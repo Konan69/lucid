@@ -147,7 +147,7 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
   /** Every notification this process hears is counted by the owners it names, then fanned out. */
   const heard = (topics: ReadonlyArray<string>) =>
     Effect.sync(() => {
-      for (const kind of Array.getSomes(topics.map(kindOf))) tally.moved(kind)
+      for (const kind of new Set(Array.getSomes(topics.map(kindOf)))) tally.moved(kind)
     }).pipe(Effect.andThen(PubSub.publish(hub, topics)))
 
   /** Invalid external payloads are ignored; valid topics still fan out through the real hub. */

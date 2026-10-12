@@ -37,8 +37,11 @@ export const LiveAttribute = {
   loads: 'vivid.live.loads',
   /** Answers that differed from the one before and were sent to the client. */
   sent: 'vivid.live.sent',
-  /** Loads abandoned because a newer change arrived before they answered. */
-  overtaken: 'vivid.live.overtaken',
+  /**
+   * Loads stopped before they answered: a newer change arrived first, or the subscription ended
+   * (the client left, its session ran out, the server is stopping). The two are not told apart.
+   */
+  interrupted: 'vivid.live.interrupted',
   /** Loads that failed, which ends their subscription. */
   failed: 'vivid.live.failed',
   /** Time spent in the loads that answered, added up. */
@@ -47,7 +50,10 @@ export const LiveAttribute = {
   slowestMillis: 'vivid.live.slowest_ms',
 } as const
 
-/** The attributes of the change bus's line: how many notifications named each kind of owner. */
+/**
+ * The attributes of the change bus's line: how many notifications named each kind of owner. A
+ * notification that names three People is one for `person`, not three.
+ */
 export const MovedAttribute = {
   person: 'vivid.changes.person',
   company: 'vivid.changes.company',
@@ -59,7 +65,7 @@ interface Counts {
   open: number
   loads: number
   sent: number
-  overtaken: number
+  interrupted: number
   failed: number
   loadMillis: number
   slowestMillis: number
@@ -69,7 +75,7 @@ const fresh = (open: number): Counts => ({
   open,
   loads: 0,
   sent: 0,
-  overtaken: 0,
+  interrupted: 0,
   failed: 0,
   loadMillis: 0,
   slowestMillis: 0,
@@ -128,7 +134,7 @@ export const makeTally = (): Tally => {
         counts.loads += 1
         counts.loadMillis += millis
         counts.slowestMillis = Math.max(counts.slowestMillis, millis)
-      } else if (Exit.hasInterrupts(exit)) counts.overtaken += 1
+      } else if (Exit.hasInterrupts(exit)) counts.interrupted += 1
       else counts.failed += 1
     },
     sent: (name) => {
@@ -140,7 +146,7 @@ export const makeTally = (): Tally => {
     drain: () => {
       const report = {
         queries: [...queries].filter(
-          ([, counts]) => counts.loads + counts.overtaken + counts.failed + counts.sent > 0,
+          ([, counts]) => counts.loads + counts.interrupted + counts.failed + counts.sent > 0,
         ),
         moved,
       }
@@ -174,7 +180,7 @@ export const report = Effect.fn('LiveTally.report')(function* () {
         [LiveAttribute.open]: counts.open,
         [LiveAttribute.loads]: counts.loads,
         [LiveAttribute.sent]: counts.sent,
-        [LiveAttribute.overtaken]: counts.overtaken,
+        [LiveAttribute.interrupted]: counts.interrupted,
         [LiveAttribute.failed]: counts.failed,
         [LiveAttribute.loadMillis]: counts.loadMillis,
         [LiveAttribute.slowestMillis]: counts.slowestMillis,

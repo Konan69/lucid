@@ -42,11 +42,13 @@ export const watch = <A, E, R>(
         Effect.sync(() => tally.opened(name)),
         () => Effect.sync(() => tally.closed(name)),
       )
-      // Timed around the whole load, so an abandoned or failed one is counted as what it was.
-      const counted = Effect.flatMap(Clock.currentTimeMillis, (started) =>
+      // Timed around the whole load, so an interrupted or failed one is counted as what it was.
+      // The monotonic clock, because a corrected wall clock would make a load take less than no time.
+      const elapsed = Clock.monotonicTimeNanos
+      const counted = Effect.flatMap(elapsed, (started) =>
         Effect.onExit(load, (exit: Exit.Exit<A, E>) =>
-          Effect.map(Clock.currentTimeMillis, (ended) =>
-            tally.loaded(name, ended - started, exit),
+          Effect.map(elapsed, (ended) =>
+            tally.loaded(name, Number((ended - started) / 1_000_000n), exit),
           ),
         ),
       )

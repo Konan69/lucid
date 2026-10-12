@@ -31,7 +31,10 @@ describe('live query counts', () => {
       const tally = makeTally()
       const changes = yield* Changes
       let answer = 1
-      const load = Effect.sync(() => answer)
+      const loaded = yield* Queue.unbounded<void>()
+      const load = Effect.as(Queue.offer(loaded, undefined), Effect.sync(() => answer)).pipe(
+        Effect.flatten,
+      )
       const seen = yield* Queue.unbounded<number>()
       const fiber = yield* watch('WatchThreads', [ada], load).pipe(
         Stream.runForEach((value) => Queue.offer(seen, value)),
@@ -39,9 +42,11 @@ describe('live query counts', () => {
         Effect.forkScoped,
       )
       expect(yield* Queue.take(seen)).toBe(1)
-      // The same answer again: loaded, not sent.
+      yield* Queue.take(loaded)
+      // The same answer again: loaded, not sent. Nothing arrives, so the load itself is the signal.
       yield* changes.publish([ada])
       yield* TestClock.adjust('20 millis')
+      yield* Queue.take(loaded)
       // A different answer: loaded and sent. Its arrival also proves the load before it finished.
       answer = 2
       yield* changes.publish([ada])
@@ -50,7 +55,7 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchThreads',
-          { open: 1, loads: 3, sent: 2, overtaken: 0, failed: 0, loadMillis: 0, slowestMillis: 0 },
+          { open: 1, loads: 3, sent: 2, interrupted: 0, failed: 0, loadMillis: 0, slowestMillis: 0 },
         ],
       ])
       // Nothing happened since: the open subscription is kept and no line is due.
@@ -83,7 +88,7 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchInbox',
-          { open: 1, loads: 1, sent: 1, overtaken: 1, failed: 0, loadMillis: 50, slowestMillis: 50 },
+          { open: 1, loads: 1, sent: 1, interrupted: 1, failed: 0, loadMillis: 50, slowestMillis: 50 },
         ],
       ])
     }).pipe(Effect.provide(busLayer)),
@@ -100,7 +105,7 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchRules',
-          { open: 0, loads: 0, sent: 0, overtaken: 0, failed: 1, loadMillis: 0, slowestMillis: 0 },
+          { open: 0, loads: 0, sent: 0, interrupted: 0, failed: 1, loadMillis: 0, slowestMillis: 0 },
         ],
       ])
     }).pipe(Effect.provide(busLayer)),

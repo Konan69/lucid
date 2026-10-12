@@ -504,7 +504,7 @@ it.effect('exports what a live query was counted doing, and how often the bus mo
         'vivid.live.open': 1,
         'vivid.live.loads': 1,
         'vivid.live.sent': 1,
-        'vivid.live.overtaken': 0,
+        'vivid.live.interrupted': 0,
         'vivid.live.failed': 0,
         'vivid.live.load_ms': 12,
         'vivid.live.slowest_ms': 12,
