@@ -46,7 +46,7 @@ describe('deciding about a computer, shown before the server answers', () => {
     })
   })
 
-  it('says what an allowed computer is for: apps only where its desktop app can do them', () => {
+  it('says how a computer stands: waiting, allowed, and apps only where its desktop app can do them', () => {
     const connected = (apps: boolean): Device => ({
       id: IDS.laptop,
       name: 'Computer laptop',
@@ -61,9 +61,7 @@ describe('deciding about a computer, shown before the server answers', () => {
     expect(standing(computer('laptop', allowedSince(1)))).toBe(
       'Allowed. Open the Vivid desktop app on it to connect.',
     )
-  })
-
-  it('says a computer that just signed in is waiting to be allowed', () => {
+    // One that just signed in can do nothing yet, connected or not.
     expect(standing(computer('desk', pending))).toBe('Waiting for you to allow it.')
   })
 })

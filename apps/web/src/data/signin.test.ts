@@ -100,69 +100,48 @@ describe('signing the desktop window in with Google', () => {
     }),
   )
 
-  it.effect('trades the code and arrives as a Person who was here before', () =>
+  it.effect('trades the code and arrives as the server says: here before, or just made', () =>
     Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(granted),
-        trade: Effect.succeed({ arrival: 'returning' }),
-      })
-      expect(yield* Ref.get(did)).toEqual([...traded, 'arrive returning'])
+      for (const arrival of ['returning', 'first'] as const) {
+        const did = yield* run({
+          begin: Effect.succeed('opened'),
+          ended: Effect.succeed(granted),
+          trade: Effect.succeed({ arrival }),
+        })
+        expect(yield* Ref.get(did)).toEqual([...traded, `arrive ${arrival}`])
+      }
     }),
   )
 
-  it.effect('arrives as a first arrival when Google just made the account', () =>
+  it.effect('ends without a trade when the browser came back with no code, or not in time', () =>
     Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(granted),
-        trade: Effect.succeed({ arrival: 'first' }),
-      })
-      expect(yield* Ref.get(did)).toEqual([...traded, 'arrive first'])
+      for (const [ending, why] of [
+        [SignInEnding.cases.Failed.make({}), 'failed'],
+        [SignInEnding.cases.Expired.make({}), 'expired'],
+      ] as const) {
+        const did = yield* run({
+          begin: Effect.succeed('opened'),
+          ended: Effect.succeed(ending),
+          trade: Effect.succeed({ arrival: 'returning' }),
+        })
+        expect(yield* Ref.get(did)).toEqual([...opened, `show Ended ${why}`])
+      }
     }),
   )
 
-  it.effect('ends as failed when the browser came back without a code', () =>
+  it.effect('does not arrive when the server says no to the trade, or does not answer it', () =>
     Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(SignInEnding.cases.Failed.make({})),
-        trade: Effect.succeed({ arrival: 'returning' }),
-      })
-      expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended failed'])
-    }),
-  )
-
-  it.effect('ends as expired when nothing came back in time', () =>
-    Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(SignInEnding.cases.Expired.make({})),
-        trade: Effect.succeed({ arrival: 'returning' }),
-      })
-      expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended expired'])
-    }),
-  )
-
-  it.effect('ends as refused when the server says no to the trade, and does not arrive', () =>
-    Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(granted),
-        trade: Effect.fail(new TradeRefused({})),
-      })
-      expect(yield* Ref.get(did)).toEqual([...traded, 'show Ended refused'])
-    }),
-  )
-
-  it.effect('ends as unreachable when the trade got no answer', () =>
-    Effect.gen(function* () {
-      const did = yield* run({
-        begin: Effect.succeed('opened'),
-        ended: Effect.succeed(granted),
-        trade: Effect.fail(new TradeUnanswered({})),
-      })
-      expect(yield* Ref.get(did)).toEqual([...traded, 'show Ended unreachable'])
+      for (const [failure, why] of [
+        [new TradeRefused({}), 'refused'],
+        [new TradeUnanswered({}), 'unreachable'],
+      ] as const) {
+        const did = yield* run({
+          begin: Effect.succeed('opened'),
+          ended: Effect.succeed(granted),
+          trade: Effect.fail(failure),
+        })
+        expect(yield* Ref.get(did)).toEqual([...traded, `show Ended ${why}`])
+      }
     }),
   )
 

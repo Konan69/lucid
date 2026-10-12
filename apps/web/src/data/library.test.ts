@@ -59,27 +59,33 @@ describe('shelvesOf', () => {
 
 describe('inFolder', () => {
   const contracts = LibraryFolderId.make('contracts')
+  const invoices = LibraryFolderId.make('invoices')
+  const year = LibraryFolderId.make('2026')
+  // One shelf's whole result, every level at once, as the server lists it.
   const shelf = {
-    documents: [item('top', {}), item('filed', { folderId: contracts })],
-    folders: [folder('contracts', null)],
+    documents: [
+      item('top', {}),
+      item('filed', { folderId: contracts }),
+      item('elsewhere', { folderId: invoices }),
+      item('deeper', { folderId: year }),
+    ],
+    folders: [folder('contracts', null), folder('invoices', null), folder('2026', 'contracts')],
   }
 
   it('shows only what is filed at the top of a shelf whose result lists every item', () => {
     const top = inFolder(shelf, null)
     expect(top.documents.map((each) => each.id)).toEqual(['top'])
-    expect(top.folders.map((each) => each.id)).toEqual(['contracts'])
+    expect(top.folders.map((each) => each.id)).toEqual(['contracts', 'invoices'])
   })
 
   it('shows a folder its own items and the folders directly inside it', () => {
-    const inside = inFolder(
-      {
-        documents: [item('filed', { folderId: contracts })],
-        folders: [folder('2026', 'contracts')],
-      },
-      contracts,
-    )
+    // Not the top's, not a sibling folder's, and not what is filed one level further down.
+    const inside = inFolder(shelf, contracts)
     expect(inside.documents.map((each) => each.id)).toEqual(['filed'])
     expect(inside.folders.map((each) => each.id)).toEqual(['2026'])
+    const sibling = inFolder(shelf, invoices)
+    expect(sibling.documents.map((each) => each.id)).toEqual(['elsewhere'])
+    expect(sibling.folders).toEqual([])
   })
 })
 

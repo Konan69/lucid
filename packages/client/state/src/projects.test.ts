@@ -67,8 +67,9 @@ describe('arranging Projects', () => {
     expect(projects.trailTo([first, second], first).map((each) => each.id)).toEqual(['second'])
   })
 
-  it('finds no Project once it is no longer in the list', () => {
-    expect(Option.isNone(projects.findProject(all, ProjectId.make('gone')))).toBe(true)
+  it('finds a Project by its id, and none once it is no longer in the list', () => {
+    expect(projects.findProject(all, floor.id)).toEqual(Option.some(floor))
+    expect(projects.findProject(all, ProjectId.make('gone'))).toEqual(Option.none())
   })
 })
 
@@ -154,5 +155,10 @@ describe('confirmed', () => {
     const once = projects.confirmed(created)(list)
     expect(once.projects.map((each) => each.id)).toEqual(['b', 'a'])
     expect(projects.confirmed(created)(once)).toBe(once)
+    // The other order: the live list got there first, with the server's own copy in its own
+    // place. The call's answer then neither adds a second one nor moves or replaces that copy.
+    const listed = project('b', null, { name: 'Renamed since', threadCount: 2 })
+    const first = new ProjectListResponse({ projects: [project('a', null, {}), listed] })
+    expect(projects.confirmed(created)(first)).toBe(first)
   })
 })

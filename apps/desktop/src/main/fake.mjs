@@ -9,6 +9,8 @@ import * as NodeReadline from 'node:readline'
 import * as Schema from 'effect/Schema'
 
 let approvalOnce = false
+/** Every request as it arrived, `<id> <method>`: what `type_text` "heard" answers with. */
+const heard = []
 let escapeAfterLook = false
 let looks = 0
 
@@ -30,6 +32,8 @@ const typed = (id, text) => {
     NodeProcess.exit(130)
   }
   if (text === 'escape later') escapeAfterLook = true
+  // The arrival order of every earlier request, so a test reads what really reached the wire.
+  if (text === 'heard') return ok(id, { heard: heard.slice(0, -1) })
   return ok(id, {})
 }
 
@@ -40,7 +44,7 @@ const methods = {
       { id: 'machine:Terminal.lnk' },
       { id: 'machine:Nameless.lnk', displayName: '' },
     ]),
-  launch_app: (id, params) => {
+  launch_app: (id, params, meta) => {
     if (params.app === 'unknown.app') return fail(id, 'app is not in the inventory')
     if (params.app === 'approval.app') {
       if (!approvalOnce) {
@@ -51,7 +55,13 @@ const methods = {
           approvalRequest: { app: params.app, displayName: 'Approval' },
         })
       }
-      return ok(id, {})
+      // The supervisor's own rule: the re-sent request is taken only with the approved app in
+      // its `meta`. The answer says which app that was, so a test can read what was sent. A
+      // request sent with no `meta` at all names no approved app.
+      const approved = meta === undefined ? undefined : meta['x-oai-cua-approved-app']
+      return approved === params.app
+        ? ok(id, { approved })
+        : fail(id, 'the approved app was not in the meta')
     }
     return ok(id, {})
   },
@@ -99,10 +109,11 @@ const decodeRequest = Schema.decodeUnknownSync(Request)
 NodeProcess.stderr.write('fake Computer started\n')
 NodeReadline.createInterface({ input: NodeProcess.stdin }).on('line', (line) => {
   const request = decodeRequest(line)
+  heard.push(`${request.id} ${request.method}`)
 
   if (request.method === 'end_turn') return methods.end_turn(request.id)
   const known = methods[request.method]
   return known === undefined
     ? fail(request.id, 'unknown method')
-    : known(request.id, request.params)
+    : known(request.id, request.params, request.meta)
 })

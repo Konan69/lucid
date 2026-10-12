@@ -377,11 +377,12 @@ describe('carrying out one action on this computer', () => {
         yield* Fiber.interrupt(acting)
         expect(page.input()).toEqual(['mousePressed', 'mouseReleased'])
         expect(page.used.at(-1)).toEqual(Option.none())
-        // The turn was given back: the next action runs.
-        const next = yield* control.execute(
-          request(BrowserAction.cases.Wait.make({ seconds: 1 }), 0),
-        )
-        expect(next).toEqual(Option.none())
+        // The turn was given back: the next action, well inside its deadline, runs to its answer.
+        const next = yield* control.execute(request(BrowserAction.cases.Read.make({})))
+        expect(Option.exists(next, DeviceAnswer.guards.Done)).toBe(true)
+        expect(
+          page.methods().slice(page.methods().lastIndexOf('Input.dispatchMouseEvent') + 1),
+        ).toContain('Accessibility.getFullAXTree')
       }),
   )
 

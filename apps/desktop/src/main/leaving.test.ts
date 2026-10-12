@@ -40,12 +40,23 @@ describe('leaving a server', () => {
         },
       })
       expect(asked).toEqual([{ origin: 'https://one.example.com', storages: kinds }])
-      // Cookies are never among the kinds: Electron clears those for the whole domain.
-      expect(asked.flatMap((storage) => storage.storages)).not.toContain('cookies')
-      yield* clearingLeft(left, { clearStorageData: () => Promise.reject(new Error('disk')) })
-      yield* clearingLeft(Option.none(), {
-        clearStorageData: () => Promise.reject(new Error('never asked')),
+      // A clear that fails is not the Person's to act on: the program still ends without failure.
+      const failed: Array<StorageToClear> = []
+      yield* clearingLeft(left, {
+        clearStorageData: (storage) => {
+          failed.push(storage)
+          return Promise.reject(new Error('disk'))
+        },
       })
+      expect(failed).toEqual([{ origin: 'https://one.example.com', storages: kinds }])
+      // With nothing left behind, Electron is not asked at all.
+      yield* clearingLeft(Option.none(), {
+        clearStorageData: (storage) => {
+          asked.push(storage)
+          return Promise.resolve()
+        },
+      })
+      expect(asked).toHaveLength(1)
     }),
   )
 })

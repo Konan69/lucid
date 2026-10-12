@@ -26,7 +26,6 @@ import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js
 import {
   judge,
   keepLatest,
-  LIMITS,
   makeSnapshots,
   readSnapshot,
   Verdict,
@@ -91,14 +90,11 @@ const boardPack = Option.some(listOf(thread('t1', 'Board pack')))
 const kept = snapshotOf({ expiresAt: LATER, threads: boardPack, drafts: Option.none() })
 
 describe('a snapshot in a device store', () => {
-  it('reads back what was written', () => {
+  it('reads back what was written, on the server it was read from and on no other', () => {
     const read = readSnapshot(Option.some(textOf(kept)), ORIGIN, NOW)
     expect(Option.map(read, (snapshot) => snapshot.me.person.id)).toEqual(Option.some(ada.id))
     expect(Option.flatMap(read, (snapshot) => snapshot.threads)).toEqual(kept.threads)
     expect(Option.flatMap(read, (snapshot) => snapshot.projects)).toEqual(Option.none())
-  })
-
-  it('refuses one read from another server', () => {
     expect(readSnapshot(Option.some(textOf(kept)), 'https://other.example', NOW)).toEqual(
       Option.none(),
     )
@@ -140,13 +136,13 @@ describe('a snapshot in a device store', () => {
         ),
         (snapshot) => snapshot.threads,
       )
-    expect(Option.map(reread(many(LIMITS.threads)), (list) => list.threads.length)).toEqual(
-      Option.some(LIMITS.threads),
-    )
+    // Two hundred Threads is what the first screen can draw; the number is written here and not
+    // read from the module, so a change to the bound has to be made on purpose.
+    expect(Option.map(reread(many(200)), (list) => list.threads.length)).toEqual(Option.some(200))
     // One more than the first screen draws: not cut to fit, which would read as the whole list.
-    expect(reread(many(LIMITS.threads + 1))).toEqual(Option.none())
-    const pages = 'words '.repeat(LIMITS.total / 6)
-    expect(
+    expect(reread(many(201))).toEqual(Option.none())
+    /** A snapshot holding `count` drafts of fifty thousand characters each, as text. */
+    const withDrafts = (count: number) =>
       writeSnapshot(
         snapshotOf({
           expiresAt: LATER,
@@ -154,26 +150,23 @@ describe('a snapshot in a device store', () => {
           drafts: Option.some({
             workspace: DraftWorkspace.cases.Personal.make({}),
             generation: 1,
-            drafts: [
-              {
-                place: DraftPlace.cases.NewThread.make({}),
-                text: pages.slice(0, 50_000),
-                revision: 1,
-                savedAt: 0,
-                device: 'phone',
-              },
-              ...Array.from({ length: 8 }, (_, index) => ({
-                place: DraftPlace.cases.InThread.make({ thread: ThreadId.make(`t${index}`) }),
-                text: pages.slice(0, 50_000),
-                revision: 1,
-                savedAt: 0,
-                device: 'phone',
-              })),
-            ],
+            drafts: Array.from({ length: count }, (_, index) => ({
+              place:
+                index === 0
+                  ? DraftPlace.cases.NewThread.make({})
+                  : DraftPlace.cases.InThread.make({ thread: ThreadId.make(`t${index}`) }),
+              text: 'words '.repeat(10_000).slice(0, 50_000),
+              revision: 1,
+              savedAt: 0,
+              device: 'phone',
+            })),
           }),
         }),
-      ),
-    ).toEqual(Option.none())
+      )
+    // The whole is bounded at four hundred thousand characters: seven such drafts are under it
+    // and are kept, nine are over it and nothing is.
+    expect(Option.exists(withDrafts(7), (text) => text.length > 350_000)).toBe(true)
+    expect(withDrafts(9)).toEqual(Option.none())
   })
 
   it('judges whose it is by the server, not by what it says itself', () => {
@@ -356,7 +349,8 @@ describe('launching from what the device kept', () => {
       expect(device.titles()).toBe('Board pack')
       yield* device.endSession
       expect(device.titles()).toBe('loading')
-      expect(yield* device.stored).toEqual(Option.none())
+      // The store itself is empty: not text the reader would merely refuse.
+      expect(yield* device.raw).toEqual(Option.none())
     }),
   )
 
@@ -394,9 +388,9 @@ describe('launching from what the device kept', () => {
       yield* device.hearMe(meOf(ada, personal))
       yield* device.hearThreads(listOf(thread('t1', 'Board pack')))
       yield* device.ended
-      expect(yield* device.stored).toEqual(Option.none())
+      expect(yield* device.raw).toEqual(Option.none())
       yield* device.flush
-      expect(yield* device.stored).toEqual(Option.none())
+      expect(yield* device.raw).toEqual(Option.none())
     }),
   )
 
@@ -405,7 +399,7 @@ describe('launching from what the device kept', () => {
       const store = Option.some('{"version":0}')
       const device = yield* launched(store)
       expect(device.titles()).toBe('loading')
-      expect(yield* device.stored).toEqual(Option.none())
+      expect(yield* device.raw).toEqual(Option.none())
     }),
   )
 })

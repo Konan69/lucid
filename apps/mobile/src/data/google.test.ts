@@ -10,14 +10,12 @@ import {
 import { Deferred, Effect, Fiber, Redacted, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
-  ATTEMPT_LASTS,
   attemptName,
   base64url,
   challengeText,
   makeGoogle,
   PhoneUnable,
   Standing,
-  TRADE_WITHIN,
   TradeUnanswered,
   type Answer,
 } from './google.ts'
@@ -144,9 +142,13 @@ it('turns a standard base64 digest into the challenge the server computes', () =
   expect(challengeText(digest.toString('base64'))).toBe(digest.toString('base64url'))
 })
 
-it('names an attempt in letters and digits only, one for each byte', () => {
+it('names an attempt from its bytes, in letters and digits only, one for each byte', () => {
   const every = Uint8Array.from({ length: 256 }, (_, byte) => byte)
   expect(attemptName(every)).toMatch(/^[A-Za-z0-9]{256}$/u)
+  // The name follows the bytes: the ends of each run of the alphabet, and the wrap past it. A
+  // name that ignored its bytes would be the same for every attempt and still have the right shape.
+  expect(attemptName(Uint8Array.of(0, 25, 26, 51, 52, 61, 62, 255))).toBe('AZaz09AH')
+  expect(attemptName(Uint8Array.of(1, 1, 1, 1))).toBe('BBBB')
   expect(attemptName(new Uint8Array(NodeCrypto.randomBytes(16)))).toHaveLength(16)
 })
 
@@ -258,7 +260,10 @@ describe('signing in with Google', () => {
       const door = yield* makeDoor(works)
       const pressing = yield* door.press()
       const state = yield* door.waitingOn
-      yield* TestClock.adjust(ATTEMPT_LASTS)
+      // One second short of the five minutes the server keeps its own record: still waiting.
+      yield* TestClock.adjust('299 seconds')
+      expect(yield* door.waitingOn).toBe(state)
+      yield* TestClock.adjust('1 second')
       yield* Fiber.join(pressing)
       expect(door.seen.standing).toEqual(Standing.Idle())
       yield* door.google.returned(granted(state))
@@ -340,7 +345,10 @@ describe('signing in with Google', () => {
       // A press now is not offered, and does nothing if it happens.
       yield* door.google.start(server)
       expect(door.seen.browser).toHaveLength(1)
-      yield* TestClock.adjust(TRADE_WITHIN)
+      // A quarter of a minute, to the millisecond: busy until then, and not after.
+      yield* TestClock.adjust('14999 millis')
+      expect(door.seen.standing).toEqual(Standing.Trading())
+      yield* TestClock.adjust('1 millis')
       yield* Fiber.join(returning)
       expect(door.seen.standing).toEqual(Standing.Unreachable())
     }),

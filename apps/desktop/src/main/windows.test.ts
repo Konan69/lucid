@@ -283,9 +283,13 @@ describe('Vivid’s actions as the Computer’s requests', () => {
 
   it.effect('closing a window sends the exact Alt+F4 and answers with what it now shows', () =>
     Effect.gen(function* () {
-      const { run } = yield* looked([answered(null), state('look2')])
+      const { Computer, run } = yield* looked([answered(null), state('look2')])
       // The supervisor says nothing about what a key did; what the window now shows is the answer.
       expect(seen(yield* run(WindowAction.cases.Close.make({ window: w1 })))).toBe('Seen look2')
+      expect(Computer.asked.slice(2)).toEqual([
+        ComputerCall.cases.PressKey.make({ window: { app: 'notepad', id: '7' }, key: 'Alt+F4' }),
+        ComputerCall.cases.WindowState.make({ window: { app: 'notepad', id: '7' } }),
+      ])
     }),
   )
 

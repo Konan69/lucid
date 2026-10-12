@@ -2,10 +2,12 @@ import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
+import * as NodeURL from 'node:url'
 import {
   Framed,
   ComputerCall,
@@ -187,22 +189,37 @@ describe('the Computer’s JSON lines', () => {
         Option.some('iVBORw0KGgo='),
       )
       expect(yield* screenshotPng('notepad.png')).toEqual(Option.none())
-      // On POSIX, a drive-prefixed directory is relative; on Windows the temp directory is
-      // already a drive path. Both exercise the real file ingress without changing process cwd.
-      const prefix =
-        NodeProcess.platform === 'win32'
-          ? NodePath.join(NodeOS.tmpdir(), 'vivid-picture-')
-          : 'C:\\vivid-picture-'
+      // A path is taken only in Windows' form. Off Windows, where the gate runs, such a path is a
+      // file name read against the working directory, so the read runs in a process of its own
+      // (`picture.mjs`) whose working directory is a directory this case owns: the file is real,
+      // the read is the app's, and nothing is written into the checkout. On Windows the temporary
+      // directory is a drive path already, and the same child reads the file by it.
       const directory = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.mkdtempSync(prefix)),
-        (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
+        Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-picture-'))),
+        (owned) => Effect.sync(() => NodeFS.rmSync(owned, { recursive: true, force: true })),
       )
-      const path = NodePath.join(directory, 'picture.png')
+      const address =
+        NodeProcess.platform === 'win32'
+          ? NodePath.join(directory, 'picture.png')
+          : 'C:\\picture.png'
+      const file = NodePath.resolve(directory, address)
+      const readThere = Effect.callback<string>((resume) => {
+        const child = NodeChildProcess.execFile(
+          NodeProcess.execPath,
+          [NodeURL.fileURLToPath(new URL('./picture.mjs', import.meta.url)), address],
+          { cwd: directory },
+          (error, stdout) => resume(error === null ? Effect.succeed(stdout) : Effect.die(error)),
+        )
+        return Effect.sync(() => child.kill())
+      })
       const picture = Buffer.from('iVBORw0KGgo=', 'base64')
-      NodeFS.writeFileSync(path, picture)
-      expect(yield* screenshotPng(path)).toEqual(Option.some(picture.toString('base64')))
-      NodeFS.rmSync(path)
-      expect(yield* screenshotPng(path)).toEqual(Option.none())
+      NodeFS.writeFileSync(file, picture)
+      expect(yield* readThere).toBe('some:iVBORw0KGgo=')
+      NodeFS.rmSync(file)
+      expect(yield* readThere).toBe('none')
+      // The same real file named any other way is not read at all: only the two shapes are taken.
+      NodeFS.writeFileSync(file, picture)
+      expect(yield* screenshotPng(NodeURL.pathToFileURL(file).href)).toEqual(Option.none())
     }),
   )
 

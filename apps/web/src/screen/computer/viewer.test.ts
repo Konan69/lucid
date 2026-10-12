@@ -23,10 +23,13 @@ describe('a provider viewer address', () => {
   })
 
   it('is loaded dark, with its permission and the rest of it untouched', () => {
-    const shown = new URL(viewerOnDesk(ISSUED))
-    expect(shown.searchParams.has('theme')).toBe(false)
-    expect(shown.searchParams.get('hostId')).toBe('1')
-    expect(shown.searchParams.get('width')).toBe('1920')
-    expect(shown.hash).toBe('#token=abc')
+    // The whole address, so a parameter the provider's page needs cannot be dropped unseen.
+    expect(viewerOnDesk(ISSUED)).toBe(
+      'https://desktop.example/stream.html?hostId=1&appId=2&width=1920&height=1080&fps=60#token=abc',
+    )
+    // The fragment is the permission: a `theme` written there is not the setting.
+    expect(viewerOnDesk('https://desktop.example/stream.html?width=1920#theme=light')).toBe(
+      'https://desktop.example/stream.html?width=1920#theme=light',
+    )
   })
 })

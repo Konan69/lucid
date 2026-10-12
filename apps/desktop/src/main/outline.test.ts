@@ -168,6 +168,25 @@ describe('the page as an outline', () => {
     // The field can still be named and typed into.
     expect(Option.isSome(findControl(read.controls, 'Password', 'type'))).toBe(true)
     // An empty password field says the same, so the outline does not reveal whether one is set.
-    expect(outline(secret, new Set([9, 10])).text).toContain('button "Sign in" = "(hidden)"')
+    const empty = decode({
+      nodes: [
+        { nodeId: '1', role: text('RootWebArea'), childIds: ['2', '4'] },
+        {
+          nodeId: '2',
+          role: text('textbox'),
+          name: text('Password'),
+          parentId: '1',
+          backendDOMNodeId: 9,
+        },
+        {
+          nodeId: '4',
+          role: text('button'),
+          name: text('Sign in'),
+          parentId: '1',
+          backendDOMNodeId: 10,
+        },
+      ],
+    })
+    expect(outline(empty, new Set([9])).text).toBe(read.text)
   })
 })

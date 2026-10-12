@@ -1,6 +1,5 @@
 import { createRootRoute, Navigate } from '@tanstack/react-router'
-import { Option } from 'effect'
-import { decodeSearch, type Search } from '../data/route'
+import { readSearch } from '../data/route'
 import { warm } from '../data/warm'
 
 /**
@@ -22,12 +21,9 @@ import { warm } from '../data/warm'
  * (`autoCodeSplitting`), which costs one more request before the first screen.
  */
 export const Route = createRootRoute({
-  // The query is read once, here; every screen gets `Search` and never the raw string.
-  // What comes back is laid over the raw query by the router, so a section this build does not
-  // know has to be answered with `settings` set to nothing; leaving the key out would leave the
-  // unknown word in place and open Settings on a section that does not exist.
-  validateSearch: (query): Search =>
-    Option.getOrElse(decodeSearch(query), (): Search => ({ settings: undefined })),
+  // The query is read once, here; every screen gets `Search` and never the raw string. A section
+  // this build does not know is read as Settings shut (`data/route.ts` `readSearch`).
+  validateSearch: readSearch,
   // Settings opening is the query gaining its word. The loader runs again when that changes, and
   // begins every section's data before the overlay is drawn (`data/warm.ts`); it holds nothing
   // back. Moving between sections with Settings open begins nothing twice: a query that is

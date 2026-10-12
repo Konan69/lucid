@@ -21,7 +21,14 @@ const drawn = (standing: ChannelStanding) => {
   return renderToStaticMarkup(createElement(TextingChannels, { links, acts }))
 }
 
+/** The moment every code below is read at, so "still works" and "ended" do not ride the clock. */
+const NOW = Date.UTC(2026, 9, 5, 10)
+
 describe('the control for texting Vivid', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('shows a channel Vivid does not text on yet, with nothing to press or fill in', () => {
     const links: ReadonlyArray<ChannelLink> = [
       { channel: 'WhatsApp', standing: ChannelStanding.cases.Unavailable.make({}) },
@@ -40,12 +47,13 @@ describe('the control for texting Vivid', () => {
   })
 
   it('offers the code to copy and to send while it still works', () => {
+    vi.useFakeTimers({ now: NOW })
     const html = drawn(
       ChannelStanding.cases.Confirming.make({
         address: mine,
         textTo,
         code: 'VIVID 4821',
-        expiresAt: Date.now() + 600_000,
+        expiresAt: NOW + 600_000,
       }),
     )
     expect(html).toContain('VIVID 4821')
@@ -55,12 +63,13 @@ describe('the control for texting Vivid', () => {
   })
 
   it('takes an ended code out of reach and leads with getting a new one', () => {
+    vi.useFakeTimers({ now: NOW })
     const html = drawn(
       ChannelStanding.cases.Confirming.make({
         address: mine,
         textTo,
         code: 'VIVID 4821',
-        expiresAt: Date.now() - 1,
+        expiresAt: NOW - 1,
       }),
     )
     expect(html).toContain('This code ended at')

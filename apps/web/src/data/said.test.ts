@@ -18,22 +18,23 @@ describe('withdrawing a sentence', () => {
     sayWith('Budget review is ready', Option.none(), 'notice-1')
     sayWith('Weekly report ran', Option.none(), 'notice-2')
 
+    // A key nothing was said under sends nothing away.
+    said.withdraw('notice-9')
+    expect(shown().map((saying) => saying.leaving)).toEqual([false, false])
+
     said.withdraw('notice-1')
 
     expect(shown().map((saying) => [saying.words, saying.leaving])).toEqual([
       ['Budget review is ready', true],
       ['Weekly report ran', false],
     ])
-    // The exit is 180 ms; after it the sentence is no longer in the document at all.
-    vi.advanceTimersByTime(180)
+    // The exit is 180 ms: still in the document one millisecond short of it, and gone at it.
+    vi.advanceTimersByTime(179)
+    expect(shown().map((saying) => saying.words)).toEqual([
+      'Budget review is ready',
+      'Weekly report ran',
+    ])
+    vi.advanceTimersByTime(1)
     expect(shown().map((saying) => saying.words)).toEqual(['Weekly report ran'])
-  })
-
-  it('does nothing for a key nothing was said under', () => {
-    sayWith('Weekly report ran', Option.none(), 'notice-2')
-
-    said.withdraw('notice-9')
-
-    expect(shown().map((saying) => saying.leaving)).toEqual([false])
   })
 })

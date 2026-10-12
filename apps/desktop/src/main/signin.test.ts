@@ -396,27 +396,20 @@ describe('desktop Google sign-in', () => {
     }),
   )
 
-  it.effect('a window still waiting when the app quits is told the attempt is over', () =>
-    Effect.gen(function* () {
-      const untilQuit = yield* Scope.make()
-      const { signIn } = yield* fixture(chosen).pipe(Scope.provide(untilQuit))
-      yield* signIn.begin
-      const waiting = yield* Effect.forkChild(signIn.ended)
-      yield* Scope.close(untilQuit, Exit.void)
-      expect(yield* Fiber.join(waiting)).toEqual(cancelled)
-    }),
-  )
-
   it.effect(
-    'the listener closes with the scope the sign-in was made in, as when the app quits',
+    'when the app quits, a window still waiting is told the attempt is over and nothing listens',
     () =>
       Effect.gen(function* () {
         const untilQuit = yield* Scope.make()
         const { signIn, seen } = yield* fixture(chosen).pipe(Scope.provide(untilQuit))
         yield* signIn.begin
         const start = yield* onlyOpened(seen.opened)
+        const waiting = yield* Effect.forkChild(signIn.ended, { startImmediately: true })
+        // Up to the quit the listener answers and the window has heard nothing.
         expect((yield* get(`${start.loopback}/favicon.ico`)).status).toBe(404)
+        expect(waiting.pollUnsafe()).toBeUndefined()
         yield* Scope.close(untilQuit, Exit.void)
+        expect(yield* Fiber.join(waiting)).toEqual(cancelled)
         expect(yield* Effect.flip(get(start.granted))).toBeInstanceOf(NothingListening)
       }),
   )

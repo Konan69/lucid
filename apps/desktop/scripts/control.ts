@@ -3,15 +3,7 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeHttp from 'node:http'
 import * as NodeProcess from 'node:process'
 import type * as NodeStream from 'node:stream'
-import {
-  BrowserAction,
-  DeviceAnswer,
-  DeviceRequest,
-  DeviceRequestId,
-  RunId,
-  ThreadId,
-  type BrowseResult,
-} from '@vivid/contracts'
+import { BrowserAction, DeviceAnswer, type BrowseResult } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Option, Result, Schema } from 'effect'
 import { BrowserWindow, app, nativeImage, net, session, type WebContents } from 'electron'
 import { Browser } from '../src/main/browser.ts'
@@ -296,15 +288,50 @@ const refusals = Effect.fn('Proof.refusals')(function* ({ act }: Stage, guest: W
 })
 
 /**
- * Item 9: developer tools. The pages session admits only web addresses, so the developer tools'
- * own document is cancelled and they never open on a page: the refusal for a page with them open
- * cannot be reached here. What can be shown is that asking for them changes nothing.
+ * Item 9: a page somebody else is inspecting. Electron gives a page one debugger client, and
+ * Vivid acts only through a session it attached itself (`src/main/driver.ts` `attach`).
+ *
+ * The refusal that is reached: the proof takes the page's debugger for itself, the way an
+ * outside inspector holds it, and Vivid's next action must answer `Failed` and leave the page
+ * where it was; once the proof lets go, Vivid attaches again and reads the same page.
+ *
+ * The refusal that is not reached: `attach` also refuses a page whose developer tools are open.
+ * The pages session admits only web addresses, so the tools' own document is cancelled and they
+ * never open on a page. What is shown for them is that asking opens nothing: the page never
+ * says they opened, by its event or by its own reading, across a whole navigation of Vivid's,
+ * which `attach` would have failed had they been open.
  */
-const inspection = Effect.fn('Proof.inspection')(function* ({ done }: Stage, guest: WebContents) {
+const inspection = Effect.fn('Proof.inspection')(function* (
+  { act, done }: Stage,
+  guest: WebContents,
+) {
+  const opened = yield* done(BrowserAction.cases.Open.make({ address: 'https://example.com' }))
+  NodeAssert.equal(opened.address, 'https://example.com/')
+  // Vivid's own session is on the page after its action. Letting go of it and taking the
+  // debugger from here leaves the page held by a client that is not Vivid's.
+  NodeAssert.equal(guest.debugger.isAttached(), true)
+  guest.debugger.detach()
+  guest.debugger.attach('1.3')
+  NodeAssert.deepEqual(yield* act(BrowserAction.cases.Read.make({})), failed)
+  // The refused action took nothing over: the page is where it was, still held from here.
+  NodeAssert.equal(yield* inPage<string>(guest, 'location.href'), 'https://example.com/')
+  NodeAssert.equal(guest.debugger.isAttached(), true)
+  guest.debugger.detach()
+  const read = yield* done(BrowserAction.cases.Read.make({}))
+  NodeAssert.equal(read.address, 'https://example.com/')
+  NodeAssert.match(read.outline, /link "Learn more"/u)
+  yield* proved('9 a page held by another debugger is refused, and taken up again when it lets go')
+
+  let toolsOpened = false
+  guest.once('devtools-opened', () => {
+    toolsOpened = true
+  })
   guest.openDevTools({ mode: 'detach' })
-  yield* done(BrowserAction.cases.Open.make({ address: 'https://example.com' }))
+  const again = yield* done(BrowserAction.cases.Open.make({ address: 'https://example.com' }))
+  NodeAssert.equal(again.address, 'https://example.com/')
+  NodeAssert.equal(toolsOpened, false)
   NodeAssert.equal(guest.isDevToolsOpened(), false)
-  yield* proved('9 developer tools cannot be opened on a page; actions carry on')
+  yield* proved('9 developer tools asked for on a page do not open (their refusal is not reached)')
 })
 
 /**
@@ -379,16 +406,10 @@ const stage = Effect.fn('Proof.stage')(function* () {
   stop = control.stop
   yield* Effect.promise(() => window.loadURL('data:text/html,<title>Vivid test</title>'))
   window.show()
-  const act = (action: BrowserAction) =>
-    control.execute(
-      DeviceRequest.make({
-        id: DeviceRequestId.make(NodeCrypto.randomUUID()),
-        threadId: ThreadId.make('thread-proof'),
-        runId: RunId.make('run-proof'),
-        action,
-        expiresAt: Date.now() + 30_000,
-      }),
-    )
+  // The executor takes one step in a page and when its authority ends (`PageWork`), which is what
+  // `main.ts` hands it from the `Page` work of a server request. The request's own identifier,
+  // Thread and Run stay with the link (`device.ts`) and never reach the executor.
+  const act = (action: BrowserAction) => control.execute({ action, expiresAt: Date.now() + 30_000 })
   return {
     browser,
     act,

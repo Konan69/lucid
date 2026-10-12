@@ -145,7 +145,10 @@ describe('display data shared by web and mobile', () => {
 
   it('separates long drafts for reading while retaining all of a short body', () => {
     expect(draftIsLong('A short reply.')).toBe(false)
+    // 320 characters and six lines are the last that stay in the card; one more of either leaves.
+    expect(draftIsLong('x'.repeat(320))).toBe(false)
     expect(draftIsLong('x'.repeat(321))).toBe(true)
+    expect(draftIsLong('One\nTwo\nThree\nFour\nFive\nSix')).toBe(false)
     expect(draftIsLong('One\nTwo\nThree\nFour\nFive\nSix\nSeven')).toBe(true)
   })
 

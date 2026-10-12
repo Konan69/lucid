@@ -75,11 +75,18 @@ describe('itemsOf', () => {
   })
 
   it('files a notice dated ahead of the phone’s clock under Today', () => {
-    const items = listed([notice('ahead', NOW + 5 * 60_000, { threadId: null })], Option.some([]))
-    expect(outline(items)).toEqual(['Today', 'ahead -> Nowhere'])
+    // Tomorrow by the server's clock: a date this phone has not reached, in one band with today's.
+    const items = listed(
+      [
+        notice('tomorrow', NOW + DAY, { threadId: null }),
+        notice('ahead', NOW + 5 * 60_000, { threadId: null }),
+      ],
+      Option.some([]),
+    )
+    expect(outline(items)).toEqual(['Today', 'tomorrow -> Nowhere', 'ahead -> Nowhere'])
   })
 
-  it('reads every unread notice of a Thread with one press, and none of the read ones', () => {
+  it('gives a Thread’s row every unread notice one press will read, and none of the read ones', () => {
     const items = listed(
       [notice('new', NOW, {}), notice('old', NOW - HOUR, { readAt: NOW - 60_000 })],
       Option.some([thread('first', 'Onboarding')]),

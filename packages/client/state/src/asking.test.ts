@@ -17,7 +17,6 @@ import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
   advance,
-  afterFailure,
   answerOf,
   answersOf,
   back,
@@ -28,7 +27,6 @@ import {
   holdOf,
   Line,
   linesOf,
-  mayAnswer,
   pickedIn,
   press,
   progressOf,
@@ -39,7 +37,6 @@ import {
   Reply,
   replyOf,
   returnTo,
-  said,
   standingOf,
   standOf,
   Step,
@@ -264,15 +261,6 @@ describe('refusedAt', () => {
   })
 })
 
-describe('said', () => {
-  it('joins picked labels and gives written words as they are', () => {
-    expect(said(chosen('Monday', 'Friday'))).toBe('Monday, Friday')
-    expect(said(InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }))).toBe(
-      'Lunch on Friday',
-    )
-  })
-})
-
 const me = { id: PersonId.make('me'), name: 'Ada', image: null }
 const them = { id: PersonId.make('them'), name: 'Bisi', image: null }
 
@@ -351,23 +339,6 @@ describe('holdOf', () => {
   })
 })
 
-describe('afterFailure', () => {
-  const a = { attempt: 1, id: InputRequestId.make('a') }
-  const b = { attempt: 2, id: InputRequestId.make('b') }
-
-  it('clears the try that failed', () => {
-    expect(afterFailure(Option.some(a), 1)).toEqual(Option.none())
-  })
-
-  it('leaves a later try on its way when an earlier one fails late', () => {
-    expect(afterFailure(Option.some(b), 1)).toEqual(Option.some(b))
-  })
-
-  it('has nothing to clear when nothing is on its way', () => {
-    expect(afterFailure(Option.none(), 1)).toEqual(Option.none())
-  })
-})
-
 describe('triesAfter', () => {
   const a = { attempt: 1, id: InputRequestId.make('a') }
   const b = { attempt: 2, id: InputRequestId.make('b') }
@@ -397,6 +368,12 @@ describe('triesAfter', () => {
   it('leaves a later try on its way when an earlier one fails late', () => {
     const later = triesAfter(untried, Tried.Began({ tried: b }))
     expect(triesAfter(later, Tried.Failed({ tried: a, failure })).pending).toEqual(Option.some(b))
+  })
+
+  it('keeps why a try failed even when nothing was on its way any more', () => {
+    const after = triesAfter(untried, Tried.Failed({ tried: a, failure }))
+    expect(after.pending).toEqual(Option.none())
+    expect(Option.map(after.refused, (refusal) => refusal.attempt)).toEqual(Option.some(1))
   })
 })
 
@@ -439,14 +416,6 @@ describe('repliedWords', () => {
         InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }),
       ]),
     ).toBe('Work\nMonday, Friday\nLunch on Friday')
-  })
-})
-
-describe('mayAnswer', () => {
-  it('refuses a second answer to a request while one is in flight', () => {
-    const flying = new Set([InputRequestId.make('a')])
-    expect(mayAnswer(flying, InputRequestId.make('a'))).toBe(false)
-    expect(mayAnswer(flying, InputRequestId.make('b'))).toBe(true)
   })
 })
 
@@ -621,28 +590,19 @@ describe('draftingOf', () => {
 })
 
 describe('standOf', () => {
-  it('is up until the grabber tucks it', () => {
+  it('is up until the grabber tucks it, and gone once it is leaving, tucked or not', () => {
     expect(standOf(false, false)).toBe('up')
     expect(standOf(false, true)).toBe('tucked')
-  })
-
-  it('is gone once it is leaving, tucked or not', () => {
     expect(standOf(true, false)).toBe('gone')
     expect(standOf(true, true)).toBe('gone')
   })
 })
 
 describe('standingOf', () => {
-  it('is on offer while it is not chosen and nothing is on its way', () => {
-    expect(standingOf(false, false)).toBe('open')
-  })
-
-  it('is chosen when it is in the draft, sending or not', () => {
+  it('is chosen when it is in the draft, sending or not; else on offer, or back while sending', () => {
     expect(standingOf(true, false)).toBe('chosen')
     expect(standingOf(true, true)).toBe('chosen')
-  })
-
-  it('stands back while the answers are on their way', () => {
+    expect(standingOf(false, false)).toBe('open')
     expect(standingOf(false, true)).toBe('back')
   })
 })

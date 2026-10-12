@@ -321,7 +321,16 @@ describe('signing in', () => {
 describe('what the store holds', () => {
   it('never hands the token to a store that anything can read', () => {
     // The browser preview's store: the address survives a reload, the sign-in does not.
-    expect(readKept(writeKept(signedIn('token-a'), false))).toEqual(signedOut)
+    const readable = writeKept(signedIn('token-a'), false)
+    // The text itself, not what the reader makes of it: a reader that skips a token it was
+    // handed would hide one sitting in the store.
+    expect(Option.exists(readable, (text) => text.includes('192.168.1.20:5178'))).toBe(true)
+    expect(Option.exists(readable, (text) => text.includes('token-a'))).toBe(false)
+    expect(readKept(readable)).toEqual(signedOut)
+    // The protected store is handed it, and the next launch signs in with it.
+    const guarded = writeKept(signedIn('token-a'), true)
+    expect(Option.exists(guarded, (text) => text.includes('token-a'))).toBe(true)
+    expect(readKept(guarded)).toEqual(signedIn('token-a'))
   })
 
   it('reads anything that is not a session as a first launch', () => {

@@ -429,6 +429,37 @@ describe('connecting an Integration', () => {
     }),
   )
 
+  it.effect(
+    'takes a press from the provider’s page, and stops listening for the account left',
+    () =>
+      Effect.gen(function* () {
+        const made = yield* started()
+        const notionAccount = account('n2', notion)
+        yield* made.probe.sendAndAwait(pressOn(gmail, { card: 'call-1' }))
+        yield* made.server.answer(signIn(gmailAccount))
+        yield* made.at('Away')
+        // The Person leaves the provider's page alone and presses something else: nothing is being
+        // waited on, so the press is taken and the first attempt is over.
+        const pressed = yield* made.probe.sendAndAwait(
+          pressOn(notion, { attempt: second, card: 'call-2', at: PRESSED }),
+        )
+        expect(pressed.handled).toBe(true)
+        expect(ConnectingStates.matches(pressed.after, 'Asking')).toBe(true)
+        expect(attemptOf(pressed.after)).toEqual(Option.some(second))
+        expect(standingOf(pressed.after, gmail)).toEqual(Standing.cases.Still.make({}))
+        // The account that was left now connects at the provider. Nobody is listening for it: it
+        // is not said connected, and it does not end the attempt that replaced it.
+        yield* Queue.offer(made.arrived, gmailAccount)
+        yield* made.server.answer(done(notionAccount))
+        const snapshot = yield* made.at('Connected')
+        expect(standingOf(snapshot.state, notion)).toEqual(
+          Standing.cases.Connected.make({ connection: notionAccount }),
+        )
+        expect(made.server.asked).toEqual([begin(gmail), begin(notion)])
+        yield* saidOnly(made, [[Option.some('call-2'), notionAccount.id]])
+      }),
+  )
+
   it.effect('lets a card say where its own attempt stands, whatever it pressed', () =>
     Effect.gen(function* () {
       const { ref, at } = yield* started()
@@ -443,21 +474,33 @@ describe('connecting an Integration', () => {
     }),
   )
 
-  it.effect('says the sign-in is still to do when the Person comes back without it', () =>
-    Effect.gen(function* () {
-      const { server, ref, at, said } = yield* started()
-      yield* ref.send(pressOn(gmail))
-      yield* at('Asking')
-      yield* server.answer(signIn(gmailAccount))
-      yield* at('Away')
-      yield* ref.send(ConnectingEvents.Returned())
-      yield* at('Checking')
-      yield* server.answer(signIn(gmailAccount))
-      const back = yield* at('Unfinished')
-      expect(standingOf(back.state, gmail)).toEqual(Standing.cases.Unfinished.make({}))
-      expect(isWaiting(back.state)).toBe(false)
-      expect(yield* Queue.size(said)).toBe(0)
-    }),
+  it.effect(
+    'says the sign-in is still to do when the Person comes back without it, until that is closed',
+    () =>
+      Effect.gen(function* () {
+        const made = yield* started()
+        const { server, ref, at } = made
+        yield* ref.send(pressOn(gmail))
+        yield* at('Asking')
+        yield* server.answer(signIn(gmailAccount))
+        yield* at('Away')
+        yield* ref.send(ConnectingEvents.Returned())
+        yield* at('Checking')
+        yield* server.answer(signIn(gmailAccount))
+        const back = yield* at('Unfinished')
+        expect(standingOf(back.state, gmail)).toEqual(Standing.cases.Unfinished.make({}))
+        expect(isWaiting(back.state)).toBe(false)
+        // Closing those words ends the attempt: the row says nothing more and holds no attempt.
+        const closed = yield* made.probe.sendAndAwait(
+          ConnectingEvents.Dismissed({ attempt: first }),
+        )
+        expect(closed.handled).toBe(true)
+        expect(ConnectingStates.matches(closed.after, 'Idle')).toBe(true)
+        expect(standingOf(closed.after, gmail)).toEqual(Standing.cases.Still.make({}))
+        expect(attemptOf(closed.after)).toEqual(Option.none())
+        // Nothing was said connected on the way, and a press is taken again.
+        yield* saidOnly(made, [])
+      }),
   )
 
   it.effect('takes a return that comes before the page is known to have opened', () =>
@@ -472,6 +515,28 @@ describe('connecting an Integration', () => {
       yield* at('Checking')
       yield* server.answer(done(gmailAccount))
       yield* at('Connected')
+      // The early return checked the account the page was being opened for, and began no other.
+      expect(server.asked).toEqual([begin(gmail), Asked.cases.Resume.make({ id: gmailAccount.id })])
+    }),
+  )
+
+  it.effect('leaves the sign-in still to do when the server will not say how it went', () =>
+    Effect.gen(function* () {
+      const { server, ref, at, said } = yield* started()
+      yield* ref.send(pressOn(gmail, { card: 'call-1' }))
+      yield* at('Asking')
+      yield* server.answer(signIn(gmailAccount))
+      yield* at('Away')
+      yield* ref.send(ConnectingEvents.Returned())
+      yield* at('Checking')
+      // The check is refused. That is not the attempt refused: the account is still listed as
+      // unfinished, so the card says the sign-in is still to do, and a press is taken again.
+      yield* server.refuse
+      const back = yield* at('Unfinished')
+      expect(standingOf(back.state, gmail)).toEqual(Standing.cases.Unfinished.make({}))
+      expect(standingOfCard(back.state, 'call-1')).toEqual(Standing.cases.Unfinished.make({}))
+      expect(isWaiting(back.state)).toBe(false)
+      expect(yield* Queue.size(said)).toBe(0)
     }),
   )
 
@@ -699,23 +764,37 @@ describe('connecting an Integration', () => {
       }),
   )
 
-  it.effect('ends refused, and says nothing, when the service did not accept the key', () =>
-    Effect.gen(function* () {
-      const { server, ref, at, said } = yield* started()
-      yield* ref.send(pressOn(gmail, { card: 'call-1' }))
-      yield* at('Asking')
-      yield* server.answer(key(gmailAccount))
-      yield* at('Keying')
-      // The server keeps the account, unusable, and takes no second key for it.
-      yield* ref.send(ConnectingEvents.Finished({ attempt: first, connection: refusedKey, at: 0 }))
-      const refused = yield* at('Refused')
-      expect(standingOf(refused.state, gmail)).toEqual(
-        Standing.cases.Refused.make({
-          refusal: Refusal.cases.Unusable.make({ serviceName: gmail }),
-        }),
-      )
-      expect(yield* Queue.size(said)).toBe(0)
-    }),
+  it.effect(
+    'ends refused, and says nothing, when the service did not accept the key, until that is closed',
+    () =>
+      Effect.gen(function* () {
+        const made = yield* started()
+        const { server, ref, at } = made
+        yield* ref.send(pressOn(gmail, { card: 'call-1' }))
+        yield* at('Asking')
+        yield* server.answer(key(gmailAccount))
+        yield* at('Keying')
+        // The server keeps the account, unusable, and takes no second key for it.
+        yield* ref.send(
+          ConnectingEvents.Finished({ attempt: first, connection: refusedKey, at: 0 }),
+        )
+        const refused = yield* at('Refused')
+        expect(standingOf(refused.state, gmail)).toEqual(
+          Standing.cases.Refused.make({
+            refusal: Refusal.cases.Unusable.make({ serviceName: gmail }),
+          }),
+        )
+        // Closing the refusal's words ends the attempt: the row and the card say nothing more.
+        const closed = yield* made.probe.sendAndAwait(
+          ConnectingEvents.Dismissed({ attempt: first }),
+        )
+        expect(closed.handled).toBe(true)
+        expect(ConnectingStates.matches(closed.after, 'Idle')).toBe(true)
+        expect(standingOf(closed.after, gmail)).toEqual(Standing.cases.Still.make({}))
+        expect(standingOfCard(closed.after, 'call-1')).toEqual(Standing.cases.Still.make({}))
+        // Nothing was said connected at any point, and a press is taken again.
+        yield* saidOnly(made, [])
+      }),
   )
 
   it.effect(
@@ -762,16 +841,24 @@ describe('connecting an Integration', () => {
         Standing.cases.Refused.make({ refusal: Refusal.cases.NotBegun.make({}) }),
       )
 
-      const blocked = yield* started({ ...working, page: Option.some('Blocked') })
-      yield* blocked.ref.send(pressOn(gmail))
-      yield* blocked.at('Asking')
-      yield* blocked.server.answer(signIn(gmailAccount))
-      const stopped = yield* blocked.at('Refused')
-      expect(standingOf(stopped.state, gmail)).toEqual(
-        Standing.cases.Refused.make({
-          refusal: Refusal.cases.Blocked.make({ serviceName: gmail }),
-        }),
-      )
+      // Each way a page is not opened is said in its own words: a pop-up blocker is something
+      // the Person can change, an address the system will not open is not. Each on a machine of
+      // its own, with the refusal it must end in written out beside it.
+      for (const [reason, refusal] of [
+        ['Blocked', Refusal.cases.Blocked.make({ serviceName: gmail })],
+        ['Unopened', Refusal.cases.Unopened.make({ serviceName: gmail })],
+      ] as const) {
+        const unopened = yield* started({ ...working, page: Option.some(reason) })
+        yield* unopened.ref.send(pressOn(gmail))
+        yield* unopened.at('Asking')
+        yield* unopened.server.answer(signIn(gmailAccount))
+        const stopped = yield* unopened.at('Refused')
+        expect(standingOf(stopped.state, gmail), reason).toEqual(
+          Standing.cases.Refused.make({ refusal }),
+        )
+        // The page was never opened, so nobody is away: nothing is being waited on.
+        expect(isWaiting(stopped.state), reason).toBe(false)
+      }
     }),
   )
 })

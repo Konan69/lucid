@@ -45,8 +45,12 @@ describe('when a message was said', () => {
     expect(said('en-US', at('2026-12-30T22:30'), newYear)).toBe('Dec 30, 2026, 10:30 PM')
   })
 
-  it('reads a message stamped ahead of this clock as said today', () => {
+  it('reads a message stamped ahead of this clock as a time alone, even past midnight', () => {
     expect(said('en-US', at('2026-10-14T15:02'))).toBe('3:02 PM')
+    // A server clock a few minutes ahead, read just before midnight: the stamp is on tomorrow's
+    // date, and next year's, and still gets no date and no year.
+    expect(said('en-US', at('2026-10-15T00:05'), at('2026-10-14T23:58'))).toBe('12:05 AM')
+    expect(said('en-US', at('2027-01-01T00:05'), at('2026-12-31T23:58'))).toBe('12:05 AM')
   })
 
   it('writes the date the way the locale does', () => {

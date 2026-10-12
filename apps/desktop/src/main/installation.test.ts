@@ -12,13 +12,35 @@ const directory = Effect.acquireRelease(
   (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
 )
 
+/** The stored file as it is on disk, read without the module under test. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 describe('this app’s identity', () => {
-  it.effect('is made once and is the same on every later launch', () =>
+  it.effect('is the one already kept on disk, which is left as it was', () =>
     Effect.gen(function* () {
-      const path = NodePath.join(yield* directory, 'nested', 'installation.json')
+      const path = NodePath.join(yield* directory, 'installation.json')
+      const kept = '{"version":1,"installation":"3f2b8a34-6c1d-4e5f-9a7b-0c1d2e3f4a5b"}'
+      NodeFS.writeFileSync(path, kept)
+      expect(yield* installationIdentity(path)).toBe('3f2b8a34-6c1d-4e5f-9a7b-0c1d2e3f4a5b')
+      expect(NodeFS.readFileSync(path, 'utf8')).toBe(kept)
+    }),
+  )
+
+  it.effect('is made once per installation, kept on disk, and the same on every later launch', () =>
+    Effect.gen(function* () {
+      const root = yield* directory
+      const path = NodePath.join(root, 'nested', 'installation.json')
       const first = yield* installationIdentity(path)
+      expect(first).toMatch(UUID)
+      // What a later launch reads is the file, so the file must name the same identity.
+      expect(NodeFS.readFileSync(path, 'utf8')).toBe(`{"version":1,"installation":"${first}"}`)
       expect(yield* installationIdentity(path)).toBe(first)
+      // No temporary file is left beside it.
       expect(NodeFS.readdirSync(NodePath.dirname(path))).toEqual(['installation.json'])
+      // Another installation is another computer in the Person's list, never the same one.
+      const other = yield* installationIdentity(NodePath.join(root, 'other', 'installation.json'))
+      expect(other).toMatch(UUID)
+      expect(other).not.toBe(first)
     }),
   )
 
@@ -27,6 +49,8 @@ describe('this app’s identity', () => {
       const path = NodePath.join(yield* directory, 'installation.json')
       NodeFS.writeFileSync(path, '{"version":1,"installation":"not-an-identity"}')
       const made = yield* installationIdentity(path)
+      expect(made).toMatch(UUID)
+      expect(NodeFS.readFileSync(path, 'utf8')).toBe(`{"version":1,"installation":"${made}"}`)
       expect(yield* installationIdentity(path)).toBe(made)
     }),
   )

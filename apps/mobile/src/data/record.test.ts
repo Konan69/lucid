@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { auditSentence } from './record.ts'
 
 describe('a line of the record', () => {
-  it('names the rule that stopped Vivid, and never what the action carried', () => {
+  it('names the rule that stopped Vivid, with the tool and the service it stopped', () => {
     expect(
       auditSentence(
         AuditEvent.cases.ActionBlocked.make({

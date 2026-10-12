@@ -1,11 +1,18 @@
 import { expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Deferred, Effect } from 'effect'
 import { keepCurrent, LOOK_AGAIN_AFTER_MS, UpdateStepFailed, type UpdateClient } from './update'
 
 /** A device whose server answers are scripted, recording every download and restart asked of it. */
 const device = (answers: ReadonlyArray<boolean | 'offline'>) => {
   const calls: Array<'download' | 'restart'> = []
-  const state = { away: false, restartFails: false, asked: 0, restartHeld: false }
+  const state = {
+    away: false,
+    restartFails: false,
+    asked: 0,
+    restartHeld: false,
+    /** Told each time a restart is asked for, before it answers. */
+    onRestart: (): void => undefined,
+  }
   const client: UpdateClient = {
     download: Effect.suspend(() => {
       calls.push('download')
@@ -17,6 +24,7 @@ const device = (answers: ReadonlyArray<boolean | 'offline'>) => {
     }),
     restart: Effect.suspend(() => {
       calls.push('restart')
+      state.onRestart()
       if (state.restartHeld) return Effect.never
       return state.restartFails
         ? Effect.fail(new UpdateStepFailed({ step: 'restart' }))
@@ -94,8 +102,13 @@ it.effect('asks for one restart, however often the app is left while it is pendi
     yield* keeper.look()
     state.away = true
     state.restartHeld = true
+    const begun = yield* Deferred.make<void>()
+    state.onRestart = () => {
+      Deferred.doneUnsafe(begun, Effect.void)
+    }
     yield* Effect.forkChild(keeper.left(0))
-    yield* Effect.yieldNow
+    // The native restart has been asked for and has not answered: that is the pending moment.
+    yield* Deferred.await(begun)
     yield* keeper.returned(1)
     yield* keeper.left(2)
     expect(calls).toEqual(['download', 'restart'])

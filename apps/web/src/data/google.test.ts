@@ -51,22 +51,25 @@ describe('reading the address the welcome was opened at', () => {
 })
 
 describe('the addresses Better Auth is given for one Google sign-in', () => {
-  const given = googleAddresses('/invite/abc?from=mail')
+  it('hands over three landings on the place the Person was going, each read as what it is', () => {
+    const given = googleAddresses('/invite/abc?from=mail')
 
-  it('lands a returning Person where they were going', () => {
+    // A Person who already has an account lands where they were going. Nothing there says a new
+    // account was made, so a time zone they chose is not adopted over (`adoptFirstArrival`).
     expect(given.callbackURL).toBe('/invite/abc?from=mail')
-  })
+    expect(firstArrival(given.callbackURL)).toEqual(Option.none())
 
-  it('lands a failure back on a welcome that says why', () => {
-    // Better Auth appends its code to the address it was given (`appendQueryParams`).
-    const landed = readAddress(`${given.errorCallbackURL}&error=access_denied`)
-    expect(landed).toEqual({
+    // A failure lands on a welcome that says why. Better Auth appends its code to the address it
+    // was given (`appendQueryParams`); `access_denied` is Google's answer to a closed screen.
+    const failed = `${given.errorCallbackURL}&error=access_denied`
+    expect(readAddress(failed)).toEqual({
       destination: '/invite/abc?from=mail',
       standing: Standing.Returned({ outcome: 'Cancelled' }),
     })
-  })
+    expect(firstArrival(failed)).toEqual(Option.none())
 
-  it('lands a new account where its time zone is adopted, then on the same place', () => {
+    // A new account lands where its time zone is adopted, and the address bar is then given back
+    // the same place without the mark.
     expect(firstArrival(given.newUserCallbackURL)).toEqual(Option.some('/invite/abc?from=mail'))
   })
 
@@ -79,8 +82,7 @@ describe('the addresses Better Auth is given for one Google sign-in', () => {
 })
 
 describe('the landing of a first sign-in with Google', () => {
-  it('is not any other landing', () => {
-    expect(firstArrival('/invite/abc?from=mail')).toEqual(Option.none())
+  it('is not a landing marked as joined some other way', () => {
     expect(firstArrival('/?joined=email')).toEqual(Option.none())
   })
 })

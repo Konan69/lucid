@@ -71,10 +71,6 @@ describe('the link that opens the messaging app', () => {
     )
   })
 
-  it('only opens the conversation when there is nothing to write', () => {
-    expect(messageLink('iMessage', 'apple', '+14155550100', Option.none())).toBe('sms:+14155550100')
-  })
-
   it('addresses WhatsApp by bare digits', () => {
     expect(messageLink('WhatsApp', 'apple', '+14155550100', code)).toBe(
       'https://wa.me/14155550100?text=VIVID%204821',

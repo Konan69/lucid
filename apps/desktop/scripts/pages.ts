@@ -109,6 +109,9 @@ const geometry = Effect.fn('NativePages.geometry')(function* (window: BrowserWin
   if (!(visible instanceof WebContentsView)) return yield* Effect.die('Expected attached guest')
   zoomPage(window, 'in')
   const zoom = window.webContents.getZoomFactor()
+  // The expected bounds below are computed from this reading, so a menu zoom that did nothing
+  // would read 1 and pass on the bounds the page already had.
+  NodeAssert.ok(zoom > 1, `zoom ${zoom}`)
   NodeAssert.deepEqual(visible.getBounds(), {
     x: Math.round(10 * zoom),
     y: Math.round(20 * zoom),
@@ -256,10 +259,11 @@ const popups = Effect.fn('NativePages.popups')(function* (input: {
     return Effect.sync(() => input.events.removeListener('state', changed))
   })
   NodeAssert.deepEqual(foreground.tabs.map((page) => page.tab).slice(0, 1), [input.tab])
-  if (ShowingTab.guards.Some(foreground.showing))
-    NodeAssert.deepEqual(foreground.tabs.map((page) => page.tab).slice(1), [
-      foreground.showing.value,
-    ])
+  // The popup sits beside its opener and is the page in front. The page is added and selected in
+  // one change (`src/main/pages.ts` `Popup`), so the first state with two pages already says so.
+  const popup = foreground.tabs[1]
+  if (popup === undefined) return yield* Effect.die('Expected the popup beside its opener')
+  NodeAssert.deepEqual(foreground.showing, ShowingTab.cases.Some.make({ value: popup.tab }))
   NodeAssert.equal(shown(input.window).length, 0)
 })
 

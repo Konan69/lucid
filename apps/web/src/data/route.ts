@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { flow, Option, Schema } from 'effect'
 
 /**
  * The words of the address that are Vivid's own and not a place: what rides after the `?`.
@@ -30,8 +30,23 @@ export const Search = Schema.Struct({ settings: Schema.optional(SettingsSection)
 export type Search = typeof Search.Type
 
 /**
- * Reads the query, for the one place that takes it in (`validateSearch` on the root route). A
- * section this build does not know decodes to nothing, which the route reads as the overlay
- * shut and not as an error page: a link from a newer build still opens the app.
+ * Reads the query, for the one place that takes it in (`validateSearch` on the root route).
+ *
+ * This is the query's ingress, so what it is handed stays opaque until the schema has read it:
+ * the reader is the schema's own decoder followed by the answer for a query it refuses, and no
+ * step in between names a type for the raw value. The router calls it with the parsed query and
+ * nothing else (installed `@tanstack/router-core` `src/router.ts` `validateSearch`:
+ * `validateSearch(input)`), and takes what it returns as the route's search
+ * (`src/validators.ts` `ResolveValidatorOutputFn`).
+ *
+ * A section this build does not know is read as the overlay shut and not as an error page: a
+ * link from a newer build still opens the app. It is answered with `settings` set to nothing and
+ * not with the key left out, because the router lays what comes back over the raw query
+ * (installed `@tanstack/router-core` `src/router.ts`, where a match's search is made:
+ * `{ ...parentSearch, ...strictSearch }`): leaving the key out would leave the unknown word in
+ * place and open Settings on a section that does not exist.
  */
-export const decodeSearch = Schema.decodeUnknownOption(Search)
+export const readSearch = flow(
+  Schema.decodeUnknownOption(Search),
+  Option.getOrElse((): Search => ({ settings: undefined })),
+)

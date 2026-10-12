@@ -121,6 +121,7 @@ describe('the editor', () => {
   it('cannot be saved without a name, an instruction and a whole schedule', () => {
     const fields = { ...routines.emptyFields(), name: 'Brief', prompt: 'Write it.' }
     expect(routines.fieldsComplete(fields, 'UTC')).toBe(true)
+    expect(routines.fieldsComplete({ ...fields, name: ' ' }, 'UTC')).toBe(false)
     expect(routines.fieldsComplete({ ...fields, prompt: '  ' }, 'UTC')).toBe(false)
     expect(routines.fieldsComplete({ ...fields, cron: ' ' }, 'UTC')).toBe(false)
     expect(routines.fieldsComplete({ ...fields, kind: 'Webhook', cron: '' }, 'UTC')).toBe(true)
@@ -164,5 +165,12 @@ describe('expectations', () => {
     const once = routines.confirmed(created)(list)
     expect(once.routines.map((item) => item.id)).toEqual(['c', 'a', 'b'])
     expect(routines.confirmed(created)(once)).toBe(once)
+    // The other order: the live list got there first, with the server's own copy in its own
+    // place. The call's answer then neither adds a second one nor moves or replaces that copy.
+    const first = {
+      routines: [routine('a', {}), routine('c', { name: 'Renamed since' })],
+      templates: [],
+    }
+    expect(routines.confirmed(created)(first)).toBe(first)
   })
 })

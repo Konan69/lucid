@@ -78,68 +78,53 @@ const reported: ErrorEvent = {
 }
 
 describe('scrub', () => {
-  const sent = scrub(reported)
-
-  it('lets nothing a Person wrote leave, wherever the SDK had put it', () => {
+  it('sends exactly the kind of error, where it happened and which build, and nothing a Person wrote', () => {
+    const sent = scrub(reported)
+    // The whole report that leaves, written out: a field this does not name must not be there.
+    expect(sent).toEqual({
+      event_id: 'a3f1',
+      timestamp: 1_790_000_000,
+      level: 'error',
+      platform: 'javascript',
+      release: 'vivid-desktop@0.1.0+abc123',
+      environment: 'production',
+      // The user, the extras, the message, the body, the cookies and every other header are gone.
+      request: { url: '/thread/7', headers: { 'User-Agent': 'Mozilla/5.0' } },
+      tags: { 'event.process': 'renderer' },
+      contexts: { os: { name: 'iOS', version: '19.1' }, device: { model: 'iPhone17,1' } },
+      exception: {
+        values: [
+          {
+            type: 'SchemaError',
+            mechanism: { type: 'generic', handled: true },
+            stacktrace: {
+              frames: [
+                {
+                  filename: '/assets/index.js',
+                  function: 'decode',
+                  lineno: 12,
+                  colno: 40,
+                  in_app: true,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      // A request and a move between screens stay, without their queries; no other breadcrumb.
+      breadcrumbs: [
+        {
+          category: 'fetch',
+          type: 'http',
+          data: { method: 'POST', status_code: 500, url: '/api/threads/7/messages' },
+        },
+        { category: 'navigation', data: { from: '/a', to: '/b' } },
+      ],
+    })
     const wire = JSON.stringify(sent)
     expect(wire).not.toContain(SECRET)
     expect(wire).not.toContain('ada@example.com')
     expect(wire).not.toContain('10.0.0.7')
-  })
-
-  it('drops the user, the extras, the message and the request body, cookies and headers', () => {
-    expect(sent.user).toBeUndefined()
-    expect(sent.extra).toBeUndefined()
-    expect(sent.message).toBeUndefined()
-    expect(sent.logentry).toBeUndefined()
-    expect(sent.request).toEqual({
-      url: '/thread/7',
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    })
-  })
-
-  it('keeps the kind of error and where it happened', () => {
-    expect(sent.exception).toEqual({
-      values: [
-        {
-          type: 'SchemaError',
-          mechanism: { type: 'generic', handled: true },
-          stacktrace: {
-            frames: [
-              {
-                filename: '/assets/index.js',
-                function: 'decode',
-                lineno: 12,
-                colno: 40,
-                in_app: true,
-              },
-            ],
-          },
-        },
-      ],
-    })
-  })
-
-  it('keeps which build and which system it happened on', () => {
-    expect(sent.release).toBe('vivid-desktop@0.1.0+abc123')
-    expect(sent.environment).toBe('production')
-    expect(sent.platform).toBe('javascript')
-    expect(sent.tags).toEqual({ 'event.process': 'renderer' })
-    expect(sent.contexts).toEqual({
-      os: { name: 'iOS', version: '19.1' },
-      device: { model: 'iPhone17,1' },
-    })
-  })
-
-  it('keeps a request and a move between screens, without their queries, and no other breadcrumb', () => {
-    expect(sent.breadcrumbs).toEqual([
-      {
-        category: 'fetch',
-        type: 'http',
-        data: { method: 'POST', status_code: 500, url: '/api/threads/7/messages' },
-      },
-      { category: 'navigation', data: { from: '/a', to: '/b' } },
-    ])
   })
 })
 
@@ -150,21 +135,15 @@ describe('the one message that may leave', () => {
     message: "'renderer' process exited with 'crashed'",
   }
 
-  it('keeps the sentence the SDK writes when a window ends', () => {
+  it('is the sentence the SDK writes when a window ends, and nothing that only starts like it', () => {
     expect(scrub(ended).message).toBe("'renderer' process exited with 'crashed'")
-  })
-
-  it('drops a message that only starts like it', () => {
     expect(scrub({ ...ended, message: `${ended.message}: ${SECRET}` }).message).toBeUndefined()
   })
 })
 
 describe('scrubBreadcrumb', () => {
-  it('drops a console line whole', () => {
+  it('as the SDK’s own hook, drops a console line whole and cuts the query from an xhr address', () => {
     expect(scrubBreadcrumb({ category: 'console', message: SECRET })).toBeNull()
-  })
-
-  it('cuts the query from an xhr address', () => {
     expect(
       scrubBreadcrumb({ category: 'xhr', data: { method: 'GET', url: `/api/x?q=${SECRET}` } }),
     ).toEqual({ category: 'xhr', data: { method: 'GET', url: '/api/x' } })
