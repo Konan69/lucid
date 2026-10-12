@@ -234,7 +234,7 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           })
           yield* silent(receipts)
           expect(yield* store.read(actor, {})).toEqual({ changed: 1, unreadCount: 0 })
-          yield* payload(receipts, [Topic.person(test.ben.id)])
+          yield* payload(receipts, [Topic.part('notifications')(Topic.person(test.ben.id))])
           const observation = yield* observing(
             [Topic.person(test.ben.id), Topic.company(test.company.id)],
             store.list(actor),

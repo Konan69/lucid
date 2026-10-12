@@ -417,7 +417,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         const store = yield* ThreadStore
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* store.markRead(test.ben.id, test.id)
-        yield* payload(notifications, [Topic.person(test.ben.id)])
+        yield* payload(notifications, [Topic.part('activity')(Topic.person(test.ben.id))])
         expect(yield* store.markRead(test.dee.id, test.id).pipe(Effect.flip)).toEqual(
           new NotFound({ message: 'Thread not found' }),
         )

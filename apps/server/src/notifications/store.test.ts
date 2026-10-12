@@ -125,7 +125,9 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
         expect(own.unreadCount).toBe(1)
         const [stored] = own.notifications
         if (stored === undefined) expect.fail('Expected the visible notice')
-        expect(yield* Ref.get(published)).toEqual([[Topic.person(owner.person.id)]])
+        expect(yield* Ref.get(published)).toEqual([
+          [Topic.part('notifications')(Topic.person(owner.person.id))],
+        ])
         expect(yield* Ref.get(pushed)).toEqual([[owner.person.id, stored.id]])
         expect(own.notifications[0]).toMatchObject({ kind: 'needs-you', title: notice.title })
         expect((yield* store.list(other)).notifications).toEqual([])

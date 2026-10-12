@@ -123,7 +123,9 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
           changed: 1,
           unreadCount: 1,
         })
-        yield* payload(notices, [Topic.person(test.personal.person.id)])
+        yield* payload(notices, [
+          Topic.part('notifications')(Topic.person(test.personal.person.id)),
+        ])
         const next = yield* nextValue(observation)
         expect(next.unreadCount).toBe(1)
         expect(next.notifications.find((notice) => notice.id === one)).toMatchObject({ readAt: at })
@@ -145,7 +147,9 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
           const store = yield* NotificationStore
           const notices = yield* (yield* PgClient).listen(CHANNEL)
           expect(yield* store.read(test.member, {})).toEqual({ changed: 2, unreadCount: 0 })
-          yield* payload(notices, [Topic.person(test.member.person.id)])
+          yield* payload(notices, [
+            Topic.part('notifications')(Topic.person(test.member.person.id)),
+          ])
           const remaining = yield* store.list(test.personal)
           expect(remaining.unreadCount).toBe(1)
           expect(remaining.notifications).toMatchObject([{ id: personal, readAt: null }])
@@ -173,7 +177,9 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
             { id: foreign, readAt: null },
           ])
           expect(yield* store.read(test.personal, {})).toEqual({ changed: 1, unreadCount: 0 })
-          yield* payload(notices, [Topic.person(test.personal.person.id)])
+          yield* payload(notices, [
+            Topic.part('notifications')(Topic.person(test.personal.person.id)),
+          ])
           expect(yield* store.read(test.personal, {})).toEqual({ changed: 0, unreadCount: 0 })
           yield* silent(notices)
         }).pipe(Effect.scoped),
@@ -195,7 +201,7 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
         expect(
           yield* notificationHandlers.ReadNotifications({ ids: [one] }).pipe(signedIn(test.member)),
         ).toEqual({ changed: 1, unreadCount: 1 })
-        yield* payload(notices, [Topic.person(test.member.person.id)])
+        yield* payload(notices, [Topic.part('notifications')(Topic.person(test.member.person.id))])
       }).pipe(Effect.scoped),
     )
   })

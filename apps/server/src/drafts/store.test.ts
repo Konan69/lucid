@@ -46,9 +46,11 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           yield* save(test.member, newThread, 'private Company draft')
           // The ordered SQL marker fails if Company was included, even though unchanged draft
           // responses would normally be deduplicated and conceal the unnecessary peer reload.
-          yield* payload(notices, [Topic.person(test.member.actor.person.id)])
+          yield* payload(notices, [Topic.part('drafts')(Topic.person(test.member.actor.person.id))])
           yield* save(test.foreign, newThread, 'peer change is the deterministic barrier')
-          yield* payload(notices, [Topic.person(test.foreign.actor.person.id)])
+          yield* payload(notices, [
+            Topic.part('drafts')(Topic.person(test.foreign.actor.person.id)),
+          ])
           expect((yield* nextValue(peer)).drafts).toMatchObject([
             { text: 'peer change is the deterministic barrier' },
           ])
