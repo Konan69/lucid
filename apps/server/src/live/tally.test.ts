@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@effect/vitest'
+import { expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
@@ -25,16 +25,17 @@ const busLayer = Layer.effect(
 
 const ada = Topic.person(PersonId.make('ada'))
 
-describe('live query counts', () => {
+layer(busLayer)('live query counts', (it) => {
   it.effect('counts a load that answers, an answer that is sent, and one that is the same', () =>
     Effect.gen(function* () {
       const tally = makeTally()
       const changes = yield* Changes
       let answer = 1
       const loaded = yield* Queue.unbounded<void>()
-      const load = Effect.as(Queue.offer(loaded, undefined), Effect.sync(() => answer)).pipe(
-        Effect.flatten,
-      )
+      const load = Effect.as(
+        Queue.offer(loaded, undefined),
+        Effect.sync(() => answer),
+      ).pipe(Effect.flatten)
       const seen = yield* Queue.unbounded<number>()
       const fiber = yield* watch('WatchThreads', [ada], load).pipe(
         Stream.runForEach((value) => Queue.offer(seen, value)),
@@ -55,7 +56,15 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchThreads',
-          { open: 1, loads: 3, sent: 2, interrupted: 0, failed: 0, loadMillis: 0, slowestMillis: 0 },
+          {
+            open: 1,
+            loads: 3,
+            sent: 2,
+            interrupted: 0,
+            failed: 0,
+            loadMillis: 0,
+            slowestMillis: 0,
+          },
         ],
       ])
       // Nothing happened since: the open subscription is kept and no line is due.
@@ -63,7 +72,7 @@ describe('live query counts', () => {
       yield* Fiber.interrupt(fiber)
       yield* changes.publish([ada])
       expect(tally.drain().queries).toEqual([])
-    }).pipe(Effect.provide(busLayer)),
+    }),
   )
 
   it.effect('counts a load a newer change overtook, with the time the one that answered took', () =>
@@ -88,10 +97,18 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchInbox',
-          { open: 1, loads: 1, sent: 1, interrupted: 1, failed: 0, loadMillis: 50, slowestMillis: 50 },
+          {
+            open: 1,
+            loads: 1,
+            sent: 1,
+            interrupted: 1,
+            failed: 0,
+            loadMillis: 50,
+            slowestMillis: 50,
+          },
         ],
       ])
-    }).pipe(Effect.provide(busLayer)),
+    }),
   )
 
   it.effect('counts a load that failed', () =>
@@ -105,9 +122,17 @@ describe('live query counts', () => {
       expect(tally.drain().queries).toEqual([
         [
           'WatchRules',
-          { open: 0, loads: 0, sent: 0, interrupted: 0, failed: 1, loadMillis: 0, slowestMillis: 0 },
+          {
+            open: 0,
+            loads: 0,
+            sent: 0,
+            interrupted: 0,
+            failed: 1,
+            loadMillis: 0,
+            slowestMillis: 0,
+          },
         ],
       ])
-    }).pipe(Effect.provide(busLayer)),
+    }),
   )
 })

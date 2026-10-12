@@ -1,6 +1,5 @@
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
-import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
 import { Forbidden, type PersonId, type SessionId } from '@vivid/contracts'
@@ -9,7 +8,23 @@ import type { Actor } from '../auth/access.ts'
 import { sessionExpiry, sessionWorkspace } from '../auth/session.ts'
 import { untraced } from '../observability/quiet.ts'
 import { Changes, Topic, topicsOf } from './changes.ts'
-import { LiveTally, type Watched } from './tally.ts'
+import { LiveTally, type Tally, type Watched } from './tally.ts'
+
+/**
+ * One load, counted under its query's name with the time it took (`live/tally.ts`).
+ *
+ * Timed around the whole load, so an interrupted or failed one is counted as what it was. The
+ * monotonic clock, because a corrected wall clock would make a load take less than no time.
+ */
+const counted = <A, E, R>(tally: Tally, name: Watched, load: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const started = yield* Clock.monotonicTimeNanos
+    return yield* Effect.onExit(load, (exit) =>
+      Effect.map(Clock.monotonicTimeNanos, (ended) =>
+        tally.loaded(name, Number((ended - started) / 1_000_000n), exit),
+      ),
+    )
+  })
 
 /**
  * Turns a read into a live query: the current result now, then again each time it changes.
@@ -42,18 +57,8 @@ export const watch = <A, E, R>(
         Effect.sync(() => tally.opened(name)),
         () => Effect.sync(() => tally.closed(name)),
       )
-      // Timed around the whole load, so an interrupted or failed one is counted as what it was.
-      // The monotonic clock, because a corrected wall clock would make a load take less than no time.
-      const elapsed = Clock.monotonicTimeNanos
-      const counted = Effect.flatMap(elapsed, (started) =>
-        Effect.onExit(load, (exit: Exit.Exit<A, E>) =>
-          Effect.map(elapsed, (ended) =>
-            tally.loaded(name, Number((ended - started) / 1_000_000n), exit),
-          ),
-        ),
-      )
       return Stream.concat(Stream.make(undefined), Stream.debounce(moved, '20 millis')).pipe(
-        Stream.switchMap(() => Stream.fromEffect(counted)),
+        Stream.switchMap(() => Stream.fromEffect(counted(tally, name, load))),
         Stream.changes,
         Stream.tap(() => Effect.sync(() => tally.sent(name))),
       )

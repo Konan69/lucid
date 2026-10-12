@@ -132,7 +132,12 @@ const touches = (wanted: ReadonlySet<string>) => (moved: ReadonlyArray<string>) 
 const EVERYTHING = '*'
 
 /** The kind of owner a topic names, for the bus's counts (`live/tally.ts`). */
-const kinds: Record<string, Moved> = { p: 'person', c: 'company', t: 'thread', [EVERYTHING]: 'everything' }
+const kinds: Record<string, Moved> = {
+  p: 'person',
+  c: 'company',
+  t: 'thread',
+  [EVERYTHING]: 'everything',
+}
 const kindOf = (topic: string) => Option.fromUndefinedOr(kinds[topic.slice(0, 1)])
 
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')

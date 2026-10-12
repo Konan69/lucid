@@ -28,9 +28,11 @@ export const watchedNames: ReadonlyArray<string> = [
 /** Whose data a change notification said had moved. `everything` is the listener reconnecting. */
 export type Moved = 'person' | 'company' | 'thread' | 'everything'
 
-/** The attributes of one query's line. Each is a whole number; times are milliseconds. */
+/** The attribute that names the query a line is about: one of `watchedNames`. */
+export const QUERY = 'vivid.live.query'
+
+/** The counts on one query's line. Each is a whole number; times are milliseconds. */
 export const LiveAttribute = {
-  query: 'vivid.live.query',
   /** Subscriptions open when the line was written. The only value that is not a count since the last line. */
   open: 'vivid.live.open',
   /** Loads that ran to an answer. */
@@ -176,7 +178,7 @@ export const report = Effect.fn('LiveTally.report')(function* () {
     queries,
     ([name, counts]) =>
       Effect.annotateLogs(Effect.logInfo(Message.live), {
-        [LiveAttribute.query]: name,
+        [QUERY]: name,
         [LiveAttribute.open]: counts.open,
         [LiveAttribute.loads]: counts.loads,
         [LiveAttribute.sent]: counts.sent,

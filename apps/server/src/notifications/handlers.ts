@@ -11,7 +11,9 @@ export const notificationHandlers = {
   }),
   /** Workspace changes re-scope the subscription through the shared live-query authority. */
   WatchNotifications: () =>
-    live('WatchNotifications', (actor) => Effect.flatMap(NotificationStore, (store) => store.list(actor))),
+    live('WatchNotifications', (actor) =>
+      Effect.flatMap(NotificationStore, (store) => store.list(actor)),
+    ),
   /** The store commits the markers, their count and the recipient's notice together. */
   ReadNotifications: Effect.fn('Rpc.ReadNotifications')(function* (
     request: typeof ReadNotificationsRequest.Type,
