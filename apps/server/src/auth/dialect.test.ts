@@ -10,7 +10,7 @@ import { DatabaseFailure, PersonId, SessionId } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { announce, CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { announce, CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { sessionEnded } from '../live/query.ts'
 import { authDatabaseLayer, SessionOwnerUnreadable, UnrecognisedDelete } from './dialect.ts'
 import { authEffect, localAuthRuntimeLayer, type AuthInstance } from './provider.ts'
@@ -201,7 +201,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
         const auth = yield* authEffect
         const ada = yield* signedUp(auth)
         const changes = yield* Changes
-        const moved = yield* changes.subscribe([Topic.person(ada.personId)])
+        const moved = yield* changes.subscribe([Topic.person(ada.personId)], everyPart)
         const ended = yield* sessionEnded(ada.personId, ada.sessionId).pipe(Effect.forkScoped)
         const signedOut = yield* call(auth, 'sign-out', {
           method: 'POST',

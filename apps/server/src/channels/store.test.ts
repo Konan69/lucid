@@ -7,7 +7,7 @@ import {
 } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Option, Queue, Ref, Result, Stream, Layer } from 'effect'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes, Topic, everyPart } from '../live/changes.ts'
 import { nextValue } from '../live/testing.ts'
 import { channelHandlers } from './handlers.ts'
 import { ChannelStore } from './store.ts'
@@ -175,7 +175,10 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
           'NotConnected',
           'Unavailable',
         ])
-        const receipt = yield* (yield* Changes).subscribe([Topic.person(test.actor.person.id)])
+        const receipt = yield* (yield* Changes).subscribe(
+          [Topic.person(test.actor.person.id)],
+          everyPart,
+        )
         const observation = { values, receipt, fiber }
         const next = () => nextValue(observation)
         yield* channelHandlers

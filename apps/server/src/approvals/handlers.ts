@@ -30,7 +30,7 @@ export const approvalHandlers = {
   GetInbox: Effect.fn('Rpc.GetInbox')(function* () {
     return yield* loadInbox(yield* requireActor())
   }),
-  WatchInbox: () => live('WatchInbox', loadInbox),
+  WatchInbox: () => live('WatchInbox', ['activity'], loadInbox),
   /** The digest and pending claim are enforced in the store before any execution. */
   DecideApproval: Effect.fn('Rpc.DecideApproval')(function* (request: DecideApprovalRequest) {
     return { approval: yield* (yield* ApprovalStore).decide(yield* decidingPerson(), request) }

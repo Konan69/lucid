@@ -11,7 +11,7 @@ export const notificationHandlers = {
   }),
   /** Workspace changes re-scope the subscription through the shared live-query authority. */
   WatchNotifications: () =>
-    live('WatchNotifications', (actor) =>
+    live('WatchNotifications', ['notifications'], (actor) =>
       Effect.flatMap(NotificationStore, (store) => store.list(actor)),
     ),
   /** The store commits the markers, their count and the recipient's notice together. */

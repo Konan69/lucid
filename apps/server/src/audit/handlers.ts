@@ -8,5 +8,5 @@ export const auditHandlers = {
   ListAudit: Effect.fn('Rpc.ListAudit')(function* () {
     return yield* loadAudit(yield* requireActor())
   }),
-  WatchAudit: () => live('WatchAudit', loadAudit),
+  WatchAudit: () => live('WatchAudit', [], loadAudit),
 }

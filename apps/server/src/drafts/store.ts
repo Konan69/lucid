@@ -269,7 +269,7 @@ const makeStore = (database: Database['Service']) => {
         return DraftSaved.cases.Kept.make({ draft, generation })
       }),
     )
-    yield* (yield* Changes).publish([Topic.person(actor.person.id)])
+    yield* (yield* Changes).publish([Topic.part('drafts')(Topic.person(actor.person.id))])
     return result
   })
   return { list, save }

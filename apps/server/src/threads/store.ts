@@ -263,7 +263,7 @@ const makeMarkRead = (database: DatabaseService) =>
             target: [threadReads.threadId, threadReads.personId],
             set: { readAt: now },
           })
-        yield* announce(tx, [Topic.person(personId)])
+        yield* announce(tx, [Topic.part('activity')(Topic.person(personId))])
       }),
     )
   })

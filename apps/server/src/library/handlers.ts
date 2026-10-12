@@ -34,7 +34,7 @@ export const libraryHandlers = {
   }),
   /** Workspace switches and ownership changes rerun the same shelf loader. */
   WatchLibrary: (query: typeof LibraryListQuery.Type) =>
-    live('WatchLibrary', (actor) => loadLibrary(actor, query)),
+    live('WatchLibrary', [], (actor) => loadLibrary(actor, query)),
   /** Unreadable ids and absent ids produce the same response. */
   GetLibraryItem: Effect.fn('Rpc.GetLibraryItem')(function* ({
     id,

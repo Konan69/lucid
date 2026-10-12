@@ -16,7 +16,7 @@ import type { Actor } from '../auth/access.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes, Topic, everyPart } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import { draftHandlers } from './handlers.ts'
 
@@ -144,7 +144,10 @@ export const observing = Effect.fn('DraftTest.observing')(function* (caller: Cal
   )
   yield* Effect.raceFirst(Deferred.await(first), Fiber.join(fiber))
   const initial = yield* Queue.take(values)
-  const receipt = yield* (yield* Changes).subscribe([Topic.person(caller.actor.person.id)])
+  const receipt = yield* (yield* Changes).subscribe(
+    [Topic.person(caller.actor.person.id)],
+    everyPart,
+  )
   return { values, fiber, initial, receipt }
 })
 

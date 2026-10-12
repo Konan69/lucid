@@ -5,7 +5,7 @@ import { Effect, Layer, Option, Schema, Stream } from 'effect'
 import { PersonId, type LibraryShelf } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { announce, CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { announce, CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { LibraryFolderCycle } from './access.ts'
 import { asPerson, fixture } from './fixtures.ts'
 import { digestBytes } from './ingest.ts'
@@ -57,7 +57,10 @@ describe.skipIf(!testDatabaseConfigured)('Library transactional announcements', 
     it.effect('announces a Company folder to its Company subscriber', () =>
       Effect.gen(function* () {
         const people = yield* fixture()
-        const subscription = yield* (yield* Changes).subscribe([Topic.company(people.company.id)])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.company(people.company.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* (yield* LibraryStore).createFolder(people.owner.actor, {
           name: 'Company folder',
@@ -119,7 +122,10 @@ describe.skipIf(!testDatabaseConfigured)('Library transactional announcements', 
       Effect.gen(function* () {
         const people = yield* fixture()
         const item = yield* upload(people.owner.actor, 'Company')
-        const subscription = yield* (yield* Changes).subscribe([Topic.company(people.company.id)])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.company(people.company.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* asPerson(people.admin).remove(item.document.id)
         expect(

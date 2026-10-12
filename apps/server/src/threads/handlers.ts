@@ -95,12 +95,12 @@ export const threadHandlers = {
   ListThreads: Effect.fn('Rpc.ListThreads')(function* () {
     return yield* listThreads(yield* requireActor())
   }),
-  WatchThreads: () => live('WatchThreads', listThreads),
+  WatchThreads: () => live('WatchThreads', ['activity'], listThreads),
   GetThread: Effect.fn('Rpc.GetThread')(function* ({ id }: { readonly id: ThreadId }) {
     return yield* detail(yield* requireActor(), id)
   }),
   WatchThread: ({ id }: { readonly id: ThreadId }) =>
-    live('WatchThread', (actor) => detail(actor, id), [Topic.thread(id)]),
+    live('WatchThread', ['activity'], (actor) => detail(actor, id), [Topic.thread(id)]),
   /** The store commits metadata, creator read receipt and announcement before returning. */
   CreateThread: Effect.fn('Rpc.CreateThread')(function* (
     request: Parameters<ThreadStore['Service']['create']>[1],

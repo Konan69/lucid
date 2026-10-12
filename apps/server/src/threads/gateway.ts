@@ -238,6 +238,8 @@ const authorizedBody = (
       const removed = watch(
         'Session',
         thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],
+        // The session and whether the Thread may still be seen: a turn's own activity moves neither.
+        [],
         checked,
       ).pipe(Stream.runDrain)
       const ended = yield* Effect.raceFirst(removed, sessionRanOut(personId, sessionId)).pipe(

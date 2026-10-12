@@ -61,7 +61,7 @@ import {
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes, Topic, everyPart } from '../live/changes.ts'
 import {
   Machine,
   MachineExecutionUnknown,
@@ -557,7 +557,7 @@ const asVivid = (person: Person) =>
 const start = Effect.fn('Computer.test.start')(function* (person: Person) {
   const changes = yield* Changes
   const store = yield* ComputerStore
-  const moved = yield* changes.subscribe([Topic.person(person.id)])
+  const moved = yield* changes.subscribe([Topic.person(person.id)], everyPart)
   const evidence = yield* ProviderEvidence
   const publishedRunning = yield* Deferred.make<void>()
   yield* Ref.set(
@@ -2013,7 +2013,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           const changes = yield* Changes
           const latch = yield* Deferred.make<void>()
           yield* Ref.set(evidence.boot, Option.some(latch))
-          const moved = yield* changes.subscribe([Topic.person(first.id)])
+          const moved = yield* changes.subscribe([Topic.person(first.id)], everyPart)
           expect(
             (yield* computerHandlers.StartComputer().pipe(asPerson(first))).computer.state._tag,
           ).toBe('Starting')

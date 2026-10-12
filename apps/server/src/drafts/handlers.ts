@@ -11,7 +11,7 @@ const load = Effect.fn('Drafts.load')(function* (actor: Actor) {
 
 export const draftHandlers = {
   /** Session authority is re-resolved before each live load by the house live helper. */
-  WatchDrafts: () => live('WatchDrafts', load),
+  WatchDrafts: () => live('WatchDrafts', ['drafts'], load),
   /** RPC middleware decodes SaveDraftRequest; only the signed-in Person may keep unsent words. */
   SaveDraft: Effect.fn('Rpc.SaveDraft')(function* (request: SaveDraftRequest) {
     const auth = yield* requirePerson()

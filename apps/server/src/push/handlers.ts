@@ -39,7 +39,7 @@ export const pushHandlers = {
     return yield* loadTargets((yield* requirePerson()).person.id)
   }),
   /** The existing live-query session-ended signal terminates revoked sessions and refreshes others. */
-  WatchPushTargets: () => live('WatchPushTargets', (actor) => loadTargets(actor.person.id)),
+  WatchPushTargets: () => live('WatchPushTargets', [], (actor) => loadTargets(actor.person.id)),
   /** Removes only the caller's target; guessed or removed ids remain harmless. */
   RemovePushTarget: Effect.fn('Rpc.RemovePushTarget')(function* ({
     id,

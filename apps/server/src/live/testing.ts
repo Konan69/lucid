@@ -4,7 +4,7 @@ import { PersonId } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Option, Queue, Schema, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Database } from '../database/client.ts'
-import { announce, Changes, Topic } from './changes.ts'
+import { announce, Changes, everyPart, Topic } from './changes.ts'
 import { watch } from './query.ts'
 
 const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
@@ -44,7 +44,7 @@ export const observing = Effect.fn('LiveTesting.observing')(function* <A, E, R>(
 ) {
   const first = yield* Deferred.make<void>()
   const values = yield* Queue.unbounded<A>()
-  const fiber = yield* watch('Session', topics, load).pipe(
+  const fiber = yield* watch('Session', topics, everyPart, load).pipe(
     Stream.runForEach((value) =>
       Queue.offer(values, value).pipe(Effect.andThen(Deferred.succeed(first, undefined))),
     ),
@@ -52,7 +52,7 @@ export const observing = Effect.fn('LiveTesting.observing')(function* <A, E, R>(
   )
   yield* Effect.raceFirst(Deferred.await(first), Fiber.join(fiber))
   const initial = yield* Queue.take(values)
-  const receipt = yield* (yield* Changes).subscribe(topics)
+  const receipt = yield* (yield* Changes).subscribe(topics, everyPart)
   return { initial, values, receipt, fiber }
 })
 

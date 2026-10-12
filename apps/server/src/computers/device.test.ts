@@ -55,7 +55,7 @@ import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { nextValue, payload, silent } from '../live/testing.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { actingRun } from '../threads/runs.ts'
@@ -84,7 +84,7 @@ const busLayer = Layer.unwrap(
     const observed = Changes.of({
       publish: (topics) => changes.publish(topics),
       subscribe: Effect.fn('DeviceTest.subscribe')(function* (topics) {
-        const subscription = yield* changes.subscribe(topics)
+        const subscription = yield* changes.subscribe(topics, everyPart)
         yield* Queue.offer(watching, undefined)
         return subscription
       }),
@@ -396,7 +396,7 @@ const watchingDevices = Effect.fn('DeviceTest.watchingDevices')(function* (who: 
   )
   yield* Effect.raceFirst(Deferred.await(first), Fiber.join(fiber))
   const initial = yield* Queue.take(values)
-  const receipt = yield* (yield* Changes).subscribe([Topic.person(who.person.id)])
+  const receipt = yield* (yield* Changes).subscribe([Topic.person(who.person.id)], everyPart)
   // listen() uses Bus's next subscription receipt to prove desktop admission. The list's own
   // subscription receipts are already accounted for by its initial emission, so consume them.
   yield* Queue.takeAll((yield* Bus).watching)

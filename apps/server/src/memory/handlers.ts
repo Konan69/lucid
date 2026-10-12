@@ -92,7 +92,7 @@ export const memoryHandlers = {
     return yield* loadMemory(yield* requireActor())
   }),
   /** Foundation live queries re-authorize workspace membership on every invalidation. */
-  WatchMemory: () => live('WatchMemory', loadMemory),
+  WatchMemory: () => live('WatchMemory', [], loadMemory),
   /** Vivid's shared-room page is constructed without consulting any persisted personal brief. */
   GetMemoryBrief: Effect.fn('Rpc.GetMemoryBrief')(
     function* () {

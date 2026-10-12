@@ -6,7 +6,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as Socket from 'effect/socket/Socket'
 import { type PersonId, type SessionId } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes, Topic, everyPart } from '../live/changes.ts'
 import { authenticate, sessionWorkspace } from '../auth/session.ts'
 import { ComputerStore, computerScreenAddress } from './store.ts'
 
@@ -72,7 +72,7 @@ export const screenLifetime = Effect.fn('Computer.screen.lifetime')(function* (i
 }) {
   const changes = yield* Changes
   const store = yield* ComputerStore
-  const moved = yield* changes.subscribe([Topic.person(identity.personId)])
+  const moved = yield* changes.subscribe([Topic.person(identity.personId)], everyPart)
   /** Session loss or provider absence ends transport authority even if neither socket has closed. */
   const check = Effect.fn('Computer.screen.checkLifetime')(function* () {
     yield* sessionWorkspace(identity.personId, identity.sessionId)

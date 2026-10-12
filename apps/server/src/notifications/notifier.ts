@@ -57,7 +57,7 @@ export const recordNotice = Effect.fn('Notifier.record')(function* (input: {
       })
       .onConflictDoNothing({ target: notifications.id }),
   )
-  yield* changes.publish([Topic.person(notice.personId)])
+  yield* changes.publish([Topic.part('notifications')(Topic.person(notice.personId))])
   // A missing row after insertion is a persistence fault. Provider failures are receipts, while
   // an unsettled persistence write stays a failure and cannot authorize repeating an external send.
   const outcome = yield* push

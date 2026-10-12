@@ -43,5 +43,5 @@ export const searchHandlers = {
     return yield* loadSuggestions(yield* requireActor())
   }),
   /** Workspace and domain changes refresh the deterministic suggestions through the change bus. */
-  WatchSuggestions: () => live('WatchSuggestions', loadSuggestions),
+  WatchSuggestions: () => live('WatchSuggestions', ['activity'], loadSuggestions),
 }

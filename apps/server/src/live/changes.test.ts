@@ -7,7 +7,7 @@ import { DatabaseFailure, PersonId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { postgresCodecs } from '../database/codecs.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { announce, CHANNEL, Changes, changesLayer, Topic } from './changes.ts'
+import { announce, CHANNEL, Changes, changesLayer, Topic, everyPart } from './changes.ts'
 
 /** A deliberate domain failure rolls back an otherwise successful announcement. */
 class AnnouncementAbandoned extends Schema.TaggedError<AnnouncementAbandoned>()(
@@ -133,7 +133,7 @@ describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
           const database = yield* Database
           const changes = yield* Changes
           const topic = Topic.person(PersonId.make(crypto.randomUUID()))
-          const subscription = yield* changes.subscribe([topic])
+          const subscription = yield* changes.subscribe([topic], everyPart)
           yield* database.transaction((transaction) => announce(transaction, [topic]))
           expect(Option.isSome(yield* Stream.runHead(subscription))).toBe(true)
         }).pipe(Effect.provide(context))

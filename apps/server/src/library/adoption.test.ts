@@ -7,7 +7,7 @@ import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { workLayer } from '../database/work.ts'
-import { Changes, changesLayer, Topic } from '../live/changes.ts'
+import { Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { extractPdf } from './extraction.ts'
 import { fixture, pendingWork, storedWork } from './fixtures.ts'
 import { digestBytes } from './ingest.ts'
@@ -81,9 +81,10 @@ describe.skipIf(!testDatabaseConfigured)('Native Library startup adoption', () =
           { id },
         ])
         expect(yield* storedWork(id), 'Q11 before Layer build').toEqual([])
-        const subscription = yield* (yield* Changes).subscribe([
-          Topic.person(owner.actor.person.id),
-        ])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.person(owner.actor.person.id)],
+          everyPart,
+        )
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* Layer.build(libraryIngestionLayer(Schedule.forever, extractPdf))

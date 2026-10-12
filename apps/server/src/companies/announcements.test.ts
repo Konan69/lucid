@@ -18,7 +18,7 @@ import { auditEntries } from '../audit/tables.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { watch } from '../live/query.ts'
 import { CompanyStore, companyStoreLayer } from './store.ts'
 import { companyTable, invitationTable, membershipTable } from './tables.ts'
@@ -131,7 +131,7 @@ const observing = Effect.fn('CompanyAnnouncements.observing')(function* <A, E, R
 ) {
   const first = yield* Deferred.make<void>()
   const values = yield* Queue.unbounded<A>()
-  const fiber = yield* watch('Session', topics, load).pipe(
+  const fiber = yield* watch('Session', topics, everyPart, load).pipe(
     Stream.runForEach((value) =>
       Queue.offer(values, value).pipe(Effect.andThen(Deferred.succeed(first, undefined))),
     ),
@@ -139,7 +139,7 @@ const observing = Effect.fn('CompanyAnnouncements.observing')(function* <A, E, R
   )
   yield* Effect.raceFirst(Deferred.await(first), Fiber.join(fiber))
   const initial = yield* Queue.take(values)
-  const receipt = yield* (yield* Changes).subscribe(topics)
+  const receipt = yield* (yield* Changes).subscribe(topics, everyPart)
   return { initial, values, receipt, fiber }
 })
 

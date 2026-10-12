@@ -3,7 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
 import * as TestClock from 'effect/testing/TestClock'
-import { Changes, Topic } from './changes.ts'
+import { Changes, everyPart, Topic } from './changes.ts'
 import { watch } from './query.ts'
 import { LiveTally, makeTally } from './tally.ts'
 import { PersonId } from '@vivid/contracts'
@@ -16,9 +16,10 @@ const busLayer = Layer.effect(
   Changes,
   Effect.gen(function* () {
     const hub = yield* PubSub.unbounded<void>()
+    const heard = () => Effect.map(PubSub.subscribe(hub), (taken) => Stream.fromSubscription(taken))
     return Changes.of({
       publish: () => PubSub.publish(hub, undefined).pipe(Effect.asVoid),
-      subscribe: () => Effect.map(PubSub.subscribe(hub), (taken) => Stream.fromSubscription(taken)),
+      subscribe: heard,
     })
   }),
 )
@@ -37,7 +38,7 @@ layer(busLayer)('live query counts', (it) => {
         Effect.sync(() => answer),
       ).pipe(Effect.flatten)
       const seen = yield* Queue.unbounded<number>()
-      const fiber = yield* watch('WatchThreads', [ada], load).pipe(
+      const fiber = yield* watch('WatchThreads', [ada], everyPart, load).pipe(
         Stream.runForEach((value) => Queue.offer(seen, value)),
         Effect.provideService(LiveTally, tally),
         Effect.forkScoped,
@@ -82,7 +83,12 @@ layer(busLayer)('live query counts', (it) => {
       const load = Effect.as(Effect.sleep('50 millis'), 'answer')
       const seen = yield* Queue.unbounded<string>()
       const started = yield* Queue.unbounded<void>()
-      yield* watch('WatchInbox', [ada], Effect.andThen(Queue.offer(started, undefined), load)).pipe(
+      yield* watch(
+        'WatchInbox',
+        [ada],
+        everyPart,
+        Effect.andThen(Queue.offer(started, undefined), load),
+      ).pipe(
         Stream.runForEach((value) => Queue.offer(seen, value)),
         Effect.provideService(LiveTally, tally),
         Effect.forkScoped,
@@ -114,7 +120,7 @@ layer(busLayer)('live query counts', (it) => {
   it.effect('counts a load that failed', () =>
     Effect.gen(function* () {
       const tally = makeTally()
-      yield* watch('WatchRules', [ada], Effect.fail('refused')).pipe(
+      yield* watch('WatchRules', [ada], everyPart, Effect.fail('refused')).pipe(
         Stream.runDrain,
         Effect.provideService(LiveTally, tally),
         Effect.exit,

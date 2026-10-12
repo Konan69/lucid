@@ -25,7 +25,7 @@ export const ruleHandlers = {
   ListRules: Effect.fn('Rpc.ListRules')(function* () {
     return yield* loadRules(yield* requireActor())
   }),
-  WatchRules: () => live('WatchRules', loadRules),
+  WatchRules: () => live('WatchRules', [], loadRules),
   /** The store commits policy, its audit entry and the notice in one transaction. */
   CreateRule: Effect.fn('Rpc.CreateRule')(function* (request: CreateRuleRequest) {
     const actor = yield* ruleActor()

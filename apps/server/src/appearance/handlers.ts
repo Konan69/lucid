@@ -16,7 +16,7 @@ export const appearanceHandlers = {
   GetAppearance: Effect.fn('Rpc.GetAppearance')(function* () {
     return yield* appearance(yield* requireActor())
   }),
-  WatchAppearance: () => live('WatchAppearance', appearance),
+  WatchAppearance: () => live('WatchAppearance', [], appearance),
   /**
    * In a personal space the Person changes their own Vivid. In a Company everyone shares one, so
    * only an owner or admin may change it; a member's attempt is refused here, not hidden by a

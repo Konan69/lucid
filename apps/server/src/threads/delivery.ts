@@ -17,7 +17,7 @@ import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
 import { withdrawWaiting } from '../inputs/store.ts'
-import { Changes } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { submissionId } from '../runtime/identity.ts'
@@ -140,8 +140,12 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
       run.threadId,
       Option.filter(reply, (text) => text.trim().length > 0),
     )
+    // A settled Run moved the Thread's activity and nothing else of its audience's data: what the
+    // Run made (an Artifact, a question, a notification) is announced by the store that wrote it.
     yield* changes.publish(
-      audienceTopics(thread.value, yield* threads.participants(thread.value.id)),
+      audienceTopics(thread.value, yield* threads.participants(thread.value.id)).map(
+        Topic.part('activity'),
+      ),
     )
     // A reply transport failure must not prevent Thread state, notifications, or learning from settling.
     yield* channels
@@ -334,7 +338,10 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         .pipe(
           Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing),
         )
-      yield* changes.publish(audienceTopics(thread, yield* threads.participants(thread.id)))
+      // A message admitted: a Run, the Thread's last words and the speaker's read mark.
+      yield* changes.publish(
+        audienceTopics(thread, yield* threads.participants(thread.id)).map(Topic.part('activity')),
+      )
       yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
       return {
         runId: admission.runId,

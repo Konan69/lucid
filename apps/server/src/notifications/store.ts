@@ -80,7 +80,8 @@ const makeStore = (database: Database['Service']) => {
           .where(and(shownTo(actor), isNull(notifications.readAt), selected))
           .returning({ id: notifications.id })
         const unread = yield* unreadCount(actor)
-        if (rows.length > 0) yield* announce(tx, [Topic.person(actor.person.id)])
+        if (rows.length > 0)
+          yield* announce(tx, [Topic.part('notifications')(Topic.person(actor.person.id))])
         return NotificationReadResponse.make({ changed: rows.length, unreadCount: unread })
       }),
     )

@@ -7,7 +7,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
 import { sessionExpiry, sessionWorkspace } from '../auth/session.ts'
 import { untraced } from '../observability/quiet.ts'
-import { Changes, Topic, topicsOf } from './changes.ts'
+import { Changes, type Reads, Topic, topicsOf } from './changes.ts'
 import { LiveTally, type Tally, type Watched } from './tally.ts'
 
 /**
@@ -39,6 +39,10 @@ const counted = <A, E, R>(tally: Tally, name: Watched, load: Effect.Effect<A, E,
  * again. Bursts are coalesced for a few milliseconds so that a transaction touching ten rows
  * causes one reload, not ten. A reload that is overtaken by a newer change is abandoned.
  *
+ * `reads` is which narrowed parts of those owners' data the loader shows (`live/changes.ts`
+ * `Part`): a write that names another part does not run it again. It must list every part the
+ * loader reads; `everyPart` is the answer for a loader that has not been checked.
+ *
  * `name` is what the query is counted under (`live/tally.ts`): how many are open, how often each
  * loads and for how long, and how many answers were sent. A reload has no span, so these counts
  * are the only record of it.
@@ -46,13 +50,14 @@ const counted = <A, E, R>(tally: Tally, name: Watched, load: Effect.Effect<A, E,
 export const watch = <A, E, R>(
   name: Watched,
   topics: ReadonlyArray<Topic>,
+  reads: Reads,
   load: Effect.Effect<A, E, R>,
 ): Stream.Stream<A, E, R | Changes> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const changes = yield* Changes
       const tally = yield* LiveTally
-      const moved = yield* changes.subscribe(topics)
+      const moved = yield* changes.subscribe(topics, reads)
       yield* Effect.acquireRelease(
         Effect.sync(() => tally.opened(name)),
         () => Effect.sync(() => tally.closed(name)),
@@ -88,6 +93,7 @@ export const watch = <A, E, R>(
  */
 export const live = <A, E, R>(
   name: Watched,
+  reads: Reads,
   load: (actor: Actor) => Effect.Effect<A, E, R>,
   also: ReadonlyArray<Topic> = [],
 ) =>
@@ -111,8 +117,10 @@ export const live = <A, E, R>(
       // Signing out moves the Person's topic, so the Actor reload above already fails on it.
       // Running out writes nothing and moves no topic, so it needs the timer: without it a
       // subscription whose data never changes again would outlive its session indefinitely.
-      return watch('Actor', [Topic.person(auth.person.id)], actor).pipe(
-        Stream.switchMap((seen) => watch(name, [...topicsOf(seen), ...also], current)),
+      // The Actor is the session, the Membership and the Company (`auth/session.ts`): none of
+      // the narrowed parts, so a conversation turn does not read every open query's session again.
+      return watch('Actor', [Topic.person(auth.person.id)], [], actor).pipe(
+        Stream.switchMap((seen) => watch(name, [...topicsOf(seen), ...also], reads, current)),
         Stream.changes,
         Stream.interruptWhen(sessionRanOut(auth.person.id, auth.sessionId)),
       )
@@ -150,6 +158,8 @@ export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {
   const removed = watch(
     'Session',
     [Topic.person(personId)],
+    // A session is removed by a write that names its Person whole (`auth/dialect.ts`).
+    [],
     sessionWorkspace(personId, sessionId).pipe(untraced),
   ).pipe(Stream.runDrain)
   return Effect.raceFirst(removed, sessionRanOut(personId, sessionId))

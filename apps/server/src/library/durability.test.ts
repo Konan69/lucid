@@ -24,7 +24,7 @@ import { Database } from '../database/client.ts'
 import { postgresCodecs } from '../database/codecs.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { WORK_TABLE, workLayer } from '../database/work.ts'
-import { announce, CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { announce, CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import {
   EXTRACTION_HEAP_MB,
   ExtractionLimitExceeded,
@@ -205,9 +205,10 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
       Effect.gen(function* () {
         expect(yield* pendingWork()).toEqual([])
         const { owner } = yield* fixture()
-        const subscription = yield* (yield* Changes).subscribe([
-          Topic.person(owner.actor.person.id),
-        ])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.person(owner.actor.person.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const item = yield* createItem(
           owner.actor,
@@ -532,9 +533,10 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
         })
-        const subscription = yield* (yield* Changes).subscribe([
-          Topic.person(owner.actor.person.id),
-        ])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.person(owner.actor.person.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* delivery(extractPdf)
         expect(yield* announcedBefore(notifications)).toEqual([
@@ -559,9 +561,10 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         const { owner } = yield* fixture()
         const bytes = NodeFS.readFileSync(new URL('./fixtures/locked.pdf', import.meta.url))
         const item = yield* createItem(owner.actor, bytes, 'application/pdf')
-        const subscription = yield* (yield* Changes).subscribe([
-          Topic.person(owner.actor.person.id),
-        ])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.person(owner.actor.person.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* delivery(extractPdf)
         expect(yield* announcedBefore(notifications)).toEqual([
@@ -593,9 +596,10 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
         })
-        const subscription = yield* (yield* Changes).subscribe([
-          Topic.person(owner.actor.person.id),
-        ])
+        const subscription = yield* (yield* Changes).subscribe(
+          [Topic.person(owner.actor.person.id)],
+          everyPart,
+        )
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const owned = nativeLaunch(Fixture.cases.faulted.make({}), EXTRACTION_HEAP_MB)
         yield* delivery(extractWith(owned.launch))

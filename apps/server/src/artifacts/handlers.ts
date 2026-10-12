@@ -31,7 +31,7 @@ export const artifactHandlers = {
     return yield* load(yield* requireActor(), threadId)
   }),
   WatchArtifacts: ({ threadId }: { readonly threadId: ThreadId }) =>
-    live('WatchArtifacts', (actor) => load(actor, threadId), [Topic.thread(threadId)]),
+    live('WatchArtifacts', [], (actor) => load(actor, threadId), [Topic.thread(threadId)]),
   GetArtifact: Effect.fn('Rpc.GetArtifact')(function* (request: typeof GetArtifactRequest.Type) {
     return yield* (yield* ArtifactStore).get((yield* requireActor()).person.id, request)
   }),

@@ -19,19 +19,77 @@ import type { Database } from '../database/client.ts'
 import { LiveTally, type Moved } from './tally.ts'
 
 /**
- * What changed, coarsely: everything a Person owns, everything a Company holds, or one Thread.
+ * A kind of an owner's data that a write can say it moved, and nothing else of that owner.
  *
- * Topics are deliberately wide. A write does not say which query it affects; it says whose data
- * moved, every live query watching that owner runs again, and a result identical to the last one
- * is not sent (`live/query.ts`). That keeps "did I remember to invalidate it" out of every
- * handler: a handler names the owner it wrote for and is done.
+ * - `activity`: a Thread's Runs, its last words, its read marks. Not a Thread appearing, going
+ *   away, being renamed or changing who may see it: those are announced whole.
+ * - `notifications`: a Person's notifications and whether they were read.
+ * - `drafts`: what a Person has typed and not sent.
+ *
+ * These three are the writes one conversation turn makes. On 12 Oct 2026 production counted one
+ * turn reloading each of a Person's twenty open queries three times, and their session twenty
+ * times each, for three queries that had anything new to send.
  */
-export type Topic = `p:${string}` | `c:${string}` | `t:${string}`
+export const Part = Schema.Literals(['activity', 'notifications', 'drafts'])
+export type Part = typeof Part.Type
+
+type Owner = `p:${string}` | `c:${string}` | `t:${string}`
+
+/**
+ * What changed: everything a Person owns, everything a Company holds, or one Thread; or one named
+ * part of one of those.
+ *
+ * A topic is wide unless its writer narrows it. A write that names only an owner says "something
+ * of theirs moved": every live query watching that owner runs again, and a result identical to
+ * the last one is not sent (`live/query.ts`). That keeps "did I remember to invalidate it" out of
+ * every handler: a handler names the owner it wrote for and is done.
+ *
+ * A writer on a path hot enough to matter may say which `Part` moved (`Topic.part`). Only the
+ * queries that read that part run again (`Reads`). The two sides are checked against each other
+ * by reading, not by the compiler: a writer that narrows a topic must write nothing a query
+ * outside that part shows. When in doubt a writer stays wide, which is always correct.
+ *
+ * The part sits before the colon (`p/activity:<id>`) because an identifier is not constrained
+ * and may hold any character after it.
+ */
+export type Topic = Owner | `${string}/${Part}:${string}`
 
 export const Topic = {
   person: (id: PersonId): Topic => `p:${id}`,
   company: (id: CompanyId): Topic => `c:${id}`,
   thread: (id: ThreadId): Topic => `t:${id}`,
+  /** The same owner, saying that only this part of their data moved. A narrowed topic is kept. */
+  part:
+    (part: Part) =>
+    (topic: Topic): Topic => {
+      const colon = topic.indexOf(':')
+      return Option.isSome(moving(topic).part)
+        ? topic
+        : `${topic.slice(0, colon)}/${part}:${topic.slice(colon + 1)}`
+    },
+}
+
+/**
+ * The parts of an owner's data a live query shows. A query always hears a wide topic; of the
+ * narrowed ones it hears only these. `everyPart` is for a subscriber that has not been read
+ * against the narrowed writers and so must hear all of them.
+ */
+export type Reads = ReadonlyArray<Part>
+export const everyPart: Reads = Part.literals
+
+/**
+ * A moved topic as its owner and the part it names, when it names one. The part, if any, is
+ * between a slash and the first colon; a slash after that colon belongs to the identifier.
+ */
+const moving = (topic: string) => {
+  const colon = topic.indexOf(':')
+  const slash = topic.indexOf('/')
+  return slash === -1 || slash > colon
+    ? { owner: topic, part: Option.none<string>() }
+    : {
+        owner: `${topic.slice(0, slash)}${topic.slice(colon)}`,
+        part: Option.some(topic.slice(slash + 1, colon)),
+      }
 }
 
 /** The topics an Actor's own writes touch: themselves, and their Company when they are in one. */
@@ -47,12 +105,14 @@ export interface ChangesService {
   /** Says these owners' data moved. Never fails the write that already happened. */
   readonly publish: (topics: ReadonlyArray<Topic>) => Effect.Effect<void>
   /**
-   * A stream with one element each time any of these topics moves. The subscription is live from
-   * the moment this effect returns, so a caller that subscribes and then reads cannot miss a write
-   * made between the two.
+   * A stream with one element each time any of these owners moves: every wide move, and a
+   * narrowed one only when it names a part in `reads` (`everyPart` hears them all). The
+   * subscription is live from the moment this effect returns, so a caller that subscribes and
+   * then reads cannot miss a write made between the two.
    */
   readonly subscribe: (
     topics: ReadonlyArray<Topic>,
+    reads: Reads,
   ) => Effect.Effect<Stream.Stream<void>, never, Scope.Scope>
 }
 
@@ -124,9 +184,23 @@ export const announce = Effect.fn('Changes.announce')(function* (
   )
 })
 
-/** Whether a notification names any topic a subscriber asked for. */
-const touches = (wanted: ReadonlySet<string>) => (moved: ReadonlyArray<string>) =>
-  moved.some((topic) => topic === EVERYTHING || wanted.has(topic))
+/**
+ * Whether a notification names an owner a subscriber asked for, wide or in a part it reads.
+ * A subscriber names owners; a narrowed topic among them is read as its owner.
+ */
+export const touches = (topics: ReadonlyArray<string>, reads: Reads) => {
+  const wanted = new Set(topics.map((topic) => moving(topic).owner))
+  const read = new Set<string>(reads)
+  return (moved: ReadonlyArray<string>) =>
+    moved.some((topic) => {
+      if (topic === EVERYTHING) return true
+      const { owner, part } = moving(topic)
+      return (
+        wanted.has(owner) &&
+        Option.match(part, { onNone: () => true, onSome: (named) => read.has(named) })
+      )
+    })
+}
 
 /** The topic that touches every subscriber. Only the listener publishes it, when it reconnects. */
 const EVERYTHING = '*'
@@ -201,11 +275,13 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
     yield* sql.notify(CHANNEL, JSON.stringify(topics)).pipe(Effect.catch(notificationNotSent))
   })
 
-  const subscribe = Effect.fn('Changes.subscribe')(function* (topics: ReadonlyArray<Topic>) {
-    const wanted = new Set<string>(topics)
+  const subscribe = Effect.fn('Changes.subscribe')(function* (
+    topics: ReadonlyArray<Topic>,
+    reads: Reads,
+  ) {
     const subscription = yield* PubSub.subscribe(hub)
     return Stream.fromSubscription(subscription).pipe(
-      Stream.filter(touches(wanted)),
+      Stream.filter(touches(topics, reads)),
       Stream.map(() => undefined),
     )
   })
