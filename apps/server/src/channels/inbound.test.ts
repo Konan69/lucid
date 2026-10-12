@@ -165,7 +165,12 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
           expect(sends.every((send) => new TextEncoder().encode(send.text).length <= 4000)).toBe(
             true,
           )
-          expect(present(sends[0]).text.startsWith('Answer')).toBe(true)
+          expect(
+            sends
+              .map((send) => send.text)
+              .join(' ')
+              .replace(/\s+/gu, ' '),
+          ).toBe(`Answer ${'large reply '.repeat(900)}`.trim())
           const row = yield* (yield* Database).run(
             (yield* Database)
               .select()
@@ -338,7 +343,9 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             yield* Ref.set(control.dispatch, Effect.never)
             const finished = yield* test.finish(first.run.id, 'A reply').pipe(Effect.forkScoped)
             yield* Queue.take(control.sending)
-            yield* TestClock.adjust('30 seconds')
+            yield* TestClock.adjust('29999 millis')
+            expect(finished.pollUnsafe()).toBeUndefined()
+            yield* TestClock.adjust('1 millis')
             const event = yield* Fiber.join(finished)
             yield* (yield* ChannelReplies).ended(event)
             const rows = yield* (yield* Database).run(

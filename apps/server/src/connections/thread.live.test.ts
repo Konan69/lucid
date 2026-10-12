@@ -12,6 +12,10 @@ const Offer = Schema.Struct({
 
 const decodeOffer = Schema.decodeUnknownEffect(Offer)
 
+const decodeToolResult = Schema.decodeUnknownEffect(
+  Schema.Struct({ ok: Schema.Literal(true), output: Schema.Json }),
+)
+
 /** A real mail request must end in the secure card, then continue only after the Person connects.
  * Missing Google operator setup fails before spending a model call: that is a blocked proof,
  * never a skipped or falsely passing mail path. OAuth consent itself remains Person-controlled.
@@ -86,8 +90,27 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_CONNECTION'] !== '1')(
               Option.isSome(connected),
               'Google sign-in must complete before the card can carry on',
             ).toBe(true)
-            const resumedId = yield* fixture.send(`${mail.name} is connected. Carry on.`)
+            const subject = process.env['VIVID_TEST_MAIL_SUBJECT']
+            if (subject === undefined || subject.trim().length === 0)
+              expect.fail('Supply a known recent message subject in the consented test mailbox')
+            const resumedId = yield* fixture.send(
+              `${mail.name} is connected. Check the latest messages with use_tool directly, including the message with subject ${JSON.stringify(subject)}. Do not use a program.`,
+            )
             const resumed = yield* completeRun(fixture, resumedId)
+            const reads = toolParts(resumed).filter(
+              (part) => part.toolName === 'use_tool' && part.state === 'output-available',
+            )
+            const received = yield* Effect.forEach(reads, (part) =>
+              part.state === 'output-available'
+                ? decodeToolResult(part.output).pipe(Effect.option)
+                : Effect.succeedNone,
+            )
+            expect(
+              received
+                .flatMap(Option.toArray)
+                .some((read) => JSON.stringify(read.output).includes(subject)),
+              'A completed provider read must contain the known mailbox subject',
+            ).toBe(true)
             expect(replyText(resumed).trim().length).toBeGreaterThan(0)
             const finished = yield* fixture.rpc.GetThread({ id: fixture.threadId })
             expect(

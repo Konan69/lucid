@@ -17,7 +17,7 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { eq, inArray } from 'drizzle-orm'
-import { ConfigProvider, Effect, Layer, Option, Ref, Stream } from 'effect'
+import { ConfigProvider, Effect, Layer, Option, Predicate, Ref, Schema, Stream } from 'effect'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { Audit } from '../audit/record.ts'
@@ -27,16 +27,68 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
-import { Embeddings, embeddingsLayer } from './embeddings.js'
+import { deterministicEmbeddings } from './testing.ts'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { MemoryCandidate, MemoryRelation, memoryExtractionLayer } from './extract.js'
 import { memoryHandlers } from './handlers.js'
 import { HelixMemory, helixMemoryLayer, MemoryPartition, MemoryScopeKey } from './helix.js'
 import { MemoryAccess, memoryAccessLayer, MemoryStore, memoryStoreLayer } from './store.js'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
-const enabled =
-  testDatabaseConfigured && url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
-const adapters = Layer.mergeAll(helixMemoryLayer, embeddingsLayer, memoryExtractionLayer).pipe(
+const enabled = testDatabaseConfigured && url !== undefined
+const decodeBriefRequest = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      messages: Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.String })),
+    }),
+  ),
+)
+const decodeBriefInput = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ memories: Schema.Array(Schema.Struct({ content: Schema.String })) }),
+  ),
+)
+/** Hand-answer only the model's HTTP request. Real MemoryAccess, summary decoding and Helix
+ * storage receive all selected records; provider compression is separately proved live. */
+const summaryTransport = HttpClient.make((request) =>
+  Effect.gen(function* () {
+    if (!Predicate.isTagged(request.body, 'Uint8Array')) expect.fail('Expected model request bytes')
+    const sent = yield* decodeBriefRequest(new TextDecoder().decode(request.body.body))
+    const message = sent.messages.find((value) => value.role === 'user')
+    if (message === undefined) expect.fail('Expected supplied summary records')
+    const shown = yield* decodeBriefInput(message.content)
+    return HttpClientResponse.fromWeb(
+      request,
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  text: shown.memories.map((memory) => memory.content).join('\n'),
+                }),
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+      ),
+    )
+  }).pipe(
+    Effect.catchTag('SchemaError', () =>
+      Effect.sync(() => expect.fail('Expected typed summary request')),
+    ),
+  ),
+)
+const summaryAdapter = memoryExtractionLayer.pipe(
+  Layer.provide(Layer.succeed(HttpClient.HttpClient, summaryTransport)),
+  Layer.provide(
+    ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'test-transport-key' }), {
+      asPrimary: true,
+    }),
+  ),
+)
+const adapters = Layer.mergeAll(helixMemoryLayer, deterministicEmbeddings, summaryAdapter).pipe(
   Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(
     ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }), {
@@ -450,43 +502,34 @@ const sharedKnowledge = Effect.fn('MemoryTest.shared')(function* (
   expect(watched).toEqual(Option.some(listed))
 })
 
-/** One real fixture pass keeps model requests few while proving the full privacy and ownership matrix. */
+/** One real storage fixture pass proves the full privacy and ownership matrix without provider credentials. */
 describe.skipIf(!enabled)('Memory calls with real Helix and disposable PostgreSQL', () => {
-  layer(access.pipe(Layer.provideMerge(silentChangesLayer)))((it) => {
-    it.effect(
-      'follows personal notes, confines room recall, and enforces Company ownership',
-      () =>
-        Effect.gen(function* () {
-          const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
-          const audit = Audit.of({
-            record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
-          })
-          yield* Effect.gen(function* () {
-            // One real provider batch keeps this privacy matrix below the free endpoint's request limit.
-            yield* (yield* Embeddings).embed([
-              'Dami uses the private meeting password iridiumwillow943.',
-              'iridiumwillow943',
-              'The Company launch code is citrinecedar672.',
-              'The shared room is preparing the Company launch code citrinecedar672.',
-              'citrinecedar672',
-              'The shared room chose violetbamboo581 as its launch slogan.',
-              'violetbamboo581',
-              'The shared room chose amberpapyrus412 as its launch slogan.',
-            ])
-            const fixture = yield* fixtures()
-            const privateMemory = yield* privacy(fixture)
-            yield* companyOwnership(fixture)
-            yield* sharedKnowledge(fixture, privateMemory)
-            const recorded = yield* Ref.get(events)
-            expect(
-              recorded.filter(AuditEvent.guards.MemorySaved).map((event) => event.scope),
-            ).toEqual(['Person', 'Company', 'Thread', 'Thread'])
-            expect(
-              recorded.filter(AuditEvent.guards.MemoryForgotten).map((event) => event.scope),
-            ).toEqual(['Company', 'Thread'])
-          }).pipe(Effect.provideService(Audit, audit))
-        }).pipe(Effect.scoped),
-      { timeout: 120000 },
-    )
-  })
+  layer(access.pipe(Layer.provideMerge(silentChangesLayer)), { excludeTestServices: true })(
+    (it) => {
+      it.effect(
+        'follows personal notes, confines room recall, and enforces Company ownership',
+        () =>
+          Effect.gen(function* () {
+            const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
+            const audit = Audit.of({
+              record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
+            })
+            yield* Effect.gen(function* () {
+              const fixture = yield* fixtures()
+              const privateMemory = yield* privacy(fixture)
+              yield* companyOwnership(fixture)
+              yield* sharedKnowledge(fixture, privateMemory)
+              const recorded = yield* Ref.get(events)
+              expect(
+                recorded.filter(AuditEvent.guards.MemorySaved).map((event) => event.scope),
+              ).toEqual(['Person', 'Company', 'Thread', 'Thread'])
+              expect(
+                recorded.filter(AuditEvent.guards.MemoryForgotten).map((event) => event.scope),
+              ).toEqual(['Company', 'Thread'])
+            }).pipe(Effect.provideService(Audit, audit))
+          }).pipe(Effect.scoped),
+        { timeout: 120000 },
+      )
+    },
+  )
 })

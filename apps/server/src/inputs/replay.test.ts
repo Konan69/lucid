@@ -81,9 +81,18 @@ layer(testDatabaseLayer)((cases) => {
                   { body: 'Which day? Monday\nWhich place? Lagos\nWhat time? Morning' },
                 ])
                 expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
-                  (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-                  (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+                  `answer-${request.id}`,
+                  `answer-${request.id}`,
                 ])
+                expect((yield* store.inThread(test.personalId))[0]).toMatchObject({
+                  state: {
+                    answers: [
+                      InputAnswer.cases.Written.make({ words: 'Monday' }),
+                      InputAnswer.cases.Written.make({ words: 'Lagos' }),
+                      InputAnswer.cases.Written.make({ words: 'Morning' }),
+                    ],
+                  },
+                })
                 expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
               }).pipe(Effect.scoped, Effect.provide(context))
             })
@@ -161,38 +170,6 @@ layer(testDatabaseLayer)((cases) => {
                 message: expect.objectContaining({ body: 'Monday' }),
               }),
             ])
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
-      )
-    })
-
-    layer(testDatabaseLayer)('Clock case 3', (clockCases) => {
-      clockCases.effect('a transient admission failure preserves the answer and the key', () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
-            const test = yield* fixture()
-            const store = yield* InputStore
-            const observed = yield* Observation
-            const request = yield* store.ask(test.vivid, question)
-            yield* Ref.set(
-              observed.deliveryFailure,
-              Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
-            )
-            yield* store.answer(test.personal, {
-              id: request.id,
-              answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
-            })
-            yield* Ref.set(observed.deliveryFailure, Option.none())
-            yield* TestClock.adjust('30 seconds')
-            yield* store.replay
-            yield* store.replay
-            expect(
-              (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
-            ).toEqual([`answer-${request.id}`, `answer-${request.id}`])
-            expect((yield* store.inThread(test.personalId))[0]).toMatchObject({
-              state: { answers: [InputAnswer.cases.Written.make({ words: 'Monday' })] },
-            })
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
       )

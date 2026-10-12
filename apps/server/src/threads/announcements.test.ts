@@ -17,26 +17,24 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { and, eq, inArray } from 'drizzle-orm'
-import { Deferred, Effect, Fiber, Layer, Option, Queue, Schema, Stream } from 'effect'
-import * as TestClock from 'effect/testing/TestClock'
+import { Effect, Layer, Option } from 'effect'
 import { auditEntries } from '../audit/tables.ts'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { announce, CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
-import { watch } from '../live/query.ts'
+import { CHANNEL, changesLayer, Topic } from '../live/changes.ts'
+import { nextValue, observing, payload, silent } from '../live/testing.ts'
 import { projectTable } from '../projects/tables.ts'
+import { ProjectStore, projectStoreLayer } from '../projects/store.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import { threadParticipants, threadReads, threads } from './tables.ts'
 
-const testLayer = Layer.merge(threadStoreLayer, changesLayer).pipe(
+const testLayer = Layer.mergeAll(threadStoreLayer, projectStoreLayer, changesLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
 )
-const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
 const decodeEvent = decodeStored(AuditEvent, 'audit event')
-type Notifications = Effect.Success<ReturnType<PgClient['listen']>>
 
 /** Seed only disposable rows, registering cascaded cleanup before the first insert. */
 const fixture = Effect.fn('ThreadAnnouncements.fixture')(function* () {
@@ -123,62 +121,6 @@ const seed = Effect.fn('ThreadAnnouncements.seed')(function* (
     )
 })
 
-/** A unique unused Person topic orders this transaction after the operation under test. */
-const sendMarker = Effect.fn('ThreadAnnouncements.sendMarker')(function* () {
-  const topic = Topic.person(PersonId.make(crypto.randomUUID()))
-  yield* (yield* Database).transaction((tx) => announce(tx, [topic]))
-  return topic
-})
-
-/** Compare the first receipt against a later marker: missing notices fail promptly even on red code. */
-const payload = Effect.fn('ThreadAnnouncements.payload')(function* (
-  notifications: Notifications,
-  expected: ReadonlyArray<Topic>,
-) {
-  yield* sendMarker()
-  const topics = yield* decodeTopics((yield* Queue.take(notifications)).payload)
-  expect(new Set(topics)).toEqual(new Set(expected))
-})
-
-/** PostgreSQL's ordered marker proves the refused/no-op operation emitted nothing. */
-const silent = Effect.fn('ThreadAnnouncements.silent')(function* (notifications: Notifications) {
-  const topic = yield* sendMarker()
-  expect(yield* decodeTopics((yield* Queue.take(notifications)).payload)).toEqual([topic])
-})
-
-/** Observe real watch loading and subscribe to the real bus before any tested mutation. */
-const observing = Effect.fn('ThreadAnnouncements.observing')(function* <A, E, R>(
-  topics: ReadonlyArray<Topic>,
-  load: Effect.Effect<A, E, R>,
-) {
-  const first = yield* Deferred.make<void>()
-  const values = yield* Queue.unbounded<A>()
-  const fiber = yield* watch(topics, load).pipe(
-    Stream.runForEach((value) =>
-      Queue.offer(values, value).pipe(Effect.andThen(Deferred.succeed(first, undefined))),
-    ),
-    Effect.forkScoped,
-  )
-  yield* Effect.raceFirst(Deferred.await(first), Fiber.join(fiber))
-  const initial = yield* Queue.take(values)
-  const receipt = yield* (yield* Changes).subscribe(topics)
-  return { initial, values, receipt, fiber }
-})
-
-/** The actual bus receipt precedes advancing watch's controlled debounce clock. */
-const nextValue = Effect.fn('ThreadAnnouncements.nextValue')(function* <A, E>(observation: {
-  readonly values: Queue.Queue<A>
-  readonly receipt: Stream.Stream<void>
-  readonly fiber: Fiber.Fiber<void, E>
-}) {
-  expect(Option.isSome(yield* Stream.runHead(observation.receipt))).toBe(true)
-  yield* TestClock.adjust('20 millis')
-  return yield* Effect.raceFirst(
-    Queue.take(observation.values),
-    Fiber.join(observation.fiber).pipe(Effect.andThen(Effect.never)),
-  )
-})
-
 /** Read persisted state and decode audit JSON rather than trusting a handler or stub. */
 const stored = Effect.fn('ThreadAnnouncements.stored')(function* (test: Fixture) {
   const database = yield* Database
@@ -214,6 +156,14 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           { threadId: test.id, personId: test.creator.id, readAt: thread.updatedAt },
         ])
         yield* payload(notifications, [Topic.thread(test.id), Topic.person(test.creator.id)])
+        expect(
+          yield* (yield* ThreadStore).create(test.actor(test.creator), {
+            id: test.id,
+            title: 'Created',
+            projectId: null,
+          }),
+        ).toEqual(thread)
+        yield* silent(notifications)
       }),
     )
     it.effect('case2 create refuses missing Membership and rolls back', () =>
@@ -225,17 +175,6 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           .pipe(Effect.flip)
         expect(result).toEqual(new Forbidden({ message: 'You are not a Member of this Company' }))
         expect((yield* stored(test)).rows).toEqual([])
-        yield* silent(notifications)
-      }),
-    )
-    it.effect('case3 create retry returns the same Thread without announcing', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const store = yield* ThreadStore
-        const request = { id: test.id, title: 'Created', projectId: null }
-        const first = yield* store.create(test.actor(test.creator), request)
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        expect(yield* store.create(test.actor(test.creator), request)).toEqual(first)
         yield* silent(notifications)
       }),
     )
@@ -479,7 +418,6 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* store.markRead(test.ben.id, test.id)
         yield* payload(notifications, [Topic.person(test.ben.id)])
-        yield* Queue.take(notifications)
         expect(yield* store.markRead(test.dee.id, test.id).pipe(Effect.flip)).toEqual(
           new NotFound({ message: 'Thread not found' }),
         )
@@ -504,22 +442,15 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           Topic.person(test.creator.id),
           Topic.company(test.company.id),
         ])
-      }),
-    )
-    it.effect('case13 a superseded generatedTitle writes and announces nothing', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test, 'company', [])
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
         expect(
           yield* (yield* ThreadStore).generatedTitle(
             test.id,
-            'Generated',
+            'Discarded',
             Option.some('Superseded'),
           ),
         ).toBe(false)
         expect((yield* stored(test)).rows).toEqual([
-          expect.objectContaining({ title: 'Initial title' }),
+          expect.objectContaining({ title: 'Generated' }),
         ])
         yield* silent(notifications)
       }),
@@ -538,8 +469,6 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const first = yield* store.ensure(input)
         yield* payload(notifications, [Topic.thread(test.id), Topic.person(test.creator.id)])
-        // Consume the payload helper's later marker before testing the next operation.
-        yield* Queue.take(notifications)
         expect(yield* store.ensure(input)).toEqual(first)
         yield* silent(notifications)
         expect(yield* store.ensure({ ...input, personId: test.ben.id }).pipe(Effect.flip)).toEqual(
@@ -567,6 +496,16 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           Topic.person(test.creator.id),
           Topic.company(test.company.id),
         ]
+        const projects = yield* ProjectStore
+        const counts = () =>
+          projects
+            .list(test.actor(test.ben))
+            .pipe(
+              Effect.map((rows) =>
+                rows.map((project) => ({ id: project.id, count: project.threadCount })),
+              ),
+            )
+        expect(yield* counts()).toEqual([{ id: projectId, count: 0 }])
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* store.create(test.actor(test.creator), {
           id: test.id,
@@ -574,15 +513,16 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           projectId,
         })
         yield* payload(notifications, expected)
-        yield* Queue.take(notifications)
+        expect(yield* counts()).toEqual([{ id: projectId, count: 1 }])
         yield* store.patch(test.creator.id, test.id, { projectId: null })
         yield* payload(notifications, expected)
-        yield* Queue.take(notifications)
+        expect(yield* counts()).toEqual([{ id: projectId, count: 0 }])
         yield* store.patch(test.creator.id, test.id, { projectId })
         yield* payload(notifications, expected)
-        yield* Queue.take(notifications)
+        expect(yield* counts()).toEqual([{ id: projectId, count: 1 }])
         yield* store.remove(test.creator.id, test.id)
         yield* payload(notifications, expected)
+        expect(yield* counts()).toEqual([{ id: projectId, count: 0 }])
         expect((yield* stored(test)).rows).toEqual([])
       }),
     )

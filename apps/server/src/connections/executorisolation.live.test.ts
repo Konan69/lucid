@@ -4,6 +4,9 @@ import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionStep, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Logger, Redacted } from 'effect'
 import { executorLayer } from './executor.ts'
+import { eq } from 'drizzle-orm'
+import { Database } from '../database/client.ts'
+import { connections } from './tables.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connectionTestLayer, fixture } from './testing.ts'
 import { findTools } from './tools.ts'
@@ -45,20 +48,25 @@ describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* Effect.gen(function* () {
               const store = yield* ConnectionStore
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  const rows = yield* store.records(ownerActor)
+                  for (const row of rows) {
+                    const removed = yield* store.remove(ownerActor, row.id).pipe(Effect.exit)
+                    expect(removed._tag).toBe('Success')
+                  }
+                }).pipe(
+                  Effect.catch(() =>
+                    Effect.sync(() => expect.fail('Owned Connection cleanup failed')),
+                  ),
+                ),
+              )
               const step = yield* store.begin(ownerActor, {
                 from: 'Web',
                 service: ServiceId.make('curated/github-com-mcp'),
                 name: 'Personal GitHub',
                 shared: false,
               })
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  const removed = yield* store
-                    .remove(ownerActor, step.connection.id)
-                    .pipe(Effect.exit)
-                  expect(removed._tag).toBe('Success')
-                }),
-              )
               if (!ConnectionStep.guards.EnterKey(step))
                 return expect.fail('GitHub must offer a secure personal token field')
               const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
@@ -75,7 +83,10 @@ describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
               const refusal = yield* store.get(memberActor, step.connection.id).pipe(Effect.flip)
               expect(refusal._tag).toBe('NotFound')
               // Provider references and state may persist; credential values must never do so.
-              const records = yield* store.records(ownerActor)
+              const database = yield* Database
+              const records = yield* database.run(
+                database.select().from(connections).where(eq(connections.id, step.connection.id)),
+              )
               expect(JSON.stringify(records).includes(token)).toBe(false)
               console.log('ok', own.tools.length)
             }).pipe(Effect.scoped, Effect.provide(context))

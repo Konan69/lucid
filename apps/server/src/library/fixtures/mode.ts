@@ -3,6 +3,7 @@ import * as Schema from 'effect/Schema'
 /**
  * One vocabulary owns the test launcher's argument and the fixture process's decoded ingress. Each
  * case is one way an extraction process behaves once the official RPC reaches it:
+ * - `digest`: returns the hash of the received bytes over the real RPC seam;
  * - `spin`: enters the handler and blocks JavaScript, so only a kill ends it;
  * - `grow`: enters the handler and exhausts V8's old generation under the launcher's heap cap;
  * - `abort`: enters the handler and aborts without exhausting anything;
@@ -14,6 +15,7 @@ import * as Schema from 'effect/Schema'
  * the heap cap is a launcher option, so nothing is shared through memory.
  */
 export const Fixture = Schema.TaggedUnion({
+  digest: {},
   spin: {},
   grow: {},
   abort: {},

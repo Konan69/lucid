@@ -8,7 +8,7 @@ import {
 import { RunId } from '@vivid/contracts'
 import { Effect, Fiber, Queue } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { observeRun, responseTimeoutMillis, Settlement } from './settlement.ts'
+import { observeRun, Settlement } from './settlement.ts'
 
 const runId = RunId.make('run-under-test')
 
@@ -157,7 +157,9 @@ describe('Run settlement observation', () => {
         messages: [assistant([])],
         settlements: [],
       })
-      yield* TestClock.adjust('90 seconds')
+      yield* TestClock.adjust('89999 millis')
+      expect(evidence.closed()).toBe(false)
+      yield* TestClock.adjust(1)
       const result = yield* Fiber.join(run)
       expect(result).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
       expect(evidence.aborted()).toBe(false)
@@ -238,7 +240,9 @@ describe('Run settlement observation', () => {
       })
       const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
       yield* Queue.take(evidence.ready)
-      yield* TestClock.adjust('91 seconds')
+      yield* TestClock.adjust('89999 millis')
+      expect(evidence.closed()).toBe(false)
+      yield* TestClock.adjust(1)
       expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
     }),
   )
@@ -301,7 +305,9 @@ describe('Run settlement observation', () => {
         messages: [assistant([])],
         settlements: [],
       })
-      yield* TestClock.adjust('10 seconds')
+      yield* TestClock.adjust('9999 millis')
+      expect(evidence.closed()).toBe(false)
+      yield* TestClock.adjust(1)
       expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
       expect(evidence.aborted()).toBe(false)
     }),
@@ -319,7 +325,9 @@ describe('Run settlement observation', () => {
       })
       yield* TestClock.adjust('120 seconds')
       evidence.disconnect(new Error('Agent conversation stream stalled'))
-      yield* TestClock.adjust('90 seconds')
+      yield* TestClock.adjust('89999 millis')
+      expect(evidence.closed()).toBe(false)
+      yield* TestClock.adjust(1)
       expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
     }),
   )
@@ -363,7 +371,11 @@ describe('Run settlement observation', () => {
         settlements: [],
         messages: [assistant([{ type: 'text', text: 'Hello', state: 'streaming' }])],
       })
-      yield* TestClock.adjust(responseTimeoutMillis)
+      // The product promises one hour. An imported deadline would let a wrongly shortened
+      // production timeout redefine its own expected behavior.
+      yield* TestClock.adjust('3599999 millis')
+      expect(evidence.closed()).toBe(false)
+      yield* TestClock.adjust(1)
       expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
     }),
   )

@@ -30,6 +30,8 @@ import { PushConfig } from './config.ts'
 import { PushAcceptance } from './receipts.ts'
 import { testPushConfig } from './testing.ts'
 
+const decodeWireJsonSync = Schema.decodeSync(Schema.fromJsonString(Schema.Json))
+
 const payload = PushPayload.make({
   notificationId: NotificationId.make('notification'),
   title: 'Meeting clash',
@@ -37,14 +39,42 @@ const payload = PushPayload.make({
   threadId: ThreadId.make('thread'),
 })
 const phone = PushDestination.cases.Phone.make({ token: 'ExpoPushToken[test-device]' })
-const ExpoWire = Schema.Struct({
-  to: Schema.String,
-  title: Schema.String,
-  body: Schema.String,
-  sound: Schema.Literal('default'),
-  data: PushPayload,
-})
-const decodeExpo = Schema.decodeUnknownEffect(Schema.fromJsonString(ExpoWire))
+/** RFC 8291 receiver derives its keys from the fixture private key and wire salt/public key.
+ * Decrypting the actual HTTP body detects random, empty, mis-keyed or corrupted ciphertext. */
+function decryptPush(bytes: Uint8Array, recipient: NodeCrypto.ECDH, auth: string) {
+  const wire = Buffer.from(bytes)
+  const salt = wire.subarray(0, 16)
+  const keyLength = wire.readUInt8(20)
+  const senderKey = wire.subarray(21, 21 + keyLength)
+  const encrypted = wire.subarray(21 + keyLength)
+  const shared = recipient.computeSecret(senderKey)
+  const authentication = NodeCrypto.createHmac('sha256', Buffer.from(auth, 'base64url'))
+    .update(shared)
+    .digest()
+  const info = Buffer.concat([
+    Buffer.from('WebPush: info\0'),
+    recipient.getPublicKey(),
+    senderKey,
+    Buffer.from([1]),
+  ])
+  const material = NodeCrypto.createHmac('sha256', authentication).update(info).digest()
+  const pseudorandom = NodeCrypto.createHmac('sha256', salt).update(material).digest()
+  const key = NodeCrypto.createHmac('sha256', pseudorandom)
+    .update(Buffer.from('Content-Encoding: aes128gcm\0\x01'))
+    .digest()
+    .subarray(0, 16)
+  const nonce = NodeCrypto.createHmac('sha256', pseudorandom)
+    .update(Buffer.from('Content-Encoding: nonce\0\x01'))
+    .digest()
+    .subarray(0, 12)
+  const decipher = NodeCrypto.createDecipheriv('aes-128-gcm', key, nonce)
+  decipher.setAuthTag(encrypted.subarray(-16))
+  const plaintext = Buffer.concat([decipher.update(encrypted.subarray(0, -16)), decipher.final()])
+  let end = plaintext.length - 1
+  while (plaintext[end] === 0) end -= 1
+  expect(plaintext[end]).toBe(2)
+  return plaintext.subarray(0, end).toString('utf8')
+}
 
 /** Encryption remains real; only provider HTTP responses are controlled at the narrow adapter. */
 it.effect(
@@ -68,7 +98,15 @@ it.effect(
             expect(request.headers.authorization).toContain('vapid ')
             if (!Predicate.isTagged(request.body, 'Uint8Array'))
               return expect.fail('Expected encrypted Web Push body')
-            expect(Buffer.from(request.body.body).toString()).not.toContain(payload.body)
+            const decoded = decodeWireJsonSync(
+              decryptPush(request.body.body, curve, destination.keys.auth),
+            )
+            expect(decoded).toEqual({
+              notificationId: 'notification',
+              title: 'Meeting clash',
+              body: 'Choose which meeting to move.',
+              threadId: 'thread',
+            })
             return HttpClientResponse.fromWeb(request, new Response(null, { status }))
           }),
         )
@@ -101,20 +139,21 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const transport = HttpClient.make((request) =>
-        Effect.gen(function* () {
+        Effect.sync(() => {
           if (!Predicate.isTagged(request.body, 'Uint8Array'))
             return expect.fail('Expected Expo JSON body')
-          const data = yield* decodeExpo(new TextDecoder().decode(request.body.body)).pipe(
-            Effect.catchTag('SchemaError', () =>
-              Effect.sync(() => expect.fail('Invalid Expo request')),
-            ),
-          )
-          expect(data).toEqual({
-            to: phone.token,
-            title: payload.title,
-            body: payload.body,
+          const wire = new TextDecoder().decode(request.body.body)
+          expect(decodeWireJsonSync(wire)).toEqual({
+            to: 'ExpoPushToken[test-device]',
+            title: 'Meeting clash',
+            body: 'Choose which meeting to move.',
             sound: 'default',
-            data: payload,
+            data: {
+              notificationId: 'notification',
+              title: 'Meeting clash',
+              body: 'Choose which meeting to move.',
+              threadId: 'thread',
+            },
           })
           return HttpClientResponse.fromWeb(
             request,
@@ -186,7 +225,9 @@ it.effect('times out a pending provider using TestClock and reports the send as 
         const adapter = yield* PushAdapter
         const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
         yield* Deferred.await(requested)
-        yield* TestClock.adjust('10 seconds')
+        yield* TestClock.adjust('9999 millis')
+        expect(pending.pollUnsafe()).toBeUndefined()
+        yield* TestClock.adjust('1 millis')
         return yield* Fiber.join(pending)
       }).pipe(Effect.provide(caseContext))
     }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))

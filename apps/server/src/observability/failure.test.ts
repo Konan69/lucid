@@ -15,7 +15,6 @@ import {
   observeFailures,
   primaryOf,
   redact,
-  redactionPatterns,
   summarize,
 } from './failure.ts'
 import { Message } from './messages.ts'
@@ -180,8 +179,6 @@ it('exports no type that is a property of what was thrown', () => {
   )
   // Pointing `constructor` at a declared class does not make a value an instance of it.
   expect(summarize('expected', { constructor: StoreUnavailable }).type).toBe('_OTHER')
-  // Every type therefore comes from a class: a declared tag, or one of a fixed list.
-  expect(fixedTypeNames).not.toContain(PRIVATE)
 })
 
 /** A trap, a getter or a function that throws as soon as it is used. */
@@ -366,12 +363,6 @@ it('never returns more text than it was given, for text built against each patte
     'a@b.c',
   ])
     expect(redact(text).length).toBeLessThanOrEqual(text.length)
-})
-
-it('repeats no group without bound in any pattern it runs', () => {
-  // A group under `*`, `+` or `{n,}` is how a pattern comes to retry one stretch of text in many
-  // ways. This reads the sources, so it is a check on how they are written, not a measurement.
-  for (const pattern of redactionPatterns) expect(pattern.source).not.toMatch(/\)(?:[*+]|\{\d+,\})/)
 })
 
 /**

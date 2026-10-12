@@ -107,35 +107,6 @@ layer(testDatabaseLayer)((it) => {
                 database.select().from(approvals).where(eq(approvals.id, approval.id)),
               ),
             ).toEqual(before)
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
-    )
-
-    it.effect(
-      'A2 re-sharing restores the same pending Approval with its content and timestamps',
-      () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
-            const test = yield* fixture()
-            const database = yield* Database
-            yield* database.run(
-              database
-                .update(threads)
-                .set({ audience: 'company' })
-                .where(eq(threads.id, test.companyId)),
-            )
-            const store = yield* ApprovalStore
-            const approval = yield* store.raise(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
-              connectionAction,
-            )
-            yield* database.run(
-              database
-                .update(threads)
-                .set({ audience: 'private' })
-                .where(eq(threads.id, test.companyId)),
-            )
             yield* database.run(
               database
                 .update(threads)
@@ -143,6 +114,11 @@ layer(testDatabaseLayer)((it) => {
                 .where(eq(threads.id, test.companyId)),
             )
             expect(yield* store.inbox(test.owner)).toEqual([approval])
+            expect(
+              yield* database.run(
+                database.select().from(approvals).where(eq(approvals.id, approval.id)),
+              ),
+            ).toEqual(before)
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
     )
@@ -730,6 +706,8 @@ layer(testDatabaseLayer)((it) => {
               'Pending',
             ])
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+            expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
+            expect((yield* loadAudit(test.owner)).entries).toEqual([])
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
     )

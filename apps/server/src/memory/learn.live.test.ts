@@ -24,7 +24,10 @@ import { Runtime } from '../runtime/client.ts'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
-  testDatabaseConfigured && url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
+  process.env['VIVID_LIVE_MEMORY'] === '1' &&
+  testDatabaseConfigured &&
+  url !== undefined &&
+  process.env['EXPLABS_API_KEY'] !== undefined
 /** Model-backed learning keeps transport diagnostics in the test console; endpoint category and status explain outages without recording exchange text or credentials. */
 const observedClient = Layer.effect(
   HttpClient.HttpClient,
@@ -72,7 +75,7 @@ const access = memoryAccessLayer.pipe(
 /** One real settled exchange proves learning, provenance, and invalidation through the production authority seams. */
 describe.skipIf(!enabled)('Settled Run learning', () => {
   /** Only persistence is shared; learning uses per-case audit and publication recordings. */
-  layer(access)((it) => {
+  layer(access, { excludeTestServices: true })((it) => {
     it.effect(
       'takes a private durable note and publishes its Person topic without failing the Run',
       () =>
@@ -151,7 +154,7 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
                   memory.learnedFrom.id === person.id,
               ),
             ).toBe(true)
-            expect(yield* Ref.get(topics)).toContain(Topic.person(person.id))
+            expect(new Set(yield* Ref.get(topics))).toEqual(new Set([Topic.person(person.id)]))
             expect((yield* Ref.get(events)).some(AuditEvent.guards.MemorySaved)).toBe(true)
             // Losing the Thread after settlement is logged and dropped before recall or extraction.
             yield* database.run(database.delete(threads).where(eq(threads.id, thread.id)))

@@ -59,11 +59,13 @@ describe.skipIf(process.env['VIVID_LIVE_TOLD_ACCOUNT'] !== '1')(
 
             const told = yield* fixture.send(`Connect another ${wiki.name} account for me.`)
             const waiting = yield* completeRun(fixture, told)
-            const [card] = toolParts(waiting).flatMap((part) =>
+            const cards = toolParts(waiting).flatMap((part) =>
               part.toolName === 'connect' && part.state === 'output-available'
                 ? Option.toArray(decodeAnother(part.output))
                 : [],
             )
+            expect(cards).toHaveLength(1)
+            const [card] = cards
             if (card === undefined)
               return yield* Effect.sync(() =>
                 expect.fail('Vivid must start one more account with the connect card when told to'),

@@ -13,6 +13,7 @@ import {
   PersonId,
   ServiceId,
   SessionId,
+  ToolOutcome,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
@@ -142,9 +143,15 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
               .pipe(Effect.provideService(AuthContext, vivid))
             expect(other.connectionId).toBe(home.id)
 
-            yield* connectionHandlers
+            const inputAt = (yield* Ref.get(probe.inputs)).length
+            const used = yield* connectionHandlers
               .UseTool(toolRequest(resolved.connectionId, 'read'))
               .pipe(Effect.provideService(AuthContext, vivid))
+            expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))
+            const row = yield* (yield* ConnectionStore).get(ownerActor, work.id)
+            expect((yield* Ref.get(probe.inputs)).slice(inputAt)).toEqual([
+              { references: row.references, tool: 'read', input: {} },
+            ])
             // The Gate, and so an Approval, is asked about the account by its own name.
             const asked = (yield* Ref.get(probe.checked))
               .map((check) => check.action.target)

@@ -12,6 +12,7 @@ import {
   InputRequestState,
   NotFound,
 } from '@vivid/contracts'
+import { InputAnswerWrittenForbidden } from '@vivid/contracts/rpc'
 import { fixture, Observation, trustTestServices } from '../approvals/testing.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -76,35 +77,6 @@ layer(testDatabaseLayer)((it) => {
                 database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
               ),
             ).toEqual(before)
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
-    )
-
-    it.effect(
-      'I2 re-sharing restores the same waiting question with its options and timestamps',
-      () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
-            const test = yield* fixture()
-            const database = yield* Database
-            yield* database.run(
-              database
-                .update(threads)
-                .set({ audience: 'company' })
-                .where(eq(threads.id, test.companyId)),
-            )
-            const store = yield* InputStore
-            const request = yield* store.ask(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
-              question,
-            )
-            yield* database.run(
-              database
-                .update(threads)
-                .set({ audience: 'private' })
-                .where(eq(threads.id, test.companyId)),
-            )
             yield* database.run(
               database
                 .update(threads)
@@ -112,6 +84,11 @@ layer(testDatabaseLayer)((it) => {
                 .where(eq(threads.id, test.companyId)),
             )
             expect(yield* store.inbox(test.owner)).toEqual([request])
+            expect(
+              yield* database.run(
+                database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
+              ),
+            ).toEqual(before)
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
     )
@@ -197,7 +174,16 @@ layer(testDatabaseLayer)((it) => {
           const records = yield* store.inThread(test.personalId)
           const first = records[0]
           expect(first).toBeDefined()
-          if (first !== undefined) expect(InputRequestState.guards.Answered(first.state)).toBe(true)
+          if (first === undefined || !InputRequestState.guards.Answered(first.state))
+            expect.fail('Expected the settled answer')
+          const winning = answers.find(Result.isSuccess)
+          if (winning === undefined || !InputRequestState.guards.Answered(winning.success.state))
+            expect.fail('Expected one accepted answer')
+          expect(first.state.answers).toEqual(winning.success.state.answers)
+          const [firstAnswer] = answers
+          if (firstAnswer === undefined) expect.fail('Expected both answer receipts')
+          const winnerWords = Result.isSuccess(firstAnswer) ? 'Monday' : 'Tuesday'
+          expect(deliveries[0]).toMatchObject({ message: { body: winnerWords } })
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )
@@ -240,7 +226,13 @@ layer(testDatabaseLayer)((it) => {
               answers: [InputAnswer.cases.Written.make({ words: 'Tuesday' })],
             }),
           )
-          expect(Result.isFailure(rejected)).toBe(true)
+          expect(Result.isFailure(rejected) && rejected.failure).toEqual(
+            new InputAnswerWrittenForbidden({
+              id: request.id,
+              questionIndex: 0,
+              message: 'Choose an offered option for this question.',
+            }),
+          )
           const accepted = yield* store.answer(test.personal, {
             id: request.id,
             answers: [InputAnswer.cases.Chosen.make({ labels: ['Monday'] })],

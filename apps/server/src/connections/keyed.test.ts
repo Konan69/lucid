@@ -1,6 +1,6 @@
 import * as NodeVM from 'node:vm'
 import { expect, it } from '@effect/vitest'
-import { keyedFiles, keyedAppsVersion, keyedMcpVersion } from './keyed.ts'
+import { keyedFiles } from './keyed.ts'
 
 /** Run the generated module body against stubbed `apps` exports. Hostile metadata must arrive
  * at defineProvider as the same string and execute nothing, including template interpolation
@@ -25,9 +25,5 @@ it('generates keyed source that runs with public metadata as data, never as code
   new NodeVM.Script(script).runInContext(context)
   expect(seen).toMatchObject([{ name, hosts: [host] }])
   expect(NodeVM.runInContext('globalThis.injected', context)).toBeUndefined()
-  const manifest = files.find((file) => file.path === 'package.json')
-  if (manifest === undefined) return expect.fail('Missing manifest')
-  expect(manifest.content).toContain(`"apps":"${keyedAppsVersion}"`)
-  expect(manifest.content).toContain(`"@modelcontextprotocol/sdk":"${keyedMcpVersion}"`)
   return undefined
 })

@@ -1,10 +1,11 @@
+import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { ComputerSession, computerScreenAddress } from '@vivid/contracts'
-import { Clock, Effect, Option, Schema } from 'effect'
-import { eq } from 'drizzle-orm'
-import { Database } from '../database/client.ts'
+import { ComputerSession, ScreenPoint, computerScreenAddress } from '@vivid/contracts'
+import { Effect, Option, Schema } from 'effect'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 import {
   chainFixture,
+  type ChainFixture,
   chainLayer,
   completeRun,
   replyText,
@@ -12,9 +13,8 @@ import {
   waitForState,
 } from '../runtime/chains.ts'
 import { bindings } from './boat/bindings.ts'
-import { createdSince } from './boat/created.ts'
+import { proofComputer, proofProvider } from './tests/proof.ts'
 import { computerMachineKey } from './store.ts'
-import { machineBindings } from './tables.ts'
 
 const Input = Schema.Struct({
   summary: Schema.NonEmptyString,
@@ -30,37 +30,70 @@ const Typed = Schema.Struct({
 })
 
 const decodeInput = Schema.decodeUnknownEffect(Input)
-const decodeOutput = Schema.decodeUnknownEffect(Output)
+// Native Browse results with no picture project as their single JSON text block in Flue 2.2.2.
+const decodeOutput = Schema.decodeUnknownEffect(Schema.fromJsonString(Output))
 const typedInput = Schema.decodeUnknownOption(Typed)
 
-/**
- * Releases the proof Person's binding, and deletes no machine. The server this proof talks to has
- * its own settings: on an installation that names its existing machine the Person is bound to
- * that one, and this proof cannot tell that case from a machine the server created for it. Until
- * 5 October 2026 this finalizer deleted whatever was bound. If Boat's record says the machine was
- * created during the proof, the proof fails naming it, so that a person removes it.
- */
-const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
-  person: Parameters<typeof computerMachineKey>[0],
-) {
-  const key = computerMachineKey(person)
-  const saved = yield* bindings()
-  const database = yield* Database
-  const began = yield* Clock.currentTimeMillis
-  yield* Effect.addFinalizer(() =>
-    Effect.gen(function* () {
-      const binding = yield* saved.load(key)
-      yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, key)))
-      if (Option.isNone(binding) || binding.value.providerId === null) return
-      const id = binding.value.providerId
-      if (yield* createdSince(id, began))
-        expect.fail(`This proof made the Boat machine ${id}. It is not deleted here: remove it.`)
-    }).pipe(
-      Effect.catch(() =>
-        Effect.sync(() => expect.fail('Boat fixture cleanup failed; reconcile the test machine')),
-      ),
+/** Flue 2.2.2 keeps the PNG attachment ref beside native tool metadata in public output. */
+const DesktopReceipt = Schema.Tuple([
+  Schema.Struct({
+    type: Schema.Literal('text'),
+    text: Schema.fromJsonString(
+      Schema.Struct({
+        ok: Schema.Literal(true),
+        view: Schema.Struct({
+          width: Schema.Int.check(Schema.isGreaterThan(0)),
+          height: Schema.Int.check(Schema.isGreaterThan(0)),
+          pointer: ScreenPoint,
+          window: Schema.NullOr(Schema.String),
+        }),
+        computer: ComputerSession,
+      }),
     ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal('attachment'),
+    attachment: Schema.Struct({
+      id: Schema.NonEmptyString,
+      mimeType: Schema.Literal('image/png'),
+      size: Schema.Int.check(Schema.isGreaterThan(0)),
+      digest: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+    }),
+  }),
+])
+const decodeDesktop = Schema.decodeUnknownEffect(DesktopReceipt)
+
+/**
+ * Fetch the native attachment through Flue's public, cookie-authenticated projection, not SQL
+ * or a guessed canonical id. Size/digest prove these are the receipt's stored bytes; PNG header,
+ * dimensions and terminal chunk prove a real full-size image accompanied successful metadata.
+ */
+const desktopPicture = Effect.fn('ThreadProof.desktopPicture')(function* (
+  fixture: ChainFixture,
+  receipt: typeof DesktopReceipt.Type,
+) {
+  const [metadata, image] = receipt
+  expect(metadata.text.computer.screen.address).toBe(computerScreenAddress)
+  expect(JSON.stringify(metadata.text.computer)).not.toContain(fixture.personId)
+  const address = new URL(fixture.conversation.attachmentUrl(image.attachment.id))
+  expect(address.origin).toBe(fixture.server.origin)
+  const response = yield* (yield* HttpClient.HttpClient).execute(
+    HttpClientRequest.get(address).pipe(HttpClientRequest.setHeader('cookie', fixture.cookie)),
   )
+  expect(response.status).toBe(200)
+  expect(response.headers['content-type']).toMatch(/^image\/png(?:;|$)/u)
+  const picture = Buffer.from(yield* response.arrayBuffer)
+  expect(picture.byteLength).toBe(image.attachment.size)
+  expect(NodeCrypto.createHash('sha256').update(picture).digest('hex')).toBe(
+    image.attachment.digest,
+  )
+  expect([...picture.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+  expect(picture.subarray(12, 16).toString('ascii')).toBe('IHDR')
+  expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toEqual([
+    metadata.text.view.width,
+    metadata.text.view.height,
+  ])
+  expect([...picture.subarray(-12)]).toEqual([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130])
 })
 
 /** One real Thread request drives Boat browser input and desktop sight. Public Selenium input
@@ -74,8 +107,11 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
         'wakes Boat, types, clicks, reads and streams its scoped session receipt',
         () =>
           Effect.gen(function* () {
+            yield* proofProvider()
             const fixture = yield* chainFixture('Computer chain proof')
-            yield* cleanupComputer(fixture.personId)
+            const owned = yield* proofComputer(computerMachineKey(fixture.personId))
+            // The real Thread must wake the captured resource, not an existing Person Computer.
+            yield* owned.machine.stop(owned.key)
             const runId = yield* fixture.send(
               'Use your Computer browser, not read_page or run_code, to open https://www.selenium.dev/selenium/web/web-form.html. Type "Vivid chain verified" in Text input, read it back, click Submit, then read the resulting page. Call use_desktop to see the final screen. Tell me the confirmation shown. Use browse directly for every browser step.',
             )
@@ -125,11 +161,14 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
               observations.some((outline) => /received/i.test(outline)),
               'The submitted page must show a real confirmation',
             ).toBe(true)
-            expect(
-              toolParts(state).some(
-                (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
-              ),
-            ).toBe(true)
+            const desktop = toolParts(state).find(
+              (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
+            )
+            if (desktop === undefined || desktop.state !== 'output-available')
+              return yield* Effect.sync(() =>
+                expect.fail('The Thread must return its desktop picture'),
+              )
+            yield* desktopPicture(fixture, yield* decodeDesktop(desktop.output))
             expect(replyText(state)).toMatch(/received/i)
             expect(
               (yield* (yield* bindings()).load(computerMachineKey(fixture.personId)))._tag,

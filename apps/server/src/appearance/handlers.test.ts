@@ -8,8 +8,8 @@ import {
   Forbidden,
   Look,
   SessionId,
+  Workspace,
   type Person,
-  type Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { fixture, trustTestLayer } from '../approvals/testing.ts'
@@ -73,6 +73,18 @@ describe.skipIf(!testDatabaseConfigured)('Vivid appearance', () => {
         if (Result.isFailure(refused)) expect(refused.failure).toBeInstanceOf(Forbidden)
         yield* appearanceHandlers.SetAppearance(teal).pipe(signedIn(test.owner))
         expect(yield* appearanceHandlers.GetAppearance().pipe(signedIn(test.member))).toEqual(teal)
+        if (!Workspace.guards.Company(test.owner.workspace)) expect.fail('Company required')
+        const admin = {
+          person: test.owner.person,
+          workspace: Workspace.cases.Company.make({
+            company: test.owner.workspace.company,
+            role: 'admin',
+          }),
+        }
+        yield* appearanceHandlers.SetAppearance(DEFAULT_APPEARANCE).pipe(signedIn(admin))
+        expect(yield* appearanceHandlers.GetAppearance().pipe(signedIn(test.member))).toEqual(
+          DEFAULT_APPEARANCE,
+        )
         // The owner's personal space has its own Vivid, untouched by the Company's.
         expect(
           yield* appearanceHandlers

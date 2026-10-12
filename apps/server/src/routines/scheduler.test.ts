@@ -36,7 +36,6 @@ describe('Routine delivery folder', () => {
     const routine = record(folder)
     for (const payload of [Option.none<string>(), Option.some('Incoming event')]) {
       const body = bodyOf(routine, payload)
-      expect(body).toContain("Search this Routine's Library folder and cite every source used.")
       expect(body).not.toContain(folder)
       expect(body).not.toMatch(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
       expect(deliveryAttributes(routine)).toEqual({

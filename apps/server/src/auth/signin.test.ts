@@ -382,6 +382,26 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
         expect(window.user.email).toBe(who.email)
         expect(inBrowser.user.email).toBe(who.email)
         expect(window.session.id).not.toBe(inBrowser.session.id)
+        const signedOut = yield* call(server, 'sign-out', {
+          method: 'POST',
+          headers: {
+            origin: server.origin,
+            cookie: cookiesOf(answer),
+            'content-type': 'application/json',
+          },
+          body: '{}',
+        })
+        expect(signedOut.status).toBe(200)
+        expect(
+          yield* bodyOf(
+            yield* call(server, 'get-session', {
+              method: 'GET',
+              headers: { origin: server.origin, cookie: cookiesOf(answer) },
+            }),
+            Schema.Null,
+          ),
+        ).toBeNull()
+        expect(yield* whoIs(server, browser)).toEqual(inBrowser)
       }).pipe(Effect.scoped),
     )
 
@@ -610,8 +630,25 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
           sameSite: 'lax',
           path: '/',
         })
-        // Signed: a token, a dot, and the signature Better Auth made with its own secret.
-        expect(cookie.value).toMatch(/^[^.]+\..+$/u)
+        // Corrupting the signature must lose authentication while the original cookie stays usable.
+        const samePath = yield* call(server, 'get-session', {
+          method: 'GET',
+          headers: {
+            origin: server.origin,
+            cookie: `${cookie.name}=${encodeURIComponent(cookie.value)}`,
+          },
+        })
+        expect((yield* bodyOf(samePath, Here)).session.id).toBeDefined()
+        const tampered = `${cookie.value.slice(0, -1)}${cookie.value.endsWith('a') ? 'b' : 'a'}`
+        const rejected = yield* call(server, 'get-session', {
+          method: 'GET',
+          headers: {
+            origin: server.origin,
+            cookie: `${cookie.name}=${encodeURIComponent(tampered)}`,
+          },
+        })
+        expect(yield* bodyOf(rejected, Schema.Null)).toBeNull()
+        expect((yield* whoIs(server, cookiesOf(answer))).session.id).toBeDefined()
         return undefined
       }).pipe(Effect.scoped),
     )
@@ -704,6 +741,26 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         expect(onPhone.user.email).toBe(who.email)
         expect(inBrowser.user.email).toBe(who.email)
         expect(onPhone.session.id).not.toBe(inBrowser.session.id)
+        const signedOut = yield* call(server, 'sign-out', {
+          method: 'POST',
+          headers: {
+            origin: server.origin,
+            authorization: `Bearer ${Redacted.value(token)}`,
+            'content-type': 'application/json',
+          },
+          body: '{}',
+        })
+        expect(signedOut.status).toBe(200)
+        expect(
+          yield* bodyOf(
+            yield* call(server, 'get-session', {
+              method: 'GET',
+              headers: { authorization: `Bearer ${Redacted.value(token)}` },
+            }),
+            Schema.Null,
+          ),
+        ).toBeNull()
+        expect(yield* whoIs(server, browser)).toEqual(inBrowser)
       }).pipe(Effect.scoped),
     )
 

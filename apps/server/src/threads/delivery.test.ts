@@ -62,7 +62,7 @@ import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
-import { Notifier } from '../notifications/notifier.ts'
+import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { Message } from '../observability/messages.ts'
 import {
   Admission,
@@ -184,12 +184,13 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
     'cache-control': 'public, max-age=3600',
   })
   const settlements = new Map<RunId, Deferred.Deferred<Settlement>>()
+  const observers = new Map<RunId, Fiber.Fiber<unknown, unknown>>()
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
+      yield* Ref.update(requests, (all) => [...all, input])
       const rejected = yield* Ref.getAndSet(failure, Option.none())
       if (Option.isSome(rejected)) return yield* rejected.value
       const id = submissionId(input.threadId, input.idempotencyKey)
-      yield* Ref.update(requests, (all) => [...all, input])
       const repeated = settlements.has(id)
       if (!repeated) {
         settlements.set(id, yield* Deferred.make<Settlement>())
@@ -205,7 +206,10 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
     settled: Effect.fn('Delivery.test.settled')(function* (_threadId, id) {
       const settlement = settlements.get(id)
       // Other integration suites may own working rows; this runtime cannot settle their Runs.
-      return yield* settlement === undefined ? Effect.never : Deferred.await(settlement)
+      return yield* Effect.withFiber((fiber) => {
+        observers.set(id, fiber)
+        return settlement === undefined ? Effect.never : Deferred.await(settlement)
+      })
     }),
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
     read: Effect.fn('Delivery.test.read')(function* () {
@@ -229,7 +233,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   })
   const finish = (id: RunId) =>
     settle(id, Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }))
-  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders }
+  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders, observers }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -264,6 +268,8 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   const recorded = yield* runFixture()
   const database = yield* Database
   const topics = yield* Ref.make<ReadonlyArray<Topic>>([])
+  const notices = yield* Ref.make<ReadonlyArray<Notice>>([])
+  const watching = yield* Ref.make(true)
   const services = Layer.mergeAll(
     Layer.succeed(Database, database),
     Layer.succeed(RunStore, recorded.observed),
@@ -280,10 +286,14 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(
       Notifier,
-      Notifier.of({ notify: Effect.fn('Delivery.test.notify')(() => Effect.void) }),
+      Notifier.of({
+        notify: Effect.fn('Delivery.test.notify')((notice) =>
+          Ref.update(notices, (previous) => [...previous, notice]),
+        ),
+      }),
     ),
     Layer.mock(Presence, {
-      watching: Effect.fn('Delivery.test.watching')(() => Effect.succeed(true)),
+      watching: Effect.fn('Delivery.test.watching')(() => Ref.get(watching)),
     }),
   )
   const context = yield* Layer.build(
@@ -295,8 +305,24 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
     yield* runtime.finish(id)
     expect(yield* Queue.take(recorded.ended)).toBe(id)
+    // The actual observing fiber owns post-settlement notification and learning. Joining it
+    // prevents a zero-notice assertion from racing work after the SQL end receipt.
+    const observer = runtime.observers.get(id)
+    if (observer === undefined) expect.fail('Missing Run observer')
+    expect((yield* Fiber.await(observer))._tag).toBe('Success')
   })
-  return { ...rows, ...runtime, ...recorded, conversation, devices, finish, services, topics }
+  return {
+    ...rows,
+    ...runtime,
+    ...recorded,
+    conversation,
+    devices,
+    finish,
+    services,
+    topics,
+    notices,
+    watching,
+  }
 })
 
 type Harness = Effect.Success<ReturnType<typeof harness>>
@@ -468,7 +494,7 @@ layer(
           if (delivered === undefined) expect.fail('Missing admitted message')
           // The Person's words reach the runtime as written: nothing is put in their mouth.
           expect(delivered.message.body).not.toContain('unanswered')
-          expect(delivered.message.body).toContain(body.body)
+          expect(delivered.message.body).toBe(body.body)
           expect(delivered.message.body).not.toContain(first.id)
           expect(delivered.message.body).not.toContain(test.ben)
           // A later question must survive a replay, even after rebuilding the admission service.
@@ -683,6 +709,7 @@ layer(
         Effect.scoped(
           Effect.gen(function* () {
             const test = yield* harness()
+            yield* Ref.set(test.watching, false)
             const source = yield* test.conversation.admit({
               threadId: test.threadId,
               personId: test.ada,
@@ -740,6 +767,28 @@ layer(
               )
             })
             expect(Result.isFailure(refused) && refused.failure._tag).toBe('Forbidden')
+            yield* test.finish(source.runId)
+            yield* test.finish(childRun.id)
+            expect(yield* Ref.get(test.notices)).toEqual([])
+            const ordinary = yield* test.conversation.admit({
+              threadId: test.threadId,
+              personId: test.ada,
+              speaker: DeliverySpeaker.cases.Acting.make({}),
+              origin: StoredRunOrigin.cases.Message.make({}),
+              message: DeliveryMessage.cases.Said.make({ body: 'Now answer me' }),
+              idempotencyKey: NodeCrypto.randomUUID(),
+            })
+            yield* test.finish(ordinary.runId)
+            expect(yield* Ref.get(test.notices)).toEqual([
+              {
+                personId: test.ada,
+                companyId: test.companyId,
+                kind: 'finished',
+                title: 'Delivery test',
+                body: 'Finished',
+                threadId: test.threadId,
+              },
+            ])
           }),
         ),
     )
@@ -756,36 +805,43 @@ layer(
           AdmissionUncertain.make({ threadId, runId, reason: 'Transport' }),
       },
     ]
-    for (const failure of admissionFailures) {
-      layer(
-        databaseLayer.pipe(
-          Layer.provideMerge(silentChangesLayer),
-          Layer.provideMerge(testConfigLayer),
-        ),
-      )('Clock case 1', (clockIt) => {
-        clockIt.effect(
-          `${failure.name} Flue admission ends the Run with Delivery and does not block Ben`,
-          () =>
-            Effect.gen(function* () {
-              const test = yield* harness()
-              // The error names the Run its request would have started, as the real client's does.
-              const message = said(test.threadId, test.ada)
-              const runId = submissionId(test.threadId, message.idempotencyKey)
-              yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
-              const rejected = yield* Effect.result(test.conversation.admit(message))
-              expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
-                RuntimeUnavailable,
+    layer(
+      databaseLayer.pipe(
+        Layer.provideMerge(silentChangesLayer),
+        Layer.provideMerge(testConfigLayer),
+      ),
+    )('Clock case 1', (clockIt) => {
+      clockIt.effect(
+        'refused and uncertain admission end the Run with Delivery and release it for Ben',
+        () =>
+          Effect.gen(function* () {
+            for (const failure of admissionFailures) {
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const test = yield* harness()
+                  // The error names the Run its request would have started, as the real client's does.
+                  const message = said(test.threadId, test.ada)
+                  const runId = submissionId(test.threadId, message.idempotencyKey)
+                  yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
+                  const rejected = yield* Effect.result(test.conversation.admit(message))
+                  expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
+                    RuntimeUnavailable,
+                  )
+                  const recorded = yield* (yield* RunStore).list(test.threadId)
+                  expect(recorded.map((run) => run.state)).toEqual([
+                    RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+                  ])
+                  expect(yield* Ref.get(test.requests)).toHaveLength(1)
+                  expect(yield* Ref.get(test.admitted)).toEqual([])
+                  yield* test.conversation.admit(said(test.threadId, test.ben))
+                  expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+                  expect(yield* Ref.get(test.requests)).toHaveLength(2)
+                }),
               )
-              const recorded = yield* (yield* RunStore).list(test.threadId)
-              expect(recorded.map((run) => run.state)).toEqual([
-                RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
-              ])
-              yield* test.conversation.admit(said(test.threadId, test.ben))
-              expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-            }).pipe(Effect.scoped),
-        )
-      })
-    }
+            }
+          }),
+      )
+    })
 
     it.effect('refuses Ben with Ada’s name, then admits him after Ada settles', () =>
       Effect.gen(function* () {
@@ -814,7 +870,16 @@ layer(
       Effect.gen(function* () {
         const test = yield* harness()
         const first = yield* test.conversation.admit(said(test.threadId, test.ada))
-        const second = yield* test.conversation.admit(said(test.threadId, test.ada))
+        const routine = said(test.threadId, test.ada)
+        const second = yield* test.conversation.admit({
+          ...routine,
+          origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }),
+          message: DeliveryMessage.cases.Signal.make({
+            type: 'schedule',
+            body: 'Review now.',
+            attributes: { name: 'Review' },
+          }),
+        })
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
           test.ada,
           test.ada,
@@ -862,7 +927,15 @@ layer(
         yield* test.conversation.deliver(delivery)
         const requests = yield* Ref.get(test.requests)
         expect(requests).toMatchObject([
-          { scope: { acting: test.ada }, message: { attributes: { from: 'Ben' } } },
+          {
+            scope: { acting: test.ada },
+            message: {
+              kind: 'signal',
+              type: 'answer',
+              body: 'Monday',
+              attributes: { from: 'Ben' },
+            },
+          },
         ])
         const database = yield* Database
         yield* database.run(
@@ -986,48 +1059,63 @@ layer(
       )
     })
 
-    for (const { type, origin } of signals) {
-      it.effect(
-        `returns Busy for a ${type} signal immediately and replays its key on the next attempt`,
-        () =>
-          Effect.gen(function* () {
-            const test = yield* harness()
-            const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
-            const delivery: SignalDelivery = {
-              speaker: DeliverySpeaker.cases.Acting.make({}),
-              threadId: test.threadId,
-              personId: test.ben,
-              idempotencyKey: `${type}-receipt`,
-              message: DeliveryMessage.cases.Signal.make({
-                type,
-                body: 'Server delivery',
-                attributes: {},
-              }),
-              origin,
-            }
-            const pending = yield* Effect.result(test.conversation.deliver(delivery)).pipe(
-              Effect.forkScoped,
-            )
-            expect(yield* Queue.take(test.blocked)).toBe(
-              submissionId(test.threadId, delivery.idempotencyKey),
-            )
-            expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-            const busy = yield* Fiber.join(pending)
-            expect(Result.isFailure(busy) && busy.failure).toBeInstanceOf(Conflict)
-            yield* test.finish(ada.runId)
-            const admitted = yield* test.conversation.deliver(delivery)
-            expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
-            expect(RunState.guards.Working(admitted.state)).toBe(true)
-            expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
-              test.ada,
-              test.ben,
-            ])
-            const replayed = yield* test.conversation.deliver(delivery)
-            expect(replayed.id).toBe(admitted.id)
-            expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(2)
-          }).pipe(Effect.scoped),
-      )
-    }
+    it.effect(
+      'Routine, approval and answer signals keep their words, speaker and replay key across Busy',
+      () =>
+        Effect.gen(function* () {
+          for (const { type, origin } of signals) {
+            yield* Effect.gen(function* () {
+              const test = yield* harness()
+              const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
+              const delivery: SignalDelivery = {
+                speaker: DeliverySpeaker.cases.Acting.make({}),
+                threadId: test.threadId,
+                personId: test.ben,
+                idempotencyKey: `${type}-receipt`,
+                message: DeliveryMessage.cases.Signal.make({
+                  type,
+                  body: `${type}: independent server words`,
+                  attributes: {},
+                }),
+                origin,
+              }
+              const pending = yield* Effect.result(test.conversation.deliver(delivery)).pipe(
+                Effect.forkScoped,
+              )
+              expect(yield* Queue.take(test.blocked)).toBe(
+                submissionId(test.threadId, delivery.idempotencyKey),
+              )
+              expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+              const busy = yield* Fiber.join(pending)
+              expect(Result.isFailure(busy) && busy.failure).toBeInstanceOf(Conflict)
+              yield* test.finish(ada.runId)
+              const admitted = yield* test.conversation.deliver(delivery)
+              expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
+              expect(RunState.guards.Working(admitted.state)).toBe(true)
+              expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
+                test.ada,
+                test.ben,
+              ])
+              expect((yield* Ref.get(test.requests)).map((input) => input.message)).toEqual([
+                expect.objectContaining({
+                  body: 'Please help',
+                  attributes: { from: 'Ada', turn: '1' },
+                }),
+                {
+                  kind: 'signal',
+                  type,
+                  tagName: type,
+                  body: `${type}: independent server words`,
+                  attributes: { from: 'Ben', turn: '2' },
+                },
+              ])
+              const replayed = yield* test.conversation.deliver(delivery)
+              expect(replayed.id).toBe(admitted.id)
+              expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(2)
+            }).pipe(Effect.scoped)
+          }
+        }),
+    )
 
     it.effect(
       'the gateway repeats one client key with one Run, one turn and the same receipt',
@@ -1402,20 +1490,34 @@ layer(
       Effect.gen(function* () {
         const test = yield* harness()
         yield* privateThread(test)
+        let reads = 0
+        const body = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              reads += 1
+              controller.enqueue(new TextEncoder().encode('{"kind":"user","body":"Look"}'))
+              controller.close()
+            },
+          },
+          { highWaterMark: 0 },
+        )
+        const requestOptions = {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${test.token}`,
+            host: 'gateway.test',
+            'content-type': 'application/json',
+            'content-length': String(29 * 1024 * 1024),
+          },
+          body,
+          duplex: 'half' as const,
+        }
         const response = yield* gateway(
           test,
-          new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${test.token}`,
-              host: 'gateway.test',
-              'content-type': 'application/json',
-              'content-length': String(29 * 1024 * 1024),
-            },
-            body: JSON.stringify({ kind: 'user', body: 'Look' }),
-          }),
+          new Request(`http://gateway.test/api/vivid/${test.threadId}`, requestOptions),
         )
         expect(response.status).toBe(413)
+        expect(reads).toBe(0)
         expect(yield* Ref.get(test.admitted)).toHaveLength(0)
       }).pipe(Effect.scoped),
     )
@@ -1438,27 +1540,27 @@ layer(
       { name: 'adding a picture', body: 'Look', attachments: [png, secondPicture, png] },
       { name: 'message text', body: 'Different text', attachments: [png, secondPicture] },
     ]
-    for (const change of keyedChanges) {
-      it.effect(
-        `keyed admission conflicts on ${change.name} after rebuilding the Conversation service`,
-        () =>
-          Effect.gen(function* () {
-            const test = yield* harness()
-            yield* privateThread(test)
-            const body = {
-              kind: 'user',
-              body: 'Look',
-              attachments: [png, secondPicture],
-              idempotencyKey: 'immutable',
-            }
-            expect((yield* post(test, body)).status).toBe(202)
-            const context = yield* Layer.build(
-              conversationLayer.pipe(
-                Layer.provide(silentChannelRepliesLayer),
-                Layer.provide(test.services),
-              ),
-            )
-            const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+    it.effect(
+      'keyed picture admission rejects every immutable payload mutation after reconstruction',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          yield* privateThread(test)
+          const body = {
+            kind: 'user',
+            body: 'Look',
+            attachments: [png, secondPicture],
+            idempotencyKey: 'immutable',
+          }
+          expect((yield* post(test, body)).status).toBe(202)
+          const context = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(test.services),
+            ),
+          )
+          const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+          for (const change of keyedChanges) {
             const response = yield* post(
               { ...test, conversation },
               {
@@ -1479,9 +1581,9 @@ layer(
             )
             expect(yield* Ref.get(test.admitted)).toHaveLength(1)
             expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
-          }).pipe(Effect.scoped),
-      )
-    }
+          }
+        }).pipe(Effect.scoped),
+    )
 
     it.effect(
       'serves private bytes inline with safe headers and hides them from a non-participant',

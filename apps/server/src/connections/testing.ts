@@ -71,6 +71,7 @@ const fixtureRouteMissing = Schema.TaggedStruct('FixtureRouteMissing', {})
 interface ConnectionProbeService {
   readonly tools: Ref.Ref<readonly (typeof ExecutorTool.Type)[]>
   readonly calls: Ref.Ref<number>
+  readonly inputs: Ref.Ref<ReadonlyArray<Parameters<ExecutorService['call']>[0]>>
   readonly signIns: Ref.Ref<number>
   readonly step: Ref.Ref<'Done' | 'OpenSignIn' | 'EnterKey'>
   readonly begins: Ref.Ref<number>
@@ -205,7 +206,8 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       yield* Ref.update(probe.discoveries, (count) => count + 1)
       return yield* Ref.get(probe.tools)
     }),
-    call: Effect.fn('Executor.Test.call')(function* () {
+    call: Effect.fn('Executor.Test.call')(function* (input) {
+      yield* Ref.update(probe.inputs, (inputs) => [...inputs, input])
       yield* Ref.update(probe.calls, (count) => count + 1)
       return yield* Ref.get(probe.outcome)
     }),
@@ -218,6 +220,7 @@ const probeLayer = Layer.effectContext(
     const probe = ConnectionProbe.of({
       tools: yield* Ref.make<readonly (typeof ExecutorTool.Type)[]>([readTool, writeTool]),
       calls: yield* Ref.make(0),
+      inputs: yield* Ref.make<ReadonlyArray<Parameters<ExecutorService['call']>[0]>>([]),
       signIns: yield* Ref.make(0),
       step: yield* Ref.make<'Done' | 'OpenSignIn' | 'EnterKey'>('Done'),
       begins: yield* Ref.make(0),
@@ -281,6 +284,24 @@ export const connectionTestLayer = connectionStoreLayer.pipe(Layer.provideMerge(
 /** Cleanup is installed before the first write and only touches unique disposable test identities. */
 export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
   const database = yield* Database
+  const probe = yield* ConnectionProbe
+  const prior = {
+    step: yield* Ref.get(probe.step),
+    outcome: yield* Ref.get(probe.outcome),
+    tools: yield* Ref.get(probe.tools),
+    decision: yield* Ref.get(probe.decision),
+    identity: yield* Ref.get(probe.identity),
+  }
+  // Controls are restored even when an assertion fails before a test's happy-path reset.
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* Ref.set(probe.step, prior.step)
+      yield* Ref.set(probe.outcome, prior.outcome)
+      yield* Ref.set(probe.tools, prior.tools)
+      yield* Ref.set(probe.decision, prior.decision)
+      yield* Ref.set(probe.identity, prior.identity)
+    }),
+  )
   const suffix = crypto.randomUUID()
   const owner = Person.make({
     id: PersonId.make(`connection-owner-${suffix}`),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import NodeProcess from 'node:process'
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
@@ -81,8 +82,10 @@ if (Fixture.guards.absent(input)) NodeProcess.exit(1)
 
 /** All fixtures use the production RPC contract and the official runner, including handler death. */
 const handlers = ExtractionRpcs.toLayer({
-  ExtractPdf: () =>
+  ExtractPdf: ({ bytes }) =>
     Fixture.match<Effect.Effect<ReadonlyArray<string>, ExtractionFaulted>>(input, {
+      digest: () =>
+        Effect.sync(() => [NodeCrypto.createHash('sha256').update(bytes).digest('hex')]),
       spin: () => Effect.sync(spin),
       grow: () => Effect.sync(grow),
       abort: () => Effect.sync(abort),

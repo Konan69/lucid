@@ -9,8 +9,8 @@ import { chainArrival, chainLayer, completeRun } from '../runtime/chains.ts'
  * model loaded the first-conversation skill and went straight to `ask_person`, so a new Person met
  * a form instead of Vivid. Clients draw whatever Vivid writes above the cards of the same reply,
  * so what is checked is the reply itself: it has words of Vivid's own, and they are written
- * before the question is asked. What the words say is the model's; only their presence and their
- * place are observable structure.
+ * before the question is asked. The introduction identifies Vivid by name; the remaining
+ * wording belongs to the model and is not compared against the prompt.
  *
  * One real signup, the server's own first Thread and one real model reply; no judge, no retry.
  */
@@ -50,6 +50,14 @@ layer(chainLayer, { excludeTestServices: true })((it) => {
             expect(spoke, 'The words must come before the question').toBeLessThan(
               Math.min(...questions.map((question) => question.index)),
             )
+            const beforeQuestion = parts
+              .slice(0, Math.min(...questions.map((question) => question.index)))
+              .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+              .join(' ')
+            expect(
+              beforeQuestion,
+              'The introduction must identify Vivid before the first question',
+            ).toMatch(/\bVivid\b/u)
             // The card is drawn from the stored question, not from the call: it has to be there
             // and still waiting for the Person. This Thread has had one Run, so it is that Run's.
             const asked = yield* fixture.rpc.GetThread({ id: fixture.threadId })

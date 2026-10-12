@@ -4,6 +4,8 @@ import { describe, expect, layer } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
 import {
   Clock,
+  Cause,
+  Exit,
   Context,
   Deferred,
   Effect,
@@ -102,6 +104,8 @@ interface EvidenceService {
   readonly onPublish: Ref.Ref<Effect.Effect<void>>
   readonly states: Ref.Ref<ReadonlyMap<MachineKey, ComputerState>>
   readonly started: Queue.Queue<MachineKey>
+  /** Provider completion distinguishes cancellation from a late successful start. */
+  readonly bootExited: Queue.Queue<{ readonly key: MachineKey; readonly interrupted: boolean }>
   readonly stopped: Queue.Queue<MachineKey>
   /** Every stop the store asked for, including one the provider could not answer. */
   readonly stopAttempts: Queue.Queue<MachineKey>
@@ -133,6 +137,10 @@ const evidenceLayer = Layer.effect(
     return ProviderEvidence.of({
       commandResult: yield* Ref.make({ exitCode: 0, output: 'hello', truncated: false }),
       started: yield* Queue.unbounded<MachineKey>(),
+      bootExited: yield* Queue.unbounded<{
+        readonly key: MachineKey
+        readonly interrupted: boolean
+      }>(),
       stopped: yield* Queue.unbounded<MachineKey>(),
       stopAttempts: yield* Queue.unbounded<MachineKey>(),
       ensures: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
@@ -177,25 +185,36 @@ const providerLayer = Layer.effect(
         return yield* new MachineRequestRejected({ status: 409 })
       return state
     })
-    const ensure = Effect.fn('Computer.test.ensure')(function* (key: MachineKey) {
-      yield* Ref.update(evidence.ensures, (calls) => [...calls, key])
-      yield* answering()
-      yield* Queue.offer(evidence.started, key)
-      const wait = yield* Ref.get(evidence.boot)
-      if (Option.isSome(wait)) yield* Deferred.await(wait.value)
-      if (yield* Ref.get(evidence.bootOutgrown))
-        return yield* new MachineOutgrown({ upgrade: true })
-      if (yield* Ref.get(evidence.bootFailed))
-        return yield* new MachineOperationFailed({ operation: 'startup' })
-      const state = ComputerState.cases.Running.make({
-        since: 100,
-        screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
-          address: computerScreenAddress,
-        }),
-      })
-      yield* Ref.update(evidence.states, (states) => new Map(states).set(key, state))
-      return state
-    })
+    const ensure = Effect.fn('Computer.test.ensure')(
+      function* (key: MachineKey) {
+        yield* Ref.update(evidence.ensures, (calls) => [...calls, key])
+        yield* answering()
+        yield* Queue.offer(evidence.started, key)
+        const wait = yield* Ref.get(evidence.boot)
+        if (Option.isSome(wait)) yield* Deferred.await(wait.value)
+        if (yield* Ref.get(evidence.bootOutgrown))
+          return yield* new MachineOutgrown({ upgrade: true })
+        if (yield* Ref.get(evidence.bootFailed))
+          return yield* new MachineOperationFailed({ operation: 'startup' })
+        const state = ComputerState.cases.Running.make({
+          since: 100,
+          screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+            address: computerScreenAddress,
+          }),
+        })
+        yield* Ref.update(evidence.states, (states) => new Map(states).set(key, state))
+        return state
+      },
+      (program, key) =>
+        program.pipe(
+          Effect.onExit((exit) =>
+            Queue.offer(evidence.bootExited, {
+              key,
+              interrupted: Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause),
+            }),
+          ),
+        ),
+    )
     const stop = Effect.fn('Computer.test.stop')(function* (key: MachineKey) {
       yield* Queue.offer(evidence.stopAttempts, key)
       yield* answering()
@@ -769,7 +788,27 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           )
           if (row === undefined) expect.fail('Expected persisted Approval')
           expect(row.runId).toBe(browser.runId)
-          // The proposing turn ends before the Person decides; a newer Run cannot replace it.
+          // A later Run is now working in the same Thread. Approval still carries the original
+          // proposal's Run, never whatever the Thread's latest Run happens to be at decision time.
+          yield* browser.database.run(
+            browser.database
+              .update(runs)
+              .set({ state: 'completed', finishedAt: 1 })
+              .where(eq(runs.id, browser.runId)),
+          )
+          const newer = RunId.make(NodeCrypto.randomUUID())
+          yield* browser.database.run(
+            browser.database.insert(runs).values({
+              id: newer,
+              threadId: browser.test.personalId,
+              personId: browser.actor.person.id,
+              turn: 2,
+              state: 'working',
+              origin: encodeRunOrigin(StoredRunOrigin.cases.Message.make({})),
+              startedAt: 2,
+              admittedAt: 2,
+            }),
+          )
           const decide = {
             id: approval.id,
             digest: approval.digest,
@@ -1026,22 +1065,30 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
-    it.effect(
-      'a cloud screenshot uses the existing desktop PNG and returns an outline under one permit',
-      () =>
-        Effect.gen(function* () {
-          const { first } = yield* fixture()
-          const result = yield* (yield* ComputerStore).browse(
-            first.id,
-            BrowserAction.cases.Screenshot.make({}),
-          )
-          expect(result.picture).toEqual(
-            BrowserPicture.make(
-              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',
-            ),
-          )
-          expect(yield* Ref.get((yield* ProviderEvidence).calls)).toHaveLength(2)
-        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    it.effect('a cloud screenshot combines the browser outline with the existing desktop PNG', () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const result = yield* (yield* ComputerStore).browse(
+          first.id,
+          BrowserAction.cases.Screenshot.make({}),
+        )
+        expect(result.picture).toEqual(
+          BrowserPicture.make(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',
+          ),
+        )
+        expect(result).toMatchObject({
+          address: 'https://example.com',
+          title: 'Example',
+          outline: 'Example outline',
+          truncated: false,
+          tabs: [{ title: 'Example', address: 'https://example.com', showing: true }],
+        })
+        expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([
+          computerMachineKey(first.id),
+          computerMachineKey(first.id),
+        ])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -2095,9 +2142,14 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect(
             (yield* computerHandlers.StartComputer().pipe(asPerson(first))).computer.state._tag,
           ).toBe('Starting')
+          const key = computerMachineKey(first.id)
+          expect(yield* Queue.take(evidence.started)).toBe(key)
           expect(
             (yield* computerHandlers.StopComputer().pipe(asPerson(first))).computer.state._tag,
           ).toBe('Stopped')
+          expect(yield* Queue.poll(evidence.bootExited)).toEqual(
+            Option.some({ key, interrupted: true }),
+          )
           yield* Deferred.succeed(latch, undefined)
           const store = yield* ComputerStore
           expect((yield* store.get(first.id)).state._tag).toBe('Stopped')

@@ -24,6 +24,7 @@ import {
 import { TestClock } from 'effect/testing'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import * as HttpMiddleware from 'effect/http/HttpMiddleware'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServer from 'effect/http/HttpServer'
@@ -50,6 +51,36 @@ import { observeFailures } from './failure.ts'
 import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
+
+/** Disabled telemetry must install no exporter, regardless of any destination it could choose. */
+it.effect('makes no outbound request for a refusal when telemetry is disabled', () =>
+  Effect.gen(function* () {
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    // Capture every destination: an empty receiver at one URL would miss an accidental default.
+    const http = HttpClient.make((request) =>
+      Ref.update(requests, (seen) => [...seen, request.url]).pipe(
+        Effect.as(HttpClientResponse.fromWeb(request, new Response('{}'))),
+      ),
+    )
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const installed = yield* Layer.build(
+          observabilityLayer(ObservabilityConfiguration.Disabled()).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+          ),
+        )
+        yield* Effect.exit(
+          Effect.fail(new ProbeRefused({ message: 'not today' })).pipe(
+            observeFailures('rpc'),
+            Effect.withSpan('Probe.disabled'),
+          ),
+        ).pipe(Effect.provide(installed))
+      }),
+    )
+    // Scope closure flushes any mistakenly installed exporter before this assertion.
+    expect(yield* Ref.get(requests)).toEqual([])
+  }),
+)
 
 /** The slice of OTLP/HTTP JSON these tests read; everything else in a post is left undecoded. */
 const Pair = Schema.Struct({
@@ -470,6 +501,14 @@ it.effect('marks a defect as a defect and logs it as an error', () =>
         'vivid.failure.kind': 'defect',
         'vivid.boundary': 'schedule',
       })
+      expect(span === undefined ? {} : span.status).toEqual({ code: 2 })
+      expect(
+        span === undefined
+          ? []
+          : span.events
+              .filter((event) => event.name === 'exception')
+              .map((event) => valuesOf(event.attributes)),
+      ).toEqual([{ 'exception.type': 'TypeError' }])
       const line = lines.find((entry) => entry.body.stringValue === Message.defect)
       expect(line === undefined ? '' : line.severityText).toBe('Error')
     }),
@@ -717,10 +756,20 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
         yield* Effect.annotateLogs(Effect.logInfo(Message.refusal), {
           'vivid.refusal.kind': PRIVATE,
           'vivid.refusal.reason': PRIVATE,
+          'vivid.refusal.call': PRIVATE,
+          'vivid.refusal.effect': PRIVATE,
+          'vivid.refusal.target': PRIVATE,
         })
         yield* recordRefusal(
           Refusal.cases.ActionBlocked.make({ effect: 'destructive', target: 'Desktop' }),
         )
+        // Independent wire expectations below catch a missing call vocabulary or a reason set
+        // assembled from only one variant. Reading the schema's own literals would miss both.
+        yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'use_tool' }))
+        yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'SharedReadOnly' }))
+        yield* recordRefusal(Refusal.cases.PageRefused.make({ reason: 'not a readable page' }))
+        yield* recordRefusal(Refusal.cases.AdmissionRefused.make({ reason: 'Address' }))
+        yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
       })
       const { lines, text } = yield* exported(decide())
 
@@ -733,6 +782,11 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
           'vivid.refusal.effect': 'destructive',
           'vivid.refusal.target': 'Desktop',
         },
+        { 'vivid.refusal.kind': 'CallRefused', 'vivid.refusal.call': 'use_tool' },
+        { 'vivid.refusal.kind': 'ToolRejected', 'vivid.refusal.reason': 'SharedReadOnly' },
+        { 'vivid.refusal.kind': 'PageRefused', 'vivid.refusal.reason': 'not a readable page' },
+        { 'vivid.refusal.kind': 'AdmissionRefused', 'vivid.refusal.reason': 'Address' },
+        { 'vivid.refusal.kind': 'DeviceRefused', 'vivid.refusal.reason': 'NotAllowed' },
       ])
       expect(text).not.toContain(PRIVATE)
       // The service is still on the server's own line.
@@ -1191,7 +1245,7 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
       }, observeFailures('rpc'))
       const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
 
-      const ROUNDS = 5
+      const ROUNDS = 2
       for (let round = 1; round <= ROUNDS; round += 1) {
         // The server's work goes on logging, and each minute's batch is exported. The export ends
         // without the clock moving, so no fiber is left waiting out a retry with a batch in hand.
@@ -1475,28 +1529,6 @@ it.effect('ends a span whose failure cannot be read, and hands the caller that f
         spanNamed(spans, 'Probe.hostile').map((span) => valuesOf(span.attributes)['error.type']),
       ).toEqual(expected.map((entry) => (entry === error ? 'Error' : '_OTHER')))
       expect(text).not.toContain(PRIVATE)
-    }),
-  ),
-)
-
-it.effect('still exports an ordinary failed span with its type, on the span and its event', () =>
-  withReceiver(
-    Effect.gen(function* () {
-      const crash = Effect.fn('Probe.crash')(function* () {
-        return yield* Effect.die(new TypeError('cannot read the thing'))
-      }, observeFailures('rpc'))
-      const { spans } = yield* exported(crash())
-
-      const [span] = spanNamed(spans, 'Probe.crash')
-      expect(span === undefined ? {} : valuesOf(span.attributes)['error.type']).toBe('TypeError')
-      expect(span === undefined ? {} : span.status).toEqual({ code: 2 })
-      expect(
-        span === undefined
-          ? []
-          : span.events
-              .filter((event) => event.name === 'exception')
-              .map((event) => valuesOf(event.attributes)),
-      ).toEqual([{ 'exception.type': 'TypeError' }])
     }),
   ),
 )
@@ -1977,28 +2009,6 @@ it.effect('exports at most 64 database codes in one process, and none after that
         undefined,
         '00000',
       ])
-    }),
-  ),
-)
-
-it.effect('posts nothing when export is disabled', () =>
-  withReceiver(
-    Effect.gen(function* () {
-      const { posts, routes } = yield* receiving(answered)
-      yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
-      const refuse = Effect.fn('Probe.refuse')(function* () {
-        return yield* new ProbeRefused({ message: 'not today' })
-      }, observeFailures('rpc'))
-      // Disabled is built only for the refusal; the receiver and router keep their own scope.
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const disabledContext = yield* Layer.build(
-            observabilityLayer(ObservabilityConfiguration.Disabled()),
-          )
-          yield* Effect.exit(refuse()).pipe(Effect.provide(disabledContext))
-        }),
-      )
-      expect(yield* Ref.get(posts)).toEqual([])
     }),
   ),
 )

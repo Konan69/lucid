@@ -50,7 +50,7 @@ const holdComputer = Effect.fn('ProgramProof.holdComputer')(function* (
 })
 
 /**
- * Reads the file the program wrote and then removes it, both through the machine's provider and
+ * Reads the file the program wrote through the machine's provider and
  * not through Vivid: what the program wrote is then evidence from outside the thing being proved,
  * and the Computer is left as it was. The path is relative to where commands start, which is
  * where a program runs. The name is this test's own, so nothing else can be removed by it.
@@ -72,12 +72,26 @@ const takeFromComputer = Effect.fn('ProgramProof.takeFromComputer')(function* (
   )
   expect(response.status, 'The file the program wrote must be on the Computer').toBe(200)
   const text = Buffer.from((yield* decodeFile(response)).content, 'base64').toString('utf8')
+  return text
+})
+
+/** Cleanup owns the UUID path before the model can write it, including failed settlement or assertions. */
+const removeFromComputer = Effect.fn('ProgramProof.removeFromComputer')(function* (
+  person: Parameters<typeof computerMachineKey>[0],
+  name: string,
+) {
+  const binding = yield* (yield* bindings()).load(computerMachineKey(person))
+  if (Option.isNone(binding) || binding.value.providerId === null)
+    expect.fail('Proof binding missing during cleanup')
+  const http = yield* HttpClient.HttpClient
+  const key = yield* Config.Redacted('VIVID_BOAT_API_KEY')
   const removed = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post(`${machine}/commands`).pipe(HttpClientRequest.bearerToken(key)),
+    HttpClientRequest.post(
+      `https://boat.dev/api/v1/sandboxes/${binding.value.providerId}/commands`,
+    ).pipe(HttpClientRequest.bearerToken(key)),
     { command: `rm -f -- '${name}'`, timeoutSeconds: 30 },
   ).pipe(Effect.flatMap((request) => http.execute(request)))
-  expect(removed.status, 'The proof file must not stay on the Computer').toBe(200)
-  return text
+  expect(removed.status).toBe(200)
 })
 
 /**
@@ -97,13 +111,19 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
             const fixture = yield* chainFixture('Program chain proof')
             yield* holdComputer(fixture.personId)
             const name = `vivid-program-proof-${NodeCrypto.randomUUID()}.txt`
+            yield* Effect.addFinalizer(() =>
+              removeFromComputer(fixture.personId, name).pipe(
+                Effect.catch(() => Effect.sync(() => expect.fail('Proof file cleanup failed'))),
+              ),
+            )
             const runId = yield* fixture.send(
               `Do this with one run_code program and nothing else. In the program: read https://example.com/ and https://www.iana.org/help/example-domains with tools.read_page, both at the same time. Then use node:fs/promises to write a file named ${name} in the current directory, holding the two page titles, one per line. Return the two titles. Afterwards tell me the titles.`,
             )
             const state = yield* completeRun(fixture, runId)
             const programs = toolParts(state).filter((part) => part.toolName === 'run_code')
             const finished = programs.filter((part) => part.state === 'output-available')
-            expect(finished.length, 'The model must have run a program').toBeGreaterThan(0)
+            expect(finished).toHaveLength(1)
+            expect(programs).toHaveLength(1)
             const outputs = yield* Effect.forEach(finished, (part) =>
               part.state === 'output-available'
                 ? decodeRan(part.output).pipe(Effect.option)
@@ -116,9 +136,11 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
             )
             expect(pages.length, 'The program’s two page reads must both be answered').toBe(2)
             const written = yield* takeFromComputer(fixture.personId, name)
-            // The title of the first page, as the server's own reader returned it to the program.
-            expect(written).toContain('Example Domain')
-            expect(written.trim().split('\n').length).toBe(2)
+            // Independently known page titles detect a duplicated first read or a wrong second page.
+            expect(written.trim().split('\n').toSorted()).toEqual([
+              'Example Domain',
+              'Example Domains',
+            ])
           }).pipe(Effect.scoped, Effect.provide(caseContext))
         }).pipe(Effect.scoped),
       { timeout: 300_000 },

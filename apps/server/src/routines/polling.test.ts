@@ -237,7 +237,22 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           yield* database.run(
             database
               .update(connections)
-              .set({ name: 'Renamed', status: 'needs-authorization' })
+              .set({ name: 'Renamed' })
+              .where(eq(connections.id, connected.connection.id)),
+          )
+          const input = {
+            routineId: RoutineId.make('test-routine'),
+            personId: ownerActor.person.id,
+            companyId: null,
+            watch,
+          }
+          yield* Ref.set(probe.calls, 0)
+          expect((yield* watcher.newItems(input)).items).toEqual([])
+          expect(yield* Ref.get(probe.calls)).toBe(1)
+          yield* database.run(
+            database
+              .update(connections)
+              .set({ status: 'needs-authorization' })
               .where(eq(connections.id, connected.connection.id)),
           )
           yield* Ref.set(probe.calls, 0)

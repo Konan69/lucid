@@ -149,33 +149,35 @@ layer(testDatabaseLayer)((it) => {
         answers: [answers[0], pick('Other'), answers[2], answers[3]],
       },
     ] satisfies readonly { readonly tag: string; readonly answers: AnswerInputRequest['answers'] }[]
-    for (const [index, scenario] of invalid.entries()) {
-      it.effect(
-        `refuses ${scenario.tag} case ${index + 1} through store and handler without writes`,
-        () =>
-          Effect.gen(function* () {
-            const context = yield* Layer.build(trustTestServices)
-            return yield* Effect.gen(function* () {
-              const test = yield* fixture()
-              const store = yield* InputStore
-              const input = yield* store.ask(test.vivid, questions)
-              const request = AnswerInputRequest.make({ id: input.id, answers: scenario.answers })
-              const before = yield* record(input.id)
-              const refused = yield* Effect.result(store.answer(test.personal, request))
-              if (!Result.isFailure(refused)) expect.fail('Invalid answers must be refused')
-              expect(refused.failure._tag).toBe(scenario.tag)
-              expect(refused.failure).toHaveProperty('id', input.id)
-              expect(yield* record(input.id)).toEqual(before)
-              const handled = yield* Effect.result(
-                inputHandlers.AnswerInput(request).pipe(signedIn(test.personal)),
-              )
-              expect(handled).toEqual(refused)
-              expect(yield* record(input.id)).toEqual(before)
-              expect(yield* Ref.get((yield* Observation).deliveries)).toEqual([])
-            }).pipe(Effect.scoped, Effect.provide(context))
-          }),
-      )
-    }
+    it.effect('refuses every invalid answer shape through store and handler without writes', () =>
+      Effect.gen(function* () {
+        for (const scenario of invalid) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const context = yield* Layer.build(trustTestServices)
+              return yield* Effect.gen(function* () {
+                const test = yield* fixture()
+                const store = yield* InputStore
+                const input = yield* store.ask(test.vivid, questions)
+                const request = AnswerInputRequest.make({ id: input.id, answers: scenario.answers })
+                const before = yield* record(input.id)
+                const refused = yield* Effect.result(store.answer(test.personal, request))
+                if (!Result.isFailure(refused)) expect.fail('Invalid answers must be refused')
+                expect(refused.failure._tag).toBe(scenario.tag)
+                expect(refused.failure).toHaveProperty('id', input.id)
+                expect(yield* record(input.id)).toEqual(before)
+                const handled = yield* Effect.result(
+                  inputHandlers.AnswerInput(request).pipe(signedIn(test.personal)),
+                )
+                expect(handled).toEqual(refused)
+                expect(yield* record(input.id)).toEqual(before)
+                expect(yield* Ref.get((yield* Observation).deliveries)).toEqual([])
+              }).pipe(Effect.scoped, Effect.provide(context))
+            }),
+          )
+        }
+      }),
+    )
 
     it.effect(
       'refuses surplus answers, then settles four valid answers once through the handler',

@@ -1,8 +1,9 @@
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
+import * as NodeNet from 'node:net'
 import * as NodePath from 'node:path'
-import { Effect } from 'effect'
+import { Effect, Predicate } from 'effect'
 import { connectionIdentity } from './link.ts'
 
 /** Where OpenSSH's server is on a Debian or Ubuntu machine; a suite that needs a peer is skipped
@@ -68,6 +69,26 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
     // The captured child and the group it leads, nothing found by a name.
     (started) => Effect.sync(() => endGroup(started)),
   )
+  // The fixture owns the TCP sockets. Disconnecting them models network loss without finding
+  // or signalling a session PID, and the listener remains available for the next opening.
+  const sockets = new Set<NodeNet.Socket>()
+  const disconnect = Effect.sync(() => {
+    for (const socket of sockets) socket.destroy()
+  })
+  const proxy = yield* Effect.acquireRelease(
+    Effect.callback<NodeNet.Server>((resume) => {
+      const server = NodeNet.createServer(forward(port, sockets))
+      server.listen(0, '127.0.0.1', () => resume(Effect.succeed(server)))
+      server.once('error', (error) => resume(Effect.die(error)))
+      return Effect.sync(() => {
+        if (!server.listening) server.close()
+      })
+    }),
+    (server) => disconnect.pipe(Effect.andThen(closeProxy(server))),
+  )
+  const proxyAddress = proxy.address()
+  if (proxyAddress === null || Predicate.isString(proxyAddress))
+    return yield* Effect.die('The SSH fixture did not acquire a TCP listener')
   const authorizedFile = NodePath.join(root, 'authorized')
   const authorize = (publicKey: string) => NodeFS.appendFileSync(authorizedFile, `${publicKey}\n`)
   // A pair of its own, let in as a provider lets a connection's key in.
@@ -95,7 +116,8 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
     }),
     home,
     host: '127.0.0.1',
-    port,
+    port: proxyAddress.port,
+    disconnect,
     user: NodeOS.userInfo().username,
     identity: key,
     hostKey: NodeFS.readFileSync(NodePath.join(root, 'host.pub'), 'utf8').trim(),
@@ -128,3 +150,25 @@ const freePort = Effect.callback<number>((resume) => {
   })
   server.on('close', () => resume(Effect.succeed(Number(text.trim()))))
 })
+
+/** Track the fixture-owned sockets so network loss can be requested without session PID discovery. */
+const forward = (port: number, sockets: Set<NodeNet.Socket>) => (incoming: NodeNet.Socket) => {
+  const outgoing = NodeNet.connect(port, '127.0.0.1')
+  const disconnect = () => {
+    incoming.destroy()
+    outgoing.destroy()
+  }
+  for (const socket of [incoming, outgoing]) {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+    socket.once('error', disconnect)
+  }
+  incoming.pipe(outgoing)
+  outgoing.pipe(incoming)
+}
+
+/** Closing the fixture listener waits for its captured sockets, all destroyed by its finalizer. */
+const closeProxy = (server: NodeNet.Server) =>
+  Effect.callback<void>((resume) => {
+    server.close(() => resume(Effect.void))
+  })

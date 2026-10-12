@@ -478,7 +478,16 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           const before = yield* Ref.get(probe.begins)
           const denied = yield* connectionHandlers
             .AddIntegration({ address: 'http://127.0.0.1/', name: 'Forbidden', shared: true })
-            .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(
+                ConnectionAddress,
+                ConnectionAddress.of({
+                  inspect: () => Effect.die('Forbidden sharing must not inspect an address'),
+                }),
+              ),
+              Effect.flip,
+            )
           expect(denied).toBeInstanceOf(Forbidden)
           expect(yield* Ref.get(probe.begins)).toBe(before)
         }),
@@ -580,6 +589,9 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               effect: 'read',
             }),
           ])
+          const [record] = yield* store.records(ownerActor)
+          if (record === undefined) expect.fail('Expected the owned read test account')
+          const inputsBefore = yield* Ref.get(probe.inputs)
           const test = () =>
             connectionHandlers
               .TestIntegration({ account: 'Records (Read test)' })
@@ -590,6 +602,9 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             tool: 'health',
             tools: ['delete', 'health'],
           })
+          expect((yield* Ref.get(probe.inputs)).slice(inputsBefore.length)).toEqual([
+            { references: record.references, tool: 'health', input: {} },
+          ])
           const checked = yield* Ref.get(probe.checked)
           expect(checked.at(-1)).toMatchObject({
             action: { effect: 'read' },

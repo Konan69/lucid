@@ -121,13 +121,22 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
   layer(testLayer, { excludeTestServices: true })((it) => {
     it.effect('uploads and deduplicates authenticated Mine bytes', () =>
       Effect.gen(function* () {
-        const { people, send } = yield* httpFixture()
+        const { people, store, send } = yield* httpFixture()
         const response = yield* send(uploadRequest(people.owner.token, 'Mine'))
         expect(response.status).toBe(201)
         const web = HttpServerResponse.toWeb(response)
         const body = yield* Effect.promise(() => web.text())
-        expect((yield* decodeUpload(body)).document.status).toBe('processing')
-        expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(200)
+        const first = (yield* decodeUpload(body)).document
+        expect(first.status).toBe('processing')
+        const again = yield* send(uploadRequest(people.owner.token, 'Mine'))
+        expect(again.status).toBe(200)
+        const duplicate = yield* decodeUpload(
+          yield* Effect.promise(() => HttpServerResponse.toWeb(again).text()),
+        )
+        expect(duplicate.document.id).toBe(first.id)
+        expect(
+          (yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents.map(({ id }) => id),
+        ).toEqual([first.id])
       }),
     )
     it.effect('keeps Mine bytes private even from another Member and an admin', () =>
@@ -136,7 +145,14 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
         expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(201)
         const mine = (yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents[0]
         if (mine === undefined) return yield* Effect.die('Uploaded Mine must exist')
-        expect((yield* send(download(mine.id, people.owner.token))).status).toBe(200)
+        const owned = yield* send(download(mine.id, people.owner.token))
+        expect(owned.status).toBe(200)
+        const body = HttpServerResponse.toWeb(owned)
+        expect(yield* Effect.promise(() => body.text())).toBe('private amethyst document')
+        expect(body.headers.get('content-type')).toContain('text/plain')
+        expect(body.headers.get('content-disposition')).toBe(
+          "inline; filename*=UTF-8''amethyst.txt",
+        )
         expect((yield* send(download(mine.id, people.reader.token))).status).toBe(404)
         expect((yield* send(download(mine.id, people.admin.token))).status).toBe(404)
         expect(
@@ -155,7 +171,14 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
         expect((yield* send(uploadRequest(people.owner.token, 'Company'))).status).toBe(201)
         const company = (yield* store.list(people.owner.actor, { shelf: 'Company' })).documents[0]
         if (company === undefined) return yield* Effect.die('Uploaded Company document must exist')
-        expect((yield* send(download(company.id, people.reader.token))).status).toBe(200)
+        const shared = yield* send(download(company.id, people.reader.token))
+        expect(shared.status).toBe(200)
+        const body = HttpServerResponse.toWeb(shared)
+        expect(yield* Effect.promise(() => body.text())).toBe('private amethyst document')
+        expect(body.headers.get('content-type')).toContain('text/plain')
+        expect(body.headers.get('content-disposition')).toBe(
+          "inline; filename*=UTF-8''amethyst.txt",
+        )
         return yield* Effect.void
       }),
     )

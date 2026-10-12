@@ -2,8 +2,8 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { AddIntegrationOutcome, ConnectionId, ConnectionState, SessionId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Logger, Option, Redacted, Ref } from 'effect'
+import { AddIntegrationOutcome, ConnectionState, SessionId, ToolOutcome } from '@vivid/contracts'
+import { ConfigProvider, Effect, Layer, Logger, Redacted, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
 import { executorLayer } from './executor.ts'
 import { connectionAddressLayer } from './address.ts'
@@ -12,7 +12,17 @@ import { connectionHandlers } from './handlers.ts'
 import { connectionTestLayer, fixture } from './testing.ts'
 import { auditLayer } from '../audit/record.ts'
 import { auditEntries } from '../audit/tables.ts'
+import { connections } from './tables.ts'
 import { Database } from '../database/client.ts'
+
+const decodeContent = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    content: Schema.Array(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String })),
+  }),
+)
+const decodeAccount = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ login: Schema.String, id: Schema.Int })),
+)
 
 const enabled =
   NodeProcess.env['VIVID_LIVE_GITHUB'] === '1' &&
@@ -51,6 +61,19 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
       'adds GitHub, completes the key card, discovers tools and isolates a second Person',
       () =>
         Effect.gen(function* () {
+          const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
+          const expectedLogin = NodeProcess.env['VIVID_TEST_GITHUB_LOGIN']
+          const expectedId = NodeProcess.env['VIVID_TEST_GITHUB_ACCOUNT_ID']
+          if (
+            token === undefined ||
+            expectedLogin === undefined ||
+            expectedId === undefined ||
+            !/^\d+$/u.test(expectedId)
+          )
+            expect.fail(
+              'Supply token authority and independently known GitHub login and numeric account id',
+            )
+
           const { ownerActor, personalActor, memberActor, threadId } = yield* fixture()
           const vivid = AuthState.Vivid({
             person: personalActor.person,
@@ -67,7 +90,6 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
             workspace: memberActor.workspace,
             threadId,
           })
-          const registered = yield* Ref.make<Option.Option<ConnectionId>>(Option.none())
           yield* Effect.gen(function* () {
             // Rebuild the store under the harness's live Executor and persisted audit authorities.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
@@ -75,12 +97,17 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
               const store = yield* ConnectionStore
               yield* Effect.addFinalizer(() =>
                 Effect.gen(function* () {
-                  const id = yield* Ref.get(registered)
-                  if (Option.isSome(id)) {
-                    const cleanup = yield* store.remove(ownerActor, id.value).pipe(Effect.exit)
+                  // Remove any saved card for this UUID-owned Person, even when Add lost its reply.
+                  const rows = yield* store.records(ownerActor)
+                  for (const row of rows) {
+                    const cleanup = yield* store.remove(ownerActor, row.id).pipe(Effect.exit)
                     expect(cleanup._tag).toBe('Success')
                   }
-                }),
+                }).pipe(
+                  Effect.catch((error) =>
+                    Effect.sync(() => expect.fail(`Cleanup failed: ${error._tag}`)),
+                  ),
+                ),
               )
               const result = yield* connectionHandlers
                 .AddIntegration({
@@ -91,12 +118,9 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                 .pipe(Effect.provideService(AuthContext, vivid))
               if (!AddIntegrationOutcome.guards.NeedsKey(result))
                 return expect.fail(`Expected NeedsKey, received ${result._tag}`)
-              yield* Ref.set(registered, Option.some(result.step.connection.id))
               expect(result.step.fields).toEqual([
                 { name: 'token', label: 'Personal access token' },
               ])
-              const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
-              if (token === undefined) return expect.fail('Supply test token authority')
               const completed = yield* connectionHandlers
                 .CompleteConnection({
                   id: result.step.connection.id,
@@ -108,6 +132,26 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                 .FindTools({ query: 'GitHub', limit: 100 })
                 .pipe(Effect.provideService(AuthContext, vivid))
               expect(found.tools.length).toBeGreaterThan(0)
+              const accountTool = found.tools.find((candidate) =>
+                /(?:^|\.)get_me$/u.test(candidate.name),
+              )
+              if (accountTool === undefined) expect.fail('Expected an authenticated account read')
+              const read = yield* connectionHandlers
+                .UseTool({
+                  connectionId: result.step.connection.id,
+                  tool: accountTool.name,
+                  input: {},
+                  summary: 'Read authenticated account',
+                  rationale: 'Verify the connected account',
+                })
+                .pipe(Effect.provideService(AuthContext, vivid))
+              if (!ToolOutcome.guards.Completed(read))
+                expect.fail('Authenticated read did not complete')
+              const response = yield* decodeContent(read.output)
+              const [text] = response.content
+              if (text === undefined) expect.fail('Expected account response text')
+              const account = yield* decodeAccount(text.text)
+              expect(account).toEqual({ login: expectedLogin, id: Number(expectedId) })
               const hidden = yield* connectionHandlers
                 .FindTools({ query: 'GitHub', limit: 100 })
                 .pipe(Effect.provideService(AuthContext, other))
@@ -131,6 +175,13 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                   .from(auditEntries)
                   .where(eq(auditEntries.personId, ownerActor.person.id)),
               )
+              const raw = yield* database.run(
+                database
+                  .select()
+                  .from(connections)
+                  .where(eq(connections.id, result.step.connection.id)),
+              )
+              expect(JSON.stringify(raw).includes(token)).toBe(false)
               expect(audit.length).toBeGreaterThan(0)
               expect(
                 JSON.stringify({ result, completed, found, records, audit }).includes(token),

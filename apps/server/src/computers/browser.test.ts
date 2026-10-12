@@ -3,7 +3,7 @@ import { Effect } from 'effect'
 import { validateAddress, validateKey } from './browser.js'
 
 describe('Computer boundary', () => {
-  it.effect('refuses local and non-web navigation before invoking a provider', () =>
+  it.effect('refuses local and non-web navigation at the application boundary', () =>
     Effect.gen(function* () {
       for (const address of [
         'file:///etc/passwd',

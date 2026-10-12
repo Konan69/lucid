@@ -25,6 +25,13 @@ describe.skipIf(!liveDecisionEnabled)('Gateway tool relevance', () => {
           'DeepWiki',
         ])
         expect(ordered).toHaveLength(20)
+        expect(new Set(ordered)).toEqual(new Set(liveTools.slice(0, 20)))
+        expect(
+          ordered
+            .slice(0, 3)
+            .map((tool) => tool.name)
+            .sort(),
+        ).toEqual(['ask_question', 'read_wiki_contents', 'read_wiki_structure'])
       }),
     )
   })

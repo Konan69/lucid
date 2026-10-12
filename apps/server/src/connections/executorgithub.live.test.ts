@@ -44,8 +44,8 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
               service: ServiceId.make(
                 entry === 'catalogue' ? 'curated/github-com-mcp' : 'github-personal-proof',
               ),
-              owner: ExecutorOwnerId.make('github-personal-proof'),
-              subject: 'github-personal-proof',
+              owner: ExecutorOwnerId.make(`github-personal-proof-${crypto.randomUUID()}`),
+              subject: `github-personal-proof-${crypto.randomUUID()}`,
               label: 'GitHub personal proof',
               returnAddress: 'https://vivid.example.test/api/connections/return',
             }
@@ -103,8 +103,8 @@ describe.skipIf(!enabled)('public MCP regression', () => {
           const step = yield* executor.add({
             connectionId: ConnectionId.make(crypto.randomUUID()),
             service: ServiceId.make('deepwiki-proof'),
-            owner: ExecutorOwnerId.make('deepwiki-proof'),
-            subject: 'deepwiki-proof',
+            owner: ExecutorOwnerId.make(`deepwiki-proof-${crypto.randomUUID()}`),
+            subject: `deepwiki-proof-${crypto.randomUUID()}`,
             label: 'DeepWiki',
             returnAddress: 'https://vivid.example.test/api/connections/return',
             source,

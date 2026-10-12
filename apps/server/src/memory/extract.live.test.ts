@@ -11,10 +11,12 @@ import {
 } from './extract.js'
 
 const enabled =
-  process.env['VIVID_TEST_HELIX_URL'] !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
+  process.env['VIVID_LIVE_MEMORY'] === '1' && process.env['EXPLABS_API_KEY'] !== undefined
 /** One real structured model call proves a short answer inherits its subject and stays private without Company intent. */
 describe.skipIf(!enabled)('Contextual memory extraction', () => {
-  layer(memoryExtractionLayer.pipe(Layer.provide(NodeHttpClient.layerUndici)))((it) => {
+  layer(memoryExtractionLayer.pipe(Layer.provide(NodeHttpClient.layerUndici)), {
+    excludeTestServices: true,
+  })((it) => {
     it.effect(
       'resolves a short answer into a durable private preference',
       () =>

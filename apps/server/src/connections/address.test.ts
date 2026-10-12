@@ -38,6 +38,8 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
     host: '127.0.0.1',
     port: 0,
   })
+  if (!NetAddress.isInetAddress(server.address)) expect.fail('Fixture did not allocate TCP')
+  const privateDestination = `http://127.0.0.1:${server.address.port}/private-target`
   const requests = yield* Ref.make<readonly string[]>([])
   const handler = Effect.fn('AddressTest.request')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
@@ -52,7 +54,7 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
     if (request.url === '/private')
       return HttpServerResponse.empty({
         status: 302,
-        headers: { location: 'http://127.0.0.1:55433/' },
+        headers: { location: privateDestination },
       })
     if (request.url === '/linked')
       return HttpServerResponse.text(
@@ -87,7 +89,7 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
     if (request.url === '/postprivate')
       return HttpServerResponse.empty({
         status: 307,
-        headers: { location: 'http://127.0.0.1:55433/' },
+        headers: { location: privateDestination },
       })
     const body = yield* request.json.pipe(Effect.flatMap(decodeJson))
     expect(body).toMatchObject({ method: 'initialize' })
@@ -240,6 +242,9 @@ describe('public integration addresses', () => {
           expect(yield* inspect('/postprivate').pipe(Effect.flip)).toMatchObject({
             reason: 'not a public web address',
           })
+          expect(
+            (yield* Ref.get(requests)).filter((request) => request.endsWith('/private-target')),
+          ).toEqual([])
           expect(yield* inspect('/spec').pipe(Effect.flip)).toEqual(
             new ExecutorSourceUnsupported({ source: 'OpenApi' }),
           )
@@ -272,7 +277,9 @@ describe('public integration addresses', () => {
           expect(yield* inspect('/private').pipe(Effect.flip)).toMatchObject({
             reason: 'not a public web address',
           })
-          expect(yield* Ref.get(requests)).not.toContain('GET /')
+          expect(
+            (yield* Ref.get(requests)).filter((request) => request.endsWith('/private-target')),
+          ).toEqual([])
           expect(yield* inspect('/docs').pipe(Effect.flip)).toMatchObject({
             reason: 'documentation page has no OpenAPI specification link',
           })

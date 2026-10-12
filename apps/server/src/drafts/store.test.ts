@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
-import { DraftPlace, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
+import { DraftPlace, DraftSaved, SaveDraftRequest, ThreadId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Deferred, Effect, Fiber, Layer, Queue, Result } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -369,17 +369,31 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
     it.effect('a Thread no longer visible is excluded before the draft list limit', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
-        const id = yield* thread(test.foreign)
         const database = yield* Database
-        yield* database.run(
-          database.update(threads).set({ audience: 'company' }).where(eq(threads.id, id)),
-        )
-        yield* save(test.member, DraftPlace.cases.InThread.make({ thread: id }), 'shared work')
-        expect((yield* current(test.member)).drafts).toHaveLength(1)
-        yield* database.run(
-          database.update(threads).set({ audience: 'private' }).where(eq(threads.id, id)),
-        )
-        expect((yield* current(test.member)).drafts).toEqual([])
+        if (!Workspace.guards.Company(test.member.actor.workspace)) expect.fail('Company required')
+        const visible = yield* thread(test.member)
+        const visiblePlace = DraftPlace.cases.InThread.make({ thread: visible })
+        yield* save(test.member, visiblePlace, 'older visible work')
+        // Seed legacy overflow directly: normal saves prune to fifty and would remove the
+        // older visible row before this read-side ordering regression could be exercised.
+        const hidden = yield* Effect.forEach(Array.from({ length: 51 }), () => thread(test.foreign))
+        for (const [index, id] of hidden.entries()) {
+          yield* database.run(
+            database.insert(drafts).values({
+              personId: test.member.actor.person.id,
+              companyId: test.member.actor.workspace.company.id,
+              place: 'InThread',
+              threadId: id,
+              text: 'unauthorized newer words',
+              revision: index + 2,
+              savedAt: at + index,
+              device: 'laptop',
+            }),
+          )
+        }
+        expect((yield* current(test.member)).drafts).toEqual([
+          expect.objectContaining({ place: visiblePlace, text: 'older visible work', revision: 1 }),
+        ])
       }).pipe(Effect.scoped),
     )
 

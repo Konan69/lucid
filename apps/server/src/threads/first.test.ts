@@ -313,27 +313,17 @@ layer(stores)((it) => {
         })
         const [delivery] = sent
         if (delivery === undefined) expect.fail('Expected runtime admission')
-        expect(delivery.body).toContain('Nothing has been said yet')
-        expect(delivery.body).toContain('Activate the first-conversation skill')
+        expect(yield* test.open(test.actor.workspace)).toEqual(
+          OpenFirstThreadResult.cases.Existing.make({ thread: result.thread }),
+        )
+        expect(yield* (yield* RunStore).list(result.thread)).toHaveLength(1)
+        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
         expect(
           JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
         ).not.toContain(test.actor.person.id)
         expect(
           JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
         ).not.toContain(result.thread)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('returns Existing on the second call without admitting another Run', () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        const first = yield* test.open(test.actor.workspace)
-        if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
-        expect(yield* test.open(test.actor.workspace)).toEqual(
-          OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }),
-        )
-        expect(yield* (yield* RunStore).list(first.thread)).toHaveLength(1)
-        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
       }).pipe(Effect.scoped),
     )
 

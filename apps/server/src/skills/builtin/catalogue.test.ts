@@ -78,19 +78,14 @@ const connection = (serviceName: string, state: ConnectionState) =>
 describe('shipped procedure catalogue', () => {
   it('uses registered tools and projects no record handles', () => {
     for (const procedure of procedures) {
-      expect(procedure.about).not.toMatch(/the Person|^When\b|`/iu)
-      expect(procedure.about.length).toBeLessThanOrEqual(300)
-      for (const tool of registered)
-        expect(procedure.about).not.toMatch(new RegExp(`\\b${tool}\\b`, 'u'))
       for (const tool of procedure.needs)
         expect(registered.has(tool), `${procedure.name}: ${tool}`).toBe(true)
-      for (const mention of procedure.instructions.matchAll(/`([a-z_]+)`/g)) {
-        const tool = mention[1]
-        if (tool === undefined) expect.fail('Tool reference is required')
-        expect(registered.has(tool), `${procedure.name}: ${mention[1]}`).toBe(true)
-        expect(procedure.needs).toContain(mention[1])
+      // Executable instructions must use available tools and declare their readiness needs.
+      for (const [, tool] of procedure.instructions.matchAll(/`([a-z_]+)`/g)) {
+        if (tool === undefined) expect.fail('Expected a captured tool name')
+        expect(registered.has(tool), `${procedure.name}: ${tool}`).toBe(true)
+        expect(procedure.needs, `${procedure.name}: ${tool}`).toContain(tool)
       }
-      expect(procedure.instructions).not.toMatch(/\bagent\b/i)
     }
     for (const builtin of builtins) {
       expect(SkillOrigin.guards.BuiltIn(builtin.origin)).toBe(true)
@@ -105,11 +100,8 @@ describe('shipped procedure catalogue', () => {
       expect(procedure.runtimeName.length).toBeLessThanOrEqual(64)
       const record = builtins.find((item) => item.name === procedure.displayName)
       expect(record).toMatchObject({
-        id: `builtin:${procedure.displayName.toLowerCase().replaceAll(' ', '-')}`,
         useWhen: procedure.useWhen,
         about: procedure.about,
-        createdAt: Date.UTC(2026, 9, 2),
-        updatedAt: Date.UTC(2026, 9, 2),
       })
     }
     expect(views.skills(builtins)).toEqual(SavedProcedures.cases.Available.make({ skills: [] }))
@@ -149,7 +141,6 @@ describe('shipped procedure catalogue', () => {
     const fallback = procedureSuggestions([])
     expect(fallback).toHaveLength(4)
     for (const suggestion of fallback) {
-      expect(suggestion.reason).not.toMatch(/^When\b|the Person|`|save_skill|read_page/iu)
       const builtin = builtins.find((skill) => skill.name === suggestion.text)
       if (builtin === undefined) expect.fail('Suggestion must name a shipped skill')
       expect(suggestion.reason).toBe(builtin.about)

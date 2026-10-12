@@ -179,27 +179,19 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
         }).pipe(Effect.scoped),
     )
 
-    it.effect('N4 a no-op Company handler returns the count without any announcement', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test.member, null)
-        const alreadyRead = yield* seed(test.member, at - 500)
-        const notices = yield* (yield* PgClient).listen(CHANNEL)
-        expect(
-          yield* notificationHandlers
-            .ReadNotifications({ ids: [alreadyRead] })
-            .pipe(signedIn(test.member)),
-        ).toEqual({ changed: 0, unreadCount: 1 })
-        yield* silent(notices)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('N5 a changed Company handler announces only the recipient', () =>
+    it.effect('Company handler no-ops stay silent and changes announce only the recipient', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
         const one = yield* seed(test.member, null)
         yield* seed(test.member, null)
         const notices = yield* (yield* PgClient).listen(CHANNEL)
+        const alreadyRead = yield* seed(test.member, at - 500)
+        expect(
+          yield* notificationHandlers
+            .ReadNotifications({ ids: [alreadyRead] })
+            .pipe(signedIn(test.member)),
+        ).toEqual({ changed: 0, unreadCount: 2 })
+        yield* silent(notices)
         expect(
           yield* notificationHandlers.ReadNotifications({ ids: [one] }).pipe(signedIn(test.member)),
         ).toEqual({ changed: 1, unreadCount: 1 })

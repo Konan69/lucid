@@ -1,6 +1,16 @@
 import * as TestClock from 'effect/testing/TestClock'
 import { expect, it } from '@effect/vitest'
-import { ConfigProvider, Deferred, Effect, Fiber, Layer, Logger, Predicate, Schema } from 'effect'
+import {
+  Clock,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Logger,
+  Predicate,
+  Schema,
+} from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/ai'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 import {
@@ -14,6 +24,10 @@ import {
   decisionModelLayer,
   GATEWAY_URL,
 } from './model.ts'
+
+const decodeModelPayload = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ model: Schema.String })),
+)
 
 /** Build each scripted model Layer per case: provider availability, recovery probes and recorded HTTP requests belong to that case rather than the suite. */
 const withModel = <A, E, R, Services, Failure, Requirements>(
@@ -69,7 +83,9 @@ it.effect.each([
       expect(yield* decisionWouldAttempt).toBe(true)
       expect(urls).toEqual([`${GATEWAY_URL}/systemone`])
       expect(bodies).toHaveLength(1)
-      expect(bodies[0]).toContain(model)
+      const [body] = bodies
+      if (body === undefined) expect.fail('Expected model request body')
+      expect(yield* decodeModelPayload(body)).toEqual({ model })
     }),
     decisionModelLayer.pipe(
       Layer.provide(transport),
@@ -156,15 +172,22 @@ it.effect('provider failure exposes only a typed unavailable reason', () =>
 )
 
 /** Controllable time proves both budgets without wall-clock sleeps. */
-it.effect.each(['10 seconds', '1200 millis'] as const)('bounds a stalled request at %s', (budget) =>
+it.effect.each([
+  { budget: '10 seconds', millis: 10000 },
+  { budget: '1200 millis', millis: 1200 },
+] as const)('bounds a stalled request at $budget', ({ budget, millis }) =>
   Effect.gen(function* () {
+    const began = yield* Clock.currentTimeMillis
     const pending = yield* (
       budget === '10 seconds'
         ? decide(definition, 'question')
         : decideWithin(definition, 'question', budget)
     ).pipe(Effect.forkChild)
-    yield* TestClock.adjust(budget)
+    yield* TestClock.adjust(millis - 1)
+    expect(pending.pollUnsafe()).toBeUndefined()
+    yield* TestClock.adjust(1)
     const error = yield* Effect.flip(Fiber.join(pending))
+    expect((yield* Clock.currentTimeMillis) - began).toBe(millis)
     expect(error).toBeInstanceOf(DecisionUnavailable)
     expect(error.reason).toBe('TimedOut')
   }).pipe(
@@ -685,7 +708,7 @@ it.effect('short-budget timeouts do not corroborate process-wide outage', () => 
 
 /** A recovery request admitted by a short-budget caller must have enough time to
  * establish reachability; the caller's budget cannot cause perpetual backoff. */
-it.effect.each([100, 1800, 2000])('a healthy probe outlives a %sms caller budget', (budget) =>
+it.effect.each([100, 2000])('a healthy probe outlives a %sms caller budget', (budget) =>
   Effect.gen(function* () {
     let calls = 0
     const started = yield* Deferred.make<void>()

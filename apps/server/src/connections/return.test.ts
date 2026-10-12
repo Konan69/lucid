@@ -116,6 +116,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
                         ).href,
                   )
                   const completed = yield* store.get(ownerActor, step.connection.id)
+                  expect(completed.status).toBe('ready')
                   const after = yield* Ref.get(remote.requests)
                   expect(
                     yield* store

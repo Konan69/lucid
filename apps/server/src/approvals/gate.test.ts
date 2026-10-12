@@ -124,7 +124,7 @@ layer(testDatabaseLayer)((it) => {
               const observed = yield* Observation
               yield* Ref.set(observed.review, review)
               const decision = yield* (yield* Gate).check(test.vivid, browserWrite, 'Ordinary')
-              expect(GateDecision.guards.ApprovalRequired(decision)).toBe(asks)
+              expect(decision._tag).toBe(asks ? 'ApprovalRequired' : 'Allowed')
               expect(yield* Ref.get(observed.reviewCalls)).toHaveLength(1)
             }).pipe(Effect.scoped, Effect.provide(context))
           }),
@@ -227,6 +227,11 @@ layer(testDatabaseLayer)((it) => {
             action: 'Update projects',
             decision: 'Allow',
             scope: RuleScope.cases.Personal.make({}),
+          })
+          yield* rules.create(test.owner, {
+            action: 'Ask before updating projects',
+            decision: 'Ask',
+            scope: RuleScope.cases.Company.make({}),
           })
           yield* rules.create(test.owner, {
             action: 'Never update projects',

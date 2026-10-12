@@ -99,6 +99,17 @@ layer(testDatabaseLayer)((it) => {
             ),
           )
           expect(listed.rules).toEqual([])
+          const rules = yield* RuleStore
+          const owned = yield* rules.create(test.personal, {
+            action: 'Ask before sending',
+            decision: 'Ask',
+            scope: RuleScope.cases.Personal.make({}),
+          })
+          const removed = yield* ruleHandlers
+            .DeleteRule({ id: owned.id })
+            .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+          expect(removed).toBeInstanceOf(Forbidden)
+          expect(yield* rules.list(test.personal)).toEqual([owned])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )

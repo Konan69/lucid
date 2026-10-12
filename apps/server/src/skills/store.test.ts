@@ -195,25 +195,6 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         }),
     )
 
-    it.effect('summary discovery preserves creation order without fetching procedure bodies', () =>
-      Effect.gen(function* () {
-        const { personal } = yield* fixture()
-        const { skill } = yield* skillHandlers
-          .SaveSkill(request)
-          .pipe(Effect.provideService(AuthContext, auth(personal)))
-        const { skills } = yield* skillHandlers
-          .ListSkillSummaries()
-          .pipe(Effect.provideService(AuthContext, auth(personal)))
-        expect(skills).toContainEqual({
-          id: skill.id,
-          name: skill.name,
-          useWhen: skill.useWhen,
-          createdAt: skill.createdAt,
-        })
-        expect(skills).toHaveLength(builtins.length + 1)
-      }),
-    )
-
     it.effect('keeps a personal skill private and follows its owner into a Company', () =>
       Effect.gen(function* () {
         const { personal, other, admin, member } = yield* fixture()

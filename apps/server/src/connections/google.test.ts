@@ -5,13 +5,7 @@ import { ConnectionId, ConnectionStep, ServiceAuthorization } from '@vivid/contr
 import { ServerConfig } from '../config.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { Executor, ExecutorOwnerId, ExecutorReferences, ExecutorStep } from './executor.ts'
-import {
-  GoogleState,
-  googleAppName,
-  googleFiles,
-  googleReturnPath,
-  googleServices,
-} from './google.ts'
+import { GoogleState, googleReturnPath, googleServices } from './google.ts'
 import { connectionReturnRoutes } from './return.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
@@ -124,9 +118,21 @@ describe('Google Integrations', () => {
           requests.filter((request) => request.path === `${method} ${hostedPrefix}${path}`)
         // One deploy for two Connections, and never a catalogue install: Executor's catalogue
         // cannot install an OpenAPI entry.
-        expect(sent('POST', '/apps/deploy').map((request) => request.body)).toEqual([
-          { name: googleAppName(gmail), files: googleFiles(gmail) },
+        const deployed = sent('POST', '/apps/deploy')
+        expect(deployed).toHaveLength(1)
+        const [deployment] = deployed
+        if (deployment === undefined) expect.fail('Expected Gmail deployment')
+        expect(deployment.body).toMatchObject({
+          name: expect.stringMatching(/^Vivid Gmail [0-9a-f]{16}$/u),
+        })
+        const source = JSON.stringify(deployment.body)
+        for (const required of [
+          'https://accounts.google.com/o/oauth2/v2/auth',
+          'https://oauth2.googleapis.com/token',
+          'https://mail.google.com/',
+          'https://www.googleapis.com/auth/gmail.settings.basic',
         ])
+          expect(source).toContain(required)
         expect(sent('POST', '/apps/install')).toHaveLength(0)
         // Executor is not asked whether a client is set up: Vivid sends its own on each start.
         expect(requests.filter((request) => request.path.includes('/providers/'))).toHaveLength(0)
@@ -234,6 +240,7 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
               'needs-authorization',
             )
             expect(yield* Ref.get(probe.signIns)).toBe(1)
+            expect((yield* store.get(ownerActor, second.connection.id)).status).toBe('ready')
             expect((yield* send(`state=${secondState}`)).headers.location).toBe(generic)
             expect(yield* Ref.get(probe.signIns)).toBe(1)
           })

@@ -1,15 +1,16 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
-import { Effect, Layer, Option, Stream } from 'effect'
-import { Person, PersonId, Workspace } from '@vivid/contracts'
+import { Effect, Layer, Option, Ref, Result, Stream } from 'effect'
+import { Person, PersonId, PushOutcome, Workspace } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { Changes } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { settingsTable } from '../settings/tables.ts'
 import { Notifier, notifierLayer } from './notifier.ts'
+import { Push } from '../push/delivery.ts'
 import { silentPushLayer } from '../push/testing.ts'
 import { NotificationStore, notificationStoreLayer } from './store.ts'
 
@@ -58,8 +59,8 @@ const fixture = Effect.fn('NotificationsTest.fixture')(function* () {
         ),
       )
       .pipe(
-        Effect.tapError((error) => Effect.logError('Notification fixture cleanup failed', error)),
-        Effect.ignore,
+        Effect.result,
+        Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
       ),
   )
   for (const person of people)
@@ -71,15 +72,32 @@ const fixture = Effect.fn('NotificationsTest.fixture')(function* () {
         emailVerified: true,
       }),
     )
-  return { database, owner, other }
+  const published = yield* Ref.make<ReadonlyArray<ReadonlyArray<Topic>>>([])
+  const pushed = yield* Ref.make<ReadonlyArray<Parameters<Push['Service']['deliver']>>>([])
+  const recorded = notifierLayer.pipe(
+    Layer.provide([
+      Layer.succeed(Database, database),
+      Layer.mock(Changes, {
+        publish: (topics) => Ref.update(published, (receipts) => [...receipts, topics]),
+      }),
+      Layer.mock(Push, {
+        deliver: (...input) =>
+          Ref.update(pushed, (receipts) => [...receipts, input]).pipe(
+            Effect.as(PushOutcome.cases.NoTargets.make({})),
+          ),
+      }),
+    ]),
+  )
+  const context = yield* Layer.build(Layer.fresh(recorded))
+  const notifier = yield* Notifier.pipe(Effect.provideContext(context))
+  return { database, owner, other, notifier, published, pushed }
 })
 
 describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
   layer(testLayer)((it) => {
     it.effect('suppresses opted-out notices and conceals other recipients from list and read', () =>
       Effect.gen(function* () {
-        const { database, owner, other } = yield* fixture()
-        const notifier = yield* Notifier
+        const { database, owner, other, notifier, published, pushed } = yield* fixture()
         const store = yield* NotificationStore
         yield* database.run(
           database.insert(settingsTable).values({ personId: owner.person.id, notify: false }),
@@ -94,6 +112,8 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
         }
         yield* notifier.notify(notice)
         expect((yield* store.list(owner)).notifications).toEqual([])
+        expect(yield* Ref.get(published)).toEqual([])
+        expect(yield* Ref.get(pushed)).toEqual([])
         yield* database.run(
           database
             .update(settingsTable)
@@ -103,6 +123,10 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
         yield* notifier.notify(notice)
         const own = yield* store.list(owner)
         expect(own.unreadCount).toBe(1)
+        const [stored] = own.notifications
+        if (stored === undefined) expect.fail('Expected the visible notice')
+        expect(yield* Ref.get(published)).toEqual([[Topic.person(owner.person.id)]])
+        expect(yield* Ref.get(pushed)).toEqual([[owner.person.id, stored.id]])
         expect(own.notifications[0]).toMatchObject({ kind: 'needs-you', title: notice.title })
         expect((yield* store.list(other)).notifications).toEqual([])
         expect(yield* store.read(other, { ids: own.notifications.map((item) => item.id) })).toEqual(

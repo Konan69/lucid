@@ -212,36 +212,6 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
         }).pipe(Effect.scoped),
     )
   })
-  layer(testLayer)('isolated clock 2', (it) => {
-    it.effect(
-      'P2 hidden selected reads are silent and mark-all announces only its visible change',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* fixture()
-          const actor = test.actor(test.ben)
-          const id = yield* seedThread(test, 'people', test.company.id, [test.ben.id])
-          const shared = yield* seedNotice(actor, id, 'shared', 1)
-          yield* seedNotice(actor, id, 'finished', 2)
-          const unrelated = yield* seedNotice(actor, null, 'finished', 3)
-          yield* (yield* ThreadStore).share(
-            test.creator.id,
-            id,
-            ShareThreadRequest.cases.Private.make({}),
-          )
-          const store = yield* NotificationStore
-          yield* TestClock.setTime(at)
-          const receipts = yield* (yield* PgClient).listen(CHANNEL)
-          expect(yield* store.read(actor, { ids: [shared.id] })).toEqual({
-            changed: 0,
-            unreadCount: 1,
-          })
-          yield* silent(receipts)
-          expect(yield* store.read(actor, {})).toEqual({ changed: 1, unreadCount: 0 })
-          yield* payload(receipts, [Topic.person(test.ben.id)])
-          yield* shown(actor, [Notification.make({ ...unrelated, readAt: at })], 0)
-        }).pipe(Effect.scoped),
-    )
-  })
   layer(testLayer)('isolated clock 3', (it) => {
     it.effect(
       'P3 re-sharing returns hidden notices unread after selective and mark-all reads',
@@ -257,8 +227,14 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           const store = yield* NotificationStore
           yield* TestClock.setTime(at)
           yield* threadStore.share(test.creator.id, id, ShareThreadRequest.cases.Private.make({}))
-          yield* store.read(actor, { ids: [shared.id] })
-          yield* store.read(actor, {})
+          const receipts = yield* (yield* PgClient).listen(CHANNEL)
+          expect(yield* store.read(actor, { ids: [shared.id] })).toEqual({
+            changed: 0,
+            unreadCount: 1,
+          })
+          yield* silent(receipts)
+          expect(yield* store.read(actor, {})).toEqual({ changed: 1, unreadCount: 0 })
+          yield* payload(receipts, [Topic.person(test.ben.id)])
           const observation = yield* observing(
             [Topic.person(test.ben.id), Topic.company(test.company.id)],
             store.list(actor),
@@ -324,23 +300,14 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
         const older = yield* Effect.forEach([1, 2, 3], (createdAt) =>
           seedNotice(actor, null, 'finished', createdAt),
         )
-        for (let index = 0; index < 60; index += 1)
-          yield* seedNotice(actor, id, 'finished', 100 + index)
+        const hidden = yield* Effect.forEach(
+          Array.from({ length: 60 }, (_, index) => 100 + index),
+          (createdAt) => seedNotice(actor, id, 'finished', createdAt),
+        )
+        expect(
+          yield* (yield* NotificationStore).read(actor, { ids: hidden.map((notice) => notice.id) }),
+        ).toEqual({ changed: 0, unreadCount: 3 })
         yield* shown(actor, older.toReversed(), 3)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('P7 an owner role cannot read or mark another Member private Thread notice', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const actor = test.actor(test.ben)
-        const id = yield* seedThread(test, 'private', test.company.id, [])
-        const notice = yield* seedNotice(actor, id, 'finished', 1)
-        yield* shown(actor, [], 0)
-        expect(yield* (yield* NotificationStore).read(actor, { ids: [notice.id] })).toEqual({
-          changed: 0,
-          unreadCount: 0,
-        })
       }).pipe(Effect.scoped),
     )
 

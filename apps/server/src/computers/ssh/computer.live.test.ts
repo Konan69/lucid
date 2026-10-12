@@ -2,34 +2,128 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
 import { expect, layer } from '@effect/vitest'
-import { Duration, Effect, Fiber, Option, Ref, Schema, Stream } from 'effect'
+import { Duration, Effect, Fiber, Layer, Option, Ref, Stream } from 'effect'
 import { machineLinks } from '../boat/shell.ts'
-import { ProviderId } from '../boat/protocol.ts'
-import { active } from '../boat/state.ts'
-import { transport } from '../boat/transport.ts'
+import { proofComputer } from '../tests/proof.ts'
+import { testDatabaseConfigured, testDatabaseLayer } from '../../database/testdb.ts'
 import { loadRunner } from '../../code/computer.ts'
 import { decodeWorker, encodeParent, ParentMessage, WorkerMessage } from '../../code/protocol.ts'
 import { MachineKey } from '../machine.ts'
 import { KEY_TAG } from './link.ts'
 
 /**
- * The SSH step on a real Computer: Boat's own `sshkey` call, the address it answers, the host key
- * it reports, and the machine's real shell, files and authorized keys.
- *
- * It names one existing machine (`VIVID_LIVE_COMPUTER_MACHINE`) and only uses it: it refuses to
- * run unless Boat says the machine is already running, so it wakes, stops, creates and deletes
- * nothing, and it binds no Person. What it leaves is nothing: its files and its own key line are
- * removed at the end. It does remove the key lines of Vivid's earlier connections, as every new
- * connection does; a server that holds a connection to the machine is not affected by that.
- *
- * It is the transport on a real machine, not the product: no Thread, no model, no store.
+ * Real provider SSH authorization, host keys, files, cancellation and runner frames, on a
+ * machine this proof creates from the frozen Computer template. Its unique create receipt is
+ * the deletion authority; configured adoption targets are rejected before any guest/SSH work.
+ * Each scenario owns its resource, binding and pre-registered proof-directory cleanup. Destroying
+ * that disposable resource removes guest keys; teardown never prunes arbitrary KEY_TAG lines.
  */
 const enabled =
   NodeProcess.env.VIVID_LIVE_COMPUTER_SSH === '1' &&
   Object.hasOwn(NodeProcess.env, 'VIVID_BOAT_API_KEY') &&
-  Object.hasOwn(NodeProcess.env, 'VIVID_LIVE_COMPUTER_MACHINE')
+  testDatabaseConfigured
+const dependencies = Layer.mergeAll(NodeHttpClient.layerUndici, testDatabaseLayer)
+type Operations = ReturnType<ReturnType<typeof machineLinks>['operations']>
 
-const decodeMachine = Schema.decodeUnknownEffect(ProviderId)
+/** Register directory cleanup before the first put/mkdir; failure remains a failed live proof. */
+const proofDirectory = Effect.fn('LiveComputer.directory')(function* (
+  operations: Operations,
+  key: MachineKey,
+) {
+  const proof = `/home/user/vivid-proof-${NodeCrypto.randomUUID()}`
+  yield* Effect.addFinalizer(() =>
+    operations
+      .run({
+        key,
+        command: `rm -rf -- ${proof} && test ! -e ${proof}`,
+        directory: '/home/user',
+        timeoutSeconds: 30,
+      })
+      .pipe(
+        Effect.tap((receipt) =>
+          Effect.sync(() =>
+            expect(receipt, 'Remove only this proof directory').toMatchObject({
+              exitCode: 0,
+              timedOut: false,
+            }),
+          ),
+        ),
+        Effect.asVoid,
+        Effect.timeout('40 seconds'),
+        Effect.interruptible,
+        Effect.catch(() => Effect.sync(() => expect.fail('SSH proof directory cleanup failed'))),
+      ),
+  )
+  return proof
+})
+
+/**
+ * The command and its child inherit the lifetime pipe. A second channel blocks on the readiness
+ * pipe, then interruption must release the lifetime writer: EOF proves no child retains it.
+ * FIFO open/read are kernel waits, replacing the old file/kill busy loops and sleeping worker.
+ */
+const cancelled = Effect.fn('LiveComputer.cancelled')(function* (
+  operations: Operations,
+  key: MachineKey,
+  proof: string,
+) {
+  const shell = (command: string) =>
+    operations.run({
+      key,
+      command,
+      directory: proof,
+      timeoutSeconds: 30,
+    })
+  expect(yield* shell('mkfifo alive started hold')).toMatchObject({ exitCode: 0, timedOut: false })
+  const ended = yield* shell('cat alive; printf "gone\n"').pipe(Effect.forkScoped)
+  const running = yield* operations
+    .run({
+      key,
+      command: `bash -c 'exec 3>alive; cat <hold & child=$!; printf "ready\n" >started; wait "$child"' & wait`,
+      directory: proof,
+      timeoutSeconds: 600,
+    })
+    .pipe(Effect.forkScoped)
+  const ready = yield* shell('read -r status <started; test "$status" = ready && printf "ready\n"')
+  expect(ready).toMatchObject({ exitCode: 0, timedOut: false, stdout: 'ready\n' })
+  yield* Fiber.interrupt(running)
+  const gone = yield* measured('cancelled command and child release their pipe', Fiber.join(ended))
+  expect(gone).toMatchObject({ exitCode: 0, timedOut: false, stdout: 'gone\n' })
+})
+
+/** A deadline must terminate both lifetime writers, not merely return timedOut to the caller. */
+const deadline = Effect.fn('LiveComputer.deadline')(function* (
+  operations: Operations,
+  key: MachineKey,
+  proof: string,
+) {
+  const ended = yield* operations
+    .run({
+      key,
+      command: 'cat alive; printf "gone\n"',
+      directory: proof,
+      timeoutSeconds: 30,
+    })
+    .pipe(Effect.forkScoped)
+  const running = yield* operations
+    .run({
+      key,
+      command: `bash -c 'exec 3>alive; cat <hold & child=$!; printf "ready\n" >started; wait "$child"' & wait`,
+      directory: proof,
+      timeoutSeconds: 3,
+    })
+    .pipe(Effect.forkScoped)
+  const ready = yield* operations.run({
+    key,
+    command: 'read -r status <started; test "$status" = ready && printf "ready\n"',
+    directory: proof,
+    timeoutSeconds: 30,
+  })
+  expect(ready).toMatchObject({ exitCode: 0, timedOut: false, stdout: 'ready\n' })
+  const late = yield* Fiber.join(running)
+  expect(late).toMatchObject({ exitCode: null, timedOut: true })
+  expect(yield* Fiber.join(ended)).toMatchObject({ exitCode: 0, timedOut: false, stdout: 'gone\n' })
+})
 
 /** Only the step and how long it took are printed; never output of the machine or a key. */
 const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
@@ -42,23 +136,19 @@ const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
     }),
   )
 
-layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 })((it) => {
+layer(dependencies, { excludeTestServices: true, timeout: 180_000 })((it) => {
   it.effect.skipIf(!enabled)(
     'runs, writes, reads and cancels on a real Computer, with a key of its own for each opening',
     () =>
       Effect.gen(function* () {
-        const api = yield* transport()
-        const id = yield* decodeMachine(NodeProcess.env.VIVID_LIVE_COMPUTER_MACHINE)
-        const record = (yield* api.get(id)).sandbox
-        if (!active(record.state))
-          expect.fail('The Computer is not running; this proof wakes nothing')
         const key = MachineKey.make(`live-${NodeCrypto.randomUUID()}`)
+        const { api, id } = yield* proofComputer(key)
         const connections = machineLinks(api)
         yield* Effect.addFinalizer(() => connections.close)
-        const { run, read, put } = connections.operations(() => Effect.succeed({ id }))
+        const operations = connections.operations(() => Effect.succeed({ id }))
         const shell = (command: string) =>
-          run({ key, command, directory: '/home/user', timeoutSeconds: 30 })
-        const proof = `/home/user/vivid-proof-${NodeCrypto.randomUUID()}`
+          operations.run({ key, command, directory: '/home/user', timeoutSeconds: 30 })
+        const proof = yield* proofDirectory(operations, key)
         /** The machine's key lines as counts and this connection's key, never the lines themselves. */
         const keys = Effect.fn('LiveComputer.keys')(function* () {
           const listed = yield* shell(
@@ -80,43 +170,32 @@ layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 
         const text = `written ${proof}\n`
         yield* measured(
           'put a file in a new directory',
-          put({ key, path: `${proof}/notes/today.txt`, content: new TextEncoder().encode(text) }),
+          operations.put({
+            key,
+            path: `${proof}/notes/today.txt`,
+            content: new TextEncoder().encode(text),
+          }),
         )
         const back = yield* measured(
           'read it back',
-          read({ key, path: `${proof}/notes/today.txt` }),
+          operations.read({ key, path: `${proof}/notes/today.txt` }),
         )
         expect(new TextDecoder().decode(back)).toBe(text)
         const seen = yield* shell(`wc -c < ${proof}/notes/today.txt`)
         expect(Number(seen.stdout.trim())).toBe(text.length)
         const big = NodeCrypto.randomBytes(262_144)
-        yield* measured('put 256 KB', put({ key, path: `${proof}/big.bin`, content: big }))
-        const bigBack = yield* measured('read 256 KB', read({ key, path: `${proof}/big.bin` }))
+        yield* measured(
+          'put 256 KB',
+          operations.put({ key, path: `${proof}/big.bin`, content: big }),
+        )
+        const bigBack = yield* measured(
+          'read 256 KB',
+          operations.read({ key, path: `${proof}/big.bin` }),
+        )
         expect(Buffer.from(bigBack).equals(big)).toBe(true)
 
-        // A command the caller stops waiting for is ended on the machine, with its child.
-        const running = yield* Effect.forkChild(
-          run({
-            key,
-            command: `sleep 300 & echo $! > ${proof}/pid.part; mv ${proof}/pid.part ${proof}/pid; wait`,
-            directory: '/home/user',
-            timeoutSeconds: 600,
-          }),
-        )
-        yield* shell(`until [ -f ${proof}/pid ]; do :; done`)
-        yield* Fiber.interrupt(running)
-        const gone = yield* measured(
-          'cancelled command gone',
-          shell(`while kill -0 $(cat ${proof}/pid) 2>/dev/null; do :; done; echo gone`),
-        )
-        expect(gone.stdout.trim()).toBe('gone')
-        // And one that passes its deadline.
-        const late = yield* shell('true').pipe(
-          Effect.andThen(
-            run({ key, command: 'sleep 30', directory: '/home/user', timeoutSeconds: 1 }),
-          ),
-        )
-        expect(late).toMatchObject({ exitCode: null, timedOut: true })
+        yield* cancelled(operations, key, proof)
+        yield* deadline(operations, key, proof)
 
         // The machine stops for Vivid's purposes: the next command is a new opening with a new key,
         // and the line of the opening before it is gone. Lines that are not Vivid's are untouched.
@@ -127,11 +206,7 @@ layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 
         expect(after.digest).not.toBe(before.digest)
         expect(after.others).toBe(before.others)
 
-        // Leave nothing: the proof's files, then this opening's own key line.
-        const cleaned = yield* shell(
-          `rm -rf ${proof} && sed -i '/ ${KEY_TAG}$/d' .ssh/authorized_keys && grep -c ' ${KEY_TAG}$' .ssh/authorized_keys; test ! -e ${proof} && echo clean`,
-        )
-        expect(cleaned.stdout.trim().split('\n')).toEqual(['0', 'clean'])
+        // Scoped directory/connection finalizers run before destruction of this owned machine.
       }).pipe(Effect.scoped),
     180_000,
   )
@@ -147,25 +222,21 @@ layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 
     'runs a program on a real Computer and answers its call over the SSH channel',
     () =>
       Effect.gen(function* () {
-        const api = yield* transport()
-        const id = yield* decodeMachine(NodeProcess.env.VIVID_LIVE_COMPUTER_MACHINE)
-        const record = (yield* api.get(id)).sandbox
-        if (!active(record.state))
-          expect.fail('The Computer is not running; this proof wakes nothing')
         const key = MachineKey.make(`live-${NodeCrypto.randomUUID()}`)
+        const { api, id } = yield* proofComputer(key)
         const connections = machineLinks(api)
         yield* Effect.addFinalizer(() => connections.close)
-        const { run, put, converse } = connections.operations(() => Effect.succeed({ id }))
-        const proof = `/home/user/vivid-proof-${NodeCrypto.randomUUID()}`
+        const operations = connections.operations(() => Effect.succeed({ id }))
+        const proof = yield* proofDirectory(operations, key)
         const runner = yield* loadRunner
-        yield* put({
+        yield* operations.put({
           key,
           path: `${proof}/runner.mjs`,
           content: new TextEncoder().encode(runner.text),
         })
         const spoken = yield* measured(
           'start the runner',
-          converse({
+          operations.converse({
             key,
             command: `exec node ${proof}/runner.mjs 32768 8192 100 262144`,
             directory: proof,
@@ -205,14 +276,7 @@ return {note: await files.readFile("note.txt", "utf8"), platform: process.platfo
           }),
         )
         expect(yield* spoken.ended).toEqual({ exitCode: 0, timedOut: false })
-        // Leave nothing: the proof's files, then this opening's own key line.
-        const cleaned = yield* run({
-          key,
-          command: `rm -rf ${proof} && sed -i '/ ${KEY_TAG}$/d' .ssh/authorized_keys; test ! -e ${proof} && echo clean`,
-          directory: '/home/user',
-          timeoutSeconds: 30,
-        })
-        expect(cleaned.stdout.trim()).toBe('clean')
+        // Scoped cleanup also runs when runner assertions fail or this case is interrupted.
       }).pipe(Effect.scoped),
     180_000,
   )

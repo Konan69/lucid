@@ -94,6 +94,7 @@ describe('Photon Stable enrolment protocol', () => {
           const caseContext = yield* Layer.build(layer)
           return yield* Effect.gen(function* () {
             const enrolment = yield* ChannelProvider
+            expect(enrolment.channels).toEqual(['iMessage'])
             expect(yield* enrolment.enrol('iMessage', address)).toEqual({
               id: 'enrolled-person',
               textTo: '+12025550100',
@@ -157,34 +158,6 @@ describe('Photon Stable enrolment protocol', () => {
           ChannelEnrolmentId.make('deleted-person'),
         )
       }).pipe(Effect.scoped),
-    )
-  })
-
-  layer(
-    photonLayer.pipe(
-      Layer.provide(transport(200, success)),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            VIVID_PHOTON_PROJECT_ID: 'test-project',
-            VIVID_PHOTON_PROJECT_SECRET: 'test-secret',
-          }),
-        ),
-      ),
-    ),
-  )((it) => {
-    it.effect(
-      'both credentials configure iMessage without a global number or opening the Spectrum stream',
-      () =>
-        Effect.gen(function* () {
-          const provider = yield* ChannelProvider
-          expect(provider.channels.includes('iMessage')).toBe(true)
-          expect(provider.channels.includes('WhatsApp')).toBe(false)
-          expect(yield* provider.enrol('iMessage', address)).toEqual({
-            id: 'enrolled-person',
-            textTo: '+12025550100',
-          })
-        }).pipe(Effect.scoped),
     )
   })
 })

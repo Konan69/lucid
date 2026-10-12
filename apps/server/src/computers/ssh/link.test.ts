@@ -1,4 +1,5 @@
 import * as NodeFS from 'node:fs'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
 import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from 'effect'
@@ -55,6 +56,7 @@ it.live.skipIf(!peerAvailable)(
       const picture = Uint8Array.from({ length: 70_000 }, (_, index) => (index * 7) % 256)
       const path = NodePath.join(server.home, 'picture.bin')
       yield* link.put(path, picture)
+      expect(NodeFS.readFileSync(path).equals(Buffer.from(picture))).toBe(true)
       expect(Buffer.from(yield* link.read(path)).equals(Buffer.from(picture))).toBe(true)
     }).pipe(Effect.scoped),
   30_000,
@@ -77,41 +79,47 @@ it.live.skipIf(!peerAvailable)(
   30_000,
 )
 
-/**
- * Ends the connection from the machine's side, as a machine that stops does: the command kills
- * the server process of its own session (its shell's parent's parent), found by its own ancestry.
- * Its end is therefore never heard.
- */
-const hangUp = (link: Link, home: string) =>
-  Effect.flip(
-    link.run({
-      command: 'kill -KILL $(ps -o ppid= -p $PPID)',
-      directory: home,
-      timeoutSeconds: 20,
-    }),
-  )
+/** File creation is the worker's receipt. Watch before reading so a fast writer cannot race it. */
+const created = (path: string) =>
+  Effect.callback<void>((resume) => {
+    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
+      if (NodeFS.existsSync(path)) resume(Effect.void)
+    })
+    watcher.once('error', (error) => resume(Effect.die(error)))
+    if (NodeFS.existsSync(path)) resume(Effect.void)
+    return Effect.sync(() => watcher.close())
+  })
 
-/** Asks the machine itself until the process is gone; the loop is the machine's, not the test's. */
-const gone = (pid: string) => `while kill -0 ${pid} 2>/dev/null; do :; done; echo gone`
+/** A pipe stays open while either the command or its child lives. EOF proves both released it. */
+const lifetime = Effect.fn('LinkTest.lifetime')(function* (home: string, link: Link) {
+  const path = NodePath.join(home, 'alive')
+  NodeChildProcess.execFileSync('mkfifo', [path])
+  const ended = yield* link
+    .run({ command: 'cat alive; echo gone', directory: home, timeoutSeconds: 20 })
+    .pipe(Effect.forkScoped)
+  return ended
+})
+
+const heldCommand = `bash -c 'exec 3>alive; sleep 300 & child=$!; touch started; wait "$child"' & wait`
 
 it.live.skipIf(!peerAvailable)(
   'ends a command and its children at the deadline',
   () =>
     Effect.gen(function* () {
       const { server, link } = yield* connected()
-      const run = yield* link.run({
-        command: 'echo started; sleep 300 & echo $! > pid; wait',
-        directory: server.home,
-        timeoutSeconds: 1,
-      })
+      const ended = yield* lifetime(server.home, link)
+      const running = yield* link
+        .run({
+          command: heldCommand,
+          directory: server.home,
+          timeoutSeconds: 3,
+        })
+        .pipe(Effect.forkScoped)
+      // The child exists and the lifetime pipe is open before waiting for its deadline.
+      yield* created(NodePath.join(server.home, 'started'))
+      const run = yield* Fiber.join(running)
       expect(run).toMatchObject({ exitCode: null, timedOut: true })
-      expect(run.stdout.trim()).toBe('started')
-      const pid = NodeFS.readFileSync(NodePath.join(server.home, 'pid'), 'utf8').trim()
-      const after = yield* link.run({
-        command: gone(pid),
-        directory: server.home,
-        timeoutSeconds: 20,
-      })
+      const after = yield* Fiber.join(ended)
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
   40_000,
@@ -122,27 +130,17 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const { server, link } = yield* connected()
-      const pidFile = NodePath.join(server.home, 'pid')
+      const ended = yield* lifetime(server.home, link)
       const running = yield* Effect.forkChild(
         link.run({
-          command: 'sleep 300 & echo $! > pid.part; mv pid.part pid; wait',
+          command: heldCommand,
           directory: server.home,
           timeoutSeconds: 600,
         }),
       )
-      // The command says it started by making the file; wait on the machine for that.
-      yield* link.run({
-        command: 'until [ -f pid ]; do :; done',
-        directory: server.home,
-        timeoutSeconds: 20,
-      })
+      yield* created(NodePath.join(server.home, 'started'))
       yield* Fiber.interrupt(running)
-      const pid = NodeFS.readFileSync(pidFile, 'utf8').trim()
-      const after = yield* link.run({
-        command: gone(pid),
-        directory: server.home,
-        timeoutSeconds: 20,
-      })
+      const after = yield* Fiber.join(ended)
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
   40_000,
@@ -190,12 +188,8 @@ it.live.skipIf(!peerAvailable)(
           }),
         ),
       )
-      yield* link.run({
-        command: 'until [ -f started ]; do :; done',
-        directory: server.home,
-        timeoutSeconds: 20,
-      })
-      expect(yield* hangUp(link, server.home)).toBeInstanceOf(LinkRunLost)
+      yield* created(NodePath.join(server.home, 'started'))
+      yield* server.disconnect
       yield* server.end
       expect(yield* Fiber.join(running)).toBeInstanceOf(LinkRunLost)
       expect(link.alive()).toBe(false)
@@ -225,7 +219,10 @@ it.live.skipIf(!peerAvailable)(
       const one = yield* held.get('machine', locate)
       expect(yield* held.get('machine', locate)).toBe(one)
       expect(yield* Ref.get(located)).toBe(1)
-      yield* hangUp(one, first.home)
+      yield* first.disconnect
+      expect(
+        yield* Effect.flip(one.run({ command: 'true', directory: first.home, timeoutSeconds: 10 })),
+      ).toBeInstanceOf(LinkRunLost)
       yield* first.end
       const two = yield* held.get('machine', locate)
       expect(two).not.toBe(one)
@@ -315,7 +312,8 @@ it.live.skipIf(!peerAvailable)(
       const located = yield* Ref.make(0)
       const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
       const old = yield* held.get('machine', locate)
-      yield* hangUp(old, server.home)
+      yield* server.disconnect
+      yield* Effect.flip(old.run({ command: 'true', directory: server.home, timeoutSeconds: 10 }))
       const fresh = yield* held.get('machine', locate)
       expect(fresh).not.toBe(old)
       // A second call that was on the old connection reports its loss only now.
@@ -377,7 +375,8 @@ it.live.skipIf(!peerAvailable)(
       const refused = yield* Effect.flip(
         link.put(NodePath.join(server.home, 'taken/inside/file.txt'), bytes('x')),
       )
-      expect(refused).toBeInstanceOf(LinkFileRefused)
+      if (!(refused instanceof LinkFileRefused)) expect.fail('Expected a file refusal')
+      expect(refused.reason).toBe('other')
     }).pipe(Effect.scoped),
   30_000,
 )
@@ -493,25 +492,20 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const { server, link } = yield* connected()
+      const ended = yield* lifetime(server.home, link)
       const scope = yield* Scope.make()
       const spoken = yield* link
         .converse({
           // Starts something that would run for ten minutes, says which process it is, and waits.
-          command: 'sleep 600 & echo $!; wait',
+          command: `echo started; ${heldCommand}`,
           directory: server.home,
           timeoutSeconds: 900,
         })
         .pipe(Scope.provide(scope))
-      const first = yield* Stream.runHead(spoken.output)
-      const pid = Option.getOrElse(first, () => '').trim()
-      expect(pid).toMatch(/^\d+$/u)
+      expect(yield* Stream.runHead(spoken.output)).toEqual(Option.some('started\n'))
+      yield* created(NodePath.join(server.home, 'started'))
       yield* Scope.close(scope, Exit.void)
-      // The machine signalled the command's whole group: what it started is gone as well.
-      const after = yield* link.run({
-        command: gone(pid),
-        directory: server.home,
-        timeoutSeconds: 20,
-      })
+      const after = yield* Fiber.join(ended)
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
   30_000,

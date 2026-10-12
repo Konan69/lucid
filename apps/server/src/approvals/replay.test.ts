@@ -5,7 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Queue, Ref, Schem
 import * as TestClock from 'effect/testing/TestClock'
 import { Message } from '../observability/messages.ts'
 import { refusalLogs } from '../observability/testlogger.ts'
-import { Database, returned } from '../database/client.ts'
+import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { DeliverySpeaker } from '../threads/conversation.ts'
 import { threads } from '../threads/tables.ts'
@@ -66,8 +66,8 @@ layer(testDatabaseLayer)((it) => {
               const deliveries = yield* Ref.get(observed.deliveries)
               expect(deliveries).toHaveLength(2)
               expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
-                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+                `approval-${approval.id}`,
+                `approval-${approval.id}`,
               ])
               expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
               expect(refusals.recorded()).toHaveLength(1)

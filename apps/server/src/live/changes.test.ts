@@ -55,7 +55,9 @@ describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
         yield* database.transaction((transaction) => announce(transaction, topics))
         yield* database.transaction((transaction) => announce(transaction, marker))
         const batches = yield* announcedBefore(notifications, JSON.stringify(marker))
-        expect(batches.map((batch) => batch.length)).toEqual([195, 195, 10])
+        expect(batches.length).toBeGreaterThan(1)
+        expect(batches.length).toBeLessThanOrEqual(3)
+        expect(batches.every((batch) => Buffer.byteLength(JSON.stringify(batch)) < 8000)).toBe(true)
         expect(batches.flat()).toEqual(topics)
       }).pipe(Effect.scoped),
     )

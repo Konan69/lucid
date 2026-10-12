@@ -7,6 +7,7 @@ import {
   CompanyId,
   InvalidRequest,
   MemoryId,
+  MemoryScope,
   NotFound,
   Person,
   PersonId,
@@ -37,7 +38,6 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { threads } from '../threads/tables.ts'
-import { Embeddings, embeddingDimensions } from './embeddings.js'
 import { MemoryCandidate, MemoryExtraction, MemoryRelation } from './extract.js'
 import {
   HelixMemory,
@@ -57,31 +57,12 @@ import {
   type LearnOnceInput,
 } from './store.js'
 
+import { deterministicEmbeddings } from './testing.ts'
+
 const url = process.env['VIVID_TEST_HELIX_URL']
 const configuration = ConfigProvider.layerAdd(
   ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }),
   { asPrimary: true },
-)
-
-/** Embeddings are not the seam under test. SHA-256 gives stable nonzero text-derived vectors in the configured embedding dimension, without any provider key. */
-const deterministicEmbeddings = Layer.effect(
-  Embeddings,
-  Effect.gen(function* () {
-    const dimensions = yield* embeddingDimensions
-    return Embeddings.of({
-      embed: Effect.fn('OnceTest.embed')((texts) =>
-        Effect.succeed(
-          texts.map((text) => {
-            const digest = NodeCrypto.createHash('sha256').update(text).digest()
-            return Array.from(
-              { length: dimensions },
-              (_, index) => (digest.readUInt8(index % digest.length) + 1) / 256,
-            )
-          }),
-        ),
-      ),
-    })
-  }),
 )
 
 /** learnOnce consumes an already extracted candidate; any accidental extraction or summarization is a test defect. */
@@ -405,6 +386,11 @@ describe.skipIf(!testDatabaseConfigured || url === undefined)('MemoryAccess.lear
               candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
             )
             const first = yield* replay(f, f.personal, input)
+            expect(first).toMatchObject({
+              content: 'Dami prefers Tuesday planning.',
+              kind: 'fact',
+              scope: MemoryScope.cases.Person.make({}),
+            })
             expect(yield* f.memory.list(f.personal)).toEqual([first])
             expect(
               yield* f.memory.recall(f.personal, { query: input.candidate.content, limit: 10 }),

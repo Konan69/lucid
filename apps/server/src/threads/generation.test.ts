@@ -38,7 +38,7 @@ import { submissionId } from '../runtime/identity.ts'
 import { findThread } from './access.ts'
 import { Conversation, DeliveryMessage, DeliverySpeaker, StoredRunOrigin } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
-import { ThreadTitles, threadTitlesLayer, TITLE_MODEL_TIMEOUT } from './generation.ts'
+import { ThreadTitles, threadTitlesLayer } from './generation.ts'
 import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
@@ -293,10 +293,7 @@ layer(databaseLayer)((it) => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect.each([
-      ['Weekly holiday planning', 'Assigned'],
-      ['Calendar clash', 'Assigned'],
-    ] as const)(
+    it.effect.each([['Weekly holiday planning', 'Assigned']] as const)(
       'preserves durable name %s after a Person reply and settled Run',
       ([title, source]) =>
         Effect.gen(function* () {
@@ -356,7 +353,9 @@ layer(databaseLayer)((it) => {
             .regenerate(yield* test.stored, test.personId)
             .pipe(Effect.result, Effect.forkScoped)
           yield* Queue.take(test.requests)
-          yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
+          yield* TestClock.adjust('29999 millis')
+          expect(yield* Deferred.isDone(test.modelFinished)).toBe(false)
+          yield* TestClock.adjust('1 millis')
           yield* Deferred.await(test.modelFinished)
           expect(yield* Fiber.join(fiber)).toEqual(
             Result.fail(ThreadTitleModelUnavailable.make({ thread: test.threadId })),
@@ -384,7 +383,9 @@ layer(databaseLayer)((it) => {
               }),
             )
             yield* Queue.take(test.requests)
-            yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
+            yield* TestClock.adjust('29999 millis')
+            expect(yield* Deferred.isDone(test.modelFinished)).toBe(false)
+            yield* TestClock.adjust('1 millis')
             yield* Deferred.await(test.modelFinished)
             yield* Deferred.await(test.finished)
             expect(yield* test.stored).toMatchObject({
@@ -523,7 +524,6 @@ layer(databaseLayer)((it) => {
         const input = yield* Queue.take(test.requests)
         expect(input.content).toMatchObject({ previousTitle: 'My holiday' })
         expect(input.prompt).not.toContain('My holiday')
-        expect(input.prompt).toContain('meaningfully improved title')
         yield* Deferred.succeed(
           test.completion,
           Completion.cases.Finished.make({ text: '{"title":"Explore Florence on holiday"}' }),

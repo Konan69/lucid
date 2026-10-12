@@ -1,8 +1,7 @@
-import { expect, it, layer } from '@effect/vitest'
+import { expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { DecisionModel } from 'effect/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
-import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT } from './effects.ts'
 import { relevantTools, toolRelevanceDecision } from './relevance.ts'
 
@@ -48,25 +47,26 @@ it.effect('caps relevance descriptions before constructing questions', () => {
 
 /** Absence and a sole lexical result are valid discovery states. Neither spends a provider
  * request, even if the provided model cannot answer anything. Usage is genuinely unreported. */
-layer(unconfiguredDecisionLayer)((it) => {
-  it.effect('returns empty and single candidate lists without a decision', () =>
-    Effect.gen(function* () {
-      const single = [
-        {
-          serviceName: 'Records',
-          account: 'Work',
-          name: 'read',
-          description: 'Read records',
-        },
-      ]
-      for (const tools of [[], single]) {
-        const result = yield* relevantTools('read records', tools)
-        expect(result.ordered).toBe(tools)
-        expect(result.usage.inputTokens).toBeUndefined()
-        expect(result.usage.outputTokens).toBeUndefined()
-      }
-    }),
-  )
+it.effect('returns empty and single candidate lists without a decision', () => {
+  let calls = 0
+  const model = DecisionModel.make({
+    decide: () => {
+      calls += 1
+      return Effect.die('No relevance request is permitted for fewer than two tools')
+    },
+  })
+  return Effect.gen(function* () {
+    const single = [
+      { serviceName: 'Records', account: 'Work', name: 'read', description: 'Read records' },
+    ]
+    for (const tools of [[], single]) {
+      const result = yield* relevantTools('read records', tools)
+      expect(result.ordered).toBe(tools)
+      expect(result.usage.inputTokens).toBeUndefined()
+      expect(result.usage.outputTokens).toBeUndefined()
+    }
+    expect(calls).toBe(0)
+  }).pipe(Effect.provideServiceEffect(DecisionModel.DecisionModel, model))
 })
 
 /** The exported builder is also a real ingress to question construction. JSON markers

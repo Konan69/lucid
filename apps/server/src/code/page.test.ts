@@ -75,7 +75,11 @@ describe('Public pages', () => {
           expect(ReadPageOutcome.guards.Read(outcome)).toBe(true)
           if (ReadPageOutcome.guards.Read(outcome)) {
             expect(outcome.title).toBe('Useful page')
-            for (const word of [
+            expect(
+              outcome.text.match(
+                /HEADING|Paragraph|First|Second|Next|https:\/\/example.com\/next/gu,
+              ),
+            ).toEqual([
               'HEADING',
               'Paragraph',
               'First',
@@ -83,7 +87,6 @@ describe('Public pages', () => {
               'Next',
               'https://example.com/next',
             ])
-              expect(outcome.text).toContain(word)
             expect(outcome.text).not.toContain('SECRET')
           }
         }).pipe(Effect.scoped),
@@ -253,22 +256,20 @@ describe('Public pages', () => {
           }).pipe(Effect.provide(caseContext))
         }).pipe(Effect.scoped)
         expect(yield* Ref.get(requests)).toBe(budgets.redirects + 1)
-        for (const response of [
-          document('é'.repeat(budgets.pageText)),
-          { status: 200, location: Option.none(), contentType: 'image/png', body: 'image' },
-          document('x'.repeat(budgets.pageBytes + 1)),
-        ]) {
+        for (const [response, expected] of [
+          [document('é'.repeat(24_576)), 'Read'],
+          [
+            { status: 200, location: Option.none(), contentType: 'image/png', body: 'image' },
+            'Refused',
+          ],
+          [document('x'.repeat(524_289)), 'Refused'],
+        ] as const) {
           const current = PageNetwork.of({
             request: Effect.fn('Test.pageSize')(() => Effect.succeed(response)),
           })
           yield* Effect.gen(function* () {
             const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
-            expect(outcome._tag).toBe(
-              response.contentType === 'text/html; charset=utf-8' &&
-                Buffer.byteLength(response.body) <= budgets.pageBytes
-                ? 'Read'
-                : 'Refused',
-            )
+            expect(outcome._tag).toBe(expected)
             if (ReadPageOutcome.guards.Read(outcome)) {
               expect(Buffer.byteLength(outcome.text)).toBeLessThanOrEqual(budgets.pageText)
               expect(outcome.truncated).toBe(true)
@@ -317,7 +318,9 @@ describe('Public pages', () => {
         }).pipe(Effect.scoped),
       )
       yield* Deferred.await(entered)
-      yield* TestClock.adjust('11 seconds')
+      yield* TestClock.adjust('9999 millis')
+      expect(running.pollUnsafe()).toBeUndefined()
+      yield* TestClock.adjust('1 millis')
       expect(yield* Fiber.join(running)).toEqual(
         ReadPageOutcome.cases.Refused.make({ reason: 'could not be reached' }),
       )
@@ -330,11 +333,17 @@ describe('Public pages', () => {
       () =>
         Effect.scoped(
           Effect.gen(function* () {
+            const socketClosed = yield* Deferred.make<void>()
             const server = NodeHttp.createServer((request, response) => {
+              if (request.url === '/large')
+                request.socket.once('close', () => Deferred.doneUnsafe(socketClosed, Effect.void))
               response.setHeader('Content-Type', 'text/plain')
-              response.end(
-                request.url === '/large' ? 'x'.repeat(budgets.pageBytes + 1) : request.headers.host,
-              )
+              if (request.url === '/large') {
+                // Leave the response open: only the reader's size refusal can close this socket.
+                response.write('x'.repeat(524_289))
+                return
+              }
+              response.end(request.headers.host)
             })
             yield* Effect.acquireRelease(
               Effect.callback<void>((resume) => {
@@ -358,6 +367,7 @@ describe('Public pages', () => {
               .request(new URL('/large', url), { address: '127.0.0.1', family: 4 })
               .pipe(Effect.flip)
             expect(refused.reason).toBe('not a readable page')
+            yield* Deferred.await(socketClosed)
             return yield* Effect.void
           }),
         ).pipe(Effect.scoped),

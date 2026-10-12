@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref, Result, Schema, Stream, Layer } from 'effect'
+import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
@@ -12,6 +12,7 @@ import {
   PushPayload,
   PushDestination,
   SessionId,
+  ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { sessionTable } from '../auth/tables.ts'
@@ -87,10 +88,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 .ListPushTargets()
                 .pipe(Effect.provideService(AuthContext, owner.auth))).targets,
             ).toHaveLength(1)
-            const watched = yield* pushHandlers
-              .WatchPushTargets()
-              .pipe(Stream.runHead, Effect.provideService(AuthContext, owner.auth))
-            expect(Option.isSome(watched) && watched.value.targets).toHaveLength(1)
             expect(
               (yield* pushHandlers
                 .ListPushTargets()
@@ -361,9 +358,19 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 sessionId: owner.sessionId,
                 destination: owner.destination,
               })
+              const elsewhere = ThreadId.make(NodeCrypto.randomUUID())
+              yield* owner.database.run(
+                owner.database.insert(threads).values({
+                  id: elsewhere,
+                  personId: owner.person.id,
+                  title: 'Other work',
+                  titleSource: 'Person',
+                  updatedAt: 0,
+                }),
+              )
               const presence = yield* Presence
               yield* presence.report(
-                owner.threadId,
+                elsewhere,
                 { id: owner.person.id, name: owner.person.name, image: null },
                 false,
               )

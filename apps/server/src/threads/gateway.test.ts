@@ -282,7 +282,9 @@ layer(foundation)((it) => {
           const read = yield* openRead(test)
           yield* listening()
           expect(yield* Queue.take(read.received)).toEqual(hello)
-          yield* TestClock.setTime(expiresAt.getTime())
+          yield* TestClock.setTime(expiresAt.getTime() - 1)
+          expect(read.ended.pollUnsafe()).toBeUndefined()
+          yield* TestClock.adjust(1)
           expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
       }),

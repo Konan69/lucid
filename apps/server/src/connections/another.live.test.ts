@@ -12,6 +12,10 @@ const decodeAnother = Schema.decodeUnknownOption(AnotherAccountMessage)
 const UsedAccount = Schema.Struct({ account: Schema.String })
 const decodeUsed = Schema.decodeUnknownOption(UsedAccount)
 
+const decodeToolResult = Schema.decodeUnknownEffect(
+  Schema.Struct({ ok: Schema.Literal(true), output: Schema.Json }),
+)
+
 /**
  * Behavioural claim: when a Person asks for an account that is not among theirs on a service
  * they have already connected, Vivid does not use the account that is there in its place. It
@@ -64,11 +68,13 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
               `Read the wiki structure of the GitHub repository facebook/react with ${wiki.name}, through my personal ${wiki.name} account, not my work one. If my personal account is not connected, ask me to connect it and wait.`,
             )
             const waiting = yield* completeRun(fixture, asked)
-            const [another] = toolParts(waiting).flatMap((part) =>
+            const cards = toolParts(waiting).flatMap((part) =>
               part.toolName === 'connect' && part.state === 'output-available'
                 ? Option.toArray(decodeAnother(part.output))
                 : [],
             )
+            expect(cards).toHaveLength(1)
+            const [another] = cards
             if (another === undefined)
               return yield* Effect.sync(() =>
                 expect.fail('Vivid must ask for one more account with the connect card'),
@@ -103,6 +109,20 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
             const done = yield* completeRun(fixture, carried)
             expect(through(done)).toContain(personal.connection.account)
             expect(through(done)).not.toContain(workAccount)
+            const reads = toolParts(done).filter(
+              (part) => part.toolName === 'use_tool' && part.state === 'output-available',
+            )
+            const results = yield* Effect.forEach(reads, (part) =>
+              part.state === 'output-available'
+                ? decodeToolResult(part.output).pipe(Effect.option)
+                : Effect.succeedNone,
+            )
+            expect(
+              results
+                .flatMap(Option.toArray)
+                .some((result) => JSON.stringify(result.output).includes('React')),
+              'The new account must actually return the requested repository structure',
+            ).toBe(true)
             return yield* Effect.void
           }).pipe(Effect.scoped),
         { timeout: 180_000 },

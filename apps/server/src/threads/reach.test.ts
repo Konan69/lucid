@@ -149,7 +149,9 @@ describe.skipIf(!testDatabaseConfigured)('Thread reach', () => {
         const privateId = yield* seed(test, 'private', test.company.id, [])
         const named = yield* seed(test, 'people', test.company.id, [test.ben.id])
         const company = yield* seed(test, 'company', test.company.id, [])
+        const stalePrivate = yield* seed(test, 'private', test.company.id, [test.ben.id])
         const cases = [
+          { id: stalePrivate, actor: test.actor(test.ben), expected: false },
           { id: own, actor: test.personal(test.creator), expected: true },
           { id: own, actor: test.personal(test.ben), expected: false },
           { id: privateId, actor: test.actor(test.creator), expected: true },
@@ -167,35 +169,6 @@ describe.skipIf(!testDatabaseConfigured)('Thread reach', () => {
           },
         ]
         for (const item of cases) yield* reach(item.actor, item.id, item.expected)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('R1 leftover participants never widen a private Thread list', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const id = yield* seed(test, 'private', test.company.id, [test.ben.id])
-        yield* reach(test.actor(test.ben), id, false)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('R1 a captured Company Actor loses list reach when Membership is removed', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const id = yield* seed(test, 'company', test.company.id, [])
-        const actor = test.actor(test.cy)
-        yield* reach(actor, id, true)
-        const database = yield* Database
-        yield* database.run(
-          database
-            .delete(membershipTable)
-            .where(
-              and(
-                eq(membershipTable.companyId, test.company.id),
-                eq(membershipTable.userId, test.cy.id),
-              ),
-            ),
-        )
-        yield* reach(actor, id, false)
       }).pipe(Effect.scoped),
     )
 
@@ -226,6 +199,20 @@ describe.skipIf(!testDatabaseConfigured)('Thread reach', () => {
             ),
         )
         yield* reach(actor, id, false)
+        const companyThread = yield* seed(test, 'company', test.company.id, [])
+        const companyActor = test.actor(test.cy)
+        yield* reach(companyActor, companyThread, true)
+        yield* database.run(
+          database
+            .delete(membershipTable)
+            .where(
+              and(
+                eq(membershipTable.companyId, test.company.id),
+                eq(membershipTable.userId, test.cy.id),
+              ),
+            ),
+        )
+        yield* reach(companyActor, companyThread, false)
         yield* store.remove(test.creator.id, id)
         yield* reach(test.actor(test.creator), id, false)
       }).pipe(Effect.scoped),

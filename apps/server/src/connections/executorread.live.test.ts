@@ -2,7 +2,7 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Logger, Redacted, Ref } from 'effect'
+import { ConfigProvider, Effect, Layer, Logger, Redacted, Ref, Schema } from 'effect'
 import {
   Executor,
   ExecutorOwnerId,
@@ -10,6 +10,15 @@ import {
   ExecutorCallOutcome,
   executorLayer,
 } from './executor.ts'
+
+const decodeContent = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    content: Schema.Array(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String })),
+  }),
+)
+const decodeAccount = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ login: Schema.String, id: Schema.Int })),
+)
 
 const enabled = NodeProcess.env['VIVID_LIVE_GITHUB'] === '1'
 const configured = executorLayer.pipe(
@@ -39,12 +48,25 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
       'reads the authenticated GitHub account with a personal token',
       () =>
         Effect.gen(function* () {
+          const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
+          const expectedLogin = NodeProcess.env['VIVID_TEST_GITHUB_LOGIN']
+          const expectedId = NodeProcess.env['VIVID_TEST_GITHUB_ACCOUNT_ID']
+          if (
+            token === undefined ||
+            expectedLogin === undefined ||
+            expectedId === undefined ||
+            !/^\d+$/u.test(expectedId)
+          )
+            expect.fail(
+              'Supply token authority and independently known GitHub login and numeric account id',
+            )
+
           const executor = yield* Executor
           const input = {
             connectionId: ConnectionId.make(crypto.randomUUID()),
             service: ServiceId.make('curated/github-com-mcp'),
-            owner: ExecutorOwnerId.make('github-personal-proof'),
-            subject: 'github-personal-proof',
+            owner: ExecutorOwnerId.make(`github-personal-proof-${crypto.randomUUID()}`),
+            subject: `github-personal-proof-${crypto.randomUUID()}`,
             label: 'GitHub personal proof',
             returnAddress: 'https://vivid.example.test/api/connections/return',
           }
@@ -61,8 +83,6 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
           expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
           if (!ExecutorStep.guards.EnterKey(step))
             return expect.fail('GitHub must offer personal token entry')
-          const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
-          if (token === undefined) return expect.fail('Supply the personal token in test authority')
           const references = yield* executor.complete({
             references: step.references,
             fields: { token: Redacted.make(token) },
@@ -73,7 +93,13 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
           if (tool === undefined)
             return expect.fail('GitHub must expose its authenticated account read')
           const outcome = yield* executor.call({ references, tool: tool.name, input: {} })
-          expect(ExecutorCallOutcome.guards.Completed(outcome)).toBe(true)
+          if (!ExecutorCallOutcome.guards.Completed(outcome))
+            expect.fail('Expected authenticated account data')
+          const content = yield* decodeContent(outcome.value)
+          const [answer] = content.content
+          if (answer === undefined) expect.fail('Expected account response text')
+          const account = yield* decodeAccount(answer.text)
+          expect(account).toEqual({ login: expectedLogin, id: Number(expectedId) })
           yield* executor.remove(references)
           yield* Ref.set(removed, true)
           const unavailable = yield* executor.tools(references).pipe(Effect.flip)

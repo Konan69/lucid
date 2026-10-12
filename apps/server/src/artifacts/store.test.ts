@@ -295,6 +295,9 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           })
           const detail = yield* store.get(person.id, { id: artifact.id })
           expect(detail.versions).toHaveLength(3)
+          const [firstOutcome] = outcomes
+          if (firstOutcome === undefined) expect.fail('Expected both revision receipts')
+          expect(detail.body).toBe(Result.isSuccess(firstOutcome) ? 'Person A' : 'Person B')
           expect(detail.shown.madeBy).toEqual(
             ArtifactAuthor.cases.Person.make({
               person: { id: person.id, name: person.name, image: null },

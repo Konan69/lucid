@@ -1,6 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { DraftPlace, DraftSaved, DraftWorkspace, SaveDraftRequest } from '@vivid/contracts'
-import { Effect, Layer } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Ref } from 'effect'
+import * as Statement from 'effect/sql/Statement'
 import * as TestClock from 'effect/testing/TestClock'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -96,21 +97,39 @@ describe.skipIf(!testDatabaseConfigured)('Person draft generation', () => {
       Effect.gen(function* () {
         const test = yield* fixture()
         yield* save(test.personal, 'initial')
-        // All writes replace one place, so every valid snapshot must pair its counter with that
-        // exact revision. Unbounded readers and writers exercise commits between the two reads.
-        const reads = yield* Effect.all(
-          Array.from({ length: 20 }, (_, index) =>
-            Effect.all([save(test.personal, `write ${index}`), current(test.second)], {
-              concurrency: 'unbounded',
-            }).pipe(Effect.map(([, listed]) => listed)),
-          ),
-          { concurrency: 'unbounded' },
+        const betweenReads = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const selects = yield* Ref.make(0)
+        // Effect 4 Statement.CurrentTransformer is a public execution hook. Pause before the
+        // second real SELECT, after PostgreSQL has established the generation snapshot. The
+        // queries, rows and transaction are untouched; READ COMMITTED would return mismatched data.
+        const barrier: Statement.Transformer = (statement) =>
+          Effect.gen(function* () {
+            const sql = statement.compile()[0]
+            if (/^select\b/iu.test(sql) && /\bfrom "vivid_drafts"/u.test(sql)) {
+              const count = yield* Ref.updateAndGet(selects, (value) => value + 1)
+              if (count === 2) {
+                yield* Deferred.succeed(betweenReads, undefined)
+                yield* Deferred.await(release)
+              }
+            }
+            return statement
+          })
+        const reading = yield* current(test.second).pipe(
+          Effect.provideService(Statement.CurrentTransformer, barrier),
+          Effect.forkChild,
         )
-        for (const listed of reads) {
-          expect(listed.drafts).toHaveLength(1)
-          expect(listed.drafts[0]).toMatchObject({ revision: listed.generation })
-        }
-        expect((yield* current(test.personal)).generation).toBe(21)
+        yield* Deferred.await(betweenReads)
+        expect((yield* save(test.personal, 'committed between the reads')).generation).toBe(2)
+        yield* Deferred.succeed(release, undefined)
+        const listed = yield* Fiber.join(reading)
+        expect(yield* Ref.get(selects)).toBe(2)
+        expect(listed.generation).toBe(1)
+        expect(listed.drafts).toMatchObject([{ revision: 1, text: 'initial' }])
+        expect(listed.drafts).toHaveLength(1)
+        const latest = yield* current(test.personal)
+        expect(latest.generation).toBe(2)
+        expect(latest.drafts).toMatchObject([{ revision: 2, text: 'committed between the reads' }])
       }).pipe(Effect.scoped),
     )
 
@@ -142,7 +161,7 @@ describe.skipIf(!testDatabaseConfigured)('Person draft generation', () => {
             })
             expect((yield* current(test.member)).generation).toBe(40)
             expect((yield* current(test.member)).drafts).toMatchObject([{ revision: 40 }])
-            expect(yield* save(test.member, ' ')).toEqual(
+            expect(yield* save(test.personal, ' ')).toEqual(
               DraftSaved.cases.Cleared.make({ place, generation: 41 }),
             )
             expect((yield* current(test.personal)).generation).toBe(41)

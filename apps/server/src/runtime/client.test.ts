@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Schema } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Layer, Redacted, Predicate, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
@@ -7,7 +7,8 @@ import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import { LibraryFolderId, PersonId, RunId, RuntimeAdmissionBody, ThreadId } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
-import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
+import { ServerConfig } from '../config.ts'
+
 import {
   AdmissionRefused,
   AdmissionUncertain,
@@ -16,6 +17,22 @@ import {
   type RuntimeMessage,
 } from './client.ts'
 
+/** HTTP-only tests supply no usable database authority and never depend on PostgreSQL provisioning. */
+const runtimeConfigLayer = Layer.succeed(ServerConfig, {
+  DATABASE_URL: Redacted.make('postgres://unused.invalid/unused'),
+  AUTH_SECRET: Redacted.make('test-Auth_secret-0123456789-ABCDEFG'),
+  RUNTIME_URL: new URL('https://runtime.example.test'),
+  RUNTIME_TOKEN: Redacted.make('test-runtime-token'),
+  PORT: 8787,
+  PUBLIC_URL: new URL('https://vivid.example.test'),
+  GOOGLE_OAUTH: {
+    clientId: 'unused',
+    clientSecret: Redacted.make('unused'),
+    redirectUri: new URL('https://vivid.example.test/google'),
+  },
+})
+
+const decodeWireJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 const decodeIncoming = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeAdmissionBody))
 /** Flue's keyed id for `MARK-thread` and `event-1`: the Run every error below must name. */
 const submission = RunId.make('sub_ik_6582cbafc27e51d07440c6dbaad55c0c')
@@ -44,7 +61,7 @@ const admitInputWith = Effect.fn('Runtime.test.admitInputWith')(function* (
 ) {
   const context = yield* Layer.build(
     runtimeLayer.pipe(
-      Layer.provide(Layer.merge(testConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
+      Layer.provide(Layer.merge(runtimeConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
     ),
   )
   const runtime = yield* Runtime.pipe(Effect.provideContext(context))
@@ -54,7 +71,7 @@ const admitWith = (http: HttpClient.HttpClient) => admitInputWith(http, admissio
 
 /** Classification is observed through the real Runtime Layer; only the remote HTTP transport varies. */
 /** Each case builds its own log capture and transport so recorded refusals cannot leak. */
-describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () => {
+describe('Runtime admission classification', () => {
   const statuses = [
     { status: 400, tag: 'AdmissionRefused', reason: 'Rejected' },
     { status: 401, tag: 'AdmissionRefused', reason: 'Rejected' },
@@ -181,7 +198,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
 })
 
 /** A 409 is never a refusal. Only Flue's named conflict is `Conflict`; every other 409 is `Status`. */
-describe.skipIf(!testDatabaseConfigured)('Runtime admission conflict', () => {
+describe('Runtime admission conflict', () => {
   const conflicts = [
     {
       name: 'Flue submission_conflict',
@@ -262,7 +279,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission conflict', () => {
 })
 
 /** Accepted status alone is insufficient; keyed identity, wire shape and body readability must agree. */
-describe.skipIf(!testDatabaseConfigured)('Runtime admission receipts', () => {
+describe('Runtime admission receipts', () => {
   for (const repeated of [false, true]) {
     it.effect(`validates and releases a matching 202 receipt with deduplicated=${repeated}`, () =>
       Effect.gen(function* () {
@@ -363,7 +380,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission receipts', () => {
 })
 
 /** The response deadline covers both dispatch and body reading; abort is observed before caller cleanup. */
-describe.skipIf(!testDatabaseConfigured)('Runtime admission deadline', () => {
+describe('Runtime admission deadline', () => {
   for (const stalled of ['headers', 'body']) {
     it.effect(`bounds stalled admission ${stalled} at 30 seconds and releases the request`, () =>
       Effect.gen(function* () {
@@ -393,7 +410,9 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission deadline', () => {
         )
         const fiber = yield* admitWith(http).pipe(Effect.forkScoped)
         yield* Deferred.await(started)
-        yield* TestClock.adjust('30 seconds')
+        yield* TestClock.adjust('29999 millis')
+        expect(yield* Deferred.isDone(cancelled)).toBe(false)
+        yield* TestClock.adjust(1)
         const result = yield* Fiber.join(fiber)
         if (Result.isSuccess(result)) expect.fail('Stalled request was admitted')
         expect(result.failure).toMatchObject(
@@ -417,12 +436,35 @@ const transport = (receiptId: string, message: RuntimeMessage) =>
       Effect.gen(function* () {
         if (!Predicate.isTagged(request.body, 'Uint8Array'))
           return expect.fail('Expected encoded JSON')
-        const delivery = yield* decodeIncoming(new TextDecoder().decode(request.body.body)).pipe(
+        const encoded = new TextDecoder().decode(request.body.body)
+        const delivery = yield* decodeIncoming(encoded).pipe(
           Effect.catchTag('SchemaError', () =>
             Effect.sync(() => expect.fail('Runtime client emitted an invalid request')),
           ),
         )
         expect(request.method).toBe('POST')
+        expect(request.url).toBe('https://runtime.example.test/agents/vivid/MARK-thread')
+        expect(request.headers).toMatchObject({
+          authorization: 'Bearer test-runtime-token',
+          'content-type': 'application/json',
+        })
+        expect(
+          yield* decodeWireJson(encoded).pipe(
+            Effect.catchTag('SchemaError', () =>
+              Effect.sync(() => expect.fail('Runtime client emitted non-JSON wire input')),
+            ),
+          ),
+        ).toEqual({
+          threadId: 'MARK-thread',
+          idempotencyKey: 'event-1',
+          body: message.body,
+          type: message.kind === 'user' ? 'message' : message.type,
+          attachments: message.kind === 'user' ? message.attachments : [],
+          attributes: message.kind === 'user' ? {} : message.attributes,
+          turn: 3,
+          scope: { acting: 'MARK-person', libraryFolder: '926eaf36-3b29-41a8-8021-90fe0f694c52' },
+          initialData: { creator: 'MARK-person', creatorName: 'Ada' },
+        })
         expect(delivery.attributes).toEqual(message.kind === 'user' ? {} : message.attributes)
         expect(delivery.attachments).toEqual(message.kind === 'user' ? message.attachments : [])
         expect(delivery.scope).toEqual({
@@ -465,7 +507,7 @@ const messages: ReadonlyArray<RuntimeMessage> = [
 ]
 
 /** The expected submission vector follows Flue 2.2.2's frozen protocol, without importing private SDK helpers. */
-describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () => {
+describe('Runtime delivery wire boundary', () => {
   /** A refused body is never pulled, so only the request scope can release its runtime socket. */
   it.effect('aborts an unconsumed runtime read when its caller scope closes', () =>
     Effect.gen(function* () {
@@ -494,7 +536,9 @@ describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () =>
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          yield* Layer.build(runtimeLayer.pipe(Layer.provide(Layer.merge(testConfigLayer, http)))),
+          yield* Layer.build(
+            runtimeLayer.pipe(Layer.provide(Layer.merge(runtimeConfigLayer, http))),
+          ),
         ),
       )
       // Abort dispatch is synchronous at scope close; regression must fail immediately, not hang.
@@ -524,7 +568,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () =>
               Effect.provide(
                 yield* Layer.build(
                   runtimeLayer.pipe(
-                    Layer.provide(Layer.merge(testConfigLayer, transport(receiptId, message))),
+                    Layer.provide(Layer.merge(runtimeConfigLayer, transport(receiptId, message))),
                   ),
                 ),
               ),

@@ -15,7 +15,10 @@ import {
 } from './store.js'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
-const enabled = url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
+const enabled =
+  process.env['VIVID_LIVE_MEMORY'] === '1' &&
+  url !== undefined &&
+  process.env['EXPLABS_API_KEY'] !== undefined
 const configuration = ConfigProvider.layerAdd(
   ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }),
   { asPrimary: true },
@@ -28,7 +31,7 @@ const store = memoryStoreLayer.pipe(Layer.provide(adapters))
 
 /** A unique test partition isolates fixture lifetime; cleanup is registered before the first write. */
 describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
-  layer(store)((it) => {
+  layer(store, { excludeTestServices: true })((it) => {
     it.effect(
       'recalls semantic and rare terms, reinforces, versions, forgets, and isolates scope and partition',
       () =>
@@ -76,17 +79,33 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
             limit: 5,
           })
           expect(rare.map((record) => record.id)).toContain(first.memory.id)
+          const distractor = yield* memory.remember(
+            RememberInput.make({
+              ...input,
+              kind: 'fact',
+              content: 'The office printer uses cyan ink cartridges.',
+              aliases: [],
+            }),
+          )
           const started = performance.now()
           const paraphrase = yield* memory.recall({
             partition,
             scopes: [scope],
             query: 'When does Dami like to meet?',
-            limit: 5,
+            limit: 1,
           })
           process.stdout.write(
             `Hybrid recall milliseconds: ${(performance.now() - started).toFixed(2)}\n`,
           )
-          expect(paraphrase.map((record) => record.id)).toContain(first.memory.id)
+          expect(paraphrase.map((record) => record.id)).toEqual([first.memory.id])
+          const printer = yield* memory.recall({
+            partition,
+            scopes: [scope],
+            query: 'Which ink does the office printer use?',
+            limit: 1,
+          })
+          expect(printer.map((record) => record.id)).toEqual([distractor.memory.id])
+          yield* memory.forget({ partition, id: distractor.memory.id })
           const second = yield* memory.remember(input)
           expect(RememberResult.guards.Reinforced(second)).toBe(true)
           expect(second.memory.id).toBe(first.memory.id)
@@ -137,13 +156,13 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
               limit: 5,
             }),
           ).toHaveLength(0)
-          const brief = yield* memory.brief.put({
+          yield* memory.brief.put({
             partition,
             personId,
             text: 'Dami likes concise answers.',
           })
           expect(yield* memory.brief.get({ partition, personId, scopes: [scope] })).toEqual(
-            Option.some(brief),
+            Option.some(expect.objectContaining({ text: 'Dami likes concise answers.' })),
           )
           expect(yield* memory.brief.get({ partition: other, personId, scopes: [scope] })).toEqual(
             Option.none(),

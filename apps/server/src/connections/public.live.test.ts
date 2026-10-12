@@ -15,6 +15,14 @@ import { trustTestLayer } from '../approvals/testing.ts'
 import { Database } from '../database/client.ts'
 import { threads } from '../threads/tables.ts'
 
+const decodeRead = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    content: Schema.Array(
+      Schema.Struct({ type: Schema.Literal('text'), text: Schema.NonEmptyString }),
+    ).check(Schema.isMinLength(1)),
+  }),
+)
+
 const executorUrl = NodeProcess.env['VIVID_TEST_EXECUTOR_URL']
 const executorKey = NodeProcess.env['VIVID_TEST_EXECUTOR_KEY']
 const enabled =
@@ -56,16 +64,6 @@ const sources: readonly {
         'Find the official Effect documentation home page, excluding third-party tutorials.',
       numResults: 1,
     },
-  },
-  // An OpenAPI document that asks for no sign-in. Swagger's Petstore was here and could never
-  // pass: it signs in with OAuth's implicit flow, and Executor's OpenAPI import only knows the
-  // authorization-code flow, so Vivid rightly answers that it cannot add it.
-  {
-    name: 'Public APIs.guru',
-    address: 'https://api.apis.guru/v2/openapi.yaml',
-    query: 'getMetrics',
-    tool: 'queries.getMetrics',
-    input: {},
   },
 ]
 
@@ -169,6 +167,10 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                   }),
                 )
                 expect(ToolOutcome.guards.Completed(used)).toBe(true)
+                if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
+                const response = yield* decodeRead(used.output)
+                const text = response.content.map((part) => part.text).join('\n')
+                expect(text).toMatch(/https:\/\/effect\.website(?:\/|\b)/u)
                 return yield* Effect.void
               }).pipe(
                 Effect.scoped,

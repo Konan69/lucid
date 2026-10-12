@@ -47,7 +47,8 @@ describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
               expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
               if (effect !== tool.expected) misses.push(`${tool.name}:${effect}`)
             }
-            const recovered = 18 - misses.length
+            const recovered =
+              liveTools.filter((tool) => tool.expected === 'read').length - misses.length
             yield* Effect.logInfo('Direct read recovery', {
               recovered,
               floor: LIVE_READ_RECOVERY_FLOOR,

@@ -15,6 +15,7 @@ import {
 } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import * as TestClock from 'effect/testing/TestClock'
+import { connections } from './tables.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -819,6 +820,21 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
                   shared.connection.id,
                   Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
                 )
+                const sharedAudit = yield* database.run(
+                  database
+                    .select({ companyId: auditEntries.companyId, event: auditEntries.event })
+                    .from(auditEntries)
+                    .where(eq(auditEntries.personId, ownerActor.person.id)),
+                )
+                expect(sharedAudit).toEqual([
+                  {
+                    companyId: expected,
+                    event: AuditEvent.cases.ConnectionAdded.make({
+                      service: 'Records',
+                      shared: true,
+                    }),
+                  },
+                ])
                 yield* recorded.callback(
                   ownerActor,
                   personal.connection.id,
@@ -938,6 +954,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           fields: { key: Redacted.make('credential-never-stored') },
         })
         expect(connection.state._tag).toBe('Ready')
+        const raw = yield* (yield* Database).run(
+          (yield* Database).select().from(connections).where(eq(connections.id, connection.id)),
+        )
+        expect(raw).toHaveLength(1)
+        expect(JSON.stringify(raw)).not.toContain('credential-never-stored')
         expect(JSON.stringify(yield* store.get(ownerActor, connection.id))).not.toContain(
           'credential-never-stored',
         )

@@ -80,6 +80,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsholdout', () => {
                 : yield* Effect.forEach(request.tools, (tool) =>
                     effects.classify({ ...request, tool }),
                   )
+            expect(result).toHaveLength(cohort.length)
             for (const [index, tool] of cohort.entries()) {
               expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
               if (tool.expected === 'read') expect(result[index], tool.name).toBe('read')

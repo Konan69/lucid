@@ -316,8 +316,8 @@ describe('settled exchange context', () => {
           history(
             [
               ...prior.flatMap((id) => [
-                message(id, 'user', 'x'.repeat(size)),
-                message(id, 'assistant', 'y'.repeat(size)),
+                message(id, 'user', `${id}: ${'x'.repeat(size)}`),
+                message(id, 'assistant', `${id}: ${'y'.repeat(size)}`),
               ]),
               message(input.runId, 'user', input.said),
             ],
@@ -327,7 +327,16 @@ describe('settled exchange context', () => {
         const exchange = result.exchanges[0]
         if (exchange === undefined) expect.fail('Extraction must run')
         expect(exchange.recent.length).toBeLessThanOrEqual(6)
-        if (size === 10) expect(exchange.recent).toHaveLength(6)
+        if (size === 10) {
+          expect(exchange.recent).toEqual(
+            [4, 5, 6, 7, 8, 9].map((index) => ({
+              speaker: 'Dami',
+              message: `MARK-${index}: xxxxxxxxxx`,
+              reply: `MARK-${index}: yyyyyyyyyy`,
+            })),
+          )
+          expect(exchange.previousReply).toBe('MARK-9: yyyyyyyyyy')
+        }
         const total =
           (exchange.previousReply === null ? 0 : exchange.previousReply.length) +
           exchange.recent.reduce(

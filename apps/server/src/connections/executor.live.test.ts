@@ -53,8 +53,8 @@ describe.skipIf(
             executor.begin({
               connectionId: ConnectionId.make(crypto.randomUUID()),
               service: publicService,
-              owner: ExecutorOwnerId.make('vivid-executor-test'),
-              subject: 'vivid-executor-test-person',
+              owner: ExecutorOwnerId.make(`vivid-executor-test-${crypto.randomUUID()}`),
+              subject: `vivid-executor-test-person-${crypto.randomUUID()}`,
               label: 'Test',
               returnAddress: 'https://vivid.example.test/connections/callback',
             }),

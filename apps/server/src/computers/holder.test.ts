@@ -4,6 +4,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
+import { onTestFinished } from 'vitest'
 import { HELD, holdable, holderClaim, snapshotRules, UNSETTLED } from './boat/holder.ts'
 import * as Protocol from './boat/protocol.ts'
 
@@ -22,7 +23,12 @@ const rivals = Array.from({ length: 16 }, (_, index) => {
  * `sh` is the least a machine can have; `bash` is what Boat's machines run commands with.
  */
 describe.each(['sh', 'bash'])('the machine’s holder record under %s', (shell) => {
-  const home = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-holder-'))
+  /** Remove only this fixture's directory, including when a claim or assertion fails. */
+  const home = () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-holder-'))
+    onTestFinished(() => NodeFS.rmSync(directory, { recursive: true, force: true }))
+    return directory
+  }
   const claim = (directory: string, intent: string) =>
     NodeChildProcess.spawnSync(shell, ['-c', holderClaim({ id: machine, intent })], {
       env: { HOME: directory, PATH: NodeProcess.env['PATH'] },

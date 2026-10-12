@@ -13,7 +13,7 @@ import { ConfigProvider, Effect, Layer, Option, Result, Schema } from 'effect'
 import { HttpClient, HttpClientRequest } from 'effect/http'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
-import { Embeddings, embeddingsLayer } from './embeddings.js'
+import { Embeddings } from './embeddings.js'
 import {
   HelixMemory,
   helixMemoryLayer,
@@ -23,13 +23,16 @@ import {
   MemoryScopeKey,
 } from './helix.js'
 
+import { deterministicEmbeddings } from './testing.ts'
+
 const url = process.env['VIVID_TEST_HELIX_URL']
-const enabled = url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
+const enabled = url !== undefined
 const configuration = ConfigProvider.layerAdd(
   ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }),
   { asPrimary: true },
 )
-const adapters = Layer.merge(helixMemoryLayer, embeddingsLayer).pipe(
+
+const adapters = Layer.merge(helixMemoryLayer, deterministicEmbeddings).pipe(
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provide(configuration),
 )
@@ -184,10 +187,11 @@ const scopedBriefs = Effect.fn('MemoryTest.briefs')(function* (input: {
   )
 })
 
-/** Prepare the list fixture in one transaction: 201 individual writes would test backfill contention instead of the read bound. All vectors came from the configured embedding provider. */
+/** Prepare the list fixture in one transaction: 201 individual writes would test backfill contention instead of the read bound. Vectors are stable fixtures; keyword and graph storage remain real. */
 const insertListFixture = Effect.fn('MemoryTest.insertList')(function* (input: {
   readonly partition: MemoryPartition
   readonly records: ReadonlyArray<MemoryRecord>
+  readonly historical: ReadonlyArray<MemoryRecord>
   readonly embedding: ReadonlyArray<number>
 }) {
   if (url === undefined) expect.fail('Helix test URL required')
@@ -195,14 +199,17 @@ const insertListFixture = Effect.fn('MemoryTest.insertList')(function* (input: {
   const p = defineParams({ embedding: param.array(param.f32()) })
   const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(MemoryRecord))
   const rows = yield* Effect.forEach(
-    input.records,
-    Effect.fn('MemoryTest.encodeList')(function* (value) {
-      return { value, payload: yield* encodeRecord(value) }
+    [
+      ...input.records.map((value) => ({ value, current: true })),
+      ...input.historical.map((value) => ({ value, current: false })),
+    ],
+    Effect.fn('MemoryTest.encodeList')(function* ({ value, current }) {
+      return { value, current, payload: yield* encodeRecord(value) }
     }),
   )
   const query = rows
     .reduce(
-      (batch, { value, payload }, index) =>
+      (batch, { value, payload, current }, index) =>
         batch.varAs(
           `created${index}`,
           g().addN('Memory', {
@@ -213,8 +220,8 @@ const insertListFixture = Effect.fn('MemoryTest.insertList')(function* (input: {
             searchText: [value.memory.content, ...value.aliases].join(' '),
             payload,
             embedding: p.embedding,
-            isLatest: true,
-            validTo: null,
+            isLatest: current,
+            validTo: current ? null : 500,
             deletedAt: null,
             createdAt: value.memory.createdAt,
             updatedAt: value.memory.updatedAt,
@@ -237,7 +244,7 @@ const insertListFixture = Effect.fn('MemoryTest.insertList')(function* (input: {
   expect(response.status).toBe(200)
 })
 
-/** The hard list bound returns the most recent 200 after filtering, even when older history accumulates. */
+/** The hard list bound filters newer unreadable and historical rows before choosing 200 current readable records. */
 const boundedList = Effect.fn('MemoryTest.list')(function* (input: {
   readonly helix: HelixMemory['Service']
   readonly embedding: ReadonlyArray<number>
@@ -248,14 +255,24 @@ const boundedList = Effect.fn('MemoryTest.list')(function* (input: {
   const records = Array.from({ length: 201 }, (_, index) =>
     record({ content: 'The Company launch workstream is in progress.', scope, createdAt: index }),
   )
+  const hidden = Array.from({ length: 3 }, (_, index) =>
+    record({
+      content: `Hidden workstream ${index}`,
+      scope: MemoryScopeKey.make('person:B'),
+      createdAt: 300 + index,
+    }),
+  )
+  const historical = Array.from({ length: 3 }, (_, index) =>
+    record({ content: `Earlier version ${index}`, scope, createdAt: 400 + index }),
+  )
   yield* Effect.addFinalizer(() =>
-    Effect.forEach(records, (value) =>
+    Effect.forEach([...records, ...hidden, ...historical], (value) =>
       helix.forget({ partition, id: value.memory.id, now: 500 }),
     ).pipe(
       Effect.match({ onFailure: (error) => expect.fail(error._tag), onSuccess: () => undefined }),
     ),
   )
-  yield* insertListFixture({ partition, records, embedding })
+  yield* insertListFixture({ partition, records: [...records, ...hidden], historical, embedding })
   const listed = yield* helix.list({ partition, scopes: [scope] })
   expect(listed).toHaveLength(200)
   expect(listed.map((value) => value.memory.createdAt)).toEqual(

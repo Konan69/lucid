@@ -338,7 +338,7 @@ const commandExit = (exitCode: number) =>
  * opened. A command that settles the holder and stops there opens no desktop either way.
  * The shell itself is run for real in `holder.test.ts`; here it is the machine's memory.
  */
-const launcher = `/opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
+const launcher = `/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
 const settled = Effect.fn('BoatTest.holder')(function* (
   evidence: EvidenceService,
   command: string,
@@ -924,7 +924,12 @@ const accounts = Effect.fn('BoatTest.accounts')(function* () {
           ),
         ),
       )
-    }).pipe(Effect.ignore),
+    }).pipe(
+      Effect.match({
+        onFailure: () => expect.fail('Boat account fixture cleanup failed'),
+        onSuccess: () => undefined,
+      }),
+    ),
   )
   yield* database.run(database.insert(personTable).values(people))
   const [first, second] = people
@@ -1043,9 +1048,12 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
   const key = MachineKey.make(NodeCrypto.randomUUID())
   const database = yield* Database
   yield* Effect.addFinalizer(() =>
-    database
-      .run(database.delete(machineBindings).where(eq(machineBindings.key, key)))
-      .pipe(Effect.ignore),
+    database.run(database.delete(machineBindings).where(eq(machineBindings.key, key))).pipe(
+      Effect.match({
+        onFailure: () => expect.fail('Boat binding fixture cleanup failed'),
+        onSuccess: () => undefined,
+      }),
+    ),
   )
   return key
 })
@@ -1803,16 +1811,19 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* machine.ensure(key)
           expect(yield* Ref.get(evidence.viewers)).toBe(0)
           const first = yield* machine.status(key)
+          expect(first).toMatchObject({ screen: { expiresAt: 600_000 } })
           expect(yield* Ref.get(evidence.viewers)).toBe(1)
           expect(yield* machine.status(key)).toEqual(first)
-          yield* TestClock.adjust('7 minutes')
+          yield* TestClock.adjust('539999 millis')
           expect(yield* machine.status(key)).toEqual(first)
           expect(yield* Ref.get(evidence.viewers)).toBe(1)
-          yield* TestClock.adjust('2 minutes')
+          yield* TestClock.adjust(1)
           const refreshed = yield* Effect.all([machine.status(key), machine.status(key)], {
             concurrency: 'unbounded',
           })
           expect(refreshed[0]).toEqual(refreshed[1])
+          expect(refreshed[0]).toMatchObject({ screen: { expiresAt: 1_140_000 } })
+          expect(refreshed[0]).not.toEqual(first)
           expect(yield* Ref.get(evidence.viewers)).toBe(2)
           const database = yield* Database
           const rows = yield* database.run(

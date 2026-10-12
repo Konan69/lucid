@@ -140,18 +140,23 @@ describe('Rule judgments', () => {
       })
     })
 
-    for (const value of [undefined, -0.1, 1.1]) {
-      layer(scripted(() => Effect.succeed(probabilities(value === undefined ? [] : [value]))))(
-        (it) => {
-          it.effect(`missing or invalid probability ${value} fails conservatively`, () =>
-            Effect.gen(function* () {
-              const error = yield* Effect.flip((yield* RuleJudge).judge(action, [rule]))
-              expect(error).toBeInstanceOf(RulesNotJudged)
-            }),
+    it.effect('missing and out-of-range probabilities all fail conservatively', () =>
+      Effect.gen(function* () {
+        for (const value of [undefined, -0.1, 1.1]) {
+          const context = yield* Layer.build(
+            Layer.fresh(
+              scripted(() => Effect.succeed(probabilities(value === undefined ? [] : [value]))),
+            ),
           )
-        },
-      )
-    }
+          const error = yield* RuleJudge.pipe(
+            Effect.flatMap((judge) => judge.judge(action, [rule])),
+            Effect.provide(context),
+            Effect.flip,
+          )
+          expect(error).toBeInstanceOf(RulesNotJudged)
+        }
+      }).pipe(Effect.scoped),
+    )
 
     it.effect(
       'provider failure preserves known Company prohibitions in an uncertain binding',

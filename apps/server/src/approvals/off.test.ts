@@ -97,6 +97,18 @@ layer(testDatabaseLayer)((it) => {
           expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
+          const asked = yield* rules.create(test.personal, {
+            action: 'Ask before sending mail',
+            decision: 'Ask',
+            scope: RuleScope.cases.Personal.make({}),
+          })
+          for (const action of [connectionAction, desktopAction])
+            expect(
+              GateDecision.guards.ApprovalRequired(
+                yield* gate.check(test.vivid, action, 'Ordinary'),
+              ),
+            ).toBe(true)
+          yield* rules.remove(test.personal, asked.id)
           // No rule can be judged while off, so one that could forbid leaves every action open.
           yield* rules.create(test.personal, {
             action: 'Never email people outside the company',

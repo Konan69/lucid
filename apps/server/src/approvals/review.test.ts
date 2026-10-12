@@ -1,6 +1,6 @@
 import * as TestClock from 'effect/testing/TestClock'
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Fiber, Layer } from 'effect'
+import { Deferred, Effect, Fiber, Layer } from 'effect'
 import { DecisionModel } from 'effect/ai'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -16,14 +16,31 @@ import {
   storeServices,
 } from './testing.ts'
 
-/** The production Reviewer over a provider that never answers and a history that is read at once. */
-const stalled = (threadId: Parameters<typeof delivery>[0]) =>
+/** A hand-answered history or decision boundary establishes entry before the deadline moves. */
+const stalled = (
+  threadId: Parameters<typeof delivery>[0],
+  entered: Deferred.Deferred<void>,
+  phase: 'history' | 'decision',
+) =>
   reviewerLayer.pipe(
     Layer.provideMerge(
-      Layer.effect(DecisionModel.DecisionModel, DecisionModel.make({ decide: () => Effect.never })),
+      Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: () =>
+            phase === 'decision'
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.die('A stalled history must never reach the decision provider'),
+        }),
+      ),
     ),
     Layer.provideMerge(
-      Layer.mock(Runtime, history([delivery(threadId, 'now', null, 'Update the project')])),
+      Layer.mock(
+        Runtime,
+        phase === 'history'
+          ? { read: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) }
+          : history([delivery(threadId, 'now', null, 'Update the project')]),
+      ),
     ),
   )
 
@@ -43,19 +60,22 @@ layer(testDatabaseLayer)((it) => {
               working: true,
             },
           ])
-          // The stalled reviewer stays scoped to the pending fiber that the deadline interrupts.
-          const review = Effect.fn('Reviewer.test.stalled')(function* () {
-            const context = yield* Layer.build(stalled(test.personalId))
-            return yield* Effect.gen(function* () {
-              return yield* (yield* Reviewer).review(test.vivid, connectionAction)
-            }).pipe(Effect.provide(context))
-          })
-          const pending = yield* review().pipe(Effect.forkChild)
-          // The deadline covers reading the request and asking, so it holds whichever is slow.
-          yield* TestClock.adjust('2999 millis')
-          expect(pending.pollUnsafe()).toBeUndefined()
-          yield* TestClock.adjust('1 millis')
-          expect(yield* Fiber.join(pending)).toEqual(Review.cases.Unreviewed.make({}))
+          for (const phase of ['history', 'decision'] as const) {
+            const entered = yield* Deferred.make<void>()
+            const review = Effect.fn('Reviewer.test.stalled')(function* () {
+              const context = yield* Layer.build(stalled(test.personalId, entered, phase))
+              return yield* (yield* Reviewer.pipe(Effect.provide(context))).review(
+                test.vivid,
+                connectionAction,
+              )
+            })
+            const pending = yield* review().pipe(Effect.forkChild)
+            yield* Deferred.await(entered)
+            yield* TestClock.adjust('2999 millis')
+            expect(pending.pollUnsafe()).toBeUndefined()
+            yield* TestClock.adjust('1 millis')
+            expect(yield* Fiber.join(pending)).toEqual(Review.cases.Unreviewed.make({}))
+          }
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )

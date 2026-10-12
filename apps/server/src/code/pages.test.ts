@@ -2,7 +2,6 @@ import { expect, it } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Person, PersonId, ReadPageOutcome, SessionId, Workspace } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Ref } from 'effect'
-import { budgets } from './budgets.ts'
 import { PageReader } from './page.ts'
 import { readPage } from './pages.ts'
 import { codeHandlers } from './handlers.ts'
@@ -15,13 +14,13 @@ it.effect('queues page reads beyond global capacity and releases slots after int
     const reader = PageReader.of({
       read: Effect.fn('Test.waitForPage')(function* () {
         const current = yield* Ref.updateAndGet(count, (value) => value + 1)
-        if (current === budgets.pages) yield* Deferred.succeed(entered, undefined)
-        if (current > budgets.pages)
+        if (current === 8) yield* Deferred.succeed(entered, undefined)
+        if (current > 8)
           return ReadPageOutcome.cases.Refused.make({ reason: 'not a readable page' })
         return yield* Effect.never
       }),
     })
-    const fibers = yield* Effect.forEach(Array.from({ length: budgets.pages }), () =>
+    const fibers = yield* Effect.forEach(Array.from({ length: 8 }), () =>
       readPage({ address: 'https://example.com/' }).pipe(
         Effect.provideService(PageReader, reader),
         Effect.forkChild,
@@ -32,10 +31,10 @@ it.effect('queues page reads beyond global capacity and releases slots after int
       readPage({ address: 'https://example.com/' }).pipe(Effect.provideService(PageReader, reader)),
       { startImmediately: true },
     )
-    expect(yield* Ref.get(count)).toBe(budgets.pages)
+    expect(yield* Ref.get(count)).toBe(8)
     for (const fiber of fibers) yield* Fiber.interrupt(fiber)
     expect(yield* Fiber.join(queued)).toHaveProperty('reason', 'not a readable page')
-    expect(yield* Ref.get(count)).toBe(budgets.pages + 1)
+    expect(yield* Ref.get(count)).toBe(8 + 1)
   }),
 )
 

@@ -110,9 +110,16 @@ const acting = Effect.fn('ShellTest.acting')(function* () {
   const database = yield* Database
   const id = PersonId.make(`shell-${NodeCrypto.randomUUID()}`)
   const person = Person.make({ id, name: 'Shell test', email: `${id}@example.test`, image: null })
-  yield* Effect.acquireRelease(database.run(database.insert(personTable).values(person)), () =>
-    database.run(database.delete(personTable).where(eq(personTable.id, id))).pipe(Effect.ignore),
+  // Register deletion before insertion: losing its receipt must not leave this fixture behind.
+  yield* Effect.addFinalizer(() =>
+    database.run(database.delete(personTable).where(eq(personTable.id, id))).pipe(
+      Effect.match({
+        onSuccess: () => void 0,
+        onFailure: () => expect.fail('Shell Person cleanup failed'),
+      }),
+    ),
   )
+  yield* database.run(database.insert(personTable).values(person))
   const actor: Actor = {
     person,
     workspace: Workspace.cases.Personal.make({}),

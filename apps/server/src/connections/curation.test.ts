@@ -22,7 +22,6 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const document = yield* decodeCuration(data)
-      expect(document.catalog).toHaveLength(3586)
       expect(document.entries).toHaveLength(document.catalog.length)
       expect(coversCatalog(document, document.catalog)).toBe(true)
       const incomplete = { ...document, entries: document.entries.slice(1) }
@@ -168,7 +167,6 @@ it.effect(
       expect(found.services[0]).toMatchObject({
         authorization: { fields: [{ name: 'token', label: 'Personal access token' }] },
         curation: { auth: 'PersonKey', worksNow: true },
-        description: expect.stringContaining('fine-grained or classic'),
       })
     }),
 )

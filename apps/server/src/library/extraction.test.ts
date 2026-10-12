@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeProcess from 'node:process'
@@ -19,7 +20,6 @@ import * as ChildProcess from 'effect/process/ChildProcess'
 import { extractText } from 'unpdf'
 import { AbortException, InvalidPDFException, PasswordException } from 'unpdf/pdfjs'
 import {
-  EXTRACTION_DEADLINE,
   EXTRACTION_HEAP_MB,
   ExtractionLimitExceeded,
   ExtractionUnavailable,
@@ -74,7 +74,10 @@ testLayer(NodeFileSystem.layer)((it) => {
       const owned = nativeLaunch(Fixture.cases.spin.make({}), EXTRACTION_HEAP_MB)
       const fiber = yield* extractWith(owned.launch)(new Uint8Array()).pipe(Effect.forkScoped)
       expect(yield* Effect.raceFirst(Deferred.await(owned.entered), Fiber.join(fiber))).toBe(true)
-      yield* TestClock.adjust(EXTRACTION_DEADLINE)
+      yield* TestClock.adjust('59999 millis')
+      expect(fiber.pollUnsafe()).toBeUndefined()
+      expect(yield* Deferred.isDone(owned.ended)).toBe(false)
+      yield* TestClock.adjust('1 millis')
       assertFailure(yield* Fiber.await(fiber), new ExtractionLimitExceeded({ limit: 'time' }))
       expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGKILL' })
       expect(yield* reportRemoved(owned)).toBe(true)
@@ -236,16 +239,18 @@ testLayer(NodeFileSystem.layer)((it) => {
    * A cap-sized upload crosses the real binary RPC seam over process IPC, where Node serializes the
    * bytes in chunks, and the caller's own bytes stay intact.
    */
-  it.effect('transfers an upload-sized PDF input while preserving the source bytes', () =>
-    Effect.gen(function* () {
-      const bytes = new Uint8Array(MAX_LIBRARY_FILE_BYTES)
-      bytes.fill(0x78)
-      const exit = yield* Effect.exit(extractPdf(bytes))
-      assertFailure(exit, new PdfUnreadable())
-      expect(bytes.byteLength).toBe(MAX_LIBRARY_FILE_BYTES)
-      expect(bytes[0]).toBe(0x78)
-      expect(bytes[bytes.length - 1]).toBe(0x78)
-    }),
+  it.effect(
+    'transfers every upload-sized input byte through native RPC without altering its source',
+    () =>
+      Effect.gen(function* () {
+        const bytes = new Uint8Array(MAX_LIBRARY_FILE_BYTES)
+        for (let index = 0; index < bytes.length; index += 1) bytes[index] = index % 251
+        const expected = NodeCrypto.createHash('sha256').update(bytes).digest('hex')
+        const owned = nativeLaunch(Fixture.cases.digest.make({}), EXTRACTION_HEAP_MB)
+        expect(yield* extractWith(owned.launch)(bytes)).toEqual([expected])
+        expect(NodeCrypto.createHash('sha256').update(bytes).digest('hex')).toBe(expected)
+        expect(yield* reportRemoved(owned)).toBe(true)
+      }),
   )
 
   /** Compile the shared stdout ingress once; E8 still decodes only after EOF and successful exit. */

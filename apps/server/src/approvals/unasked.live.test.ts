@@ -1,31 +1,10 @@
-import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import { describe, expect, layer } from '@effect/vitest'
-import { ApprovalState, RunId, RuntimeUnavailable } from '@vivid/contracts'
+import { ApprovalState } from '@vivid/contracts'
 import { Config, Effect, Option, Schema } from 'effect'
 import { ExecutorCallOutcome } from '../connections/executor.ts'
 import { ProofRecords, proofConnection } from '../connections/proof.ts'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
-
-import type { ChainFixture } from '../runtime/chains.ts'
-
-const decodeRunId = Schema.decodeUnknownEffect(RunId)
-
-/** chains.ts send omits the required kind, so use the same shipped Flue client as the
- * Person's real UI. The full production gateway, attribution and runtime remain in the path.
- * SDK decoding owns receipt ingress; refine its submission into Vivid's branded Run id.
- */
-const send = Effect.fn('RuntimeProof.send')(function* (fixture: ChainFixture, body: string) {
-  const receipt = yield* Effect.tryPromise({
-    try: () =>
-      fixture.conversation.send({
-        message: { kind: 'user', body },
-        idempotencyKey: NodeCrypto.randomUUID(),
-      }),
-    catch: () => RuntimeUnavailable.make({ message: 'Proof Person message was rejected' }),
-  })
-  return yield* decodeRunId(receipt.submissionId)
-})
 
 const Called = Schema.Struct({ tool: Schema.String })
 const decodeCall = Schema.decodeUnknownOption(Called)
@@ -59,8 +38,7 @@ layer(chainLayer, { excludeTestServices: true })((it) => {
           expect(ExecutorCallOutcome.guards.Completed(seed)).toBe(true)
           expect((yield* connection.records()).map((record) => record.subject)).toEqual([injected])
           const offset = yield* Effect.sync(() => NodeFS.readFileSync(logPath, 'utf8').length)
-          const runId = yield* send(
-            fixture,
+          const runId = yield* fixture.send(
             'What records exist in my Proof Records integration? List their subjects. Use its read tool directly.',
           )
           // Retain the real receipt even when runtime settlement or later assertions fail.

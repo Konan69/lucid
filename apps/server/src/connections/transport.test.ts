@@ -501,7 +501,6 @@ describe('Executor hosted transport', () => {
           service: ServiceId.make(`url:${source.address}`),
           source,
         })
-        yield* executor.remove(first.references)
         const second = yield* executor.add({
           ...begin,
           connectionId: ConnectionId.make('second'),
@@ -509,6 +508,11 @@ describe('Executor hosted transport', () => {
           source,
         })
         expect(second.references.app).not.toBe(first.references.app)
+        yield* executor.remove(first.references)
+        expect((yield* executor.status(second.references))._tag).toBe('Ready')
+        expect((yield* executor.tools(second.references)).map((tool) => tool.name)).toEqual([
+          'read',
+        ])
         const requests = yield* Ref.get(remote.requests)
         const imports = requests.filter(
           (request) => request.path === `POST ${hostedPrefix}/apps/import`,

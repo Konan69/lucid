@@ -16,6 +16,7 @@ import {
   AuditEvent,
   Conflict,
   InvalidRequest,
+  LibraryFolderId,
   Company,
   CompanyId,
   ConnectionId,
@@ -51,6 +52,7 @@ import { RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../notifications/tables.ts'
+import { libraryFolders } from '../library/tables.ts'
 import { notifierLayer } from '../notifications/notifier.ts'
 import { silentPushLayer } from '../push/testing.ts'
 import { SettingsStore, settingsStoreLayer } from '../settings/store.ts'
@@ -95,6 +97,11 @@ class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Deliv
   'test/RoutineDeliveries',
 ) {}
 
+/** All invocations remain observable, including refused and duplicate-key calls. */
+class DeliveryCalls extends Context.Service<DeliveryCalls, Ref.Ref<ReadonlyArray<Delivery>>>()(
+  'test/RoutineDeliveryCalls',
+) {}
+
 /**
  * Routines deliver only Signals. A FirstConversation or Said delivery carries no Routine text, so
  * reaching one here is a wrong delivery and fails the test rather than reading an absent body.
@@ -116,6 +123,7 @@ const recordedConversationLayer = Layer.effectContext(
   Effect.gen(function* () {
     const store = yield* RunStore
     const recorded = new Set<RunId>()
+    const calls = yield* Ref.make<ReadonlyArray<Delivery>>([])
     const delivered = yield* Ref.make<ReadonlyArray<Delivery>>([])
     const failure = yield* Ref.make<Option.Option<RuntimeUnavailable | NotFound>>(Option.none())
     const conversation = Conversation.of({
@@ -127,6 +135,7 @@ const recordedConversationLayer = Layer.effectContext(
       }),
       /** A Run exists durably before delivery returns, just as the production authority promises. */
       deliver: Effect.fn('Test.RoutineConversation.deliver')(function* (delivery) {
+        yield* Ref.update(calls, (previous) => [...previous, delivery])
         const failed = yield* Ref.getAndSet(failure, Option.none())
         if (Option.isSome(failed)) return yield* failed.value
         // Persist through the production allocator: parallel deliveries and replays keep real turns.
@@ -160,6 +169,7 @@ const recordedConversationLayer = Layer.effectContext(
     })
     return Context.make(Conversation, conversation).pipe(
       Context.add(Deliveries, delivered),
+      Context.add(DeliveryCalls, calls),
       Context.add(DeliveryFailure, failure),
     )
   }),
@@ -351,6 +361,7 @@ const fixture = Effect.fn('Test.Routines.fixture')(function* () {
     return yield* new DatabaseFailure({ message: 'Test People are missing' })
   yield* Ref.set(yield* Published, [])
   yield* Ref.set(yield* Deliveries, [])
+  yield* Ref.set(yield* DeliveryCalls, [])
   yield* Ref.set(yield* DeliveryFailure, Option.none())
   return {
     owner,
@@ -546,8 +557,21 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         const store = yield* RoutineStore
         const scheduler = yield* RoutineScheduler
         const now = yield* Clock.currentTimeMillis
+        const folder = LibraryFolderId.make(NodeCrypto.randomUUID())
+        const database = yield* Database
+        yield* database.run(
+          database.insert(libraryFolders).values({
+            id: folder,
+            name: 'Routine source',
+            personId: owner.person.id,
+            companyId: companyColumnOf(owner.workspace),
+            createdAt: now,
+            updatedAt: now,
+          }),
+        )
         const routine = yield* store.create(owner, {
           name: 'Reminder',
+          libraryFolderId: folder,
           prompt: 'Remind me to check the report.',
           trigger: RoutineTrigger.cases.Once.make({ at: now + 60_000, timezone: 'Africa/Lagos' }),
         })
@@ -579,6 +603,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           )).runs,
         ).toHaveLength(1)
         expect(
+          (yield* Ref.get(yield* DeliveryCalls)).map((delivery) => delivery.libraryFolder),
+        ).toEqual([folder])
+        expect(
           (yield* Ref.get(yield* Deliveries)).filter(
             (delivery) => delivery.threadId === `routine-${routine.id}`,
           ),
@@ -586,6 +613,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect(
           yield* Effect.flip(store.patch(owner, routine.id, { enabled: true })),
         ).toBeInstanceOf(RoutineTimePassed)
+        expect((yield* Ref.get(yield* DeliveryCalls)).map((delivery) => delivery.threadId)).toEqual(
+          [ThreadId.make(`routine-${routine.id}`)],
+        )
       }),
     )
 
@@ -694,6 +724,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             (delivery) => delivery.threadId === `routine-${routine.id}`,
           ),
         ).toHaveLength(1)
+        expect((yield* Ref.get(yield* DeliveryCalls)).map((delivery) => delivery.threadId)).toEqual(
+          [ThreadId.make(`routine-${routine.id}`)],
+        )
       }),
     )
 
@@ -850,14 +883,33 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           (yield* post({ web, id: routine.id, key: issued.key, body: 'x'.repeat(64 * 1024 + 1) }))
             .status,
         ).toBe(413)
-        expect(
-          (yield* post({
-            web,
-            id: routine.id,
-            key: Redacted.make('x'.repeat(43)),
-            body: 'x'.repeat(64 * 1024 + 1),
-          })).status,
-        ).toBe(404)
+        let reads = 0
+        const body = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              reads += 1
+              controller.enqueue(new TextEncoder().encode('x'.repeat(64 * 1024 + 1)))
+              controller.close()
+            },
+          },
+          { highWaterMark: 0 },
+        )
+        const requestOptions = {
+          method: 'POST',
+          headers: { authorization: `Bearer ${'x'.repeat(43)}` },
+          body,
+          duplex: 'half' as const,
+        }
+        const refused = yield* Effect.tryPromise({
+          try: () =>
+            web.handler(
+              new Request(`http://routines.test/api/hooks/routines/${routine.id}`, requestOptions),
+            ),
+          catch: (cause) =>
+            new WebhookFixtureFailure({ message: 'Webhook body fixture failed', cause }),
+        })
+        expect(refused.status).toBe(404)
+        expect(reads).toBe(0)
         expect(
           (yield* post({ web, id: routine.id, key: issued.key, body: 'é'.repeat(32 * 1024 + 1) }))
             .status,
@@ -914,10 +966,21 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect((yield* store.list(owner))[0]).toMatchObject({
           runs: [{ status: 'succeeded', finishedAt: 61_000 }],
         })
+        const attempts = yield* Ref.get(yield* DeliveryCalls)
+        // Concurrent workers may replay the same unacknowledged admission. The persisted
+        // Occurrence and its delivery key, rather than transport call count, own idempotency.
+        expect(attempts.length).toBeGreaterThan(0)
+        expect(attempts.length).toBeLessThanOrEqual(2)
+        for (const attempt of attempts)
+          expect(attempt).toMatchObject({
+            threadId: ThreadId.make(`routine-${routine.id}`),
+            idempotencyKey: occurrence.id,
+          })
         yield* store.patch(owner, routine.id, { enabled: false })
         yield* TestClock.setTime(180_000)
         yield* scheduler.runDue
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        expect(yield* Ref.get(yield* DeliveryCalls)).toEqual(attempts)
         return yield* Effect.void
       }),
     )
@@ -1037,6 +1100,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* database.run(
             database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
           )
+          const publishedAt = (yield* Ref.get(yield* Published)).length
           yield* (yield* RoutineScheduler).runDue
           const failed = yield* returned(
             (yield* returned(yield* store.list(owner), 'Routine')).runs,
@@ -1066,7 +1130,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             },
           ])
           expect(audit).toHaveLength(1)
-          expect(yield* Ref.get(yield* Published)).toEqual([
+          expect((yield* Ref.get(yield* Published)).slice(publishedAt)).toEqual([
             Topic.person(owner.person.id),
             Topic.company(
               yield* returned(
@@ -1625,20 +1689,13 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           expect(signalBody(yield* returned(delivered, 'Delivery'))).not.toContain(
             'PRIVATE-CONNECTION-MARKER',
           )
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue
+          expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
+          expect((yield* Ref.get(yield* DeliveryCalls)).map((call) => call.threadId)).toEqual([
+            ThreadId.make(`routine-${routine.id}`),
+          ])
         }),
-    )
-
-    it.effect('the same Integration event delivered twice retains one Occurrence and one Run', () =>
-      Effect.gen(function* () {
-        const { owner, store, scheduler } = yield* integrationFixture()
-        yield* Ref.set(yield* WatchEvents, [email(1)])
-        yield* TestClock.adjust('5 minutes')
-        yield* scheduler.runDue
-        yield* TestClock.adjust('5 minutes')
-        yield* scheduler.runDue
-        expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
-        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
-      }),
     )
 
     it.effect(
@@ -1781,7 +1838,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
               Effect.provide(
                 yield* Layer.build(
                   routineSchedulerServiceLayer.pipe(
-                    Layer.provide(routineStoreServiceLayer),
+                    Layer.provide(Layer.fresh(routineStoreServiceLayer)),
                     Layer.provide(testConfigLayer),
                   ),
                 ),
@@ -1805,7 +1862,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             Effect.provide(
               yield* Layer.build(
                 routineSchedulerServiceLayer.pipe(
-                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(Layer.fresh(routineStoreServiceLayer)),
                   Layer.provide(testConfigLayer),
                 ),
               ),
@@ -1835,6 +1892,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* Ref.set(yield* Published, [])
           yield* TestClock.adjust('5 minutes')
           yield* scheduler.runDue
+          const changed = yield* Ref.get(yield* Published)
           const stopped = yield* store.get(owner, routine.id)
           expect(stopped.routine.enabled).toBe(false)
           expect(stopped.watchRevision).toBe(before.watchRevision + 1)
@@ -1854,10 +1912,17 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             },
           ])
           expect(audit).toHaveLength(1)
-          expect(yield* Ref.get(yield* Published)).toContain(Topic.person(owner.person.id))
           const company = companyColumnOf(owner.workspace)
           if (company === null) expect.fail('The fixture must belong to a Company')
-          expect(yield* Ref.get(yield* Published)).toContain(Topic.company(company))
+          // The stop and its durable notice completion each announce the same two audiences.
+          // Repeating the pass must add neither another stop nor another notice publication.
+          expect(changed).toEqual([
+            Topic.person(owner.person.id),
+            Topic.company(company),
+            Topic.person(owner.person.id),
+            Topic.company(company),
+          ])
+          expect(yield* Ref.get(yield* Published)).toEqual(changed)
         }),
     )
 
@@ -1921,7 +1986,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             Effect.provide(
               yield* Layer.build(
                 routineSchedulerServiceLayer.pipe(
-                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(Layer.fresh(routineStoreServiceLayer)),
                   Layer.provide(testConfigLayer),
                 ),
               ),

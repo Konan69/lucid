@@ -98,9 +98,8 @@ describe.skipIf(process.env['VIVID_LIVE_NAMED_ACCOUNT'] !== '1')('named account 
           // Vivid named the work account and no other, and where the Person was asked first,
           // they were asked about that account by its own name.
           expect(new Set(work.named)).toEqual(new Set(['Proof Accounts (Work)']))
-          expect(Option.getOrElse(work.asked, () => 'Proof Accounts (Work)')).toBe(
-            'Proof Accounts (Work)',
-          )
+          for (const asked of Option.toArray(work.asked))
+            expect(asked).toBe('Proof Accounts (Work)')
           expect(yield* accounts.records('work account verified')).toEqual([
             { subject: 'work account verified', by: 'ada@work.example' },
           ])
@@ -111,9 +110,8 @@ describe.skipIf(process.env['VIVID_LIVE_NAMED_ACCOUNT'] !== '1')('named account 
             work.named.length,
           )
           expect(new Set(home.named)).toEqual(new Set(['Proof Accounts (ada@home.example)']))
-          expect(Option.getOrElse(home.asked, () => 'Proof Accounts (ada@home.example)')).toBe(
-            'Proof Accounts (ada@home.example)',
-          )
+          for (const asked of Option.toArray(home.asked))
+            expect(asked).toBe('Proof Accounts (ada@home.example)')
           expect(yield* accounts.records('home account verified')).toEqual([
             { subject: 'home account verified', by: 'ada@home.example' },
           ])

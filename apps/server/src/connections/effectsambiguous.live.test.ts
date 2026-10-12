@@ -127,6 +127,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
                 : yield* Effect.forEach(request.tools, (tool) =>
                     effects.classify({ ...request, tool }),
                   )
+            expect(result).toHaveLength(cohort.length)
             for (const [index, tool] of cohort.entries()) {
               const scores = effectScores(lines, tool.name)
               expect(scores, tool.name).toHaveLength(1)
@@ -134,6 +135,8 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
               if (tool.expected === 'write') {
                 expect(scores[0], tool.name).toBeLessThan(READ_PROBABILITY_THRESHOLD)
                 expect(result[index], tool.name).not.toBe('read')
+              } else {
+                expect(result[index], tool.name).toBe('read')
               }
             }
           }).pipe(Effect.provide(context))

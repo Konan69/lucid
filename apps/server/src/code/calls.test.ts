@@ -329,8 +329,12 @@ describe.skipIf(!testDatabaseConfigured)(
               name: null,
               shared: true,
             })
+            const probe = yield* ConnectionProbe
+            const before = yield* Ref.get(probe.calls)
             const shared = yield* run(test.member, test.companyId, `return await ${use('write')};`)
             expect(shared.calls.map((call) => call.end)).toEqual(['refused'])
+            expect(yield* Ref.get(probe.calls)).toBe(before)
+            expect(yield* (yield* ApprovalStore).inThread(test.companyId)).toEqual([])
           }),
           testLayer,
         ),
@@ -382,7 +386,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const outcome = yield* run(
                 test.personal,
                 test.personalId,
-                `try {await Promise.allSettled([${use('write')},${use('write')}]);} finally {await ${use('write')};}`,
+                `try {await Promise.all([${use('write')},${use('write')}]);} finally {await ${use('write')};}`,
               )
               expect(CodeOutcome.guards.ApprovalRequired(outcome)).toBe(true)
               expect(yield* Ref.get(probe.calls)).toBe(0)
@@ -510,7 +514,7 @@ describe.skipIf(!testDatabaseConfigured)(
             const outcome = yield* run(
               test.personal,
               test.personalId,
-              `try {await Promise.allSettled([${use('write')},${use('write')}]);} catch(e) {await ${use('write')};}`,
+              `try {await Promise.all([${use('write')},${use('write')}]);} catch(e) {await ${use('write')};}`,
             )
             expect(CodeOutcome.guards.Blocked(outcome)).toBe(true)
             expect(outcome).toHaveProperty('rule', 'Never update records')

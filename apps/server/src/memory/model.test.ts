@@ -1,4 +1,4 @@
-import { expect, layer as testLayer } from '@effect/vitest'
+import { expect, it, layer as testLayer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Predicate, Result, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { Completion, MemoryGenerationIncomplete, MemoryModel, memoryModelLayer } from './model.ts'
@@ -74,17 +74,21 @@ testLayer(modelLayer('{"title":"Holiday"}', 'length'))((it) => {
   )
 })
 
-testLayer(modelLayer('', 'stop'))((it) => {
-  it.effect('rejects unfinished or blank provider output without inventing a title', () =>
-    Effect.gen(function* () {
-      const result = yield* (yield* MemoryModel).complete(input).pipe(Effect.result)
+// Blank output and a nonblank answer with an unknown ending are independently authored
+// provider failures; neither may be mislabeled as a finished or budget-limited completion.
+it.effect('rejects blank and unfinished provider output', () =>
+  Effect.gen(function* () {
+    for (const [content, reason, outputCharacters] of [
+      ['', 'stop', 0],
+      ['{"title":"Holiday"}', 'provider_changed', 19],
+    ] as const) {
+      const context = yield* Layer.build(modelLayer(content, reason))
+      const result = yield* (yield* MemoryModel.pipe(Effect.provide(context)))
+        .complete(input)
+        .pipe(Effect.result)
       expect(Result.isFailure(result) && result.failure).toEqual(
-        MemoryGenerationIncomplete.make({
-          operation: 'thread_title',
-          reason: 'stop',
-          outputCharacters: 0,
-        }),
+        MemoryGenerationIncomplete.make({ operation: 'thread_title', reason, outputCharacters }),
       )
-    }),
-  )
-})
+    }
+  }).pipe(Effect.scoped),
+)

@@ -2,16 +2,14 @@ import * as Layer from 'effect/Layer'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
-import * as Queue from 'effect/Queue'
-import * as Schema from 'effect/Schema'
 import { AuditEvent } from '@vivid/contracts'
 import { fixture, trustTestServices } from '../approvals/testing.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { CHANNEL, Topic } from '../live/changes.ts'
 import { Audit } from './record.ts'
 import { loadAudit } from './store.ts'
-
-const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
+import { payload } from '../live/testing.ts'
+import { requireCompany } from '../auth/access.ts'
 
 /** Private Thread contents remain private while attributed action metadata reaches the authorized record. */
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
@@ -35,9 +33,11 @@ layer(testDatabaseLayer)((it) => {
                 rule: 'Never remove records',
               }),
             )
-            const announced = yield* decodeTopics((yield* Queue.take(notifications)).payload)
-            expect(announced).toContain(Topic.thread(test.companyId))
-            expect(announced).toContain(Topic.person(test.member.person.id))
+            yield* payload(notifications, [
+              Topic.thread(test.companyId),
+              Topic.person(test.member.person.id),
+              Topic.company((yield* requireCompany(test.member.workspace)).company.id),
+            ])
             yield* audit.record(
               test.owner,
               AuditEvent.cases.RuleAdded.make({ action: 'Ask before writing', decision: 'Ask' }),

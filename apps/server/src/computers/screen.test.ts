@@ -54,8 +54,10 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* (st
   const sessionId = SessionId.make(NodeCrypto.randomUUID())
   yield* Effect.addFinalizer(() =>
     database.run(database.delete(personTable).where(eq(personTable.id, personId))).pipe(
-      Effect.tapError((error) => Effect.logError('Screen lifetime cleanup failed', error._tag)),
-      Effect.ignore,
+      Effect.match({
+        onFailure: () => expect.fail('Screen lifetime cleanup failed'),
+        onSuccess: () => undefined,
+      }),
     ),
   )
   yield* TestClock.setTime(startedAt)
@@ -76,26 +78,30 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* (st
   const checked = yield* Deferred.make<void>()
   const sleeping = yield* Deferred.make<void>()
   const stopped = yield* Deferred.make<void>()
+  const finished = yield* Deferred.make<void>()
   const clock = yield* Clock.Clock
   /** Endpoint readiness precedes the tick's sleep. Register the real TestClock sleep in an
    * immediate child before signaling readiness; suppress automatic yields only in that child
    * so the signal cannot overtake registration (rc.116 TestClock.make.sleep registers first).
    */
-  // SAFETY: Object.create keeps the TestClock as the prototype, so every other Clock method is
-  // the real one; only sleep is overridden below.
-  const tickingClock = Object.create(clock) as Clock.Clock
-  tickingClock.sleep = Effect.fn('Computer.screen.test.tick')(function* (
-    duration: Duration.Duration,
-  ) {
-    const sleeper = yield* clock
-      .sleep(duration)
-      .pipe(
-        Effect.provideService(Scheduler.PreventSchedulerYield, true),
-        Effect.forkChild({ startImmediately: true }),
-      )
-    yield* Deferred.succeed(sleeping, undefined)
-    yield* Fiber.join(sleeper)
-  })
+  const tickingClock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+    currentTimeMillis: clock.currentTimeMillis,
+    currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+    currentTimeNanos: clock.currentTimeNanos,
+    monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: clock.monotonicTimeNanos,
+    sleep: Effect.fn('Computer.screen.test.tick')(function* (duration: Duration.Duration) {
+      const sleeper = yield* clock
+        .sleep(duration)
+        .pipe(
+          Effect.provideService(Scheduler.PreventSchedulerYield, true),
+          Effect.forkChild({ startImmediately: true }),
+        )
+      yield* Deferred.succeed(sleeping, undefined)
+      yield* Fiber.join(sleeper)
+    }),
+  }
   const store = yield* ComputerStore
   const controlled = ComputerStore.of({
     ...store,
@@ -118,11 +124,12 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* (st
   )
   const worker = yield* lifetime.pipe(
     Effect.provideService(Clock.Clock, tickingClock),
+    Effect.ensuring(Deferred.succeed(finished, undefined)),
     Effect.forkChild,
   )
   yield* Deferred.await(checked)
   yield* Deferred.await(sleeping)
-  return { database, personId, sessionId, moved, stopped, worker }
+  return { database, personId, sessionId, moved, stopped, finished, worker }
 })
 
 describe.skipIf(!testDatabaseConfigured)('Computer screen lifetime', () => {
@@ -135,22 +142,29 @@ describe.skipIf(!testDatabaseConfigured)('Computer screen lifetime', () => {
           yield* fixture.database.run(
             fixture.database.delete(sessionTable).where(eq(sessionTable.id, fixture.sessionId)),
           )
-          yield* TestClock.adjust('5 seconds')
+          // A lifetime that merely checks once and returns must fail before the next real check.
+          yield* TestClock.adjust('4999 millis')
+          expect(yield* Deferred.isDone(fixture.finished)).toBe(false)
+          yield* TestClock.adjust(1)
           expect(yield* Fiber.join(fixture.worker)).toBeUndefined()
         }),
     )
     test.effect('revokes screen authority at session expiry using the controllable clock', () =>
       Effect.gen(function* () {
-        // One registered tick reaches expiry exactly; a multi-tick jump could outrun real
-        // database I/O and finish before the next sleep registers, leaving the worker waiting.
+        // Remain active just before expiry, then cross the last millisecond of the registered
+        // tick. The completion receipt rejects a worker that returns after its first check.
         const fixture = yield* lifetimeFixture(55_000)
-        yield* TestClock.adjust('5 seconds')
+        yield* TestClock.adjust('4999 millis')
+        expect(yield* Deferred.isDone(fixture.finished)).toBe(false)
+        yield* TestClock.adjust(1)
         expect(yield* Fiber.join(fixture.worker)).toBeUndefined()
       }),
     )
     test.effect('revokes screen authority when the Computer stops and publishes its change', () =>
       Effect.gen(function* () {
         const fixture = yield* lifetimeFixture(0)
+        yield* TestClock.adjust(1)
+        expect(yield* Deferred.isDone(fixture.finished)).toBe(false)
         yield* Deferred.succeed(fixture.stopped, undefined)
         yield* PubSub.publish(fixture.moved, undefined)
         expect(yield* Fiber.join(fixture.worker)).toBeUndefined()

@@ -3,29 +3,31 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { ApprovalId, CodeOutcome, PersonId, ThreadId } from '@vivid/contracts'
-import { Duration, Effect, Layer, Ref } from 'effect'
-import { boatMachineLayer } from '../computers/boat.ts'
+import { Deferred, Duration, Effect, Layer, Ref, Option, Schema } from 'effect'
+import { proofComputer } from '../computers/tests/proof.ts'
 import { Machine, MachineKey } from '../computers/machine.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import type { ComputerAttachment } from '../computers/store.ts'
 import { CodeComputer, installRunner, loadRunner, openGuest } from './computer.ts'
 import { CallOutcome, CodeProcess, codeProcessLayer, type Dispatch } from './process.ts'
 
-// A machine costs money and this test must never make one: it runs only when the installation
-// names the machine it already has (`VIVID_BOAT_MACHINE`), which the Boat Layer then takes instead
-// of creating. Read presence only; a key's value is never printed.
+const decodeGuestPid = Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Int }))
+
+// Explicit live opt-in authorizes creation and destruction of a disposable proof machine.
+// The shared fixture rejects both adoption settings before any provider or guest work.
 const enabled =
   testDatabaseConfigured &&
   Object.hasOwn(NodeProcess.env, 'VIVID_BOAT_API_KEY') &&
-  Object.hasOwn(NodeProcess.env, 'VIVID_BOAT_MACHINE') &&
   NodeProcess.env.VIVID_LIVE_PROGRAM_COMPUTER === '1'
 
-const boat = boatMachineLayer.pipe(
-  Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)),
-)
-
-/** The machine's key for this run, so a test can look at the Computer after a program ended. */
+/** Each file's owned machine key keeps the runner available across its two scoped programs. */
 const key = MachineKey.make(NodeCrypto.randomUUID())
+const boat = Layer.effect(
+  Machine,
+  Effect.gen(function* () {
+    return (yield* proofComputer(key)).machine
+  }),
+).pipe(Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)))
 
 /**
  * The real provider under the real runner. Only the Computer store is left out: its waking and
@@ -76,8 +78,26 @@ describe.skipIf(!enabled)('Programs on a real Boat machine', () => {
         Effect.gen(function* () {
           const process = yield* CodeProcess
           const asked = yield* Ref.make<ReadonlyArray<string>>([])
+          const bothEntered = yield* Deferred.make<void>()
+          const machine = yield* Machine
+          const proofFile = `/tmp/vivid-code-proof-${NodeCrypto.randomUUID()}.txt`
+          yield* Effect.addFinalizer(() =>
+            machine.exec({ key, command: `rm -f -- '${proofFile}'`, timeoutSeconds: 30 }).pipe(
+              Effect.catch(() =>
+                Effect.sync(() => expect.fail('Could not remove owned proof file')),
+              ),
+              Effect.asVoid,
+            ),
+          )
           const dispatch: Dispatch = Effect.fn('Live.answer')(function* (call) {
-            yield* Ref.update(asked, (kinds) => kinds.concat([call.kind]))
+            const entered = yield* Ref.updateAndGet(asked, (kinds) => kinds.concat([call.kind]))
+            if (entered.length === 2) yield* Deferred.succeed(bothEntered, undefined)
+            yield* Deferred.await(bothEntered).pipe(
+              Effect.timeoutOrElse({
+                duration: '30 seconds',
+                orElse: () => Effect.die('Both calls must enter dispatch together'),
+              }),
+            )
             return CallOutcome.cases.Returned.make({
               value: { asked: call.input },
               summary: call.kind,
@@ -95,10 +115,10 @@ const [found, page] = await Promise.all([
   tools.find_tools({query: "records"}),
   tools.read_page({address: "https://example.com/"}),
 ]);
-await files.writeFile("vivid-program-proof.txt", found.asked.query + " " + page.asked.address);
+await files.writeFile(${JSON.stringify(proofFile)}, found.asked.query + " " + page.asked.address);
 console.log("wrote the file");
-const file = await files.readFile("vivid-program-proof.txt", "utf8");
-await files.rm("vivid-program-proof.txt");
+const file = await files.readFile(${JSON.stringify(proofFile)}, "utf8");
+await files.rm(${JSON.stringify(proofFile)});
 return {file, platform: process.platform};`,
                 },
                 boundary: boundary(),
@@ -119,7 +139,7 @@ return {file, platform: process.platform};`,
             }),
           )
           expect((yield* Ref.get(asked)).toSorted()).toEqual(['find_tools', 'read_page'])
-        }),
+        }).pipe(Effect.scoped),
       15 * 60_000,
     )
 
@@ -129,20 +149,24 @@ return {file, platform: process.platform};`,
         Effect.gen(function* () {
           const process = yield* CodeProcess
           const machine = yield* Machine
-          const dispatch: Dispatch = () =>
-            Effect.succeed(
-              CallOutcome.cases.ApprovalRequired.make({
-                approvalId: ApprovalId.make('approval-live'),
-                summary: 'Send the message',
-              }),
+          const pid = yield* Ref.make(Option.none<number>())
+          const dispatch: Dispatch = Effect.fn('Live.approval')(function* (call) {
+            const input = yield* decodeGuestPid(call.input).pipe(
+              Effect.catch(() => Effect.sync(() => expect.fail('Guest PID required'))),
             )
+            yield* Ref.set(pid, Option.some(input.pid))
+            return CallOutcome.cases.ApprovalRequired.make({
+              approvalId: ApprovalId.make('approval-live'),
+              summary: 'Send the message',
+            })
+          })
           const outcome = yield* timed(
             'approval',
             process.run(
               {
                 request: {
                   summary: 'Prove a decision stops the program',
-                  code: 'try { await tools.use_tool({}); } catch (error) {} await new Promise((done) => setTimeout(done, 600000)); return "continued";',
+                  code: 'try { await tools.use_tool({pid:process.pid}); } catch (error) {} await new Promise((done) => setTimeout(done, 600000)); return "continued";',
                 },
                 boundary: boundary(),
               },
@@ -151,14 +175,14 @@ return {file, platform: process.platform};`,
           )
           expect(CodeOutcome.guards.ApprovalRequired(outcome)).toBe(true)
           expect(outcome.calls.map((call) => call.end)).toEqual(['needs approval'])
-          // The program was waiting on a ten-minute timer. Closing its command ended the runner
-          // on the Computer; the bracket keeps the search from finding its own command line.
+          const captured = yield* Ref.get(pid)
+          if (Option.isNone(captured)) expect.fail('Guest did not report its PID')
           const left = yield* machine.exec({
             key,
-            command: "pgrep -f '[v]ivid/computer/program-' | wc -l",
+            command: `test ! -d /proc/${captured.value}`,
             timeoutSeconds: 30,
           })
-          expect(left.output.trim()).toBe('0')
+          expect(left.exitCode).toBe(0)
         }),
       15 * 60_000,
     )

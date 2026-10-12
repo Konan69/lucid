@@ -241,22 +241,28 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           new TextEncoder().encode('idempotent emerald'),
           'text/plain',
         )
+        const notices = yield* (yield* PgClient).listen(CHANNEL)
         yield* delivery(extractPdf)
+        expect(yield* announcedBefore(notices)).toEqual([[Topic.person(owner.actor.person.id)]])
         const settled = yield* store.getItem(owner.actor, item.document.id)
         yield* ingest(item.document.id, 2)
+        expect(yield* announcedBefore(notices)).toEqual([])
         expect(yield* store.getItem(owner.actor, item.document.id)).toEqual(settled)
         const next = yield* createItem(
           owner.actor,
           new TextEncoder().encode('competing ruby'),
           'text/plain',
         )
+        expect(yield* announcedBefore(notices)).toEqual([[Topic.person(owner.actor.person.id)]])
         yield* Effect.all([ingest(next.document.id, 1), ingest(next.document.id, 1)], {
           concurrency: 2,
         })
+        expect(yield* announcedBefore(notices)).toEqual([[Topic.person(owner.actor.person.id)]])
         expect(yield* store.getItem(owner.actor, next.document.id)).toMatchObject({
           value: { status: 'ready', chunkCount: 1 },
         })
         yield* delivery(extractPdf)
+        expect(yield* announcedBefore(notices)).toEqual([])
       }),
     )
 

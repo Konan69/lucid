@@ -46,6 +46,22 @@ it.effect('canonical digests preserve nested meaning and bind Person and Thread'
       }),
     })
     expect(digest).not.toEqual(actionDigest(yield* encode(changed), thread, person))
+    // Input values and array order carry authority; object-key canonicalization must not erase them.
+    for (const input of [
+      { a: 5, z: [1, { a: 3, b: 2 }] },
+      { a: 4, z: [{ a: 3, b: 2 }, 1] },
+    ]) {
+      const changedInput = ProposedAction.make({
+        ...action,
+        target: ActionTarget.cases.Connection.make({
+          connectionId: ConnectionId.make('connection-one'),
+          account: 'Work',
+          tool: 'update',
+          input,
+        }),
+      })
+      expect(digest).not.toEqual(actionDigest(yield* encode(changedInput), thread, person))
+    }
     expect(digest).toMatch(/^[a-f0-9]{64}$/u)
   }),
 )

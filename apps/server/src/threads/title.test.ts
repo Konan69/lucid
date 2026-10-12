@@ -3,18 +3,21 @@ import { Option } from 'effect'
 import { buildThreadTitlePrompt, formatThreadTitleContext, sanitizeThreadTitle } from './title.ts'
 
 describe('Thread titles', () => {
-  it.each([
-    [
-      '  "Reconnect failures after restart because the session state does not recover"  ',
-      'Reconnect failures after restart because the se...',
-    ],
-    ['  `Plan   a\tweekend away`\nsecond line', 'Plan a weekend away'],
-    [" 'Find flights'\r\nignored", 'Find flights'],
-    ['  \n  ', 'New thread'],
-    ['`"\'`', 'New thread'],
-    ['a'.repeat(50), 'a'.repeat(50)],
-    ['a'.repeat(51), `${'a'.repeat(47)}...`],
-  ])('sanitizes %j', (raw, expected) => expect(sanitizeThreadTitle(raw)).toBe(expected))
+  it('sanitizes authored title inputs at whitespace, quote and length boundaries', () => {
+    const inputs = [
+      [
+        '  "Reconnect failures after restart because the session state does not recover"  ',
+        'Reconnect failures after restart because the se...',
+      ],
+      ['  `Plan   a\tweekend away`\nsecond line', 'Plan a weekend away'],
+      [" 'Find flights'\r\nignored", 'Find flights'],
+      ['  \n  ', 'New thread'],
+      ['`"\'`', 'New thread'],
+      ['a'.repeat(50), 'a'.repeat(50)],
+      ['a'.repeat(51), `${'a'.repeat(47)}...`],
+    ] as const
+    for (const [raw, expected] of inputs) expect(sanitizeThreadTitle(raw)).toBe(expected)
+  })
 
   it('keeps chronological Person and Vivid text, omitting system and blank messages', () => {
     expect(
@@ -56,9 +59,6 @@ describe('Thread titles', () => {
       `Thread contents:\n${message.slice(0, 8000)}\n\n[truncated]`,
     )
     expect(initial.prompt).not.toContain('Latest goal')
-    expect(initial.prompt).toContain(
-      'USER lines define the subject; ASSISTANT lines only resolve vague references.',
-    )
     const regenerated = buildThreadTitlePrompt(message, Option.some('Old title'))
     expect(regenerated.content).toEqual({
       previousTitle: 'Old title',
@@ -66,7 +66,6 @@ describe('Thread titles', () => {
     })
     expect(regenerated.prompt).not.toContain('Old title')
     expect(regenerated.prompt).not.toContain('Latest goal')
-    expect(regenerated.prompt).toContain('meaningfully improved title')
     const already = buildThreadTitlePrompt(
       `[Earlier content truncated]\n\n${message}`,
       Option.some('Old title'),

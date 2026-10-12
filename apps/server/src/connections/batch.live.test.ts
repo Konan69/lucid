@@ -68,10 +68,15 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
               tools: conservativeReads,
             })
             yield* Effect.logInfo('Batch read recovery', {
-              recovered: 18 - conservativeReads.length,
+              recovered:
+                liveTools.filter((tool) => tool.expected === 'read').length -
+                conservativeReads.length,
               floor: LIVE_READ_RECOVERY_FLOOR,
             })
-            expect(18 - conservativeReads.length).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
+            expect(
+              liveTools.filter((tool) => tool.expected === 'read').length -
+                conservativeReads.length,
+            ).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
             expect(misses).toEqual([])
           }).pipe(Effect.provide(context))
         }).pipe(

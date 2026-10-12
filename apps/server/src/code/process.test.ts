@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import { Context, Layer, Logger } from 'effect'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import {
@@ -281,16 +282,21 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
               summary: 'Send the message',
             })
           })
-          const outcome = yield* run(
-            `try {await Promise.allSettled([tools.use_tool({}),tools.use_tool({}),tools.browse({})]);}
-        catch(e){await tools.use_tool({});} finally {await tools.use_tool({});} return "continued";`,
-            dispatch,
-          )
-          check(outcome, 'ApprovalRequired', {
-            approvalId: 'approval-test',
-            calls: [{ end: 'needs approval' }],
-          })
-          expect(yield* Ref.get(count)).toBe(1)
+          // Promise.all reaches catch; allSettled reaches finally. Both must lose authority
+          // before any already-queued or recovery write reaches the provider.
+          for (const aggregate of ['all', 'allSettled'] as const) {
+            yield* Ref.set(count, 0)
+            const outcome = yield* run(
+              `try {await Promise.${aggregate}([tools.use_tool({}),tools.use_tool({}),tools.browse({})]);}
+              catch(e){await tools.use_tool({});} finally {await tools.use_tool({});} return "continued";`,
+              dispatch,
+            )
+            check(outcome, 'ApprovalRequired', {
+              approvalId: 'approval-test',
+              calls: [{ end: 'needs approval' }],
+            })
+            expect(yield* Ref.get(count)).toBe(1)
+          }
         }),
     )
 
@@ -398,12 +404,15 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
 
     it.effect('accepts an exact 256 KiB argument and result without altering either', () =>
       Effect.gen(function* () {
-        const size = budgets.frame - 2 // The JSON string's two quotes are part of its byte budget.
+        const size = 262_142 // The JSON string's two quotes are part of its byte budget.
         const outcome = yield* run(
-          `return (await tools.find_tools("x".repeat(${size}))).length;`,
+          `const {createHash}=await import("node:crypto"); return createHash("sha256").update(await tools.find_tools("x".repeat(${size}))).digest("hex");`,
           reply,
         )
-        expect(outcome).toHaveProperty('result', size)
+        expect(outcome).toHaveProperty(
+          'result',
+          NodeCrypto.createHash('sha256').update('x'.repeat(size)).digest('hex'),
+        )
         expect(outcome.calls).toHaveLength(1)
       }),
     )
@@ -487,6 +496,16 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             Deferred.await(entered),
             Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
           )
+          if (index === 0) {
+            check(
+              yield* process.run(
+                { ...input, boundary: { person, thread: ThreadId.make('thread-0') } },
+                reply,
+              ),
+              'Failed',
+              { failure: CodeFailure.cases.Unavailable.make({}) },
+            )
+          }
         }
         for (const thread of ['thread-0', 'fifth-thread'])
           check(
@@ -675,6 +694,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           const order = yield* Ref.make(0)
           const secondRunning = yield* Deferred.make<void>()
           const asked = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
           const dispatch: Dispatch = Effect.fn('Test.askBesideWork')(function* () {
             const position = yield* Ref.updateAndGet(order, (value) => value + 1)
             if (position === 1) {
@@ -686,8 +706,8 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
               })
             }
             yield* Deferred.succeed(secondRunning, undefined)
-            // Held by the test clock, which moves only after the first call has asked.
-            yield* Effect.sleep('1 second')
+            // Hand-answer the sibling only after the Approval receipt is observed.
+            yield* Deferred.await(release)
             return CallOutcome.cases.Returned.make({
               value: true,
               summary: 'Filed the note',
@@ -698,7 +718,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
           )
           yield* Deferred.await(asked)
-          yield* TestClock.adjust('1 second')
+          yield* Deferred.succeed(release, undefined)
           const outcome = yield* Fiber.join(running)
           // The sibling's receipt is its real result, not the provisional unknown it had when the
           // first call asked.
@@ -719,6 +739,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           const order = yield* Ref.make(0)
           const secondRunning = yield* Deferred.make<void>()
           const asked = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
           const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
             const position = yield* Ref.updateAndGet(order, (value) => value + 1)
             if (position === 1) {
@@ -730,14 +751,14 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
               })
             }
             yield* Deferred.succeed(secondRunning, undefined)
-            yield* Effect.sleep('1 second')
+            yield* Deferred.await(release)
             return yield* Effect.interrupt
           })
           const running = yield* Effect.forkChild(
             run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
           )
           yield* Deferred.await(asked)
-          yield* TestClock.adjust('1 second')
+          yield* Deferred.succeed(release, undefined)
           // The lost call keeps its honest unknown receipt, and the decision still arrives at once
           // instead of waiting for the deadline.
           check(yield* Fiber.join(running), 'ApprovalRequired', {

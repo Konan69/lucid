@@ -217,11 +217,10 @@ const supersession = Effect.fn('ReceiptTest.supersession')(function* (neighbours
       expect(reverse.map((row) => row.memory.id)).toEqual([f.replacement.memory.id])
     }
   }
-  const missing = yield* f.helix.supersedeOnce({
-    ...input,
-    receiptId: MemoryReceiptId.make(NodeCrypto.randomUUID()),
-  })
+  const missingInput = { ...input, receiptId: MemoryReceiptId.make(NodeCrypto.randomUUID()) }
+  const missing = yield* f.helix.supersedeOnce(missingInput)
   expect(missing).toEqual(ReceiptedWrite.cases.Missing.make({}))
+  expect(yield* f.helix.receipt(missingInput)).toEqual(Option.none())
   expect(yield* inspect(f.partition)).toEqual(first)
 })
 
@@ -467,40 +466,6 @@ describe.skipIf(process.env['VIVID_TEST_HELIX_URL'] === undefined)('Helix memory
       it.effect(
         'supersedes once, copies both EXTENDS directions and replays without duplicate edges',
         () => verified(supersession(true)),
-      )
-
-      it.effect(
-        'returns Missing without a receipt for an already superseded oldId under a new key',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              yield* f.helix.insert({
-                partition: f.partition,
-                record: f.seed,
-                embedding: f.embedding,
-              })
-              yield* f.helix.supersede({
-                partition: f.partition,
-                oldId: f.seed.memory.id,
-                record: f.replacement,
-                embedding: f.embedding,
-              })
-              const input = {
-                partition: f.partition,
-                receiptId: f.receiptId,
-                oldId: f.seed.memory.id,
-                record: f.outgoing,
-                embedding: f.embedding,
-              }
-              expect(yield* f.helix.supersedeOnce(input)).toEqual(
-                ReceiptedWrite.cases.Missing.make({}),
-              )
-              expect(yield* f.helix.receipt(input)).toEqual(Option.none())
-              expect((yield* inspect(f.partition)).memories).toHaveLength(2)
-              expect((yield* inspect(f.partition)).receipts).toEqual([])
-            }),
-          ),
       )
 
       it.effect(

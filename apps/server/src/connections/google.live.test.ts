@@ -18,6 +18,19 @@ import { googleReturnPath, googleServices, type GoogleService } from './google.t
 const returnAddress = `https://vivid.example.test${googleReturnPath}`
 const clientId = 'isolated-test-client'
 
+/** Authored OAuth requirements are independent of the source generator and service metadata. */
+const requiredScopes = new Map([
+  ['Gmail', ['https://mail.google.com/', 'https://www.googleapis.com/auth/gmail.settings.basic']],
+  ['Google Calendar', ['https://www.googleapis.com/auth/calendar']],
+  ['Google Drive', ['https://www.googleapis.com/auth/drive']],
+  ['Google Docs', ['https://www.googleapis.com/auth/documents']],
+  [
+    'Google Sheets',
+    ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file'],
+  ],
+  ['Google Tasks', ['https://www.googleapis.com/auth/tasks']],
+])
+
 const liveLayer = executorLayer.pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(
@@ -70,7 +83,14 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
         return expect.fail('Google correlation required')
       return Effect.succeed(inspect(step, step.references))
     },
-    (step) => executor.remove(step.references),
+    (step) =>
+      executor
+        .remove(step.references)
+        .pipe(
+          Effect.catch(() =>
+            Effect.sync(() => expect.fail('Could not remove owned Google proof connection')),
+          ),
+        ),
   )
 })
 
@@ -78,7 +98,7 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
  * The real adapter against a disposable hosted Executor, with nothing installed on it beforehand:
  * no product database and no Google token exchange. For each of the six services the first Begin
  * deploys Vivid's own source and the second finds that app, and both return Google's own consent
- * address carrying the client, the return address, the state Vivid stored and the service's scopes.
+ * address carrying the client, the return address and the state Vivid stored.
  *
  * Run on the hosted Executor's own image (`executor-selfhost:src-304bf60`), which must be started
  * with `EXECUTOR_OAUTH_CALLBACK_URL` set to `returnAddress` above. Assertions compare to booleans
@@ -109,7 +129,14 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
                 expect(sent('client_id') === clientId).toBe(true)
                 expect(sent('redirect_uri') === returnAddress).toBe(true)
                 expect(sent('state') === references.googleState).toBe(true)
-                expect(sent('scope') === google.scopes.join(' ')).toBe(true)
+                const scopes = requiredScopes.get(google.name)
+                if (scopes === undefined)
+                  expect.fail('OAuth expectations required for this service')
+                const supplied = sent('scope')
+                if (supplied === null) expect.fail('Google consent must request its scopes')
+                expect(supplied.split(' ').toSorted()).toEqual(
+                  ['openid', 'email', 'profile', ...scopes].toSorted(),
+                )
                 // Google issues a refresh token only for offline access, and takes no resource.
                 expect(sent('access_type') === 'offline').toBe(true)
                 expect(address.searchParams.has('resource')).toBe(false)

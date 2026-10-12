@@ -105,12 +105,26 @@ describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', 
         expect(yield* Ref.get(probe.catalogs)).toBe(before)
       }),
     )
-    it.effect('reserves UseTool for Vivid before acquiring any store authority', () =>
+    it.effect('reserves UseTool for Vivid without reading store state or dispatching', () =>
       Effect.gen(function* () {
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const calls = yield* Ref.get(probe.calls)
+        // A hostile store read turns an incorrectly routed Person request into a defect;
+        // the real Forbidden result must be chosen before any account lookup.
+        const unreadable = ConnectionStore.of({
+          ...store,
+          get: () => Effect.die('Person UseTool must not read a Connection'),
+        })
         const failure = yield* connectionHandlers
           .UseTool(toolRequest(ConnectionId.make('absent'), 'read'))
-          .pipe(Effect.provideService(AuthContext, personAuth), Effect.flip)
+          .pipe(
+            Effect.provideService(AuthContext, personAuth),
+            Effect.provideService(ConnectionStore, unreadable),
+            Effect.flip,
+          )
         expect(failure).toBeInstanceOf(Forbidden)
+        expect(yield* Ref.get(probe.calls)).toBe(calls)
       }),
     )
   })
@@ -452,12 +466,14 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           .pipe(Effect.provideService(AuthContext, auth))
         expect(read._tag).toBe('Completed')
         const before = yield* Ref.get(probe.checked)
+        const calls = yield* Ref.get(probe.calls)
         const write = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'write'))
           .pipe(Effect.provideService(AuthContext, auth))
         expect(write._tag).toBe('Rejected')
         expect(JSON.stringify(write)).toContain('read-only')
         expect(yield* Ref.get(probe.checked)).toEqual(before)
+        expect(yield* Ref.get(probe.calls)).toBe(calls)
         const found = yield* connectionHandlers
           .FindTools({ query: 'records' })
           .pipe(Effect.provideService(AuthContext, auth))

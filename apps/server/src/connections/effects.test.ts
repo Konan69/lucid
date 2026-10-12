@@ -12,7 +12,6 @@ import { AiError, DecisionModel } from 'effect/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
 import {
-  EFFECT_BATCH_BUDGET,
   TOOL_DESCRIPTION_LIMIT,
   TOOL_DESCRIPTION_MINIMUM,
   TOOL_NAME_LIMIT,
@@ -118,32 +117,40 @@ it.effect(
   },
 )
 
+/** Independent typed outage, absent labels and invalid probabilities all retain authority. */
 it.effect('failed or malformed decisions retain write', () =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(
-      provider(() =>
-        Effect.fail(
-          AiError.make({
-            module: 'Test',
-            method: 'decide',
-            reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
-          }),
-        ),
-      ),
-    )
-    return yield* Effect.gen(function* () {
-      expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
-    }).pipe(Effect.provide(context))
-  }).pipe(Effect.scoped),
-)
-
-it.effect('missing distributions retain write', () =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(provider(() => Effect.succeed(answer(2, 'read'))))
-    return yield* Effect.gen(function* () {
-      expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
-    }).pipe(Effect.provide(context))
-  }).pipe(Effect.scoped),
+    const absent = {
+      answers: { tool_0: ScriptedAnswer.cases.Classify.make({ label: 'read', probabilities: {} }) },
+      usage: { inputTokens: undefined, outputTokens: undefined },
+    }
+    const outage = AiError.make({
+      module: 'Test',
+      method: 'decide',
+      reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
+    })
+    for (const reply of [
+      Effect.fail(outage),
+      Effect.succeed(absent),
+      Effect.succeed(answer(2, 'read')),
+    ]) {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          let calls = 0
+          const context = yield* Layer.build(
+            provider(() => {
+              calls += 1
+              return reply
+            }),
+          )
+          expect(yield* (yield* ToolEffects.pipe(Effect.provide(context))).classify(request)).toBe(
+            'write',
+          )
+          expect(calls).toBe(1)
+        }),
+      )
+    }
+  }),
 )
 
 /** The approval-removing answer expires after 24 hours; refreshing rechecks metadata
@@ -185,7 +192,9 @@ it.effect('a stalled classification keeps write within the direct budget', () =>
       const effects = yield* ToolEffects
       const pending = yield* effects.classify(request).pipe(Effect.forkChild)
       yield* Deferred.await(started)
-      yield* TestClock.adjust(EFFECT_BATCH_BUDGET)
+      yield* TestClock.adjust('1799 millis')
+      expect(pending.pollUnsafe()).toBeUndefined()
+      yield* TestClock.adjust('1 millis')
       expect(yield* Fiber.join(pending)).toBe('write')
       expect(calls).toBe(1)
     }).pipe(Effect.provide(context))
@@ -355,7 +364,9 @@ it.effect('stalled discovery returns writes within its budget then retries after
       }
       const pending = yield* effects.classifyBatch(batch).pipe(Effect.forkChild)
       yield* Deferred.await(started)
-      yield* TestClock.adjust(EFFECT_BATCH_BUDGET)
+      yield* TestClock.adjust('1799 millis')
+      expect(pending.pollUnsafe()).toBeUndefined()
+      yield* TestClock.adjust('1 millis')
       expect((yield* Fiber.join(pending)).map((tool) => tool.effect)).toEqual(['write'])
       expect(calls).toBe(1)
       yield* TestClock.adjust('1 minute')
@@ -817,12 +828,22 @@ it.effect('403 warning suppression preserves the metadata failure TTL', () => {
       expect(calls).toBe(1)
       expect(lines.filter((line) => line.includes('Decision permission rejected'))).toHaveLength(1)
       expect(lines.some((line) => line.includes('Tool effect unavailable'))).toBe(false)
+      expect(
+        yield* effects.classify({
+          ...request,
+          tool: ExecutorTool.make({ ...request.tool, name: 'another_read' }),
+        }),
+      ).toBe('write')
+      expect(calls).toBe(2)
+      // Gateway warning admission is shared across metadata: the second payload is attempted,
+      // but the one-minute warning interval suppresses its duplicate diagnostic.
+      expect(lines.filter((line) => line.includes('Decision permission rejected'))).toHaveLength(1)
       yield* TestClock.adjust('59 seconds')
       expect(yield* effects.classify(request)).toBe('write')
-      expect(calls).toBe(1)
+      expect(calls).toBe(2)
       yield* TestClock.adjust('1 second')
       expect(yield* effects.classify(request)).toBe('write')
-      expect(calls).toBe(2)
+      expect(calls).toBe(3)
       expect(lines.filter((line) => line.includes('Decision permission rejected'))).toHaveLength(2)
     }).pipe(Effect.provide(context))
   }).pipe(

@@ -33,7 +33,7 @@ const refusalLogs = () => {
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
   layer(connectionTestLayer)((it) => {
-    /** Exercise every pre-service rejection through useTool, keeping real ownership/state reads. */
+    /** Exercise admission refusals and provider rejection through useTool, retaining real scope/state reads. */
     it.effect.each([
       'IntegrationUnavailable',
       'IntegrationFailed',
@@ -61,6 +61,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             shared: reason === 'SharedReadOnly',
           })
           const row = yield* store.get(ownerActor, step.connection.id)
+          const calls = yield* Ref.get(probe.calls)
           if (reason === 'IntegrationFailed')
             yield* store.failed(ownerActor, row, 'Private service failure')
           if (reason === 'ServiceRejected')
@@ -69,7 +70,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
             )
           const outcome = yield* useTool(
-            reason === 'IntegrationUnavailable' ? memberActor : ownerActor,
+            reason === 'IntegrationUnavailable' || reason === 'SharedReadOnly'
+              ? memberActor
+              : ownerActor,
             {
               connectionId: row.id,
               tool: reason === 'ToolUnknown' ? 'private_missing_tool' : 'write',
@@ -79,6 +82,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             },
           )
           expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
+          expect(yield* Ref.get(probe.calls)).toBe(calls + (reason === 'ServiceRejected' ? 1 : 0))
           const recorded = logs.recorded()
           expect(recorded).toHaveLength(1)
           expect(recorded[0]).toContain('vivid.refusal.kind=ToolRejected')
@@ -1105,13 +1109,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' }))
                 .effect,
             ).toBe('read')
-            yield* useTool(ownerActor, {
+            const calls = yield* Ref.get(probe.calls)
+            const used = yield* useTool(ownerActor, {
               connectionId: connection.connection.id,
               tool: 'ask_question',
               input: {},
               summary: 'Read documentation',
               rationale: 'Explain the repository',
             })
+            expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))
+            expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
             expect((yield* Ref.get(probe.checked)).map(({ action }) => action.effect)).toEqual([
               'read',
             ])
@@ -1426,15 +1433,24 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
           )
           return yield* Effect.gen(function* () {
-            yield* useTool(ownerActor, {
+            const used = yield* useTool(ownerActor, {
               connectionId: connection.connection.id,
               tool: 'lookup_0',
               input: {},
               summary: 'Read',
               rationale: 'Read a record',
             })
-            yield* resolveTool(ownerActor, { account: 'Records (Work)', tool: 'lookup_1' })
-            yield* connectionRunner({
+            expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))
+            const resolved = yield* resolveTool(ownerActor, {
+              account: 'Records (Work)',
+              tool: 'lookup_1',
+            })
+            expect(resolved).toMatchObject({
+              connectionId: connection.connection.id,
+              name: 'lookup_1',
+              effect: 'read',
+            })
+            const executed = yield* connectionRunner({
               person: ownerActor.person,
               workspace: ownerActor.workspace,
               target: ActionTarget.cases.Connection.make({
@@ -1444,6 +1460,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                 input: {},
               }),
             })
+            expect(executed).toEqual(ActionOutcome.cases.Succeeded.make({ result: '{"ok":true}' }))
             expect(names).toHaveLength(3)
             for (const [index, question] of names.entries())
               expect(question).toContain(`"tool":"lookup_${index}"`)
