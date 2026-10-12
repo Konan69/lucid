@@ -639,7 +639,10 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
           },
         })
         expect((yield* bodyOf(samePath, Here)).session.id).toBeDefined()
-        const tampered = `${cookie.value.slice(0, -1)}${cookie.value.endsWith('a') ? 'b' : 'a'}`
+        // Keep the base64 signature's length and padding intact: rejection must reach HMAC verification.
+        const signatureAt = cookie.value.lastIndexOf('.') + 1
+        const swapped = cookie.value[signatureAt] === 'A' ? 'B' : 'A'
+        const tampered = `${cookie.value.slice(0, signatureAt)}${swapped}${cookie.value.slice(signatureAt + 1)}`
         const rejected = yield* call(server, 'get-session', {
           method: 'GET',
           headers: {

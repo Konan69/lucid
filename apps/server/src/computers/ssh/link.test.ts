@@ -83,10 +83,19 @@ it.live.skipIf(!peerAvailable)(
 const created = (path: string) =>
   Effect.callback<void>((resume) => {
     const watcher = NodeFS.watch(NodePath.dirname(path), () => {
-      if (NodeFS.existsSync(path)) resume(Effect.void)
+      if (NodeFS.existsSync(path)) {
+        watcher.close()
+        resume(Effect.void)
+      }
     })
-    watcher.once('error', (error) => resume(Effect.die(error)))
-    if (NodeFS.existsSync(path)) resume(Effect.void)
+    watcher.once('error', (error) => {
+      watcher.close()
+      resume(Effect.die(error))
+    })
+    if (NodeFS.existsSync(path)) {
+      watcher.close()
+      resume(Effect.void)
+    }
     return Effect.sync(() => watcher.close())
   })
 
