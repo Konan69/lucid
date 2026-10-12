@@ -2,11 +2,9 @@ import { ActionTarget } from '@vivid/contracts'
 import type { Schema } from 'effect'
 import type { ReactNode } from 'react'
 import { ScrollView, View } from 'react-native'
-import { Globe, Link2, Monitor, type LucideIcon } from 'lucide-react-native'
 import { browserStep, desktopStep } from '@vivid/state'
 import { fieldName, fieldsOf, Shown, shownAs } from '../../data/action'
-import { useTheme } from '../../theme'
-import { HAIRLINE, Label, MONO } from '../../ui/ui'
+import { Label, MONO } from '../../ui/ui'
 
 /**
  * Exactly what an Approval would allow, in full.
@@ -30,8 +28,8 @@ export function Exactly({ target }: { target: ActionTarget }) {
     Connection: ({ account, tool, input }) => (
       <Sending account={account} tool={tool} input={input} />
     ),
-    Browser: ({ action }) => <Step icon={TARGET_ICON.Browser} text={browserStep(action)} />,
-    Desktop: ({ action }) => <Step icon={TARGET_ICON.Desktop} text={desktopStep(action)} />,
+    Browser: ({ action }) => <Step text={browserStep(action)} />,
+    Desktop: ({ action }) => <Step text={desktopStep(action)} />,
   })
 }
 
@@ -42,14 +40,12 @@ export function Exactly({ target }: { target: ActionTarget }) {
 function Sending({ account, tool, input }: { account: string; tool: string; input: Schema.Json }) {
   return (
     <Well>
-      <Line icon={TARGET_ICON.Connection} ruled>
-        {/* In full and wrapping: the account is where the action lands. */}
-        <Label selectable size="label" tone="ink-2" style={{ flex: 1 }}>
-          {account}
-          <Label size="label" tone="ink-2">{` · ${fieldName(tool)}`}</Label>
-        </Label>
-      </Line>
-      <View style={{ paddingHorizontal: INSET, paddingVertical: 10, gap: 10 }}>
+      {/* In full and wrapping: the account is where the action lands. */}
+      <Label selectable size="label" tone="ink-2">
+        {account}
+        <Label size="label" tone="ink-2">{` · ${fieldName(tool)}`}</Label>
+      </Label>
+      <View style={{ paddingTop: 8, gap: 8 }}>
         {fieldsOf(input).map(([key, value]) => (
           <Field key={key} name={key} value={value} />
         ))}
@@ -59,95 +55,42 @@ function Sending({ account, tool, input }: { account: string; tool: string; inpu
 }
 
 /** A command, or a step on Vivid's Computer, exactly as it would run: wrapping, never cut. */
-function Step({ icon, text }: { icon: LucideIcon; text: string }) {
+function Step({ text }: { text: string }) {
   return (
     <Well>
-      <Line icon={icon} ruled={false}>
-        <Label selectable size="label" tone="ink-2" style={{ flex: 1, fontFamily: MONO }}>
-          {text}
-        </Label>
-      </Line>
+      <Label selectable size="label" tone="ink-2" style={{ fontFamily: MONO }}>
+        {text}
+      </Label>
     </Well>
   )
 }
 
-/** The mark for each kind of thing an action is done to; a new kind fails to compile here. */
-const TARGET_ICON = {
-  Connection: Link2,
-  Browser: Globe,
-  Desktop: Monitor,
-} as const satisfies Record<ActionTarget['_tag'], LucideIcon>
-
-/** The space between the well's edge and what is in it, on either side. */
-const INSET = 10
-
 /**
- * The box the action is in: the most it is tall, which is the reference's 80 px, and its corner,
- * which is a row's in the banner round it.
+ * The most the action is tall before it scrolls inside. The reference's detail is 80 px of
+ * 12 px type, about five lines; five of the phone's lines are 110 points.
  */
-const WELL = { tallest: 80, corner: 8 } as const
+const TALLEST = 110
 
 /**
- * The sunk surface the action sits in, set apart from the sentence that describes it. It has a
- * fill and no edge, and it scrolls inside when the action is taller than `WELL.tallest`. Its
- * scroll bar stays in sight on Android (`persistentScrollbar`), since nothing else says there is
- * more below; iOS shows its own only while the box is scrolled. It scrolls inside the banner's
- * own scroller, so it is told it is nested.
+ * What holds the action, under the sentence that describes it: plain lines on the banner's own
+ * surface, which scroll inside when they are taller than `TALLEST`. Until 12 October 2026 this
+ * was a filled box with a mark and a ruled head, a card inside the banner, which the owner had
+ * rejected ("too much card nesting"); the web's detail is plain lines too. Its scroll bar stays
+ * in sight on Android (`persistentScrollbar`), since nothing else says there is more below; iOS
+ * shows its own only while it is scrolled. It scrolls inside the banner's own scroller, so it
+ * is told it is nested.
  */
 function Well({ children }: { children: ReactNode }) {
-  const { colors: c } = useTheme()
   return (
     <ScrollView
       bounces={false}
       nestedScrollEnabled
       persistentScrollbar
       keyboardShouldPersistTaps="handled"
-      style={{
-        maxHeight: WELL.tallest,
-        flexGrow: 0,
-        borderRadius: WELL.corner,
-        borderCurve: 'continuous',
-        backgroundColor: c['md-code-bg'],
-      }}
+      style={{ maxHeight: TALLEST, flexGrow: 0 }}
     >
       {children}
     </ScrollView>
-  )
-}
-
-/**
- * The mark of what the action is done to, and beside it the words that say so. The mark stays on
- * the first line however many lines the words wrap to. `ruled` draws the line that separates a
- * Connection's account from its fields.
- */
-function Line({
-  icon: Icon,
-  ruled,
-  children,
-}: {
-  icon: LucideIcon
-  ruled: boolean
-  children: ReactNode
-}) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 8,
-        paddingHorizontal: INSET,
-        paddingVertical: 8,
-        borderBottomWidth: ruled ? HAIRLINE : 0,
-        borderBottomColor: c.border,
-      }}
-    >
-      {/* A 15-point mark centred on the first 18-point line of the words beside it. */}
-      <View style={{ marginTop: 1.5 }}>
-        <Icon size={15} strokeWidth={1.7} color={c['foreground-secondary']} />
-      </View>
-      {children}
-    </View>
   )
 }
 
