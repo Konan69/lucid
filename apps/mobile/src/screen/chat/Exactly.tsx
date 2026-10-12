@@ -1,27 +1,29 @@
 import { ActionTarget } from '@vivid/contracts'
 import type { Schema } from 'effect'
 import type { ReactNode } from 'react'
-import { View } from 'react-native'
+import { ScrollView, View } from 'react-native'
 import { Globe, Link2, Monitor, type LucideIcon } from 'lucide-react-native'
 import { browserStep, desktopStep } from '@vivid/state'
 import { fieldName, fieldsOf, Shown, shownAs } from '../../data/action'
 import { useTheme } from '../../theme'
-import { HAIRLINE, Label, MONO, radius } from '../../ui/ui'
+import { HAIRLINE, Label, MONO } from '../../ui/ui'
 
 /**
  * Exactly what an Approval would allow, in full.
  *
  * An Approval is consent to one specific action, and the decision the phone sends back quotes the
- * digest of all of it. So the card shows that action and not a summary of it: the account it would
+ * digest of all of it. So this shows that action and not a summary of it: the account it would
  * use and every field as it would be sent (who it goes to, the subject, the whole message), the
  * whole command, or a step in the browser or on the desktop in the words every surface uses for
- * it (`@vivid/state`). The phone used to show one line here, cut off after two rows, and none of
+ * it (`@vivid/state`). The phone once showed one line here, cut off after two rows, and none of
  * a Connection's fields: a recipient, a message or the end of a command could be allowed without
  * ever having been on screen.
  *
- * Nothing here is cut short or scrolls on its own. The text wraps and the card grows, so the
- * conversation's own scroll carries the Person through all of it before they reach the buttons
- * underneath. The same rules as the web card (`apps/web/src/screen/thread/Cards.tsx`).
+ * It is drawn in the Approval's banner over the composer (`Allow.tsx`), behind "Details". No
+ * word of it is cut short: the text wraps, and the box it is in (`Well`) is at most
+ * `WELL.tallest` points tall and scrolls inside, as the detail of the reference's approval does
+ * (T3 Code web `ComposerPendingApprovalPanel.tsx`, `max-h-20 overflow-auto`). Until 12 October
+ * 2026 it was laid out whole in a card in the conversation, which grew with it.
  */
 export function Exactly({ target }: { target: ActionTarget }) {
   return ActionTarget.match(target, {
@@ -79,21 +81,37 @@ const TARGET_ICON = {
 /** The space between the well's edge and what is in it, on either side. */
 const INSET = 10
 
-/** The sunk surface the action sits in, set apart from the sentence that describes it. */
+/**
+ * The box the action is in: the most it is tall, which is the reference's 80 px, and its corner,
+ * which is a row's in the banner round it.
+ */
+const WELL = { tallest: 80, corner: 8 } as const
+
+/**
+ * The sunk surface the action sits in, set apart from the sentence that describes it. It has a
+ * fill and no edge, and it scrolls inside when the action is taller than `WELL.tallest`. Its
+ * scroll bar stays in sight on Android (`persistentScrollbar`), since nothing else says there is
+ * more below; iOS shows its own only while the box is scrolled. It scrolls inside the banner's
+ * own scroller, so it is told it is nested.
+ */
 function Well({ children }: { children: ReactNode }) {
   const { colors: c } = useTheme()
   return (
-    <View
+    <ScrollView
+      bounces={false}
+      nestedScrollEnabled
+      persistentScrollbar
+      keyboardShouldPersistTaps="handled"
       style={{
-        // Tighter than the card's own corners, which it sits inside.
-        borderRadius: radius.card - 10,
+        maxHeight: WELL.tallest,
+        flexGrow: 0,
+        borderRadius: WELL.corner,
+        borderCurve: 'continuous',
         backgroundColor: c['md-code-bg'],
-        // The rule under a Connection's account stops at the rounded corners.
-        overflow: 'hidden',
       }}
     >
       {children}
-    </View>
+    </ScrollView>
   )
 }
 

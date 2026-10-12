@@ -2,16 +2,27 @@ import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useFlueAgent, type UseFlueAgentOptions } from '@flue/react'
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
+  ApprovalDecision,
   ThreadAudience,
   Workspace,
+  type Approval,
+  type ApprovalId,
   type InputAnswer,
   type InputRequest,
   type InputRequestId,
+  type PersonId,
   type Thread,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { asking as model, draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
+import {
+  approvalUp,
+  asking as model,
+  draftPlace,
+  titleFromMessage,
+  workspaceKey,
+  type ApprovalUp,
+} from '@vivid/state'
 import { Option, Result, type Array as Arr } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -29,7 +40,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, withFirst } from '../data/first'
-import { commit } from '../data/haptics'
+import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
@@ -52,6 +63,15 @@ import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '..
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
+import { Allow } from './chat/Allow'
+import {
+  ApprovalHold,
+  approvalHoldOf,
+  Deciding,
+  isDeciding,
+  refusedAfter,
+  wasRefused,
+} from './chat/asked'
 import { isAway, newestWords } from './chat/away'
 import { Choices } from './chat/Choices'
 import { Message } from './chat/Message'
@@ -437,31 +457,121 @@ function useAsking(up: Option.Option<InputRequest>) {
 }
 
 /**
- * The card over the composer, for what it holds (`useAsking`): the questions of the request that
- * is up, or of the one sliding away. It is keyed by the request, so each card starts on its
- * first question, open, with nothing picked, and measures itself.
+ * The Approval whose banner is up over the composer, and deciding it.
+ *
+ * `up` is the Approval that should be up (`approvalUp`, `@vivid/state`): the oldest still waiting
+ * on this Person. The banner holds one at a time and lets go of it only once it has slid away,
+ * so one settled here or on another device slides away, and the next rises after it
+ * (`approvalHoldOf`). What it holds follows `up` while rendering, as a question's banner does
+ * (`useAsking`).
+ *
+ * A decision quotes the digest of the record the banner is drawn from, so a banner drawn from
+ * an older proposal cannot allow a newer one. It is kept as on its way until the Approval's
+ * record says it is settled, which is what takes the banner away (`Deciding`). One Approval
+ * takes one decision at a time: which have a call in flight is kept in a ref, read when a press
+ * happens and never while rendering, because two presses can land before React has drawn the
+ * first, and the second would come back refused. The end of a call only ever ends its own try
+ * (`refusedAfter`). The phone answers a yes and a no differently in the hand as well as on
+ * screen.
+ *
+ * Until 12 October 2026 the buttons were on a card in the conversation (`chat/Cards.tsx`), which
+ * kept its own refusal and no try: it could be pressed twice, and a late answer wrote over
+ * whatever the card then said.
+ */
+function useAllowing(up: Option.Option<ApprovalUp>) {
+  const data = useLiveData()
+  const [held, setHeld] = useState(up)
+  const [deciding, setDeciding] = useState<Deciding>(Deciding.Idle())
+  const flying = useRef(new Set<ApprovalId>())
+  const attempts = useRef(0)
+  const hold = approvalHoldOf(held, up)
+  if (ApprovalHold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
+  // One function for the life of the Thread: the banner's slide is timed again when it changes.
+  const release = useCallback(() => setHeld(Option.none()), [])
+
+  /** Sends one decision about one Approval, as it was shown. */
+  async function decide(approval: Approval, decision: ApprovalDecision) {
+    if (flying.current.has(approval.id)) return
+    flying.current.add(approval.id)
+    attempts.current += 1
+    const attempt = attempts.current
+    if (ApprovalDecision.guards.Deny(decision)) warn()
+    else confirm()
+    setDeciding(Deciding.Flying({ attempt, id: approval.id }))
+    const result = await data.change((client) =>
+      client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
+    )
+    flying.current.delete(approval.id)
+    if (Result.isFailure(result)) setDeciding((now) => refusedAfter(now, attempt))
+  }
+
+  return {
+    hold,
+    /**
+     * No Approval is up or sliding away, so the place over the composer is a question's to take.
+     */
+    free: ApprovalHold.$is('Free')(hold) && Option.isNone(up),
+    /** A decision about one Approval is on its way. */
+    decidingOn: (id: ApprovalId) => isDeciding(deciding, id),
+    /** The last decision about the Approval that is up did not go through. */
+    refused: ApprovalHold.$is('Up')(hold) && wasRefused(deciding, hold.up.approval.id),
+    decide,
+    release,
+  }
+}
+
+/**
+ * What waits on this Person in a Thread: an Approval, and a request's questions. There is one
+ * place over the composer and an Approval comes first, so a request is up only while no Approval
+ * is up or still sliding away. With no request up, the composer under an Approval is the
+ * ordinary one (`Foot`): it is handed nothing to move on with, and what it sends is a message.
+ */
+function useWaiting(detail: Option.Option<ThreadDetail>, me: PersonId) {
+  const allowing = useAllowing(approvalUp(approvalsOf(detail), me))
+  const asking = useAsking(allowing.free ? model.upOf(requestsOf(detail), me) : Option.none())
+  return { allowing, asking }
+}
+
+/** What is said over the composer when a decision about an Approval did not go through. */
+const UNDECIDED = 'This was already decided, or it changed. Look again.'
+
+/**
+ * The banner over the composer, for what it holds: an Approval (`useAllowing`, `chat/Allow.tsx`)
+ * or the questions of a request (`useAsking`, `chat/Choices.tsx`), up or sliding away. There is
+ * one place and an Approval comes first, as in the reference (T3 Code web `ChatComposer.tsx`,
+ * the `activePendingApproval` branch): a question is not up while an Approval is
+ * (`Conversation`). A question's banner that was up when an Approval arrived slides away
+ * before the Approval's rises, and a waiting question's rises once the Approval's has gone.
+ *
+ * Each is keyed by what it holds, so each starts closed, with nothing picked, and measures
+ * itself.
  *
  * It is drawn as a child of the Thread's column (`Conversation`), which holds the conversation
  * and the composer and ends at the keyboard, and it is anchored to the composer's measured dock
- * (`dock`). Until the dock has been laid out there is nothing to anchor to, and no card.
+ * (`dock`). Until the dock has been laid out there is nothing to anchor to, and no banner.
  */
 function Raised({
   asking,
+  allowing,
   dock,
   covered,
 }: {
   asking: ReturnType<typeof useAsking>
+  allowing: ReturnType<typeof useAllowing>
   /** The height of the composer's dock, once it has been laid out. */
   dock: Option.Option<number>
   covered: SharedValue<number>
 }) {
-  const drawn = model.Hold.$match(asking.hold, {
+  if (Option.isNone(dock)) return null
+  const question = model.Hold.$match(asking.hold, {
     Free: () => Option.none(),
     Up: ({ request }) => Option.some({ request, leaving: false }),
     Leaving: ({ request }) => Option.some({ request, leaving: true }),
   })
-  if (Option.isNone(drawn) || Option.isNone(dock)) return null
-  const { request, leaving } = drawn.value
+  if (Option.isNone(question)) {
+    return <RaisedApproval allowing={allowing} dock={dock.value} covered={covered} />
+  }
+  const { request, leaving } = question.value
   return (
     <Choices
       key={request.id}
@@ -478,9 +588,38 @@ function Raised({
   )
 }
 
+/** The Approval's banner, for what it holds: the one that is up, or the one sliding away. */
+function RaisedApproval({
+  allowing,
+  dock,
+  covered,
+}: {
+  allowing: ReturnType<typeof useAllowing>
+  dock: number
+  covered: SharedValue<number>
+}) {
+  const banner = (up: ApprovalUp, leaving: boolean) => (
+    <Allow
+      key={up.approval.id}
+      up={up}
+      leaving={leaving}
+      busy={allowing.decidingOn(up.approval.id)}
+      dock={dock}
+      covered={covered}
+      onDecide={(decision) => void allowing.decide(up.approval, decision)}
+      onGone={allowing.release}
+    />
+  )
+  return ApprovalHold.$match(allowing.hold, {
+    Free: () => null,
+    Up: ({ up }) => banner(up, false),
+    Leaving: ({ up }) => banner(up, true),
+  })
+}
+
 /**
- * The height of the composer's dock as it was last laid out, which is what a question's choices
- * are anchored to (`Raised`), and the way to say it was laid out. Nothing until the first
+ * The height of the composer's dock as it was last laid out, which is what the banner over it
+ * is anchored to (`Raised`), and the way to say it was laid out. Nothing until the first
  * layout. A layout that changed nothing is not a new height, and draws nothing again.
  */
 function useDock() {
@@ -495,6 +634,13 @@ function useDock() {
 
 /** No questions: a Thread whose detail has not arrived. One value, not a new list each render. */
 const NO_REQUESTS: ReadonlyArray<InputRequest> = []
+
+/** No Approvals: a Thread whose detail has not arrived. One value, not a new list each render. */
+const NO_APPROVALS: ReadonlyArray<Approval> = []
+
+/** The Thread's Approvals, oldest first, once its live detail carries them. */
+const approvalsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<Approval> =>
+  Option.match(detail, { onNone: () => NO_APPROVALS, onSome: (value) => value.approvals })
 
 /** The Thread's Input requests, oldest first, once its live detail carries them. */
 const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputRequest> =>
@@ -548,9 +694,8 @@ function Conversation({
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
-  // The request waiting on this Person, when there is one: its questions rise from behind the
-  // composer as a card (`Raised`).
-  const asking = useAsking(model.upOf(requestsOf(detail), me.person.id))
+  // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
+  const { allowing, asking } = useWaiting(detail, me.person.id)
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -633,7 +778,7 @@ function Conversation({
             onContinue={speak}
           />
         </View>
-        <Raised asking={asking} dock={dock} covered={covered} />
+        <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
         <Foot
           typed={typed}
           writing={writing}
@@ -643,6 +788,7 @@ function Conversation({
           // typed meanwhile stays in the composer.
           waits={held(settled, sending.pending || asking.answering)}
           asking={asking}
+          undecided={allowing.refused}
           stopping={stopping}
           onType={type}
           onSpeak={speak}
@@ -662,8 +808,8 @@ function Conversation({
 }
 
 /**
- * The foot of a Thread: the composer, and over it what could not be done from it (an answer that
- * did not go through, a Stop that was refused).
+ * The foot of a Thread: the composer, and over it what could not be done from it (an answer or
+ * a decision that did not go through, a Stop that was refused).
  *
  * What the composer sends is nearly always an ordinary message in the Thread, a waiting request
  * or not. While a request waits it says "Reply": the server withdraws the request when it takes
@@ -682,6 +828,7 @@ function Foot({
   working,
   waits,
   asking,
+  undecided,
   stopping,
   onType,
   onSpeak,
@@ -694,6 +841,8 @@ function Foot({
   /** Words must wait in the composer (`held`). */
   waits: boolean
   asking: ReturnType<typeof useAsking>
+  /** The last decision about the Approval that is up did not go through (`useAllowing`). */
+  undecided: boolean
   stopping: ReturnType<typeof useStop>
   onType: (words: string) => void
   onSpeak: Say
@@ -751,6 +900,11 @@ function Foot({
       {Option.isSome(asking.refusal) && (
         <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
           <Notice message={asking.refusal.value.words} />
+        </View>
+      )}
+      {undecided && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message={UNDECIDED} />
         </View>
       )}
       {stopping.refused && (
@@ -906,8 +1060,8 @@ interface MessagesProps {
   /** The ids of the messages written here that did not arrive. */
   readonly unsent: ReadonlySet<string>
   /**
-   * How far a question's choices stand over the foot of the conversation, in points
-   * (`chat/Choices.tsx`). The conversation keeps that much more clear under its newest words.
+   * How far the banner over the composer (a question's choices, an Approval) stands over the
+   * foot of the conversation, in points (`chat/Banner.tsx`). The conversation keeps that much more clear under its newest words.
    */
   readonly covered: SharedValue<number>
   readonly onContinue: Say
@@ -1358,6 +1512,9 @@ function Tail({
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
+  // Nothing to say is nothing drawn: an empty row here still took the column's 22-point gap
+  // under the newest words (measured on the emulator, 12 October 2026).
+  if (!awaited && Option.isNone(ended) && Option.isNone(trouble)) return null
   return (
     <View style={{ gap: 12 }}>
       {awaited && <Waiting />}

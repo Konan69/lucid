@@ -1,38 +1,25 @@
-import {
-  ApprovalDecision,
-  ApprovalState,
-  type Approval,
-  type ApprovalId,
-  type PersonId,
-  type ThreadDetail,
-} from '@vivid/contracts'
-import { APPROVAL_EFFECT_WORDS, drawn, readShown } from '@vivid/state'
-import { Option, Result } from 'effect'
-import { useState, type ReactNode } from 'react'
+import { ApprovalState, type Approval, type PersonId, type ThreadDetail } from '@vivid/contracts'
+import { drawn, readShown } from '@vivid/state'
+import { Option } from 'effect'
 import { View } from 'react-native'
-import { ShieldQuestion } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
-import { confirm, warn } from '../../data/haptics'
-import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
-import { useAppearance } from '../../data/vivid'
-import { useTheme } from '../../theme'
-import { Button, EDGE, Label, Notice, radius, styles } from '../../ui/ui'
+import { Label } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
-import { Exactly } from './Exactly'
-import { requestOf } from './asked'
+import { approvalOf, requestOf } from './asked'
 import { Asked } from './Question'
 import { Display } from './Shown'
+import { Words } from './Words'
 
 /**
- * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
- * needs a yes for, a service it needs connected, something it took on. Each card is drawn from
- * the server's record in the Thread's live detail, so it keeps telling the truth after it is
- * settled: who allowed it, what came back, or that it ran out.
+ * What a Thread shows where a tool's result names a record: something Vivid wants to do and
+ * needs a yes for, a question it could not answer alone, a service it needs connected. Each is
+ * drawn from the server's record in the Thread's live detail, so it keeps telling the truth
+ * after it is settled: who allowed it, what came back, or that it ran out.
  *
- * A question Vivid could not answer alone is found here too, because it reaches the Thread the
- * same way (a tool's result naming a record), but it is not a card: it is drawn as Vivid's own
- * words (`Asked`, `Question.tsx`), and its choices rise from behind the composer (`Choices.tsx`).
+ * Only a service to connect is a card. What Vivid asks of the Person is drawn as Vivid's own
+ * words, and the way to answer rises from behind the composer: a question (`Asked`,
+ * `Question.tsx`; `Choices.tsx`) and an Approval (`AskedFirst`; `Allow.tsx`).
  */
 export function Cards({
   tools,
@@ -58,8 +45,8 @@ export function Cards({
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (
-        // A card stands a little apart from the words round it. A question is words itself.
-        <View key={tool.toolCallId} style={Card.$is('Input')(card) ? undefined : CARD_ROOM}>
+        // A card stands a little apart from the words round it. What Vivid asks is words itself.
+        <View key={tool.toolCallId} style={Card.$is('Connection')(card) ? CARD_ROOM : undefined}>
           <Drawn
             call={tool.toolCallId}
             card={card}
@@ -77,16 +64,10 @@ export function Cards({
 /** The room above and below a card, between it and the reply's words. */
 const CARD_ROOM = { marginTop: 8, marginBottom: 6 } as const
 
-/** The Approval a card stands for, once the Thread's live detail carries it. */
-const approvalOf = (detail: Option.Option<ThreadDetail>, id: ApprovalId) =>
-  Option.flatMap(detail, (value) =>
-    Option.fromUndefinedOr(value.approvals.find((approval) => approval.id === id)),
-  )
-
 /**
- * One card. An Approval and an Input request are drawn from their record, never from the tool's
- * own words; until that record has arrived in the Thread's detail there is nothing truthful to
- * draw, so nothing is drawn.
+ * One of them. An Approval and an Input request are drawn from their record, never from the
+ * tool's own words; until that record has arrived in the Thread's detail there is nothing
+ * truthful to draw, so nothing is drawn.
  */
 function Drawn({
   call,
@@ -109,7 +90,7 @@ function Drawn({
     Approval: ({ id }) =>
       Option.match(approvalOf(detail, id), {
         onNone: () => null,
-        onSome: (approval) => <ApprovalCard approval={approval} me={me} />,
+        onSome: (approval) => <AskedFirst approval={approval} me={me} />,
       }),
     Input: ({ id }) =>
       Option.match(requestOf(detail, id), {
@@ -127,72 +108,6 @@ function Drawn({
       />
     ),
   })
-}
-
-/** The shape every card shares: a quiet raised surface with a small line saying what it is. */
-function Shell({
-  icon,
-  kind,
-  tone,
-  trailing,
-  children,
-}: {
-  icon: ReactNode
-  kind: string
-  tone: 'status-approve' | 'status-attention' | 'ink-3'
-  /** Only Approval headers carry an effect chip. */
-  trailing?: ReactNode
-  children: ReactNode
-}) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      style={{
-        padding: 14,
-        gap: 8,
-        borderRadius: radius.card,
-        borderWidth: EDGE,
-        borderColor: c.border,
-        backgroundColor: c.subtle,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        {icon}
-        <Label size="caption" tone={tone} style={{ flex: 1 }}>
-          {kind}
-        </Label>
-        {trailing}
-      </View>
-      {children}
-    </View>
-  )
-}
-
-/** The web's informational, approval and destructive chip colours, read from native tokens. */
-const EFFECT = {
-  read: { fill: 'status-info-soft', ink: 'status-info' },
-  write: { fill: 'status-approve-soft', ink: 'status-approve' },
-  destructive: { fill: 'status-danger-soft', ink: 'status-danger' },
-} as const satisfies Record<Approval['action']['effect'], { fill: string; ink: string }>
-
-/** The effect is visible before a decision, and remains part of the settled card's record. */
-function EffectChip({ effect }: { effect: Approval['action']['effect'] }) {
-  const { colors: c } = useTheme()
-  const paint = EFFECT[effect]
-  return (
-    <View
-      style={{
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: radius.panel,
-        backgroundColor: c[paint.fill],
-      }}
-    >
-      <Label size="caption" style={{ color: c[paint.ink] }}>
-        {APPROVAL_EFFECT_WORDS[effect]}
-      </Label>
-    </View>
-  )
 }
 
 /** How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. */
@@ -238,77 +153,33 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
 }
 
 /**
- * One thing Vivid wants to do and will not do without a yes. Only the Person it is addressed to
- * sees the buttons; everyone else in the Thread sees who it is waiting on. The decision quotes
- * the digest of exactly what is shown, so a card drawn from an older proposal cannot allow a
- * newer one; that is also why everything the digest covers is on the card (`Exactly`) before the
- * buttons are. The phone answers a yes and a no differently in the hand as well as on screen.
+ * Something Vivid asked before doing it, where the card was: Vivid's words, as a question's are
+ * (`Asked`, `Question.tsx`). A quiet line says what these words are, then the action's summary
+ * as an ordinary message, and under it one line: how it ended once it is settled, or, while it
+ * waits on somebody else, who. One waiting on this Person says nothing more here: the way to
+ * answer is the banner over the composer (`Allow.tsx`), which also holds exactly what would be
+ * done.
+ *
+ * Until 12 October 2026 this was a card in the conversation with the action's rationale, an
+ * effect chip, the whole action and three buttons. The owner rejected it ("too much card
+ * nesting, too much unnecessary text"): the conversation reads as a conversation, and what must
+ * be pressed is where the thumb already is.
  */
-function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
-  // The name this Person or their Company gave Vivid, live.
-  const vivid = useAppearance()
-  const data = useLiveData()
-  const { colors: c } = useTheme()
-  const [refused, setRefused] = useState(false)
-  const pending = ApprovalState.guards.Pending(approval.state)
-  const mine = approval.askedOf.id === me
-
-  async function decide(decision: ApprovalDecision) {
-    if (ApprovalDecision.guards.Deny(decision)) warn()
-    else confirm()
-    setRefused(false)
-    const result = await data.change((client) =>
-      client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
-    )
-    setRefused(Result.isFailure(result))
-  }
-
+function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
+  const theirs = ApprovalState.guards.Pending(approval.state) && approval.askedOf.id !== me
   return (
-    <Shell
-      icon={<ShieldQuestion size={14} strokeWidth={1.8} color={c['status-approve']} />}
-      kind={pending ? `${vivid.name} is asking first` : `${vivid.name} asked first`}
-      tone="status-approve"
-      trailing={<EffectChip effect={approval.action.effect} />}
-    >
-      <Label size="footnote" style={{ fontSize: 15 }}>
-        {approval.action.summary}
+    // A little apart from whatever Vivid said before asking.
+    <View style={{ marginTop: 8, gap: 2 }}>
+      <Label size="caption" tone="ink-3">
+        Asked first
       </Label>
-      {approval.action.rationale.length > 0 && (
-        <Label size="label" tone="ink-2">
-          {approval.action.rationale}
-        </Label>
-      )}
-      <Exactly target={approval.action.target} />
-      {pending && mine && (
-        <Label size="caption" tone="ink-2">
-          Your answer applies only to what is shown above.
-        </Label>
-      )}
-      {!pending && <ApprovalOutcome state={approval.state} />}
-      {pending && !mine && (
+      <Words text={approval.action.summary} />
+      <ApprovalOutcome state={approval.state} />
+      {theirs && (
         <Label size="label" tone="ink-2">
           Waiting on {approval.askedOf.name}.
         </Label>
       )}
-      {pending && mine && (
-        <View style={[styles.wrap, { marginTop: 2 }]}>
-          <Button
-            kind="primary"
-            label="Allow once"
-            onPress={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
-          />
-          <Button
-            label="Always allow"
-            onPress={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}
-          />
-          <Button
-            kind="ghost"
-            label="Don’t"
-            onPress={() => void decide(ApprovalDecision.cases.Deny.make({}))}
-          />
-        </View>
-      )}
-      {refused && <Notice message="This was already decided, or it changed. Look again." />}
-    </Shell>
+    </View>
   )
 }
