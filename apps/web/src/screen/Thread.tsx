@@ -18,9 +18,9 @@ import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { useAsking, type Asking } from './thread/asking'
+import { Asks, useAsks } from './thread/Allow'
+import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
-import { Raised } from './thread/Choices'
 import { Composer } from './thread/Composer'
 import {
   isBlank,
@@ -418,6 +418,7 @@ function Conversation({
             thread: Option.some(id),
           })}
           me={me.person.id}
+          approvals={context.approvals}
           requests={context.requests}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
@@ -454,9 +455,13 @@ function Conversation({
 }
 
 /**
- * The Thread's column: the conversation, the banner of a question from Vivid attached to the
- * composer while one waits on this Person (`Raised`, `thread/Choices.tsx`), and the composer.
- * The banner is in the column's flow, so the conversation ends above it.
+ * The Thread's column: the conversation, the one banner attached to the composer while Vivid is
+ * asking something of this Person (`Asks`, `thread/Allow.tsx`: an Approval first, then a
+ * question), and the composer. The banner is in the column's flow, so the conversation ends
+ * above it.
+ *
+ * While an Approval is up the composer is the ordinary composer: no question is up as far as
+ * this column can tell (`useAsks`), so what is sent is a message and the button sends it.
  *
  * It also decides what the composer does. With words written it sends them, and nearly always
  * that is an ordinary message, a waiting request or not: the server withdraws the request when
@@ -470,6 +475,7 @@ function Conversation({
 function Column({
   place,
   me,
+  approvals,
   requests,
   working,
   pictures,
@@ -481,6 +487,8 @@ function Column({
   /** Where the composer's unsent words are kept. */
   place: string
   me: MeResponse['person']['id']
+  /** Every Approval Vivid has asked for in this Thread, oldest first. */
+  approvals: ThreadContext['approvals']
   /** Every request Vivid has made in this Thread, oldest first. */
   requests: ThreadContext['requests']
   working: boolean
@@ -493,7 +501,7 @@ function Column({
   /** The conversation. */
   children: React.ReactNode
 }) {
-  const asked = useAsking(asking.upOf(requests, me))
+  const { allowing, asked } = useAsks(approvals, requests, me)
   const { written, onward, backward } = asked
   const reply = useCallback(
     (text: string, sent: ReadonlyArray<Picture>) => {
@@ -505,7 +513,7 @@ function Column({
   return (
     <>
       {children}
-      <Raised asking={asked} />
+      <Asks allowing={allowing} asked={asked} />
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.

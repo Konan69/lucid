@@ -26,7 +26,7 @@ import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import { ApprovalCard, approvalById, cardFor, ConnectionCard, requestById } from './Cards'
+import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
 import { Display } from './Shown'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
@@ -338,8 +338,9 @@ const SIGNAL_LINE = {
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
  * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
- * Approval's outcome is told by its card and an answer by its own row (`Replied`), and what the runtime says to itself
- * and the model (its instructions were reloaded, its tools changed) is for no Person.
+ * Approval's outcome is told under its own words (`AskedFirst`) and an answer by its own row
+ * (`Replied`), and what the runtime says to itself and the model (its instructions were
+ * reloaded, its tools changed) is for no Person.
  */
 function Signal({
   message,
@@ -431,7 +432,7 @@ function ToolCards({
       case 'approval': {
         const approval = approvalById(context.approvals, wanted.id)
         return Option.isNone(approval) ? null : (
-          <ApprovalCard key={tool.toolCallId} approval={approval.value} me={context.me} />
+          <AskedFirst key={tool.toolCallId} approval={approval.value} me={context.me} />
         )
       }
       case 'input': {

@@ -1,6 +1,5 @@
 import {
   ActionTarget,
-  ApprovalDecision,
   ApprovalId,
   ApprovalState,
   ConnectionAuthorization,
@@ -13,11 +12,10 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Data, Effect, Option, Predicate, Result, Schema } from 'effect'
+import { Data, Option, Predicate, Schema } from 'effect'
 import {
   answered,
   answering,
-  APPROVAL_EFFECT_WORDS,
   Awaited,
   awaitedOf,
   awaitedWords,
@@ -27,10 +25,9 @@ import {
   connecting,
   desktopStep,
 } from '@vivid/state'
-import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
+import { Check, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
-import { useState, type ReactNode } from 'react'
-import { act } from '../../data/app'
+import type { ReactNode } from 'react'
 import {
   carriedOn,
   dismiss,
@@ -41,22 +38,25 @@ import {
   useAttempt,
   waitingOn,
 } from '../../data/connecting'
-import { changing, live, useLiveValue } from '../../data/live'
+import { live, useLiveValue } from '../../data/live'
 import { openSettings } from '../../router'
 import { themeShown, useTheme } from '../../data/theme'
 import { Button } from '../../ui/button'
 import { Card } from '../../ui/card'
+import { Markdown } from '../../ui/Markdown'
 import { cn } from '../../ui/cn'
 import { EnterKey } from '../integration/Key'
 import { Mark } from '../integration/Mark'
 import { NameAccount } from '../integration/Name'
 
 /**
- * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
- * needs a yes for, a service it needs connected, something it took on. A question Vivid could
- * not answer alone is not a card: it is Vivid's words here (`Question.tsx`) and a banner attached
- * to the composer (`Choices.tsx`); this file only reads which request a tool call stands for.
- * Each card is drawn from the server's record, so it keeps telling the truth after it is settled: who allowed it, what came back, or that it ran out.
+ * What a Thread shows where a tool's output asks for more than a plain message: a service Vivid
+ * needs connected is a card (`ConnectionCard`); something Vivid wants to do and needs a yes for
+ * is its own words (`AskedFirst`) and a banner attached to the composer (`Allow.tsx`); a
+ * question Vivid could not answer alone is its own words too (`Question.tsx`) and a banner
+ * (`Choices.tsx`). This file reads which of these a tool call stands for.
+ * Each is drawn from the server's record, so it keeps telling the truth after it is settled:
+ * who allowed it, what came back, or that it ran out.
  */
 
 const decodeApprovalRequest = Schema.decodeUnknownOption(
@@ -99,12 +99,6 @@ export function cardFor(
     awaited: awaitedOf(output),
   }))
 }
-
-const TARGET_ICON = {
-  Connection: <Link2 className="size-4" />,
-  Browser: <Globe className="size-4" />,
-  Desktop: <MousePointer2 className="size-4" />,
-} satisfies Record<ActionTarget['_tag'], ReactNode>
 
 /** A field's name as a person reads it: `reply_to` and `replyTo` are both "Reply to". */
 const fieldName = (key: string) => {
@@ -160,23 +154,22 @@ const fieldsOf = (input: Schema.Json): ReadonlyArray<readonly [string, Schema.Js
   isRecord(input) ? Object.entries(input) : [['details', input] as const]
 
 /**
- * Exactly what would be done, in full. An Approval is consent to one specific action, so the card
- * shows that action and not a summary of it: the account it would use and every field as it
- * would be sent (who it goes to, the subject, the whole message), or the whole command. One line
- * cut off with an ellipsis is not something a Person can approve.
+ * Exactly what would be done, in full: the account it would use and every field as it would be
+ * sent (who it goes to, the subject, the whole message), or the whole step on the Computer. An
+ * Approval is consent to one specific action, and its banner says that action in one sentence;
+ * this is what the sentence stands for, which the banner opens on request (`Allow.tsx`,
+ * "Details"). It is plain lines with no fill or edge of its own: it is read inside the banner,
+ * which is already a surface, and the banner's box is what scrolls.
  */
-function Exactly({ target }: { target: ActionTarget }) {
+export function Exactly({ target }: { target: ActionTarget }) {
   if (ActionTarget.guards.Connection(target)) {
     return (
-      <div className="mt-3 overflow-hidden rounded-control bg-well ring-line">
-        <div className="flex items-start gap-2 px-3 py-2 text-label text-ink-2 hairline-b">
-          <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON.Connection}</span>
-          {/* In full and wrapping: the account is where the action lands. */}
-          <span className="min-w-0 wrap-break-word">
-            {target.account} <span className="text-ink-3">· {target.tool}</span>
-          </span>
-        </div>
-        <dl className="flex max-h-72 flex-col gap-2 overflow-y-auto px-3 py-2.5 text-label">
+      <div className="flex flex-col gap-1.5">
+        {/* In full and wrapping: the account is where the action lands. */}
+        <p className="wrap-anywhere text-ink-2">
+          {target.account} <span className="text-ink-3">· {target.tool}</span>
+        </p>
+        <dl className="flex flex-col gap-1.5">
           {fieldsOf(target.input).map(([key, value]) => (
             <div key={key}>
               <dt className="flex items-baseline gap-1.5 text-meta font-meta text-ink-3">
@@ -193,16 +186,13 @@ function Exactly({ target }: { target: ActionTarget }) {
     )
   }
   return (
-    <div className="mt-3 flex items-start gap-2 rounded-control bg-well px-3 py-2 text-label text-ink-2 ring-line">
-      <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON[target._tag]}</span>
-      <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
-        {ActionTarget.match(target, {
-          Connection: ({ account, tool }) => `${account} · ${tool}`,
-          Browser: ({ action }) => browserStep(action),
-          Desktop: ({ action }) => desktopStep(action),
-        })}
-      </span>
-    </div>
+    <p className="font-mono wrap-anywhere whitespace-pre-wrap text-ink-2">
+      {ActionTarget.match(target, {
+        Connection: ({ account, tool }) => `${account} · ${tool}`,
+        Browser: ({ action }) => browserStep(action),
+        Desktop: ({ action }) => desktopStep(action),
+      })}
+    </p>
   )
 }
 
@@ -252,104 +242,39 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
   })
 }
 
-/** How much an action can change, said plainly and coloured by how careful to be. */
-const EFFECT = {
-  read: { words: APPROVAL_EFFECT_WORDS.read, tone: 'bg-info-soft text-info' },
-  write: { words: APPROVAL_EFFECT_WORDS.write, tone: 'bg-approve-soft text-approve' },
-  destructive: { words: APPROVAL_EFFECT_WORDS.destructive, tone: 'bg-danger-soft text-danger' },
-} as const satisfies Record<Approval['action']['effect'], { words: string; tone: string }>
-
 /**
- * One thing Vivid wants to do and will not do without a yes. Only the Person it is addressed to
- * sees the buttons; everyone else in the Thread sees who it is waiting on. The decision quotes the
- * digest of exactly what is shown, so a card drawn from an older proposal cannot allow a newer one.
+ * Something Vivid asked to do, as the Thread's conversation holds it: a quiet line that says it
+ * asked first, and what it asked to do in its own words, drawn as its words are anywhere. Under
+ * them is one line of how it ended, once it has; while it waits on somebody else, who that is,
+ * since nothing else on this Person's screen says so.
+ *
+ * The ways to answer are not in the conversation. While it waits on the Person looking at it,
+ * it is a banner attached to the composer (`Allow.tsx`), as a question of Vivid's is
+ * (`Question.tsx`, `Choices.tsx`).
+ *
+ * Until 12 October 2026 this was a card in the conversation, with a chip for the action's
+ * effect, Vivid's reason, every field of the action in a box inside the card and three buttons.
+ * The owner rejected it as a developer's tool: too many boxes in boxes and too many words.
  */
-export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
-  const [refusal, setRefusal] = useState<string | null>(null)
+export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
   const pending = ApprovalState.guards.Pending(approval.state)
-  const mine = approval.askedOf.id === me
-  const shown = useTheme(themeShown)
-
-  function decide(decision: ApprovalDecision) {
-    return Effect.gen(function* () {
-      setRefusal(null)
-      const result = yield* changing((client) =>
-        client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
-      )
-      if (Result.isFailure(result))
-        setRefusal('This was already decided, or it changed. Look again.')
-    })
-  }
-
   return (
-    // A request waiting on this Person is the one thing in the Thread that needs them, so its
-    // edge breathes until they answer. Settled, or someone else's to answer, it is a plain card.
-    <Edged>
-      <BorderBeam
-        active={pending && mine}
-        size="pulse-inner"
-        colorVariant="mono"
-        strength={0.6}
-        theme={shown}
-      >
-        <Card className="block p-4">
-          <div className="flex items-center gap-2 text-meta text-approve">
-            <ShieldQuestion className="size-3.5" />
-            <span className="flex-1">
-              {pending ? 'Vivid is asking first' : 'Vivid asked first'}
-            </span>
-            <span
-              className={cn(
-                'rounded-full px-2 py-0.5 font-title',
-                EFFECT[approval.action.effect].tone,
-              )}
-            >
-              {EFFECT[approval.action.effect].words}
-            </span>
-          </div>
-          <h3 className="mt-2 text-title font-title text-ink">{approval.action.summary}</h3>
-          {approval.action.rationale.length > 0 && (
-            <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
-          )}
-          <Exactly target={approval.action.target} />
-          {pending && mine && (
-            <p className="mt-2 text-meta font-meta text-ink-3">
-              Your answer applies only to what is shown above.
-            </p>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {!pending && <ApprovalOutcome state={approval.state} />}
-            {pending && !mine && (
-              <span className="text-label text-ink-3">Waiting on {approval.askedOf.name}.</span>
-            )}
-            {pending && mine && (
-              <>
-                <Button onClick={() => void act(decide(ApprovalDecision.cases.AllowOnce.make({})))}>
-                  Allow once
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void act(decide(ApprovalDecision.cases.AlwaysAllow.make({})))}
-                >
-                  Always allow
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void act(decide(ApprovalDecision.cases.Deny.make({})))}
-                >
-                  Don’t
-                </Button>
-              </>
-            )}
-          </div>
-          {refusal !== null && (
-            <p role="alert" className="mt-2 text-label text-danger">
-              {refusal}
-            </p>
-          )}
-        </Card>
-      </BorderBeam>
-    </Edged>
+    <div className="mt-3">
+      <p className="text-meta font-meta text-ink-3">Asked first</p>
+      {/* A sentence with no place to break (an address, a link) breaks anywhere, and it takes its
+          direction from its own first strong letter. */}
+      <div dir="auto" className="mt-1 wrap-anywhere">
+        <Markdown content={approval.action.summary} />
+      </div>
+      {pending && approval.askedOf.id !== me && (
+        <p className="mt-1 text-label text-ink-3">Waiting on {approval.askedOf.name}.</p>
+      )}
+      {!pending && (
+        <p className="mt-1">
+          <ApprovalOutcome state={approval.state} />
+        </p>
+      )}
+    </div>
   )
 }
 

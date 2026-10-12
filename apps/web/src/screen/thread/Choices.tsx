@@ -2,7 +2,13 @@ import type { InputAnswer, InputOption, InputRequest } from '@vivid/contracts'
 import { asking as model } from '@vivid/state'
 import { Option, type Array as Arr } from 'effect'
 import { Check, ChevronDown, CircleHelp } from 'lucide-react'
-import { useCallback, useId, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useId,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { Alert } from '../../ui/alert'
 import { cn } from '../../ui/cn'
 import type { Asking } from './asking'
@@ -226,16 +232,67 @@ function steer(event: ReactKeyboardEvent<HTMLElement>) {
 }
 
 /**
- * The banner in its place: the composer's gutters and column, and in it the attachment
- * (`asked-attachment`), which is narrower than the composer, tucked behind its top edge, and
- * folds in as it is mounted. It is drawn between the conversation and the composer, in the
- * column's flow, so the conversation ends above it and keeps its newest words in sight by
- * itself: the Thread's scroller is a reversed column, which the browser keeps on its end as the
- * room above the composer changes.
+ * A banner in its place over the composer, for whatever is asked in it: a question of Vivid's
+ * (`Choices`, here) or an Approval (`Allow.tsx`). It is the composer's gutters and column, and
+ * in it the attachment (`asked-attachment`), which is narrower than the composer, tucked behind
+ * its top edge, and folds in as it is mounted. It is drawn between the conversation and the
+ * composer, in the column's flow, so the conversation ends above it and keeps its newest words
+ * in sight by itself: the Thread's scroller is a reversed column, which the browser keeps on its
+ * end as the room above the composer changes.
  *
  * A banner that is leaving is no longer a way to answer: it is `inert`, so neither a pointer nor
- * the keyboard nor a screen reader finds its rows while it folds away. When that fold has ended
- * it says so (`onGone`), and only then can the next request's banner arrive.
+ * the keyboard nor a screen reader finds its controls while it folds away. When that fold has
+ * ended it says so (`onGone`), and only then can the next banner arrive.
+ *
+ * What did not go through is said over the banner, never inside it.
+ */
+export function Attached({
+  leaving,
+  refusal,
+  onGone,
+  children,
+}: {
+  /** What it holds is no longer what is up: it folds away and then says so (`onGone`). */
+  leaving: boolean
+  /** What to say when the last answer from here did not go through, in one sentence. */
+  refusal: Option.Option<string>
+  /** The banner has folded away. */
+  onGone: () => void
+  /** The banner's surface, and whatever must be mounted exactly as long as it is. */
+  children: ReactNode
+}) {
+  return (
+    <div className="shrink-0 px-4 sm:px-6" inert={leaving}>
+      <div className="mx-auto w-full max-w-(--thread-max-w)">
+        {Option.isSome(refusal) && (
+          <div className="flex justify-center pb-2 sm:justify-end">
+            <Alert variant="destructive">{refusal.value}</Alert>
+          </div>
+        )}
+        <div
+          data-folded={leaving ? '' : undefined}
+          className="asked-attachment"
+          onTransitionEnd={(event) => {
+            // Only the banner's own fold, not a row's fill or a panel opening inside it.
+            if (leaving && event.target === event.currentTarget) onGone()
+          }}
+        >
+          <div>{children}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The surface every banner over the composer is drawn on (`asked-surface`, the reference's
+ * attached `Surface` and `Root`), with the composer's own fill and shadow.
+ */
+export const SURFACE = 'asked-surface bg-surface-3 text-label lift'
+
+/**
+ * The banner of a question, in its place (`Attached`). Beside its surface it mounts two marks
+ * that are there only while something holds: see `usePicking` and `digits`.
  */
 function Choices({
   request,
@@ -258,38 +315,20 @@ function Choices({
   // moment a pressed option is shown before the banner moves on.
   const held = !open || leaving || busy || picking.moving
   return (
-    <div className="shrink-0 px-4 sm:px-6" inert={leaving}>
-      <div className="mx-auto w-full max-w-(--thread-max-w)">
-        {Option.isSome(refusal) && (
-          <div className="flex justify-center pb-2 sm:justify-end">
-            <Alert variant="destructive">{refusal.value}</Alert>
-          </div>
-        )}
-        <div
-          data-folded={leaving ? '' : undefined}
-          className="asked-attachment"
-          onTransitionEnd={(event) => {
-            // Only the banner's own fold, not a row's fill or the panel opening inside it.
-            if (leaving && event.target === event.currentTarget) onGone()
-          }}
-        >
-          <div>
-            <Banner
-              progress={progress}
-              open={open}
-              reach={held ? 'held' : 'pressable'}
-              busy={busy}
-              onToggle={() => setClosedAt(open ? Option.some(progress.at) : Option.none())}
-              onPick={picking.pick}
-            />
-          </div>
-        </div>
-        {/* There only while this request is the one that is up: see `usePicking`. */}
-        {!leaving && <span hidden ref={alive} />}
-        {/* There only while the rows can be pressed: see `digits`. */}
-        {!held && <span hidden ref={digits(progress.question.options, picking.pick)} />}
-      </div>
-    </div>
+    <Attached leaving={leaving} refusal={refusal} onGone={onGone}>
+      <Banner
+        progress={progress}
+        open={open}
+        reach={held ? 'held' : 'pressable'}
+        busy={busy}
+        onToggle={() => setClosedAt(open ? Option.some(progress.at) : Option.none())}
+        onPick={picking.pick}
+      />
+      {/* There only while this request is the one that is up: see `usePicking`. */}
+      {!leaving && <span hidden ref={alive} />}
+      {/* There only while the rows can be pressed: see `digits`. */}
+      {!held && <span hidden ref={digits(progress.question.options, picking.pick)} />}
+    </Attached>
   )
 }
 
@@ -322,11 +361,7 @@ function Banner({
   const panel = useId()
   const { question } = progress
   return (
-    <section
-      aria-label="Vivid's question"
-      className="asked-surface bg-surface-3 text-label lift"
-      onKeyDown={steer}
-    >
+    <section aria-label="Vivid's question" className={SURFACE} onKeyDown={steer}>
       <button
         type="button"
         aria-expanded={open}
