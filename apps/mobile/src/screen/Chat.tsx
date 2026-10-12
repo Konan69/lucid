@@ -771,8 +771,6 @@ function Foot({
           onSend={() => reply(typed.trim())}
           onStop={() => void stopping.stop()}
           asked={Option.getOrUndefined(onward)}
-          // Up or sliding away: the composer's shadow falls on the banner for as long as it is there.
-          attached={!model.Hold.$is('Free')(asking.hold)}
         />
       </View>
     </>

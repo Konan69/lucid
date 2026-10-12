@@ -212,8 +212,11 @@
  * These are that file's measures, which have no step on Vivid's scales.
  */
 
-/* `Attachment`: in the composer's column and narrower than it by 22 px at each side
-   (`--chat-composer-drawer-inset`, 1.375rem), tucked `1rem + 1px` behind the composer's top edge
+/* `Attachment`: in the composer's column and narrower than it at each side by the composer's
+   own corner (`--radius-composer`), so its edges come down on the straight part of the
+   composer's top edge and never across the curve. The reference's inset is its composer's
+   corner too (`--chat-composer-drawer-inset`, 1.375rem, against a 22 px corner); Vivid's corner
+   is 24 px, and with the reference's number each edge ran 2 px into the curve. It is tucked `1rem + 1px` behind the composer's top edge
    by a negative margin, so the composer, drawn after it, covers its foot: there is no bottom
    edge to see and no gap. Vivid's composer keeps `--spacing(2)` of room over its own box (`pt-2`
    in `screen/thread/Composer.tsx`), which the margin crosses first.
@@ -227,7 +230,7 @@
 @utility asked-attachment {
   display: grid;
   grid-template-rows: 1fr;
-  width: calc(100% - 2 * 1.375rem);
+  width: calc(100% - 2 * var(--radius-composer));
   margin-inline: auto;
   margin-bottom: calc(-1 * (1rem + 1px + --spacing(2)));
   transition:
@@ -294,18 +297,21 @@
   }
 }
 
-/* The shadow the composer casts up onto the banner tucked behind its top edge, so the banner
-   reads as behind the composer: the approved phone mockup's `0 -14px 20px -12px` at 26% black,
-   the same on the web. Its negative spread keeps it inside the banner's width, which is 22 px
-   narrower than the composer at each side. It is on a clear shape laid over the composer's box
-   (`Composer.tsx`), not on the composer, whose own edge and lift it therefore never changes; it
-   is clear until a question is up (`data-shown`) and fades on the banner's clock. */
+/* The shade where an attached banner meets the composer, in the dark theme only: the
+   reference's `--background-image-composer-seam-above` (its `apps/web/src/index.css`), 10 px of
+   18% black fading away from the seam. The reference draws nothing there in the light theme,
+   and neither does this; until 12 October 2026 a wider, darker shadow of my own was drawn in
+   both. It is on a clear shape laid over the composer's box (`Composer.tsx`), not on the
+   composer, whose own edge and lift it therefore never changes; it is clear until a question
+   is up (`data-shown`) and fades on the banner's clock. */
 @utility asked-seam {
-  box-shadow: 0 -14px 20px -12px rgb(0 0 0 / 0.26);
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease-out);
   &[data-shown='true'] {
     opacity: 1;
+  }
+  :where(html:not([data-theme='light'])) & {
+    box-shadow: 0 -10px 10px -10px rgb(0 0 0 / 0.18);
   }
 }
 

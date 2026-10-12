@@ -4,7 +4,7 @@ import { nativeMetrics as m } from '@vivid/tokens/native'
 import { Option, type Array as Arr } from 'effect'
 import { Check, ChevronDown, CircleHelp } from 'lucide-react-native'
 import { useCallback, useState, type ReactNode } from 'react'
-import { Platform, useWindowDimensions, View } from 'react-native'
+import { useWindowDimensions, View } from 'react-native'
 import Animated, {
   cubicBezier,
   Easing,
@@ -28,7 +28,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { scheduleOnRN } from 'react-native-worklets'
 import { useKeyboardShowing } from '../../data/keyboard'
 import { useTheme } from '../../theme'
-import { COMPOSER_CLEAR, COMPOSER_SIDE } from '../../ui/Composer'
+import { COMPOSER_CLEAR, COMPOSER_CORNER, COMPOSER_SIDE } from '../../ui/Composer'
 import { HANG } from '../../ui/Presence'
 import { EDGE, Label, Press } from '../../ui/ui'
 import { keyboardRoomOf, tallestOf } from './asked'
@@ -64,12 +64,17 @@ const SWAP_OUT = FadeOut.duration(160).reduceMotion(ReduceMotion.System)
 const SWAP = cubicBezier(0.2, 0, 0, 1)
 const CHECK = 150
 
-/** How much narrower than the composer's shape the banner is, at each side. */
-const INSET = 10
+/**
+ * How much narrower than the composer's shape the banner is, at each side: the composer's own
+ * corner, as in the reference, whose `--chat-composer-drawer-inset` (1.375rem) is the 22 px of
+ * its composer's corner (`ComposerSurface.tsx`). The banner's edges then come down on the
+ * straight part of the composer's top edge. Until 12 October 2026 this was 10 against a corner
+ * of 24, and each edge ran into the curve and showed as a cut corner.
+ */
+const INSET = COMPOSER_CORNER
 /**
  * How far the banner's foot is tucked behind the composer's top edge: the reference's 1rem and
- * 1px (`ComposerBanner.tsx`, `Attachment`). At the banner's sides the composer's round corner
- * has come within five points of its top edge, so the strip is always behind the shape.
+ * 1px (`ComposerBanner.tsx`, `Attachment`).
  */
 const TUCK = 17
 /** How far the window's foot is under the top of the composer's dock: its room, then the tuck. */
@@ -109,11 +114,13 @@ const STANDING_BACK = 0.45
 const MORE = { fade: 26, least: 4 } as const
 
 /**
- * The shadow the composer casts up onto the banner, where Android draws it as a strip (`Seam`):
- * how far up it reaches, and how dark it is at the composer's edge. They are the mockup's
- * `0 -14px 20px -12px` at 26% black, read at the edge and at the end of its blur.
+ * The shade where the banner meets the composer, in the dark theme only (`Seam`): the
+ * reference's `--background-image-composer-seam-above` (`apps/web/src/index.css`), 10 px of
+ * 18% black fading away from the seam. The reference draws nothing there in the light theme,
+ * and neither does this. Until 12 October 2026 a 14-point strip of my own was drawn in both
+ * themes, and in the light one it read as a grey band across the banner.
  */
-const SEAM = { reach: 14, dark: 0.15 } as const
+const SEAM = { reach: 10, dark: 0.18 } as const
 
 interface ChoicesProps {
   /** The request the banner holds. */
@@ -326,6 +333,7 @@ export function Choices({
   const open = !Option.contains(closedAt, progress.at)
   const tallest = useTallest(dock)
   const slide = useSlide(asking.standOf(leaving, !open), covered, onGone)
+  const { dark } = useTheme()
   // Closed, the rows are behind the composer and must not be pressed; nor may those of a request
   // that has just been settled, here or anywhere else, or whose answers are on their way, or in
   // the moment a pressed option is shown before the banner moves on.
@@ -383,27 +391,28 @@ export function Choices({
         {/* There only while this request is the one that is up: see `usePicking`. */}
         {!leaving && <View ref={alive} />}
       </Animated.View>
-      {Platform.OS === 'android' && <Seam showing={slide.showing} />}
+      {dark && <Seam showing={slide.showing} />}
     </View>
   )
 }
 
 /**
  * The banner's surface: an opaque raised layer with a quiet edge on its top and both sides and a
- * soft shadow cast upward, round at its top corners and square at its foot, which is behind the
+ * soft drop under it, round at its top corners and square at its foot, which is behind the
  * composer. It is opaque on purpose: it lies over the conversation with no blur behind it, and a
  * translucent banner would show the message under it through the rows.
  *
  * The edge is the layer's quieter line (`line-2`, about a tenth of the ink), as the web
- * banner's is. The shadow is written here and is not one of `ui/elevation.ts`'s tiers: those
- * fall downward, and this is the one shape in the app whose shadow falls up, onto the
- * conversation it covers.
+ * banner's is. The shadow is the reference's composer elevation, which its attached banner
+ * shares (`--shadow-composer` and `--shadow-composer-dark`, `apps/web/src/index.css`): a soft
+ * drop pulled in under the shape. It is written here and is not one of `ui/elevation.ts`'s
+ * tiers, which have no drop this tight.
  *
  * The height limit is on this shape, which holds the scroller: that is what makes the scroller,
  * and not the banner's room, give way when the rows do not fit.
  */
 function Surface({ tallest, children }: { tallest: number; children: ReactNode }) {
-  const { colors: c } = useTheme()
+  const { colors: c, dark } = useTheme()
   return (
     <View
       style={{
@@ -423,7 +432,9 @@ function Surface({ tallest, children }: { tallest: number; children: ReactNode }
         borderRightWidth: EDGE,
         borderColor: c['line-2'],
         backgroundColor: c['subtle-strong'],
-        boxShadow: '0 -8px 22px -16px rgba(0, 0, 0, 0.25)',
+        boxShadow: dark
+          ? '0 14px 32px -18px rgba(0, 0, 0, 0.75)'
+          : '0 12px 28px -18px rgba(0, 0, 0, 0.4)',
       }}
     >
       {children}
@@ -432,10 +443,9 @@ function Surface({ tallest, children }: { tallest: number; children: ReactNode }
 }
 
 /**
- * The shadow the composer casts up onto the banner where they meet, on Android: a strip just
- * above the composer's top edge, as wide as the banner, dark at the edge and clear `SEAM.reach`
- * above it. iOS draws the same shadow as one of the composer's own (`ui/Composer.tsx`,
- * `attached`); an Android elevation falls downward only, so here it is a picture.
+ * The shade where the banner meets the composer in the dark theme (`SEAM`): a strip just above
+ * the composer's top edge, as wide as the banner, dark at the edge and clear `SEAM.reach` above
+ * it. It is a picture on both systems, because the reference draws it as a gradient too.
  *
  * It is in the window, not on the banner, so it stays at the composer's edge while the banner
  * slides behind it; it is as present as the banner is behind it, so it is never drawn over the

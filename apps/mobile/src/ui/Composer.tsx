@@ -46,18 +46,15 @@ const BACK = 32
 const TRAILING = (TARGET - ROUND) / 2
 
 /**
- * The shadow the composer casts up onto a question's banner where they meet, so the banner
- * reads as behind the composer and not as one flat shape with it: the approved mockup's
- * `0 -14px 20px -12px` at 26% black. Its spread keeps it inside the banner's width, which is
- * narrower than the composer by 10 points at each side.
- */
-const SEAM = '0 -14px 20px -12px rgba(0, 0, 0, 0.26)'
-
-/**
  * What the dock keeps clear above the composer's shape, for whatever is laid out against that
  * shape's top edge: a question's banner rises from behind it (`screen/chat/Choices.tsx`).
  */
 export const COMPOSER_CLEAR = AROUND
+/**
+ * The shape's corner. A question's banner stands this far in from each side, so its edges come
+ * down on the straight part of the composer's top edge and never across the curve.
+ */
+export const COMPOSER_CORNER = CORNER
 /** What the dock keeps clear at each side of the shape. */
 export const COMPOSER_SIDE = 12
 /** The composer's height with one line in it and the keyboard up: the shape and the dock's room. */
@@ -117,8 +114,7 @@ export interface Onward {
  * "Next", or "Submit" on the last question. Words written under a question that offers options
  * bring the ordinary button back, and it sends them as a message; under a question answered by
  * writing the pill stays, because the words are that question's answer (`screen/Chat.tsx`,
- * `reply`). While a banner is attached above it (`attached`), the composer
- * casts a soft shadow up onto it (`Seam`).
+ * `reply`).
  *
  * It rests on the home indicator's inset when the keyboard is down and directly on the keyboard
  * when it is up. The screen around it moves it there (`KeyboardAvoidingView`). The reference uses
@@ -135,7 +131,6 @@ export function Composer({
   onSend,
   onStop,
   asked,
-  attached = false,
 }: {
   ref?: Ref<ComposerEditorHandle>
   value: string
@@ -154,8 +149,6 @@ export function Composer({
   onStop: () => void
   /** A question from Vivid is up: with nothing written, the trailing end moves on from it. */
   asked?: Onward
-  /** A question's banner is attached above, up or sliding away: the shadow falls up onto it. */
-  attached?: boolean
 }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
@@ -198,7 +191,6 @@ export function Composer({
       }}
     >
       <View style={styles.column}>
-        {attached && <Seam />}
         <View
           style={[
             {
@@ -272,33 +264,6 @@ export function Composer({
  */
 function movingOf(asked: Option.Option<Onward>, empty: boolean): Option.Option<Onward> {
   return Option.filter(asked, (question) => empty || !question.offers)
-}
-
-/**
- * The shadow the composer casts up onto a question's banner (`SEAM`), on iOS: a clear shape
- * exactly under the composer's own, whose one shadow falls outside it and upward. It is a shape
- * of its own so the composer's look is the same with a banner and without, and so the shadow
- * comes and goes with the banner and nothing else is drawn again. Android draws nothing here: an
- * elevation there falls downward only, and the banner draws the shadow as a strip over itself
- * (`Seam` in `screen/chat/Choices.tsx`).
- */
-function Seam() {
-  if (Platform.OS === 'android') return null
-  return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        borderRadius: CORNER,
-        borderCurve: 'continuous',
-        boxShadow: SEAM,
-      }}
-    />
-  )
 }
 
 /**
