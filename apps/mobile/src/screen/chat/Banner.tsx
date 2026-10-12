@@ -4,7 +4,6 @@ import { useWindowDimensions, View } from 'react-native'
 import Animated, {
   Easing,
   interpolate,
-  interpolateColor,
   ReduceMotion,
   useAnimatedReaction,
   useAnimatedStyle,
@@ -79,11 +78,12 @@ const SHADOW_ROOM = 32
 /** The banner's top corners. */
 export const CORNER = 16
 /**
- * The room between the banner's edge and what it holds, by how much it holds: the reference's
- * `density` (`Root`), whose default is 4 px all round and whose `spacious`, which its approval
- * takes, is 12.
+ * The room between the banner's edge and what it holds: the 4 px all round of the reference's
+ * default `density` (`Root`). Every banner has it. Until 12 October 2026 an Approval's took the
+ * reference's `spacious` 12 on a warning surface; the owner rejected that banner as bloated, and
+ * an Approval is now drawn as a question is.
  */
-export const ROOM = { default: 4, spacious: 12 } as const
+export const ROOM = 4
 /** The system bar's own height under the status bar, in points. */
 const NAV = 44
 /**
@@ -148,8 +148,8 @@ export function useTallest(dock: number): number {
  * question with fewer rows) it is at rest at once, where a translation up would lift its foot
  * off the composer for the length of the slide.
  *
- * `head` is the height of the row that stays in sight of a banner closed to it (`tucked`). Only
- * a question's banner closes, and its room is the default (`ROOM`).
+ * `head` is the height of the row that stays in sight of a banner closed to it (`tucked`), with
+ * the banner's room (`ROOM`) over and under it.
  */
 export function useSlide(stand: asking.Stand, covered: SharedValue<number>, onGone: () => void) {
   // What slides and its head row, measured straight from their layout.
@@ -157,10 +157,7 @@ export function useSlide(stand: asking.Stand, covered: SharedValue<number>, onGo
   const head = useSharedValue(0)
   const showing = useDerivedValue<number>(() => {
     const whole = height.get()
-    const closed = Math.min(
-      HEADROOM + EDGE + ROOM.default + head.get() + ROOM.default + TUCK,
-      whole,
-    )
+    const closed = Math.min(HEADROOM + EDGE + ROOM + head.get() + ROOM + TUCK, whole)
     const target = { up: whole, tucked: closed, gone: 0 }[stand]
     return withTiming(target, RISE, (finished) => {
       if (finished === true && stand === 'gone') scheduleOnRN(onGone)
@@ -238,30 +235,15 @@ export function Attached({
 }
 
 /**
- * How much of the theme's approval colour a banner that asks for a yes takes: the reference's
- * `variantColors.warning`, an edge that is 28% of its warning colour and a tint that is 8% of
- * it over the surface.
- */
-const WARNING = { edge: 0.28, tint: 0.08 } as const
-
-/**
- * One colour laid over another at a share of its strength, as CSS `color-mix(in srgb, …)` gives
- * it. Reanimated's own interpolation, so every colour the theme can hold is read; `gamma: 1` is
- * the plain sRGB mix (its default corrects for gamma, which CSS does not).
- */
-const mixed = (under: string, over: string, share: number): string =>
-  interpolateColor(share, [0, 1], [under, over], 'RGB', { gamma: 1 })
-
-/**
  * The banner's surface: an opaque raised layer with a quiet edge on its top and both sides and a
  * soft drop under it, round at its top corners and square at its foot, which is behind the
  * composer. It is opaque on purpose: it lies over the conversation with no blur behind it, and a
  * translucent banner would show the message under it through what it holds.
  *
  * The edge is the layer's quieter line (`line-2`, about a tenth of the ink), as the web
- * banner's is. A banner that asks for a yes (`warning`) takes the theme's approval colour into
- * its edge and its fill instead (`WARNING`); the fill stays opaque, so it is that colour mixed
- * into the surface and not laid over it. The shadow is the reference's composer elevation,
+ * banner's is. It is the same for a question and for an Approval: the reference tints its
+ * approval's surface with its warning colour, and Vivid's does not (the owner, 12 October 2026:
+ * an Approval "should just ask a normal question"). The shadow is the reference's composer elevation,
  * which its attached banner shares (`--shadow-composer` and `--shadow-composer-dark`,
  * `apps/web/src/index.css`): a soft drop pulled in under the shape. It is written here and is
  * not one of `ui/elevation.ts`'s tiers, which have no drop this tight.
@@ -269,45 +251,27 @@ const mixed = (under: string, over: string, share: number): string =>
  * The height limit is on this shape, which holds whatever scrolls: that is what makes the
  * scroller, and not the banner's room, give way when what it holds does not fit.
  */
-export function Surface({
-  tallest,
-  variant,
-  density,
-  children,
-}: {
-  tallest: number
-  /** The reference's `variant`: a banner like any other, or one that asks for a yes. */
-  variant: 'default' | 'warning'
-  /** The reference's `density`: how much room is kept round what it holds (`ROOM`). */
-  density: keyof typeof ROOM
-  children: ReactNode
-}) {
+export function Surface({ tallest, children }: { tallest: number; children: ReactNode }) {
   const { colors: c, dark } = useTheme()
-  const room = ROOM[density]
-  const fill =
-    variant === 'warning'
-      ? mixed(c['subtle-strong'], c['status-approve'], WARNING.tint)
-      : c['subtle-strong']
   return (
     <View
       style={{
         flexShrink: 1,
         maxHeight: tallest + TUCK,
         marginHorizontal: COMPOSER_SIDE + INSET,
-        paddingTop: room,
-        paddingHorizontal: room,
+        paddingTop: ROOM,
+        paddingHorizontal: ROOM,
         // Under what it holds: its own room, then the strip that is behind the composer, which
         // is always empty.
-        paddingBottom: room + TUCK,
+        paddingBottom: ROOM + TUCK,
         borderTopLeftRadius: CORNER,
         borderTopRightRadius: CORNER,
         borderCurve: 'continuous',
         borderTopWidth: EDGE,
         borderLeftWidth: EDGE,
         borderRightWidth: EDGE,
-        borderColor:
-          variant === 'warning' ? mixed(fill, c['status-approve'], WARNING.edge) : c['line-2'],
-        backgroundColor: fill,
+        borderColor: c['line-2'],
+        backgroundColor: c['subtle-strong'],
         boxShadow: dark
           ? '0 14px 32px -18px rgba(0, 0, 0, 0.75)'
           : '0 12px 28px -18px rgba(0, 0, 0, 0.4)',

@@ -7,7 +7,6 @@ import {
   ApprovalState,
   ConnectionId,
   DecideApprovalRequest,
-  DesktopAction,
   InputRequestId,
   InputRequestState,
   PersonId,
@@ -135,13 +134,19 @@ function mount() {
   return { container, root }
 }
 
-const APPROVAL = '[data-asks="approval"]'
+const APPROVAL = '[aria-label="Vivid asks first"]'
 
-/** The ways a test reaches a banner drawn in `container`. The menu is drawn on the page. */
+/** The ways a test reaches a banner drawn in `container`. */
 function reach(container: HTMLElement) {
   const button = (name: string) => {
     const found = Array.from(container.querySelectorAll('button')).find(
-      (one) => one.getAttribute('aria-label') === name || one.textContent === name,
+      (one) =>
+        one.getAttribute('aria-label') === name ||
+        one.textContent === name ||
+        // An answer is a row: its label, and beside it a second line or its number key.
+        Array.from(one.querySelectorAll('[data-asked="label"]')).some(
+          (label) => label.textContent === name,
+        ),
     )
     if (found === undefined) throw new Error(`The banner drew no button named ${name}.`)
     return found
@@ -158,41 +163,20 @@ function reach(container: HTMLElement) {
     if (found === null) throw new Error(`There is no ${what}.`)
     return found
   }
-  // A menu that has been shut stays on the page while it fades out, marked as closed, and this
-  // page never ends a fade. So the items a Person can reach are those of a menu not so marked.
-  const items = () =>
-    Array.from(
-      document.querySelectorAll<HTMLElement>('[role="menu"]:not([data-closed]) [role="menuitem"]'),
-    )
-  /** Every item on the page, those of a menu that is fading out included. */
-  const lingering = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
   return {
     button,
     part,
     /** Whether the banner has a named part at all. */
     has: (name: string) => container.querySelector(`[data-asked="${name}"]`) !== null,
-    items,
-    lingering,
     /** Whether the banner of an Approval is up. */
     approval: () => container.querySelector(APPROVAL) !== null,
     /** Whether the banner of a question is up. */
     question: () => container.querySelector('[aria-label="Vivid\'s question"]') !== null,
     /** Everything the banner of the Approval says, in the order it says it. */
     says: () => drawn('banner of an Approval', APPROVAL).textContent,
-    /** The box that holds exactly what would be done, open or not. */
-    exactly: () => drawn('box of details', '[aria-label="Exactly what Vivid would do"]'),
     /** What is said over the banner when a decision did not go through. */
     alert: () => drawn('refusal', '[role="alert"]').textContent,
     press: (name: string) => act(() => button(name).click()),
-    /** Opens the menu behind the ellipsis, as a pointer does. */
-    more: () => act(() => button('More ways to answer').click()),
-    /** Presses an item of the open menu. */
-    choose: (name: string) =>
-      act(() => {
-        const item = items().find((one) => one.textContent === name)
-        if (item === undefined) throw new Error(`The menu has no item named ${name}.`)
-        item.click()
-      }),
     /** The banner's fold has ended, which a page with no layout never says by itself. */
     folded: () =>
       act(() => {
@@ -245,6 +229,8 @@ function raise(approval: Approval, standing: Partial<Standing> = {}) {
   return { decided, draw, ...reach(container) }
 }
 
+const ANSWERS = ['Allow', 'Always allow', 'Don’t allow']
+
 describe('the three answers', () => {
   it('hands on "allow this once" from Allow', () => {
     const banner = raise(waitingOn('one'))
@@ -258,53 +244,61 @@ describe('the three answers', () => {
     expect(banner.decided).toEqual([ApprovalDecision.cases.Deny.make({})])
   })
 
-  it('keeps Always allow in the menu behind the ellipsis, and hands it on from there', () => {
+  it('offers Always allow as a row of its own, and says what it means', () => {
     const banner = raise(waitingOn('one'))
-    expect(banner.items()).toEqual([])
-    banner.more()
-    expect(banner.items().map((item) => item.textContent)).toEqual(['Always allow'])
-    banner.choose('Always allow')
+    expect(banner.button('Always allow').textContent).toContain('Vivid won’t ask again for this')
+    banner.press('Always allow')
     expect(banner.decided).toEqual([ApprovalDecision.cases.AlwaysAllow.make({})])
   })
 
-  it('cannot be pressed while a decision is on its way', () => {
+  it('answers from the number keys, in the order the rows are in', () => {
+    const banner = raise(waitingOn('one'))
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true }))
+    })
+    expect(banner.decided).toEqual([ApprovalDecision.cases.Deny.make({})])
+  })
+
+  it('cannot be pressed, by pointer or key, while a decision is on its way', () => {
     const banner = raise(waitingOn('one'), { sending: true })
-    const controls = ['Don’t allow', 'Allow', 'More ways to answer'].map(banner.button)
-    expect(controls.map((control) => control.disabled)).toEqual([true, true, true])
-    for (const control of controls) act(() => control.click())
-    expect(banner.items()).toEqual([])
+    const rows = ANSWERS.map(banner.button)
+    expect(rows.map((row) => row.getAttribute('aria-disabled'))).toEqual(['true', 'true', 'true'])
+    for (const row of rows) act(() => row.click())
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }))
+    })
     expect(banner.decided).toEqual([])
   })
 
-  it('shuts the menu, and sends nothing from it, when the Approval is settled meanwhile', () => {
+  it('shows the pressed row as chosen while it is on its way, and none once it was refused', () => {
     const banner = raise(waitingOn('one'))
-    banner.more()
-    expect(banner.items()).toHaveLength(1)
-    banner.draw({ leaving: true })
-    expect(banner.items()).toEqual([])
-    // A press that lands on the item while the menu fades out is not a decision.
-    for (const item of banner.lingering()) act(() => item.click())
+    banner.press('Allow')
+    banner.draw({ sending: true })
+    expect(ANSWERS.map((name) => banner.button(name).getAttribute('aria-pressed'))).toEqual([
+      'true',
+      'false',
+      'false',
+    ])
+    banner.draw({ sending: false, refusal: Option.some('No.') })
+    expect(ANSWERS.map((name) => banner.button(name).getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'false',
+      'false',
+    ])
+  })
+
+  it('takes no answer while its rows are closed', () => {
+    const banner = raise(waitingOn('one'))
+    banner.press('Send the signed NDA to Dami')
+    for (const name of ANSWERS) act(() => banner.button(name).click())
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }))
+    })
     expect(banner.decided).toEqual([])
   })
 })
 
 describe('what the banner says', () => {
-  it('says what kind of action it is, the account it uses, and what Vivid would do', () => {
-    const banner = raise(waitingOn('one'))
-    expect(banner.part('effect').textContent).toBe('Sends, deletes or pays')
-    expect(banner.part('account').textContent).toBe('Gmail (Work)')
-    expect(banner.part('summary').textContent).toBe('Send the signed NDA to Dami')
-  })
-
-  it('names no account for a step on the Computer', () => {
-    const banner = raise(
-      waitingOn('one', {
-        target: ActionTarget.cases.Desktop.make({ action: DesktopAction.cases.Look.make({}) }),
-      }),
-    )
-    expect(banner.has('account')).toBe(false)
-  })
-
   it('counts the Approvals waiting only when there is more than one', () => {
     expect(raise(waitingOn('one'), { waiting: 1 }).has('count')).toBe(false)
     expect(raise(waitingOn('one'), { waiting: 12 }).part('count').textContent).toBe('1/12')
@@ -313,29 +307,10 @@ describe('what the banner says', () => {
   it('keeps a sentence with nowhere to break whole, and lets it choose its own direction', () => {
     const unbroken = 'https://example.com/'.padEnd(300, 'a')
     const banner = raise(waitingOn('one', { summary: unbroken }))
-    expect(banner.part('summary').textContent).toBe(unbroken)
+    expect(banner.part('question').textContent).toBe(unbroken)
     // What reads right to left starts at the right in a banner that reads left to right.
     const arabic = raise(waitingOn('two', { summary: 'أرسل الاتفاقية الموقعة إلى دامي' }))
-    expect(arabic.part('summary').getAttribute('dir')).toBe('auto')
-  })
-
-  it('says a long account name in full where exactly what is sent is read', () => {
-    const account = 'Gmail '.padEnd(80, 'x')
-    const banner = raise(
-      waitingOn('one', {
-        target: ActionTarget.cases.Connection.make({ ...gmail, account }),
-      }),
-    )
-    const details = banner.button('Details')
-    const box = banner.exactly()
-    expect(details.getAttribute('aria-expanded')).toBe('false')
-    expect(details.getAttribute('aria-controls')).toBe(box.id)
-    expect(box.hidden).toBe(true)
-    banner.press('Details')
-    expect(details.getAttribute('aria-expanded')).toBe('true')
-    expect(box.hidden).toBe(false)
-    expect(box.textContent).toContain(account)
-    expect(box.textContent).toContain('dami@example.com')
+    expect(arabic.part('question').getAttribute('dir')).toBe('auto')
   })
 
   it('says a decision that did not go through over the banner, not in it', () => {
@@ -345,12 +320,13 @@ describe('what the banner says', () => {
     expect(banner.says()).not.toContain(words)
   })
 
-  it('says nothing but the action: no reason, and no standing sentences', () => {
+  it('says what Vivid would do and the three answers, and nothing else', () => {
     const banner = raise(waitingOn('one'))
     expect(banner.says()).toBe(
-      'Sends, deletes or paysGmail (Work)Send the signed NDA to DamiDetails' +
-        'Gmail (Work) · Send emailTodami@example.comSubjectThe signed NDA' +
-        'Don’t allowAllow',
+      'Send the signed NDA to Dami' +
+        'Allow1' +
+        'Always allowVivid won’t ask again for this2' +
+        'Don’t allow3',
     )
   })
 })
@@ -468,7 +444,7 @@ describe('an Approval and a question both waiting', () => {
     expect(column.part('count').textContent).toBe('1/2')
     column.draw([allowed(first), second], [])
     column.folded()
-    expect(column.part('summary').textContent).toBe('Delete the draft')
+    expect(column.part('question').textContent).toBe('Delete the draft')
     expect(column.has('count')).toBe(false)
   })
 })
@@ -493,7 +469,7 @@ describe('a press, as the server hears it', () => {
       column.press('Allow')
       // From the press, before the server has said anything: a second press is not a second
       // decision.
-      expect(column.button('Allow').disabled).toBe(true)
+      expect(column.button('Allow').getAttribute('aria-disabled')).toBe('true')
       act(() => column.button('Allow').click())
       const carried = yield* hears(
         'DecideApproval',

@@ -78,7 +78,7 @@ import type { Asking } from './asking'
  */
 
 /** Whether the banner's rows can be pressed, or are there but out of reach. */
-type Reach = 'pressable' | 'held'
+export type Reach = 'pressable' | 'held'
 
 /**
  * The banner over the composer, for what it holds (`useAsking`): the questions of the request
@@ -194,7 +194,7 @@ const typedInto = (target: EventTarget | null): boolean =>
  * shortcut is the app's), held down, or pressed somewhere that is not this Thread: a dialog over
  * the Thread has the keyboard while it is open.
  */
-const digits =
+export const digits =
   (options: ReadonlyArray<InputOption>, onPick: (label: string) => void) => (mark: HTMLElement) => {
     const thread = mark.closest('[data-alive]')
     const hear = (event: KeyboardEvent) => {
@@ -217,7 +217,7 @@ const digits =
  * `onKeyDown`, so it hears nothing typed into the composer. From somewhere in the banner that is
  * not a row, down lands on the first row and up on the last; the ends wrap round.
  */
-function steer(event: ReactKeyboardEvent<HTMLElement>) {
+export function steer(event: ReactKeyboardEvent<HTMLElement>) {
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
   if (event.metaKey || event.ctrlKey || event.altKey) return
   const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-choice]'))
@@ -334,13 +334,7 @@ function Choices({
 
 /**
  * The banner's surface (`asked-surface`: the reference's attached `Surface` and `Root`), its
- * head row and, under it, the panel that the head opens and closes.
- *
- * The head is the reference's `Row` drawn as a button: a column for the mark as wide as the row
- * is tall (28 px, 24 from the `sm` width up), the words, and at the trailing end the count and
- * the chevron. It says whether the panel is open (`aria-expanded`) and names what it controls.
- * The chevron points down while the panel is open and turns over when it is closed, as the
- * reference's `ToggleIcon` does; it is decoration, since the row is the control.
+ * head row (`Head`) and, under it, the panel that the head opens and closes.
  */
 function Banner({
   progress,
@@ -359,56 +353,115 @@ function Banner({
   onPick: (label: string) => void
 }) {
   const panel = useId()
-  const { question } = progress
   return (
     <section aria-label="Vivid's question" className={SURFACE} onKeyDown={steer}>
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={panel}
-        title={open ? 'Hide the question and its options' : 'Show the question and its options'}
-        onClick={onToggle}
-        className="flex min-h-7 w-full cursor-pointer items-start gap-1 rounded-row text-start transition-colors duration-150 hover:bg-wash-hover focus-visible:-outline-offset-2"
-      >
-        <span
-          aria-hidden
-          className="flex size-7 flex-none items-center justify-center text-ink-3 sm:w-6"
-        >
-          <CircleHelp className="size-3" />
-        </span>
-        <span
-          data-asked="question"
-          dir="auto"
-          className={cn(
-            'min-w-0 flex-1 py-1.5 font-title text-ink',
-            // Two lines of the question at most, then an ellipsis; one while it is closed.
-            open ? 'line-clamp-2 wrap-anywhere' : 'truncate',
-          )}
-        >
-          {question.question}
-        </span>
-        <span className="flex h-7 flex-none items-center gap-1">
-          {progress.of > 1 && (
-            <span
-              aria-label={`Question ${progress.at + 1} of ${progress.of}`}
-              className="text-meta font-title text-ink-3 tabular-nums"
-            >
-              {progress.at + 1}/{progress.of}
-            </span>
-          )}
-          <span aria-hidden className="flex size-6 items-center justify-center text-ink-3">
-            <ChevronDown className={cn('size-3.5', !open && 'rotate-180')} />
-          </span>
-        </span>
-      </button>
-      {/* The panel folds between nothing and its own height (`motion-fold`); folded it stays in
-          the document, so it is `inert` there. */}
-      <div id={panel} data-folded={open ? undefined : ''} inert={!open} className="motion-fold">
-        <div>
-          <Options progress={progress} reach={reach} busy={busy} onPick={onPick} />
-        </div>
-      </div>
+      <Head
+        words={progress.question.question}
+        count={
+          progress.of > 1
+            ? Option.some({
+                shown: `${progress.at + 1}/${progress.of}`,
+                said: `Question ${progress.at + 1} of ${progress.of}`,
+              })
+            : Option.none()
+        }
+        open={open}
+        panel={panel}
+        onToggle={onToggle}
+      />
+      <Panel id={panel} open={open}>
+        <Options progress={progress} reach={reach} busy={busy} onPick={onPick} />
+      </Panel>
     </section>
+  )
+}
+
+/** Which of several this banner is on: what is drawn ("1/3") and what a screen reader hears. */
+export interface Count {
+  readonly shown: string
+  readonly said: string
+}
+
+/**
+ * The head of a banner over the composer, for a question and for an Approval alike. It is the
+ * reference's `Row` drawn as a button: a column for the mark as wide as the row is tall (28 px,
+ * 24 from the `sm` width up), the words, and at the trailing end the count and the chevron. It
+ * says whether the panel is open (`aria-expanded`) and names what it controls. The chevron
+ * points down while the panel is open and turns over when it is closed, as the reference's
+ * `ToggleIcon` does; it is decoration, since the row is the control.
+ *
+ * The words are two lines at most while the banner is open, and one, cut short, while it is
+ * closed.
+ */
+export function Head({
+  words,
+  count,
+  open,
+  panel,
+  onToggle,
+}: {
+  /** What is asked: a question, or what Vivid would do. */
+  words: string
+  count: Option.Option<Count>
+  /** The panel under the head is showing. */
+  open: boolean
+  /** The id of the panel this row opens and closes. */
+  panel: string
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={panel}
+      title={open ? 'Hide what is asked and its options' : 'Show what is asked and its options'}
+      onClick={onToggle}
+      className="flex min-h-7 w-full cursor-pointer items-start gap-1 rounded-row text-start transition-colors duration-150 hover:bg-wash-hover focus-visible:-outline-offset-2"
+    >
+      <span
+        aria-hidden
+        className="flex size-7 flex-none items-center justify-center text-ink-3 sm:w-6"
+      >
+        <CircleHelp className="size-3" />
+      </span>
+      <span
+        data-asked="question"
+        dir="auto"
+        className={cn(
+          'min-w-0 flex-1 py-1.5 font-title text-ink',
+          // Two lines of the words at most, then an ellipsis; one while it is closed.
+          open ? 'line-clamp-2 wrap-anywhere' : 'truncate',
+        )}
+      >
+        {words}
+      </span>
+      <span className="flex h-7 flex-none items-center gap-1">
+        {Option.isSome(count) && (
+          <span
+            data-asked="count"
+            aria-label={count.value.said}
+            className="text-meta font-title text-ink-3 tabular-nums"
+          >
+            {count.value.shown}
+          </span>
+        )}
+        <span aria-hidden className="flex size-6 items-center justify-center text-ink-3">
+          <ChevronDown className={cn('size-3.5', !open && 'rotate-180')} />
+        </span>
+      </span>
+    </button>
+  )
+}
+
+/**
+ * The panel a head opens and closes. It folds between nothing and its own height
+ * (`motion-fold`); folded it stays in the document, so it is `inert` there.
+ */
+export function Panel({ id, open, children }: { id: string; open: boolean; children: ReactNode }) {
+  return (
+    <div id={id} data-folded={open ? undefined : ''} inert={!open} className="motion-fold">
+      <div>{children}</div>
+    </div>
   )
 }
 
@@ -489,7 +542,7 @@ const lookOf = (chosen: boolean, open: boolean) =>
  * A row out of reach is `aria-disabled`, not disabled: it keeps the keyboard's focus through the
  * moment a pressed option is shown, where a disabled button would drop it to the page.
  */
-function Row({
+export function Row({
   option,
   digit,
   several,

@@ -1,71 +1,32 @@
 import {
-  ActionTarget,
   ApprovalDecision,
   type Approval,
   type ApprovalId,
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { APPROVAL_EFFECT_WORDS, approvalUp, asking, type ApprovalUp } from '@vivid/state'
+import { approvalUp, asking, type ApprovalUp } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
-import { ChevronRight, Ellipsis, Shield } from 'lucide-react'
 import { useCallback, useId, useReducer, useRef, useState } from 'react'
 import { act } from '../../data/app'
 import { changing } from '../../data/live'
-import { Button } from '../../ui/button'
-import { cn } from '../../ui/cn'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../../ui/dropdownmenu'
 import { useAsking, type Asking } from './asking'
-import { Exactly } from './Cards'
-import { Attached, Raised, SURFACE } from './Choices'
+import { Attached, Head, Panel, Raised, Row, SURFACE, digits, steer, type Reach } from './Choices'
 
 /**
- * Something Vivid wants to do and will not do without a yes, as a banner attached to the top of
- * the composer while it waits on the Person looking at it. What it asked is also Vivid's words
- * in the conversation (`AskedFirst`, `Cards.tsx`), which is what stays once the banner has gone.
+ * Something Vivid wants to do and will not do without a yes, asked the way Vivid asks anything:
+ * as a question's banner attached to the top of the composer (`Choices.tsx`), while it waits on
+ * the Person looking at it. What it asked is also Vivid's words in the conversation
+ * (`AskedFirst`, `Cards.tsx`), with exactly what would be sent, and that is what stays once the
+ * banner has gone.
  *
- * It is a port of T3 Code web's pending-approval banner, read from its `origin/main`:
- * `components/chat/ComposerBanner.tsx` (`Root` with `variant="warning"` and
- * `density="spacious"`, `Row` with `layout="approval"`, `Icon`, `Content`, `Actions`),
- * `components/chat/ComposerPendingApprovalPanel.tsx`,
- * `components/chat/ComposerPendingApprovalActions.tsx`, and the `activePendingApproval` branch
- * of `components/chat/ChatComposer.tsx`. Kept from it:
- * - It is on the attachment and surface a question's banner is on (`Attached`, `SURFACE`,
- *   `Choices.tsx`), in the warning variant: 12 px of padding, the edge and a faint tint in the
- *   approval colour (`asked-surface` with `data-asks="approval"`, `styles/motion.css`).
- * - One row of three columns, tops aligned: a shield, 16 px, in the approval colour; the words;
- *   the buttons, beside the words and centred on them. In a banner narrower than 560 px the
- *   buttons drop under the words, at the end (`asked-row`, a container query).
- * - The words are a column 4 px apart. First a small muted line: what kind of action it is, in
- *   medium weight and the approval colour, then where it lands, cut short, and at the far end
- *   "1/3" when more than one is waiting on this Person. Then what is to be approved.
- * - The buttons: decline, as a control; approve, as the one filled action; and an ellipsis menu
- *   that opens upward from its end with the rest. Nothing can be pressed while a decision is on
- *   its way.
- * - While an Approval is up it takes the place of a question's banner (`useAsks`).
- *
- * Adapted, and why:
- * - The reference's label is the kind of request ("Command approval") and its second line is
- *   the command itself. A Vivid Approval says what it would do in one sentence
- *   (`action.summary`), so that is the second line, in up to three lines and never cut to one;
- *   and the label is how much the action can change (`APPROVAL_EFFECT_WORDS`). The reference's
- *   app name is the account the action uses, when it uses one.
- * - Exactly what would be sent is the reference's detail box (80 px at most, scrolling,
- *   focusable). Here it is closed until "Details" is pressed: the sentence is what a Person
- *   reads, and every field of an action shown at once is what made the card this replaces a
- *   developer's tool.
- * - There are three answers, not four: Vivid has no "cancel" apart from "Don't allow", so the
- *   menu holds one item, "Always allow".
- * - The banner arrives and leaves by the fold a question's banner uses (`asked-attachment`); the
- *   reference's is simply there.
- * - A decision that did not go through is said over the banner, as a question's refusal is.
- * - The buttons are the app's small size (28 px), as the composer's "Next question" is; the
- *   reference's are 24 px.
+ * It was a port of T3 Code web's pending-approval banner (a tinted surface, a shield, a label
+ * for the kind of action, a box of details and three buttons). The owner rejected that as
+ * bloated on 12 October 2026 ("highest it should just ask a normal question"): Vivid runs what
+ * it is told without asking, so an Approval is rare, and when one is needed it is one more
+ * question. So the banner is a question's: the same surface, head and rows, and the three
+ * answers are its options. Kept from the reference: while an Approval is up it takes the place
+ * of a question's banner (`useAsks`), and nothing can be pressed while a decision is on its way.
  */
 
 /**
@@ -254,8 +215,8 @@ export function Asks({ allowing, asked }: { allowing: Allowing; asked: Asking })
 
 /**
  * The banner over the composer, for what it holds (`useAllowing`): the Approval that is up, or
- * the one folding away. It is keyed by the Approval, so each one's banner arrives, with its
- * details closed and its menu shut.
+ * the one folding away. It is keyed by the Approval, so each one's banner arrives open, with
+ * no row chosen.
  */
 export function Allowed({ allowing }: { allowing: Allowing }) {
   const drawn = Hold.$match(allowing.hold, {
@@ -285,24 +246,31 @@ export function Allowed({ allowing }: { allowing: Allowing }) {
   )
 }
 
-/** The account an action uses, when it uses one: a step on the Computer uses none. */
-const accountOf = (target: ActionTarget): Option.Option<string> =>
-  ActionTarget.match(target, {
-    Connection: ({ account }) => Option.some(account),
-    Browser: () => Option.none(),
-    Desktop: () => Option.none(),
-  })
+/**
+ * The three answers, as a question's options, in the order they are offered. "Allow" is for this
+ * once; "Always allow" also writes the Person's rule, so the same kind of action does not ask
+ * again (`ApprovalDecision`, `packages/contracts`), which its second line says.
+ */
+const ANSWERS = [
+  { option: { label: 'Allow', detail: '' }, decision: ApprovalDecision.cases.AllowOnce.make({}) },
+  {
+    option: { label: 'Always allow', detail: 'Vivid won’t ask again for this' },
+    decision: ApprovalDecision.cases.AlwaysAllow.make({}),
+  },
+  { option: { label: 'Don’t allow', detail: '' }, decision: ApprovalDecision.cases.Deny.make({}) },
+] as const
+
+/** The answers' rows alone, for the number keys (`digits`, `Choices.tsx`). */
+const OPTIONS = ANSWERS.map((answer) => answer.option)
 
 /**
- * The banner's surface and its one row (`asked-row`: the reference's `Row layout="approval"`):
- * the shield in a column as wide as a question's mark (28 px, 24 from the `sm` width up), the
- * words, and the buttons.
+ * An Approval, drawn as a question: the head a question's banner has, saying what Vivid would
+ * do, and under it the three answers as a question's rows. The head closes and opens the rows,
+ * and says "1/3" when more than one Approval waits on this Person.
  *
- * The first line never wraps: the kind of action is short and kept whole, the account gives way
- * (it is said in full under "Details"), and the count keeps the far end. What Vivid would do
- * wraps, to three lines at most; a string with no place to break (an address, a link) breaks
- * anywhere, and it takes its direction from its own first strong letter, so an Arabic sentence
- * starts at the right in a banner that reads left to right.
+ * Which row was pressed is kept here only to show it chosen while its decision is on its way:
+ * once nothing is held any more and the Approval is still up, the decision did not go through,
+ * and no row is shown as chosen.
  */
 function Allow({
   approval,
@@ -317,142 +285,47 @@ function Allow({
   held: boolean
   onDecide: (decision: ApprovalDecision) => void
 }) {
-  const { action } = approval
-  const account = accountOf(action.target)
+  const panel = useId()
+  const [open, setOpen] = useState(true)
+  const [pressed, setPressed] = useState<Option.Option<string>>(Option.none())
+  // Closed, the rows are out of sight and must not be pressed, by a pointer or a number key.
+  const reach: Reach = held || !open ? 'held' : 'pressable'
+  const pick = (label: string) => {
+    const answer = ANSWERS.find((each) => each.option.label === label)
+    if (answer === undefined) return
+    setPressed(Option.some(label))
+    onDecide(answer.decision)
+  }
   return (
-    <section aria-label="Vivid asks first" data-asks="approval" className={SURFACE}>
-      <div className="asked-row">
-        <span aria-hidden className="flex w-7 flex-none justify-center pt-0.5 text-approve sm:w-6">
-          <Shield className="size-4" />
-        </span>
-        <div data-asked="content" className="flex min-w-0 flex-col items-start gap-1">
-          <p className="flex w-full min-w-0 items-center gap-2 text-meta text-ink-3">
-            <span data-asked="effect" className="shrink-0 font-title text-approve">
-              {APPROVAL_EFFECT_WORDS[action.effect]}
-            </span>
-            {Option.isSome(account) && (
-              <span data-asked="account" className="min-w-0 truncate">
-                {account.value}
-              </span>
-            )}
-            {waiting > 1 && (
-              <span
-                data-asked="count"
-                aria-label={`The first of ${waiting} waiting on you`}
-                className="ml-auto shrink-0 tabular-nums"
-              >
-                1/{waiting}
-              </span>
-            )}
-          </p>
-          <p data-asked="summary" dir="auto" className="line-clamp-3 w-full wrap-anywhere text-ink">
-            {action.summary}
-          </p>
-          <Details target={action.target} />
-        </div>
-        <div data-asked="actions" className="flex flex-wrap items-center justify-end gap-1.5">
-          <Answers held={held} onDecide={onDecide} />
-        </div>
-      </div>
+    <section aria-label="Vivid asks first" className={SURFACE} onKeyDown={steer}>
+      <Head
+        words={approval.action.summary}
+        count={
+          waiting > 1
+            ? Option.some({ shown: `1/${waiting}`, said: `The first of ${waiting} waiting on you` })
+            : Option.none()
+        }
+        open={open}
+        panel={panel}
+        onToggle={() => setOpen((shown) => !shown)}
+      />
+      <Panel id={panel} open={open}>
+        <ul className="mt-2 flex min-w-0 flex-col gap-0.5 ps-8 pe-1 pb-1 sm:ps-7">
+          {ANSWERS.map(({ option }, place) => (
+            <Row
+              key={option.label}
+              option={option}
+              digit={place + 1}
+              several={false}
+              reach={reach}
+              standing={asking.standingOf(held && Option.contains(pressed, option.label), held)}
+              onPress={() => pick(option.label)}
+            />
+          ))}
+        </ul>
+      </Panel>
+      {/* There only while the rows can be pressed: see `digits`. */}
+      {reach === 'pressable' && <span hidden ref={digits(OPTIONS, pick)} />}
     </section>
-  )
-}
-
-/**
- * Exactly what would be done (`Exactly`, `Cards.tsx`), closed until asked for: a small quiet
- * button, and the reference's detail box, which is 80 px tall at most and scrolls. The box can
- * take the keyboard's focus, as the reference's can, so it can be scrolled without a pointer.
- * Closed, it stays in the document for the button to name, and is `hidden`.
- */
-function Details({ target }: { target: ActionTarget }) {
-  const [open, setOpen] = useState(false)
-  const box = useId()
-  return (
-    <>
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={box}
-        onClick={() => setOpen((shown) => !shown)}
-        className="-ml-1 inline-flex cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:bg-wash-hover focus-visible:text-ink"
-      >
-        <ChevronRight
-          aria-hidden
-          className={cn(
-            'size-3.5 shrink-0 transition-transform duration-(--dur-fast)',
-            open && 'rotate-90',
-          )}
-        />
-        Details
-      </button>
-      <div
-        id={box}
-        hidden={!open}
-        role="group"
-        aria-label="Exactly what Vivid would do"
-        // A box that scrolls must be reachable from the keyboard to be scrolled from it.
-        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        tabIndex={0}
-        className="max-h-20 w-full overflow-auto rounded-row focus-visible:-outline-offset-2"
-      >
-        <Exactly target={target} />
-      </div>
-    </>
-  )
-}
-
-/**
- * The three answers, after the reference's: decline as a control, approve as the one filled
- * action, and the rest behind an ellipsis that opens upward from its end. "Allow" is for this
- * once; "Always allow" also writes the Person's rule, so the same kind of action does not ask
- * again (`ApprovalDecision`, `packages/contracts`).
- *
- * The menu is drawn outside the banner (a portal), where the banner being `inert` does not
- * reach. So it is open only while something can be decided: an Approval that is settled
- * somewhere else while the menu is open takes the menu with it, and its item sends nothing.
- */
-function Answers({
-  held,
-  onDecide,
-}: {
-  held: boolean
-  onDecide: (decision: ApprovalDecision) => void
-}) {
-  const [menu, setMenu] = useState(false)
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={held}
-        onClick={() => onDecide(ApprovalDecision.cases.Deny.make({}))}
-      >
-        Don’t allow
-      </Button>
-      <Button
-        size="sm"
-        disabled={held}
-        onClick={() => onDecide(ApprovalDecision.cases.AllowOnce.make({}))}
-      >
-        Allow
-      </Button>
-      <DropdownMenu open={menu && !held} onOpenChange={(next) => setMenu(next)}>
-        <DropdownMenuTrigger
-          disabled={held}
-          render={<Button variant="outline" size="icon-sm" aria-label="More ways to answer" />}
-        >
-          <Ellipsis />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="end" className="min-w-40">
-          <DropdownMenuItem
-            onClick={() => {
-              if (!held) onDecide(ApprovalDecision.cases.AlwaysAllow.make({}))
-            }}
-          >
-            Always allow
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
   )
 }

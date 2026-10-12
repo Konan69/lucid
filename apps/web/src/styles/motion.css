@@ -289,51 +289,6 @@
       transparent 100%
     );
   }
-  /* `Root variant="warning" density="spacious"`, which the reference gives the banner of an
-     approval (`ChatComposer.tsx`, the `activePendingApproval` branch): 12 px of padding where a
-     question's banner has 4, the edge at 28% of the warning colour and a tint of 8% of it over
-     the surface (`variantColors.warning`). The warning colour here is the app's approval amber,
-     the token an Approval has always been said in. `Root` is also the container the row below
-     measures (`@container`). */
-  &[data-asks='approval'] {
-    --edge-color: color-mix(in srgb, var(--status-approve) 28%, transparent);
-    --asked-tint: color-mix(in srgb, var(--status-approve) 8%, transparent);
-    container-type: inline-size;
-    padding: --spacing(3) --spacing(3) calc(--spacing(3) + 1rem + 1px);
-    background-image: linear-gradient(var(--asked-tint), var(--asked-tint));
-  }
-}
-
-/* `Row layout="approval"` with its `Content` and `Actions`: three columns (the mark, the words,
-   the buttons), tops aligned, 8 px between columns and 12 between rows. The buttons sit beside
-   the words, centred on them. In a banner narrower than 560 px the words take the buttons'
-   column as well and the buttons drop to a row of their own under them, from the words' column
-   to the end (the reference's `@max-[560px]` rules on `Content` and `Actions`). The mark's
-   column is as wide as the mark's own box, which the row's markup sizes. */
-@utility asked-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  column-gap: --spacing(2);
-  row-gap: --spacing(3);
-  & > [data-asked='content'] {
-    grid-column-start: 2;
-    grid-row-start: 1;
-  }
-  & > [data-asked='actions'] {
-    grid-column-start: 3;
-    grid-row-start: 1;
-    align-self: center;
-  }
-  @container (width < 560px) {
-    & > [data-asked='content'] {
-      grid-column-end: 4;
-    }
-    & > [data-asked='actions'] {
-      grid-column: 2 / 4;
-      grid-row-start: 2;
-    }
-  }
 }
 
 /* `Scroll`: the options scroll inside the banner past `min(24rem, 40dvh)`, with no scrollbar

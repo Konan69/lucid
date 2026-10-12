@@ -48,8 +48,8 @@ const SWAP_OUT = FadeOut.duration(160).reduceMotion(ReduceMotion.System)
 const SWAP = cubicBezier(0.2, 0, 0, 1)
 const CHECK = 150
 
-/** The room between the banner's edge and what it holds: the reference's default density. */
-const PAD = ROOM.default
+/** The room between the banner's edge and what it holds. */
+const PAD = ROOM
 
 /**
  * The head row: its least height, the column its mark sits in (which is also where the body's
@@ -231,9 +231,15 @@ export function Choices({
   const held = !open || leaving || busy || picking.moving
   return (
     <Attached dock={dock} tallest={tallest} leaving={leaving} slide={slide}>
-      <Surface tallest={tallest} variant="default" density="default">
+      <Surface tallest={tallest}>
         <Head
-          progress={progress}
+          words={progress.question.question}
+          count={progress.of > 1 ? Option.some(`${progress.at + 1}/${progress.of}`) : Option.none()}
+          says={{
+            hide: 'Hide the question and its options',
+            show: 'Show the question and its options',
+            place: progress.of > 1 ? `Question ${progress.at + 1} of ${progress.of}. ` : '',
+          }}
           open={open}
           disabled={leaving}
           onHeight={(height) => slide.head.set(height)}
@@ -265,27 +271,38 @@ export function Choices({
 
 /**
  * The head row, which is the control that closes and opens the banner: a column for the mark,
- * the question's own words, and at the trailing end which question this is and a chevron.
+ * what is asked in its own words, and at the trailing end which one this is and a chevron. A
+ * question's banner and an Approval's (`Allow.tsx`) both have this one row.
  *
  * The words are the question itself, since a question in Vivid's contract has no short header
- * (`packages/contracts/src/inputs.ts`): two lines at most while the banner is open, then an
- * ellipsis, and one quieter line while it is closed. All of the question is Vivid's message in
- * the Thread. The chevron points down while the banner is open and turns over when it is
- * closed, as the reference's `ToggleIcon` does.
+ * (`packages/contracts/src/inputs.ts`), or an Approval's summary of its action: two lines at
+ * most while the banner is open, then an ellipsis, and one quieter line while it is closed. All
+ * of it is Vivid's message in the Thread. The chevron points down while the banner is open and
+ * turns over when it is closed, as the reference's `ToggleIcon` does.
  *
  * To a screen reader it is one control: what a press does, whether the banner is open, and as
- * its value the question and its place, so the question is heard here as well as in the Thread.
+ * its value the words and their place, so what is asked is heard here as well as in the Thread.
  * It is 36 points tall and pressed 44 (`HEADROOM`). It answers a press with the wash and does
  * not sink: a row as wide as the banner that shrank would read as the banner moving.
  */
-function Head({
-  progress,
+export function Head({
+  words,
+  count,
+  says,
   open,
   disabled,
   onHeight,
   onToggle,
 }: {
-  progress: asking.Progress
+  /** What is asked. */
+  words: string
+  /** Which one this is of how many ("2/3"), when there is more than one. */
+  count: Option.Option<string>
+  /**
+   * What a screen reader hears: what a press does while the banner is open (`hide`) and while
+   * it is closed (`show`), and the place said before the words, which is empty for the only one.
+   */
+  says: { readonly hide: string; readonly show: string; readonly place: string }
   /** Everything under the head is showing. */
   open: boolean
   /** The banner is leaving. */
@@ -296,14 +313,11 @@ function Head({
 }) {
   const { colors: c } = useTheme()
   const still = useReducedMotion()
-  const place = progress.of > 1 ? `Question ${progress.at + 1} of ${progress.of}. ` : ''
   return (
     <Press
       accessibilityRole="button"
-      accessibilityLabel={
-        open ? 'Hide the question and its options' : 'Show the question and its options'
-      }
-      accessibilityValue={{ text: `${place}${progress.question.question}` }}
+      accessibilityLabel={open ? says.hide : says.show}
+      accessibilityValue={{ text: `${says.place}${words}` }}
       accessibilityState={{ expanded: open, disabled }}
       disabled={disabled}
       depth={1}
@@ -343,7 +357,7 @@ function Head({
           fontWeight: open ? m['weight-strong'] : m['weight-title'],
         }}
       >
-        {progress.question.question}
+        {words}
       </Label>
       <View
         style={{
@@ -355,13 +369,13 @@ function Head({
           paddingRight: 8,
         }}
       >
-        {progress.of > 1 && (
+        {Option.isSome(count) && (
           <Label
             size="micro"
             tone="ink-3"
             style={{ fontWeight: m['weight-title'], fontVariant: ['tabular-nums'] }}
           >
-            {`${progress.at + 1}/${progress.of}`}
+            {count.value}
           </Label>
         )}
         <Animated.View
@@ -384,7 +398,7 @@ function Head({
  * head), and it goes clear on the way there, so the head's words are never read against a row
  * sliding past; it is then no part of the screen to a finger or a screen reader.
  */
-function Body({ open, children }: { open: boolean; children: ReactNode }) {
+export function Body({ open, children }: { open: boolean; children: ReactNode }) {
   return (
     <Animated.View
       pointerEvents={open ? 'auto' : 'none'}
@@ -404,7 +418,13 @@ function Body({ open, children }: { open: boolean; children: ReactNode }) {
 }
 
 /** Whether the banner's rows can be pressed, or are there but out of reach. */
-type Reach = 'pressable' | 'held'
+export type Reach = 'pressable' | 'held'
+
+/** One row as it is drawn: the option, and how it stands (`asking.standingOf`). */
+export interface Shown {
+  readonly option: InputOption
+  readonly standing: asking.Standing
+}
 
 /**
  * One question's options, standing under the head's words: for a question several options may
@@ -425,14 +445,36 @@ function Options({
 }) {
   const { question } = progress
   if (question.options.length === 0) return null
+  const picked = asking.pickedIn(progress.draft)
+  const several = question.selection === 'Several'
   return (
-    <View style={{ flexShrink: 1, paddingLeft: HEAD.mark, paddingRight: PAD, paddingBottom: PAD }}>
-      {question.selection === 'Several' && (
+    <Under>
+      {several && (
         <Label size="caption" tone="ink-3" style={{ marginBottom: 4 }}>
           Select one or more options.
         </Label>
       )}
-      <Rows progress={progress} reach={reach} busy={busy} onPick={onPick} />
+      <Rows
+        rows={question.options.map((option) => ({
+          option,
+          standing: asking.standingOf(picked.includes(option.label), busy),
+        }))}
+        several={several}
+        reach={reach}
+        onPick={(row) => onPick(row.option.label)}
+      />
+    </Under>
+  )
+}
+
+/**
+ * Where what is under the head stands: under the head's words (the mark's column is clear at
+ * its start), with the banner's room at its end and its foot.
+ */
+export function Under({ children }: { children: ReactNode }) {
+  return (
+    <View style={{ flexShrink: 1, paddingLeft: HEAD.mark, paddingRight: PAD, paddingBottom: PAD }}>
+      {children}
     </View>
   )
 }
@@ -445,22 +487,25 @@ function Options({
  * Whether there is more is worked out on the UI thread from the scroller's own three measures
  * (its content, its room and how far it is scrolled), so nothing is drawn again by React while
  * the Person scrolls. The fade is the surface's colour laid over the rows and takes no touches.
+ *
+ * It draws whatever rows it is handed, each with how it stands, and answers a press with the
+ * row itself: a question's options (`Options`) and an Approval's three answers (`Allow.tsx`).
+ * Rows are told apart by their labels, which a question's options and those answers both keep
+ * distinct.
  */
-function Rows({
-  progress,
+export function Rows<Each extends Shown>({
+  rows,
+  several,
   reach,
-  busy,
   onPick,
 }: {
-  progress: asking.Progress
+  rows: ReadonlyArray<Each>
+  /** Several of the rows may be chosen together, so each is a checkbox. */
+  several: boolean
   reach: Reach
-  busy: boolean
-  onPick: (label: string) => void
+  onPick: (row: Each) => void
 }) {
   const { colors: c } = useTheme()
-  const { question } = progress
-  const picked = asking.pickedIn(progress.draft)
-  const several = question.selection === 'Several'
   const content = useSharedValue(0)
   const room = useSharedValue(0)
   const scrolled = useSharedValue(0)
@@ -484,14 +529,14 @@ function Rows({
         style={{ flexShrink: 1 }}
         contentContainerStyle={{ gap: ROW.gap }}
       >
-        {question.options.map((option) => (
+        {rows.map((row) => (
           <Row
-            key={option.label}
-            option={option}
+            key={row.option.label}
+            option={row.option}
             several={several}
             reach={reach}
-            standing={asking.standingOf(picked.includes(option.label), busy)}
-            onPress={() => onPick(option.label)}
+            standing={row.standing}
+            onPress={() => onPick(row)}
           />
         ))}
       </Animated.ScrollView>
