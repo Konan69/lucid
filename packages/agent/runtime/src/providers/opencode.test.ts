@@ -28,20 +28,22 @@ afterEach(() => vi.useRealTimers())
 
 describe('production provider request retries', () => {
   for (const method of ['stream', 'streamSimple'] as const) {
-    it.effect.each([500, 501, 502, 503, 504, 520, 521, 522, 523, 524, 599])(
-      `${method} retries %s before output and returns the successful answer`,
-      (status) =>
+    it.effect(
+      `${method} retries server failures before output and returns the successful answer`,
+      () =>
         Effect.gen(function* () {
-          const fetch = vi
-            .fn()
-            .mockResolvedValueOnce(new Response(null, { status }))
-            .mockResolvedValueOnce(completion())
-          const result = provider[method](model, context, { apiKey: 'test', fetch }).result()
-          yield* Effect.promise(() => vi.runAllTimersAsync())
-          expect((yield* Effect.promise(() => result)).content).toEqual([
-            { type: 'text', text: 'ready' },
-          ])
-          expect(fetch).toHaveBeenCalledTimes(2)
+          for (const status of [500, 501, 502, 503, 504, 520, 521, 522, 523, 524, 599]) {
+            const fetch = vi
+              .fn()
+              .mockResolvedValueOnce(new Response(null, { status }))
+              .mockResolvedValueOnce(completion())
+            const result = provider[method](model, context, { apiKey: 'test', fetch }).result()
+            yield* Effect.promise(() => vi.runAllTimersAsync())
+            expect((yield* Effect.promise(() => result)).content).toEqual([
+              { type: 'text', text: 'ready' },
+            ])
+            expect(fetch, String(status)).toHaveBeenCalledTimes(2)
+          }
         }),
     )
   }

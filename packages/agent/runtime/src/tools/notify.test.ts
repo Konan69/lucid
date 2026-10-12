@@ -21,7 +21,7 @@ const message = { title: 'Reply overdue', body: 'The agreed reply has not arrive
 
 /** Actual Flue callback and generated RPC client run together; only remote server replies vary. */
 it.effect(
-  'notify_person reports accepted target counts and explains unavailable/no-target outcomes without identifiers',
+  'notify_person distinguishes attempted, present and missing-target delivery without identifiers',
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -43,10 +43,35 @@ it.effect(
           }),
         )
         const [tool] = notifyTools(toolRunner(layer))
-        for (const push of [
-          PushOutcome.cases.Attempted.make({ accepted: 2, failed: 1, uncertain: 0 }),
-          PushOutcome.cases.NoTargets.make({}),
-          PushOutcome.cases.Present.make({}),
+        for (const { push, output } of [
+          {
+            push: PushOutcome.cases.Attempted.make({ accepted: 2, failed: 1, uncertain: 0 }),
+            output: {
+              ok: true,
+              status: 'attempted',
+              acceptedTargets: 2,
+              failedTargets: 1,
+              uncertainTargets: 0,
+            },
+          },
+          {
+            push: PushOutcome.cases.NoTargets.make({}),
+            output: {
+              ok: true,
+              status: 'no-targets',
+              acceptedTargets: 0,
+              message: expect.stringContaining('No active push target'),
+            },
+          },
+          {
+            push: PushOutcome.cases.Present.make({}),
+            output: {
+              ok: true,
+              status: 'present',
+              acceptedTargets: 0,
+              message: expect.stringContaining('no push was sent'),
+            },
+          },
         ]) {
           const reply = Effect.fn('NotifyToolsTest.reply')(function* () {
             const request = yield* Queue.take(requests)
@@ -82,9 +107,7 @@ it.effect(
             ],
             { concurrency: 2 },
           )
-          if (PushOutcome.guards.Attempted(push))
-            expect(result.output).toMatchObject({ ok: true, acceptedTargets: 2 })
-          else expect(result.output).toMatchObject({ ok: true, acceptedTargets: 0 })
+          expect(result.output).toMatchObject(output)
           expect(JSON.stringify(result.output)).not.toContain('MARK-')
           expect(result.terminate).toBe(false)
         }

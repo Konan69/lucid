@@ -62,6 +62,7 @@ describe('connected tool execution', () => {
       const discovery = yield* Queue.take(requests)
       if (!Predicate.isTagged(discovery, 'Request')) expect.fail('Expected discovery')
       expect(discovery.tag).toBe('FindTools')
+      expect(discovery.payload).toEqual({ query: 'Mail', limit: 25 })
       yield* rpc.write({
         // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
         _tag: 'Exit',
@@ -84,6 +85,11 @@ describe('connected tool execution', () => {
       const offer = yield* Queue.take(requests)
       if (!Predicate.isTagged(offer, 'Request')) expect.fail('Expected offer')
       expect(offer.tag).toBe('OfferConnection')
+      expect(offer.payload).toEqual({
+        service: 'mail',
+        reason: 'Read your latest mail',
+        wanted: 'Service',
+      })
       yield* rpc.write({
         // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
         _tag: 'Exit',
@@ -124,6 +130,8 @@ describe('connected tool execution', () => {
     ).pipe(Effect.forkScoped)
     const discovery = yield* Queue.take(requests)
     if (!Predicate.isTagged(discovery, 'Request')) expect.fail('Expected discovery')
+    expect(discovery.tag).toBe('FindTools')
+    expect(discovery.payload).toEqual({ query: 'Mail', limit: 25 })
     yield* rpc.write({
       // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
       _tag: 'Exit',
@@ -153,7 +161,11 @@ describe('connected tool execution', () => {
       if (!Predicate.isTagged(offer, 'Request')) expect.fail('Expected offer')
       expect(offer.tag).toBe('OfferConnection')
       // The server is told this is a request for one more account, not for the service.
-      expect(offer.payload).toMatchObject({ service: 'mail', wanted: 'Another' })
+      expect(offer.payload).toEqual({
+        service: 'mail',
+        wanted: 'Another',
+        reason: 'To send it from your work address',
+      })
       yield* rpc.write({
         // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
         _tag: 'Exit',
@@ -307,6 +319,12 @@ describe('connected tool execution', () => {
         ).pipe(Effect.forkScoped)
         const request = yield* Queue.take(requests)
         if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
+        expect(request.tag).toBe('AddIntegration')
+        expect(request.payload).toEqual({
+          address: 'https://records.example/mcp',
+          name: 'Work Records',
+          shared: false,
+        })
         const connection = Connection.make({
           id: ConnectionId.make('MARK-connection'),
           service: ServiceId.make('MARK-service'),
@@ -383,7 +401,14 @@ describe('connected tool execution', () => {
         ),
       })
       const result = yield* Fiber.join(call)
-      expect(result).toMatchObject({ terminate: true, output: { kind: 'approval-request' } })
+      expect(result).toMatchObject({
+        terminate: true,
+        output: {
+          kind: 'approval-request',
+          approvalId: 'MARK-approval',
+          summary: 'Test Work Records',
+        },
+      })
     }).pipe(Effect.scoped),
   )
   it.effect(
@@ -430,10 +455,12 @@ describe('connected tool execution', () => {
         const execute = yield* Queue.take(requests)
         if (!Predicate.isTagged(execute, 'Request')) expect.fail('Expected an RPC request')
         expect(execute.tag).toBe('UseTool')
-        expect(execute.payload).toMatchObject({
-          connectionId: tool.connectionId,
-          tool: tool.name,
+        expect(execute.payload).toEqual({
+          connectionId: 'MARK-connection',
+          tool: 'get_message',
           input: { id: 'provider-message' },
+          summary: 'Read mail',
+          rationale: 'Answer the question',
         })
         const output = {
           id: 'provider-message',

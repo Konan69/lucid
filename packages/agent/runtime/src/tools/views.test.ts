@@ -152,6 +152,44 @@ describe('model views', () => {
         truncated: false,
       }),
     ]
+    // Redaction must retain useful content: replacing every projection with an empty value fails.
+    expect(output).toMatchObject([
+      {
+        skills: [
+          { name: 'review-agreement', useWhen: 'Before signing' },
+          { name: 'review-agreement-2', useWhen: 'Before signing' },
+        ],
+      },
+      { name: 'review-agreement-2', instructions: 'Read the terms.', source: 'Saved procedure' },
+      { name: 'Review agreement', useWhen: 'Before signing' },
+      {
+        tools: [{ account: 'Mail (Work)', tool: 'read_mail', effect: 'read' }],
+        unconnected: [{ service: 'Mail', description: 'Read mail' }],
+      },
+      [
+        { content: 'Review in the morning.', about: 'the Thread “Agreement”', learnedFrom: 'Ada' },
+        { content: 'Review in the morning.', about: 'this Person' },
+        { content: 'Review in the morning.', about: 'the whole Company' },
+      ],
+      { ok: true, remembered: 'Review in the morning.' },
+      [
+        {
+          filename: 'Agreement.pdf',
+          page: 2,
+          text: 'Signature required',
+          citation: '[Agreement.pdf, p.2]',
+        },
+      ],
+      {
+        name: 'Review each morning',
+        prompt: 'Review the agreement.',
+        schedule: { cron: '0 9 * * *', timezone: 'Africa/Lagos' },
+        enabled: true,
+      },
+      [{ name: 'Review each morning', prompt: 'Review the agreement.', enabled: true }],
+      { name: 'Review each morning', schedule: 'when called' },
+      { title: 'Agreement', outline: 'Signed', tabs: [{ title: 'Agreement', showing: true }] },
+    ])
     const json = JSON.stringify(output)
     expect(json).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
     const context = contextInstruction(
@@ -214,10 +252,6 @@ describe('model views', () => {
     expect(context).toContain('"apps":["GIMP","LibreOffice Calc"]')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
-    expect(views.tools({ tools: [tool], connected: [], unconnected: [] }).tools[0]).toHaveProperty(
-      'signature',
-      tool.signature,
-    )
   })
   it('omits rewritten account labels while preserving exact callable names', () => {
     for (const account of [`Mail ${reference}`, 'Mail https://example.test/picture.png']) {

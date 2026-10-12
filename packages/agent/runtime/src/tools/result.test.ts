@@ -118,16 +118,6 @@ describe('output limits', () => {
 })
 
 describe('RPC result boundary', () => {
-  it.effect('tells the model the Person’s computer is not connected', () =>
-    Effect.gen(function* () {
-      const result = yield* settle(Effect.fail(new NoDeviceConnected({})), 'browse')
-      expect(result.output).toEqual({
-        ok: false,
-        message: 'The Person’s computer is not connected.',
-      })
-    }),
-  )
-
   it.effect(
     'logs one warning with the tool and tag, without failure payloads or successful results',
     () =>
@@ -159,27 +149,54 @@ describe('RPC result boundary', () => {
     Effect.gen(function* () {
       const message = 'Private driver payload that must never reach the model'
       const failures = [
-        new NotFound({ message }),
-        new Forbidden({ message }),
-        new Unauthenticated({ message }),
-        new Conflict({ message }),
-        new InvalidRequest({ message }),
-        new RuntimeUnavailable({ message }),
-        new DatabaseUnavailable({ message }),
-        new DatabaseConstraintViolation({ message }),
-        new DatabaseFailure({ message }),
-        new ServiceUnavailable({ service: 'memory', message }),
+        { failure: new NoDeviceConnected({}), expected: 'The Person’s computer is not connected.' },
+        {
+          failure: new NotFound({ message }),
+          expected: 'It does not exist or the person cannot see it.',
+        },
+        {
+          failure: new Forbidden({ message }),
+          expected: 'The person is not allowed to do that here.',
+        },
+        {
+          failure: new Unauthenticated({ message }),
+          expected: 'The person needs to sign in before Vivid can do that.',
+        },
+        {
+          failure: new Conflict({ message }),
+          expected: 'The request conflicts with the current state; check it before trying again.',
+        },
+        {
+          failure: new InvalidRequest({ message }),
+          expected: 'The request is invalid; check the supplied details.',
+        },
+        {
+          failure: new RuntimeUnavailable({ message }),
+          expected: 'Vivid cannot start that work right now.',
+        },
+        {
+          failure: new DatabaseUnavailable({ message }),
+          expected: 'Vivid cannot reach its saved records right now.',
+        },
+        {
+          failure: new DatabaseConstraintViolation({ message }),
+          expected: 'The request conflicts with Vivid’s saved records.',
+        },
+        {
+          failure: new DatabaseFailure({ message }),
+          expected: 'Vivid could not read or save that record right now.',
+        },
+        {
+          failure: new ServiceUnavailable({ service: 'memory', message }),
+          expected: 'That part of Vivid is not available right now.',
+        },
       ]
-      for (const failure of failures) {
-        const result = yield* settle(Effect.fail(failure), 'test-tool')
-        expect(result.output).toHaveProperty('ok', false)
-        expect(JSON.stringify(result.output)).not.toContain(message)
-        expect(result.terminate).toBe(false)
+      for (const { failure, expected } of failures) {
+        expect(yield* settle(Effect.fail(failure), 'test-tool')).toEqual({
+          output: { ok: false, message: expected },
+          terminate: false,
+        })
       }
-      expect((yield* settle(Effect.fail(new NotFound({ message })), 'test-tool')).output).toEqual({
-        ok: false,
-        message: 'It does not exist or the person cannot see it.',
-      })
     }),
   )
 
@@ -209,15 +226,7 @@ describe('RPC result boundary', () => {
       const defect = new TypeError('Tool invariant failed')
       const exit = yield* Effect.exit(settle(Effect.die(defect), 'test-tool'))
       expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true)
-    }),
-  )
-
-  it.effect('returns a boolean stop flag for ordinary results so Flue accepts the envelope', () =>
-    Effect.gen(function* () {
-      expect(yield* settle(Effect.succeed({ output: { routines: [] } }), 'test-tool')).toEqual({
-        output: { routines: [] },
-        terminate: false,
-      })
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect)
     }),
   )
 

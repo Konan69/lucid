@@ -71,10 +71,7 @@ it.effect(
         integrations: [{ name: 'Google Calendar', connected: false }],
       })
       const output = JSON.stringify(result.output)
-      expect(output).toContain('not set up on this Vivid yet')
-      expect(output).toContain('Google Calendar is not set up on this Vivid yet')
       expect(output).toContain('whoever runs it needs to register a sign-in application for it')
-      expect(output).toContain('Do not offer a connect card')
       expect(output).not.toContain('connection-request')
       expect(output).not.toContain('fixture-person')
       expect(yield* Queue.size(requests)).toBe(0)

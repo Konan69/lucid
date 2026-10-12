@@ -7,7 +7,6 @@ import { AgentFS } from 'agentfs-sdk'
 import { Effect } from 'effect'
 import {
   deleteNote,
-  INDEX_BUDGET,
   Note,
   NoteFile,
   noteIndex,
@@ -122,13 +121,22 @@ describe('notes', () => {
     Effect.gen(function* () {
       const notes = yield* store('ada')
       const long = 'x'.repeat(190)
-      const count = Math.ceil(INDEX_BUDGET / 190) + 5
+      const count = 48
       for (let n = 0; n < count; n++)
         yield* writeNote(notes, note(`note-${n}.md`, `${n} ${long}`.slice(0, 200)))
       const index = yield* noteIndex(notes)
       expect(index.more).toBe(true)
       expect(index.lines.length).toBeLessThan(count)
       expect(index.lines.length).toBeGreaterThan(30)
+      // The documented 8,000-character allowance counts filenames and descriptions, not a count
+      // of entries. Check the boundary independently so ignoring either field exceeds the budget.
+      const used = index.lines.reduce(
+        (sum, line) => sum + line.file.length + line.description.length,
+        0,
+      )
+      expect(used).toBeLessThanOrEqual(8000)
+      const remaining = 8000 - used
+      expect(remaining).toBeLessThan(200)
     }).pipe(Effect.scoped),
   )
 

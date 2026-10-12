@@ -65,9 +65,9 @@ const fixture = Effect.fn('ProjectToolsTest.fixture')(function* () {
 })
 
 /** Server-owned attribution and identifiers must never become model-visible metadata. */
-const project = (name: string, parentProjectId: ProjectId | null) =>
+const project = (name: string, parentProjectId: ProjectId | null, id: string) =>
   Project.make({
-    id: ProjectId.make('PRIVATE-project'),
+    id: ProjectId.make(id),
     companyId: null,
     name,
     parentProjectId,
@@ -93,7 +93,7 @@ describe('Project tools', () => {
               tools.reply(
                 'CreateProject',
                 { name: 'Launch', parentProjectId: null },
-                Exit.succeed(project('Launch', null)),
+                Exit.succeed(project('Launch', null, 'PRIVATE-project')),
               ),
             ],
             { concurrency: 2 },
@@ -113,7 +113,8 @@ describe('Project tools', () => {
     Effect.scoped(
       Effect.gen(function* () {
         const tools = yield* fixture()
-        const parent = project('Launch', null)
+        const parent = project('Launch', null, 'PRIVATE-project')
+        const unrelated = project('Other work', null, 'PRIVATE-unrelated-project')
         const [result] = yield* Effect.all(
           [
             tools.create({
@@ -122,11 +123,17 @@ describe('Project tools', () => {
               location: { kind: 'Within', project: 'Launch' },
             }),
             Effect.gen(function* () {
-              yield* tools.reply('ListProjects', null, Exit.succeed({ projects: [parent] }))
+              // The requested parent is not the first visible Project: selecting a convenient
+              // first row must not silently create the child in somebody else's container.
+              yield* tools.reply(
+                'ListProjects',
+                null,
+                Exit.succeed({ projects: [unrelated, parent] }),
+              )
               yield* tools.reply(
                 'CreateProject',
                 { name: 'Website', parentProjectId: parent.id },
-                Exit.succeed(project('Website', parent.id)),
+                Exit.succeed(project('Website', parent.id, 'PRIVATE-website-project')),
               )
             }),
           ],
@@ -138,7 +145,10 @@ describe('Project tools', () => {
     ),
   )
 
-  for (const parents of [[], [project('Launch', null), project('Launch', null)]]) {
+  for (const parents of [
+    [],
+    [project('Launch', null, 'PRIVATE-project'), project('launch', null, 'PRIVATE-second-project')],
+  ]) {
     it.effect(
       parents.length === 0
         ? 'missing parent refuses creation'
@@ -159,6 +169,12 @@ describe('Project tools', () => {
               { concurrency: 2 },
             )
             expect(result.output).toHaveProperty('ok', false)
+            expect(result.output).toHaveProperty(
+              'message',
+              expect.stringContaining(
+                parents.length === 0 ? 'Nothing here is called' : 'More than one match',
+              ),
+            )
             expect(yield* Queue.size(tools.requests)).toBe(0)
           }),
         ),

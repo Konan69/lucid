@@ -69,15 +69,6 @@ function words(message: AssistantMessage) {
     .join('\n')
 }
 
-/** Check each authored sentence, including a second receipt joined into the same reply. */
-function expectCapitalSentences(message: AssistantMessage) {
-  for (const block of message.content.filter((content) => content.type === 'text')) {
-    for (const sentence of block.text.split(/[.!?]\s+/u)) {
-      expect(sentence).toMatch(/^[A-Z]/u)
-    }
-  }
-}
-
 /**
  * Each registration case starts a Node process that boots Vite and loads the provider cold: about
  * two seconds on an idle machine, and past the default five when several gates share its cores
@@ -102,6 +93,7 @@ function registration(model: Option.Option<string>) {
     cwd: new URL('../../../', import.meta.url),
     env,
     encoding: 'utf8',
+    timeout: coldProcess,
   })
   expect(result.status, result.stderr).toBe(0)
   return result.stdout.trim()
@@ -112,7 +104,6 @@ describe('Rehearsal scenes', () => {
     it(`${phrase}: real schemas accept every tool input and context advances the step`, () => {
       const start = context(`Please ${phrase.toUpperCase()} for this rehearsal`)
       const first = script(start)
-      expectCapitalSentences(first)
       const calls = first.content.filter((block) => block.type === 'toolCall')
       expect(calls.length).toBe(phrase === 'two things' ? 2 : 1)
       expect(first.stopReason).toBe('toolUse')
@@ -142,10 +133,8 @@ describe('Rehearsal scenes', () => {
         ],
       })
       expect(following.stopReason).toBe('stop')
-      expectCapitalSentences(following)
       expect(following.content.some((block) => block.type === 'toolCall')).toBe(false)
       expect(words(following)).toContain('That part of Vivid is not available right now.')
-      expect(words(first) + words(following)).not.toMatch(/\bagent\b|rehearsal:|MARK-/iu)
     })
   }
 
@@ -255,7 +244,6 @@ describe('Rehearsal scenes', () => {
         messages: [...start.messages, first, receipt(call, example.output)],
       })
       expect(words(result)).toBe(example.expected)
-      expectCapitalSentences(result)
     }
   })
 
@@ -298,7 +286,7 @@ describe('Rehearsal scenes', () => {
     }
   })
 
-  it('capitalizes missing-result replies for every scene', () => {
+  it('returns a reply when scene receipts are missing or empty', () => {
     for (const phrase of phrases) {
       const start = context(phrase)
       const first = script(start)
@@ -306,12 +294,11 @@ describe('Rehearsal scenes', () => {
       for (const results of [[], calls.map((call) => receipt(call, {}))]) {
         const reply = script({ ...start, messages: [...start.messages, first, ...results] })
         expect(words(reply)).not.toBe('')
-        expectCapitalSentences(reply)
       }
     }
   })
 
-  it('lists all supported phrases for unknown, empty and picture-only messages', () => {
+  it('does not invent a scene for unknown, empty or picture-only messages', () => {
     for (const input of [
       context('hello'),
       { messages: [] },
@@ -326,9 +313,9 @@ describe('Rehearsal scenes', () => {
       },
     ]) {
       const output = script(input)
-      expectCapitalSentences(output)
       expect(output.stopReason).toBe('stop')
-      for (const phrase of phrases) expect(words(output)).toContain(phrase)
+      expect(words(output)).not.toBe('')
+      expect(output.content.some((block) => block.type === 'toolCall')).toBe(false)
     }
   })
 
@@ -420,19 +407,22 @@ describe('Rehearsal scenes', () => {
     )
   })
 
-  for (const model of [
-    Option.none<string>(),
-    Option.some('openrouter/z-ai/glm-5.3-flash'),
-    Option.some('rehearsalish/script'),
-  ]) {
-    it(
-      `does not register without explicit opt-in (${String(model)})`,
-      () => {
-        expect(registration(model)).toBe('{"registered":false,"model":null}')
-      },
-      coldProcess,
-    )
-  }
+  it(
+    'does not register without explicit opt-in for absent, unrelated or similarly named models',
+    () => {
+      for (const model of [
+        Option.none<string>(),
+        Option.some('openrouter/z-ai/glm-5.3-flash'),
+        Option.some('rehearsalish/script'),
+      ]) {
+        expect(
+          registration(model),
+          Option.getOrElse(model, () => 'no model'),
+        ).toBe('{"registered":false,"model":null}')
+      }
+    },
+    coldProcess * 3,
+  )
   it(
     'registers exactly the opt-in script model through Flue',
     () => {

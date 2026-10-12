@@ -1,12 +1,16 @@
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
-import { Config, Effect, Result, Schema, SchemaIssue } from 'effect'
+import { Config, Effect, Predicate, Result, Schema, SchemaIssue } from 'effect'
 import { testDatabaseConfigured } from '../../../../apps/server/src/database/testdb.ts'
 
 /** Exercise the project setup, including root project runs, without printing either URL. */
 it.effect('runtime database authority comes only from the explicit test URL', () =>
   Effect.sync(() => {
-    expect(NodeProcess.env.DATABASE_URL === NodeProcess.env.VIVID_TEST_DATABASE_URL).toBe(true)
+    if (testDatabaseConfigured) {
+      expect(Predicate.isString(NodeProcess.env.VIVID_TEST_DATABASE_URL)).toBe(true)
+      expect(NodeProcess.env.VIVID_TEST_DATABASE_URL !== '').toBe(true)
+      expect(NodeProcess.env.DATABASE_URL === NodeProcess.env.VIVID_TEST_DATABASE_URL).toBe(true)
+    } else expect(NodeProcess.env.DATABASE_URL).toBeUndefined()
   }),
 )
 

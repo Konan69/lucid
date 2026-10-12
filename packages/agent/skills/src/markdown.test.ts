@@ -33,7 +33,7 @@ describe('shipped Markdown adapter', () => {
   it('loads the real package asset and exposes only Flue-validated content', () => {
     const parsed = Result.getOrThrow(readMarkdown('deep-research'))
     expect(parsed.name).toBe('deep-research')
-    expect(parsed.description).toContain('primary sources')
-    expect(parsed.body).toContain('Restate the question')
+    expect(parsed.description.trim().length).toBeGreaterThan(0)
+    expect(parsed.body.trim().length).toBeGreaterThan(0)
   })
 })

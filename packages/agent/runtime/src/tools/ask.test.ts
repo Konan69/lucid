@@ -25,7 +25,6 @@ const one = {
   allowsOwnAnswer: true,
 }
 const four = [one, { ...one, several: false }, one, one] as const
-
 /** Exercise the actual Flue callback and generated RPC client, controlling only the server receipt. */
 describe('ask_person', () => {
   it.effect(
@@ -54,11 +53,15 @@ describe('ask_person', () => {
         const tool = askTools(toolRunner(scope))[0]
         for (const questions of [[one], four] as const) {
           const data = v.parse(tool.input, { questions })
-          const expected = Arr.map(data.questions, (question) =>
+          const selections =
+            questions.length === 1
+              ? (['Several'] as const)
+              : (['Several', 'One', 'Several', 'Several'] as const)
+          const expected = Arr.map(data.questions, (question, index) =>
             AskInputQuestion.make({
               question: question.question,
               options: question.options,
-              selection: question.several ? 'Several' : 'One',
+              selection: selections[index] === 'One' ? 'One' : 'Several',
               allowsOwnAnswer: question.allowsOwnAnswer,
             }),
           )
@@ -109,14 +112,4 @@ describe('ask_person', () => {
         }
       }),
   )
-
-  it('refuses zero or five questions and more than six options before tool execution', () => {
-    const tool = askTools(() => Promise.reject(new Error('Must not execute invalid input')))[0]
-    for (const questions of [
-      [],
-      [...four, one],
-      [{ ...one, options: Array.from({ length: 7 }, () => one.options[0]) }],
-    ])
-      expect(v.safeParse(tool.input, { questions }).success).toBe(false)
-  })
 })

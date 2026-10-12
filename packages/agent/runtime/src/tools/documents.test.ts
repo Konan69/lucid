@@ -102,16 +102,20 @@ describe('document tools', () => {
       read(ReadDocumentOutcome.cases.Missing.make({ titles: ['Plan', 'Report'] })),
     ).toMatchObject({ ok: false, titles: ['Plan', 'Report'] })
     expect(
-      JSON.stringify(
-        read(
-          ReadDocumentOutcome.cases.Found.make({
-            title: reference,
-            version: 1,
-            body: `Document ${reference}`,
-          }),
-        ),
+      read(
+        ReadDocumentOutcome.cases.Found.make({
+          title: reference,
+          version: 1,
+          body: `Document ${reference}`,
+        }),
       ),
-    ).not.toContain(reference)
+    ).toEqual({
+      ok: true,
+      title: '[reference]',
+      version: 1,
+      body: 'Document [reference]',
+      characters: 45,
+    })
   })
 
   it.effect('sends only document fields for WriteDocument and only title for ReadDocument', () =>
@@ -212,16 +216,21 @@ describe('document tools', () => {
     () =>
       Effect.gen(function* () {
         for (const length of [4_001, 48_000]) {
+          const body = 'word '.repeat(Math.ceil(length / 5)).slice(0, length)
           const output = read(
             ReadDocumentOutcome.cases.Found.make({
               title: 'Plan',
               version: 1,
-              body: 'word '.repeat(Math.ceil(length / 5)).slice(0, length),
+              body,
             }),
           )
-          expect((yield* settle(Effect.succeed({ output }), 'read_document')).output).toEqual(
-            output,
-          )
+          expect((yield* settle(Effect.succeed({ output }), 'read_document')).output).toEqual({
+            ok: true,
+            title: 'Plan',
+            version: 1,
+            body,
+            characters: length,
+          })
         }
         const output = read(
           ReadDocumentOutcome.cases.Found.make({
@@ -246,7 +255,11 @@ describe('document tools', () => {
           ReadDocumentOutcome.cases.Found.make({ title: 'Plan', version: 1, body }),
         )
         const result = (yield* settle(Effect.succeed({ output }), 'read_document')).output
-        expect(result).toMatchObject({ truncated: true, characters: body.length })
+        expect(result).toMatchObject({
+          body: ('[reference]\n' + 'word '.repeat(9_601)).slice(0, 48_000),
+          truncated: true,
+          characters: body.length,
+        })
         expect(JSON.stringify(result)).toContain(
           `This document has ${body.length} characters in all.`,
         )

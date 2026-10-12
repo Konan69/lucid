@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   AddIntegrationOutcome,
   Connection,
-  ConnectionAuthorizationMessage,
   ConnectionId,
   ConnectionMatch,
   ConnectionOwnership,
@@ -13,7 +12,6 @@ import {
   ServiceAuthorization,
   TestIntegrationOutcome,
 } from '@vivid/contracts'
-import { Schema } from 'effect'
 import { added, integrations, tested } from './connectionviews.ts'
 
 const connection = Connection.make({
@@ -31,7 +29,6 @@ const connection = Connection.make({
   state: ConnectionState.cases.NeedsAuthorization.make({}),
   createdAt: 1,
 })
-const decodeCard = Schema.decodeUnknownSync(ConnectionAuthorizationMessage)
 
 /** Projections are exercised with recognizable authority and secret markers from upstream records. */
 describe('integration model views', () => {
@@ -127,15 +124,14 @@ describe('integration model views', () => {
     expect(JSON.stringify({ failed, waiting })).not.toContain('MARK-')
   })
   it('keeps the OAuth sign-in address out of the model-visible card', () => {
-    const view = decodeCard(
-      added(
-        AddIntegrationOutcome.cases.NeedsSignIn.make({
-          step: ConnectionStep.cases.OpenSignIn.make({
-            connection,
-            address: 'https://service.example/sign-in',
-          }),
+    // Inspect the raw model receipt: a schema decoder would erase a leaked extra field.
+    const view = added(
+      AddIntegrationOutcome.cases.NeedsSignIn.make({
+        step: ConnectionStep.cases.OpenSignIn.make({
+          connection,
+          address: 'https://service.example/sign-in',
         }),
-      ),
+      }),
     )
     expect(view).toMatchObject({
       kind: 'connection-request',
@@ -147,18 +143,16 @@ describe('integration model views', () => {
     expect(JSON.stringify(view)).not.toContain('MARK-person')
     expect(JSON.stringify(view)).not.toContain('ownership')
     expect(JSON.stringify(view)).not.toContain('https://service.example/sign-in')
-    expect(view.authorization).not.toHaveProperty('address')
+    expect(view).not.toHaveProperty('authorization.address')
   })
-  it('emits only masked-dialog field definitions and never a key submission', () => {
-    const view = decodeCard(
-      added(
-        AddIntegrationOutcome.cases.NeedsKey.make({
-          step: ConnectionStep.cases.EnterKey.make({
-            connection,
-            fields: [{ name: 'apiKey', label: 'API key' }],
-          }),
+  it('emits the secure-dialog fields without account ownership', () => {
+    const view = added(
+      AddIntegrationOutcome.cases.NeedsKey.make({
+        step: ConnectionStep.cases.EnterKey.make({
+          connection,
+          fields: [{ name: 'apiKey', label: 'API key' }],
         }),
-      ),
+      }),
     )
     expect(view).toMatchObject({
       kind: 'connection-request',
@@ -168,6 +162,6 @@ describe('integration model views', () => {
       },
     })
     expect(JSON.stringify(view)).not.toContain('MARK-person')
-    expect(JSON.stringify(view)).not.toContain('KEY-MUST-NOT-APPEAR')
+    expect(JSON.stringify(view)).not.toContain('ownership')
   })
 })

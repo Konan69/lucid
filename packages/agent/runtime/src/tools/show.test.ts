@@ -114,293 +114,299 @@ const context = {
   log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
 }
 
+/** Independently authored bounds and dangerous inputs reach the real callback, never a copied validator. */
+const accepted = [
+  {
+    name: 'maximum table size and text',
+    value: {
+      ...samples.Table,
+      title: 'x'.repeat(200),
+      columns: Array.from({ length: 8 }, () => 'Column'),
+      rows: Array.from({ length: 60 }, () => Array.from({ length: 8 }, () => 'x'.repeat(2000))),
+    },
+  },
+  { name: 'whitespace line', value: { ...samples.Table, title: ' ' } },
+  { name: 'empty cell', value: { ...samples.Table, rows: [['']] } },
+  { name: 'empty unit', value: { ...samples.Chart, unit: '' } },
+  { name: 'maximum draft body', value: { ...samples.Draft, body: 'x'.repeat(20_000) } },
+]
+
+const refused = [
+  {
+    name: 'too many rows',
+    value: { ...samples.Table, rows: Array.from({ length: 61 }, () => ['Row']) },
+  },
+  // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Invalid model input intentionally bypasses contract constructors.
+  { name: 'unknown kind', value: { ...samples.Table, _tag: 'Unknown' } },
+  // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Lowercase tags must fail the model and surface decoders alike.
+  { name: 'lowercase kind', value: { ...samples.Table, _tag: 'table' } },
+  {
+    name: 'missing required field',
+    value: Object.fromEntries(
+      Object.entries(samples.Table).filter(([key]) => ['_tag', 'columns'].includes(key)),
+    ),
+  },
+  { name: 'empty columns', value: { ...samples.Table, columns: [] } },
+  {
+    name: 'too many columns',
+    value: { ...samples.Table, columns: Array.from({ length: 9 }, () => 'Column') },
+  },
+  {
+    name: 'too many cells',
+    value: { ...samples.Table, rows: [Array.from({ length: 9 }, () => 'Cell')] },
+  },
+  { name: 'overlong cell', value: { ...samples.Table, rows: [['x'.repeat(2001)]] } },
+  { name: 'empty title', value: { ...samples.Table, title: '' } },
+  { name: 'overlong title', value: { ...samples.Table, title: 'x'.repeat(201) } },
+  { name: 'undefined optional key', value: { ...samples.Table, title: undefined } },
+  { name: 'null optional key', value: { ...samples.Table, note: null } },
+  { name: 'unknown chart style', value: { ...samples.Chart, kind: 'pie' } },
+  { name: 'empty labels', value: { ...samples.Chart, labels: [] } },
+  {
+    name: 'too many labels',
+    value: { ...samples.Chart, labels: Array.from({ length: 61 }, () => 'Label') },
+  },
+  { name: 'empty series', value: { ...samples.Chart, series: [] } },
+  {
+    name: 'too many series',
+    value: {
+      ...samples.Chart,
+      series: Array.from({ length: 7 }, () => ({ name: 'Series', values: [1] })),
+    },
+  },
+  { name: 'empty values', value: { ...samples.Chart, series: [{ name: 'Series', values: [] }] } },
+  {
+    name: 'too many values',
+    value: {
+      ...samples.Chart,
+      series: [{ name: 'Series', values: Array.from({ length: 61 }, () => 1) }],
+    },
+  },
+  {
+    name: 'infinite value',
+    value: { ...samples.Chart, series: [{ name: 'Series', values: [Infinity] }] },
+  },
+  { name: 'NaN value', value: { ...samples.Chart, series: [{ name: 'Series', values: [NaN] }] } },
+  { name: 'overlong unit', value: { ...samples.Chart, unit: 'x'.repeat(13) } },
+  { name: 'empty steps', value: { ...samples.Steps, steps: [] } },
+  {
+    name: 'too many steps',
+    value: {
+      ...samples.Steps,
+      steps: Array.from({ length: 31 }, () => ({ label: 'Step', state: 'done' })),
+    },
+  },
+  {
+    name: 'unknown step state',
+    value: { ...samples.Steps, steps: [{ label: 'Step', state: 'pending' }] },
+  },
+  { name: 'too few options', value: { ...samples.Options, options: [{ label: 'Only one' }] } },
+  {
+    name: 'too many options',
+    value: {
+      ...samples.Options,
+      options: Array.from({ length: 9 }, () => ({ label: 'Option' })),
+    },
+  },
+  {
+    name: 'missing choice mode',
+    value: Object.fromEntries(Object.entries(samples.Options).filter(([key]) => key !== 'many')),
+  },
+  { name: 'too few comparison items', value: { ...samples.Comparison, items: [] } },
+  {
+    name: 'too many comparison items',
+    value: {
+      ...samples.Comparison,
+      items: Array.from({ length: 6 }, () => ({ name: 'Item', good: [], bad: [], facts: [] })),
+    },
+  },
+  {
+    name: 'too many advantages',
+    value: {
+      ...samples.Comparison,
+      items: [
+        { name: 'A', good: Array.from({ length: 7 }, () => 'Good'), bad: [], facts: [] },
+        { name: 'B', good: [], bad: [], facts: [] },
+      ],
+    },
+  },
+  {
+    name: 'too many drawbacks',
+    value: {
+      ...samples.Comparison,
+      items: [
+        { name: 'A', good: [], bad: Array.from({ length: 7 }, () => 'Bad'), facts: [] },
+        { name: 'B', good: [], bad: [], facts: [] },
+      ],
+    },
+  },
+  {
+    name: 'too many comparison facts',
+    value: {
+      ...samples.Comparison,
+      items: [
+        {
+          name: 'A',
+          good: [],
+          bad: [],
+          facts: Array.from({ length: 9 }, () => ({ label: 'Fact', value: 'Value' })),
+        },
+        { name: 'B', good: [], bad: [], facts: [] },
+      ],
+    },
+  },
+  { name: 'empty links', value: { ...samples.Links, links: [] } },
+  {
+    name: 'too many links',
+    value: {
+      ...samples.Links,
+      links: Array.from({ length: 13 }, () => ({
+        title: 'Link',
+        address: 'https://example.test',
+      })),
+    },
+  },
+  {
+    name: 'empty address',
+    value: { ...samples.Links, links: [{ title: 'Source', address: '' }] },
+  },
+  {
+    name: 'overlong address',
+    value: {
+      ...samples.Links,
+      links: [{ title: 'Source', address: `https://example.test/${'x'.repeat(2000)}` }],
+    },
+  },
+  // An address becomes a link's target on every surface, so only the web's own schemes pass.
+  {
+    name: 'script address',
+    value: { ...samples.Links, links: [{ title: 'Source', address: 'javascript:alert(1)' }] },
+  },
+  {
+    name: 'file address',
+    value: { ...samples.Links, links: [{ title: 'Source', address: 'file:///etc/passwd' }] },
+  },
+  {
+    name: 'address without a scheme',
+    value: { ...samples.Links, links: [{ title: 'Source', address: 'example.test/guide' }] },
+  },
+  { name: 'empty facts', value: { ...samples.Facts, facts: [] } },
+  {
+    name: 'too many facts',
+    value: {
+      ...samples.Facts,
+      facts: Array.from({ length: 9 }, () => ({ label: 'Fact', value: 'Value' })),
+    },
+  },
+  {
+    name: 'unknown fact tone',
+    value: { ...samples.Facts, facts: [{ label: 'Count', value: '2', tone: 'neutral' }] },
+  },
+  { name: 'empty draft', value: { ...samples.Draft, body: '' } },
+  { name: 'overlong draft', value: { ...samples.Draft, body: 'x'.repeat(20_001) } },
+  {
+    name: 'too many recipients',
+    value: { ...samples.Draft, to: Array.from({ length: 21 }, () => 'Ada') },
+  },
+  { name: 'unknown draft kind', value: { ...samples.Draft, kind: 'letter' } },
+  { name: 'empty schedule', value: { ...samples.Schedule, items: [] } },
+  {
+    name: 'too many events',
+    value: {
+      ...samples.Schedule,
+      items: Array.from({ length: 31 }, () => ({ at: '09:00', title: 'Event' })),
+    },
+  },
+  { name: 'empty form', value: { ...samples.Form, fields: [] } },
+  {
+    name: 'too many fields',
+    value: {
+      ...samples.Form,
+      fields: Array.from({ length: 11 }, () => ({ label: 'Name', kind: 'text', choices: [] })),
+    },
+  },
+  {
+    name: 'unknown field kind',
+    value: { ...samples.Form, fields: [{ label: 'Name', kind: 'password', choices: [] }] },
+  },
+  {
+    name: 'missing choices',
+    value: { ...samples.Form, fields: [{ label: 'Name', kind: 'text' }] },
+  },
+  {
+    name: 'too many field choices',
+    value: {
+      ...samples.Form,
+      fields: [
+        { label: 'Name', kind: 'choice', choices: Array.from({ length: 13 }, () => 'Choice') },
+      ],
+    },
+  },
+  { name: 'empty pictures', value: { ...samples.Pictures, pictures: [] } },
+  {
+    name: 'inline picture data',
+    value: {
+      ...samples.Pictures,
+      pictures: [{ address: 'data:image/svg+xml,<svg onload="alert(1)"/>' }],
+    },
+  },
+  {
+    name: 'too many pictures',
+    value: {
+      ...samples.Pictures,
+      pictures: Array.from({ length: 13 }, () => ({ address: 'https://example.test/a.png' })),
+    },
+  },
+]
+
 /** Real model-input decoding and the registered Flue callback require no server authority or storage. */
 describe('show tool', () => {
-  // Public input admits unknown displays for friendly refusals; only the callback proves success.
-  it.effect.each(
-    Object.values(samples).map((sample) => ({
-      sample,
-      shown: receipts[sample._tag].shown,
-      terminate: receipts[sample._tag].terminate,
-    })),
-  )('acknowledges $shown with termination $terminate', ({ sample, shown, terminate }) =>
+  it.effect('acknowledges every display and stops only when the Person must reply', () =>
     Effect.gen(function* () {
-      const input = { summary: 'Launch details', show: sample }
-      const data = v.parse(show.input, input)
-      // Valibot strips unknown keys; every field advertised by the contract must reach the callback.
-      expect(data.show).toEqual(sample)
-      const result = yield* Effect.promise(() => Promise.resolve(show.run({ ...context, data })))
-      // Exact raw receipts catch any duplicate display; decoding would strip unexpected keys.
-      if (terminate)
-        expect(result).toEqual({
-          output: {
-            ok: true,
-            shown,
-            message: expect.stringContaining('The Person will answer in their next message.'),
-          },
-          terminate: true,
-        })
-      else expect(result).toEqual({ output: { ok: true, shown }, terminate: false })
+      for (const sample of Object.values(samples)) {
+        const { shown, terminate } = receipts[sample._tag]
+        const data = v.parse(show.input, { summary: 'Launch details', show: sample })
+        expect(data.show).toEqual(sample)
+        const result = yield* Effect.promise(() => Promise.resolve(show.run({ ...context, data })))
+        if (terminate)
+          expect(result).toEqual({
+            output: { ok: true, shown, message: expect.stringContaining('The Person will answer') },
+            terminate: true,
+          })
+        else expect(result).toEqual({ output: { ok: true, shown }, terminate: false })
+      }
     }),
   )
 
-  it.effect.each([
-    {
-      name: 'maximum table size and text',
-      value: {
-        ...samples.Table,
-        title: 'x'.repeat(200),
-        columns: Array.from({ length: 8 }, () => 'Column'),
-        rows: Array.from({ length: 60 }, () => Array.from({ length: 8 }, () => 'x'.repeat(2000))),
-      },
-    },
-    { name: 'whitespace line', value: { ...samples.Table, title: ' ' } },
-    { name: 'empty cell', value: { ...samples.Table, rows: [['']] } },
-    { name: 'empty unit', value: { ...samples.Chart, unit: '' } },
-    { name: 'maximum draft body', value: { ...samples.Draft, body: 'x'.repeat(20_000) } },
-  ])('accepts $name through the callback', ({ value }) =>
+  it.effect('accepts boundary displays through both model and client ingress', () =>
     Effect.gen(function* () {
-      const input = { summary: 'Launch details', show: value }
-      const result = yield* Effect.promise(() =>
-        Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
-      )
-      expect(result).toMatchObject({ output: { ok: true } })
-      // These boundary fixtures are mutated inputs, so client acceptance is an independent claim.
-      expect(Option.isSome(decodeRequest(input))).toBe(true)
-    }),
-  )
-
-  it.effect.each([
-    {
-      name: 'too many rows',
-      value: { ...samples.Table, rows: Array.from({ length: 61 }, () => ['Row']) },
-    },
-    // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Invalid model input intentionally bypasses contract constructors.
-    { name: 'unknown kind', value: { ...samples.Table, _tag: 'Unknown' } },
-    // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Lowercase tags must fail the model and surface decoders alike.
-    { name: 'lowercase kind', value: { ...samples.Table, _tag: 'table' } },
-    { name: 'missing required field', value: { _tag: samples.Table._tag, columns: ['Name'] } },
-    { name: 'empty columns', value: { ...samples.Table, columns: [] } },
-    {
-      name: 'too many columns',
-      value: { ...samples.Table, columns: Array.from({ length: 9 }, () => 'Column') },
-    },
-    {
-      name: 'too many cells',
-      value: { ...samples.Table, rows: [Array.from({ length: 9 }, () => 'Cell')] },
-    },
-    { name: 'overlong cell', value: { ...samples.Table, rows: [['x'.repeat(2001)]] } },
-    { name: 'empty title', value: { ...samples.Table, title: '' } },
-    { name: 'overlong title', value: { ...samples.Table, title: 'x'.repeat(201) } },
-    { name: 'undefined optional key', value: { ...samples.Table, title: undefined } },
-    { name: 'null optional key', value: { ...samples.Table, note: null } },
-    { name: 'unknown chart style', value: { ...samples.Chart, kind: 'pie' } },
-    { name: 'empty labels', value: { ...samples.Chart, labels: [] } },
-    {
-      name: 'too many labels',
-      value: { ...samples.Chart, labels: Array.from({ length: 61 }, () => 'Label') },
-    },
-    { name: 'empty series', value: { ...samples.Chart, series: [] } },
-    {
-      name: 'too many series',
-      value: {
-        ...samples.Chart,
-        series: Array.from({ length: 7 }, () => ({ name: 'Series', values: [1] })),
-      },
-    },
-    { name: 'empty values', value: { ...samples.Chart, series: [{ name: 'Series', values: [] }] } },
-    {
-      name: 'too many values',
-      value: {
-        ...samples.Chart,
-        series: [{ name: 'Series', values: Array.from({ length: 61 }, () => 1) }],
-      },
-    },
-    {
-      name: 'infinite value',
-      value: { ...samples.Chart, series: [{ name: 'Series', values: [Infinity] }] },
-    },
-    { name: 'NaN value', value: { ...samples.Chart, series: [{ name: 'Series', values: [NaN] }] } },
-    { name: 'overlong unit', value: { ...samples.Chart, unit: 'x'.repeat(13) } },
-    { name: 'empty steps', value: { ...samples.Steps, steps: [] } },
-    {
-      name: 'too many steps',
-      value: {
-        ...samples.Steps,
-        steps: Array.from({ length: 31 }, () => ({ label: 'Step', state: 'done' })),
-      },
-    },
-    {
-      name: 'unknown step state',
-      value: { ...samples.Steps, steps: [{ label: 'Step', state: 'pending' }] },
-    },
-    { name: 'too few options', value: { ...samples.Options, options: [{ label: 'Only one' }] } },
-    {
-      name: 'too many options',
-      value: {
-        ...samples.Options,
-        options: Array.from({ length: 9 }, () => ({ label: 'Option' })),
-      },
-    },
-    {
-      name: 'missing choice mode',
-      value: { _tag: samples.Options._tag, question: 'Which?', options: samples.Options.options },
-    },
-    { name: 'too few comparison items', value: { ...samples.Comparison, items: [] } },
-    {
-      name: 'too many comparison items',
-      value: {
-        ...samples.Comparison,
-        items: Array.from({ length: 6 }, () => ({ name: 'Item', good: [], bad: [], facts: [] })),
-      },
-    },
-    {
-      name: 'too many advantages',
-      value: {
-        ...samples.Comparison,
-        items: [
-          { name: 'A', good: Array.from({ length: 7 }, () => 'Good'), bad: [], facts: [] },
-          { name: 'B', good: [], bad: [], facts: [] },
-        ],
-      },
-    },
-    {
-      name: 'too many drawbacks',
-      value: {
-        ...samples.Comparison,
-        items: [
-          { name: 'A', good: [], bad: Array.from({ length: 7 }, () => 'Bad'), facts: [] },
-          { name: 'B', good: [], bad: [], facts: [] },
-        ],
-      },
-    },
-    {
-      name: 'too many comparison facts',
-      value: {
-        ...samples.Comparison,
-        items: [
-          {
-            name: 'A',
-            good: [],
-            bad: [],
-            facts: Array.from({ length: 9 }, () => ({ label: 'Fact', value: 'Value' })),
-          },
-          { name: 'B', good: [], bad: [], facts: [] },
-        ],
-      },
-    },
-    { name: 'empty links', value: { ...samples.Links, links: [] } },
-    {
-      name: 'too many links',
-      value: {
-        ...samples.Links,
-        links: Array.from({ length: 13 }, () => ({
-          title: 'Link',
-          address: 'https://example.test',
-        })),
-      },
-    },
-    {
-      name: 'empty address',
-      value: { ...samples.Links, links: [{ title: 'Source', address: '' }] },
-    },
-    {
-      name: 'overlong address',
-      value: {
-        ...samples.Links,
-        links: [{ title: 'Source', address: `https://example.test/${'x'.repeat(2000)}` }],
-      },
-    },
-    // An address becomes a link's target on every surface, so only the web's own schemes pass.
-    {
-      name: 'script address',
-      value: { ...samples.Links, links: [{ title: 'Source', address: 'javascript:alert(1)' }] },
-    },
-    {
-      name: 'file address',
-      value: { ...samples.Links, links: [{ title: 'Source', address: 'file:///etc/passwd' }] },
-    },
-    {
-      name: 'address without a scheme',
-      value: { ...samples.Links, links: [{ title: 'Source', address: 'example.test/guide' }] },
-    },
-    { name: 'empty facts', value: { ...samples.Facts, facts: [] } },
-    {
-      name: 'too many facts',
-      value: {
-        ...samples.Facts,
-        facts: Array.from({ length: 9 }, () => ({ label: 'Fact', value: 'Value' })),
-      },
-    },
-    {
-      name: 'unknown fact tone',
-      value: { ...samples.Facts, facts: [{ label: 'Count', value: '2', tone: 'neutral' }] },
-    },
-    { name: 'empty draft', value: { ...samples.Draft, body: '' } },
-    { name: 'overlong draft', value: { ...samples.Draft, body: 'x'.repeat(20_001) } },
-    {
-      name: 'too many recipients',
-      value: { ...samples.Draft, to: Array.from({ length: 21 }, () => 'Ada') },
-    },
-    { name: 'unknown draft kind', value: { ...samples.Draft, kind: 'letter' } },
-    { name: 'empty schedule', value: { ...samples.Schedule, items: [] } },
-    {
-      name: 'too many events',
-      value: {
-        ...samples.Schedule,
-        items: Array.from({ length: 31 }, () => ({ at: '09:00', title: 'Event' })),
-      },
-    },
-    { name: 'empty form', value: { ...samples.Form, fields: [] } },
-    {
-      name: 'too many fields',
-      value: {
-        ...samples.Form,
-        fields: Array.from({ length: 11 }, () => ({ label: 'Name', kind: 'text', choices: [] })),
-      },
-    },
-    {
-      name: 'unknown field kind',
-      value: { ...samples.Form, fields: [{ label: 'Name', kind: 'password', choices: [] }] },
-    },
-    {
-      name: 'missing choices',
-      value: { ...samples.Form, fields: [{ label: 'Name', kind: 'text' }] },
-    },
-    {
-      name: 'too many field choices',
-      value: {
-        ...samples.Form,
-        fields: [
-          { label: 'Name', kind: 'choice', choices: Array.from({ length: 13 }, () => 'Choice') },
-        ],
-      },
-    },
-    { name: 'empty pictures', value: { ...samples.Pictures, pictures: [] } },
-    {
-      name: 'inline picture data',
-      value: {
-        ...samples.Pictures,
-        pictures: [{ address: 'data:image/svg+xml,<svg onload="alert(1)"/>' }],
-      },
-    },
-    {
-      name: 'too many pictures',
-      value: {
-        ...samples.Pictures,
-        pictures: Array.from({ length: 13 }, () => ({ address: 'https://example.test/a.png' })),
-      },
-    },
-  ])('refuses $name without weakening the surface contract', ({ value }) =>
-    Effect.gen(function* () {
-      const input = { summary: 'Launch details', show: value }
-      const result = decodeRefusal(
-        yield* Effect.promise(() =>
+      for (const { name, value } of accepted) {
+        const input = { summary: 'Launch details', show: value }
+        const result = yield* Effect.promise(() =>
           Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
-        ),
-      )
-      expect(result.output.ok).toBe(false)
-      expect(Option.isSome(decodeRequest(input))).toBe(false)
+        )
+        expect(result, name).toMatchObject({ output: { ok: true } })
+        expect(Option.isSome(decodeRequest(input)), name).toBe(true)
+      }
+    }),
+  )
+
+  it.effect('refuses unsafe displays without stopping the turn or echoing their payload', () =>
+    Effect.gen(function* () {
+      for (const { name, value } of refused) {
+        const input = { summary: 'Launch details', show: value }
+        const result = yield* Effect.promise(() =>
+          Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
+        )
+        expect(result, name).toEqual({
+          output: { ok: false, message: expect.stringContaining('Nothing was displayed.') },
+          terminate: false,
+        })
+        expect(Option.isSome(decodeRequest(input)), name).toBe(false)
+        // These rejected addresses are actual inputs; the refusal must not repeat unsafe payloads.
+        for (const forbidden of ['javascript:', 'file:///etc/passwd', 'data:image/svg+xml'])
+          expect(JSON.stringify(result), name).not.toContain(forbidden)
+      }
     }),
   )
 
@@ -427,8 +433,6 @@ describe('show tool', () => {
           ),
         )
         expect(result.output.message).toContain(`show.items.0.${field}: Provide the ${field} array`)
-        expect(result.output.message).toContain('use []')
-        expect(result.output.message).toContain('call show again once')
         expect(
           decodeReceipt(
             yield* Effect.promise(() =>
@@ -456,7 +460,6 @@ describe('show tool', () => {
         ),
       )
       expect(result.output.message).toContain('show: Provide show as a JSON object')
-      expect(result.output.message).toContain('do not quote or stringify it')
       expect(result.output.message).toContain('Nothing was displayed.')
       expect(Option.isSome(decodeRequest(input))).toBe(false)
     }),

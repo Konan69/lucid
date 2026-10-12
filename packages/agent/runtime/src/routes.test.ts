@@ -210,28 +210,33 @@ describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable P
   // The body starts as the shared codec's encoding of a valid request (the text `admit` sends
   // and H1 proves accepted) and only `turn` is replaced. If the codec later transforms a field,
   // the rest of the body stays valid, so the 400 is still about the turn and not the encoding.
-  for (const turn of [0, 1.5]) {
-    it.live(`H2 rejects turn ${turn} at runtime ingress before calling the model`, () =>
-      Effect.gen(function* () {
-        const runtime = yield* routes
-        const request = delivery(thread(), 1, 'Invalid turn')
-        const wire = yield* decodeWire(yield* encodeAdmission(request))
-        // Guards the control itself: the key replaced below is the one the codec wrote.
-        expect(wire).toHaveProperty('turn', 1)
-        yield* runtime.reply('This response must not be used')
+  it.live('H2 rejects malformed turns at runtime ingress before calling the model', () =>
+    Effect.gen(function* () {
+      const runtime = yield* routes
+      const request = delivery(thread(), 1, 'Invalid turn')
+      const wire = yield* decodeWire(yield* encodeAdmission(request))
+      expect(wire).toHaveProperty('turn', 1)
+      for (const turn of [0, 1.5]) {
         const response = yield* runtime.send(`/agents/vivid/${request.threadId}`, {
           method: 'POST',
           body: JSON.stringify({ ...wire, turn }),
         })
-        expect(response.status).toBe(400)
-        // app.ts also answers 400 for a wrong Thread; the body names which refusal this was.
+        expect(response.status, `turn ${turn}`).toBe(400)
         expect(yield* decodeRefusal(yield* bodyText(response))).toEqual({
           error: 'Invalid runtime delivery',
         })
-        expect(yield* runtime.modelCalls).toBe(0)
-      }).pipe(Effect.scoped),
-    )
-  }
+      }
+      expect(yield* runtime.modelCalls).toBe(0)
+      // The same encoded control is admitted and completed: the hostile inputs cannot pass
+      // merely because the route stopped accepting every request.
+      yield* runtime.reply('ready')
+      const receipt = yield* admit(runtime, request)
+      expect(yield* runtime.settled(request.threadId, receipt.submissionId)).toEqual(
+        Settled.Completed({ text: 'ready' }),
+      )
+      expect(yield* runtime.modelCalls).toBe(1)
+    }).pipe(Effect.scoped),
+  )
 
   it.live('H3 drops the stopped schema and starts another runtime in the same module graph', () =>
     Effect.gen(function* () {

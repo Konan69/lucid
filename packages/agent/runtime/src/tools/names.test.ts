@@ -22,7 +22,7 @@ describe('human names', () => {
     const second = { id: 'b', createdAt: 1, name: 'Draft', status: 'open', dueAt: 1, updatedAt: 2 }
     const shown = inventory([second, first], (item) => item.name)
     const changed = { ...first, status: 'done', dueAt: 4, updatedAt: 5 }
-    const relisted = inventory([second, changed], (item) => item.name)
+    const relisted = inventory([changed, second], (item) => item.name)
     expect(shown.map(({ name, item }) => [name, item.id])).toEqual([
       ['Draft', 'a'],
       ['Draft (2)', 'b'],

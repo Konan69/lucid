@@ -229,8 +229,12 @@ describe('Integration Routine tools', () => {
           ],
           { concurrency: 2 },
         )
-        expect(result.output).toMatchObject({
-          schedule: { cron: trigger.cron, timezone: trigger.timezone },
+        expect(result.output).toEqual({
+          name: 'Morning review',
+          prompt: 'Review my day.',
+          schedule: { cron: '0 9 * * *', timezone: 'Africa/Lagos' },
+          enabled: true,
+          nextRunAt: '1970-01-01T00:05:00.000Z',
         })
       }),
     ),

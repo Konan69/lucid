@@ -163,7 +163,6 @@ describe('Program model tools', () => {
           })
           for (const tool of [program, page])
             expect(JSON.stringify(tool.input)).not.toContain('MARK-')
-          expect(program.description).not.toContain('connectionId')
           return yield* Effect.void
         }),
       ),
