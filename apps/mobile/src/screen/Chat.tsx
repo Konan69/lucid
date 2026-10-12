@@ -40,7 +40,7 @@ import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
-import { Composer } from '../ui/Composer'
+import { Composer, type Onward } from '../ui/Composer'
 import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
@@ -439,7 +439,7 @@ function useAsking(up: Option.Option<InputRequest>) {
 /**
  * The card over the composer, for what it holds (`useAsking`): the questions of the request that
  * is up, or of the one sliding away. It is keyed by the request, so each card starts on its
- * first question, untucked, with nothing picked, and measures itself.
+ * first question, open, with nothing picked, and measures itself.
  *
  * It is drawn as a child of the Thread's column (`Conversation`), which holds the conversation
  * and the composer and ends at the keyboard, and it is anchored to the composer's measured dock
@@ -667,10 +667,13 @@ function Conversation({
  *
  * What the composer sends is nearly always an ordinary message in the Thread, a waiting request
  * or not. While a request waits it says "Reply": the server withdraws the request when it takes
- * the message, the card slides away with whatever was picked in it, and Vivid reads the message
+ * the message, the banner slides away with whatever was picked in it, and Vivid reads the message
  * right after its own questions, so "skip that, just do this" and an answer in the Person's own
  * words are the same thing to send. The one exception is a question that offers no options and
- * takes words: there the reply is that question's answer, and the card moves on (`reply`).
+ * takes words: there the reply is that question's answer, and the banner moves on (`reply`).
+ *
+ * With nothing written while a request is up, the composer moves on from the question instead:
+ * the banner has no button of its own (`onward`; `chat/Choices.tsx`).
  */
 function Foot({
   typed,
@@ -720,6 +723,29 @@ function Foot({
     })
   }
 
+  /**
+   * What the composer's trailing end is given while a question is up (`Onward`,
+   * `ui/Composer.tsx`): where the Person is in the questions, whether they may move on, and the
+   * two moves. Moving on is the next question, or from the last every answer sent
+   * (`asking.advance`); going back keeps every pick. With no request up it is nothing.
+   */
+  const onward = Option.map(asking.up, ({ request, drafting }): Onward => {
+    const progress = model.progressOf(request.questions, drafting)
+    return {
+      first: progress.first,
+      last: progress.last,
+      offers: progress.question.options.length > 0,
+      ready: progress.canAdvance && !waits,
+      onNext: () =>
+        model.Step.$match(model.advance(request.questions, drafting), {
+          Stay: () => undefined,
+          Next: ({ asking: next }) => asking.draft(request.id, next),
+          Send: ({ answers }) => void asking.answer(request.id, answers),
+        }),
+      onBack: () => asking.draft(request.id, model.back(drafting)),
+    }
+  })
+
   return (
     <>
       {Option.isSome(asking.refusal) && (
@@ -744,6 +770,7 @@ function Foot({
           // draft.
           onSend={() => reply(typed.trim())}
           onStop={() => void stopping.stop()}
+          asked={Option.getOrUndefined(onward)}
         />
       </View>
     </>

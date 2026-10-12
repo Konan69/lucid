@@ -40,8 +40,16 @@ import type { Asking } from './asking'
  * Adapted, and why:
  * - A question in Vivid's contract has no short `header` (`packages/contracts/src/inputs.ts`
  *   says why), so the head row's words are the question itself: one line, cut short, while the
- *   banner is closed, and all of it while it is open. The body then does not say the question a
- *   second time, as the reference's does under its header.
+ *   banner is closed, and two lines at most while it is open. A question may be 400 characters
+ *   long, and all of it shown pushed the options off a small screen; all of it is Vivid's
+ *   message in the Thread. The body does not say the question a second time, as the
+ *   reference's does under its header.
+ * - A row's label and its second line wrap, to three lines each at most, and are never cut to
+ *   one line: the owner rejected an ellipsis on a choice (11 October 2026: "truncated isn't
+ *   helping design well"). Past that the list scrolls. A string with no place to break (an
+ *   address, a link) breaks anywhere, so nothing reaches past the banner's edge; and each takes
+ *   its direction from its own first strong letter (`dir="auto"`), so an Arabic label starts at
+ *   the right in a banner that reads left to right.
  * - There is no dismiss control. What the Person sends from the composer is an ordinary message,
  *   and the server withdraws the waiting request when it takes it: that is the way to dismiss.
  * - The reference's panel opens and closes by animating a measured height, and its banner is
@@ -334,9 +342,12 @@ function Banner({
           <CircleHelp className="size-3" />
         </span>
         <span
+          data-asked="question"
+          dir="auto"
           className={cn(
             'min-w-0 flex-1 py-1.5 font-title text-ink',
-            open ? 'text-pretty wrap-anywhere' : 'truncate',
+            // Two lines of the question at most, then an ellipsis; one while it is closed.
+            open ? 'line-clamp-2 wrap-anywhere' : 'truncate',
           )}
         >
           {question.question}
@@ -481,9 +492,21 @@ function Row({
         )}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-body font-title">{option.label}</span>
+          <span
+            data-asked="label"
+            dir="auto"
+            className="line-clamp-3 text-body font-title wrap-anywhere"
+          >
+            {option.label}
+          </span>
           {option.detail.length > 0 && option.detail !== option.label && (
-            <span className="text-meta text-ink-3">{option.detail}</span>
+            <span
+              data-asked="detail"
+              dir="auto"
+              className="line-clamp-3 text-meta wrap-anywhere text-ink-3"
+            >
+              {option.detail}
+            </span>
           )}
         </span>
         {chosen ? (

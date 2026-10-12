@@ -42,7 +42,8 @@ const NO_FILES: ReturnType<ReturnType<typeof useAttachments>['take']> = { lines:
  * While a question from Vivid is up (`asked`) and nothing is written, the button and Enter move
  * on from the question instead: to the next one, or sending every answer from the last. With
  * words written they send the words, as always; what those words mean then is the Thread's to
- * decide (`screen/Thread.tsx`).
+ * decide (`screen/Thread.tsx`). For as long, in the dark theme, there is a faint shade on
+ * the banner where it meets the composer's top edge (`asked-seam`), as in the reference.
  *
  * It is drawn again only when what it is given changes (`memo`), and not at each key: the field
  * follows the words itself (`Field`), and the composer hears only of the field becoming empty or
@@ -143,6 +144,15 @@ export const Composer = memo(function Composer({
           {/* The edge and the lift are drawn by this wrapper, outside the beam: both are shadows
               that fall outside the box, and the beam clipped them away, which left the composer
               a white box on a white page with no edge at all. */}
+          {/* The dark theme's shade on a question's banner at the seam (`asked-seam`): a clear
+              shape exactly over the composer's own box, whose one shadow falls outside it. It is
+              always there and shows only while a question is up, so it fades with the banner and
+              the composer's own edge and lift are never rewritten. */}
+          <div
+            aria-hidden
+            data-shown={asked !== undefined}
+            className="pointer-events-none absolute inset-0 rounded-composer asked-seam"
+          />
           <div className="rounded-composer lift edge-field">
             <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
               {/* The beam reads its corner radius from the one element it wraps. */}

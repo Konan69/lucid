@@ -4,10 +4,10 @@ import { Option } from 'effect'
 /**
  * The decisions around a request from Vivid (an Input request, of one to four questions) that
  * are the phone's own and need no screen to make: which request a tool call in the conversation
- * stands for, and how tall the card over the composer may be. Everything both clients decide the
+ * stands for, and how tall the banner over the composer may be. Everything both clients decide the
  * same way (which request is up, what the card holds, one try at answering, where answers go in
  * the Thread, what a send from the composer means) is `asking` in `@vivid/state`.
- * `Choices.tsx` draws the card and `screen/Chat.tsx` holds the state.
+ * `Choices.tsx` draws the banner and `screen/Chat.tsx` holds the state.
  */
 
 /** The Input request a tool call in the conversation stands for, once the Thread's detail has it. */
@@ -19,28 +19,35 @@ export const requestOf = (
     Option.fromUndefinedOr(value.requests.find((request) => request.id === id)),
   )
 
-/** The card is never taller than this, however large the screen. */
+/** The banner is never taller than this, however large the screen. */
 const TALLEST = 560
 /**
- * Nor is it squeezed under this. The card's head (the grabber and the question, up to four
- * lines) is fixed and the rows scroll in what is left, so at this floor a short question leaves
- * about two rows in sight and a long one leaves the rows to be scrolled to.
+ * Nor is it squeezed under this. The banner's head (the question, up to two lines) is fixed and
+ * the rows scroll in what is left, so at this floor a short question leaves about two rows in
+ * sight and a long one leaves the rows to be scrolled to.
  */
 const SHORTEST = 160
-/** What is kept clear between the top of the card and what is above it. */
+/** What is kept clear between the top of the banner and what is above it. */
 const ABOVE = 12
 
 /**
- * The keyboard's height before one has been seen: a portrait iPhone's with its suggestion bar.
- * Overestimating only costs the card height; an underestimate would put it under the bar when
- * the Person opens the keyboard to reply.
+ * The room kept for the keyboard while it is up: a portrait iPhone's with its suggestion bar.
+ * The app is told that the keyboard is up, not how tall it is (`data/keyboard.ts`).
+ * Overestimating only costs the banner height; an underestimate would put it under the bar.
  */
 export const KEYBOARD_RESERVE = 336
 
 /**
- * The most room the card may take, so that it fits between the bar and the composer with the
- * keyboard up. The keyboard's room is reserved whether or not it is up, so the card is the same
- * height either way and opening the keyboard only moves it.
+ * The room the keyboard takes from the banner: its reserve while it is up, and none while it is
+ * down. Until 11 October 2026 the reserve was kept whether or not the keyboard was up, so that
+ * opening it only moved the card; with the keyboard down that cut the card to about half the
+ * room it had, and a question with five options scrolled on a screen that could show them all.
+ */
+export const keyboardRoomOf = (showing: boolean): number => (showing ? KEYBOARD_RESERVE : 0)
+
+/**
+ * The most room the banner may take, so that it fits between the bar and the composer, over the
+ * keyboard when that is up (`keyboardRoomOf`).
  *
  * Ported from T3 Code mobile `src/features/threads/pendingUserInputLayout.ts`
  * (`derivePendingUserInputMaxHeight`: the window less the keyboard, the header, the composer's
