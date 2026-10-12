@@ -141,6 +141,26 @@ describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
     )
 
     /**
+     * A Thread shared with a few hundred People names more topics than one PostgreSQL payload
+     * holds (8000 bytes). The last owner named is the one a single rejected payload would lose.
+     */
+    it.effect('delivers a publish that names more owners than one payload holds', () =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(changesLayer)
+        return yield* Effect.gen(function* () {
+          const changes = yield* Changes
+          const audience = Array.from({ length: 400 }, () =>
+            Topic.part('activity')(Topic.person(PersonId.make(crypto.randomUUID()))),
+          )
+          const last = audience.slice(-1)
+          const subscription = yield* changes.subscribe(last, ['activity'])
+          yield* changes.publish(audience)
+          expect(Option.isSome(yield* Stream.runHead(subscription))).toBe(true)
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped),
+    )
+
+    /**
      * Use the public Drizzle factory that Database itself wraps: its production Layer fixes pool
      * sizing. effect-postgres/session.js:24-29 pins this client's sole connection for transaction;
      * announcing must finish on it, without PgClient.notify's separate checkout (:256-263).

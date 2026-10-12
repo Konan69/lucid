@@ -272,7 +272,12 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
     if (topics.length === 0) return
     // The write is already committed. If the notification cannot be sent, open clients miss one
     // refresh; failing the caller would instead report a successful write as a failure.
-    yield* sql.notify(CHANNEL, JSON.stringify(topics)).pipe(Effect.catch(notificationNotSent))
+    // Split by bytes like `announce`: a Thread shared with enough People names more topics than
+    // one payload holds, and a rejected payload would be a refresh nobody received.
+    yield* notificationPayloads(topics).pipe(
+      Effect.flatMap(Effect.forEach((payload) => sql.notify(CHANNEL, payload), { discard: true })),
+      Effect.catch(notificationNotSent),
+    )
   })
 
   const subscribe = Effect.fn('Changes.subscribe')(function* (
