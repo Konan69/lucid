@@ -346,16 +346,14 @@ const ruled = (was: Ruled['stand'], command: MachineTest.RuntimeCommand<Said>): 
   const still: Ruled = { stand: was, moved: false, says: [] }
   if (!Predicate.isTagged(command, 'Send')) return still
   const said = command.event
-  if (
-    Predicate.isTagged(said, 'Press') ||
-    Predicate.isTagged(said, 'Returned') ||
-    said.attempt !== second
-  ) {
+  if (Predicate.isTagged(said, 'Dismissed')) {
+    if (said.attempt !== second) return still
+    return { stand: 'Idle', moved: was !== 'Idle', says: [] }
+  }
+  if (!Predicate.isTagged(said, 'Finished')) return still
+  if (said.attempt !== second || was !== 'Keying' || said.connection.id !== gmailAccount.id) {
     return still
   }
-  if (Predicate.isTagged(said, 'Dismissed'))
-    return { stand: 'Idle', moved: was !== 'Idle', says: [] }
-  if (was !== 'Keying' || said.connection.id !== gmailAccount.id) return still
   if (!ConnectionState.guards.Ready(said.connection.state)) {
     return { stand: 'Refused', moved: true, says: [] }
   }
