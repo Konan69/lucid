@@ -71,7 +71,11 @@ const gmail = ActionTarget.cases.Connection.make({
 })
 
 /** An Approval waiting on this Person, with whatever a test says differently about it. */
-const waitingOn = (id: string, action: Partial<Approval['action']> = {}): Approval => ({
+const waitingOn = (
+  id: string,
+  action: Partial<Approval['action']> = {},
+  askedOf: Approval['askedOf'] = me,
+): Approval => ({
   id: ApprovalId.make(id),
   threadId: ThreadId.make('thread'),
   runId: null,
@@ -83,15 +87,21 @@ const waitingOn = (id: string, action: Partial<Approval['action']> = {}): Approv
     ...action,
   },
   digest: `digest of ${id}`,
-  askedOf: me,
+  askedOf,
   state: ApprovalState.cases.Pending.make({ expiresAt: 10 }),
   createdAt: 1,
 })
 
 /** The same Approval once this Person has allowed it and it is being done. */
 const allowed = (approval: Approval): Approval => ({
-  ...approval,
+  id: approval.id,
+  threadId: approval.threadId,
+  runId: approval.runId,
+  action: approval.action,
+  digest: approval.digest,
+  askedOf: approval.askedOf,
   state: ApprovalState.cases.Executing.make({ decidedBy: me, decidedAt: 2 }),
+  createdAt: approval.createdAt,
 })
 
 const question: InputRequest = {
@@ -447,7 +457,7 @@ describe('an Approval and a question both waiting', () => {
   })
 
   it('does not show an Approval that waits on somebody else', () => {
-    const column = thread([{ ...waitingOn('one'), askedOf: bola }], [question])
+    const column = thread([waitingOn('one', {}, bola)], [question])
     expect(column.approval()).toBe(false)
     expect(column.question()).toBe(true)
   })
