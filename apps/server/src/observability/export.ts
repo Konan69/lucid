@@ -21,6 +21,7 @@ import * as OtlpSerialization from 'effect/observability/OtlpSerialization'
 import * as OtlpTracer from 'effect/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
+import { LiveAttribute, MovedAttribute, watchedNames } from '../live/tally.ts'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
 import {
@@ -221,6 +222,11 @@ const rulesOf = (): Rules => {
     [DROPPED_COUNT, integer(0, Number.MAX_SAFE_INTEGER)],
     [PAUSED_SIGNAL, oneOf(Signals)],
     [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],
+    // `live/tally.ts`: the name is one of the contract's `Watch…` tags and every other value a count.
+    [LiveAttribute.query, oneOf(watchedNames)],
+    ...[...Object.values(LiveAttribute), ...Object.values(MovedAttribute)]
+      .filter((key) => key !== LiveAttribute.query)
+      .map((key) => [key, integer(0, Number.MAX_SAFE_INTEGER)] as const),
     // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its
     // type from `error.name`, a string by the time it is here, so only a fixed name is let through.
     // Since `guard.ts` that name is the stand-in's, the type `failure.ts` took from the class.

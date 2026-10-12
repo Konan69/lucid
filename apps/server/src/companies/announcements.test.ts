@@ -131,7 +131,7 @@ const observing = Effect.fn('CompanyAnnouncements.observing')(function* <A, E, R
 ) {
   const first = yield* Deferred.make<void>()
   const values = yield* Queue.unbounded<A>()
-  const fiber = yield* watch(topics, load).pipe(
+  const fiber = yield* watch('Session', topics, load).pipe(
     Stream.runForEach((value) =>
       Queue.offer(values, value).pipe(Effect.andThen(Deferred.succeed(first, undefined))),
     ),

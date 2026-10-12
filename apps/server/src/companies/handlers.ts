@@ -67,7 +67,7 @@ export const companyHandlers = {
   Me: Effect.fn('Rpc.Me')(function* () {
     return yield* me(yield* requireActor())
   }),
-  WatchMe: () => live(me),
+  WatchMe: () => live('WatchMe', me),
   /**
    * A Company exists because a Person asked for one by name. Nothing else in the product creates
    * one: not signing up, not inviting someone, not sharing a Thread.
@@ -95,7 +95,7 @@ export const companyHandlers = {
   ListPeople: Effect.fn('Rpc.ListPeople')(function* () {
     return yield* people(yield* requireActor())
   }),
-  WatchPeople: () => live(people),
+  WatchPeople: () => live('WatchPeople', people),
   /** The store commits its audit and notice before the external invitation notification. */
   InviteMember: Effect.fn('Rpc.InviteMember')(function* (request: InviteMembershipRequest) {
     const auth = yield* requirePerson()

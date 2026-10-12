@@ -19,6 +19,10 @@ export const Message = {
   fault: 'Client fault',
   /** `export.ts`: an export was cancelled, refused or timed out; its signal is paused a minute. */
   dropped: 'Telemetry batches dropped',
+  /** `live/tally.ts`: what one live query did in the last minute. */
+  live: 'Live query counted',
+  /** `live/tally.ts`: how many change notifications this process heard in the last minute. */
+  moved: 'Changes counted',
 } as const
 export type Message = (typeof Message)[keyof typeof Message]
 

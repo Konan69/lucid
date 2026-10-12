@@ -48,6 +48,7 @@ import {
   PAUSE_MILLIS,
 } from './export.ts'
 import { observeFailures } from './failure.ts'
+import { LiveTally, makeTally, report } from '../live/tally.ts'
 import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
@@ -483,6 +484,38 @@ it.effect('exports a typed failure with its tag, as expected, at its boundary', 
           'deployment.environment.name': 'production',
         })
       expect(new Set(scopes)).toEqual(new Set(['vivid-server']))
+    }),
+  ),
+)
+
+it.effect('exports what a live query was counted doing, and how often the bus moved', () =>
+  withReceiver(
+    Effect.gen(function* () {
+      const tally = makeTally()
+      tally.opened('WatchThreads')
+      tally.loaded('WatchThreads', 12, Exit.succeed('answer'))
+      tally.sent('WatchThreads')
+      tally.moved('person')
+      const { lines } = yield* exported(report().pipe(Effect.provideService(LiveTally, tally)))
+
+      const query = lines.find((entry) => entry.body.stringValue === Message.live)
+      expect(query === undefined ? {} : valuesOf(query.attributes)).toEqual({
+        'vivid.live.query': 'WatchThreads',
+        'vivid.live.open': 1,
+        'vivid.live.loads': 1,
+        'vivid.live.sent': 1,
+        'vivid.live.overtaken': 0,
+        'vivid.live.failed': 0,
+        'vivid.live.load_ms': 12,
+        'vivid.live.slowest_ms': 12,
+      })
+      const bus = lines.find((entry) => entry.body.stringValue === Message.moved)
+      expect(bus === undefined ? {} : valuesOf(bus.attributes)).toEqual({
+        'vivid.changes.person': 1,
+        'vivid.changes.company': 0,
+        'vivid.changes.thread': 0,
+        'vivid.changes.everything': 0,
+      })
     }),
   ),
 )

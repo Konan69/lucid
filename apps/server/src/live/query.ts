@@ -1,5 +1,6 @@
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
 import { Forbidden, type PersonId, type SessionId } from '@vivid/contracts'
@@ -8,6 +9,7 @@ import type { Actor } from '../auth/access.ts'
 import { sessionExpiry, sessionWorkspace } from '../auth/session.ts'
 import { untraced } from '../observability/quiet.ts'
 import { Changes, Topic, topicsOf } from './changes.ts'
+import { LiveTally, type Watched } from './tally.ts'
 
 /**
  * Turns a read into a live query: the current result now, then again each time it changes.
@@ -21,18 +23,37 @@ import { Changes, Topic, topicsOf } from './changes.ts'
  * that lands between the load and the subscription is not lost: it queues, and the loader runs
  * again. Bursts are coalesced for a few milliseconds so that a transaction touching ten rows
  * causes one reload, not ten. A reload that is overtaken by a newer change is abandoned.
+ *
+ * `name` is what the query is counted under (`live/tally.ts`): how many are open, how often each
+ * loads and for how long, and how many answers were sent. A reload has no span, so these counts
+ * are the only record of it.
  */
 export const watch = <A, E, R>(
+  name: Watched,
   topics: ReadonlyArray<Topic>,
   load: Effect.Effect<A, E, R>,
 ): Stream.Stream<A, E, R | Changes> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const changes = yield* Changes
+      const tally = yield* LiveTally
       const moved = yield* changes.subscribe(topics)
+      yield* Effect.acquireRelease(
+        Effect.sync(() => tally.opened(name)),
+        () => Effect.sync(() => tally.closed(name)),
+      )
+      // Timed around the whole load, so an abandoned or failed one is counted as what it was.
+      const counted = Effect.flatMap(Clock.currentTimeMillis, (started) =>
+        Effect.onExit(load, (exit: Exit.Exit<A, E>) =>
+          Effect.map(Clock.currentTimeMillis, (ended) =>
+            tally.loaded(name, ended - started, exit),
+          ),
+        ),
+      )
       return Stream.concat(Stream.make(undefined), Stream.debounce(moved, '20 millis')).pipe(
-        Stream.switchMap(() => Stream.fromEffect(load)),
+        Stream.switchMap(() => Stream.fromEffect(counted)),
         Stream.changes,
+        Stream.tap(() => Effect.sync(() => tally.sent(name))),
       )
     }),
   )
@@ -53,9 +74,13 @@ export const watch = <A, E, R>(
  * re-subscribes the inner query to the right Company's changes when the workspace moves. A session
  * that runs out fails the stream with `Unauthenticated` at that moment (`sessionRanOut`).
  *
- * `also` adds topics beyond the Actor's own, for a query about one Thread.
+ * `also` adds topics beyond the Actor's own, for a query about one Thread. `name` is the call
+ * being served, for the counts; the Actor's own reads are counted apart, as `Actor`. An answer the
+ * last `Stream.changes` here drops (the Actor changed and the data did not) is still counted as
+ * sent by the inner query, which only happens when a Person changes workspace.
  */
 export const live = <A, E, R>(
+  name: Watched,
   load: (actor: Actor) => Effect.Effect<A, E, R>,
   also: ReadonlyArray<Topic> = [],
 ) =>
@@ -79,8 +104,8 @@ export const live = <A, E, R>(
       // Signing out moves the Person's topic, so the Actor reload above already fails on it.
       // Running out writes nothing and moves no topic, so it needs the timer: without it a
       // subscription whose data never changes again would outlive its session indefinitely.
-      return watch([Topic.person(auth.person.id)], actor).pipe(
-        Stream.switchMap((seen) => watch([...topicsOf(seen), ...also], current)),
+      return watch('Actor', [Topic.person(auth.person.id)], actor).pipe(
+        Stream.switchMap((seen) => watch(name, [...topicsOf(seen), ...also], current)),
         Stream.changes,
         Stream.interruptWhen(sessionRanOut(auth.person.id, auth.sessionId)),
       )
@@ -116,6 +141,7 @@ export const sessionRanOut = (personId: PersonId, sessionId: SessionId) =>
  */
 export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {
   const removed = watch(
+    'Session',
     [Topic.person(personId)],
     sessionWorkspace(personId, sessionId).pipe(untraced),
   ).pipe(Stream.runDrain)

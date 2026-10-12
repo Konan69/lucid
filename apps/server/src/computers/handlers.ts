@@ -104,7 +104,7 @@ export const computerHandlers = {
     return yield* loadDevices(yield* requirePerson())
   }),
   /** Resolve session authority again on every change, as for the other live product lists. */
-  WatchDevices: () => live(loadDevices),
+  WatchDevices: () => live('WatchDevices', loadDevices),
   AllowDevice: Effect.fn('Rpc.AllowDevice')(function* ({ id }: { readonly id: DeviceId }) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).allow(auth.person.id, id)
@@ -153,7 +153,7 @@ export const computerHandlers = {
       Effect.gen(function* () {
         const auth = yield* requirePerson()
         yield* (yield* ComputerStore).watching(auth.person.id)
-        return live(load)
+        return live('WatchComputer', load)
       }),
     ),
   StartComputer: Effect.fn('Rpc.StartComputer')(function* () {

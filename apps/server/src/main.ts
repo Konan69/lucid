@@ -47,6 +47,7 @@ import { ingestionBackoff } from './library/ingestion.ts'
 import { libraryIngestionLayer } from './library/worker.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
+import { tallyLayer } from './live/tally.ts'
 import { embeddingsLayer } from './memory/embeddings.ts'
 import { memoryModelLayer } from './memory/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
@@ -111,6 +112,7 @@ const serverProgram = Effect.gen(function* () {
   const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
   const foundation = Layer.mergeAll(
     changesLayer,
+    tallyLayer,
     photonLayer,
     runtimeLayer,
     companyStoreLayer,

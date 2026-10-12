@@ -16,6 +16,7 @@ import * as Stream from 'effect/Stream'
 import { DatabaseFailure, type CompanyId, type PersonId, type ThreadId } from '@vivid/contracts'
 import { companyOf, type Actor } from '../auth/access.ts'
 import type { Database } from '../database/client.ts'
+import { LiveTally, type Moved } from './tally.ts'
 
 /**
  * What changed, coarsely: everything a Person owns, everything a Company holds, or one Thread.
@@ -130,6 +131,10 @@ const touches = (wanted: ReadonlySet<string>) => (moved: ReadonlyArray<string>) 
 /** The topic that touches every subscriber. Only the listener publishes it, when it reconnects. */
 const EVERYTHING = '*'
 
+/** The kind of owner a topic names, for the bus's counts (`live/tally.ts`). */
+const kinds: Record<string, Moved> = { p: 'person', c: 'company', t: 'thread', [EVERYTHING]: 'everything' }
+const kindOf = (topic: string) => Option.fromUndefinedOr(kinds[topic.slice(0, 1)])
+
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')
 
 /** Scoped listener acquisition confirms its first LISTEN before exposing a subscribable bus. */
@@ -137,11 +142,18 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
   const sql = yield* PgClient
   const hub = yield* PubSub.unbounded<ReadonlyArray<string>>()
   const ready = yield* Latch.make()
+  const tally = yield* LiveTally
+
+  /** Every notification this process hears is counted by the owners it names, then fanned out. */
+  const heard = (topics: ReadonlyArray<string>) =>
+    Effect.sync(() => {
+      for (const kind of Array.getSomes(topics.map(kindOf))) tally.moved(kind)
+    }).pipe(Effect.andThen(PubSub.publish(hub, topics)))
 
   /** Invalid external payloads are ignored; valid topics still fan out through the real hub. */
   const forward = (payload: string) =>
     decodeTopics(payload).pipe(
-      Effect.flatMap((topics) => PubSub.publish(hub, topics)),
+      Effect.flatMap(heard),
       Effect.catchTag('SchemaError', () =>
         Effect.logWarning('Ignored a malformed change notification'),
       ),
@@ -154,7 +166,7 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
    */
   const listen = Effect.gen(function* () {
     const notifications = yield* sql.listen(CHANNEL)
-    yield* PubSub.publish(hub, [EVERYTHING])
+    yield* heard([EVERYTHING])
     // PgConnection.ts:1833-1834 awaits LISTEN confirmation. Open after the reload broadcast so
     // a new subscriber cannot mistake startup's EVERYTHING for its first committed announcement.
     yield* ready.open

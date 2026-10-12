@@ -51,7 +51,7 @@ export const skillHandlers = {
     return yield* loadSkills(yield* requireActor())
   }),
   /** A workspace switch re-scopes this same loader through the shared live query authority. */
-  WatchSkills: () => live(loadSkills),
+  WatchSkills: () => live('WatchSkills', loadSkills),
   /** Summaries intentionally omit instructions until Vivid chooses a procedure. */
   ListSkillSummaries: Effect.fn('Rpc.ListSkillSummaries')(function* () {
     const { skills } = yield* loadSkills(yield* requireActor())

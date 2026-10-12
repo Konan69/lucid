@@ -128,7 +128,7 @@ export const routineHandlers = {
     return yield* loadRoutines(yield* requireActor())
   }),
   /** Live reads reuse the loader and follow the signed-in Person’s current workspace. */
-  WatchRoutines: () => live(loadRoutines),
+  WatchRoutines: () => live('WatchRoutines', loadRoutines),
   /** Creation validates and persists the trigger before publishing. */
   CreateRoutine: createRoutine,
   /** Wall-clock input is resolved with server-owned Settings, never a model-supplied epoch or zone. */

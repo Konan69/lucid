@@ -15,7 +15,7 @@ export const settingsHandlers = {
   GetSettings: Effect.fn('Rpc.GetSettings')(function* () {
     return yield* settings(yield* requireActor())
   }),
-  WatchSettings: () => live(settings),
+  WatchSettings: () => live('WatchSettings', settings),
   PatchSettings: Effect.fn('Rpc.PatchSettings')(function* (request: PatchSettingsRequest) {
     const auth = yield* requirePerson()
     const saved = yield* (yield* SettingsStore).patch(auth.person.id, request)

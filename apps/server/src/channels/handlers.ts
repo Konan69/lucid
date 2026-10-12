@@ -26,7 +26,7 @@ const personActor = Effect.fn('Channels.personActor')(function* () {
 })
 
 export const channelHandlers = {
-  WatchChannels: () => live(standings),
+  WatchChannels: () => live('WatchChannels', standings),
   /** Owner decision, 4 October 2026: testing with one Person; ownership proof deferred, so Connect emits Connected directly. */
   ConnectChannel: Effect.fn('Rpc.ConnectChannel')(function* (request: ConnectChannelRequest) {
     const link = yield* (yield* ChannelStore).connect(

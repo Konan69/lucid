@@ -236,6 +236,7 @@ const authorizedBody = (
         untraced,
       )
       const removed = watch(
+        'Session',
         thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],
         checked,
       ).pipe(Stream.runDrain)

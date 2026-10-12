@@ -12,7 +12,7 @@ export const projectHandlers = {
   ListProjects: Effect.fn('Rpc.ListProjects')(function* () {
     return yield* projects(yield* requireActor())
   }),
-  WatchProjects: () => live(projects),
+  WatchProjects: () => live('WatchProjects', projects),
   CreateProject: Effect.fn('Rpc.CreateProject')(function* (request: CreateProjectRequest) {
     const actor = yield* requireActor()
     return yield* (yield* ProjectStore).create(actor, request)

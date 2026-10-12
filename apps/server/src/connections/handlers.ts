@@ -44,7 +44,7 @@ export const connectionHandlers = {
   ListConnections: Effect.fn('Rpc.ListConnections')(function* () {
     return yield* load(yield* requireActor())
   }),
-  WatchConnections: () => live(load),
+  WatchConnections: () => live('WatchConnections', load),
   /** The public catalog has no workspace scope; searching still requires a signed-in Person. */
   FindServices: Effect.fn('Rpc.FindServices')(function* (request: FindServicesRequest) {
     yield* requirePerson()
