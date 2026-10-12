@@ -75,8 +75,8 @@ export interface Onward {
   /** Moving on from this question sends the answers. */
   readonly last: boolean
   /**
-   * The question offers options, so it is moved on from with the pill. One that offers none is
-   * answered by writing, and keeps the ordinary button.
+   * The question offers options, so words written under it are a message of their own. One
+   * that offers none is answered by writing: the words are its answer, and the pill sends them.
    */
   readonly offers: boolean
   /** The question that is up has an answer, and none is on its way: the Person may move on. */
@@ -112,11 +112,12 @@ export interface Onward {
  * reference's attachment button, dictation, model control and command popover are things
  * Vivid's composer does not have, and are not here.
  *
- * While a question from Vivid is up (`asked`) and nothing is written, the trailing end is T3
- * Code's compact footer in place of the one button (`Moving`): from the second question a way
- * back, and a pill that says "Next", or "Submit" on the last question. With words written the
- * ordinary button is back and sends them; what they mean then is the Thread's to decide
- * (`screen/Chat.tsx`, `reply`). While a banner is attached above it (`attached`), the composer
+ * While a question from Vivid is up (`asked`), the trailing end is T3 Code's compact footer in
+ * place of the one button (`Moving`): from the second question a way back, and a pill that says
+ * "Next", or "Submit" on the last question. Words written under a question that offers options
+ * bring the ordinary button back, and it sends them as a message; under a question answered by
+ * writing the pill stays, because the words are that question's answer (`screen/Chat.tsx`,
+ * `reply`). While a banner is attached above it (`attached`), the composer
  * casts a soft shadow up onto it (`Seam`).
  *
  * It rests on the home indicator's inset when the keyboard is down and directly on the keyboard
@@ -170,10 +171,13 @@ export function Composer({
   // Words that cannot be sent yet (a send still on its way) leave the button dimmed, not a way to
   // stop: it must not change what it does under words the Person means to send.
   const sends = !empty && !disabled
-  // Nothing written while a question is up: the trailing end moves on from the question. That
-  // comes before stopping, because a Run that asked is waiting on the Person, not working.
-  const moving = empty ? asked : undefined
-  const stops = working && empty && moving === undefined
+  // While a question is up the trailing end moves on from it: with nothing written, and also
+  // with words when the question is answered by writing, since the words are then its answer.
+  // That comes before stopping, because a Run that asked is waiting on the Person, not working.
+  // Until 12 October 2026 a question answered by writing kept the round arrow, so the last
+  // question never said "Submit" (seen on the emulator).
+  const moving = movingOf(Option.fromUndefinedOr(asked), empty)
+  const stops = working && empty && Option.isNone(moving)
   const idle = !sends && !stops
 
   function act() {
@@ -250,7 +254,7 @@ export function Composer({
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
             </View>
-            <Trailing moving={Option.fromUndefinedOr(moving)}>
+            <Trailing moving={moving} empty={empty} sends={sends} onSend={act}>
               <Act working={working} stops={stops} idle={idle} onPress={act} />
             </Trailing>
           </View>
@@ -258,6 +262,16 @@ export function Composer({
       </View>
     </View>
   )
+}
+
+/**
+ * The question the composer's trailing end moves on from, when it does: any question while
+ * nothing is written, and one answered by writing while there are words too, since those words
+ * are its answer. Words under a question that offers options are a message of their own, and
+ * the ordinary button sends them.
+ */
+function movingOf(asked: Option.Option<Onward>, empty: boolean): Option.Option<Onward> {
+  return Option.filter(asked, (question) => empty || !question.offers)
 }
 
 /**
@@ -289,22 +303,31 @@ function Seam() {
 
 /**
  * The composer's trailing end. Ordinarily it is the one button (`children`). While a question
- * is up and nothing is written (`moving`) it is the way on from the question: for one that
- * offers options the pill (`Moving`), and for one answered by writing the one button still,
- * dimmed until there are words, after the way back.
+ * is being moved on from (`moving`) it is the pill: with nothing written it moves on with what
+ * was picked, and with words under a question answered by writing it sends them as its answer.
  */
-function Trailing({ moving, children }: { moving: Option.Option<Onward>; children: ReactNode }) {
+function Trailing({
+  moving,
+  empty,
+  sends,
+  onSend,
+  children,
+}: {
+  moving: Option.Option<Onward>
+  empty: boolean
+  sends: boolean
+  onSend: () => void
+  children: ReactNode
+}) {
   return Option.match(moving, {
     onNone: () => children,
-    onSome: (asked) =>
-      asked.offers ? (
-        <Moving asked={asked} />
-      ) : (
-        <>
-          <Back asked={asked} />
-          {children}
-        </>
-      ),
+    onSome: (asked) => (
+      <Moving
+        asked={asked}
+        ready={empty ? asked.ready : sends}
+        onPress={empty ? asked.onNext : onSend}
+      />
+    ),
   })
 }
 
@@ -349,8 +372,8 @@ function Back({ asked }: { asked: Onward }) {
 }
 
 /**
- * What takes the one button's place while a question that offers options is up and nothing is
- * written: the way back (`Back`), and a pill that moves on. The pill says what it does in a
+ * What takes the one button's place while a question is being moved on from: the way back
+ * (`Back`), and a pill that moves on (`onPress`) once it may (`ready`). The pill says what it does in a
  * word, T3 Code's compact labels (`formatPendingPrimaryActionLabel`): "Next", or "Submit" on
  * the last question, where moving on sends every answer. An arrow on a round button was the
  * mark that sends a message, and was not read as the way to the next question.
@@ -358,7 +381,7 @@ function Back({ asked }: { asked: Onward }) {
  * Until the question has an answer the pill is a quiet shape with muted words, not a faded
  * accent: a neutral one reads as "pick something first". It is 34 points tall and pressed 44.
  */
-function Moving({ asked }: { asked: Onward }) {
+function Moving({ asked, ready, onPress }: { asked: Onward; ready: boolean; onPress: () => void }) {
   const { colors: c } = useTheme()
   const label = asked.last ? 'Submit' : 'Next'
   return (
@@ -375,8 +398,8 @@ function Moving({ asked }: { asked: Onward }) {
         <Press
           accessibilityRole="button"
           accessibilityLabel={asked.last ? 'Submit answers' : 'Next question'}
-          accessibilityState={{ disabled: !asked.ready }}
-          disabled={!asked.ready}
+          accessibilityState={{ disabled: !ready }}
+          disabled={!ready}
           depth={0.96}
           hitSlop={{
             top: (TARGET - PILL.height) / 2,
@@ -384,20 +407,20 @@ function Moving({ asked }: { asked: Onward }) {
             left: PILL.gap / 2,
             right: TRAILING,
           }}
-          onPress={asked.onNext}
+          onPress={onPress}
           style={({ pressed }) => ({
             height: PILL.height,
             paddingHorizontal: PILL.side,
             borderRadius: PILL.height / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: asked.ready ? c.primary : c['wash-pressed'],
+            backgroundColor: ready ? c.primary : c['wash-pressed'],
             opacity: pressed ? 0.85 : 1,
           })}
         >
           <Label
             size="footnote"
-            tone={asked.ready ? 'ink-on-accent' : 'ink-4'}
+            tone={ready ? 'ink-on-accent' : 'ink-4'}
             numberOfLines={1}
             style={{ fontWeight: '600' }}
           >
