@@ -1289,6 +1289,15 @@ function Transcript(props: MessagesProps) {
             props.onListed()
           }}
           onScroll={follow}
+          // The room under the conversation grows on the UI thread, and the scroller is put on
+          // its new end in that same frame (`useEndRoom`). The platform holds that scroll to the
+          // content's height as it was laid out last, a frame ago. While the banner glides the
+          // next frame makes it up; when the whole rise lands in one frame (a Thread opened
+          // under load: measured on Android on 12 October 2026, the room went from 0 to 193
+          // points in one step) nothing came after it, and the newest words stayed behind the
+          // banner. The content's own size changing is the one event that always follows the
+          // last growth, so the scroller is put back on its end from it as well.
+          onContentSizeChange={settle}
           // A finger on the conversation takes over from a return that was under way.
           onScrollBeginDrag={() => {
             returning.current = false
