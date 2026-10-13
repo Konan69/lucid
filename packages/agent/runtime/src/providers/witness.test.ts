@@ -1,3 +1,4 @@
+import * as NodeUtil from 'node:util'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Predicate, Schema } from 'effect'
@@ -5,6 +6,8 @@ import { normalizeContext } from '@earendil-works/pi-ai'
 // Load Pi before fake time: these tests control retry waits, not dynamic import scheduling.
 import '@earendil-works/pi-ai/api/openai-completions'
 import { provider } from './opencode.ts'
+import { completions, requestBudget } from './budget.ts'
+import { witness } from './witness.ts'
 import { provider as gateway } from './explabs.ts'
 
 const model = provider.getModels().find((candidate) => candidate.id === 'glm-5.3-flash')
@@ -26,13 +29,13 @@ const Line = Schema.fromJsonString(
         tools: Schema.Int,
         stream: Schema.Union([Schema.Boolean, Schema.Literal('unset')]),
       }),
-      Schema.TaggedStruct('Undecoded', { bytes: Schema.Int }),
+      Schema.TaggedStruct('Undecoded', { bytes: Schema.optionalKey(Schema.Int) }),
     ]),
   }),
 )
 const decodeLine = Schema.decodeUnknownSync(Line)
 
-/** Observe actual Effect warning output; the receipt acknowledges the refusal before time moves. */
+/** Observe actual Effect output; the receipt acknowledges the refusal before time moves. */
 function capture() {
   const lines: Array<typeof Line.Type> = []
   const first = Deferred.makeUnsafe<void>()
@@ -96,6 +99,13 @@ describe('provider refusal witnesses', () => {
         expect(fetch).toHaveBeenCalledTimes(2)
         expect(sent).toHaveLength(2)
         expect(sent[1]).toEqual(sent[0])
+        expect(fetch.mock.calls[1]).toEqual(fetch.mock.calls[0])
+        expect(captured.log.mock.calls[0]).toEqual(
+          expect.arrayContaining([expect.stringContaining('WARN')]),
+        )
+        expect(captured.log.mock.calls[1]).toEqual(
+          expect.arrayContaining([expect.stringContaining('INFO')]),
+        )
         expect(captured.lines.map(({ attempt, status }) => ({ attempt, status }))).toEqual([
           { attempt: 1, status: 400 },
           { attempt: 2, status: 200 },
@@ -281,30 +291,208 @@ describe('provider refusal witnesses', () => {
       }),
   )
 
-  it.effect('records explicit tool error flags when the request payload actually has them', () =>
+  it.effect(
+    'keeps SDK timeouts identical to bare completions when the transport never answers',
+    () =>
+      Effect.gen(function* () {
+        for (const streams of [completions, provider]) {
+          const started = Deferred.makeUnsafe<void>()
+          const fetch = vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
+            // The bare adapter relies on its transport rejecting with the platform abort reason.
+            const signal = new Request(input, init).signal
+            const wait = NodeUtil.promisify((done: (error: Error) => void) => {
+              signal.addEventListener('abort', () => done(signal.reason), { once: true })
+            })
+            const answer = wait().then(completion)
+            Deferred.doneUnsafe(started, Effect.void)
+            return answer
+          })
+          const result = streams
+            .streamSimple(model, context, {
+              apiKey: 'test',
+              fetch,
+              timeoutMs: 100,
+              ...requestBudget,
+            })
+            .result()
+          yield* Deferred.await(started)
+          yield* Effect.promise(() => vi.runAllTimersAsync())
+          const answer = yield* Effect.promise(() => result)
+          expect(answer.stopReason).toBe('error')
+          expect(answer.errorMessage).toBe('Request timed out.')
+          expect(fetch).toHaveBeenCalledTimes(3)
+        }
+      }),
+  )
+
+  it.effect('returns the SDK timeout even when a custom transport ignores abort', () =>
     Effect.gen(function* () {
-      const captured = capture()
-      const fetch = vi.fn(() => Promise.resolve(new Response('refused', { status: 400 })))
+      const started = Deferred.makeUnsafe<void>()
+      const fetch = vi.fn(() => {
+        Deferred.doneUnsafe(started, Effect.void)
+        // The HTTP peer never answers; the witness must independently observe SDK interruption.
+        return new ReadableStream<Response>().getReader().read().then(completion)
+      })
       const result = provider
         .streamSimple(model, context, {
           apiKey: 'test',
           fetch,
-          onPayload: () => ({
-            model: model.id,
-            stream: true,
-            messages: [
-              { role: 'system', content: 'private' },
-              { role: 'user', content: 'private' },
-              { role: 'assistant', tool_calls: [{}, {}] },
-              { role: 'tool', isError: false },
-              { role: 'tool', is_error: true },
-              { role: 'user', content: 'private' },
-            ],
-          }),
+          timeoutMs: 100,
         })
         .result()
-      yield* Effect.promise(() => result)
-      expect(captured.lines[0]).toMatchObject({ request: { roles: 's u a(2) t t! u', tools: 0 } })
+      yield* Deferred.await(started)
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).errorMessage).toBe('Request timed out.')
+      expect(fetch).toHaveBeenCalledTimes(3)
+    }),
+  )
+
+  it.effect('hands a replayed 500 back to Pi before a third HTTP request succeeds', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 400 }))
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(completion())
+      const result = provider.streamSimple(model, context, { apiKey: 'test', fetch }).result()
+      yield* captured.first
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).stopReason).toBe('stop')
+      expect(fetch).toHaveBeenCalledTimes(3)
+      expect(captured.lines.map(({ attempt, status }) => ({ attempt, status }))).toEqual([
+        { attempt: 1, status: 400 },
+        { attempt: 2, status: 500 },
+      ])
+    }),
+  )
+
+  it.effect('bounds alternating empty 400 and 500 responses at six HTTP requests', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      let attempts = 0
+      const fetch = vi.fn(() => {
+        attempts++
+        return Promise.resolve(new Response(null, { status: attempts % 2 === 1 ? 400 : 500 }))
+      })
+      const result = provider.streamSimple(model, context, { apiKey: 'test', fetch }).result()
+      yield* captured.first
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).stopReason).toBe('error')
+      expect(fetch).toHaveBeenCalledTimes(6)
+      expect(captured.lines.map(({ attempt }) => attempt)).toEqual([1, 2, 1, 2, 1, 2])
+    }),
+  )
+
+  it.effect('scrubs every echoed bearer value before bounding the witness excerpt', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const key = 'sk-echo-private-123'
+      const body = `Bearer ${key}: ${key} ${'x'.repeat(2000)}${key}`
+      const fetch = vi.fn(() => Promise.resolve(new Response(body, { status: 401 })))
+      const result = provider.streamSimple(model, context, { apiKey: key, fetch }).result()
+      const answer = yield* Effect.promise(() => result)
+      expect(answer.stopReason).toBe('error')
+      expect(answer.errorMessage).toContain(key)
+      expect(captured.lines[0]).toMatchObject({
+        body: body.replaceAll(key, '[redacted]').slice(0, 2048),
+      })
+      expect(JSON.stringify(captured.log.mock.calls)).not.toContain(key)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }),
+  )
+
+  it.effect('replays a whitespace-only 400 once', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(' \t\r\n', { status: 400 }))
+        .mockResolvedValueOnce(completion())
+      const result = provider.streamSimple(model, context, { apiKey: 'test', fetch }).result()
+      yield* captured.first
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).stopReason).toBe('stop')
+      expect(fetch).toHaveBeenCalledTimes(2)
+    }),
+  )
+
+  it.effect('replays a consumed Request stream from the clone saved before the first send', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const body = JSON.stringify({ model: model.id, messages: [], stream: true })
+      const input = new Request(model.baseUrl, { method: 'POST', body })
+      const sent: Array<string> = []
+      const fetch = vi.fn((sentInput: string | URL | Request, init: RequestInit = {}) =>
+        new Request(sentInput, init).text().then((text) => {
+          sent.push(text)
+          return sent.length === 1 ? new Response(null, { status: 400 }) : completion()
+        }),
+      )
+      const init = { headers: { 'x-request-id': 'preserved' } }
+      const result = witness(fetch)(input, init)
+      yield* captured.first
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).status).toBe(200)
+      expect(input.bodyUsed).toBe(true)
+      expect(fetch.mock.calls[0]).toEqual([input, init])
+      expect(sent).toEqual([body, body])
+    }),
+  )
+
+  it.effect('honors an init that clears a Request’s inherited abort signal', () =>
+    Effect.gen(function* () {
+      const controller = new AbortController()
+      const input = new Request(model.baseUrl, { signal: controller.signal })
+      controller.abort()
+      const response = completion()
+      const fetch = vi.fn(() => Promise.resolve(response))
+      expect(yield* Effect.promise(() => witness(fetch)(input, { signal: null }))).toBe(response)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }),
+  )
+
+  it.effect.each([400, 500])(
+    'returns the real %i when the request stream cannot be inspected',
+    (status) =>
+      Effect.gen(function* () {
+        const captured = capture()
+        const input = new Request(model.baseUrl, {
+          method: 'POST',
+          body: 'unreadable',
+          headers: { authorization: 'Bearer sk-unreadable-private' },
+        })
+        yield* Effect.promise(() => input.text())
+        const response = new Response('real refusal sk-unreadable-private', { status })
+        const fetch = vi.fn(() => Promise.resolve(response))
+        expect(yield* Effect.promise(() => witness(fetch)(input))).toBe(response)
+        expect(yield* Effect.promise(() => response.text())).toBe(
+          'real refusal sk-unreadable-private',
+        )
+        expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Undecoded'])
+        expect(captured.lines.map(({ request }) => Object.hasOwn(request, 'bytes'))).toEqual([
+          false,
+        ])
+        expect(fetch).toHaveBeenCalledTimes(1)
+        expect(JSON.stringify(captured.log.mock.calls)).not.toContain('sk-unreadable-private')
+      }),
+  )
+
+  it.effect('does not replace a response when reading the request clone fails', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error('unreadable'))
+        },
+      })
+      const init = { method: 'POST', body, duplex: 'half' } as const
+      const input = new Request(model.baseUrl, init)
+      const response = new Response('real refusal', { status: 400 })
+      const fetch = vi.fn(() => Promise.resolve(response))
+      expect(yield* Effect.promise(() => witness(fetch)(input))).toBe(response)
+      expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Undecoded'])
+      expect(captured.lines.map(({ request }) => Object.hasOwn(request, 'bytes'))).toEqual([false])
     }),
   )
 

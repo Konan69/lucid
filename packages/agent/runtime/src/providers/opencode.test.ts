@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, vi } from 'vitest'
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Predicate } from 'effect'
 import { normalizeContext } from '@earendil-works/pi-ai'
 // Preload the real adapter so fake time controls retry timers rather than module loading.
 import '@earendil-works/pi-ai/api/openai-completions'
@@ -19,6 +19,13 @@ const completion = () =>
       'data: [DONE]\n\n',
     { headers: { 'content-type': 'text/event-stream' } },
   )
+
+/** Match the SDK's original fetch address without hiding changes to the init argument. */
+const addressOf = (input: string | URL | Request) => {
+  if (Predicate.isString(input)) return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -89,8 +96,7 @@ describe('production provider request retries', () => {
     Effect.gen(function* () {
       const sent: Array<{ readonly address: string; readonly headers: Headers }> = []
       const fetch = vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
-        const request = new Request(input, init)
-        sent.push({ address: request.url, headers: request.headers })
+        sent.push({ address: addressOf(input), headers: new Headers(init.headers) })
         return Promise.resolve(completion())
       })
       const result = provider

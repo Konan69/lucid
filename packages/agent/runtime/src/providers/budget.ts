@@ -15,7 +15,9 @@ export const completions = openAICompletionsApi()
  * `witness.ts` separately replays one empty HTTP 400; Pi's budget still owns every other status.
  * This adapter never replays a stream after assistant content or a tool delta. Flue separately
  * retries some failed turns up to three times, without a public content guard or retry option:
- * those errors can therefore make up to twelve HTTP requests and replay partial output.
+ * each of Pi's three attempts can send an empty 400 followed by a retryable failure (six HTTP
+ * requests per Pi request). Four Flue turn attempts can therefore make twenty-four HTTP
+ * requests and replay partial output.
  */
 export const requestBudget = { maxRetries: 2, maxRetryDelayMs: 2_000 }
 
