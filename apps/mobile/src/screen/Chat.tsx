@@ -19,6 +19,8 @@ import {
   approvalUp,
   asking as model,
   draftPlace,
+  lasting,
+  QUIET_MS,
   readingOf,
   streamSaid,
   titleFromMessage,
@@ -27,7 +29,7 @@ import {
 } from '@vivid/state'
 import { Option, Result, type Array as Arr } from 'effect'
 import { randomUUID } from 'expo-crypto'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import Animated, {
@@ -747,7 +749,7 @@ function Conversation({
   const trouble = troubleOf({
     lost,
     unsent: sending.unsent,
-    cut: useCut(agent) && Option.isNone(ended),
+    cut: useCut(agent),
     onFirst: () => void again(firstWay(data), front.firsts, id),
     onSay: (words) => void speak(words),
     onOpen: () => agent.refresh(),
@@ -997,12 +999,18 @@ const endedOf = (
  * Whether the conversation's stream is broken in a way worth saying. A stream Flue is already
  * reopening is not said while the app's own socket still reaches the server (`streamSaid`).
  */
-const useCut = (agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error'>) => {
+const useCut = (
+  agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error' | 'settlements'>,
+) => {
   const link = useAtomValue(useLiveData().link)
-  return streamSaid(
-    readingOf({ status: agent.status, broken: agent.error !== undefined }),
-    link === 'lost',
-  )
+  const reading = readingOf({
+    status: agent.status,
+    broken: agent.error !== undefined,
+    settledBadly: agent.settlements.slice(-1).some((settled) => settled.outcome === 'failed'),
+  })
+  const held = useMemo(() => lasting(reading === 'CatchingUp', QUIET_MS), [reading])
+  const late = useSyncExternalStore(held.subscribe, held.read, held.read)
+  return streamSaid(reading, { socketLost: link === 'lost', late })
 }
 
 /**
@@ -1022,11 +1030,7 @@ const UNREACHED = 'Vivid can’t be reached right now.'
 const troubleOf = (at: {
   readonly lost: Option.Option<Extract<First, { readonly _tag: 'Unsent' }>>
   readonly unsent: Option.Option<Unsent>
-  /**
-   * The conversation's stream is broken in a way worth saying, and no Run ended badly: that is
-   * said by the Run's own ending, from the server's record of it, and the stream reports the
-   * same failure a second time in Flue's words.
-   */
+  /** The conversation's stream is broken in a way worth saying (`useCut`). */
   readonly cut: boolean
   readonly onFirst: () => void
   readonly onSay: (words: string) => void

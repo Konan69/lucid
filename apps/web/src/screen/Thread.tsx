@@ -5,6 +5,8 @@ import {
   asking,
   draftPlace,
   inThread,
+  lasting,
+  QUIET_MS,
   readingOf,
   streamSaid,
   titleFromMessage,
@@ -13,7 +15,7 @@ import {
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
 import { conversationOf, heardIn } from '../data/conversation'
@@ -614,12 +616,18 @@ const Busy = Schema.Struct({
  * reopening is not said while this page's own socket still reaches the server: a deploy or a
  * sleeping laptop cuts it for a second and it resumes from where it stopped.
  */
-const useCut = (agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error'>) => {
+const useCut = (
+  agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error' | 'settlements'>,
+) => {
   const reach = useAtomValue(link.atom)
-  return streamSaid(
-    readingOf({ status: agent.status, broken: agent.error !== undefined }),
-    reach === 'lost',
-  )
+  const reading = readingOf({
+    status: agent.status,
+    broken: agent.error !== undefined,
+    settledBadly: agent.settlements.slice(-1).some((settled) => settled.outcome === 'failed'),
+  })
+  const held = useMemo(() => lasting(reading === 'CatchingUp', QUIET_MS), [reading])
+  const late = useSyncExternalStore(held.subscribe, held.read, held.read)
+  return streamSaid(reading, { socketLost: reach === 'lost', late })
 }
 
 const whyNot = (refusal: Parameters<typeof readBusy>[0]) =>
