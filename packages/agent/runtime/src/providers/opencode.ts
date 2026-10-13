@@ -6,7 +6,7 @@ import {
 } from '@earendil-works/pi-ai'
 import { Option } from 'effect'
 import { setProvider } from '@flue/runtime'
-import { completions, requestBudget } from './budget.ts'
+import { budgeted } from './budget.ts'
 
 /**
  * Vivid's model provider: OpenCode Go, the subscription gateway to open models
@@ -54,7 +54,7 @@ export const DEFAULT_MODEL = 'opencode-go/glm-5.3-flash'
 type Sessioned = Pick<StreamOptions, 'headers' | 'sessionId'>
 
 /**
- * A request's options with the shared budget (`budget.ts`) and the session it belongs to.
+ * A request's options with the session it belongs to; `budget.ts` owns the budget and witness.
  *
  * Go asks for a stable session id in `x-opencode-session` (opencode sends its own session id:
  * `refs/opencode/packages/opencode/src/session/llm/request.ts`). Pi hands a provider the id of
@@ -63,10 +63,9 @@ type Sessioned = Pick<StreamOptions, 'headers' | 'sessionId'>
  */
 const forSession = <Given extends Sessioned>(options: Option.Option<Given>) =>
   Option.match(options, {
-    onNone: () => requestBudget,
+    onNone: () => ({}),
     onSome: (given) => ({
       ...given,
-      ...requestBudget,
       headers: Option.match(Option.fromUndefinedOr(given.sessionId), {
         onNone: () => ({ ...given.headers }),
         onSome: (session) => ({ ...given.headers, 'x-opencode-session': session }),
@@ -76,9 +75,9 @@ const forSession = <Given extends Sessioned>(options: Option.Option<Given>) =>
 
 const requests: ProviderStreams = {
   stream: (model, context, options) =>
-    completions.stream(model, context, forSession(Option.fromUndefinedOr(options))),
+    budgeted.stream(model, context, forSession(Option.fromUndefinedOr(options))),
   streamSimple: (model, context, options) =>
-    completions.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
+    budgeted.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
 }
 
 /** The same production provider is exercised through its public streaming seam in tests. */

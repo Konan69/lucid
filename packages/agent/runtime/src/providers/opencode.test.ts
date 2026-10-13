@@ -20,9 +20,6 @@ const completion = () =>
     { headers: { 'content-type': 'text/event-stream' } },
   )
 
-/** Where a request goes, in whichever of fetch's three forms the client named it. */
-const addressOf = (input: string | URL | Request) => new Request(input).url
-
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
@@ -92,7 +89,8 @@ describe('production provider request retries', () => {
     Effect.gen(function* () {
       const sent: Array<{ readonly address: string; readonly headers: Headers }> = []
       const fetch = vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
-        sent.push({ address: addressOf(input), headers: new Headers(init.headers) })
+        const request = new Request(input, init)
+        sent.push({ address: request.url, headers: request.headers })
         return Promise.resolve(completion())
       })
       const result = provider
