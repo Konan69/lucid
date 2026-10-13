@@ -10,8 +10,7 @@ import { useReducedMotion } from 'react-native-reanimated'
 const frames: Frames = {
   now: () => performance.now(),
   next: (step) => {
-    const frame = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(frame)
+    requestAnimationFrame(step)
   },
   instant: () => AppState.currentState !== 'active',
 }
