@@ -3,8 +3,8 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.3.6",
-    "runtimeVersion": "0.3.6",
+    "version": "0.3.7",
+    "runtimeVersion": "0.3.7",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
