@@ -38,5 +38,10 @@
     "file": "apps/server/src/channels/photon.ts",
     "classification": "third-party-adapter",
     "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
+  },
+  {
+    "file": "packages/agent/runtime/src/providers/witness.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
   }
 ]

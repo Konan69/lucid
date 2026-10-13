@@ -186,6 +186,7 @@ const send = Effect.fn('Provider.send')(function* (transport: FetchFunction, req
 export function witness(transport: FetchFunction): FetchFunction {
   return (input, init) => {
     const request = new Request(input, init)
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- This is the single Pi transport boundary, classified exactly by the Effect boundary audit.
     return Effect.runPromise(send(transport, request).pipe(Effect.result), {
       signal: request.signal,
     }).then(
