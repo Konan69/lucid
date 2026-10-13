@@ -262,7 +262,7 @@ function DayBand({
   const shown = folded ? threads.filter((thread) => thread.id === active) : threads
   return (
     <section>
-      <BandCaption name={name} folded={folded} count={threads.length} />
+      <BandCaption name={name} folded={folded} />
       <ul data-folds={folded ? 'folded' : 'open'} className="flex flex-col gap-px">
         {shown.map(row)}
       </ul>
@@ -606,14 +606,20 @@ function Caption({ label, count }: { label: string; count: number }) {
  * - The chevron is not drawn while the band is open and nobody is near it: a column of four
  *   chevrons down the list said "these fold" louder than the Threads said anything. It comes in
  *   under the pointer or the keyboard's focus, and on a screen that is touched, which has no
- *   pointer to come near with, it is always there. Folded, it stays and points across, with how
- *   many Threads are behind it at the far end where the rows keep their times.
+ *   pointer to come near with, it is always there. Folded, it stays and points across.
+ * - Every chevron is in one column at the far end of its line, where the rows keep their times.
+ *   Today's way to start a Thread sits just inside it. With the plus at the end and the chevron
+ *   beside it, today's chevron stood a step to the left of all the others.
+ * - The chevron and the plus are drawn alike: the same size, the same weight of line, the same
+ *   box. Two marks side by side that differ in either read as a mistake.
+ * - It says no number. The two lanes that need the Person count; a day does not.
  * - Only today's band has the way to start a Thread. It used to be on every caption, and under
- *   "Earlier" it read as adding a Thread to last month.
+ *   "Earlier" it read as adding a Thread to last month. It is a button beside the caption's own,
+ *   laid over it and not inside it, so there is never a button within a button.
  * - From the keyboard the band is open or folded at once (`instantly`): nothing done from the
  *   keys animates.
  */
-function BandCaption({ name, folded, count }: { name: Band; folded: boolean; count: number }) {
+function BandCaption({ name, folded }: { name: Band; folded: boolean }) {
   const toggle = (event: MouseEvent) => {
     if (byKeyboard(event)) instantly(() => toggleBand(name))
     else toggleBand(name)
@@ -622,32 +628,40 @@ function BandCaption({ name, folded, count }: { name: Band; folded: boolean; cou
     <div
       // A caption moves with the rows under it when the list above it grows or closes up.
       data-moves={`caption:${name}`}
-      className={cn('mt-1 flex items-center pe-1', CAPTION)}
+      className={cn('group/caption relative mt-1', CAPTION)}
     >
-      <h3 className="h-full min-w-0 flex-1">
+      <h3 className="size-full">
         <button
           type="button"
           aria-expanded={!folded}
           onClick={toggle}
-          className="group/caption flex size-full cursor-pointer items-center gap-1 rounded-row ps-2.5 pe-1.5 text-left text-meta font-title text-ink-3 transition-colors duration-(--dur-fast) select-none hover:text-ink focus-visible:-outline-offset-2"
+          className="flex size-full cursor-pointer items-center rounded-row ps-2.5 pe-1 text-left text-meta font-title text-ink-3 transition-colors duration-(--dur-fast) select-none group-hover/caption:text-ink focus-visible:-outline-offset-2"
         >
-          {name}
-          <ChevronRight
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          <span
             aria-hidden
             className={cn(
-              'size-3 shrink-0 text-ink-4 transition duration-(--dur-fast) ease-out group-hover/caption:text-ink-2',
+              'inline-flex size-6 shrink-0 items-center justify-center transition-opacity duration-(--dur-fast) ease-out',
               !folded &&
-                'rotate-90 opacity-0 group-hover/caption:opacity-100 group-focus-visible/caption:opacity-100 pointer-coarse:opacity-100',
+                'opacity-0 group-hover/caption:opacity-100 group-has-focus-visible/caption:opacity-100 pointer-coarse:opacity-100',
             )}
-          />
-          {folded && (
-            <span className="ms-auto font-meta tabular-nums">
-              <Count value={count} />
-            </span>
-          )}
+          >
+            <ChevronRight
+              strokeWidth={1.8}
+              className={cn(
+                'size-3.5 transition-transform duration-(--dur-fast) ease-out',
+                !folded && 'rotate-90',
+              )}
+            />
+          </span>
         </button>
       </h3>
-      {name === 'Today' && <NewThread />}
+      {/* One box in from the chevron's: the caption's 4px, then the chevron's 24. */}
+      {name === 'Today' && (
+        <span className="absolute inset-y-0 inset-e-7 flex items-center">
+          <NewThread />
+        </span>
+      )}
     </div>
   )
 }
