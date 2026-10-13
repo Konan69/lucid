@@ -10,8 +10,7 @@ import { still } from './motion'
 const frames: Frames = {
   now: () => performance.now(),
   next: (step) => {
-    const frame = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(frame)
+    requestAnimationFrame(step)
   },
   instant: () => document.hidden || still(),
 }

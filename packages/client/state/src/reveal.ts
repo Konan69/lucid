@@ -59,8 +59,8 @@ export const revealed = (text: string, shown: number): string => {
 /** What a surface supplies: its clock, its next frame, and when pacing has nobody to see it. */
 export interface Frames {
   readonly now: () => number
-  /** Runs `step` before the next paint and answers how to call that off. */
-  readonly next: (step: () => void) => () => void
+  /** Runs `step` once, before the next paint. */
+  readonly next: (step: () => void) => void
   /** The page is hidden, or the Person asked for less motion: words are shown at once. */
   readonly instant: () => boolean
 }
@@ -72,36 +72,51 @@ export interface Frames {
  * paced.
  *
  * `toward` is the store's subscription for a text of a given length; a screen makes it anew
- * when the length changes. Steps run only while the screen is subscribed and words are waiting,
- * so a finished reply schedules nothing, and nothing is changed during a render.
+ * when the length changes, which is at every lump. The steps are the reveal's own and outlive
+ * any one subscription: a subscription only says how far there is to go and who to tell. Twice
+ * a step that belonged to the subscription was lost (13 October 2026): first its clock started
+ * over at every lump, then, on a device that draws slower than lumps arrive, the frame it was
+ * waiting for was called off by the next lump before it ran. Both showed a reply frozen at its
+ * first words until it had finished arriving. Steps run only while someone is listening and
+ * words are waiting, so a finished reply schedules nothing, and nothing changes during a render.
  */
 export const revealer = (frames: Frames, start: number) => {
   let shown = start
-  // When the last step ran. It is the reveal's own, not a subscription's: a screen subscribes
-  // anew at every lump, and a clock that started over each time never reached the frame gate
-  // when lumps came faster than it (found in review, 13 October 2026: nothing was shown for as
-  // long as words arrived 20 ms apart).
+  let total = start
   let last = frames.now()
+  let waiting = false
+  const listening = new Set<() => void>()
+
+  const step = () => {
+    waiting = false
+    if (listening.size === 0 || shown >= total) return
+    const now = frames.now()
+    if (frames.instant() || now - last >= REVEAL.frameMs) {
+      shown = frames.instant() ? total : paced({ shown, total, elapsedMs: now - last })
+      last = now
+      for (const heard of listening) heard()
+    }
+    follow()
+  }
+
+  /** Asks for the next step when words are waiting and none is already asked for. */
+  const follow = () => {
+    if (waiting || shown >= total) return
+    waiting = true
+    frames.next(step)
+  }
+
   return {
     read: () => shown,
-    toward: (total: number) => (heard: () => void) => {
-      if (shown >= total) return () => undefined
+    toward: (length: number) => (heard: () => void) => {
       // After a pause with nothing waiting, time starts from now: the pause is not owed as words.
-      if (frames.now() - last > REVEAL.settleMs) last = frames.now()
-      let cancel: () => void = () => undefined
-      const step = () => {
-        const now = frames.now()
-        if (!frames.instant() && now - last < REVEAL.frameMs) {
-          cancel = frames.next(step)
-          return
-        }
-        shown = frames.instant() ? total : paced({ shown, total, elapsedMs: now - last })
-        last = now
-        heard()
-        if (shown < total) cancel = frames.next(step)
+      if (shown >= total && frames.now() - last > REVEAL.settleMs) last = frames.now()
+      total = length
+      listening.add(heard)
+      follow()
+      return () => {
+        listening.delete(heard)
       }
-      cancel = frames.next(step)
-      return () => cancel()
     },
   }
 }
