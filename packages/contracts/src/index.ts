@@ -42,4 +42,5 @@ export * from './identity.js'
 
 export * from './channels.js'
 export * from './drafts.js'
+export * from './egress.js'
 export * from './windows.js'

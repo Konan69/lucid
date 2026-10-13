@@ -177,6 +177,7 @@ import {
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { Appearance } from './appearance.js'
+import { EgressStatus } from './egress.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
   SkillReadOnly,
@@ -817,6 +818,12 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
+/**
+ * What egress is doing for the caller right now (`egress.ts`). Whether it is on is the Person's
+ * own setting (`Settings.egress`); this is what came of it.
+ */
+const GetEgress = Rpc.make('GetEgress', { ...call, success: EgressStatus })
+const WatchEgress = Rpc.make('WatchEgress', { ...live, success: EgressStatus })
 const StartComputer = Rpc.make('StartComputer', { ...call, success: ComputerResponse })
 const StopComputer = Rpc.make('StopComputer', { ...call, success: ComputerResponse })
 /** A Person taking the keyboard and pointer, or handing them back. Vivid cannot act while held. */
@@ -1071,6 +1078,8 @@ export const VividRpc = RpcGroup.make(
   PatchSkill,
   DeleteSkill,
   GetComputer,
+  GetEgress,
+  WatchEgress,
   GetComputerApps,
   WatchComputer,
   StartComputer,
