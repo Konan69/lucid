@@ -158,7 +158,12 @@ export function Composer({
   const [reported, setReported] = useState(ONE_LINE)
   // What the same words need when measured here (`Measure`), which is what an iPhone goes by.
   const [measured, setMeasured] = useState(ONE_LINE)
-  const needed = Math.max(reported, measured)
+  // One of the two, never the larger of both. An iPhone's editor reports the height it was given
+  // (see `Measure`), so once the composer had grown, that report stayed at the grown height and
+  // the larger of the two never came down again: a line added with Return stayed after the line
+  // was deleted and after the message was sent (seen on an iPhone, 13 October 2026). Android's
+  // editor reports what its text needs and nothing is measured there.
+  const needed = Platform.OS === 'ios' ? measured : reported
   const empty = value.trim().length === 0
   // With words written, the button sends them, while Vivid is working too: they join the answer
   // in progress at its next step (Flue's durability contract: a message that arrives while a
