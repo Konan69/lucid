@@ -1,4 +1,5 @@
 import { nativeThemes } from '@vivid/tokens/native'
+import { Predicate } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import { typeset } from './typeset'
 
@@ -10,8 +11,8 @@ const palettes = Object.values(nativeThemes).flatMap((family) => [family.dark, f
 /** Every colour a style names, at any depth: the values of its `color` and `...Color` keys. */
 const coloursIn = (style: object): ReadonlyArray<string> =>
   Object.entries(style).flatMap(([key, held]) => {
-    if (typeof held === 'object' && held !== null) return coloursIn(held)
-    return typeof held === 'string' && /color$/iu.test(key) ? [held] : []
+    if (Predicate.isObject(held)) return coloursIn(held)
+    return Predicate.isString(held) && /color$/iu.test(key) ? [held] : []
   })
 
 describe('typeset', () => {

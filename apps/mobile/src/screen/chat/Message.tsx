@@ -33,7 +33,7 @@ import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 import { Said, Voice } from './Said'
 import { useRevealed } from '../../ui/reveal'
-import { Arriving } from './Words'
+import { Reply } from './Words'
 
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
@@ -315,7 +315,7 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && <Arriving text={words.drawn} fresh={words.fresh} />}
+        {text.length > 0 && <Reply text={words.drawn} fresh={words.fresh} />}
         <Cards
           tools={tools}
           detail={detail}

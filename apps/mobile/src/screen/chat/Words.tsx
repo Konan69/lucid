@@ -57,6 +57,6 @@ export function Words({ text }: { text: string }) {
  * whether more is on its way (`useRevealed`). The two are one reading of one reply, so they are
  * taken together.
  */
-export function Arriving({ text, fresh }: { text: string; fresh: boolean }) {
+export function Reply({ text, fresh }: { text: string; fresh: boolean }) {
   return <Formatted text={text} fresh={fresh} />
 }
