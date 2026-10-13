@@ -10,6 +10,9 @@ FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
+# The phone app's Markdown renderer is a packed tarball beside its package.json (`file:deps/...`);
+# an install that reads the lockfile needs it there before any of `apps/mobile` is copied.
+COPY apps/mobile/deps apps/mobile/deps
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
