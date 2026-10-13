@@ -35,6 +35,7 @@ import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
+import { egressLayer } from './computers/egress/relay.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
@@ -157,9 +158,12 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
-  const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
-    Layer.provideMerge(conversation),
-  )
+  const accounts = Layer.mergeAll(
+    connectionStoreLayer,
+    toolEffectsLayer,
+    computerStoreLayer,
+    egressLayer,
+  ).pipe(Layer.provideMerge(conversation))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),

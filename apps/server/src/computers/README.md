@@ -107,6 +107,43 @@ running that the record did not have running counts its idle time from that mome
 A Person's Computer runs nothing but Vivid's product. Gates, builds and test suites run on the
 build machine; `scripts/gate/cloud.mjs` refuses a host that resolves to the Computer.
 
+## Egress
+
+A Person signs in to sites at home, and the Computer is in a datacentre; a sign-in used from a
+datacentre address is what sites revoke. With egress on (`Settings.egress`, off until the Person
+turns it on; issue 61 removes the choice), the Computer's browser sends its traffic out through
+the Person's own computer, so sites see the address they signed in from.
+
+```
+Computer's Chrome --proxy--> proxy.mjs on the Computer (loopback 8791)
+                                 | one stream per connection, loopback 8790
+server: SSH channel to 8790 <----+        (`ssh/link.ts` `tunnel`, `egress/relay.ts`)
+   |  WebSocket /api/computer/egress, the desktop app's own session (`egress/route.ts`)
+desktop app: resolves the name, dials the site, carries the bytes (`apps/desktop/src/main/egress.ts`)
+```
+
+The frames are Grok Bot's (`packages/contracts/src/egress.ts`). Its desktop app dials its
+machine's hosted port; a Computer here has no port a home network can be sure of reaching, so the
+desktop app dials the server and the server joins it to the Computer over the SSH connection it
+already holds. Nothing on the Computer listens beyond loopback.
+
+- The desktop app holds its socket open whenever someone is signed in. The server parks it until
+  egress is on and the Computer's record says running, then starts the proxy on the Computer
+  (`egress/guest.ts`, any number of times) and joins the two. It never wakes a Computer for this.
+- A browser's way out is decided when it starts: a step that has to start Chrome gives it the
+  proxy only when egress is on (`boat/browser.ts`). A Chrome that was already running, or one the
+  Person started from the launcher, goes out directly until it is started again.
+- The proxy dials from the Computer itself while no desktop app is joined, so the browser never
+  loses the internet because nobody is at home. Turning egress off un-joins; the same Chrome
+  then goes out directly.
+- The desktop app refuses a target inside its own networks (`apps/desktop/src/main/reserved.ts`)
+  after resolving the name, and dials the address it checked.
+- The status (`WatchEgress`) is this server process's reading of the sockets it holds; with more
+  than one server process, a Person whose desktop app is held by another reads "waiting" here.
+
+`egress/address.live.test.ts` (`VIVID_LIVE_EGRESS=1`) asks Vivid, on a real Computer with a real
+desktop app attached, for the address a page sees with egress on and with it off.
+
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and
 desktop writes pass the same Gate and takeover checks. Uncertain commands are never retried.

@@ -273,7 +273,7 @@ const listenWith = Effect.fn('DeviceTest.listenWith')(function* (
 
 /** Existing page tests keep their page-only desktop capability. */
 const listen = (who: Somebody, device: Device, installation: InstallationId) =>
-  listenWith(who, device, installation, { pages: true, apps: false })
+  listenWith(who, device, installation, { pages: true, apps: false, egress: false })
 
 /** Use the runtime-only RPC with the same Person/Thread authority as Browse. */
 const useWindow = (who: Somebody, threadId: ThreadId, action: WindowAction) =>
@@ -293,7 +293,11 @@ const native = Effect.fn('DeviceTest.native')(function* () {
   const who = yield* somebody(farFuture)
   const { device, installation } = yield* enrolled(who, 'Windows computer')
   yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
-  const link = yield* listenWith(who, device, installation, { pages: true, apps: true })
+  const link = yield* listenWith(who, device, installation, {
+    pages: true,
+    apps: true,
+    egress: false,
+  })
   const run = yield* working(who.person, who.person)
   return { who, device, installation, link, ...run }
 })
@@ -449,7 +453,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation,
-              ability: { pages: true, apps: false },
+              ability: { pages: true, apps: false, egress: false },
             })
             .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
           yield* Queue.take((yield* Bus).watching)
@@ -470,7 +474,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false },
+            ability: { pages: true, apps: false, egress: false },
           })
           .pipe(Stream.runDrain, signedInCompany, Effect.flip)
         expect(failure._tag).toBe('Forbidden')
@@ -487,7 +491,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(ada)
         const previous = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+          presence: DevicePresence.cases.Connected.make({
+            ability: { pages: true, apps: false, egress: false },
+          }),
         })
         const successor = yield* listen(ada, device, installation)
         expect(Exit.isSuccess(yield* Fiber.await(previous.ended))).toBe(true)
@@ -580,7 +586,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         })
         const link = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+          presence: DevicePresence.cases.Connected.make({
+            ability: { pages: true, apps: false, egress: false },
+          }),
         })
         yield* Fiber.interrupt(link.ended)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
@@ -696,7 +704,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation: presented,
-              ability: { pages: true, apps: false },
+              ability: { pages: true, apps: false, egress: false },
             })
             .pipe(
               Stream.runDrain,
@@ -755,7 +763,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false },
+            ability: { pages: true, apps: false, egress: false },
           })
           .pipe(Stream.runDrain, as(ada), Effect.flip)
         expect(again._tag).toBe('Forbidden')

@@ -1716,7 +1716,7 @@ layer(
           sessionId,
           device: device.id,
           installation,
-          ability: { pages: true, apps: true },
+          ability: { pages: true, apps: true, egress: false },
         })
         yield* stream.pipe(
           Stream.runForEach((request) =>

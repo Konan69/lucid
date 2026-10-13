@@ -23,6 +23,7 @@ import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { computerWindow } from './windows.ts'
 import { DeviceRegistry } from './device.ts'
+import { Egress } from './egress/relay.ts'
 import {
   ComputerStore,
   computerBrowse,
@@ -83,6 +84,11 @@ const admitted = Effect.fn('Computer.admitted')(function* (
  * A Person's call is always about their own Computer and their own computers: none of these takes
  * a Person to act on, and Vivid's tools get the same owner from the identity they act with.
  */
+/** Read again whenever anything of the Person's moves: the relay says so when the status does. */
+const egressStatus = Effect.fn('Computers.egressStatus')(function* (actor: Pick<Actor, 'person'>) {
+  return yield* (yield* Egress).status(actor.person.id)
+})
+
 export const computerHandlers = {
   /** Metadata uses the same authenticated owner as every other Computer operation. */
   GetComputerApps: Effect.fn('Rpc.GetComputerApps')(function* () {
@@ -158,6 +164,12 @@ export const computerHandlers = {
     const auth = yield* requirePerson()
     return yield* (yield* DeviceRegistry).answer(auth.person.id, auth.sessionId, input)
   }),
+  /** What egress is doing for the caller; whether it is on is their own setting. */
+  GetEgress: Effect.fn('Rpc.GetEgress')(function* () {
+    const auth = yield* requirePerson()
+    return yield* (yield* Egress).status(auth.person.id)
+  }),
+  WatchEgress: () => live('WatchEgress', [], egressStatus),
   GetComputer: Effect.fn('Rpc.GetComputer')(function* () {
     const auth = yield* requirePerson()
     const store = yield* ComputerStore
