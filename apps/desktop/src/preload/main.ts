@@ -7,6 +7,7 @@ import {
   REPORTING_ARGUMENT,
   BridgeRequest,
   BridgeResponse,
+  type ColorSchemePreference,
   type VividDesktopBridge,
   decodeBridgeResponse,
   encodeBridgeRequest,
@@ -73,6 +74,7 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     GoogleSignInBegun: answered,
     GoogleSignInEnded: answered,
     GoogleSignInCancelled: answered,
+    ColorSchemeShown: answered,
   })
 })
 
@@ -156,6 +158,15 @@ const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
   return yield* new UnexpectedBridgeResponse({})
 })
 
+/** Hands the shell the look the Person chose; there is nothing to read back. */
+const showColorScheme = Effect.fn('DesktopPreload.showColorScheme')(function* (
+  preference: ColorSchemePreference,
+) {
+  const response = yield* invoke(BridgeRequest.cases.ShowColorScheme.make({ preference }))
+  if (BridgeResponse.guards.ColorSchemeShown(response)) return undefined
+  return yield* new UnexpectedBridgeResponse({})
+})
+
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
   // Main says so by an argument on this process (`REPORTING_ARGUMENT`), read here once.
@@ -178,6 +189,7 @@ const bridge: VividDesktopBridge = {
     ended: () => Effect.runPromise(signInEnded()),
     cancel: () => Effect.runPromise(cancelSignIn()),
   },
+  colorScheme: { show: (preference) => Effect.runPromise(showColorScheme(preference)) },
 }
 // Preload limits the visible API; main independently checks the actual sender frame on every call.
 const chooserDocument =
@@ -192,5 +204,6 @@ contextBridge.exposeInMainWorld(
         pages: bridge.pages,
         device: bridge.device,
         signIn: bridge.signIn,
+        colorScheme: bridge.colorScheme,
       },
 )

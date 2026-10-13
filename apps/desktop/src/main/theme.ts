@@ -1,5 +1,5 @@
 import { nativeTheme } from 'electron'
-import { ColorSchemeState } from '../shared/bridge.ts'
+import { ColorSchemeState, type ColorSchemePreference } from '../shared/bridge.ts'
 import { inkFor, surfaceFor, type ThemeSurfaces } from './tokens.ts'
 
 /**
@@ -24,6 +24,18 @@ export class ColorSchemeController {
     })
   }
 
+  /**
+   * Adopt the look the Person chose in Vivid as the window's own scheme. Until the page says one,
+   * the scheme is the operating system's, and a Person who chose light on a dark system got dark
+   * window buttons on a black strip over a light page (seen on Windows, 13 October 2026).
+   * Electron then reports `updated`, so every window repaints through `onChange` as it does for
+   * a change made in the system. Setting the scheme it already has reports nothing.
+   *
+   * The mechanism is T3 Code's (`setSource` in `apps/desktop/src/electron/ElectronTheme.ts`).
+   */
+  show(preference: ColorSchemePreference): void {
+    nativeTheme.themeSource = preference
+  }
   /** Subscribe one window and return the exact cleanup operation for its close event. */
   onChange(listener: (state: ColorSchemeState) => void): () => void {
     this.listeners.add(listener)

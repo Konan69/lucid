@@ -5,6 +5,7 @@ import {
   BridgeRequest,
   BridgeResponse,
   InvalidBridgeMessage,
+  type ColorSchemePreference,
   decodeBridgeRequest,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
@@ -24,6 +25,8 @@ export interface BridgeHandlers {
   readonly getAppVersion: () => string
   /** This computer's link to Vivid: what it is now, and a nudge to ask the server again. */
   readonly device: { readonly state: () => DeviceLink; readonly wake: () => void }
+  /** Makes the look the Person chose the window's own scheme (`ColorSchemeController.show`). */
+  readonly showColorScheme: (preference: ColorSchemePreference) => void
   readonly settings: DesktopSettings['Service']
   readonly onServerChanged: (value: ServerSettings) => void
   readonly openExternal: (
@@ -110,6 +113,11 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
       Effect.sync(() => {
         handlers.device.wake()
         return BridgeResponse.cases.DeviceLink.make({ value: handlers.device.state() })
+      }),
+    ShowColorScheme: ({ preference }) =>
+      Effect.sync(() => {
+        handlers.showColorScheme(preference)
+        return BridgeResponse.cases.ColorSchemeShown.make({})
       }),
     Pages: ({ request: pagesRequest }) =>
       handlers.pages(pagesRequest).pipe(

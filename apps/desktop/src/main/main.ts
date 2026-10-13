@@ -455,6 +455,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
         }),
       getAppVersion: () => information.appVersion,
       device: computer,
+      showColorScheme: (preference) => colorScheme.show(preference),
       settings,
       openExternal: openExternalUrl,
       signIn,
