@@ -49,6 +49,8 @@ afterPack: ./scripts/packed.mjs
 win:
   target:
     - nsis
+  # The file says which build it is, with no spaces, as the phone build's does (`Vivid-0.3.3.ipa`).
+  artifactName: Vivid-Setup-${version}.${ext}
   extraResources:
     # Vivid's Computer: the vendored supervisor and its engine beside it (`vendor/computer/`).
     # Main starts both from `resources/native/computer` (src/main/computer.ts).

@@ -54,15 +54,23 @@ import { googleSignIn } from './signin.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import { startTelemetry } from './telemetry.ts'
 
-// First, before anything that can fail and before any scheme is registered (`telemetry.ts`).
+// The app's name, before anything asks where its data is. Electron makes the data folder from the
+// name the first time the folder is asked for and keeps that answer, and the workspace package is
+// named `@vivid/desktop`. Error reporting asks for the folder as it starts, so while this line
+// came after it the app of 12 October 2026 kept its data in `@vivid/desktop`, not `Vivid`: a
+// Person who installed it over the one before opened it signed out, with a new identity and none
+// of their settings, though nothing of theirs had been deleted. `productName` in `package.json`
+// gives Electron the same name before any of this file runs; this line is the same statement
+// where it can be read beside what depends on it.
+app.setName('Vivid')
+
+// Next, before anything that can fail and before any scheme is registered (`telemetry.ts`).
 startTelemetry()
 
 const PLACEMENT_FILE = 'window-placement.json'
 const INSTALLATION_FILE = 'installation.json'
 /** The host name as the Person's list of computers shows it, cut to what the contract allows. */
 const deviceName = Schema.decodeUnknownOption(DeviceName)
-// The workspace package name is scoped; native application identity and userData must use Vivid.
-app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
   Schema.Literals(['darwin', 'win32', 'linux'] as const),
 )
