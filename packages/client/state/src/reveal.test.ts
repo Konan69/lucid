@@ -9,10 +9,6 @@ const hand = () => {
     now: () => at.now,
     next: (step) => {
       waiting.push(step)
-      return () => {
-        const index = waiting.indexOf(step)
-        if (index >= 0) waiting.splice(index, 1)
-      }
     },
     instant: () => at.instant,
   }
@@ -95,6 +91,21 @@ describe('one reply being revealed', () => {
       stop = reveal.toward(10 + lump * 5)(() => undefined)
     }
     expect(reveal.read()).toBeGreaterThan(50)
+  })
+
+  it('keeps moving on a device whose frames are slower than the lumps arrive', () => {
+    const { frames, turn } = hand()
+    const reveal = revealer(frames, 0)
+    let stop = reveal.toward(10)(() => undefined)
+    for (let lump = 1; lump <= 30; lump += 1) {
+      // Three lumps, each a new subscription, before the one frame the device manages.
+      for (let arrival = 0; arrival < 3; arrival += 1) {
+        stop()
+        stop = reveal.toward(10 + (lump * 3 + arrival) * 5)(() => undefined)
+      }
+      turn(300)
+    }
+    expect(reveal.read()).toBeGreaterThan(200)
   })
 
   it('shows everything at once when nobody can see pacing, and steps nothing once let go', () => {
