@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Linking } from 'react-native'
 import { EnrichedMarkdownText } from 'react-native-enriched-markdown'
+import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { useTheme } from '../theme'
 import { Recover } from './Recover'
 import { typeset } from './typeset'
@@ -90,7 +91,7 @@ export function Prose({
 }) {
   const { colors } = useTheme()
   // One object per palette: the renderer sends a style to the native view when it is a new one.
-  const style = useMemo(() => typeset(colors), [colors])
+  const style = useMemo(() => typeset(colors, MOBILE_TYPOGRAPHY), [colors])
   return (
     <Recover from={text} fallback={<Plain text={plain} />}>
       <EnrichedMarkdownText

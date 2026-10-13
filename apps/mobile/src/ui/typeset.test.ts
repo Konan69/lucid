@@ -1,33 +1,35 @@
 import { nativeThemes } from '@vivid/tokens/native'
-import { Predicate } from 'effect'
-import { describe, expect, it, vi } from 'vitest'
-import { typeset } from './typeset'
+import { describe, expect, it } from 'vitest'
+import { typeset, type ProseType } from './typeset'
 
-// The type scale reads the platform for one step (`typing`); nothing here draws.
-vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
+/** The four steps prose is set in, as the phone's scale has them (`data/typography.ts`). */
+const type: ProseType = {
+  reading: { fontSize: 16, lineHeight: 24 },
+  title: { fontWeight: 600, fontSize: 21, lineHeight: 28 },
+  headline: { fontWeight: 600, fontSize: 18, lineHeight: 23 },
+  footnote: { fontWeight: 500, fontSize: 14, lineHeight: 19 },
+}
 
 const palettes = Object.values(nativeThemes).flatMap((family) => [family.dark, family.light])
 
-/** Every colour a style names, at any depth: the values of its `color` and `...Color` keys. */
-const coloursIn = (style: object): ReadonlyArray<string> =>
-  Object.entries(style).flatMap(([key, held]) => {
-    if (Predicate.isObject(held)) return coloursIn(held)
-    return Predicate.isString(held) && /color$/iu.test(key) ? [held] : []
-  })
+/** Every colour written in a style, at any depth: the values of its `color` and `...Color` keys. */
+const coloursIn = (written: string): ReadonlyArray<string> =>
+  Array.from(written.matchAll(/"\w*color":"([^"]*)"/giu), ([, colour]) => String(colour))
 
 describe('typeset', () => {
   it('takes every colour from the palette in force', () => {
     for (const palette of palettes) {
       const allowed = new Set([...Object.values(palette), 'transparent'])
-      const foreign = coloursIn(typeset(palette)).filter((colour) => !allowed.has(colour))
-      expect(foreign).toEqual([])
+      const written = coloursIn(JSON.stringify(typeset(palette, type)))
+      expect(written.length).toBeGreaterThan(0)
+      expect(written.filter((colour) => !allowed.has(colour))).toEqual([])
     }
   })
 
   // The renderer's own defaults are a light palette: an element with no colour of ours is drawn
   // in it, dark on dark. These are the elements whose default names a colour.
   it('colours every element the renderer would draw in its own palette', () => {
-    const style = typeset(nativeThemes.graphite.dark)
+    const style = typeset(nativeThemes.graphite.dark, type)
     const uncoloured = (
       [
         'paragraph',
@@ -49,7 +51,7 @@ describe('typeset', () => {
         'underline',
         'spoiler',
       ] as const
-    ).filter((element) => coloursIn(style[element] ?? {}).length === 0)
+    ).filter((element) => coloursIn(String(JSON.stringify(style[element]))).length === 0)
     expect(uncoloured).toEqual([])
   })
 })

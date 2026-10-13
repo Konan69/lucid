@@ -1,7 +1,13 @@
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import type { MarkdownStyle } from 'react-native-enriched-markdown'
-import { MOBILE_TYPOGRAPHY } from '../data/typography'
+import type { MOBILE_TYPOGRAPHY } from '../data/typography'
 import type { Colors } from '../theme'
+
+/** The steps of the type scale prose is set in: its text, its three headings, its code. */
+export type ProseType = Pick<
+  typeof MOBILE_TYPOGRAPHY,
+  'reading' | 'title' | 'headline' | 'footnote'
+>
 
 /** The size and line of a step of the type scale, without its weight. */
 const sized = (step: { readonly fontSize: number; readonly lineHeight: number }) => ({
@@ -19,7 +25,8 @@ const sized = (step: { readonly fontSize: number; readonly lineHeight: number })
  * come from. T3 Code is handed sizes and colours by each caller; Vivid has one type scale
  * (`MOBILE_TYPOGRAPHY`) and one palette (`useTheme`), and the spacing `Prose` already had (ten
  * points under a paragraph or a list, a heading closer to what follows it than to what precedes
- * it).
+ * it). Both are handed in, so this file draws on nothing of the platform and its output can be
+ * checked without a phone.
  *
  * Every colour comes from the palette. The renderer's own defaults are a light palette written
  * into it (`normalizeMarkdownStyle.ts` in the package), so an element left unstyled would be drawn
@@ -31,9 +38,9 @@ const sized = (step: { readonly fontSize: number; readonly lineHeight: number })
  * `linkVariants`, which draw T3 Code's file and skill links as pills; Vivid has neither kind of
  * link.
  */
-export const typeset = (c: Colors): MarkdownStyle => {
+export const typeset = (c: Colors, type: ProseType): MarkdownStyle => {
   const body = {
-    ...sized(MOBILE_TYPOGRAPHY.reading),
+    ...sized(type.reading),
     color: c.foreground,
     marginTop: 0,
     marginBottom: 10,
@@ -43,7 +50,7 @@ export const typeset = (c: Colors): MarkdownStyle => {
     step: { readonly fontWeight: number; readonly fontSize: number; readonly lineHeight: number },
     space: { readonly marginTop: number; readonly marginBottom: number },
   ) => ({ ...sized(step), ...space, fontWeight: String(step.fontWeight), color: c.foreground })
-  const small = heading(MOBILE_TYPOGRAPHY.footnote, { marginTop: 4, marginBottom: 4 })
+  const small = heading(type.footnote, { marginTop: 4, marginBottom: 4 })
   // The frame of a block that stands apart from the text. The radius stays small: iOS clips a
   // table's square cell borders at the corners without drawing the arcs (T3 Code's note).
   const block = {
@@ -55,8 +62,8 @@ export const typeset = (c: Colors): MarkdownStyle => {
   }
   return {
     paragraph: body,
-    h1: heading(MOBILE_TYPOGRAPHY.title, { marginTop: 6, marginBottom: 8 }),
-    h2: heading(MOBILE_TYPOGRAPHY.headline, { marginTop: 6, marginBottom: 6 }),
+    h1: heading(type.title, { marginTop: 6, marginBottom: 8 }),
+    h2: heading(type.headline, { marginTop: 6, marginBottom: 6 }),
     h3: small,
     // Markdown has six levels and the scale has three for prose: the lower three read as the third.
     h4: small,
@@ -67,7 +74,7 @@ export const typeset = (c: Colors): MarkdownStyle => {
     code: { color: c.foreground, backgroundColor: c.subtle, borderColor: c['border-subtle'] },
     codeBlock: {
       ...block,
-      ...sized(MOBILE_TYPOGRAPHY.footnote),
+      ...sized(type.footnote),
       color: c['md-code-text'],
       backgroundColor: c['md-code-bg'],
       padding: 12,
