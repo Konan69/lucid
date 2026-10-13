@@ -63,9 +63,10 @@ import { workspaceKey } from './threads.js'
 /**
  * The format's version. Changing what a kept answer holds changes this, and every device then
  * discards what it wrote under the old one (`readSnapshot`), as T3's
- * `ORCHESTRATION_CACHE_SCHEMA_VERSION` does. Version 2 records when the session ends.
+ * `ORCHESTRATION_CACHE_SCHEMA_VERSION` does. Version 2 records when the session ends. Version 3:
+ * the kept settings say whether egress is on (`Settings.egress`).
  */
-const VERSION = 2
+const VERSION = 3
 
 /**
  * One device's snapshot. It is decoded with the same Schemas the socket uses, so text that is

@@ -40,6 +40,7 @@ const toSettings = (row: typeof settingsTable.$inferSelect) =>
     theme: row.theme,
     timezone: row.timezone,
     notify: row.notify,
+    egress: row.egress,
   })
 
 /**
@@ -86,6 +87,7 @@ const makeSettingsStore = Effect.fn('SettingsStore.make')(function* () {
         .set({
           theme: request.theme === undefined ? sql`${settingsTable.theme}` : request.theme,
           notify: request.notify === undefined ? sql`${settingsTable.notify}` : request.notify,
+          egress: request.egress === undefined ? sql`${settingsTable.egress}` : request.egress,
           timezone,
           updatedAt: new Date(now),
         })
