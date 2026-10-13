@@ -440,17 +440,18 @@ describe('provider refusal witnesses', () => {
     }),
   )
 
-  it.effect('honors an init that clears a Request’s inherited abort signal', () =>
-    Effect.gen(function* () {
-      const controller = new AbortController()
+  it.effect('honors an init that clears a Request’s inherited abort signal', () => {
+    // The caller owns this aborted signal; it must not interrupt the test's Effect fiber.
+    const controller = new AbortController()
+    controller.abort()
+    return Effect.gen(function* () {
       const input = new Request(model.baseUrl, { signal: controller.signal })
-      controller.abort()
       const response = completion()
       const fetch = vi.fn(() => Promise.resolve(response))
       expect(yield* Effect.promise(() => witness(fetch)(input, { signal: null }))).toBe(response)
       expect(fetch).toHaveBeenCalledTimes(1)
-    }),
-  )
+    })
+  })
 
   it.effect.each([400, 500])(
     'returns the real %i when the request stream cannot be inspected',
