@@ -1,4 +1,5 @@
 import { pages } from '../data/pages'
+import { mended } from '@vivid/state'
 import { memo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -188,7 +189,9 @@ export const Markdown = memo(function Markdown({
   /** The words are still arriving: each new one fades in (`fade.ts`). */
   fresh?: boolean
 }) {
-  const linkedContent = normalizeTypedBullets(content).replace(
+  // A reply still arriving is formatted with its half-written marks closed (`mended`), so the
+  // same words are never drawn twice when the other half lands.
+  const linkedContent = normalizeTypedBullets(fresh ? mended(content) : content).replace(
     /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
     (_match, filename: string, page?: string) => {
       const label = page ? `${filename}, p.${page}` : filename
