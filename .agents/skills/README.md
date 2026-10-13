@@ -37,3 +37,5 @@ All hashes in `skills-lock.json` exclude each skill's `UPSTREAM.md`. External sk
 | to-prd | VCOS owner | `7f38dca4` | all files byte-identical | Provenance only |
 | turborepo | vercel/turborepo | `bcc853c2` | pnpm-only policy | Complete 2.11.2 refresh |
 | vitest-evals | getsentry/vitest-evals | `8cff207d` | two pnpm install edits | Complete current refresh |
+| app-designer | supplied by the owner as `app-designer.zip` | `local-2026-10-13` | pnpm in place of the other package manager | New: direction by three rendered explorations, slop scan, critic rubric |
+| image-gen | owner's own skill | `local-2026-10-13` | reads the model output one level deeper, as the provider now returns it | New: image assets through Cloudflare unified AI |
