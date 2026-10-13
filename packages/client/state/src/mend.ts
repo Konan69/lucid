@@ -14,38 +14,56 @@
  * This is the part of `remend` Vivid's replies need: fences, inline code, bold and links.
  */
 
-const FENCE = /^\s{0,3}(```|~~~)/u
+/** A line that opens or closes a fence: its indent, and its run of backticks or tildes. */
+const FENCE = /^(\s*)(`{3,}|~{3,})/u
 
-/** Whether the text ends inside a code fence, where nothing else is a mark. */
-const inFence = (text: string): boolean =>
-  text.split('\n').filter((line) => FENCE.test(line)).length % 2 === 1
+/**
+ * The fence the text ends inside, when it ends inside one: the indent and marker that opened it.
+ * A fence closes only on its own kind of marker, at least as long as the one that opened it, so
+ * tildes inside a backtick fence, or a shorter run, are its contents.
+ */
+const openFence = (text: string): { readonly indent: string; readonly marker: string } | null => {
+  let open: { readonly indent: string; readonly marker: string } | null = null
+  for (const line of text.split('\n')) {
+    const found = FENCE.exec(line)
+    if (found === null) continue
+    const [, indent = '', marker = ''] = found
+    if (open === null) open = { indent, marker }
+    else if (marker.startsWith(open.marker)) open = null
+  }
+  return open
+}
 
 /** How many times `mark` occurs in `text`. */
 const count = (text: string, mark: string): number => text.split(mark).length - 1
 
-/**
- * The last paragraph with its unfinished inline marks completed or, where a mark has nothing in
- * it yet, taken off: a bare `**` or `` ` `` at the very end says nothing until words follow.
- */
-const mendInline = (paragraph: string): string => {
-  // A link whose address has not closed is shown as its words alone.
-  const linked = paragraph.replace(/\[([^\]\n]*)\]\([^)\n]*$/u, '$1')
-  // Inline code first: an asterisk inside it is not a mark.
-  const coded = count(linked, '`') % 2 === 1 ? closing(linked, '`') : linked
-  const outsideCode = coded.replace(/`[^`]*`/gu, '')
-  return count(outsideCode, '**') % 2 === 1 ? closing(coded, '**') : coded
-}
-
 /** Closes an open `mark`, or drops it when it is the last thing written. */
 const closing = (text: string, mark: string): string =>
   text.endsWith(mark) ? text.slice(0, -mark.length) : `${text}${mark}`
+
+/** `text` without its finished code spans and link addresses, where an asterisk is not a mark. */
+const prose = (text: string): string =>
+  text.replace(/(`+)[^`]*?\1/gu, '').replace(/\]\([^)\n]*\)/gu, ']')
+
+/**
+ * The last paragraph with its unfinished inline marks completed or, where a mark has nothing in
+ * it yet, taken off: a bare `**` or `` ` `` at the very end says nothing until words follow.
+ * Code is settled first, and while a code span is open nothing after it is read as a mark.
+ */
+const mendInline = (paragraph: string): string => {
+  if (count(prose(paragraph), '`') % 2 === 1) return closing(paragraph, '`')
+  // A link whose address has not closed is shown as its words alone.
+  const linked = paragraph.replace(/\[([^\]\n`]*)\]\([^)\n]*$/u, '$1')
+  return count(prose(linked), '**') % 2 === 1 ? closing(linked, '**') : linked
+}
 
 /**
  * `text` with whatever it has left open closed. Marks are only ever open in the paragraph being
  * written, so everything before the last blank line is returned untouched.
  */
 export const mended = (text: string): string => {
-  if (inFence(text)) return `${text}\n\`\`\``
+  const fence = openFence(text)
+  if (fence !== null) return `${text}\n${fence.indent}${fence.marker}`
   const at = text.lastIndexOf('\n\n')
   const head = at < 0 ? '' : text.slice(0, at + 2)
   return `${head}${mendInline(text.slice(head.length))}`

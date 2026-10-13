@@ -77,11 +77,17 @@ export interface Frames {
  */
 export const revealer = (frames: Frames, start: number) => {
   let shown = start
+  // When the last step ran. It is the reveal's own, not a subscription's: a screen subscribes
+  // anew at every lump, and a clock that started over each time never reached the frame gate
+  // when lumps came faster than it (found in review, 13 October 2026: nothing was shown for as
+  // long as words arrived 20 ms apart).
+  let last = frames.now()
   return {
     read: () => shown,
     toward: (total: number) => (heard: () => void) => {
       if (shown >= total) return () => undefined
-      let last = frames.now()
+      // After a pause with nothing waiting, time starts from now: the pause is not owed as words.
+      if (frames.now() - last > REVEAL.settleMs) last = frames.now()
       let cancel: () => void = () => undefined
       const step = () => {
         const now = frames.now()

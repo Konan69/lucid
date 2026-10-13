@@ -29,6 +29,19 @@ describe('a reply that is still arriving', () => {
     )
   })
 
+  it('closes a fence with the marker and indent that opened it', () => {
+    expect(mended('~~~\ncode ``` here')).toBe('~~~\ncode ``` here\n~~~')
+    expect(mended('* item\n\n  ```sh\n  ls')).toBe('* item\n\n  ```sh\n  ls\n  ```')
+  })
+
+  it('does not read marks inside a finished link address or longer code span', () => {
+    expect(mended('See [x](https://example.com/**) now')).toBe(
+      'See [x](https://example.com/**) now',
+    )
+    expect(mended('Type ``a ** b`` then')).toBe('Type ``a ** b`` then')
+    expect(mended('In code `[a](http')).toBe('In code `[a](http`')
+  })
+
   it('shows a link as its words until its address has closed', () => {
     expect(mended('See [the guide](https://exam')).toBe('See the guide')
     expect(mended('See [the guide](https://example.com) now')).toBe(

@@ -6,7 +6,10 @@ import type { Options } from 'react-markdown'
  * While a reply is still arriving, every word of its formatted text is put in its own span that
  * fades up from clear (`word-in`, `styles/motion.css`). React keeps a span it already drew and
  * only mounts the ones that are new, and a CSS animation runs once, when its element is
- * mounted: so the words already on the page stay still and only the newest fade in. This is the
+ * mounted: so the words already on the page stay still and only the newest fade in. Where the
+ * formatter replaces an element as more arrives (a link's words when its address closes, a list
+ * that becomes a loose one), the words in it are mounted again and fade once more; `mended`
+ * (`@vivid/state`) removes the common cases and those two remain. This is the
  * look of a stream in ChatGPT and the AI SDK's `Streamdown` (`animated`), done with the same
  * mechanism: a rehype step over the formatted tree, no timers and no state.
  *
@@ -53,7 +56,9 @@ const wordsOf = (text: Text): ReadonlyArray<Node> =>
 /** Replaces each run of text under `parent` with its words, leaving verbatim elements whole. */
 const fade = (parent: Root | Element): void => {
   parent.children = parent.children.flatMap((child): ReadonlyArray<Node> => {
-    if (child.type === 'text') return wordsOf(child)
+    // Space between blocks, rows and items is structure, not words: a span there is invalid
+    // under a table or a list and undoes the formatter's own removal of it.
+    if (child.type === 'text') return child.value.trim() === '' ? [child] : wordsOf(child)
     if (child.type === 'element' && !VERBATIM.has(child.tagName)) fade(child)
     return [child]
   })

@@ -85,6 +85,18 @@ describe('one reply being revealed', () => {
     expect(reveal.read()).toBeGreaterThan(first)
   })
 
+  it('keeps moving when more text arrives faster than a step, each arrival a new subscription', () => {
+    const { frames, turn } = hand()
+    const reveal = revealer(frames, 0)
+    let stop = reveal.toward(10)(() => undefined)
+    for (let lump = 1; lump <= 50; lump += 1) {
+      turn(REVEAL.frameMs / 2)
+      stop()
+      stop = reveal.toward(10 + lump * 5)(() => undefined)
+    }
+    expect(reveal.read()).toBeGreaterThan(50)
+  })
+
   it('shows everything at once when nobody can see pacing, and steps nothing once let go', () => {
     const hidden = hand()
     hidden.at.instant = true
