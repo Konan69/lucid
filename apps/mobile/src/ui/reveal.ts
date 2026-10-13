@@ -20,20 +20,20 @@ const frames: Frames = {
  * arrives afterwards let out at an even pace in place of the lumps it comes in. Nothing runs
  * once it is all shown.
  *
- * While the reply is still being written (`streaming`) or still being let out, a mark it has
- * left open is closed for it (`mended`). It is the web's `useRevealed`
- * (`apps/web/src/ui/reveal.ts`) with one difference: the web learns of less motion in its frames,
- * and a phone learns of it from a hook. A Person who asked the phone for less motion gets the
- * text as it lands. A finished reply, and one opened from history, is neither being written nor
- * let out, so it is drawn as written.
+ * `fresh` says the reply is still being written (`streaming`) or still being let out. While it
+ * is, a mark it has left open is closed for it (`mended`), so half a bold word never shows its
+ * stars. It is the web's `useRevealed` (`apps/web/src/ui/reveal.ts`) with one difference: the web
+ * learns of less motion in its frames, and a phone learns of it from a hook. A Person who asked
+ * the phone for less motion gets the text as it lands. A finished reply, and one opened from
+ * history, is neither being written nor let out, so it is not fresh and is drawn as written.
  */
 export const useRevealed = (text: string, streaming: boolean) => {
   const still = useReducedMotion()
   const [reveal] = useState(() => revealer(frames, text.length))
   const toward = useMemo(() => reveal.toward(text.length), [reveal, text.length])
   const shown = useSyncExternalStore(toward, reveal.read, reveal.read)
-  if (still) return text
+  if (still) return { drawn: text, fresh: false }
+  const fresh = streaming || shown < text.length
   const drawn = revealed(text, shown)
-  // Half a bold word must not show its stars while the rest of it is on its way.
-  return streaming || shown < text.length ? mended(drawn) : drawn
+  return { drawn: fresh ? mended(drawn) : drawn, fresh }
 }
