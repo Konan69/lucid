@@ -35,9 +35,15 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import { Machine, MachineNotRunning, MachineState, computerScreenAddress } from './machine.ts'
+import {
+  Machine,
+  MachineNotRunning,
+  MachinePortClosed,
+  MachineState,
+  computerScreenAddress,
+} from './machine.ts'
 import { linkFailure } from './boat/shell.ts'
-import { openLink } from './ssh/link.ts'
+import { LinkPortClosed, openLink } from './ssh/link.ts'
 import { peer, peerAvailable } from './ssh/peer.ts'
 import {
   type ComputerStore,
@@ -93,6 +99,16 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
     write: unused('write through the provider'),
     browse: unused('browse'),
     desktop: unused('use the desktop'),
+    tunnel: (input) =>
+      link
+        .tunnel(input.port)
+        .pipe(
+          Effect.mapError((failure) =>
+            failure instanceof LinkPortClosed
+              ? new MachinePortClosed({ port: input.port })
+              : linkFailure(failure),
+          ),
+        ),
     run: (input) =>
       link.run(input).pipe(
         Effect.catchTag('LinkRunLost', () => Effect.die('The stand-in lost a command')),

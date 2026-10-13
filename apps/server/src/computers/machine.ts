@@ -1,3 +1,4 @@
+import type * as NodeStream from 'node:stream'
 import {
   type BrowseResult,
   type BrowserAction,
@@ -186,6 +187,16 @@ export class MachineFileRefused extends Schema.TaggedError<MachineFileRefused>()
 ) {}
 
 /**
+ * Nothing on the machine listens on the loopback port that was asked for. The machine is fine.
+ * Only `tunnel` meets it, so it is that call's own failure and not one of `MachineFailure`.
+ */
+export class MachinePortClosed extends Schema.TaggedError<MachinePortClosed>()(
+  'MachinePortClosed',
+  { port: Schema.Int },
+  { title: 'MachinePortClosed' },
+) {}
+
+/**
  * Precise adapter failures remain visible for orchestration and RPC translation.
  *
  * None of them says "no provider is configured". A server always has its Computer provider: its
@@ -336,6 +347,15 @@ export interface MachineOperations {
     readonly directory: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<MachineConversation, MachineFailure, Scope.Scope>
+  /**
+   * A byte stream to a port on the machine's own loopback, over its SSH connection, held for the
+   * scope (`ssh/link.ts`, `tunnel`). It never wakes a machine: one that is not running is
+   * `MachineNotRunning`, and a port nothing listens on is `MachinePortClosed`.
+   */
+  readonly tunnel: (input: {
+    readonly key: MachineKey
+    readonly port: number
+  }) => Effect.Effect<NodeStream.Duplex, MachineFailure | MachinePortClosed, Scope.Scope>
   readonly read: (input: {
     readonly key: MachineKey
     readonly path: string
@@ -346,9 +366,16 @@ export interface MachineOperations {
     readonly path: string
     readonly content: Uint8Array
   }) => Effect.Effect<void, MachineFailure>
+  /**
+   * One step in the Computer's browser. `egress` is the Person's choice to send the browser's
+   * traffic out through their own computer (`egress/`): it matters only when this step has to
+   * start the browser, which is then started with the Computer's egress proxy as its proxy. A
+   * browser that is already running keeps the way out it was started with.
+   */
   readonly browse: (input: {
     readonly key: MachineKey
     readonly action: BrowserAction
+    readonly egress: boolean
   }) => Effect.Effect<BrowseResult, MachineFailure>
   readonly desktop: (input: {
     readonly key: MachineKey
