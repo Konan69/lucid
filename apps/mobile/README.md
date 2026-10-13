@@ -72,10 +72,12 @@ or account is involved.
   VIVID_MOBILE_UPDATES=/path/to/updates  # in the server's environment, then restart it
   ```
 
-- An update only reaches a binary with the same runtime version, which is `version` in
-  `app.json`. JavaScript and assets travel over the air; anything native does not. After adding
-  a native module, changing a config plugin or moving to a new Expo SDK, raise `version` and
-  install a new binary. An update is only taken when it is newer than the JavaScript built into
+- An update only reaches a binary with the same runtime version, which is `runtimeVersion` in
+  `app.json` (older installs listed in `ALSO_RUNS_ON` in `scripts/publish.mjs` get it too).
+  `version` is separate: it is the number Settings shows, and it is raised with every change
+  that ships. JavaScript and assets travel over the air; anything native does not. After adding
+  a native module, changing a config plugin or moving to a new Expo SDK, raise `runtimeVersion`
+  and install a new binary. An update is only taken when it is newer than the JavaScript built into
   the binary.
 
 ### Windows Android Studio emulator with WSL

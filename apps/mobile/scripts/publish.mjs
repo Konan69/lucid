@@ -53,7 +53,8 @@ const decodeRuntimeVersionInfo = Schema.decodeUnknownOption(
 )
 
 /**
- * Resolves one platform's runtime version through expo-updates' own resolver. The printed line is
+ * Resolves one platform's runtime version through expo-updates' own resolver, which reads the
+ * fixed name in `app.json`. The printed line is
  * decoded once, here; the failure names the platform and never the rejected output.
  */
 function resolveRuntimeVersion(platform) {
@@ -67,8 +68,8 @@ function resolveRuntimeVersion(platform) {
 
 /**
  * One export carries both platforms, so both must resolve to the same runtime version. That holds
- * under the `appVersion` policy in `app.json`; a policy that differs by platform would need one
- * export for each, and this stops instead of mislabelling one of them.
+ * for the one fixed name in `app.json`; a setting that differs by platform would need one export
+ * for each, and this stops instead of mislabelling one of them.
  */
 const versions = new Set(platforms.map(resolveRuntimeVersion))
 if (versions.size !== 1)
@@ -165,20 +166,21 @@ function findMaps(directory) {
 /**
  * The installed binaries this JavaScript also runs on, besides the one `app.json` names.
  *
- * The app's runtime version is its version (`runtimeVersion.policy: appVersion`), and a binary is
- * only ever given an update published under its own. So raising the version publishes for the new
- * binary alone, and every phone still on the one before stops being updated without a word: on
- * 13 October 2026 the developer's phone had asked seven times that day and been answered "no
- * update is published" each time, two days after 0.3.3 was cut. But a version is also raised for
- * a change no JavaScript can see. 0.3.1, 0.3.2 and 0.3.3 changed only the launch screen and the
- * cover drawn over it, which is native code nothing here calls; their modules and views are those
- * of 0.3.0, so this export runs on all four.
+ * A binary is only ever given an update published under its own runtime version. Until
+ * 13 October 2026 that was the app's version (`runtimeVersion.policy: appVersion`), so raising the
+ * version published for the new binary alone and every phone still on the one before stopped
+ * being updated without a word: the developer's phone had asked seven times that day and been
+ * answered "no update is published" each time, two days after 0.3.3 was cut. The two are separate
+ * now: `runtimeVersion` in `app.json` names the native side and is raised only when a new install
+ * is needed, and `version` is the number the Person reads, raised with every update. The
+ * binaries installed before the split still ask under their old names. 0.3.1, 0.3.2 and 0.3.3
+ * changed only the launch screen and the cover drawn over it, which is native code nothing here
+ * calls; their modules and views are those of 0.3.0, so this export runs on all four.
  *
- * Each name here is published as a link to the same export. Keep a version in this list for as
- * long as the JavaScript runs on its binary, and add the outgoing version when `app.json` is
- * raised for a native change the JavaScript does not depend on. Empty the list in the commit that
- * adds, removes or changes a native module or view the JavaScript calls: a binary without it
- * would be handed code that crashes on it. 0.2.0 is not here for that reason (it has no web view).
+ * Each name here is published as a link to the same export. Empty the list in the commit that
+ * raises `runtimeVersion`, which is the commit that adds, removes or changes a native module or
+ * view the JavaScript calls: a binary without it would be handed code that crashes on it. 0.2.0
+ * is not here for that reason (it has no web view).
  */
 const ALSO_RUNS_ON = ['0.3.0', '0.3.1', '0.3.2']
 

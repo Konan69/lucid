@@ -12,10 +12,13 @@ const Versioned = Schema.Struct({ version: Schema.String })
 const decodeVersioned = Schema.decodeUnknownOption(Versioned)
 
 /**
- * The app's version. An update is only ever given to the version it was made for
- * (`runtimeVersion` follows the app's version, `app.json`), so the config an update carries says
- * the same version as the app it runs in. None when the config has no version, which a built app
- * never is.
+ * The version of the JavaScript that is running, which is the one the Person is told. It comes
+ * from the config the running update carries (`version` in `app.json` when it was published), so
+ * it goes up with every update taken over the air. It is not the version of the installed app:
+ * that one only says which native side the phone has (`runtimeVersion` in `app.json`), changes
+ * only with a new install, and stayed at 0.3.1 on the developer's phone through every update,
+ * which read as "the update did not arrive" (13 October 2026). None when the config has no
+ * version, which a built app never is.
  */
 export const version: Option.Option<string> = Option.map(
   decodeVersioned(Constants.expoConfig),
