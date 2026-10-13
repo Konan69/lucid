@@ -162,4 +162,35 @@ function findMaps(directory) {
   return maps
 }
 
-console.log(`Published runtime ${runtimeVersion} to ${directory}`)
+/**
+ * The installed binaries this JavaScript also runs on, besides the one `app.json` names.
+ *
+ * The app's runtime version is its version (`runtimeVersion.policy: appVersion`), and a binary is
+ * only ever given an update published under its own. So raising the version publishes for the new
+ * binary alone, and every phone still on the one before stops being updated without a word: on
+ * 13 October 2026 the developer's phone had asked seven times that day and been answered "no
+ * update is published" each time, two days after 0.3.3 was cut. But a version is also raised for
+ * a change no JavaScript can see. 0.3.1, 0.3.2 and 0.3.3 changed only the launch screen and the
+ * cover drawn over it, which is native code nothing here calls; their modules and views are those
+ * of 0.3.0, so this export runs on all four.
+ *
+ * Each name here is published as a link to the same export. Keep a version in this list for as
+ * long as the JavaScript runs on its binary, and add the outgoing version when `app.json` is
+ * raised for a native change the JavaScript does not depend on. Empty the list in the commit that
+ * adds, removes or changes a native module or view the JavaScript calls: a binary without it
+ * would be handed code that crashes on it. 0.2.0 is not here for that reason (it has no web view).
+ */
+const ALSO_RUNS_ON = ['0.3.0', '0.3.1', '0.3.2']
+
+// A link, not a copy: the server reads a release through `stat` and by path
+// (`apps/server/src/updates/release.ts`), both of which follow one, and the image keeps a single
+// export. The target is relative so it holds wherever the directory is copied to.
+for (const older of ALSO_RUNS_ON.filter((version) => version !== runtimeVersion)) {
+  const link = NodePath.resolve(target, older, NodePath.basename(directory))
+  NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true })
+  NodeFS.symlinkSync(NodePath.relative(NodePath.dirname(link), directory), link, 'dir')
+}
+
+console.log(
+  `Published runtime ${runtimeVersion} to ${directory}, also for ${ALSO_RUNS_ON.join(', ')}`,
+)
