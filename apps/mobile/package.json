@@ -49,7 +49,7 @@
     "react-dom": "catalog:",
     "react-native": "catalog:",
     "react-native-gesture-handler": "catalog:",
-    "react-native-markdown-display": "7.0.2",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.11.tgz",
     "react-native-reanimated": "catalog:",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.26.2",
@@ -68,5 +68,17 @@
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "enriched-markdown": {
+    "enableMath": false,
+    "enableVideo": false,
+    "enableCodeHighlight": false
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "react-native-enriched-markdown"
+      ]
+    }
   }
 }

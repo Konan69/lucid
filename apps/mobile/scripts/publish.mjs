@@ -173,16 +173,21 @@ function findMaps(directory) {
  * answered "no update is published" each time, two days after 0.3.3 was cut. The two are separate
  * now: `runtimeVersion` in `app.json` names the native side and is raised only when a new install
  * is needed, and `version` is the number the Person reads, raised with every update. The
- * binaries installed before the split still ask under their old names. 0.3.1, 0.3.2 and 0.3.3
- * changed only the launch screen and the cover drawn over it, which is native code nothing here
- * calls; their modules and views are those of 0.3.0, so this export runs on all four.
+ * binaries installed before the split still ask under their old names.
  *
  * Each name here is published as a link to the same export. Empty the list in the commit that
  * raises `runtimeVersion`, which is the commit that adds, removes or changes a native module or
- * view the JavaScript calls: a binary without it would be handed code that crashes on it. 0.2.0
- * is not here for that reason (it has no web view).
+ * view the JavaScript calls: a binary without it would be handed code that crashes on it.
+ *
+ * It is empty since 0.3.6, which draws Markdown with a native view (`src/ui/Prose.tsx`,
+ * `react-native-enriched-markdown`). No binary before it has that view, so none of them is given
+ * this JavaScript: 0.3.0 to 0.3.3, which shared one native side and were all listed here until
+ * then, are answered "no update is published" and go on running the JavaScript they last took,
+ * until the new build is installed.
+ *
+ * @type {ReadonlyArray<string>}
  */
-const ALSO_RUNS_ON = ['0.3.0', '0.3.1', '0.3.2']
+const ALSO_RUNS_ON = []
 
 // A link, not a copy: the server reads a release through `stat` and by path
 // (`apps/server/src/updates/release.ts`), both of which follow one, and the image keeps a single
