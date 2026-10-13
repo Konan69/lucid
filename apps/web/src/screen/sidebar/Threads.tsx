@@ -4,6 +4,7 @@ import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { Data, Option } from 'effect'
 import {
   Check,
+  ChevronRight,
   CircleCheck,
   FolderInput,
   Pencil,
@@ -13,7 +14,7 @@ import {
   Undo2,
   Users,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { type MouseEvent, type ReactNode, useRef, useState } from 'react'
 import { act, running } from '../../data/app'
 import { changing, live } from '../../data/live'
 import { Link } from '@tanstack/react-router'
@@ -40,9 +41,10 @@ import {
 } from '../../ui/contextmenu'
 import { Count } from '../../ui/Count'
 import { useSurface } from '../../ui/Layer'
-import { byKeyboard, leave } from '../../ui/motion'
+import { byKeyboard, instantly, leave } from '../../ui/motion'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { MoveThread } from '../project/Move'
+import { BANDS, type Band, band, daysAgo, toggleBand, useBandFolded } from './bands'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /**
@@ -112,27 +114,6 @@ function useRetitling() {
 
 /** A title Vivid is thinking of a replacement for: quieter, and still, until the new one lands. */
 const IN_FLUX = 'transition-opacity duration-(--dur-fast) aria-busy:opacity-50'
-
-const DAY = 86_400_000
-
-/** Midnight at the start of the day a moment falls in, in the Person's own clock. */
-const startOfDay = (moment: number) => {
-  const date = new Date(moment)
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-}
-
-const daysAgo = (updatedAt: number, now: number) =>
-  Math.round((startOfDay(now) - startOfDay(updatedAt)) / DAY)
-
-const BANDS = ['Today', 'Yesterday', 'This week', 'Earlier'] as const
-
-/** Which quiet band a Thread belongs in, by when it last moved. */
-function band(updatedAt: number, now: number): (typeof BANDS)[number] {
-  const days = daysAgo(updatedAt, now)
-  if (days <= 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  return days < 7 ? 'This week' : 'Earlier'
-}
 
 /** When a Thread last moved, as short as it can be said: the time today, the day this week. */
 export function relativeTime(updatedAt: number, now: number) {
@@ -218,10 +199,13 @@ export function Threads({
         const inBand = rest.filter((thread) => band(thread.updatedAt, now) === name)
         if (inBand.length === 0) return null
         return (
-          <section key={name}>
-            <Caption label={name} />
-            <ul className="flex flex-col gap-px">{inBand.map((thread) => row(thread, 'line'))}</ul>
-          </section>
+          <DayBand
+            key={name}
+            name={name}
+            threads={inBand}
+            active={active}
+            row={(thread) => row(thread, 'line')}
+          />
         )
       })}
       {done.length > 0 && (
@@ -250,6 +234,39 @@ export function Threads({
       {Doing.$is('Moving')(doing) && <MoveThread thread={doing.thread} onClose={nothing} />}
       {Doing.$is('Deleting')(doing) && <DeleteThread thread={doing.thread} onClose={nothing} />}
     </>
+  )
+}
+
+/**
+ * One day's band: its caption and the Threads under it. Folded, it keeps only the Thread on
+ * screen, when that Thread is one of its own: where the Person is must never be hidden by a
+ * choice they made about the list (T3 Code web keeps the open thread out of a collapsed shelf
+ * the same way, `refs/t3code/apps/web/src/components/Sidebar.tsx`).
+ *
+ * The list is always drawn, even with nothing in it, and says which way it is in `data-folds`:
+ * that is how the list's `settling` knows the rows came or went because the Person folded it,
+ * and plays them as a fold (`ui/settle.ts`, "Folding").
+ */
+function DayBand({
+  name,
+  threads,
+  active,
+  row,
+}: {
+  name: Band
+  threads: ReadonlyArray<Thread>
+  active: ThreadId | null
+  row: (thread: Thread) => ReactNode
+}) {
+  const folded = useBandFolded(name)
+  const shown = folded ? threads.filter((thread) => thread.id === active) : threads
+  return (
+    <section>
+      <BandCaption name={name} folded={folded} count={threads.length} />
+      <ul data-folds={folded ? 'folded' : 'open'} className="flex flex-col gap-px">
+        {shown.map(row)}
+      </ul>
+    </section>
   )
 }
 
@@ -562,41 +579,97 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
 }
 
 /**
- * The line over each part of the list, with the way to start a Thread at its far end. A Person
- * reading down the list is looking at these lines, so "new" is where the eye already is, on
- * every one of them, not only at the top of the sidebar.
+ * The line over the Threads that need the Person or are being worked on: what they are, and how
+ * many. It does nothing when pressed. These are the Threads the list exists to show, so they
+ * cannot be folded away.
  */
-function Caption({ label, count }: { label: string; count?: number }) {
+function Caption({ label, count }: { label: string; count: number }) {
   return (
     <div
       // A caption moves with the rows under it when the list above it grows or closes up.
       data-moves={`caption:${label}`}
-      className={cn('mt-1 flex items-center gap-1.5 ps-2.5 pe-1', CAPTION)}
+      className={cn('mt-1 flex items-center ps-2.5', CAPTION)}
     >
       <h3 className="flex min-w-0 flex-1 items-center gap-1.5 text-meta font-title text-ink-3">
         {label}
-        {count !== undefined && (
-          <span className="font-meta">
-            <Count value={count} />
-          </span>
-        )}
+        <span className="font-meta">
+          <Count value={count} />
+        </span>
       </h3>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="New thread"
-              onClick={() => void router.navigate({ to: '/' })}
-              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
-            />
-          }
-        >
-          <Plus className="size-3.5" strokeWidth={1.8} />
-        </TooltipTrigger>
-        <TooltipContent>New thread</TooltipContent>
-      </Tooltip>
     </div>
+  )
+}
+
+/**
+ * The line over one day's band. Pressing it folds the band away or opens it again.
+ *
+ * - The chevron is not drawn while the band is open and nobody is near it: a column of four
+ *   chevrons down the list said "these fold" louder than the Threads said anything. It comes in
+ *   under the pointer or the keyboard's focus, and on a screen that is touched, which has no
+ *   pointer to come near with, it is always there. Folded, it stays and points across, with how
+ *   many Threads are behind it at the far end where the rows keep their times.
+ * - Only today's band has the way to start a Thread. It used to be on every caption, and under
+ *   "Earlier" it read as adding a Thread to last month.
+ * - From the keyboard the band is open or folded at once (`instantly`): nothing done from the
+ *   keys animates.
+ */
+function BandCaption({ name, folded, count }: { name: Band; folded: boolean; count: number }) {
+  const toggle = (event: MouseEvent) => {
+    if (byKeyboard(event)) instantly(() => toggleBand(name))
+    else toggleBand(name)
+  }
+  return (
+    <div
+      // A caption moves with the rows under it when the list above it grows or closes up.
+      data-moves={`caption:${name}`}
+      className={cn('mt-1 flex items-center pe-1', CAPTION)}
+    >
+      <h3 className="h-full min-w-0 flex-1">
+        <button
+          type="button"
+          aria-expanded={!folded}
+          onClick={toggle}
+          className="group/caption flex size-full cursor-pointer items-center gap-1 rounded-row ps-2.5 pe-1.5 text-left text-meta font-title text-ink-3 transition-colors duration-(--dur-fast) select-none hover:text-ink focus-visible:-outline-offset-2"
+        >
+          {name}
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              'size-3 shrink-0 text-ink-4 transition duration-(--dur-fast) ease-out group-hover/caption:text-ink-2',
+              !folded &&
+                'rotate-90 opacity-0 group-hover/caption:opacity-100 group-focus-visible/caption:opacity-100 pointer-coarse:opacity-100',
+            )}
+          />
+          {folded && (
+            <span className="ms-auto font-meta tabular-nums">
+              <Count value={count} />
+            </span>
+          )}
+        </button>
+      </h3>
+      {name === 'Today' && <NewThread />}
+    </div>
+  )
+}
+
+/** The way to start a Thread, at the far end of today's caption: where today's work is read. */
+function NewThread() {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="New thread"
+            onClick={() => void router.navigate({ to: '/' })}
+            className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
+          />
+        }
+      >
+        <Plus className="size-3.5" strokeWidth={1.8} />
+      </TooltipTrigger>
+      <TooltipContent>New thread</TooltipContent>
+    </Tooltip>
   )
 }
 

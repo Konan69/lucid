@@ -176,10 +176,11 @@ export function Sidebar({
         </div>
 
         {/* `settling` keeps the list in one piece as Threads arrive, move and are marked done:
-            a row with a new place glides to it and the rows under a gap close up. */}
+            a row with a new place glides to it and the rows under a gap close up. It is
+            positioned because a folded band's rows fade as copies placed from its corner. */}
         <nav
           ref={settling}
-          className="mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
+          className="relative mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
         >
           <Work scoped={scoped} />
         </nav>
