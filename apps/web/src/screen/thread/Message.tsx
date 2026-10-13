@@ -464,6 +464,21 @@ const COPY = {
 const BUBBLE_MOST = 700
 
 /**
+ * Whether a reply is drawn in a bubble. Only a reply that was already finished when it was first
+ * drawn can be: one that is written while the Person watches stays in the open column for as
+ * long as it is on screen.
+ *
+ * Before 13 October 2026 this was asked again at every word, so a reply began as a few plain
+ * words in a bubble and, the moment it grew a second paragraph or a list, lost its background
+ * and jumped to the full column in the middle of being read. The bubble also sizes itself to
+ * its words, which laid the whole reply out again at each of them.
+ */
+const useBubble = (text: string, tools: ReadonlyArray<ToolPart>, streaming: boolean) => {
+  const [written] = useState(streaming)
+  return !written && !streaming && simpleWords(text, tools)
+}
+
+/**
  * Whether a reply is a few plain words: no steps or displays with it, no Markdown block (heading,
  * quote, list, code, table), and short. Those get a bubble the size of the words; everything else
  * keeps the reading column, which blocks and long text need.
@@ -550,7 +565,7 @@ function FromVivid({
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
   // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
   const { drawn: drawnText, fresh } = useRevealed(text, streaming)
-  const simple = simpleWords(text, tools)
+  const simple = useBubble(text, tools, streaming)
   const steps = tools.filter((tool) => !drawn(tool))
   // Only the newest reply can still be in the making; an older one's steps are its record.
   const making = working && latest
