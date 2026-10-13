@@ -56,6 +56,8 @@ export const live = {
   audit: one((client) => client.WatchAudit()),
   memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
+  /** What egress is doing for the Person right now (`screen/settings/Egress.tsx`). */
+  egress: one((client) => client.WatchEgress()),
   suggestions: one((client) => client.WatchSuggestions()),
   /** The Person's own computers, each with its access and whether its desktop app is listening. */
   devices: one((client) => client.WatchDevices()),

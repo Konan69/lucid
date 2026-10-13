@@ -24,7 +24,9 @@ describe('how a computer stands', () => {
       id: IDS.laptop,
       name: 'Computer laptop',
       access: allowedSince(1),
-      presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps } }),
+      presence: DevicePresence.cases.Connected.make({
+        ability: { pages: true, apps, egress: false },
+      }),
     })
     expect(standing(connected(true))).toBe(
       'Allowed. Vivid can use the pages and the apps on this computer. A notice shows while it works, and Esc stops it.',
