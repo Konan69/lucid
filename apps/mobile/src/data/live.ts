@@ -35,7 +35,7 @@ import { door } from './door'
 import { sessionExpiry } from './account'
 import { followDrafts, forgetDrafts } from './drafts'
 import { forgetAppearance, vividAtom } from './vivid'
-import { inFront } from './foreground'
+import { inFront, reconnected } from './foreground'
 import { liveAddress } from './server'
 import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
@@ -299,8 +299,20 @@ function makeLiveData(session: SignedIn) {
   forgetAppearance()
   // Whether the phone can reach the server; Home says so when it cannot.
   const link = makeLink()
+  // Whether the socket has been lost since it last opened. Its first opening is not a return:
+  // nothing was following a conversation before it.
+  let wasLost = false
+  /** Tells the link, and on a reopening after a loss has every open conversation catch up. */
+  const heardLink = (open: boolean) => {
+    link.heard(open)
+    if (!open) wasLost = true
+    else if (wasLost) {
+      wasLost = false
+      reconnected()
+    }
+  }
   const engine = makeLive(
-    VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: link.heard }).pipe(
+    VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: heardLink }).pipe(
       Layer.provide(bearerSocket(session.token)),
     ),
   )

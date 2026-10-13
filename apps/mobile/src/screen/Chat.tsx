@@ -19,6 +19,8 @@ import {
   approvalUp,
   asking as model,
   draftPlace,
+  readingOf,
+  streamSaid,
   titleFromMessage,
   workspaceKey,
   type ApprovalUp,
@@ -43,7 +45,7 @@ import { again, First, firstKey, isOnItsWay, isSettled, withFirst } from '../dat
 import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
-import { inFront, onForeground } from '../data/foreground'
+import { inFront, onCatchUp } from '../data/foreground'
 import type { Whose } from '../data/heard'
 import { heardIn, heardThrough } from '../data/hearing'
 import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
@@ -677,9 +679,10 @@ function Conversation({
   // there, as it did when a Thread was only opened once it had started.
   const settled = isSettled(first)
   const agent = useFlueAgent(settled ? { client } : UNOPENED)
-  // A phone suspends the app when it is not in front, and the stream with it; coming back
+  // A phone suspends the app when it is not in front, and the stream with it; a network that
+  // changes or a server that is replaced cuts it too. Coming back, or reaching the server again,
   // catches the conversation up. The subscription lives exactly as long as this view does.
-  const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
+  const wake = useMemo(() => onCatchUp(() => agent.refresh()), [agent])
   // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
   // in the composer after leaving the Thread or closing the app.
   const place = draftPlace(me.person.id, {
@@ -739,16 +742,16 @@ function Conversation({
     return sending.say(words)
   }
 
+  const ended = endedOf(working, shown, around, (words) => void speak(words))
+
   const trouble = troubleOf({
     lost,
     unsent: sending.unsent,
-    error: Option.fromUndefinedOr(agent.error),
+    cut: useCut(agent) && Option.isNone(ended),
     onFirst: () => void again(firstWay(data), front.firsts, id),
     onSay: (words) => void speak(words),
     onOpen: () => agent.refresh(),
   })
-
-  const ended = endedOf(working, shown, around, (words) => void speak(words))
 
   return (
     <AboveKeyboardBelowBar>
@@ -991,17 +994,40 @@ const endedOf = (
   )
 
 /**
+ * Whether the conversation's stream is broken in a way worth saying. A stream Flue is already
+ * reopening is not said while the app's own socket still reaches the server (`streamSaid`).
+ */
+const useCut = (agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error'>) => {
+  const link = useAtomValue(useLiveData().link)
+  return streamSaid(
+    readingOf({ status: agent.status, broken: agent.error !== undefined }),
+    link === 'lost',
+  )
+}
+
+/**
+ * What a Person is told when the conversation cannot be followed. Flue's own sentence for it
+ * names a stream and a number of milliseconds, and was on the screen until 13 October 2026.
+ */
+const UNREACHED = 'Vivid can’t be reached right now.'
+
+/**
  * What went wrong at the foot of the conversation, and the one thing to do about it. First words
  * that did not arrive come first, since nothing else can be said until they have: their button
  * sends them again from where they stopped. Then a later message that did not arrive: its button
  * sends those words again, as the same delivery. Otherwise it is the conversation's own stream
- * that failed, and its button opens it again. Sending is felt, from here as from the composer's
+ * that is cut, and its button opens it again; a stream Flue is already reopening says nothing. Sending is felt, from here as from the composer's
  * own button.
  */
 const troubleOf = (at: {
   readonly lost: Option.Option<Extract<First, { readonly _tag: 'Unsent' }>>
   readonly unsent: Option.Option<Unsent>
-  readonly error: Option.Option<Error>
+  /**
+   * The conversation's stream is broken in a way worth saying, and no Run ended badly: that is
+   * said by the Run's own ending, from the server's record of it, and the stream reports the
+   * same failure a second time in Flue's words.
+   */
+  readonly cut: boolean
   readonly onFirst: () => void
   readonly onSay: (words: string) => void
   readonly onOpen: () => void
@@ -1023,11 +1049,9 @@ const troubleOf = (at: {
         at.onSay(unsent.words)
       },
     })),
-    Option.map(at.error, (error): Trouble => ({
-      message: error.message,
-      action: 'Try again',
-      onAct: at.onOpen,
-    })),
+    at.cut
+      ? Option.some<Trouble>({ message: UNREACHED, action: 'Try again', onAct: at.onOpen })
+      : Option.none(),
   ])
 
 /** The key first words that did not arrive are drawn under, so they are drawn as not sent. */

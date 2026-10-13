@@ -1,7 +1,15 @@
-import { useAtomMount, useAtomSet } from '@effect/atom-react'
+import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { asking, draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
+import {
+  asking,
+  draftPlace,
+  inThread,
+  readingOf,
+  streamSaid,
+  titleFromMessage,
+  workspaceKey,
+} from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
@@ -11,6 +19,7 @@ import { act } from '../data/app'
 import { conversationOf, heardIn } from '../data/conversation'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { router } from '../router'
+import { link } from '../data/runtime'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords, landedFor, useFirstWords, wordsFor } from '../data/threads'
 import { Button } from '../ui/button'
@@ -396,6 +405,7 @@ function Conversation({
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
+  const cut = useCut(agent)
   return (
     <Layout
       id={id}
@@ -407,7 +417,7 @@ function Conversation({
       doing={working ? Option.flatMap(replyIn(visible), doingIn) : Option.none()}
       // What Vivid's face answers for: words that did not arrive, a server that cannot be
       // reached, a Run that ended without an answer.
-      failed={agent.error !== undefined || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
+      failed={cut || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
@@ -434,7 +444,7 @@ function Conversation({
             empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
             working={working}
             waiting={isWaiting(working, visible)}
-            failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
+            failure={cut ? 'Vivid can’t be reached right now.' : null}
             onRetry={() => agent.refresh()}
             said={said}
             visible={visible}
@@ -599,6 +609,19 @@ const Busy = Schema.Struct({
   status: Schema.Literal(409),
   body: Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
 })
+/**
+ * Whether the conversation's stream is broken in a way worth saying. A stream Flue is already
+ * reopening is not said while this page's own socket still reaches the server: a deploy or a
+ * sleeping laptop cuts it for a second and it resumes from where it stopped.
+ */
+const useCut = (agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error'>) => {
+  const reach = useAtomValue(link.atom)
+  return streamSaid(
+    readingOf({ status: agent.status, broken: agent.error !== undefined }),
+    reach === 'lost',
+  )
+}
+
 const whyNot = (refusal: Parameters<typeof readBusy>[0]) =>
   Option.map(readBusy(refusal), (busy) => busy.body.error.message)
 const readBusy = Schema.decodeUnknownOption(Busy)
