@@ -74,17 +74,23 @@ const placeOf = (me: MeResponse) =>
   draftPlace(me.person.id, { workspace: workspaceKey(me.workspace), thread: Option.none() })
 
 /**
- * Home as it is once it is known what to show: Vivid in the bar, and the greeting and the composer
- * as one group in the middle of everything under the bar.
+ * Home as it is once it is known what to show: Vivid at the top, the composer in the middle of the
+ * pane, and the greeting standing on it.
  *
- * The middle is the true one, as T3 Code centres an empty new thread
- * (`apps/web/src/components/ChatView.tsx`, the `isDraftHeroState` composer overlay): it is taken
- * from this pane alone, so nothing beside it moves it. T3 Code centres with an absolute overlay,
- * which cuts the top off when the window is shorter than the group. Here the group is centred by
- * its own `margin-block: auto` inside a column that is at least as tall as the scrolling area:
- * with room to spare the two margins share it equally, and with none they are zero, so the group
- * starts 24 under the bar and the page scrolls. `justify-center` would push it up past the top of
- * the scroll, where it cannot be reached.
+ * It is the composer that is centred, not the greeting and the composer as one group, as T3 Code
+ * places an empty new thread (`apps/web/src/components/ChatView.tsx`, the `isDraftHeroState`
+ * overlay: `absolute inset-0 flex items-center` around the composer, with the headline hung above
+ * it at `bottom-full`). Centring the group put the composer well under the middle, where the eye
+ * does not start, and the taller the greeting the lower it sat (the developer, 13 October 2026:
+ * "make this higher like how t3 has it").
+ *
+ * T3 Code's overlay is absolute, which cuts the headline off when the window is shorter than the
+ * two together. Here the same placement is three parts of a column at least as tall as the pane:
+ * Vivid and the greeting share the first, pushed to its two ends, the composer is the second, and
+ * the third is empty. The outer two start from nothing and take equal shares of the room, which
+ * is what puts the composer in the middle. The first is never shorter than what is in it and the
+ * empty one gives up its share first, so in a short window the composer moves down under the
+ * greeting and the pane scrolls by no more than what does not fit.
  */
 function Back({ me, working }: { me: MeResponse; working: boolean }) {
   const { name } = useAppearance()
@@ -94,38 +100,34 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
   const first = me.person.name.trim().split(/\s+/u)[0]
   const mood = working ? 'thinking' : 'happy'
   return (
-    <section className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      {/* Vivid sits where a Thread puts it: the face at 56 with its name capsule under it, at
-          the top centre (`HeroButton`, the same piece a conversation starts with). */}
-      <header className="flex shrink-0 justify-center pt-4">
-        <HeroButton mood={mood} open={about} onOpen={() => setAbout((value) => !value)} />
-      </header>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-(--thread-max-w) shrink-0 grow flex-col px-2 py-6 sm:px-0">
-          <div className="my-auto">
-            <div className="motion-enter px-4 text-center sm:px-6">
-              <h1 className="font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
-                {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
-              </h1>
-              <p className="mt-2 text-section text-pretty wrap-break-word text-ink-3">
-                {Workspace.match(me.workspace, {
-                  Personal: () => 'What are you waiting on, or want done?',
-                  Company: ({ company }) => `What are you waiting on at ${company.name}?`,
-                })}
-              </p>
-            </div>
-
-            <div className="mt-6">
-              <Composer
-                place={placeOf(me)}
-                placeholder={`Message ${name}`}
-                working={false}
-                onSend={(text) => startThread(text)}
-                onStop={() => undefined}
-              />
-            </div>
+    <section className="relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-surface-0">
+      <div className="mx-auto flex w-full max-w-(--thread-max-w) shrink-0 grow flex-col px-2 pb-6 sm:px-0">
+        <div className="flex min-h-min flex-1 flex-col justify-between gap-6 pb-6">
+          {/* Vivid sits where a Thread puts it: the face at 56 with its name capsule under it, at
+              the top centre (`HeroButton`, the same piece a conversation starts with). */}
+          <header className="flex justify-center pt-4">
+            <HeroButton mood={mood} open={about} onOpen={() => setAbout((value) => !value)} />
+          </header>
+          <div className="motion-enter px-4 text-center sm:px-6">
+            <h1 className="font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
+              {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
+            </h1>
+            <p className="mt-2 text-section text-pretty wrap-break-word text-ink-3">
+              {Workspace.match(me.workspace, {
+                Personal: () => 'What are you waiting on, or want done?',
+                Company: ({ company }) => `What are you waiting on at ${company.name}?`,
+              })}
+            </p>
           </div>
         </div>
+        <Composer
+          place={placeOf(me)}
+          placeholder={`Message ${name}`}
+          working={false}
+          onSend={(text) => startThread(text)}
+          onStop={() => undefined}
+        />
+        <div className="flex-1" />
       </div>
       {about && (
         <Suspense fallback={null}>
