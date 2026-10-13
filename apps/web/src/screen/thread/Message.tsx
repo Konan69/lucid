@@ -460,19 +460,6 @@ const COPY = {
   refused: 'Could not copy. Select the text instead.',
 } satisfies Record<'idle' | 'copied' | 'refused', string>
 
-/** Past this, a reply reads as a document, not a line said to someone. */
-const BUBBLE_MOST = 700
-
-/**
- * Whether a reply is a few plain words: no steps or displays with it, no Markdown block (heading,
- * quote, list, code, table), and short. Those get a bubble the size of the words; everything else
- * keeps the reading column, which blocks and long text need.
- */
-const simpleWords = (text: string, tools: ReadonlyArray<ToolPart>) =>
-  tools.length === 0 &&
-  text.length <= BUBBLE_MOST &&
-  !/^(#{1,6} |>|[-*+] |\d+\. |```|~~~)|\|.*\|/mu.test(text)
-
 /**
  * Copies a reply's words in one press. It is always there, quietly, beside the time: a control
  * that only appears on hover does not exist on a touch screen, and one more thing appearing under
@@ -527,9 +514,9 @@ function Stamp({ message }: { message: FlueConversationMessage }) {
 }
 
 /**
- * Vivid's reply. A few plain words sit in a bubble beside its face, shaped like the other
- * people's in a shared Thread (soft, with the corner nearest the face squared); steps, displays and
- * longer or structured text keep the open column.
+ * Vivid's reply, in the open reading column beside its face. It has no bubble: a short reply used
+ * to get one and lose it mid-sentence when it grew a list or a second paragraph, and the owner
+ * asked for it gone (13 October 2026).
  */
 function FromVivid({
   message,
@@ -550,7 +537,6 @@ function FromVivid({
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
   // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
   const { drawn: drawnText, fresh } = useRevealed(text, streaming)
-  const simple = simpleWords(text, tools)
   const steps = tools.filter((tool) => !drawn(tool))
   // Only the newest reply can still be in the making; an older one's steps are its record.
   const making = working && latest
@@ -564,21 +550,8 @@ function FromVivid({
           </span>
         )}
         {making && <Doing tools={steps} wordless={text.length === 0} />}
-        <div className={cn(simple && 'flex items-end gap-2')}>
-          {text.length > 0 && (
-            <div
-              className={cn(
-                simple &&
-                  'w-fit max-w-bubble min-w-0 rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5',
-              )}
-            >
-              <Markdown content={drawnText} fresh={fresh} />
-            </div>
-          )}
-          {!streaming && text.length > 0 && (
-            <Settled message={message} text={text} beside={simple} latest={latest} />
-          )}
-        </div>
+        {text.length > 0 && <Markdown content={drawnText} fresh={fresh} />}
+        {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
         {!making && <Trail tools={steps} />}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
@@ -626,20 +599,17 @@ function ReplyFace({
 function Settled({
   message,
   text,
-  beside,
   latest,
 }: {
   message: FlueConversationMessage
   text: string
-  /** Whether it sits beside a short bubble instead of under an open column. */
-  beside: boolean
   latest: boolean
 }) {
   return (
     <div
       className={cn(
         'flex h-6 items-center gap-1.5 text-meta text-ink-3',
-        beside ? 'shrink-0' : 'mt-1',
+        'mt-1',
         latest && 'motion-fade',
       )}
     >
