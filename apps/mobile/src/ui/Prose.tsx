@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Linking } from 'react-native'
+import { Linking, UIManager } from 'react-native'
 import { EnrichedMarkdownText } from 'react-native-enriched-markdown'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { useTheme } from '../theme'
@@ -19,6 +19,17 @@ function Plain({ text }: { text: string }) {
     </Label>
   )
 }
+
+/**
+ * Whether this build has the native formatter. A missing native view does not throw: React
+ * Native draws an empty "unimplemented" box in its place (`RCTComponentViewFactory.mm`), so
+ * `Recover` would never see it and every reply would be blank. The iPhone build adds the view
+ * as a framework loaded beside the app; when that framework did not load, the words are still
+ * shown, as written. It is asked while drawing and not when this file loads, because the
+ * registry it asks is installed with the renderer; React Native remembers the answer by name
+ * (`NativeComponentRegistryUnstable.js`), so asking again costs a lookup.
+ */
+const formats = (): boolean => UIManager.hasViewManagerConfig('EnrichedMarkdownText')
 
 /**
  * Opens a link in the phone's browser, and answers whether it could be. Only a web page is ever
@@ -92,6 +103,7 @@ export function Prose({
   const { colors } = useTheme()
   // One object per palette: the renderer sends a style to the native view when it is a new one.
   const style = useMemo(() => typeset(colors, MOBILE_TYPOGRAPHY), [colors])
+  if (!formats()) return <Plain text={plain} />
   return (
     <Recover from={text} fallback={<Plain text={plain} />}>
       <EnrichedMarkdownText
