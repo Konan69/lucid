@@ -334,7 +334,7 @@ const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
     server: input.server,
     open: openExternalUrl,
     random: (size) => NodeCrypto.randomBytes(size),
-    focus: () => raiseMainWindow(mainWindow),
+    focus: () => raiseMainWindow(platform, mainWindow),
     surfaces: input.surfaces,
   }).pipe(Scope.provide(untilQuit))
 })

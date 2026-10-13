@@ -1,7 +1,7 @@
 {
   "name": "@vivid/desktop",
   "productName": "Vivid",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Electron host for the Vivid web renderer: window chrome, deep links, and the desktop bridge.",
