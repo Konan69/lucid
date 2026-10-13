@@ -3,10 +3,14 @@ import { memo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from './cn'
+import { fadeWords } from './fade'
 import { Recover } from './Recover'
 
 /** Stable plugin list: a fresh array each render would make ReactMarkdown rebuild its processor. */
 const REMARK_PLUGINS = [remarkGfm]
+/** The same two lists every render, so the formatter does not take a new one as a change. */
+const FADING = [fadeWords]
+const STILL: typeof FADING = []
 
 /** What the table's copy control says for each thing that can have happened to the last press. */
 const COPY_TABLE = {
@@ -176,7 +180,14 @@ function Plain({ content }: { content: string }) {
  * re-renders for every token, and parsing Markdown is the expensive part of a message. Every
  * reply above the one being written has the same words as last time and is not parsed again.
  */
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({
+  content,
+  fresh = false,
+}: {
+  content: string
+  /** The words are still arriving: each new one fades in (`fade.ts`). */
+  fresh?: boolean
+}) {
   const linkedContent = normalizeTypedBullets(content).replace(
     /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
     (_match, filename: string, page?: string) => {
@@ -190,7 +201,11 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
       {/* A reply the formatter cannot draw is still a reply: it is shown as it was written, and
           tried again when more of it arrives. One bad message must not take the Thread with it. */}
       <Recover from={linkedContent} fallback={<Plain content={content} />}>
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={fresh ? FADING : STILL}
+          components={MARKDOWN_COMPONENTS}
+        >
           {linkedContent}
         </ReactMarkdown>
       </Recover>

@@ -25,6 +25,7 @@ import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
+import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
@@ -547,6 +548,8 @@ function FromVivid({
   const tools = message.parts.filter((part) => part.type === 'dynamic-tool')
   const forWhom = answering(message, context)
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
+  // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
+  const { drawn: drawnText, fresh } = useRevealed(text, streaming)
   const simple = simpleWords(text, tools)
   const steps = tools.filter((tool) => !drawn(tool))
   // Only the newest reply can still be in the making; an older one's steps are its record.
@@ -569,7 +572,7 @@ function FromVivid({
                   'w-fit max-w-bubble min-w-0 rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5',
               )}
             >
-              <Markdown content={text} />
+              <Markdown content={drawnText} fresh={fresh} />
             </div>
           )}
           {!streaming && text.length > 0 && (
