@@ -8,6 +8,9 @@ import { ServerConfig } from '../config.ts'
 import { appSignIn } from './signin.ts'
 import { authDatabaseLayer } from './dialect.ts'
 
+/** A year. See `session` in the options below for why it is not Better Auth's seven days. */
+const SESSION_LASTS_SECONDS = 365 * 24 * 60 * 60
+
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
  * its organization/member/invitation model names use Vivid's company,
@@ -38,6 +41,19 @@ const makeOptions = (config: ServerConfig['Service']) => {
      * `X-Real-IP` and `X-Forwarded-For` had both replaced.
      */
     advanced: { ipAddress: { ipAddressHeaders: ['x-real-ip'] } },
+    /**
+     * How long a sign-in lasts with nobody using it: a year, renewed each day it is used.
+     *
+     * Better Auth's own default is seven days (`sessionConfig.expiresIn` in
+     * `dist/context/create-context.mjs`, 1.7.5), which signed a Person out of an app or a browser
+     * they had not opened for a week: a phone app left alone, a desktop app, a second browser.
+     * A Person signs in to Vivid once on each device and stays signed in until they sign out.
+     * Every session takes its lifetime from here: the browser's cookie, and the session an app
+     * trades its code for (`signin.ts`), whose token the phone keeps as its bearer token.
+     * A session made under the old lifetime is past due for renewal under this one, so it is
+     * given the year the next time it is used (`shouldBeUpdated` in `dist/api/routes/session.mjs`).
+     */
+    session: { expiresIn: SESSION_LASTS_SECONDS },
     emailAndPassword: {
       enabled: true,
       autoSignIn: true,
