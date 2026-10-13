@@ -80,13 +80,25 @@ type Window = { readonly pid: number; readonly window_id: number }
 const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
   native: Driver,
   mayLaunch: boolean,
+  proxy: Effect.Effect<Option.Option<string>>,
 ) {
   let list = yield* native.call('list_windows', {}, Windows)
   let matches = list.windows.filter((window) => /chrome|chromium/i.test(window.app_name))
   if (matches.length === 0 && mayLaunch) {
+    // Asked only here: a browser's way out is decided when it starts and kept until it ends.
+    const through = yield* proxy
     yield* native.call(
       'launch_app',
-      { name: 'google-chrome-stable', additional_arguments: ['--force-renderer-accessibility'] },
+      {
+        name: 'google-chrome-stable',
+        additional_arguments: [
+          '--force-renderer-accessibility',
+          ...Option.match(through, {
+            onNone: () => [],
+            onSome: (address) => [`--proxy-server=${address}`],
+          }),
+        ],
+      },
       Launched,
     )
     // Launch is dispatched once; only discovery is retried while the native window appears.
@@ -305,15 +317,19 @@ const resolveTab = Effect.fn('Machine.boat.browser.resolveTab')(function* (
 })
 
 /** Refresh native binding after each step so URLs, current tab and outline describe post-action state.
- * Refused browser setup is surfaced; we never start a second profile or alter the guest daemon. */
+ * Refused browser setup is surfaced; we never start a second profile or alter the guest daemon.
+ *
+ * `proxy` answers the address of the proxy a browser started by this step is given, or nothing
+ * for the machine's own way out (`egress/guest.ts`). It is run only when the browser is started. */
 export const browse = Effect.fn('Machine.boat.browser')(function* (
   native: Driver,
   action: BrowserAction,
   previous: Option.Option<BrowseResult['tabs']>,
+  proxy: Effect.Effect<Option.Option<string>>,
 ) {
   if (BrowserAction.guards.Open(action) || BrowserAction.guards.OpenTab(action))
     yield* validateAddress(action.address)
-  const window = yield* chrome(native, BrowserAction.isAnyOf(['Open', 'OpenTab'])(action))
+  const window = yield* chrome(native, BrowserAction.isAnyOf(['Open', 'OpenTab'])(action), proxy)
   if (BrowserAction.isAnyOf(['Open', 'OpenTab'])(action)) yield* prepare(native, window)
   const before = yield* binding(native, window)
   yield* step(native, window, before, yield* resolveTab(before, action, previous))

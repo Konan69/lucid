@@ -1620,16 +1620,21 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* machine.ensure(key)
           yield* machine.browse({
             key,
+            egress: false,
             action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
           })
           yield* Ref.set(evidence.active, null)
-          const read = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+          const read = yield* machine.browse({
+            key,
+            egress: false,
+            action: BrowserAction.cases.Read.make({}),
+          })
           expect(read.tabs).toEqual([
             { title: 'Example', address: 'https://example.com', showing: true },
           ])
           yield* Ref.set(evidence.extraTab, true)
           const ambiguous = yield* machine
-            .browse({ key, action: BrowserAction.cases.Read.make({}) })
+            .browse({ key, egress: false, action: BrowserAction.cases.Read.make({}) })
             .pipe(Effect.flip)
           expect(ambiguous._tag).toBe('BrowserStepFailed')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
@@ -1645,6 +1650,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* machine.ensure(key)
           yield* machine.browse({
             key,
+            egress: false,
             action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
           })
           yield* Ref.set(evidence.missingBounds, true)
@@ -1652,7 +1658,11 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             (tool) => tool === 'click',
           ).length
           const refused = yield* machine
-            .browse({ key, action: BrowserAction.cases.Click.make({ target: 'Continue' }) })
+            .browse({
+              key,
+              egress: false,
+              action: BrowserAction.cases.Click.make({ target: 'Continue' }),
+            })
             .pipe(Effect.flip)
           expect(refused._tag).toBe('BrowserStepFailed')
           expect((yield* Ref.get(evidence.calls)).filter((tool) => tool === 'click').length).toBe(
@@ -1663,6 +1673,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           const unchanged = yield* machine
             .browse({
               key,
+              egress: false,
               action: BrowserAction.cases.Type.make({
                 target: 'Message',
                 text: 'private-fixture-input',
@@ -1714,6 +1725,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           const refused = yield* machine
             .browse({
               key,
+              egress: false,
               action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
             })
             .pipe(Effect.flip)
@@ -1759,6 +1771,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect((yield* Ref.get(evidence.files)).size).toBe(0)
           const page = yield* machine.browse({
             key,
+            egress: false,
             action: BrowserAction.cases.Open.make({ address: 'https://example.com/proof' }),
           })
           expect(page.address).toBe('https://example.com/proof')
@@ -1766,11 +1779,13 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
           const clicked = yield* machine.browse({
             key,
+            egress: false,
             action: BrowserAction.cases.Click.make({ target: 'Continue' }),
           })
           expect(clicked.address).toBe('https://example.com/continued')
           const typed = yield* machine.browse({
             key,
+            egress: false,
             action: BrowserAction.cases.Type.make({
               target: 'Message',
               text: 'private-fixture-input',
