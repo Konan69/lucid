@@ -32,6 +32,7 @@ import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 import { Said, Voice } from './Said'
+import { useRevealed } from '../../ui/reveal'
 import { Words } from './Words'
 
 /**
@@ -292,6 +293,8 @@ function FromVivid({
   onContinue: Say
 }) {
   const text = textOf(message)
+  // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
+  const drawn = useRevealed(text, isStreaming(message))
   const tools = toolsOf(message)
   const moment = momentOf(message)
   // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
@@ -311,7 +314,7 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && <Words text={text} />}
+        {text.length > 0 && <Words text={drawn} />}
         <Cards
           tools={tools}
           detail={detail}
