@@ -80,6 +80,7 @@ import {
   ConnectChannelRequest,
 } from './channels.js'
 import { UseWindowRequest, WindowOutcome } from './windows.js'
+import { CopySignInRequest, CopySignInOutcome } from './signins.js'
 import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
   ACCOUNT_HANDLE_MAX,
@@ -871,6 +872,12 @@ const UseWindow = Rpc.make('UseWindow', {
   payload: UseWindowRequest,
   success: WindowOutcome,
 })
+/** One explicit site's sign-in. Cookies stay inside the device and Computer channel. */
+const CopySignIn = Rpc.make('CopySignIn', {
+  ...call,
+  payload: CopySignInRequest,
+  success: CopySignInOutcome,
+})
 /**
  * The desktop app listening for work. Holding this open is what makes its Device `Connected`;
  * only the installation that enrolled an allowed Device may hold it, and nothing sent while it
@@ -1046,6 +1053,7 @@ export const VividRpc = RpcGroup.make(
   RevokeDevice,
   ReportDeviceStop,
   UseWindow,
+  CopySignIn,
   WatchDeviceRequests,
   AnswerDeviceRequestRpc,
   UseDesktop,

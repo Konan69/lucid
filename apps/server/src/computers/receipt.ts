@@ -30,6 +30,8 @@ export const receiptOf = (answer: DeviceAnswer): DeviceReceipt =>
     Did: (): DeviceReceipt => DeviceReceipt.cases.Did.make({}),
     Declined: ({ reason }): DeviceReceipt => DeviceReceipt.cases.Declined.make({ reason }),
     Failed: (): DeviceReceipt => DeviceReceipt.cases.Failed.make({}),
+    // The answer's private cookie collection is never encoded into the ledger.
+    SignIn: (): DeviceReceipt => DeviceReceipt.cases.Done.make({}),
   })
 
 /**

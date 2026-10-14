@@ -16,6 +16,7 @@ import * as Result from 'effect/Result'
 import * as Match from 'effect/Match'
 import { pictureResult } from './picture.ts'
 import { personComputerModelTool } from './windows.ts'
+import { signInModelTool } from './signins.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunScoped, type RunTool } from './scope.ts'
@@ -267,5 +268,10 @@ export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
 
 /** The tools whose results carry a picture. */
 export function pictureTools(runTool: RunTool) {
-  return [desktopModelTool(runTool), browseModelTool(runTool), personComputerModelTool(runTool)]
+  return [
+    desktopModelTool(runTool),
+    browseModelTool(runTool),
+    personComputerModelTool(runTool),
+    signInModelTool(runTool),
+  ]
 }

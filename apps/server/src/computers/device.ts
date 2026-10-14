@@ -20,6 +20,8 @@ import {
   DeviceWork,
   DeviceAbility,
   WindowOutcome,
+  CopySignInRequest,
+  SignInDelivery,
   WindowAction,
   type ReportDeviceStopRequest,
   RunState,
@@ -168,6 +170,14 @@ export interface DeviceService {
     runId: RunId
     action: WindowAction
   }) => Effect.Effect<WindowOutcome, DatabaseInfrastructureError>
+  /** Site consent is asked on the desktop before any cookies are read. Secrets are returned
+   * only to the server's injection program, never to a model or a persisted ledger row. */
+  readonly signIn: (input: {
+    personId: PersonId
+    threadId: ThreadId
+    runId: RunId
+    request: CopySignInRequest
+  }) => Effect.Effect<SignInDelivery, DatabaseInfrastructureError>
   /** Ends a native turn once on its original Device link; offline Devices use their own idle timeout. */
   readonly ended: (runId: RunId) => Effect.Effect<void>
   /** Desktop Stop must prove Device, installation and Run ownership before runtime abort. */
@@ -249,6 +259,7 @@ const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
       ),
     Did: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
     Declined: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
+    SignIn: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -546,6 +557,7 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     const matches = DeviceWork.match(ticket.request.work, {
       Page: () => DeviceAnswer.isAnyOf(['Done', 'Refused', 'Failed'])(input.answer),
       Window: () => DeviceAnswer.isAnyOf(['Did', 'Declined', 'Failed'])(input.answer),
+      SignIn: () => DeviceAnswer.isAnyOf(['SignIn', 'Failed'])(input.answer),
     })
     const receipt = matches ? receiptOf(input.answer) : DeviceReceipt.cases.OutcomeUnknown.make({})
     return yield* Effect.uninterruptible(
@@ -718,7 +730,11 @@ const makeSend = (
         subscriptionId: subscription.id,
         threadId: request.threadId,
         runId: request.runId,
-        action: request.work.action._tag,
+        action: DeviceWork.match(request.work, {
+          Page: ({ action }) => action._tag,
+          Window: ({ action }) => action._tag,
+          SignIn: () => 'SignIn',
+        }),
         receipt: yield* encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
         dispatchedAt: yield* Clock.currentTimeMillis,
         expiresAt: request.expiresAt,
@@ -828,6 +844,8 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
         // Read after the turn is taken: the link that was there when the wait began may be gone.
         const subscription = links.get(id)
         if (subscription === undefined) return yield* new NoDeviceConnected({})
+        if (DeviceWork.guards.SignIn(input.work) && !subscription.ability.signins)
+          return Option.some(DeviceAnswer.cases.Failed.make({}))
         const request = DeviceRequest.cases.Act.make({
           id: DeviceRequestId.make(NodeCrypto.randomUUID()),
           threadId: input.threadId,
@@ -850,6 +868,7 @@ const windowOutcome = (answer: DeviceAnswer): WindowOutcome =>
     Declined: ({ reason }) => WindowOutcome.cases.Refused.make({ reason }),
     Done: () => WindowOutcome.cases.OutcomeUnknown.make({}),
     Refused: () => WindowOutcome.cases.OutcomeUnknown.make({}),
+    SignIn: () => WindowOutcome.cases.OutcomeUnknown.make({}),
     Failed: () =>
       WindowOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -916,6 +935,49 @@ const makeWindows = ({
   })
   return { window, ended }
 }
+
+/** Cookie work shares the device ledger, queue and Run admission, while keeping its private
+ * receipt and actionable source refusals separate from page and window vocabularies. */
+const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
+  Effect.fn('Device.signIn')(function* (input: Parameters<DeviceService['signIn']>[0]) {
+    return yield* dispatch({
+      personId: input.personId,
+      threadId: input.threadId,
+      runId: input.runId,
+      work: DeviceWork.cases.SignIn.make(input.request),
+      authority: BrowseAuthority.cases.Acting.make({}),
+    }).pipe(
+      Effect.map((answer) =>
+        Option.match(answer, {
+          onNone: (): SignInDelivery => SignInDelivery.cases.OutcomeUnknown.make({}),
+          onSome: (value): SignInDelivery =>
+            DeviceAnswer.match<SignInDelivery>(value, {
+              SignIn: ({ read }) => read,
+              Failed: () =>
+                SignInDelivery.cases.Unavailable.make({
+                  reason: 'Sign-in copying is unavailable on this connected device.',
+                }),
+              Done: () => SignInDelivery.cases.OutcomeUnknown.make({}),
+              Refused: () => SignInDelivery.cases.OutcomeUnknown.make({}),
+              Did: () => SignInDelivery.cases.OutcomeUnknown.make({}),
+              Declined: () => SignInDelivery.cases.OutcomeUnknown.make({}),
+            }),
+        }),
+      ),
+      Effect.catchTags({
+        NoDeviceConnected: () => Effect.succeed(SignInDelivery.cases.NotConnected.make({})),
+        NoActingRun: () => Effect.succeed(SignInDelivery.cases.RunRequired.make({})),
+        RunNotWorking: () => Effect.succeed(SignInDelivery.cases.RunRequired.make({})),
+        DeviceBusy: () => Effect.succeed(SignInDelivery.cases.Busy.make({})),
+        WindowUnavailable: () =>
+          Effect.succeed(
+            SignInDelivery.cases.Unavailable.make({
+              reason: 'The device cannot complete this request.',
+            }),
+          ),
+      }),
+    )
+  })
 
 /**
  * The database does not have the tables this code was written for: product migrations have not
@@ -1023,6 +1085,7 @@ export const deviceLayer = Layer.effect(
       requireConnected,
       watch: makeWatch(database, presence),
       ...windows,
+      signIn: makeSignIns(dispatch),
       reportStop: Effect.fn('Device.reportStop')(function* (personId, input) {
         const row = yield* registry.find(personId, input.device)
         if (row.installationId !== input.installation)

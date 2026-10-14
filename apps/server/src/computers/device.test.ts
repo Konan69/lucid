@@ -49,6 +49,11 @@ import {
   DEVICE_ASKING_MILLIS,
   DeviceListResponse,
   DeviceRequest,
+  CopySignInRequest,
+  SignInCookie,
+  SignInProfile,
+  SignInRead,
+  SignInSite,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { refusalLogs } from '../observability/testlogger.ts'
@@ -68,6 +73,8 @@ import { BrowseAuthority, DeviceRegistry, deviceLayer } from './device.ts'
 import { computerHandlers } from './handlers.ts'
 import { DeviceReceipt, DeviceSubscriptionId } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
+import { ComputerStore } from './store.ts'
+import { Redacted } from 'effect'
 
 /**
  * Observe subscriptions on the real PostgreSQL change bus. Session removal announces through
@@ -277,7 +284,7 @@ const listenWith = Effect.fn('DeviceTest.listenWith')(function* (
 
 /** Existing page tests keep their page-only desktop capability. */
 const listen = (who: Somebody, device: Device, installation: InstallationId) =>
-  listenWith(who, device, installation, { pages: true, apps: false, egress: false })
+  listenWith(who, device, installation, { pages: true, apps: false, egress: false, signins: false })
 
 /** Use the runtime-only RPC with the same Person/Thread authority as Browse. */
 const useWindow = (who: Somebody, threadId: ThreadId, action: WindowAction) =>
@@ -301,10 +308,44 @@ const native = Effect.fn('DeviceTest.native')(function* () {
     pages: true,
     apps: true,
     egress: false,
+    signins: false,
   })
   const run = yield* working(who.person, who.person)
   return { who, device, installation, link, ...run }
 })
+
+/** Same persisted link and Run authority, advertising the new cookie reader explicitly. */
+const signInNative = Effect.fn('DeviceTest.signInNative')(function* () {
+  const who = yield* somebody(farFuture)
+  const { device, installation } = yield* enrolled(who, 'Sign-in source')
+  yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
+  const link = yield* listenWith(who, device, installation, {
+    pages: true,
+    apps: false,
+    egress: false,
+    signins: true,
+  })
+  return { who, device, installation, link, ...(yield* working(who.person, who.person)) }
+})
+
+const signInRequest = CopySignInRequest.make({
+  site: SignInSite.make('github.com'),
+  browser: 'Chrome',
+  profile: SignInProfile.make('Default'),
+})
+
+/** Actor authority comes from the same runtime-only authentication as existing window tests. */
+const useSignIn = (who: Somebody, threadId: ThreadId) =>
+  computerHandlers.CopySignIn(signInRequest).pipe(
+    Effect.provideService(
+      AuthContext,
+      AuthState.Vivid({
+        person: who.person,
+        workspace: Workspace.cases.Personal.make({}),
+        threadId,
+      }),
+    ),
+  )
 
 /**
  * Acknowledge the public handler's bounded turn wait, without replacing its permit or SQL.
@@ -443,7 +484,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation,
-              ability: { pages: true, apps: false, egress: false },
+              ability: { pages: true, apps: false, egress: false, signins: false },
             })
             .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
           yield* Queue.take((yield* Bus).watching)
@@ -464,7 +505,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false, egress: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
           })
           .pipe(Stream.runDrain, signedInCompany, Effect.flip)
         expect(failure._tag).toBe('Forbidden')
@@ -482,7 +523,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const previous = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
           presence: DevicePresence.cases.Connected.make({
-            ability: { pages: true, apps: false, egress: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
           }),
         })
         const successor = yield* listen(ada, device, installation)
@@ -577,7 +618,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const link = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
           presence: DevicePresence.cases.Connected.make({
-            ability: { pages: true, apps: false, egress: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
           }),
         })
         yield* Fiber.interrupt(link.ended)
@@ -694,7 +735,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation: presented,
-              ability: { pages: true, apps: false, egress: false },
+              ability: { pages: true, apps: false, egress: false, signins: false },
             })
             .pipe(
               Stream.runDrain,
@@ -753,7 +794,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false, egress: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
           })
           .pipe(Stream.runDrain, as(ada), Effect.flip)
         expect(again._tag).toBe('Forbidden')
@@ -1488,5 +1529,124 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
         expect(yield* Queue.size(test.link.runEnds)).toBe(0)
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
+  })
+})
+
+// These cases exercise the real Device ledger and public RPC handler. Only the desktop answer
+// and Computer browser are hand-controlled; cookie scope and refusal propagation are production.
+describe('copying a sign-in through the device link', () => {
+  layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect('returns BrowserLocked without injection and copies on a fresh approved retry', () =>
+      Effect.gen(function* () {
+        const test = yield* signInNative()
+        const injected: Array<ReadonlyArray<SignInCookie>> = []
+        const computer = Layer.mock(ComputerStore, {
+          copySignIn: (_person, cookies) =>
+            Effect.sync(() => {
+              injected.push(cookies)
+              return cookies.length
+            }),
+        })
+        const first = yield* useSignIn(test.who, test.threadId).pipe(
+          // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point for the controlled Computer adapter.
+          Effect.provide(computer),
+          Effect.forkScoped,
+        )
+        const locked = yield* Queue.take(test.link.requests)
+        expect(locked.work).toEqual(DeviceWork.cases.SignIn.make(signInRequest))
+        yield* computerHandlers
+          .AnswerDeviceRequest({
+            device: test.device.id,
+            id: locked.id,
+            answer: DeviceAnswer.cases.SignIn.make({
+              read: SignInRead.cases.BrowserLocked.make({ browser: 'Chrome' }),
+            }),
+          })
+          .pipe(as(test.who))
+        expect(yield* Fiber.join(first)).toEqual(
+          SignInRead.cases.BrowserLocked.make({ browser: 'Chrome' }),
+        )
+        expect(injected).toHaveLength(0)
+        const second = yield* useSignIn(test.who, test.threadId).pipe(
+          // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point for the controlled Computer adapter.
+          Effect.provide(computer),
+          Effect.forkScoped,
+        )
+        const retry = yield* Queue.take(test.link.requests)
+        expect(retry.id).not.toBe(locked.id)
+        const cookie = SignInCookie.make({
+          name: 'session',
+          value: Redacted.make('device-cookie-sentinel'),
+          scope: SignInCookie.fields.scope.cases.Host.make({ host: SignInSite.make('github.com') }),
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          sameSite: 'Lax',
+          expiry: SignInCookie.fields.expiry.cases.Session.make({}),
+        })
+        yield* computerHandlers
+          .AnswerDeviceRequest({
+            device: test.device.id,
+            id: retry.id,
+            answer: DeviceAnswer.cases.SignIn.make({
+              read: SignInRead.cases.Collected.make({ cookies: [cookie] }),
+            }),
+          })
+          .pipe(as(test.who))
+        const outcome = yield* Fiber.join(second)
+        expect(outcome).toHaveProperty('_tag', 'Copied')
+        expect(outcome).toHaveProperty('cookies', 1)
+        expect(injected).toHaveLength(1)
+        expect(JSON.stringify(outcome)).not.toContain('device-cookie-sentinel')
+        const rows = yield* (yield* Database).run(
+          (yield* Database).select().from(deviceRequests).where(eq(deviceRequests.id, retry.id)),
+        )
+        expect(rows).toHaveLength(1)
+        expect(JSON.stringify(rows)).not.toContain('device-cookie-sentinel')
+        expect(JSON.stringify(rows)).not.toContain('github.com')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('an older desktop without sign-in capability is refused before dispatch', () =>
+      Effect.gen(function* () {
+        const test = yield* native()
+        const outcome = yield* useSignIn(test.who, test.threadId).pipe(
+          // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point and must prove no Computer operation occurs.
+          Effect.provide(Layer.mock(ComputerStore, {})),
+        )
+        expect(outcome).toHaveProperty('_tag', 'Unavailable')
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    for (const read of [
+      SignInRead.cases.Declined.make({}),
+      SignInRead.cases.NothingToCopy.make({}),
+      SignInRead.cases.PermissionDenied.make({ browser: 'Chrome' }),
+      SignInRead.cases.UnsupportedEncryption.make({ browser: 'Chrome' }),
+      SignInRead.cases.UnsupportedCookieScope.make({ browser: 'Chrome' }),
+      SignInRead.cases.Unreadable.make({ browser: 'Chrome' }),
+    ]) {
+      it.effect(`preserves ${read._tag} without reading or injecting another source`, () =>
+        Effect.gen(function* () {
+          const test = yield* signInNative()
+          const pending = yield* useSignIn(test.who, test.threadId).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point and must prove no Computer operation occurs.
+            Effect.provide(Layer.mock(ComputerStore, {})),
+            Effect.forkScoped,
+          )
+          const work = yield* Queue.take(test.link.requests)
+          yield* computerHandlers
+            .AnswerDeviceRequest({
+              device: test.device.id,
+              id: work.id,
+              answer: DeviceAnswer.cases.SignIn.make({ read }),
+            })
+            .pipe(as(test.who))
+          expect(yield* Fiber.join(pending)).toEqual(read)
+          expect(yield* Queue.size(test.link.requests)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
   })
 })

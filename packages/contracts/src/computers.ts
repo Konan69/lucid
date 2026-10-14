@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect'
 import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
 import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
+import { CopySignInRequest, SignInRead } from './signins.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -316,6 +317,7 @@ export type DeviceRequestId = typeof DeviceRequestId.Type
 export const DeviceWork = Schema.TaggedUnion({
   Page: { action: BrowserAction },
   Window: { action: WindowAction },
+  SignIn: CopySignInRequest.fields,
 })
 export type DeviceWork = typeof DeviceWork.Type
 
@@ -357,6 +359,7 @@ export const DeviceAnswer = Schema.TaggedUnion({
   Did: { result: WindowResult },
   Declined: { reason: WindowRefusal },
   Failed: {},
+  SignIn: { read: SignInRead },
 })
 export type DeviceAnswer = typeof DeviceAnswer.Type
 

@@ -30,6 +30,7 @@ const Asked = Schema.Struct({
   content: text,
   title: text,
   question: text,
+  site: text,
   /** `forget` says what to forget; `correct` says what is true now. */
   what: text,
   now: text,
@@ -50,6 +51,7 @@ const Answered = Schema.Struct({
   tools: list,
   memories: list,
   watches: list,
+  message: text,
 })
 type Answered = typeof Answered.Type
 
@@ -272,6 +274,14 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.summary)],
   },
+  copy_signin: {
+    said: {
+      running: 'Copying your sign-in',
+      done: 'Copied your sign-in',
+      failed: 'Sign-in not copied',
+    },
+    detail: (asked, answered) => [said(asked.site), said(answered.message)],
+  },
   run_code: {
     said: {
       running: 'Writing a program',
@@ -435,6 +445,7 @@ const NOTHING_ASKED: Asked = {
   content: Option.none(),
   title: Option.none(),
   question: Option.none(),
+  site: Option.none(),
   what: Option.none(),
   now: Option.none(),
 }
@@ -447,6 +458,7 @@ const NOTHING_ANSWERED: Answered = {
   ok: Option.none(),
   created: Option.none(),
   changed: Option.none(),
+  message: Option.none(),
 }
 
 /**

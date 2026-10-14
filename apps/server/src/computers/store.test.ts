@@ -287,6 +287,7 @@ const providerLayer = Layer.effect(
         Effect.fail(new MachineOperationFailed({ operation })),
       )
     return Machine.of({
+      copySignIn: unused('copySignIn'),
       status,
       inspect,
       ensure,
@@ -420,7 +421,7 @@ const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () 
     const ready = yield* Deferred.make<void>()
     const fiber = yield* Effect.gen(function* () {
       const stream = yield* registry.watch({
-        ability: { pages: true, apps: false, egress: false },
+        ability: { pages: true, apps: false, egress: false, signins: false },
         personId: test.personal.person.id,
         sessionId: session.sessionId,
         device: device.id,
@@ -1706,7 +1707,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           const device = yield* registry.enrol(first.id, { installation, name: 'Test computer' })
           yield* registry.allow(first.id, device.id)
           const listening = yield* registry.watch({
-            ability: { pages: true, apps: false, egress: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
             personId: first.id,
             sessionId: SessionId.make(NodeCrypto.randomUUID()),
             device: device.id,

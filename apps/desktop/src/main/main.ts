@@ -50,6 +50,7 @@ import { DesktopSettings, settingsLayer } from './settings.ts'
 import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
 import { APP_PARTITION, secureSession } from './session.ts'
+import { copyDeviceSignIn } from './cookies/copy.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { googleSignIn } from './signin.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
@@ -268,12 +269,18 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
           identity: known,
         }),
     }),
-    ability: () => ({ pages: true, apps: windows.apps, egress: true }),
+    ability: () => ({ pages: true, apps: windows.apps, egress: true, signins: true }),
     execute: (request) =>
       DeviceWork.match(request.work, {
         Page: ({ action }) => control.execute({ action, expiresAt: request.expiresAt }),
         Window: ({ action }) =>
           windows.execute({ runId: request.runId, action, expiresAt: request.expiresAt }),
+        SignIn: (work) =>
+          copyDeviceSignIn({
+            request: work,
+            expiresAt: request.expiresAt,
+            parent: mainWindow,
+          }),
       }),
     ended: windows.ended,
     // The notice window belongs to one server's origin and one session; it goes with the link.

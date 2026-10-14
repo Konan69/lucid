@@ -25,7 +25,7 @@ describe('how a computer stands', () => {
       name: 'Computer laptop',
       access: allowedSince(1),
       presence: DevicePresence.cases.Connected.make({
-        ability: { pages: true, apps, egress: false },
+        ability: { pages: true, apps, egress: false, signins: false },
       }),
     })
     expect(standing(connected(true))).toBe(

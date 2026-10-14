@@ -450,6 +450,11 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
 })
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
+  /** The takeover and idle-stop permit is held until the private cookie import ends. */
+  readonly copySignIn: (
+    person: PersonId,
+    cookies: ReadonlyArray<import('@vivid/contracts').SignInCookie>,
+  ) => Effect.Effect<number, StoreError | MachineFailure | ReadinessFailure>
   readonly get: (person: PersonId) => Effect.Effect<Computer, StoreError>
   readonly start: (person: PersonId) => Effect.Effect<Computer, StoreError>
   readonly stop: (person: PersonId) => Effect.Effect<Computer, StoreError>
@@ -1194,6 +1199,9 @@ export const computerStoreLayer = Layer.effect(
       return yield* state.stop(person)
     })
     return ComputerStore.of({
+      copySignIn: Effect.fn('ComputerStore.copySignIn')((person, cookies) =>
+        execute(person, (key) => state.machine.copySignIn({ key, cookies })),
+      ),
       get: state.get,
       start,
       stop,
@@ -1213,7 +1221,7 @@ export const computerStoreLayer = Layer.effect(
 type ExecutionFailure = MachineFailure | ReadinessFailure | DatabaseInfrastructureError
 
 /** Domain refusals keep useful sentences; database and provider details never reach a tool response. */
-const executionReason = (failure: ExecutionFailure): string =>
+export const executionReason = (failure: ExecutionFailure): string =>
   Match.value(failure).pipe(
     Match.tags({
       DatabaseFailure: () => 'The Computer record could not be read or updated.',
@@ -1243,7 +1251,7 @@ const ordinaryRefusals: ReadonlySet<(MachineFailure | ReadinessFailure)['_tag']>
  * name only. It is a successful answer to the caller, so nothing else records it: on 6 October
  * 2026 every action on a Person's Computer was refused for seven hours and the log was silent.
  */
-const executionRefusals = <A>(
+export const executionRefusals = <A>(
   answer: (failure: MachineFailure | ReadinessFailure) => Effect.Effect<A>,
 ) => {
   const handle = (failure: MachineFailure | ReadinessFailure) =>

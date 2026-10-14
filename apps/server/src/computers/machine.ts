@@ -295,6 +295,11 @@ export interface MachineConversation {
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
+  /** Import into the same Chrome profile as browser work. Values stay on the private channel. */
+  readonly copySignIn: (input: {
+    readonly key: MachineKey
+    readonly cookies: ReadonlyArray<import('@vivid/contracts').SignInCookie>
+  }) => Effect.Effect<number, MachineFailure>
   readonly ensure: (
     key: MachineKey,
   ) => Effect.Effect<typeof MachineState.cases.Running.Type, MachineFailure>

@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest'
 import { describeToolCall, readAnswered, readAsked, summarizeSteps } from './activity.js'
 
 describe('a step, in words', () => {
+  it('shows the quit-and-retry instruction and refuses to label a locked copy as copied', () => {
+    const asked = readAsked({ site: 'github.com' })
+    const locked = readAnswered({
+      ok: false,
+      message: 'Quit Chrome, then tell me to retry copying your github.com sign-in.',
+    })
+    expect(describeToolCall('copy_signin', asked, locked, 'done')).toEqual({
+      state: 'failed',
+      label: 'Sign-in not copied',
+      detail: 'github.com · Quit Chrome, then tell me to retry copying your github.com sign-in.',
+    })
+    expect(
+      describeToolCall('copy_signin', asked, readAnswered({ ok: true }), 'done'),
+    ).toMatchObject({
+      state: 'done',
+      label: 'Copied your sign-in',
+      detail: 'github.com',
+    })
+  })
   it('describes a completed Library search with its query and result count', () => {
     expect(
       describeToolCall(

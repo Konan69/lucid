@@ -75,6 +75,7 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
   )
   const unused = (operation: string) => () => Effect.die(`The stand-in does not ${operation}`)
   const machine = Machine.of({
+    copySignIn: unused('copy a sign-in'),
     ensure: Effect.fn('StandIn.ensure')(function* () {
       yield* Ref.update(wakes, (count) => count + 1)
       yield* Ref.set(awake, true)

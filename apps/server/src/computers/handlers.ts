@@ -5,6 +5,7 @@ import {
   DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
+  type CopySignInRequest,
   DeviceListResponse,
   DeviceResponse,
   type AnswerDeviceRequest,
@@ -22,6 +23,7 @@ import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/a
 import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { computerWindow } from './windows.ts'
+import { copySignIn } from './signins/copy.ts'
 import { DeviceRegistry } from './device.ts'
 import { Egress } from './egress/relay.ts'
 import {
@@ -90,6 +92,11 @@ const egressStatus = Effect.fn('Computers.egressStatus')(function* (actor: Pick<
 })
 
 export const computerHandlers = {
+  /** Public receipt contains only the outcome and count; cookies never cross the runtime RPC. */
+  CopySignIn: Effect.fn('Rpc.CopySignIn')(function* (request: CopySignInRequest) {
+    yield* requireVivid()
+    return yield* copySignIn(yield* requireActor(), request)
+  }),
   /** Metadata uses the same authenticated owner as every other Computer operation. */
   GetComputerApps: Effect.fn('Rpc.GetComputerApps')(function* () {
     const auth = yield* requireActor()

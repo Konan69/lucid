@@ -217,5 +217,8 @@ export const DeviceAbility = Schema.Struct({
   pages: Schema.Boolean,
   apps: Schema.Boolean,
   egress: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  /** An already-installed desktop binary has no sign-in reader. Decoding its older capability
+   * envelope must preserve that absence instead of granting the new work or dropping its link. */
+  signins: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
 })
 export interface DeviceAbility extends Schema.Schema.Type<typeof DeviceAbility> {}
