@@ -20,7 +20,7 @@ import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { machineLinks } from './boat/shell.ts'
 import { holding, wake } from './boat/holder.ts'
-import { EGRESS_PROXY_ADDRESS, startProxy } from './egress/guest.ts'
+import { browserProxy, startProxy } from './egress/guest.ts'
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
@@ -183,16 +183,8 @@ export const boatMachineLayer = Layer.effect(
             yield* nativeDriver(input.key),
             input.action,
             Option.fromUndefinedOr(tabs.get(input.key)),
-            // With egress chosen, a browser this step starts is given the Computer's egress
-            // proxy, once that proxy is seen to listen; otherwise it goes out directly, as a
-            // browser always did. A proxy that cannot be started never stops the browser.
-            input.egress
-              ? startProxy(shell, input.key).pipe(
-                  Effect.map((listening) =>
-                    listening ? Option.some(EGRESS_PROXY_ADDRESS) : Option.none(),
-                  ),
-                )
-              : Effect.succeedNone,
+            // What a browser this step starts is given as its way out (`browserProxy`).
+            browserProxy(input.egress, startProxy(shell, input.key)),
           )
           tabs.set(input.key, result.tabs)
           return result

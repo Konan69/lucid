@@ -104,3 +104,15 @@ export const startProxy = Effect.fn('Egress.startProxy')(function* (
       ),
     )
 })
+
+/**
+ * The proxy a browser is given when a step has to start it: the egress proxy when the Person
+ * has egress on and the proxy is seen to listen, and otherwise nothing, which is the machine's
+ * own way out. With egress off `listening` is never run, so nothing is started on the Computer
+ * for a Person who did not ask for it; and a proxy that could not be started never stops the
+ * browser, it only sends it out directly.
+ */
+export const browserProxy = (egress: boolean, listening: Effect.Effect<boolean>) =>
+  egress
+    ? Effect.map(listening, (up) => (up ? Option.some(EGRESS_PROXY_ADDRESS) : Option.none()))
+    : Effect.succeedNone

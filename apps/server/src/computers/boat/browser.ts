@@ -76,9 +76,15 @@ const Elements = Schema.Struct({
 })
 type Window = { readonly pid: number; readonly window_id: number }
 
-/** Discovery refuses ambiguous Chrome windows rather than controlling a different profile. */
-const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
-  native: Driver,
+/**
+ * Discovery refuses ambiguous Chrome windows rather than controlling a different profile.
+ *
+ * `proxy` is asked only when this step starts the browser, and its answer is the one thing that
+ * decides whether that browser is given `--proxy-server`: a browser's way out is fixed when it
+ * starts, so one that is already running is found and left as it is.
+ */
+export const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
+  native: Pick<Driver, 'call'>,
   mayLaunch: boolean,
   proxy: Effect.Effect<Option.Option<string>>,
 ) {
