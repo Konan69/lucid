@@ -844,6 +844,47 @@ describe('a desktop app that has gone without a word', () => {
   )
 
   it.effect(
+    'is dropped the same way while it is parked, or only waits its turn',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, facts, turn } = yield* relaying()
+        const server = yield* routed(relay)
+        // Egress is off: the socket is parked, joined to nothing.
+        const parked = yield* desktopApp(server.port, false)
+        yield* server.held
+        for (let ping = 1; ping < deadline; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          yield* parked.pinged
+        }
+        yield* TestClock.adjust(EGRESS_PING_MILLIS)
+        expect(yield* parked.closed).toBe(1006)
+
+        // An app that is awake is the way out, and one that is not waits behind it.
+        const awake = yield* desktopApp(server.port, true)
+        yield* server.held
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        const waiting = yield* desktopApp(server.port, false)
+        yield* server.held
+        for (let ping = 1; ping < deadline; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          yield* waiting.pinged
+          yield* awake.pinged
+          yield* awake.read
+        }
+        yield* TestClock.adjust(EGRESS_PING_MILLIS)
+        expect(yield* waiting.closed).toBe(1006)
+        // The one in front lost nothing by it.
+        yield* awake.pinged
+        yield* awake.read
+        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+        expect(facts.started).toBe(1)
+        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+      }),
+    20_000,
+  )
+
+  it.effect(
     'with no other app, the Person is said to be waiting once it is dropped',
     () =>
       Effect.gen(function* () {
