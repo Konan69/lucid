@@ -1,6 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
-import * as NodeNet from 'node:net'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
@@ -26,7 +25,7 @@ import { createNotice } from './notice.ts'
 import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
 import { resolveHost, vividMayOpen } from './reach.ts'
-import { egressAddress, exitLink, isSessionCookie, type ExitSocket } from './egress.ts'
+import { dialTarget, egressAddress, exitLink, isSessionCookie, type ExitSocket } from './egress.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -306,7 +305,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       )
     },
     resolve: resolveHost,
-    dial: (address, port) => NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
+    dial: dialTarget,
     // Never from the app: a page on the Computer must not reach into this computer's network.
     allowPrivateTargets: false,
     onStatus: () => undefined,

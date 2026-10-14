@@ -32,8 +32,8 @@ import {
   DRAIN,
   ExitStatus,
   QUEUE_BOUND,
-  QUIET,
   checkedAddress,
+  dialTarget,
   exitLink,
   type ExitDependencies,
   type ExitSocket,
@@ -189,7 +189,7 @@ const attached = Effect.fn(function* (
   const link = yield* exitLink({
     socket: () => Option.some(tunnel.exit),
     resolve: never,
-    dial: (address, port) => NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
+    dial: dialTarget,
     allowPrivateTargets: true,
     ...overrides,
     onStatus: (status) => {
@@ -736,17 +736,30 @@ describe('egress through the Person’s computer', () => {
     }),
   )
 
-  it.effect('a site that stays silent after the request ended is let go', () =>
+  it.effect('an answer that comes long after the request ended is still carried', () =>
     Effect.gen(function* () {
-      const stalled = yield* stalledSite()
+      // A site that answers only when the test says so, however long that is.
+      const accepted = yield* Deferred.make<NodeNet.Socket>()
+      const server = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
+        socket.on('error', () => undefined)
+        socket.resume()
+        socket.on('end', () => Deferred.doneUnsafe(accepted, Effect.succeed(socket)))
+      })
+      const sitePort = yield* listening(server)
       const hand = yield* handDriven({})
-      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.say(openTo(one, sitePort))
       yield* hand.dialled(1)
-      const target = yield* hand.target
+      // The browser has sent its whole request: it is done sending, and still reads.
       yield* hand.say(EgressFrame.cases.End.make({ stream: one }))
-      yield* TestClock.adjust(QUIET)
-      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
-      yield* target.closed
+      const site = yield* Deferred.await(accepted)
+      yield* TestClock.adjust('10 minutes')
+      expect(yield* Queue.size(hand.sent)).toBe(0)
+      site.end('a slow answer')
+      const answer = yield* hand.frame
+      expect(EgressFrame.guards.Data(answer) && Buffer.from(answer.payload).toString()).toBe(
+        'a slow answer',
+      )
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.End.make({ stream: one }))
     }),
   )
 

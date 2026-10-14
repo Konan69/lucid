@@ -99,13 +99,34 @@ export const QUEUE_BOUND = 1 << 20
 export const DRAIN = Duration.seconds(10)
 
 /**
- * How long a site may neither send nor take anything once the browser has finished sending,
- * before its stream is closed. A browser does not end its side of a connection it still uses,
- * so an end means it has let go; only this computer then holds the socket, and a site that
- * never answers would be held for ever. A minute is a web server's own usual patience with a
- * silent peer.
+ * How long a dialled connection may be idle before this computer's TCP asks the far end whether
+ * it is still there. Forty-five seconds is what Chromium sets on its own sockets
+ * (`kTCPKeepAliveSeconds`; recalled, not read for this port). The Computer's browser would have
+ * asked on a direct connection, and behind the proxy it cannot: the socket that reaches the
+ * site is this one.
  */
-export const QUIET = Duration.seconds(60)
+const KEEP_ALIVE_MILLIS = 45_000
+
+/**
+ * Dials one checked address, as the app does.
+ *
+ * `allowHalfOpen`: a site that has finished sending does not end what the browser is still
+ * sending, and a browser that has finished sending (`End`) still gets its answer, however long
+ * the site takes. An `End` is a half-close and nothing more: an earlier version closed a stream
+ * whose site was silent for a minute after it, and threw away answers that were only slow.
+ *
+ * `keepAlive`: what bounds a half-closed stream whose site has gone without a word is the
+ * transport's own check, not a clock here. A site that no longer answers TCP fails the socket,
+ * the socket closes, and the stream ends as it does when either real socket ends (`gone`).
+ */
+export const dialTarget = (address: string, port: number) =>
+  NodeNet.createConnection({
+    host: address,
+    port,
+    allowHalfOpen: true,
+    keepAlive: true,
+    keepAliveInitialDelay: KEEP_ALIVE_MILLIS,
+  })
 
 /** How often the queue is looked at again while a target is paused, in milliseconds. */
 const DRAIN_MILLIS = 10
@@ -137,10 +158,7 @@ export interface ExitDependencies {
   readonly socket: () => Option.Option<ExitSocket>
   /** What a name leads to, asked on this computer (`reach.ts`, `resolveHost`). */
   readonly resolve: (host: string) => Effect.Effect<ReadonlyArray<string>, Unresolved>
-  /**
-   * Dials one checked address: `node:net`'s `createConnection` in the app, with `allowHalfOpen`,
-   * so that a site that has finished sending does not end what the browser is still sending.
-   */
+  /** Dials one checked address: `dialTarget` in the app. */
   readonly dial: (address: string, port: number) => NodeNet.Socket
   /**
    * Whether a target inside this computer's own networks may be dialled. Never in the app; a
@@ -253,8 +271,6 @@ interface Relaying {
   readonly owed: Array<Uint8Array>
   /** Looks at this stream again: what `pour` is for it, as one value the link can call back. */
   readonly again: () => void
-  /** Bytes the target has sent or taken, ever: whether it is still doing anything (`QUIET`). */
-  moved: number
   /** The Computer has said it will send no more, and the target was told so. */
   heardEnd: boolean
   /** The site sent its last byte. The Computer is told once nothing is owed (`sentEnd`). */
@@ -274,7 +290,7 @@ interface Relaying {
 interface Link {
   readonly dependencies: ExitDependencies
   readonly socket: ExitSocket
-  /** Starts work that lives as long as the link: resolving a name, and the waits on the clock. */
+  /** Starts work that lives as long as the link: resolving a name, and the wait of `dropped`. */
   readonly fork: (work: Effect.Effect<void>) => void
   readonly flow: ReturnType<typeof draining>
   readonly resolving: Map<EgressStream, Resolving>
@@ -323,7 +339,6 @@ const write = (link: Link, stream: EgressStream, leg: Relaying, payload: Uint8Ar
     const taken = Math.min(payload.length, leg.queued)
     leg.queued -= taken
     link.state.held -= taken
-    leg.moved += taken
     // Bytes a failed socket gave up are not bytes it took, and a stream that is gone is owed
     // nothing.
     if (failed instanceof Error || link.relaying.get(stream) !== leg) return
@@ -365,7 +380,7 @@ const pour = (link: Link, stream: EgressStream, leg: Relaying) => {
 
 /**
  * Ends a stream from this side, now: its target is destroyed and the Computer is told. For a
- * stream over its budget, a number opened twice, and a site that has gone silent.
+ * stream over its budget, and a number opened twice.
  */
 const cut = (link: Link, stream: EgressStream, leg: Relaying) => {
   link.relaying.delete(stream)
@@ -404,25 +419,13 @@ const gone = (link: Link, stream: EgressStream, leg: Relaying) => {
   publish(link)
 }
 
-/** Closes a stream whose site has done nothing for `QUIET` since the browser finished. */
-const watched = Effect.fn('DesktopEgress.watched')(function* (
-  link: Link,
-  stream: EgressStream,
-  leg: Relaying,
-) {
-  for (;;) {
-    const before = leg.moved
-    yield* Effect.sleep(QUIET)
-    if (link.relaying.get(stream) !== leg) return
-    if (leg.moved === before) return cut(link, stream, leg)
-  }
-})
-
-/** The Computer will send no more: the target is told, and its answer is still carried. */
-const ended = (link: Link, stream: EgressStream, leg: Relaying) => {
+/**
+ * The Computer will send no more: the target is told, and its answer is still carried, whenever
+ * it comes. The stream ends when the site ends too, or when either socket closes.
+ */
+const ended = (leg: Relaying) => {
   leg.heardEnd = true
   leg.target.end()
-  link.fork(watched(link, stream, leg))
 }
 
 /**
@@ -471,7 +474,6 @@ const open = Effect.fn('DesktopEgress.open')(function* (
     credit: EGRESS_WINDOW,
     owed: [],
     again: () => pour(link, stream, leg),
-    moved: 0,
     heardEnd: false,
     finished: false,
     sentEnd: false,
@@ -480,7 +482,6 @@ const open = Effect.fn('DesktopEgress.open')(function* (
   link.state.relayed += 1
   publish(link)
   target.on('data', (payload: Uint8Array) => {
-    leg.moved += payload.length
     leg.owed.push(payload)
     pour(link, stream, leg)
   })
@@ -492,7 +493,7 @@ const open = Effect.fn('DesktopEgress.open')(function* (
   target.on('error', () => undefined)
   target.on('close', () => gone(link, stream, leg))
   for (const payload of entry.pending) write(link, stream, leg, payload)
-  if (entry.heardEnd) ended(link, stream, leg)
+  if (entry.heardEnd) ended(leg)
 })
 
 /** Bytes for one stream: counted, then held for its name or written to its target. */
@@ -540,7 +541,7 @@ const handle = (link: Link, frame: EgressFrame) =>
       const waiting = link.resolving.get(stream)
       const leg = link.relaying.get(stream)
       if (waiting !== undefined) waiting.heardEnd = true
-      if (leg !== undefined && !leg.heardEnd) ended(link, stream, leg)
+      if (leg !== undefined && !leg.heardEnd) ended(leg)
     },
     // The Computer has room for more of what the site sends.
     Grant: ({ stream, bytes }) => {
