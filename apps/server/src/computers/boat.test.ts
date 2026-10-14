@@ -3,6 +3,7 @@ import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
+import * as NodeNet from 'node:net'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -66,6 +67,7 @@ import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { HELD, UNOPENED, UNSETTLED, holding, wake } from './boat/holder.ts'
+import { EGRESS_PROXY_ADDRESS, EGRESS_PROXY_PORT } from './egress/guest.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -136,6 +138,10 @@ interface EvidenceService {
   /** Where the fake says a machine is for SSH, and each public key it was asked to let in. */
   readonly ssh: Ref.Ref<Option.Option<Effect.Success<ReturnType<typeof peer>>>>
   readonly sshKeys: Ref.Ref<ReadonlyArray<string>>
+  /** While true the desktop has no browser window: a browser step has to start the browser. */
+  readonly browserClosed: Ref.Ref<boolean>
+  /** The arguments each start of the browser was given, in order. */
+  readonly browserStarts: Ref.Ref<ReadonlyArray<unknown>>
 }
 class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
 const evidenceLayer = Layer.effect(
@@ -180,6 +186,8 @@ const evidenceLayer = Layer.effect(
       org: yield* Ref.make(Option.some('personal')),
       ssh: yield* Ref.make(Option.none<Effect.Success<ReturnType<typeof peer>>>()),
       sshKeys: yield* Ref.make<ReadonlyArray<string>>([]),
+      browserClosed: yield* Ref.make(false),
+      browserStarts: yield* Ref.make<ReadonlyArray<unknown>>([]),
     })
   }),
 )
@@ -431,6 +439,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
     case 'get_cursor_position':
       return commandReply('{"source":"x11","x":0,"y":0}')
     case 'list_windows':
+      if (yield* Ref.get(evidence.browserClosed)) return commandReply('{"windows":[]}')
       return commandReply(
         JSON.stringify({
           windows: [
@@ -591,6 +600,8 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"effect":"unverifiable","route":"synthetic_events","delivery":{"mode":"foreground"}}',
       )
     case 'launch_app':
+      yield* Ref.update(evidence.browserStarts, (starts) => [...starts, args.additional_arguments])
+      yield* Ref.set(evidence.browserClosed, false)
       return commandReply(
         '{"active":false,"bundle_id":null,"name":"google-chrome-stable","pid":7,"running":true,"windows":[]}',
       )
@@ -1608,6 +1619,46 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(yield* Ref.get(evidence.created)).toBe(1)
           expect((yield* machine.ensure(first))._tag).toBe('Running')
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    /**
+     * The one call that joins the Person's choice to the browser's start (`boat.ts`, `browse`:
+     * `browserProxy(input.egress, startProxy(shell, input.key))`), through everything on either
+     * side of it: the real start command, run by the real shell over SSH, and the real launch
+     * step. What stands in is the proxy alone. The test holds the proxy's port, so the command
+     * finds a proxy listening and leaves it; a copy it starts beside it finds the port taken and
+     * ends by itself (`egress/proxy.mjs`), so nothing is left running on the machine.
+     */
+    it.effect.skipIf(!peerAvailable)(
+      'a browser that a step has to start is given the egress proxy when egress is on, and only then',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          yield* Effect.acquireRelease(
+            Effect.callback<NodeNet.Server>((resume) => {
+              const holder = NodeNet.createServer((socket) => socket.destroy())
+              // Held already, by another run on this machine: something answers there all the same.
+              holder.once('error', () => resume(Effect.succeed(holder)))
+              holder.listen(EGRESS_PROXY_PORT, '127.0.0.1', () => resume(Effect.succeed(holder)))
+            }),
+            (holder) => Effect.sync(() => holder.close()),
+          )
+          yield* machine.ensure(key)
+          const action = BrowserAction.cases.Open.make({ address: 'https://example.com' })
+          yield* Ref.set(evidence.browserClosed, true)
+          yield* machine.browse({ key, egress: true, action })
+          yield* Ref.set(evidence.browserClosed, true)
+          yield* machine.browse({ key, egress: false, action })
+          expect(yield* Ref.get(evidence.browserStarts)).toEqual([
+            ['--force-renderer-accessibility', `--proxy-server=${EGRESS_PROXY_ADDRESS}`],
+            ['--force-renderer-accessibility'],
+          ])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+      30000,
     )
 
     it.effect(
