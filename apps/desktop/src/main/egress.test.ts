@@ -426,6 +426,16 @@ describe('egress through the Person’s computer', () => {
       expect(
         yield* checkedAddress('::ffff:10.0.0.5', { resolve, allowPrivateTargets: false }),
       ).toEqual(Option.none())
+      // Local IPv6 ranges the reference lets through are passed over after a name is resolved,
+      // and refused when written out.
+      const local = () =>
+        Effect.succeed(['fec0::1', '64:ff9b:1::a00:1', '2002:c0a8:101::1', '2606:4700:4700::1111'])
+      expect(
+        yield* checkedAddress('site.example', { resolve: local, allowPrivateTargets: false }),
+      ).toEqual(Option.some('2606:4700:4700::1111'))
+      expect(
+        yield* checkedAddress('64:ff9b:1::a00:1', { resolve, allowPrivateTargets: false }),
+      ).toEqual(Option.none())
     }),
   )
 })
