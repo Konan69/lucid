@@ -60,6 +60,10 @@ const Field = Schema.Struct({
 })
 const readForm = Schema.decodeUnknownOption(Schema.Record(Schema.String, Field))
 
+/** Everything a display's forms hold when a Button is pressed, keyed as OpenUI's renderer keys it. */
+export const FormState = Schema.Record(Schema.String, Schema.Unknown)
+export type FormState = typeof FormState.Type
+
 /** A ticked box reads as a word; an empty or unticked field says nothing. */
 function fieldWords(value: string | number | boolean): Option.Option<string> {
   if (Predicate.isBoolean(value)) return value ? Option.some('yes') : Option.none()
@@ -73,7 +77,7 @@ function fieldWords(value: string | number | boolean): Option.Option<string> {
  * the forms under names that start with `$`; a display already writes those into the Button's
  * words, so they are left out here.
  */
-export function said(pressed: string, formState: object): string {
+export function said(pressed: string, formState: FormState): string {
   const lines = Object.entries(formState)
     .filter(([name]) => !name.startsWith('$'))
     .flatMap(([, form]) =>

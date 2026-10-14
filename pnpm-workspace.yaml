@@ -125,6 +125,9 @@ overrides:
   '@effect/sql-sqlite-do': 4.0.2
   drizzle-kit: 'catalog:'
   drizzle-orm: 'catalog:'
+  # Better Auth finds its schema check by the identity of its adapter object; a second jose
+  # (pulled in by OpenUI's packages) would make a second copy of that adapter.
+  jose: 6.2.10
   effect: 'catalog:'
 
 # Only dependencies whose working artifact requires an install script may run
