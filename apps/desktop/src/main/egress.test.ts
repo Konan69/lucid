@@ -145,8 +145,17 @@ const windows = () => {
  * arrives is one message. `bufferedAmount` is what the socket has not written yet, as a
  * WebSocket's is. `window` is what passed, as the middle saw it (`windows`).
  */
-const joined = (tunnelPort: number) => {
+const joined = (tunnelPort: number, delay = 0) => {
   const socket = NodeNet.connect(tunnelPort, '127.0.0.1')
+  /**
+   * The link's distance: with a `delay`, everything that crosses it, either way, arrives that
+   * many milliseconds after it was sent, in the order it was sent (timers of one length fire in
+   * the order they were set). With none it crosses at once.
+   */
+  const crossing = (deliver: () => void) => {
+    if (delay === 0) deliver()
+    else setTimeout(deliver, delay)
+  }
   const window = windows()
   /** Called after each message from the Computer has been handled by the exit client. */
   const handled = new Set<() => void>()
@@ -156,7 +165,7 @@ const joined = (tunnelPort: number) => {
   socket.on('connect', () => events.dispatchEvent(new Event('open')))
   socket.on('error', () => undefined)
   socket.on('close', () => events.dispatchEvent(new Event('close')))
-  socket.on('data', (chunk: Buffer) => {
+  const arrived = (chunk: Buffer) => {
     held = Buffer.concat([held, chunk])
     while (held.length >= 4 && held.length >= 4 + held.readUInt32BE(0)) {
       const size = held.readUInt32BE(0)
@@ -168,7 +177,8 @@ const joined = (tunnelPort: number) => {
       for (const look of handled) look()
       held = held.subarray(4 + size)
     }
-  })
+  }
+  socket.on('data', (chunk: Buffer) => crossing(() => arrived(chunk)))
   const exit: ExitSocket = {
     binaryType: 'arraybuffer',
     get bufferedAmount() {
@@ -179,7 +189,10 @@ const joined = (tunnelPort: number) => {
       window.passed('down', data)
       const size = Buffer.alloc(4)
       size.writeUInt32BE(data.length)
-      socket.write(Buffer.concat([size, data]))
+      const message = Buffer.concat([size, data])
+      crossing(() => {
+        if (!socket.destroyed) socket.write(message)
+      })
     },
     close: () => socket.destroy(),
     addEventListener: (type, listener) => events.addEventListener(type, listener),
@@ -193,9 +206,10 @@ const never = () => Effect.fail(new Unresolved({}))
 const attached = Effect.fn(function* (
   tunnelPort: number,
   overrides: Partial<Pick<ExitDependencies, 'allowPrivateTargets' | 'resolve' | 'dial'>>,
+  delay = 0,
 ) {
   const statuses = yield* Queue.unbounded<ExitStatus>()
-  const tunnel = joined(tunnelPort)
+  const tunnel = joined(tunnelPort, delay)
   const link = yield* exitLink({
     socket: () => Option.some(tunnel.exit),
     resolve: never,
@@ -418,6 +432,34 @@ describe('egress through the Person’s computer', () => {
         expect(seen.requests).toBe(pages)
         expect(tunnel.window.seen.most).toBeLessThanOrEqual(EGRESS_WINDOW)
       }),
+  )
+
+  it.live(
+    'a page from far away arrives faster than a window of 256 KiB could carry it',
+    () =>
+      Effect.gen(function* () {
+        // A home that is 100 ms from the Computer, each way: a grant for what the browser took
+        // is back at the desktop app a fifth of a second after the bytes left it.
+        const eachWay = 100
+        const roundTrip = (2 * eachWay) / 1000
+        // The window this protocol began with, yamux's. However fast the link, a sender with
+        // that window had at most this many bytes a second: a window, then a wait for a grant.
+        const before = (256 * 1024) / roundTrip
+        const body = Buffer.alloc(8 << 20, 42)
+        const target = site(body)
+        const port = yield* listening(target.server)
+        const proxy = yield* computerProxy()
+        yield* attached(proxy.tunnel, {}, eachWay)
+        const started = performance.now()
+        const answer = yield* tunnelled(proxy.proxy, `127.0.0.1:${port}`, '/')
+        const seconds = (performance.now() - started) / 1000
+        expect(digest(bodyOf(answer))).toBe(digest(body))
+        // Half as much again as the old window could do at its best. A busy machine can only
+        // make this slower, so it can fail a window that is large enough, and can never pass
+        // one of the old size. Measured here: 7.7 MB/s, against 1.24 MB/s before.
+        expect(body.length / seconds).toBeGreaterThan(1.5 * before)
+      }),
+    60_000,
   )
 
   it.live('a plain HTTP page is carried the same way', () =>

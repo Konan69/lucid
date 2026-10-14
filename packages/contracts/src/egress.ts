@@ -25,7 +25,8 @@ import { Result, Schema } from 'effect'
  * slower than a datacentre's, so an ordinary upload is exactly that case. Each direction of each
  * stream therefore has a window, as a stream of yamux has
  * (`github.com/hashicorp/yamux` v0.1.2, `const.go` `initialStreamWindow`, and `stream.go`
- * `sendWindowUpdate`), and this is the one rule, the same in both directions:
+ * `sendWindowUpdate`; the mechanism is yamux's, the size is not: `EGRESS_WINDOW`), and this is
+ * the one rule, the same in both directions:
  *
  * 1. Whoever sends a stream's bytes (the proxy for what the browser sends, the desktop app for
  *    what the site sends) may have at most `EGRESS_WINDOW` bytes of that stream sent and not yet
@@ -48,25 +49,65 @@ import { Result, Schema } from 'effect'
  *
  * `EGRESS_STREAM_BUDGET` and `EGRESS_LINK_BUDGET` are what a receiver does when the far end does
  * not keep rule 1: a stream holding more than the first, or a link holding more than the second
- * in all, is ended with a `Close`. A far end that keeps the rule never reaches either.
+ * in all, is ended with a `Close`. A far end that keeps the rule never reaches the first, and
+ * reaches the second only with more connections stuck at once than a browser's pages make
+ * (`EGRESS_LINK_BUDGET`).
  */
 
 /** The most bytes one frame may be. A longer one is not this protocol, wherever it arrives. */
 export const EGRESS_FRAME_LIMIT = 1 << 20
 
 /**
- * How many bytes of one stream, in one direction, may be sent and not yet granted: yamux's
- * initial stream window, 256 KiB.
+ * How many bytes of one stream, in one direction, may be sent and not yet granted: two
+ * mebibytes.
+ *
+ * It began as yamux's initial stream window, 256 KiB, and that number set the speed of every
+ * page. A sender with a window sends it and then waits for a grant, which is a round trip away,
+ * so one stream carries at most a window per round trip whatever the link can do. A home 100 ms
+ * from the Computer each way got 8 MiB in 6.8 s, 1.24 MB/s, against the 1.31 MB/s that 256 KiB
+ * every fifth of a second comes to; with this window the same page takes 1.1 s
+ * (`apps/desktop/src/main/egress.test.ts`, "a page from far away"). In yamux that number is only where a stream starts: its
+ * setting `MaxStreamWindowSize` (v0.1.2 `mux.go`; `stream.go` `sendWindowUpdate` takes a
+ * stream's window up to it) is how a far link is given more. This protocol's window is one
+ * number that does not change, so it is set where a far home is still fast: two mebibytes every
+ * fifth of a second is 10 MB/s, more than most homes send.
+ *
+ * What it costs is memory, and only for a stream that is stuck: a receiver holds for one stream
+ * what its socket has not taken, at most a window, so a connection whose site or whose browser
+ * has stopped reading now holds up to 2 MiB where it held 256 KiB, at the desktop app or on the
+ * Computer. A connection that is read holds next to nothing at either size.
+ *
+ * The other numbers were looked at again with it. A frame (`EGRESS_FRAME_LIMIT`) is half a
+ * window and need not change. The queues toward a slow link (the desktop app's `QUEUE_BOUND`,
+ * the server's `QUEUE_LIMIT`, one mebibyte each) are now less than one window, which is right:
+ * they bound what waits in one socket for the link to take it, the window bounds what is on its
+ * way from end to end, and a link that is slower than its sender is paced by the first whatever
+ * the second allows. The budgets are below.
  */
-export const EGRESS_WINDOW = 256 * 1024
+export const EGRESS_WINDOW = 2 * 1024 * 1024
 
 /** A receiver grants once its socket has taken this much: half the window, as yamux does. */
 export const EGRESS_GRANT = EGRESS_WINDOW / 2
 
-/** The most a receiver holds for one stream from a far end that ignores the window. */
+/**
+ * The most a receiver holds for one stream from a far end that ignores the window: sixteen
+ * windows. A far end that keeps the window is never past one, so this is not reached by it.
+ */
 export const EGRESS_STREAM_BUDGET = 32 * 1024 * 1024
 
-/** The most a receiver holds for all the streams of one link, from a far end that ignores it. */
+/**
+ * The most a receiver holds for all the streams of one link: 96 MiB, forty-eight whole windows.
+ *
+ * With a window of 256 KiB this was 384 of them, more streams than a browser has, so a far end
+ * that kept the window could not reach it. At two mebibytes it can, by having more than
+ * forty-eight connections stuck with a whole window each at the same moment. That is left as it
+ * is, and the number is not raised eightfold to restore the old margin: it is the memory of the
+ * Person's desktop app and of their Computer, and 768 MiB held for a browser that has stopped
+ * reading is the worse failure. Chromium opens at most 32 connections through one proxy
+ * (`kDefaultMaxSocketsPerProxyChain`; recalled, not read for this change), WebSockets apart, so
+ * a browser's ordinary connections, all stuck at once, hold 64 MiB. The stream that crosses
+ * the bound is closed, and the others stay.
+ */
 export const EGRESS_LINK_BUDGET = 96 * 1024 * 1024
 
 /**

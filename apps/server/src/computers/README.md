@@ -174,14 +174,17 @@ listens beyond loopback.
   after resolving the name, and dials the address it checked. For IPv6 it dials only what a
   public host can have, which is stricter than the reference.
 - Every hop holds a bounded amount (the contract's "How much a hop may hold"). A frame is at
-  most one mebibyte. Each direction of a stream has a window of 256 KiB, yamux's: the sender
+  most one mebibyte. Each direction of a stream has a window of two mebibytes (the mechanism is
+  yamux's; its 256 KiB held a home 100 ms away to 1.2 MB/s, a window per round trip): the sender
   stops reading that stream's own socket when the window is used, and the receiver grants more,
   half a window at a time, only as the stream's own socket takes what was written. So an upload
   of any size to a slow site arrives whole at the site's pace, and the other streams go on. The
   server holds nothing for any one stream and passes grants through. A grant is for bytes that
   were sent: one that would give a sender more than the window to send (said twice, or made
-  up) ends that stream with a close and nothing else. The older bounds remain
-  for a far end that ignores the window: a stream holding 32 MiB, or a link 96 MiB in all, is
+  up) ends that stream with a close and nothing else. A connection that is stuck holds up to
+  a window at its receiving end, and one that is read holds next to nothing. The older bounds
+  remain: a stream holding 32 MiB, which only a far end that ignores the window can, or a link
+  holding 96 MiB in all, which is forty-eight connections stuck with a whole window each, is
   closed.
 - A site that hangs up in the middle of a plain HTTP answer ends the browser's request: the
   proxy drops the browser's connection, which is how a browser learns an answer is not whole.

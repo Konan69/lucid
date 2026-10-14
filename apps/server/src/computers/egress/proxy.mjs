@@ -40,7 +40,7 @@ const GRANT = 5
 // when these are not the same.
 const FRAME_LIMIT = 1 << 20
 const PAYLOAD_LIMIT = FRAME_LIMIT - 5
-const WINDOW = 256 * 1024
+const WINDOW = 2 * 1024 * 1024
 const GRANT_AT = WINDOW / 2
 const STREAM_BUDGET = 32 * 1024 * 1024
 const LINK_BUDGET = 96 * 1024 * 1024

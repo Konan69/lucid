@@ -518,10 +518,10 @@ describe('the egress relay', () => {
         yield* proxy.attached(true)
         yield* desktop.stall
 
-        // Many connections of the browser's upload at once, to an app that reads nothing and so
-        // grants nothing: each may send one window, and together that is far more than may wait
-        // for the app on this server.
-        const pages = 32
+        // Several connections of the browser's upload at once, to an app that reads nothing and
+        // so grants nothing: each may send one window, and together that is far more than may
+        // wait for the app on this server.
+        const pages = 4
         for (let at = 0; at < pages; at += 1) {
           const browser = yield* Effect.acquireRelease(
             Effect.sync(() => NodeNet.connect(proxy.ports.proxy, '127.0.0.1')),
