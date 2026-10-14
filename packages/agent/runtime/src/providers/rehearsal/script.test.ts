@@ -1,6 +1,7 @@
+import { createParser } from '@openuidev/lang-core'
 import { describe, expect, it } from '@effect/vitest'
 import type { AssistantMessage, Context, ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
-import { CodeFailure, DesktopAction, Shown, UseDesktopRequest } from '@vivid/contracts'
+import { CodeFailure, DesktopAction, UseDesktopRequest } from '@vivid/contracts'
 import { validateToolArguments } from '@earendil-works/pi-ai'
 import * as NodeChildProcess from 'node:child_process'
 import { Option, Schema } from 'effect'
@@ -12,9 +13,9 @@ import { pictureTools } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
 import { routineTools } from '../../tools/routines.ts'
-import { showTools } from '../../tools/show.ts'
 import type { RunTool } from '../../tools/scope.ts'
 import { phrases, script } from './script.ts'
+import spec from '../../agents/parts.json' with { type: 'json' }
 
 /** Inspect the definitions' own schemas; execution through this runner would be a test defect. */
 const unavailable: RunTool = () =>
@@ -26,9 +27,7 @@ const tools = [
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
   ...routineTools(unavailable),
-  ...showTools(),
 ]
-const decodeShown = Schema.decodeUnknownSync(Shown)
 const nativeTools = pictureTools(unavailable)
 const decodeDesktop = Schema.decodeUnknownSync(UseDesktopRequest)
 const timestamp = Date.parse('2026-10-03T14:00:00Z')
@@ -99,12 +98,28 @@ function registration(model: Option.Option<string>) {
   return result.stdout.trim()
 }
 
+/** OpenUI's parser reads the program out of its fence itself, as the surfaces' renderer does. */
+const displayParser = createParser(spec.schema, spec.root)
+const wordsOf = (block: { readonly type: string; readonly text?: string }) =>
+  block.type === 'text' && block.text !== undefined ? block.text : ''
+
 describe('Rehearsal scenes', () => {
   for (const phrase of phrases) {
     it(`${phrase}: real schemas accept every tool input and context advances the step`, () => {
       const start = context(`Please ${phrase.toUpperCase()} for this rehearsal`)
       const first = script(start)
       const calls = first.content.filter((block) => block.type === 'toolCall')
+      if (phrase.startsWith('show ')) {
+        // A display is part of the reply, not a call: its program must be one OpenUI draws whole.
+        expect(calls).toEqual([])
+        expect(first.stopReason).toBe('stop')
+        const drawn = displayParser.parse(first.content.map(wordsOf).join(''))
+        expect(drawn.root).not.toBeNull()
+        expect(drawn.meta.errors).toEqual([])
+        expect(drawn.meta.unresolved).toEqual([])
+        expect(script(start)).toEqual(first)
+        return
+      }
       expect(calls.length).toBe(phrase === 'two things' ? 2 : 1)
       expect(first.stopReason).toBe('toolUse')
       expect(script(start)).toEqual(first)
@@ -120,7 +135,6 @@ describe('Rehearsal scenes', () => {
         expect(tool, call.name).toBeDefined()
         if (tool === undefined) throw new Error(`Missing schema for ${call.name}`)
         expect(v.safeParse(tool.input, call.arguments).success).toBe(true)
-        if (call.name === 'show') decodeShown(call.arguments.show)
       }
       const following = script({
         ...start,
@@ -184,11 +198,6 @@ describe('Rehearsal scenes', () => {
         expected: 'That didn’t finish: No document has that title.',
       },
       {
-        phrase: 'show a table',
-        output: { ok: true, shown: 'table' },
-        expected: 'The table is above.',
-      },
-      {
         phrase: 'remind me',
         output: { name: 'Reminder', nextRunAt: '2026-10-04T08:00:00Z' },
         expected: 'The reminder is scheduled for 2026-10-04T08:00:00Z as a one-off Routine.',
@@ -248,12 +257,12 @@ describe('Rehearsal scenes', () => {
   })
 
   it('does not leak mutable scene inputs or progress across different contexts', () => {
-    const start = context('show a table')
+    const start = context('write a document')
     const expected = script(start)
     const changed = script(start)
     const call = changed.content.find((block) => block.type === 'toolCall')
-    if (call === undefined) throw new Error('Expected a display call')
-    call.arguments.show = { changed: true }
+    if (call === undefined) throw new Error('Expected a document call')
+    call.arguments.title = 'Changed'
     script(context('run a program'))
     expect(script(start)).toEqual(expected)
   })
@@ -348,9 +357,9 @@ describe('Rehearsal scenes', () => {
         { role: 'user', content: 'show a table', timestamp: timestamp + 100 },
       ],
     })
-    expect(next.content.some((block) => block.type === 'toolCall' && block.name === 'show')).toBe(
-      true,
-    )
+    expect(
+      next.content.some((block) => block.type === 'text' && block.text.includes('```openui-lang')),
+    ).toBe(true)
   })
 
   it('schedules tomorrow at 09:00 in the context timezone, including month and year rollover', () => {

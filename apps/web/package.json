@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "node ../../scripts/test.mjs"
+    "test": "node ../../scripts/test.mjs",
+    "parts": "openui generate src/parts/library.ts --spec --out ../../packages/agent/runtime/src/agents/parts.json --no-telemetry --no-interactive"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -19,6 +20,7 @@
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@novnc/novnc": "^1.7.0",
+    "@openuidev/react-lang": "catalog:",
     "@sentry/core": "catalog:",
     "@sentry/electron": "catalog:",
     "@sentry/react": "catalog:",
@@ -38,10 +40,12 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "thinking-orbs": "^0.3.2",
+    "zod": "catalog:",
     "zustand": "5.0.11"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@openuidev/cli": "catalog:",
     "@sentry/vite-plugin": "5.4.0",
     "@tailwindcss/vite": "catalog:",
     "@tanstack/router-plugin": "1.168.42",

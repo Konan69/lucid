@@ -1,10 +1,11 @@
 import { Option, Result } from 'effect'
-import { settledAt } from '@vivid/state'
+import { stretches } from '@vivid/state'
 import { memo, useState } from 'react'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useLiveData } from '../../data/live'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { useRevealed } from '../../ui/reveal'
+import { Display } from '../../parts/display'
 import { Label } from '../../ui/ui'
 
 /**
@@ -48,19 +49,38 @@ export function Words({ text }: { text: string }) {
 const Finished = memo(Words)
 
 /**
- * The words of a reply, which may still be arriving. They are let out evenly (`useRevealed`),
- * and while they are, the reply is drawn in two parts: what is finished (`settledAt`) and the
- * block now arriving. The formatter rebuilds every element it draws when its text changes, so
- * only the arriving block is rebuilt on each step and the cost of a step does not grow with the
- * reply. Once it is all there it is one piece again, formatted as written.
+ * A reply as the Person reads it: its words, with each display it wrote drawn where it stands in
+ * them (`stretches`). Each stretch is keyed by where it starts in the reply, which never moves,
+ * so a display is not remounted — and keeps what the Person picked in it — while the words after
+ * it are still coming.
+ *
+ * Words that are already whole are drawn once and left alone (`Finished`, above): the formatter rebuilds
+ * every element it draws when its text changes, so only what can still change is redrawn each
+ * step, and the cost of a step does not grow with the reply. A display that is still arriving
+ * fills itself in (`arriving`), as the web's does.
  */
-export function Reply({ text, streaming }: { text: string; streaming: boolean }) {
-  const { drawn, fresh } = useRevealed(text, streaming)
-  const cut = fresh ? settledAt(drawn) : 0
+export function Reply({
+  text,
+  streaming,
+  live,
+  onSay,
+}: {
+  text: string
+  streaming: boolean
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
+  onSay: (words: string) => void
+}) {
+  const { drawn } = useRevealed(text, streaming)
   return (
     <>
-      {cut > 0 && <Finished text={drawn.slice(0, cut)} />}
-      <Words text={drawn.slice(cut)} />
+      {stretches(drawn).map((stretch) =>
+        stretch.kind === 'words' ? (
+          <Finished key={stretch.from} text={stretch.text} />
+        ) : (
+          <Display key={stretch.from} text={stretch.text} arriving={!stretch.whole} live={live} onSay={onSay} />
+        ),
+      )}
     </>
   )
 }

@@ -10,7 +10,6 @@ import {
 import {
   awaitedOf,
   describeToolCall,
-  drawn,
   inThread,
   readAnswered,
   readAsked,
@@ -200,7 +199,7 @@ const ON_COMPUTER = new Set([
 /**
  * Each tool call as a line in the product's words, never the tool's own name or payload.
  *
- * One pass with the array's own `flatMap`: a call that is drawn elsewhere gives no step. It was
+ * One pass with the array's own `flatMap`. It was
  * `tools.values().filter().map().toArray()`, which are methods of the iterator, not of the
  * array. Every Vivid message is drawn through here, and the phone's engine does not promise
  * them: Hermes 250829098.0.17, the one this app is built with, lists iterator helpers as not
@@ -208,7 +207,6 @@ const ON_COMPUTER = new Set([
  */
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
   tools.flatMap((tool) => {
-    if (drawn(tool)) return []
     const standing = STANDING[tool.state]
     const described = describeToolCall(
       tool.toolName,

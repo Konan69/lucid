@@ -1,4 +1,3 @@
-import { Linking } from 'react-native'
 import Markdown from 'react-native-markdown-display'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { useTheme } from '../theme'
@@ -18,18 +17,7 @@ function Plain({ text }: { text: string }) {
   )
 }
 
-/**
- * Opens a link in the phone's browser, and answers whether it could be. Only a web page is ever
- * handed over: Markdown is written by Vivid or pasted in by a Person, and a link in it to another
- * app's scheme would open that app.
- */
-export const openWebLink = (address: string): Promise<boolean> =>
-  /^https?:\/\//iu.test(address)
-    ? Linking.openURL(address).then(
-        () => true,
-        () => false,
-      )
-    : Promise.resolve(false)
+export { openWebLink } from '../data/links'
 
 /**
  * Markdown as formatted text, in the app's own type and palette: a reply of Vivid's in a Thread,

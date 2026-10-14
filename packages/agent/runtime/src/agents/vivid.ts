@@ -15,6 +15,7 @@ import '../providers/explabs.ts'
 import { DEFAULT_MODEL } from '../providers/opencode.ts'
 import { namedAs, useVividContext } from '../context.ts'
 import { notesDirectory } from '../settings.ts'
+import { DISPLAYS } from './displays.ts'
 import { askTools } from '../tools/ask.ts'
 import { mountComputer } from '../tools/computer.ts'
 import { documentTools } from '../tools/documents.ts'
@@ -28,7 +29,6 @@ import { openTools } from '../tools/open.ts'
 import { routineTools } from '../tools/routines.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
-import { showTools } from '../tools/show.ts'
 import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
 
 import { nativeSkillsInOrder } from '@vivid/skills/native'
@@ -177,7 +177,6 @@ export function Vivid({ id }: { id: string }) {
     projectTools(runTool),
     codeTools(runTool),
     documentTools(runTool),
-    showTools(),
   ]) {
     for (const tool of tools) useTool(tool)
   }
@@ -200,7 +199,7 @@ export function Vivid({ id }: { id: string }) {
     ...ACTING,
     ...TOOLS,
     connectionTools.instructions,
-    showTools.instructions,
+    DISPLAYS,
     documentTools.instructions,
     ...FOLLOWING_THROUGH,
     ...KEEPING_NOTES,

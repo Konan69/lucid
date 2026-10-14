@@ -311,7 +311,9 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && <Reply text={text} streaming={isStreaming(message)} />}
+        {text.length > 0 && (
+          <Reply text={text} streaming={isStreaming(message)} live={latest && !working} onSay={onContinue} />
+        )}
         <Cards
           tools={tools}
           detail={detail}

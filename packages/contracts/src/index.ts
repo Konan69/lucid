@@ -18,7 +18,6 @@ export * from './rules.js'
 export * from './search.js'
 export * from './settings.js'
 export * from './artifacts.js'
-export * from './shown.js'
 export * from './skills.js'
 export * from './threads.js'
 export {
