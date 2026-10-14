@@ -1,7 +1,9 @@
 import {
+  EGRESS_DEADLINE_MILLIS,
   EGRESS_GRANT,
   EGRESS_LINK_BUDGET,
   EGRESS_PATH,
+  EGRESS_PING_MILLIS,
   EGRESS_STREAM_BUDGET,
   EGRESS_WINDOW,
   EgressFrame,
@@ -38,7 +40,7 @@ import { isReserved } from './reserved.ts'
  * `EgressTunnelExitClient`), and keeps its mechanism: the frames, a stream table keyed by the
  * stream number, bytes that arrive before the target is dialled held and then written in order,
  * a refused or unresolvable target answered with a close, a bound on what is queued toward the
- * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Five things are
+ * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Six things are
  * Vivid's:
  *
  * - The reference dials the machine's own hosted port. Vivid's Computer has no port a home
@@ -57,6 +59,9 @@ import { isReserved } from './reserved.ts'
  *   open. A socket this module dialled is this module's until it has closed.
  * - A stream's two directions end apart (the contract's `End`): a browser that has sent its
  *   whole request still gets the answer.
+ * - The reference waits for its socket to close. A server that can no longer be reached closes
+ *   nothing, so a socket that has brought nothing for the contract's deadline is ended here
+ *   and dialled again (`QUIET_PINGS`).
  */
 
 /** Where the tunnel is opened on a chosen server: the same origin, on the socket scheme. */
@@ -137,6 +142,13 @@ export const dialTarget = (address: string, port: number) =>
  * dialled, and its start command run on the Computer, every two seconds for ever.
  */
 export const STEADY = Duration.seconds(30)
+
+/**
+ * How many pings' worth of time may go by with nothing arriving before the socket is gone (the
+ * contract's `EGRESS_PING_MILLIS`). The server sends something with every ping, so a socket that
+ * is there never comes near it.
+ */
+const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
 
 /** How often the queue is looked at again while a target is paused, in milliseconds. */
 const DRAIN_MILLIS = 10
@@ -316,6 +328,8 @@ interface Link {
     closed: boolean
     /** It has been open for `STEADY`. */
     steady: boolean
+    /** How many pings' worth of time have gone by since anything arrived (`QUIET_PINGS`). */
+    quiet: number
     relayed: number
     held: number
   }
@@ -605,9 +619,12 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
     resolving: new Map(),
     relaying: new Map(),
     leaving: new Set(),
-    state: { open: false, closed: false, steady: false, relayed: 0, held: 0 },
+    state: { open: false, closed: false, steady: false, quiet: 0, relayed: 0, held: 0 },
   }
-  /** This socket is done, by its own close or because it sent what no frame can be. */
+  /**
+   * This socket is done: it closed, it sent what no frame can be, or it has brought nothing for
+   * the deadline.
+   */
   const finished = () => {
     link.state.closed = true
     Deferred.doneUnsafe(over, Effect.void)
@@ -624,10 +641,28 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
         ),
       ),
     )
+    // A web socket shows no ping and cannot send one, so the app cannot ask whether the server
+    // is there. It listens: the server sends a message with every ping (`EGRESS_BEAT`), and a
+    // socket that has brought nothing for the deadline is one whose server cannot be reached.
+    // Nothing would otherwise say so, and this computer would stay "connected" to nothing while
+    // the Person's other computer, or this one on a new socket, could have been the way out.
+    link.fork(
+      Effect.sleep(EGRESS_PING_MILLIS).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            link.state.quiet += 1
+            if (link.state.quiet >= QUIET_PINGS) finished()
+          }),
+        ),
+        Effect.forever,
+      ),
+    )
     publish(link)
   })
   socket.addEventListener('message', (event) => {
     if (link.state.closed) return
+    // Anything at all: a frame, the server's beat, or a word this build does not know.
+    link.state.quiet = 0
     Option.map(messageBytes(event), (bytes) =>
       Result.match(decodeEgressFrame(bytes), {
         onSuccess: (frame) => handle(link, frame),

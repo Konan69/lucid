@@ -6,7 +6,10 @@ import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
 import {
+  EGRESS_BEAT,
+  EGRESS_DEADLINE_MILLIS,
   EGRESS_FRAME_LIMIT,
+  EGRESS_PING_MILLIS,
   EGRESS_WINDOW,
   EgressFrame,
   EgressStatus,
@@ -29,10 +32,12 @@ import {
 import * as NetAddress from 'effect/net/NetAddress'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
+import * as TestClock from 'effect/testing/TestClock'
 import { Changes } from '../../live/changes.ts'
 import {
   Egress,
   QUEUE_LIMIT,
+  type EgressService,
   type ExitSocket,
   egressRelay,
   frameCutter,
@@ -181,7 +186,7 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
   })
   const turn = (change: Partial<typeof facts>) =>
     Effect.sync(() => Object.assign(facts, change)).pipe(Effect.andThen(changes.publish([])))
-  return { proxy, relay, facts, app, turn }
+  return { proxy, relay, facts, app, turn, hub }
 })
 
 /**
@@ -644,4 +649,199 @@ describe('frames on the Computer’s byte stream', () => {
     new DataView(over.buffer).setUint32(0, EGRESS_FRAME_LIMIT + 1)
     expect(frameCutter()(over)).toEqual(Option.none())
   })
+})
+
+describe('a desktop app that has gone without a word', () => {
+  /**
+   * The relay behind the real route's socket (`held`), on a real HTTP server. `held` answers
+   * each time the relay begins to read a socket: that socket has its place in the Person's line.
+   */
+  const routed = Effect.fn('EgressTest.routed')(function* (relay: EgressService) {
+    const began = yield* Queue.unbounded<void>()
+    const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+      host: '127.0.0.1',
+      port: 0,
+    })
+    yield* server.serve(
+      Effect.gen(function* () {
+        yield* held(yield* HttpServerRequest.HttpServerRequest, person, Effect.never)
+        return HttpServerResponse.empty()
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(
+          Egress,
+          Egress.of({
+            status: relay.status,
+            carry: (who, app) => {
+              const read = Deferred.makeUnsafe<void>()
+              return relay.carry(who, {
+                ...app,
+                pull: Effect.suspend(() =>
+                  Deferred.doneUnsafe(read, Effect.void)
+                    ? Queue.offer(began, undefined)
+                    : Effect.void,
+                ).pipe(Effect.andThen(app.pull)),
+              })
+            },
+          }),
+        ),
+        Effect.catchTags({ SocketError: () => Effect.succeed(HttpServerResponse.empty()) }),
+      ),
+    )
+    if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('No TCP address')
+    return { port: server.address.port, held: Queue.take(began) }
+  })
+
+  /**
+   * A desktop app's socket, from the `ws` package. One that `answers` does what every WebSocket
+   * client does with a ping. One that does not is the computer that went to sleep: its
+   * connection is still open, and nothing comes back over it.
+   */
+  const desktopApp = Effect.fn('EgressTest.desktopApp')(function* (port: number, answers: boolean) {
+    const pings = yield* Queue.unbounded<void>()
+    const pongs = yield* Queue.unbounded<void>()
+    const beats = yield* Queue.unbounded<string>()
+    const frames = yield* Queue.unbounded<EgressFrame>()
+    const closed = yield* Deferred.make<number>()
+    const socket = yield* Effect.acquireRelease(
+      Effect.callback<NodeWS.WebSocket>((resume) => {
+        const opened = new NodeWS.WebSocket(`ws://127.0.0.1:${port}`, { autoPong: answers })
+        opened.on('error', () => undefined)
+        opened.on('ping', () => Queue.offerUnsafe(pings, undefined))
+        opened.on('pong', () => Queue.offerUnsafe(pongs, undefined))
+        opened.on('close', (code) => Deferred.doneUnsafe(closed, Effect.succeed(code)))
+        opened.on('message', (data: Buffer, binary: boolean) => {
+          if (binary)
+            Option.map(Result.getSuccess(decodeEgressFrame(data)), (frame) =>
+              Queue.offerUnsafe(frames, frame),
+            )
+          else Queue.offerUnsafe(beats, data.toString('utf8'))
+        })
+        opened.on('open', () => resume(Effect.succeed(opened)))
+      }),
+      (opened) => Effect.sync(() => opened.terminate()),
+    )
+    return {
+      socket,
+      /** The server's next ping arrived here. */
+      pinged: Queue.take(pings),
+      /** The next text message the server sent. */
+      beat: Queue.take(beats),
+      frame: Queue.take(frames),
+      /**
+       * The server has read everything this app sent so far, its answer to a ping included: a
+       * ping of the app's own is read after them, and this is the server's answer to it.
+       */
+      read: Effect.sync(() => socket.ping()).pipe(Effect.andThen(Queue.take(pongs))),
+      /** The socket closed, and with which code. */
+      closed: Deferred.await(closed),
+    }
+  })
+
+  const deadline = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
+
+  it.effect(
+    'is dropped at the deadline, and the app that waited behind it becomes the way out',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, facts, turn } = yield* relaying()
+        const server = yield* routed(relay)
+        const asleep = yield* desktopApp(server.port, false)
+        yield* server.held
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        const awake = yield* desktopApp(server.port, true)
+        yield* server.held
+
+        for (let ping = 1; ping < deadline; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          yield* asleep.pinged
+          yield* awake.pinged
+          yield* awake.read
+          // Short of the deadline the first is still the way out, and the second still waits.
+          expect(asleep.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+          expect(yield* relay.status(person)).toEqual(
+            EgressStatus.cases.Routing.make({ streams: 0 }),
+          )
+          expect(facts.started).toBe(1)
+        }
+        yield* TestClock.adjust(EGRESS_PING_MILLIS)
+        // 1006: the connection was ended under the socket, with no close said first.
+        expect(yield* asleep.closed).toBe(1006)
+
+        // The one that waited is joined: the Computer's proxy is attached again, and a
+        // connection the browser opens now is opened by the app that is awake.
+        yield* proxy.attached(false)
+        yield* proxy.attached(true)
+        expect(facts.started).toBe(2)
+        yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
+        expect((yield* awake.frame)._tag).toBe('Open')
+        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+      }),
+    20_000,
+  )
+
+  it.effect(
+    'with no other app, the Person is said to be waiting once it is dropped',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, turn, hub } = yield* relaying()
+        const server = yield* routed(relay)
+        const asleep = yield* desktopApp(server.port, false)
+        yield* server.held
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+        const told = yield* PubSub.subscribe(hub)
+        for (let ping = 1; ping < deadline; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          yield* asleep.pinged
+        }
+        yield* TestClock.adjust(EGRESS_PING_MILLIS)
+        yield* asleep.closed
+        yield* proxy.attached(false)
+        // Read at each change the Person's watchers are told of, until it is the one meant.
+        let said = yield* relay.status(person)
+        while (!EgressStatus.guards.Waiting(said)) {
+          yield* PubSub.take(told)
+          said = yield* relay.status(person)
+        }
+        expect(said).toEqual(EgressStatus.cases.Waiting.make({}))
+      }),
+    20_000,
+  )
+
+  it.effect(
+    'is kept for as long as it answers, parked or joined, with nothing carried',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, facts, turn } = yield* relaying()
+        const server = yield* routed(relay)
+        const awake = yield* desktopApp(server.port, true)
+        yield* server.held
+        /** Twice the deadline goes by, a ping at a time, each one answered and the answer read. */
+        const idle = Effect.fn('EgressTest.idle')(function* () {
+          for (let ping = 0; ping < 2 * deadline; ping += 1) {
+            yield* TestClock.adjust(EGRESS_PING_MILLIS)
+            yield* awake.pinged
+            // What a desktop app can see of the ping (`EGRESS_BEAT`).
+            expect(yield* awake.beat).toBe(EGRESS_BEAT)
+            yield* awake.read
+          }
+        })
+        yield* idle()
+        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        yield* idle()
+        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+        expect(facts.started).toBe(1)
+        yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
+        expect((yield* awake.frame)._tag).toBe('Open')
+        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+      }),
+    20_000,
+  )
 })

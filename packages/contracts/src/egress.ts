@@ -64,6 +64,40 @@ export const EGRESS_STREAM_BUDGET = 32 * 1024 * 1024
 /** The most a receiver holds for all the streams of one link, from a far end that ignores it. */
 export const EGRESS_LINK_BUDGET = 96 * 1024 * 1024
 
+/**
+ * How a dead link is found: the socket between a desktop app and the server (`EGRESS_PATH`).
+ *
+ * A computer that goes to sleep, or a network that drops, closes nothing: the socket stays open
+ * at the other end for as long as TCP lets it, which with nothing being sent is for ever. The
+ * server held such a socket as the Person's way out, the Computer's browser sent its connections
+ * to it, and a second desktop app of the same Person waited behind it.
+ *
+ * So every `EGRESS_PING_MILLIS` the server asks each socket it holds, joined or parked or
+ * waiting its turn, with a WebSocket ping, which every client answers by itself (RFC 6455,
+ * section 5.5.2). It also sends `EGRESS_BEAT`, because a desktop app's socket is a web
+ * `WebSocket`, which neither shows a ping to the app nor lets it send one: the beat is what the
+ * app can see. Each end then keeps the same rule: a socket on which nothing at all has arrived
+ * for `EGRESS_DEADLINE_MILLIS` is gone. The server ends it, which frees the Person's way out
+ * for the next app; the app ends it and dials again.
+ *
+ * The numbers are those of the tunnel's other leg, the server's SSH connection to the Computer
+ * (`apps/server/src/computers/ssh/link.ts`: a probe every fifteen seconds, three lost). The
+ * Thread connection's five and ten seconds (`packages/client/rpc/src/rpc.ts`) were not taken:
+ * that socket carries small messages, and this one carries pages. A ping to a home on a slow
+ * line waits behind what is already on its way there, up to a mebibyte here and more in the
+ * system's own buffers, and ten seconds is less than that takes at a megabit.
+ */
+export const EGRESS_PING_MILLIS = 15_000
+
+/** How long a socket may bring nothing before it is gone: three pings (`EGRESS_PING_MILLIS`). */
+export const EGRESS_DEADLINE_MILLIS = 3 * EGRESS_PING_MILLIS
+
+/**
+ * What the server sends a desktop app with each ping: one text message. Frames are binary, so
+ * it is no frame, and an end that does not know it passes it over as it does any text.
+ */
+export const EGRESS_BEAT = 'beat'
+
 /** One stream's number, chosen by the side that opens it (the Computer). Unsigned 32 bits. */
 export const EgressStream = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 0xffff_ffff }),

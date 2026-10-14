@@ -145,6 +145,14 @@ listens beyond loopback.
   stopped, the channel closed, a frame that is not one), the server closes the app's socket. The
   app ends every connection it had made and dials again, with an empty table. Nothing of an old
   join can then be read as part of a new one (`egress/relay.ts`).
+- A socket whose app went without closing it (a computer that sleeps, a network that drops) is
+  found and ended. Every fifteen seconds the server pings each egress socket it holds, joined or
+  parked or waiting its turn, and sends one text message beside the ping, which is what a
+  desktop app can see of it. A socket on which nothing has arrived for forty-five seconds is
+  terminated (`egress/route.ts`, `watched`): its place in the Person's line goes, and the next
+  app of theirs becomes the way out. The app keeps the same rule toward the server and dials
+  again. The numbers are the SSH connection's to the Computer, the tunnel's other leg, and are
+  in the contract (`EGRESS_PING_MILLIS`).
 - The app dials again two seconds after a socket that had stayed open for thirty seconds. A
   socket that never opens, or is closed sooner than that, makes the next wait twice as long, up
   to thirty seconds, so a join that ends as soon as it is made does not run the start command

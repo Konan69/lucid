@@ -7,9 +7,12 @@ import * as NodeURL from 'node:url'
 import * as NodeV8 from 'node:v8'
 import * as NodeVM from 'node:vm'
 import {
+  EGRESS_BEAT,
+  EGRESS_DEADLINE_MILLIS,
   EGRESS_FRAME_LIMIT,
   EGRESS_LINK_BUDGET,
   EGRESS_PAYLOAD_LIMIT,
+  EGRESS_PING_MILLIS,
   EGRESS_STREAM_BUDGET,
   EGRESS_WINDOW,
   EgressFrame,
@@ -279,6 +282,17 @@ const byHand = Effect.fn('EgressTest.byHand')(function* () {
     opened: Effect.sync(() => events.dispatchEvent(new Event('open'))),
     raw,
     say: (frame: EgressFrame) => raw(encodeEgressFrame(frame)),
+    /**
+     * Time passes on a link whose server is there: it says so at every ping (`EGRESS_BEAT`), as
+     * the route does, so the exit client has no reason to think it gone.
+     */
+    passes: (pings: number) =>
+      Effect.gen(function* () {
+        for (let ping = 0; ping < pings; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          events.dispatchEvent(new MessageEvent('message', { data: EGRESS_BEAT }))
+        }
+      }),
     /** The next frame the exit client sent. */
     frame: Queue.take(sent),
     sent,
@@ -758,7 +772,8 @@ describe('egress through the Person’s computer', () => {
       // The browser has sent its whole request: it is done sending, and still reads.
       yield* hand.say(EgressFrame.cases.End.make({ stream: one }))
       const site = yield* Deferred.await(accepted)
-      yield* TestClock.adjust('10 minutes')
+      // Ten minutes.
+      yield* hand.passes(40)
       expect(yield* Queue.size(hand.sent)).toBe(0)
       site.end('a slow answer')
       const answer = yield* hand.frame
@@ -998,6 +1013,58 @@ describe('egress through the Person’s computer', () => {
         expect(link.state()._tag).toBe('Connected')
         expect(statuses.at(-1)).toBe('Connected')
       }),
+  )
+
+  it.effect('a server that sends nothing for the deadline is gone, and is dialled again', () =>
+    Effect.gen(function* () {
+      /** Each socket dialled: its events, in the test's hands, and whether the app closed it. */
+      const sockets: Array<{ readonly events: EventTarget; closed: boolean }> = []
+      const link = yield* exitLink({
+        socket: () => {
+          const made = { events: new EventTarget(), closed: false }
+          sockets.push(made)
+          return Option.some({
+            binaryType: '',
+            bufferedAmount: 0,
+            send: () => undefined,
+            close: () => {
+              made.closed = true
+            },
+            addEventListener: (type, listener) => made.events.addEventListener(type, listener),
+          })
+        },
+        resolve: never,
+        dial: dialTarget,
+        allowPrivateTargets: false,
+        onStatus: () => undefined,
+      })
+      yield* Effect.forkScoped(link.run)
+      yield* TestClock.adjust(0)
+      const first = Option.getOrThrow(Arr.get(sockets, 0))
+      first.events.dispatchEvent(new Event('open'))
+
+      // A server that is there says so at every ping. Twice the deadline goes by with nothing
+      // carried, and the socket is kept.
+      const pings = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
+      for (let ping = 0; ping < 2 * pings; ping += 1) {
+        yield* TestClock.adjust(EGRESS_PING_MILLIS)
+        first.events.dispatchEvent(new MessageEvent('message', { data: EGRESS_BEAT }))
+      }
+      expect(first.closed).toBe(false)
+      expect(link.state()._tag).toBe('Connected')
+
+      // Then nothing more comes, and nothing says the socket closed: the server's computer is
+      // unreachable, or the network between dropped. At the deadline the app ends the socket
+      // itself, and dials again as after any link that had held.
+      yield* TestClock.adjust(EGRESS_DEADLINE_MILLIS - 1)
+      expect(first.closed).toBe(false)
+      yield* TestClock.adjust(1)
+      expect(first.closed).toBe(true)
+      expect(link.state()._tag).toBe('Connecting')
+      expect(sockets.length).toBe(1)
+      yield* TestClock.adjust('2 seconds')
+      expect(sockets.length).toBe(2)
+    }),
   )
 
   it.effect('rests with nobody to dial as, and dials when told the session changed', () =>

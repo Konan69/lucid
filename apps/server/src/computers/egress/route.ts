@@ -7,7 +7,13 @@ import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as Socket from 'effect/socket/Socket'
-import { EGRESS_FRAME_LIMIT, EGRESS_PATH } from '@vivid/contracts'
+import {
+  EGRESS_BEAT,
+  EGRESS_DEADLINE_MILLIS,
+  EGRESS_FRAME_LIMIT,
+  EGRESS_PATH,
+  EGRESS_PING_MILLIS,
+} from '@vivid/contracts'
 import { authenticate } from '../../auth/session.ts'
 import { ServerConfig } from '../../config.ts'
 import { sessionEnded } from '../../live/query.ts'
@@ -62,6 +68,49 @@ const closed = (socket: NodeWS.WebSocket, wire: NodeStream.Duplex) =>
     return socket.close(1000)
   })
 
+/** How many pings in a row may go by with nothing heard before the socket is gone. */
+const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
+
+/**
+ * Asks an egress socket whether its app is still there, for as long as the scope holds it, and
+ * ends it when the answer stops coming (the contract's `EGRESS_PING_MILLIS`).
+ *
+ * Without this a socket was held until TCP said it had closed, and a computer that sleeps says
+ * nothing: its socket stayed the Person's way out, the browser's connections went to it and
+ * hung, and a second app waited behind it for as long as the server ran. This is the same for
+ * every socket of this kind, joined or parked or waiting its turn, because it belongs to the
+ * socket and not to what the relay is doing with it.
+ *
+ * Anything that arrives counts, a frame as much as the answer to a ping: an app that is busy
+ * carrying a page is there. A check that finds the socket paused is not counted either way. It
+ * is paused by this server, which has not yet passed on what the app sent (`relay.ts`,
+ * `pumped`), and a socket that is not read can bring neither a frame nor an answer; holding the
+ * app to a deadline then would end a healthy one for the Computer's slowness. The pause ends
+ * when the Computer takes what waits or its channel goes, and the count goes on from there.
+ *
+ * `terminate` ends the connection without a close handshake, which a gone app would not answer.
+ * The read of the socket then fails, and the hold ends as it does when an app closes its own.
+ */
+const watched = (socket: NodeWS.WebSocket) => {
+  const quiet = { pings: 0 }
+  const heard = () => {
+    quiet.pings = 0
+  }
+  socket.on('pong', heard)
+  socket.on('message', heard)
+  const check = Effect.sync(() => {
+    if (socket.readyState !== NodeWS.WebSocket.OPEN || socket.isPaused) return
+    quiet.pings += 1
+    if (quiet.pings >= QUIET_PINGS) return socket.terminate()
+    socket.ping()
+    // What a desktop app can see: its own deadline runs on this (`EGRESS_BEAT`).
+    return socket.send(EGRESS_BEAT)
+  })
+  return Effect.forkScoped(
+    Effect.sleep(EGRESS_PING_MILLIS).pipe(Effect.andThen(check), Effect.forever),
+  )
+}
+
 /**
  * A request's upgraded WebSocket as the relay holds it (`relay.ts`, `ExitSocket`), upgraded at
  * the egress boundary (`receiving`).
@@ -78,20 +127,20 @@ export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
 ) {
   const incoming = NodeHttpServerRequest.toIncomingMessage(request)
   const wire = incoming.socket
-  const socket = yield* Socket.fromWebSocket(
-    Effect.acquireRelease(
-      Effect.callback<NodeWS.WebSocket, Socket.SocketError>((resume) => {
-        const gone = () => resume(Effect.fail(unopened()))
-        if (wire.destroyed) return gone()
-        wire.once('close', gone)
-        return receiving.handleUpgrade(incoming, wire, NO_HEAD, (upgraded) => {
-          wire.off('close', gone)
-          resume(Effect.succeed(upgraded))
-        })
-      }),
-      (upgraded) => closed(upgraded, wire),
-    ),
+  const upgraded = yield* Effect.acquireRelease(
+    Effect.callback<NodeWS.WebSocket, Socket.SocketError>((resume) => {
+      const gone = () => resume(Effect.fail(unopened()))
+      if (wire.destroyed) return gone()
+      wire.once('close', gone)
+      return receiving.handleUpgrade(incoming, wire, NO_HEAD, (opened) => {
+        wire.off('close', gone)
+        resume(Effect.succeed(opened))
+      })
+    }),
+    (opened) => closed(opened, wire),
   )
+  yield* watched(upgraded)
+  const socket = yield* Socket.fromWebSocket(Effect.succeed(upgraded))
   const reader = yield* socket.reader
   const writer = yield* socket.writer
   const held: ExitSocket = {
