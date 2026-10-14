@@ -1,8 +1,9 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
+import type { FlueConversationState } from '@flue/sdk'
 import { ComputerState, EgressStatus, PatchSettingsRequest } from '@vivid/contracts'
-import { Config, Effect, Option, Stream } from 'effect'
-import { type ChainFixture, chainSession, completeRun, replyText } from '../../runtime/chains.ts'
+import { Array as Arr, Config, Effect, Option, Schema, Stream } from 'effect'
+import { type ChainFixture, chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
 
 /**
  * Egress on a real Computer with a real desktop app: a page opened in the Computer's browser
@@ -16,31 +17,77 @@ import { type ChainFixture, chainSession, completeRun, replyText } from '../../r
  *   (a build with egress) is open and signed in as them, on a network other than the
  *   Computer's. The cookie is read redacted and never printed.
  * - `VIVID_LIVE_EGRESS_ADDRESS` (optional): that computer's public address, when it is known.
- *   The page's answer with egress on is then also compared with it.
+ *   The address the page saw with egress on must then be exactly it. Give it whenever it can
+ *   be found: without it the proof shows two different ways out, and not whose the first is.
  *
  * What it does to that Person's account: it turns egress on and, at the end, off again; it stops
  * and starts their Computer, so that the browser is started after egress was turned on (a
  * browser keeps the way out it started with); and it leaves one Thread, "Egress proof".
  *
  * The page is opened by Vivid, in a real Run, because that is the only thing that opens a page
- * in the Computer's browser. The same question is asked twice: with egress on, and with it off,
- * when the Computer's proxy goes out from the Computer itself. The two answers are the two
- * addresses. It is not run by the gate; run it with Vitest directly.
+ * in the Computer's browser. The same page is opened twice: with egress on, and with it off,
+ * when the Computer's proxy goes out from the Computer itself.
+ *
+ * What is compared is what the browser itself returned, never what Vivid said about it: each
+ * step in the Computer's browser leaves a receipt in the Thread (the `browse` tool's output:
+ * the page's address and its outline, as the browser gave them to the server), and the address
+ * is read out of the outline of the receipt for the echo page. A Run in which the browser did
+ * nothing leaves no such receipt and fails the proof, whatever the reply says; an earlier
+ * version read the reply and passed on any two different answers. It is not run by the gate;
+ * run it with Vitest directly.
  */
 const ECHO = 'https://api.ipify.org'
 
-/** An IPv4 or IPv6 address somewhere in what Vivid said. */
+/** An IPv4 or IPv6 address somewhere in a page's outline. */
 const ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b/iu
 
-/** Asks Vivid to open the echo page on its Computer and answers the address it reported. */
-const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture) {
+/**
+ * A browser step's receipt as the Thread holds it: a native Browse result with no picture is
+ * its single JSON text block in Flue 2.2.2 (`computers/thread.live.test.ts`).
+ */
+const Receipt = Schema.fromJsonString(
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    result: Schema.Struct({ address: Schema.String, outline: Schema.String }),
+  }),
+)
+const decodeReceipt = Schema.decodeUnknownOption(Receipt)
+
+/**
+ * The address the echo page showed in each receipt the Computer's browser left for it, oldest
+ * first. A receipt for another page, a refused step, or an echo page with no address in it
+ * (an error page, a blocked request) is not one.
+ */
+const echoed = (state: FlueConversationState) =>
+  toolParts(state).flatMap((part) => {
+    if (part.toolName !== 'browse' || part.state !== 'output-available') return []
+    return Option.match(decodeReceipt(part.output), {
+      onNone: () => [],
+      onSome: ({ result }) => {
+        if (!URL.canParse(result.address)) return []
+        if (new URL(result.address).origin !== ECHO) return []
+        const found = ADDRESS.exec(result.outline)
+        return found === null ? [] : [found[0]]
+      },
+    })
+  })
+
+/**
+ * Asks Vivid to open the echo page on its Computer, and answers the address in the receipt the
+ * browser left for it in this Run. `before` is how many such receipts earlier Runs left in the
+ * Thread: this Run must add one.
+ */
+const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture, before: number) {
   const runId = yield* fixture.send(
     `Open ${ECHO} in a new tab of the browser on your computer and reply with exactly the address the page shows, nothing else.`,
   )
-  const state = yield* completeRun(fixture, runId)
-  const found = ADDRESS.exec(replyText(state))
-  if (found === null) return yield* Effect.sync(() => expect.fail('Vivid reported no address'))
-  return found[0]
+  const seen = echoed(yield* completeRun(fixture, runId))
+  const address = Arr.last(seen)
+  if (seen.length <= before || Option.isNone(address))
+    return yield* Effect.sync(() =>
+      expect.fail('The Computer’s browser left no receipt for the echo page in this Run'),
+    )
+  return { address: address.value, seen: seen.length }
 })
 
 /** Waits until the Person's live egress status is the one named. */
@@ -81,16 +128,22 @@ describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => 
           yield* fixture.rpc.StartComputer()
           yield* computerIs(fixture, ComputerState.guards.Running)
           yield* egressIs(fixture, 'Routing')
-          const through = yield* asked(fixture)
+          const through = yield* asked(fixture, 0)
 
           yield* fixture.rpc.PatchSettings(new PatchSettingsRequest({ egress: false }))
           yield* egressIs(fixture, 'Off')
-          const direct = yield* asked(fixture)
+          const direct = yield* asked(fixture, through.seen)
 
-          expect(through, 'With egress on the page must not see the Computer’s address').not.toBe(
-            direct,
-          )
-          if (Option.isSome(known)) expect(through).toBe(known.value)
+          expect(
+            through.address,
+            'With egress on the page must not see the Computer’s address',
+          ).not.toBe(direct.address)
+          // With the device's address known, the page must have seen exactly it, and the
+          // Computer's own address must be another.
+          if (Option.isSome(known)) {
+            expect(through.address).toBe(known.value)
+            expect(direct.address).not.toBe(known.value)
+          }
         }).pipe(Effect.scoped),
       { timeout: 900_000 },
     )
