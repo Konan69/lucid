@@ -41,6 +41,11 @@ import { Result, Schema } from 'effect'
  *    `Grant` passes through it like any other. It reads one link only as fast as the other
  *    takes what was read, which is the link's own pace and no stream's.
  *
+ * A sender holds the receiver to the same arithmetic. A `Grant` is for bytes that were sent, so
+ * what a sender may still send never comes to more than the window. A grant that would take it
+ * past the window is for bytes that never were, and the sender ends that stream with a `Close`
+ * and nothing else. A grant for a stream nobody has is passed over, like any frame for one.
+ *
  * `EGRESS_STREAM_BUDGET` and `EGRESS_LINK_BUDGET` are what a receiver does when the far end does
  * not keep rule 1: a stream holding more than the first, or a link holding more than the second
  * in all, is ended with a `Close`. A far end that keeps the rule never reaches either.

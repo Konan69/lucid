@@ -10,6 +10,7 @@ import {
   EGRESS_BEAT,
   EGRESS_DEADLINE_MILLIS,
   EGRESS_FRAME_LIMIT,
+  EGRESS_GRANT,
   EGRESS_LINK_BUDGET,
   EGRESS_PAYLOAD_LIMIT,
   EGRESS_PING_MILLIS,
@@ -886,6 +887,129 @@ describe('egress through the Person’s computer', () => {
       // The stream whose bytes crossed the bound is the one that is closed.
       expect(yield* hand.frame).toEqual(
         EgressFrame.cases.Close.make({ stream: EgressStream.make(count) }),
+      )
+    }),
+  )
+
+  /** A site that takes one connection and hands the test its end of it. */
+  const heldSite = Effect.fn('EgressTest.heldSite')(function* () {
+    const accepted = yield* Deferred.make<NodeNet.Socket>()
+    const server = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
+      socket.on('error', () => undefined)
+      Deferred.doneUnsafe(accepted, Effect.succeed(socket))
+    })
+    const port = yield* listening(server)
+    return { port, accepted: Deferred.await(accepted) }
+  })
+
+  /**
+   * What became of what a site sent after a grant: the stream's `Close`, or this computer
+   * sending `limit` bytes of it, whichever comes first, and how many it sent before that.
+   */
+  const answered = Effect.fn('EgressTest.answered')(function* (
+    hand: Effect.Success<ReturnType<typeof handDriven>>,
+    stream: EgressStream,
+    limit: number,
+  ) {
+    let sent = 0
+    while (sent < limit) {
+      const frame = yield* hand.frame
+      if (frame.stream !== stream) continue
+      if (EgressFrame.guards.Close(frame)) return { closed: true, sent }
+      if (EgressFrame.guards.Data(frame)) sent += frame.payload.length
+    }
+    return { closed: false, sent }
+  })
+
+  it.live('a grant of more than was sent ends that stream, and no other', () =>
+    Effect.gen(function* () {
+      const place = yield* heldSite()
+      const echo = yield* listening(
+        NodeNet.createServer((socket) => {
+          socket.on('error', () => undefined)
+          socket.pipe(socket)
+        }),
+      )
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, place.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      const far = yield* place.accepted
+      yield* hand.say(openTo(two, echo))
+      yield* hand.dialled(2)
+      // Nothing has been sent on the stream, so there is nothing to grant: the whole window is
+      // still unused. Taken at its word, this grant would let the site send without end.
+      yield* hand.say(EgressFrame.cases.Grant.make({ stream: one, bytes: 0xffff_ffff }))
+      far.write(Buffer.alloc(2 * EGRESS_WINDOW))
+      const answer = yield* answered(hand, one, 2 * EGRESS_WINDOW)
+      expect(answer).toEqual({ closed: true, sent: 0 })
+      // The connection this computer dialled for it is ended, not left open with no stream.
+      yield* target.closed
+      // The other stream is as it was.
+      yield* hand.say(EgressFrame.cases.Data.make({ stream: two, payload: Buffer.from('ping') }))
+      const back = yield* hand.frame
+      expect(EgressFrame.guards.Data(back) && Buffer.from(back.payload).toString()).toBe('ping')
+    }),
+  )
+
+  it.live('a grant said twice ends the stream once it comes to more than was sent', () =>
+    Effect.gen(function* () {
+      const place = yield* heldSite()
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, place.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      const far = yield* place.accepted
+      far.write(Buffer.alloc(EGRESS_GRANT))
+      expect(yield* answered(hand, one, EGRESS_GRANT)).toEqual({
+        closed: false,
+        sent: EGRESS_GRANT,
+      })
+      // Half a window was sent and half is granted back: the window is whole again. The same
+      // grant a second time is for bytes that were never sent.
+      const grant = EgressFrame.cases.Grant.make({ stream: one, bytes: EGRESS_GRANT })
+      yield* hand.say(grant)
+      yield* hand.say(grant)
+      far.write(Buffer.alloc(2 * EGRESS_WINDOW))
+      expect(yield* answered(hand, one, 2 * EGRESS_WINDOW)).toEqual({ closed: true, sent: 0 })
+      yield* target.closed
+    }),
+  )
+
+  it.live('a grant for a stream whose name is still being resolved ends it', () =>
+    Effect.gen(function* () {
+      const hand = yield* handDriven({ resolve: () => Effect.never })
+      yield* hand.say(EgressFrame.cases.Open.make({ stream: one, host: 'slow.example', port: 80 }))
+      // Nothing can have been sent on a stream that has no target yet.
+      yield* hand.say(EgressFrame.cases.Grant.make({ stream: one, bytes: 1 }))
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+    }),
+  )
+
+  it.live('a grant for a stream that is over, or that never was, is passed over', () =>
+    Effect.gen(function* () {
+      const place = yield* heldSite()
+      const echo = yield* listening(
+        NodeNet.createServer((socket) => {
+          socket.on('error', () => undefined)
+          socket.pipe(socket)
+        }),
+      )
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, place.port))
+      yield* hand.dialled(1)
+      yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
+      yield* hand.until((status) => ExitStatus.guards.Connected(status) && status.active === 0)
+      yield* hand.say(EgressFrame.cases.Grant.make({ stream: one, bytes: 0xffff_ffff }))
+      yield* hand.say(
+        EgressFrame.cases.Grant.make({ stream: EgressStream.make(77), bytes: 0xffff_ffff }),
+      )
+      // Nothing is said in answer to either: the next frame this computer sends is the answer
+      // on a stream opened afterwards.
+      yield* hand.say(openTo(two, echo))
+      yield* hand.say(EgressFrame.cases.Data.make({ stream: two, payload: Buffer.from('ping') }))
+      expect(yield* hand.frame).toEqual(
+        EgressFrame.cases.Data.make({ stream: two, payload: Uint8Array.from(Buffer.from('ping')) }),
       )
     }),
   )

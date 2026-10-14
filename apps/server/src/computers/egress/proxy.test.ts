@@ -485,6 +485,99 @@ describe('the Computer’s egress proxy', () => {
     }),
   )
 
+  /**
+   * What became of an upload after a grant: the stream's `Close`, or the proxy sending `limit`
+   * bytes of it, whichever comes first, and how many bytes it sent before that.
+   */
+  const uploaded = Effect.fn('ProxyTest.uploaded')(function* (
+    tunnel: Effect.Success<ReturnType<typeof tunnelEnd>>,
+    stream: EgressStream,
+    limit: number,
+  ) {
+    let sent = 0
+    while (sent < limit) {
+      const frame = yield* tunnel.frame
+      if (frame.stream !== stream) continue
+      if (EgressFrame.guards.Close(frame)) return { closed: true, sent }
+      if (EgressFrame.guards.Data(frame)) sent += frame.payload.length
+    }
+    return { closed: false, sent }
+  })
+
+  it.live('a grant of more than was sent ends that stream, and no other', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      const open = yield* tunnel.frame
+      const other = yield* browser(proxy.ports.proxy, connect('other.example:443'))
+      yield* other.until(ESTABLISHED)
+      const second = yield* tunnel.frame
+      expect(second._tag).toBe('Open')
+      // Nothing has been sent on the stream, so there is nothing to grant: the whole window is
+      // still unused. Taken at its word, this grant would let the browser send without end.
+      yield* tunnel.say(EgressFrame.cases.Grant.make({ stream: open.stream, bytes: 0xffff_ffff }))
+      page.socket.write(Buffer.alloc(2 * EGRESS_WINDOW))
+      const upload = yield* uploaded(tunnel, open.stream, 2 * EGRESS_WINDOW)
+      expect(upload.closed).toBe(true)
+      expect(upload.sent).toBeLessThanOrEqual(EGRESS_WINDOW)
+      yield* page.closed
+      // The other connection is as it was, both ways.
+      other.socket.write('unharmed')
+      expect(text(yield* tunnel.next('Data', second.stream))).toBe('unharmed')
+      yield* tunnel.send(second.stream, Buffer.from('still here'))
+      expect(yield* other.until('still here')).toContain('still here')
+    }),
+  )
+
+  it.live('a grant said twice ends the stream once it comes to more than was sent', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      const open = yield* tunnel.frame
+      page.socket.write(Buffer.alloc(EGRESS_GRANT, 7))
+      let sent = 0
+      while (sent < EGRESS_GRANT) {
+        const data = yield* tunnel.next('Data', open.stream)
+        sent += EgressFrame.guards.Data(data) ? data.payload.length : 0
+      }
+      // Half a window was sent and half is granted back: the window is whole again. The same
+      // grant a second time is for bytes that were never sent.
+      const grant = EgressFrame.cases.Grant.make({ stream: open.stream, bytes: EGRESS_GRANT })
+      yield* tunnel.say(grant)
+      yield* tunnel.say(grant)
+      page.socket.write(Buffer.alloc(2 * EGRESS_WINDOW))
+      const upload = yield* uploaded(tunnel, open.stream, 2 * EGRESS_WINDOW)
+      expect(upload.closed).toBe(true)
+      expect(upload.sent).toBeLessThanOrEqual(EGRESS_WINDOW)
+      yield* page.closed
+    }),
+  )
+
+  it.live('a grant for a stream that is over, or that never was, is passed over', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      const open = yield* tunnel.frame
+      yield* tunnel.say(EgressFrame.cases.Close.make({ stream: open.stream }))
+      yield* page.closed
+      yield* tunnel.say(EgressFrame.cases.Grant.make({ stream: open.stream, bytes: 0xffff_ffff }))
+      yield* tunnel.say(
+        EgressFrame.cases.Grant.make({ stream: EgressStream.make(77), bytes: 0xffff_ffff }),
+      )
+      // Nothing is said in answer to either: the next frame is the next connection's open, and
+      // that connection is carried.
+      const other = yield* browser(proxy.ports.proxy, connect('other.example:443'))
+      const next = yield* tunnel.frame
+      expect(next._tag).toBe('Open')
+      yield* tunnel.send(next.stream, Buffer.from('still here'))
+      expect(yield* other.until('still here')).toContain('still here')
+      expect(yield* proxy.exited).toBe(false)
+    }),
+  )
+
   it.live('the far end is granted more only as the browser reads, half a window at a time', () =>
     Effect.gen(function* () {
       const { proxy, tunnel } = yield* attachedProxy()

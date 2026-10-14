@@ -178,7 +178,9 @@ listens beyond loopback.
   stops reading that stream's own socket when the window is used, and the receiver grants more,
   half a window at a time, only as the stream's own socket takes what was written. So an upload
   of any size to a slow site arrives whole at the site's pace, and the other streams go on. The
-  server holds nothing for any one stream and passes grants through. The older bounds remain
+  server holds nothing for any one stream and passes grants through. A grant is for bytes that
+  were sent: one that would give a sender more than the window to send (said twice, or made
+  up) ends that stream with a close and nothing else. The older bounds remain
   for a far end that ignores the window: a stream holding 32 MiB, or a link 96 MiB in all, is
   closed.
 - A site that hangs up in the middle of a plain HTTP answer ends the browser's request: the

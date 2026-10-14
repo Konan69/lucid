@@ -224,10 +224,21 @@ const heardEnd = (entry) => {
   entry.feed()
 }
 
-/** The far end has room for more of what the browser sends. */
+/**
+ * The far end has room for more of what the browser sends. A grant is for bytes that were sent,
+ * so credit never comes to more than the window: one that would is for bytes that never were
+ * (said twice, or made up), and it ends its stream as any other break of the window does. It
+ * was once added as it came, and one grant of four gigabytes let a browser upload without any
+ * window.
+ */
 const heardGrant = (entry, frame) => {
   if (frame.length < 9) return
-  entry.credit += frame.readUInt32BE(5)
+  const more = frame.readUInt32BE(5)
+  if (entry.credit + more > WINDOW) {
+    entry.duplex.destroy()
+    return
+  }
+  entry.credit += more
   entry.pour()
 }
 

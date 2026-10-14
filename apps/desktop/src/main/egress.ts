@@ -415,7 +415,7 @@ const pour = (link: Link, stream: EgressStream, leg: Relaying) => {
 
 /**
  * Ends a stream from this side, now: its target is destroyed and the Computer is told. For a
- * stream over its budget, and a number opened twice.
+ * stream over its budget, a number opened twice, and a grant of more than was sent.
  */
 const cut = (link: Link, stream: EgressStream, leg: Relaying) => {
   link.relaying.delete(stream)
@@ -578,12 +578,19 @@ const handle = (link: Link, frame: EgressFrame) =>
       if (waiting !== undefined) waiting.heardEnd = true
       if (leg !== undefined && !leg.heardEnd) ended(leg)
     },
-    // The Computer has room for more of what the site sends.
+    // The Computer has room for more of what the site sends. A grant is for bytes that were
+    // sent, so credit never comes to more than the window: one that would is for bytes that
+    // never were (said twice, made up, or for a stream that has sent nothing because it has no
+    // target yet), and it ends its stream as any other break of the window does. It was once
+    // added as it came, and one grant of four gigabytes let a site send without any window.
     Grant: ({ stream, bytes }) => {
+      const waiting = link.resolving.get(stream)
       const leg = link.relaying.get(stream)
-      if (leg === undefined) return
+      if (waiting !== undefined) return refuse(link, stream, waiting)
+      if (leg === undefined) return undefined
+      if (leg.credit + bytes > EGRESS_WINDOW) return cut(link, stream, leg)
       leg.credit += bytes
-      pour(link, stream, leg)
+      return pour(link, stream, leg)
     },
     Close: ({ stream }) => {
       const waiting = link.resolving.get(stream)
