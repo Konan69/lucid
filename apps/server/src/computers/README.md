@@ -122,14 +122,21 @@ server: SSH channel to 8790 <----+        (`ssh/link.ts` `tunnel`, `egress/relay
 desktop app: resolves the name, dials the site, carries the bytes (`apps/desktop/src/main/egress.ts`)
 ```
 
-The frames are Grok Bot's (`packages/contracts/src/egress.ts`). Its desktop app dials its
-machine's hosted port; a Computer here has no port a home network can be sure of reaching, so the
-desktop app dials the server and the server joins it to the Computer over the SSH connection it
-already holds. Nothing on the Computer listens beyond loopback.
+The frames are Grok Bot's (`packages/contracts/src/egress.ts`), with one kind added: `End`, so
+that a stream's two directions end apart and a browser that has sent its whole request still
+gets the answer. Grok Bot's desktop app dials its machine's hosted port; a Computer here has no
+port a home network can be sure of reaching, so the desktop app dials the server and the server
+joins it to the Computer over the SSH connection it already holds. Nothing on the Computer
+listens beyond loopback.
 
 - The desktop app holds its socket open whenever someone is signed in. The server parks it until
   egress is on and the Computer's record says running, then starts the proxy on the Computer
-  (`egress/guest.ts`, any number of times) and joins the two. It never wakes a Computer for this.
+  (`egress/guest.ts`, any number of times, and at the same moment) and joins the two. It never
+  wakes a Computer for this.
+- One socket is one join. When a join ends for any reason (egress turned off, the Computer
+  stopped, the channel closed, a frame that is not one), the server closes the app's socket. The
+  app ends every connection it had made and dials again two seconds later, with an empty table.
+  Nothing of an old join can then be read as part of a new one (`egress/relay.ts`).
 - A browser's way out is decided when it starts: a step that has to start Chrome gives it the
   proxy only when egress is on (`boat/browser.ts`). A Chrome that was already running, or one the
   Person started from the launcher, goes out directly until it is started again.
@@ -137,12 +144,33 @@ already holds. Nothing on the Computer listens beyond loopback.
   loses the internet because nobody is at home. Turning egress off un-joins; the same Chrome
   then goes out directly.
 - The desktop app refuses a target inside its own networks (`apps/desktop/src/main/reserved.ts`)
-  after resolving the name, and dials the address it checked.
+  after resolving the name, and dials the address it checked. For IPv6 it dials only what a
+  public host can have, which is stricter than the reference.
+- Every hop holds a bounded amount (the contract's "How much a hop may hold"): a frame is at
+  most one mebibyte, a stream may have 32 MiB waiting for a slow site or a browser that is not
+  reading, and a link 96 MiB in all. The stream that crosses a bound is closed and the others
+  go on. The cost is an upload larger than that to a site slower than the Computer's own
+  connection: it is cut. The protocol has no window for one stream, and none was added.
 - The status (`WatchEgress`) is this server process's reading of the sockets it holds; with more
   than one server process, a Person whose desktop app is held by another reads "waiting" here.
 
-`egress/address.live.test.ts` (`VIVID_LIVE_EGRESS=1`) asks Vivid, on a real Computer with a real
-desktop app attached, for the address a page sees with egress on and with it off.
+Who is trusted. The two ports on the Computer (8790, where the tunnel attaches, and 8791, the
+browser's proxy) are on loopback and ask for nothing. Any program running on the Computer can
+therefore send traffic out through the Person's home address by using 8791, and can attach to
+8790 in the server's place, which takes the tunnel from the server and lets that program read
+and answer what the browser sends through the proxy (inside HTTPS it sees only where a
+connection goes, not what is said). This is inside the trust the Computer already has: the only
+thing that runs there is Vivid's own Run, which already drives that same browser and can open
+any page with the Person's sign-ins. A secret for the tunnel was considered and not built: the
+start command would have to leave it on the Computer for the proxy to read, in the same account
+every program of a Run uses, so it would stop nothing that can reach the port. It would matter
+only if a Computer ran programs as a second account, which it does not. What does not rest on
+the Computer is the Person's own network: the desktop app decides what may be dialled, after
+resolving the name itself, and a program on the Computer cannot widen that.
+
+`egress/address.live.test.ts` (`VIVID_LIVE_EGRESS=1`) opens an address-echo page on a real
+Computer with a real desktop app attached, with egress on and with it off, and compares the
+addresses in the receipts the Computer's browser left, not what Vivid said about them.
 
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and
