@@ -10,7 +10,7 @@ import {
   EGRESS_STREAM_BUDGET,
   EGRESS_WINDOW,
   EgressFrame,
-  type EgressStream,
+  EgressStream,
   decodeEgressFrame,
   egressData,
   encodeEgressFrame,
@@ -350,6 +350,75 @@ describe('the Computer’s egress proxy', () => {
     }),
   )
 
+  /** A site that says a hundred bytes are coming, sends seven, and hangs up. */
+  const brokenSite = Effect.fn('ProxyTest.brokenSite')(function* () {
+    const site = NodeNet.createServer((socket) => {
+      socket.on('error', () => undefined)
+      socket.once('data', () => socket.end('HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial'))
+    })
+    return yield* listening(site)
+  })
+  const BROKEN = 'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial'
+
+  it.live(
+    'a site that hangs up in the middle of an answer ends the browser’s request, directly',
+    () =>
+      Effect.gen(function* () {
+        const sitePort = yield* brokenSite()
+        const proxy = yield* computerProxy()
+        const plain = yield* browser(
+          proxy.ports.proxy,
+          `GET http://127.0.0.1:${sitePort}/ HTTP/1.1\r\nHost: site\r\n\r\n`,
+        )
+        expect(yield* plain.until('partial')).toContain('partial')
+        // The answer cannot be finished: the connection is dropped, which is how a browser
+        // learns that what it has is not the whole of it.
+        yield* plain.closed
+        // The same through `CONNECT`, and for a request that asks to change protocol.
+        const tunnelled = yield* browser(proxy.ports.proxy, connect(`127.0.0.1:${sitePort}`))
+        yield* tunnelled.until(ESTABLISHED)
+        tunnelled.socket.write('GET / HTTP/1.1\r\n\r\n')
+        expect(yield* tunnelled.until('partial')).toContain('partial')
+        yield* tunnelled.closed
+        const upgrade = yield* browser(
+          proxy.ports.proxy,
+          `GET http://127.0.0.1:${sitePort}/room HTTP/1.1\r\nHost: site\r\n` +
+            'Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n',
+        )
+        expect(yield* upgrade.until('partial')).toContain('partial')
+        yield* upgrade.closed
+        expect(yield* proxy.exited).toBe(false)
+      }),
+  )
+
+  it.live(
+    'the far end ending or closing in the middle of an answer ends the browser’s request',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, tunnel } = yield* attachedProxy()
+        const ask = () =>
+          browser(
+            proxy.ports.proxy,
+            'GET http://site.example/ HTTP/1.1\r\nHost: site.example\r\n\r\n',
+          )
+        // The site finished sending before the answer was whole.
+        const ended = yield* ask()
+        const first = yield* tunnel.frame
+        yield* tunnel.send(first.stream, Buffer.from(BROKEN))
+        yield* tunnel.say(EgressFrame.cases.End.make({ stream: first.stream }))
+        expect(yield* ended.until('partial')).toContain('partial')
+        yield* ended.closed
+        // The site's connection was dropped.
+        const dropped = yield* ask()
+        const second = yield* tunnel.next('Open', EgressStream.make(first.stream + 1))
+        yield* tunnel.send(second.stream, Buffer.from(BROKEN))
+        yield* tunnel.say(EgressFrame.cases.Close.make({ stream: second.stream }))
+        expect(yield* dropped.until('partial')).toContain('partial')
+        yield* dropped.closed
+        expect(yield* proxy.exited).toBe(false)
+      }),
+  )
+
   it.live('a frame longer than a frame ends that tunnel and nothing else', () =>
     Effect.gen(function* () {
       const { proxy, tunnel } = yield* attachedProxy()
@@ -425,7 +494,7 @@ describe('the Computer’s egress proxy', () => {
       // A far end that keeps its window: it sends what it may, and waits for a grant.
       const body = Buffer.alloc(4 * EGRESS_WINDOW, 9)
       let credit = EGRESS_WINDOW
-      for (let at = 0; at < body.length; ) {
+      for (let at = 0; at < body.length;) {
         if (credit === 0) {
           const grant = yield* tunnel.next('Grant', open.stream)
           const more = EgressFrame.guards.Grant(grant) ? grant.bytes : 0

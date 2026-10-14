@@ -407,6 +407,15 @@ proxy.on('request', (request, response) => {
   outward.on('response', (answer) => {
     response.writeHead(answer.statusCode, answer.rawHeaders)
     answer.pipe(response)
+    // A site that goes before its answer is whole (it promised a length and hung up, or the
+    // far end closed the stream) ends `answer` without finishing it, and `pipe` then leaves
+    // the browser's response open for ever. The browser's connection is dropped instead: a
+    // connection that closes short of the promised length is how it learns the answer is not
+    // whole. The failure is the same fact, said first.
+    answer.on('error', () => undefined)
+    answer.on('close', () => {
+      if (!answer.complete) response.destroy()
+    })
   })
   outward.on('error', () => {
     if (response.headersSent) response.destroy()
