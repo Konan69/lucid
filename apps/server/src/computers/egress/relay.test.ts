@@ -1,3 +1,4 @@
+import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
@@ -7,16 +8,39 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import {
+  EGRESS_FRAME_LIMIT,
   EgressFrame,
   EgressStatus,
   PersonId,
   decodeEgressFrame,
   encodeEgressFrame,
 } from '@vivid/contracts'
-import { Array as Arr, Effect, Fiber, Option, PubSub, Queue, Result, Schema, Stream } from 'effect'
+import {
+  Array as Arr,
+  Deferred,
+  Effect,
+  Fiber,
+  Option,
+  PubSub,
+  Queue,
+  Result,
+  Schema,
+  Stream,
+} from 'effect'
+import * as NetAddress from 'effect/net/NetAddress'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { Changes } from '../../live/changes.ts'
 import { startCommand } from './guest.ts'
-import { egressRelay, frameCutter, lengthPrefixed } from './relay.ts'
+import {
+  Egress,
+  QUEUE_LIMIT,
+  type ExitSocket,
+  egressRelay,
+  frameCutter,
+  lengthPrefixed,
+} from './relay.ts'
+import { held } from './route.ts'
 
 /**
  * The relay against the real program that runs on the Computer (`proxy.mjs`), over real sockets
@@ -138,6 +162,9 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
         relay.carry(person, {
           pull: Queue.take(sent).pipe(Effect.map(Arr.of)),
           write: (frame) => Queue.offer(received, frame).pipe(Effect.asVoid),
+          // Queues take everything at once: nothing is ever waiting to leave.
+          buffered: () => 0,
+          drained: Effect.void,
         }),
       ),
     )
@@ -146,11 +173,106 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
       Effect.map(Result.getOrThrow),
     )
     const say = (value: EgressFrame) => Queue.offer(sent, encodeEgressFrame(value))
-    return { fiber, frame, say, received }
+    const raw = (bytes: Uint8Array) => Queue.offer(sent, bytes)
+    return { fiber, frame, say, raw, received }
   })
   const turn = (change: Partial<typeof facts>) =>
     Effect.sync(() => Object.assign(facts, change)).pipe(Effect.andThen(changes.publish([])))
   return { proxy, relay, facts, app, turn }
+})
+
+/**
+ * A desktop app's WebSocket spoken by hand over a TCP connection, so that the test can do what
+ * a WebSocket library will not: stop reading. Frames toward the server are masked with a key of
+ * zeros, which a server must accept and which leaves the bytes as they are.
+ */
+const appSocket = Effect.fn('EgressTest.appSocket')(function* (port: number) {
+  const upgraded = yield* Deferred.make<void>()
+  const closing = yield* Deferred.make<void>()
+  const frames = yield* Queue.unbounded<EgressFrame>()
+  const seen = { bytes: 0, wanted: 0, reached: Deferred.makeUnsafe<void>() }
+  const socket = yield* Effect.acquireRelease(
+    Effect.sync(() => NodeNet.connect(port, '127.0.0.1')),
+    (opened) => Effect.sync(() => opened.destroy()),
+  )
+  socket.on('error', () => undefined)
+  socket.on('connect', () =>
+    socket.write(
+      'GET /egress HTTP/1.1\r\nHost: vivid.test\r\nUpgrade: websocket\r\n' +
+        'Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n' +
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n',
+    ),
+  )
+  let waiting = Buffer.alloc(0)
+  /** Where a frame's payload begins and how long it is, once enough of its head has come. */
+  const measured = () => {
+    if (waiting.length < 2) return Option.none()
+    const short = waiting.readUInt8(1) & 0x7f
+    if (short < 126) return Option.some({ head: 2, size: short })
+    if (short === 126)
+      return waiting.length < 4
+        ? Option.none()
+        : Option.some({ head: 4, size: waiting.readUInt16BE(2) })
+    return waiting.length < 10
+      ? Option.none()
+      : Option.some({ head: 10, size: Number(waiting.readBigUInt64BE(2)) })
+  }
+  /** One WebSocket frame from the server, which never masks: its opcode and its payload. */
+  const frame = () =>
+    Option.flatMap(measured(), ({ head, size }) => {
+      if (waiting.length < head + size) return Option.none()
+      const found = {
+        opcode: waiting.readUInt8(0) & 0x0f,
+        payload: Uint8Array.from(waiting.subarray(head, head + size)),
+      }
+      waiting = waiting.subarray(head + size)
+      return Option.some(found)
+    })
+  socket.on('data', (chunk: Buffer) => {
+    waiting = Buffer.concat([waiting, chunk])
+    if (!Deferred.isDoneUnsafe(upgraded)) {
+      const end = waiting.indexOf('\r\n\r\n')
+      if (end < 0) return
+      waiting = waiting.subarray(end + 4)
+      Deferred.doneUnsafe(upgraded, Effect.void)
+    }
+    for (let next = frame(); Option.isSome(next); next = frame()) {
+      seen.bytes += next.value.payload.length
+      if (next.value.opcode === 8) {
+        // Answered as an app answers it, so the server's side of the socket can finish too.
+        socket.end(Buffer.from([0x88, 0x80, 0, 0, 0, 0]))
+        Deferred.doneUnsafe(closing, Effect.void)
+      }
+      if (next.value.opcode === 2)
+        Option.map(Result.getSuccess(decodeEgressFrame(next.value.payload)), (read) =>
+          Queue.offerUnsafe(frames, read),
+        )
+      if (seen.bytes >= seen.wanted) Deferred.doneUnsafe(seen.reached, Effect.void)
+    }
+  })
+  yield* Deferred.await(upgraded)
+  return {
+    frame: Queue.take(frames),
+    say: (value: EgressFrame) =>
+      Effect.sync(() => {
+        const bytes = encodeEgressFrame(value)
+        const head = Buffer.from([0x82, 0x80 | 126, 0, 0, 0, 0, 0, 0])
+        head.writeUInt16BE(bytes.length, 2)
+        socket.write(Buffer.concat([head, bytes]))
+      }),
+    /** Stops reading, as an app on a slow connection or a busy computer does. */
+    stall: Effect.sync(() => socket.pause()),
+    /** Reads again, and waits until this many bytes of frames have arrived in all. */
+    read: (bytes: number) =>
+      Effect.suspend(() => {
+        seen.wanted = bytes
+        seen.reached = Deferred.makeUnsafe<void>()
+        socket.resume()
+        return seen.bytes >= bytes ? Effect.void : Deferred.await(seen.reached)
+      }),
+    /** The server began closing the socket. */
+    closing: Deferred.await(closing),
+  }
 })
 
 describe('the egress relay', () => {
@@ -206,20 +328,106 @@ describe('the egress relay', () => {
       }),
   )
 
-  it.live('the Computer stopping, or egress turned off, lets the tunnel go', () =>
+  it.live('the Computer stopping, or egress turned off, ends the join and the app’s socket', () =>
     Effect.gen(function* () {
       const { proxy, relay, app, turn } = yield* relaying()
-      yield* app()
+      const first = yield* app()
       yield* turn({ chosen: true })
       yield* proxy.attached(true)
       yield* turn({ running: false })
       yield* proxy.attached(false)
+      // The hold is over: whoever held the socket closes it, and the app dials again.
+      yield* Fiber.join(first.fiber)
       expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Waiting.make({}))
+      const second = yield* app()
       yield* turn({ running: true })
       yield* proxy.attached(true)
       yield* turn({ chosen: false })
       yield* proxy.attached(false)
+      yield* Fiber.join(second.fiber)
       expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Off.make({}))
+    }),
+  )
+
+  it.live('a join made again starts with nothing of the one before', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, app, turn } = yield* relaying()
+      const first = yield* app()
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      // A connection is open through the Person's computer when egress is turned off.
+      const cut = yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
+      const before = yield* first.frame
+      expect(before._tag).toBe('Open')
+      yield* turn({ chosen: false })
+      // The browser's connection ends, and so does the hold on the app's socket: the app is
+      // not left with a stream the Computer has forgotten.
+      expect(yield* Fiber.join(cut)).toBe('')
+      yield* Fiber.join(first.fiber)
+
+      // The app dials again and egress is turned on again. The proxy numbers the streams of
+      // the new attachment from one again, and the new socket has no stream by that number.
+      const second = yield* app()
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      const reply = yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'b'))
+      const again = yield* second.frame
+      expect(again).toEqual(before)
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+      yield* second.say(
+        EgressFrame.cases.Data.make({ stream: again.stream, payload: Buffer.from('new') }),
+      )
+      yield* second.say(EgressFrame.cases.Close.make({ stream: again.stream }))
+      expect(yield* Fiber.join(reply)).toBe('new')
+    }),
+  )
+
+  it.live('a stream that each side has ended is no longer counted', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, app, turn } = yield* relaying()
+      const desktop = yield* app()
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      const answer = yield* Effect.forkScoped(
+        Effect.callback<string>((resume) => {
+          const socket = NodeNet.connect({
+            port: proxy.ports.proxy,
+            host: '127.0.0.1',
+            allowHalfOpen: true,
+          })
+          const chunks: Array<Buffer> = []
+          socket.on('connect', () => socket.end('CONNECT site.example:443 HTTP/1.1\r\n\r\nask'))
+          socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+          socket.on('end', () => resume(Effect.succeed(Buffer.concat(chunks).toString('utf8'))))
+          return Effect.sync(() => socket.destroy())
+        }),
+      )
+      const open = yield* desktop.frame
+      yield* desktop.frame
+      expect(yield* desktop.frame).toEqual(EgressFrame.cases.End.make({ stream: open.stream }))
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+      yield* desktop.say(
+        EgressFrame.cases.Data.make({ stream: open.stream, payload: Buffer.from('answer') }),
+      )
+      yield* desktop.say(EgressFrame.cases.End.make({ stream: open.stream }))
+      expect((yield* Fiber.join(answer)).endsWith('answer')).toBe(true)
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+    }),
+  )
+
+  it.live('a message from the app longer than a frame ends that app’s join, and nothing else', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, app, turn } = yield* relaying()
+      const first = yield* app()
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      yield* first.raw(new Uint8Array(EGRESS_FRAME_LIMIT + 1))
+      yield* Fiber.join(first.fiber)
+      yield* proxy.attached(false)
+      // The relay goes on: the next socket of the same Person is joined.
+      yield* app()
+      yield* proxy.attached(true)
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
     }),
   )
 
@@ -235,6 +443,94 @@ describe('the egress relay', () => {
       yield* proxy.attached(true)
       expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
     }),
+  )
+
+  it.live(
+    'over a real socket, an app that stops reading stops the Computer being read, and a join’s end closes the socket',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, turn } = yield* relaying()
+        // The relay as the server gives it to the route, with two things looked at in passing:
+        // the socket it was handed, and the moment it first waits for that socket to empty.
+        const waited = yield* Deferred.make<void>()
+        const handed = yield* Deferred.make<ExitSocket>()
+        const watched = Egress.of({
+          status: relay.status,
+          carry: (who, app) =>
+            Deferred.succeed(handed, app).pipe(
+              Effect.andThen(
+                relay.carry(who, {
+                  ...app,
+                  drained: Deferred.succeed(waited, undefined).pipe(Effect.andThen(app.drained)),
+                }),
+              ),
+            ),
+        })
+        const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+          host: '127.0.0.1',
+          port: 0,
+        })
+        yield* server.serve(
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest
+            yield* held(request, person, Effect.never)
+            return HttpServerResponse.empty()
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(Egress, watched),
+            Effect.catchTags({
+              SocketError: () => Effect.succeed(HttpServerResponse.empty()),
+              HttpServerError: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),
+            }),
+          ),
+        )
+        if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('No TCP address')
+        const desktop = yield* appSocket(server.address.port)
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        yield* desktop.stall
+
+        // The browser uploads far more than may wait anywhere, to an app that reads nothing.
+        const megabyte = Buffer.alloc(1 << 20)
+        const total = 64
+        const sent = { megabytes: 0 }
+        const uploaded = yield* Deferred.make<void>()
+        const browser = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeNet.connect(proxy.ports.proxy, '127.0.0.1')),
+          (socket) => Effect.sync(() => socket.destroy()),
+        )
+        browser.on('error', () => undefined)
+        const more = () => {
+          if (sent.megabytes === total) {
+            Deferred.doneUnsafe(uploaded, Effect.void)
+            return
+          }
+          sent.megabytes += 1
+          browser.write(megabyte, more)
+        }
+        browser.on('connect', () =>
+          browser.write('CONNECT site.example:443 HTTP/1.1\r\n\r\n', more),
+        )
+        const outcome = yield* Effect.raceFirst(
+          Deferred.await(uploaded).pipe(Effect.as('The relay took everything')),
+          Deferred.await(waited).pipe(Effect.as('The relay waited for the app')),
+        )
+        expect(outcome).toBe('The relay waited for the app')
+        // What is held for the app is the bound and the frames of the one chunk that crossed it.
+        const app = yield* Deferred.await(handed)
+        expect(app.buffered()).toBeGreaterThan(QUEUE_LIMIT)
+        expect(app.buffered()).toBeLessThan(4 * QUEUE_LIMIT)
+        expect(sent.megabytes).toBeLessThan(total)
+
+        // The app reads again: everything arrives, and only then is the upload all taken.
+        yield* desktop.read(total << 20)
+        yield* Deferred.await(uploaded)
+
+        // The join ends: the server closes the app's socket, not only the join.
+        yield* turn({ chosen: false })
+        yield* desktop.closing
+      }),
+    30_000,
   )
 
   it.live('with egress on and no desktop app, it says it is waiting', () =>
@@ -264,6 +560,12 @@ describe('frames on the Computer’s byte stream', () => {
 
   it('a length no frame can have ends the reading', () => {
     expect(frameCutter()(Uint8Array.from([255, 255, 255, 255, 1]))).toEqual(Option.none())
+    // The longest frame is taken; one byte more is refused on its length alone.
+    const longest = lengthPrefixed(new Uint8Array(EGRESS_FRAME_LIMIT))
+    expect(Option.map(frameCutter()(longest), (frames) => frames.length)).toEqual(Option.some(1))
+    const over = lengthPrefixed(new Uint8Array(0)).slice()
+    new DataView(over.buffer).setUint32(0, EGRESS_FRAME_LIMIT + 1)
+    expect(frameCutter()(over)).toEqual(Option.none())
   })
 })
 

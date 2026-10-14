@@ -12,7 +12,7 @@ import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import type * as Socket from 'effect/socket/Socket'
-import { EgressStatus, type PersonId } from '@vivid/contracts'
+import { EGRESS_FRAME_LIMIT, EgressStatus, type PersonId } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../../database/client.ts'
 import { Changes, Topic, everyPart } from '../../live/changes.ts'
 import { Machine, type MachineOperations } from '../machine.ts'
@@ -36,14 +36,25 @@ import { egressChosen } from './setting.ts'
  * carries JSON calls, has no stream from the app to the server, and a page's bytes would wait
  * behind the actions Vivid takes on that computer.
  *
- * The server does not read the tunnel beyond counting: a message from the app is one frame, and
- * toward the Computer each frame is written with its length in front, because an SSH channel is
- * a byte stream and does not keep a message's edges (`proxy.mjs` reads them the same way).
+ * The server does not read the tunnel beyond counting and measuring: a message from the app is
+ * one frame, and toward the Computer each frame is written with its length in front, because an
+ * SSH channel is a byte stream and does not keep a message's edges (`proxy.mjs` reads them the
+ * same way). It holds nothing for any one stream (the contract's "How much a hop may hold",
+ * rule 2): each side is read only as fast as the other takes what was read (`pumped`).
  *
  * A desktop app's socket is held whether or not egress is on. While it is off, or the Computer
  * is not running, the socket is parked: nothing is read from it but its end. Turning egress on
  * therefore needs nothing from the app, and issue 61, which removes the choice, changes one
  * condition here (`egressChosen`).
+ *
+ * One socket is one join. When a join ends for any reason (egress turned off, the Computer
+ * stopped, the channel closed, a frame that is not one), the app's socket is closed with it and
+ * the app dials again. The other way to end the app's streams would be a `Close` for each, on a
+ * socket that is kept; but the app's bytes for those streams may still be on their way, the
+ * proxy numbers the streams of each attachment from one again, and nothing in a frame says
+ * which join it belongs to, so a late byte of an old stream would be read as a new stream's. A
+ * socket that is closed takes everything in flight with it: the app ends every connection it
+ * made (`apps/desktop/src/main/egress.ts`, the scope of `carry`) and starts with an empty table.
  */
 
 /** What one held socket is doing. Only what is true while that socket is open. */
@@ -66,20 +77,14 @@ interface Held {
 /** The first five bytes of a frame: its kind and its stream (`egress.ts`). */
 const OPEN = 1
 const CLOSE = 3
-
-/** The largest frame taken from the Computer; the proxy sends at most one socket read in one. */
-const FRAME_LIMIT = 16 * 1024 * 1024
+const END = 4
 
 /**
- * How much may wait to be written toward the Computer. The path to it is between two
- * datacentres and far faster than a home connection, so nothing should wait at all; if this
- * much does, the SSH connection has stalled, and the join is ended and made again, which is
- * bounded, instead of the server holding a page it cannot deliver.
+ * How much may wait toward the app before the Computer is no longer read: what the relay has
+ * taken off the channel and not written yet, and what it has written that has not left this
+ * server. One mebibyte each, the bound the app keeps the other way (`QUEUE_BOUND`).
  */
-const BACKLOG_LIMIT = 32 * 1024 * 1024
-
-/** How much read from the Computer may wait to be written to the app before reading pauses. */
-const QUEUE_LIMIT = 1 << 20
+export const QUEUE_LIMIT = 1 << 20
 
 /** How often a parked or failed socket looks again without being told anything changed. */
 const LOOK_AGAIN = '30 seconds'
@@ -91,11 +96,11 @@ class TunnelInvalid extends Schema.TaggedError<TunnelInvalid>()(
   { title: 'The egress tunnel sent something that is not a frame' },
 ) {}
 
-/** The bytes toward the Computer are not being taken (`BACKLOG_LIMIT`). */
-class TunnelStalled extends Schema.TaggedError<TunnelStalled>()(
-  'TunnelStalled',
+/** The desktop app sent a message longer than any frame (`EGRESS_FRAME_LIMIT`). */
+class ExitInvalid extends Schema.TaggedError<ExitInvalid>()(
+  'ExitInvalid',
   {},
-  { title: 'The egress tunnel is not draining' },
+  { title: 'The desktop app sent something that is not a frame' },
 ) {}
 
 /**
@@ -113,7 +118,7 @@ export const frameCutter = () => {
     for (;;) {
       if (held.length < 4) return Option.some(frames)
       const size = new DataView(held.buffer, held.byteOffset, 4).getUint32(0)
-      if (size > FRAME_LIMIT) return Option.none()
+      if (size > EGRESS_FRAME_LIMIT) return Option.none()
       if (held.length < 4 + size) return Option.some(frames)
       frames.push(held.subarray(4, 4 + size))
       held = held.subarray(4 + size)
@@ -133,9 +138,10 @@ export interface EgressService {
   /** What egress is doing for a Person at this moment. */
   readonly status: (person: PersonId) => Effect.Effect<EgressStatus, DatabaseInfrastructureError>
   /**
-   * Holds one desktop app's socket until it closes, joining it to the Person's Computer for as
-   * long as egress is on and the Computer runs. A Person has one way out at a time: a newer
-   * socket of theirs ends this one. The scope owns the socket and the channel to the Computer.
+   * Holds one desktop app's socket, parked until egress is on and the Computer runs, then
+   * joined to the Person's Computer. It returns when that join ends or a newer socket of the
+   * Person's takes its place (a Person has one way out at a time), and whoever called it then
+   * closes the socket. The scope owns the channel to the Computer.
    */
   readonly carry: (
     person: PersonId,
@@ -157,54 +163,97 @@ export interface EgressReads {
   readonly running: (person: PersonId) => Effect.Effect<boolean, DatabaseInfrastructureError>
 }
 
-/** The app's socket as the relay uses it: messages in, in order, and frames out. */
+/**
+ * The app's socket as the relay uses it: messages in, in order, and frames out.
+ *
+ * A message that is not pulled is not read off the network (Effect's reader pauses a `ws`
+ * socket once 64 KiB waits, `Socket.fromWebSocket`), so not pulling is how the app is slowed.
+ * Writing is the other matter: `write` hands the frame to the socket and succeeds at once
+ * (Effect 4.0.2 `Socket.ts`, `fromWebSocket`: `ws.send(chunk)` with no callback, then
+ * `Effect.void`), whether or not the app is taking anything. So the socket also says how much
+ * it still holds, and when that has gone (`route.ts`, `exitSocket`).
+ */
 export interface ExitSocket {
   readonly pull: Socket.Reader['pull']
   readonly write: (frame: Uint8Array) => Effect.Effect<void, Socket.SocketError>
+  /** Bytes written that have not left this server yet. */
+  readonly buffered: () => number
+  /** Completes once what was written has left, or the socket has closed. */
+  readonly drained: Effect.Effect<void>
+}
+
+/** Waits until a Node stream has taken what was written to it, or has closed. */
+export const flushed = (stream: NodeStream.Writable) =>
+  Effect.callback<void>((resume) => {
+    if (!stream.writableNeedDrain || stream.destroyed) return resume(Effect.void)
+    const done = () => resume(Effect.void)
+    stream.once('drain', done)
+    stream.once('close', done)
+    return Effect.sync(() => {
+      stream.off('drain', done)
+      stream.off('close', done)
+    })
+  })
+
+/**
+ * How many of the browser's connections are open through a join, read from the frames that
+ * pass: an open from the Computer adds one, a close from either side takes it away, and so does
+ * the second of the two ends (each side says `End` once, and the stream is then over without a
+ * close).
+ */
+const streamCount = () => {
+  const open = new Map<number, { computer: boolean; app: boolean }>()
+  return (frame: Uint8Array, fromComputer: boolean): number => {
+    if (frame.length < 5) return open.size
+    const stream = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1)
+    const ends = open.get(stream)
+    if (fromComputer && frame[0] === OPEN) open.set(stream, { computer: false, app: false })
+    if (frame[0] === CLOSE) open.delete(stream)
+    if (frame[0] === END && ends !== undefined) {
+      ends[fromComputer ? 'computer' : 'app'] = true
+      if (ends.computer && ends.app) open.delete(stream)
+    }
+    return open.size
+  }
 }
 
 /**
  * Carries frames both ways between the app's socket and the channel to the Computer, until one
- * side is done. `counted` hears how many of the browser's connections are open each time that
- * changes: an open from the Computer adds one, a close from either side takes it away.
+ * side is done. `counted` hears how many of the browser's connections are open each time a
+ * frame passes.
+ *
+ * Each direction waits for the side it writes to. Toward the Computer, the app is not pulled
+ * while the channel has more than it will take. Toward the app, the channel is not read while
+ * more than `QUEUE_LIMIT` waits to be written or has been written and not left; the channel's
+ * own flow control then slows the Computer, whose proxy pauses the browser.
  *
  * It ends, without failing, when the Computer's side ends for any reason (the Computer stopped,
- * the proxy ended, the SSH connection went, it stalled). It fails only with the app's socket.
+ * the proxy ended, the SSH connection went), or when either side sends what no frame can be. It
+ * fails only with the app's socket.
  */
 const pumped = Effect.fn('Egress.pumped')(function* (
   app: ExitSocket,
   tunnel: NodeStream.Duplex,
   counted: (streams: number) => void,
 ) {
-  const streams = new Set<number>()
-  const note = (frame: Uint8Array, fromComputer: boolean) => {
-    if (frame.length < 5) return
-    const stream = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1)
-    if (fromComputer && frame[0] === OPEN) streams.add(stream)
-    if (frame[0] === CLOSE) streams.delete(stream)
-    counted(streams.size)
-  }
+  const count = streamCount()
   const toComputer = app.pull.pipe(
     Effect.flatMap((messages) =>
       Effect.suspend(() => {
         for (const message of messages) {
           // A frame is binary; text is not this protocol and is passed over.
           if (Predicate.isString(message)) continue
-          note(message, false)
+          if (message.length > EGRESS_FRAME_LIMIT) return Effect.fail(new ExitInvalid({}))
+          counted(count(message, false))
           tunnel.write(lengthPrefixed(message))
         }
-        return tunnel.writableLength > BACKLOG_LIMIT
-          ? Effect.fail(new TunnelStalled({}))
-          : Effect.void
+        return flushed(tunnel)
       }),
     ),
     Effect.forever,
   )
   const cut = frameCutter()
-  // The channel's bytes, in order, as they arrive; the queue ends when the channel does. While
-  // more than `QUEUE_LIMIT` waits to be written to the app the channel is not read, so a desktop
-  // app that takes frames slowly slows the channel, and the channel's own flow control slows
-  // the Computer.
+  // The channel's bytes, in order, as they arrive; the queue ends when the channel does.
   const chunks = yield* Queue.unbounded<Uint8Array, Cause.Done>()
   const waiting = { bytes: 0 }
   tunnel.on('data', (chunk: Uint8Array) => {
@@ -221,9 +270,12 @@ const pumped = Effect.fn('Egress.pumped')(function* (
         const frames = cut(chunk)
         if (Option.isNone(frames)) return yield* new TunnelInvalid({})
         for (const frame of frames.value) {
-          note(frame, true)
+          counted(count(frame, true))
           yield* app.write(frame)
         }
+        // The frames are in the socket, not yet with the app. Until they have left, this
+        // chunk still counts as waiting, so the channel stays paused behind a slow app.
+        if (app.buffered() > QUEUE_LIMIT) yield* app.drained
         waiting.bytes -= chunk.length
         if (waiting.bytes <= QUEUE_LIMIT && tunnel.isPaused()) tunnel.resume()
         return undefined
@@ -233,7 +285,7 @@ const pumped = Effect.fn('Egress.pumped')(function* (
   yield* Effect.raceFirst(toComputer, toDesktop).pipe(
     Effect.catchTags({
       TunnelInvalid: () => Effect.logWarning('The egress tunnel ended: not a frame.'),
-      TunnelStalled: () => Effect.logWarning('The egress tunnel ended: not draining.'),
+      ExitInvalid: () => Effect.logWarning('The egress tunnel ended: the app sent no frame.'),
     }),
   )
 })
@@ -349,16 +401,18 @@ export const egressRelay = (
         return changed ? told(person) : Effect.void
       })
     /**
-     * Parked, then joined, then parked again, for as long as the socket lives. Exactly one thing
-     * reads the socket at a time: while parked nothing is expected from the app, and what
+     * Parked, then joined once, and then over: a join that ends for any reason ends the hold,
+     * which closes the socket (see the module's note on one socket being one join). Exactly one
+     * thing reads the socket at a time: while parked nothing is expected from the app, and what
      * arrives is read and dropped so that its close is seen; while joined the join reads it. A
-     * join that could not be made is tried again at the next look, never in a loop.
+     * join that could not be made carried nothing, so the socket is kept and it is tried again
+     * at the next look, never in a loop.
      */
     const life = Effect.fn('Egress.life')(function* () {
       for (;;) {
         yield* Effect.raceFirst(until(true), app.pull.pipe(Effect.forever))
-        const made = yield* Effect.scoped(attempt(person, entry, app, until(false)))
-        yield* park(made ? Carrying.cases.Parked.make({}) : Carrying.cases.Failed.make({}))
+        if (yield* Effect.scoped(attempt(person, entry, app, until(false)))) return
+        yield* park(Carrying.cases.Failed.make({}))
       }
     })
     yield* told(person)

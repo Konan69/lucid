@@ -1,4 +1,6 @@
+import { NodeHttpServerRequest } from '@effect/platform-node'
 import { Effect, Option } from 'effect'
+import type { PersonId } from '@vivid/contracts'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
@@ -7,10 +9,50 @@ import { authenticate } from '../../auth/session.ts'
 import { ServerConfig } from '../../config.ts'
 import { sessionEnded } from '../../live/query.ts'
 import { screenOriginAllowed } from '../screen.ts'
-import { Egress } from './relay.ts'
+import { Egress, type ExitSocket, flushed } from './relay.ts'
 
 const notFound = () =>
   HttpServerResponse.empty({ status: 404, headers: { 'cache-control': 'no-store' } })
+
+/**
+ * A request's upgraded WebSocket as the relay holds it (`relay.ts`, `ExitSocket`).
+ *
+ * Effect's socket says nothing about what it has written and not sent, and the relay must know,
+ * or it reads the Computer as fast as the Computer sends while a slow app's frames pile up
+ * here. The frames are written by `ws` straight onto the request's own TCP socket (it holds
+ * nothing back itself without compression, which this server does not turn on: `ws`
+ * `bufferedAmount` is that socket's queue plus its own, and its own is the compressor's), so
+ * that socket's queue is the true amount, and its `drain` is the moment it has gone.
+ */
+export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const socket = yield* request.upgrade
+  const reader = yield* socket.reader
+  const writer = yield* socket.writer
+  const wire = NodeHttpServerRequest.toIncomingMessage(request).socket
+  const held: ExitSocket = {
+    pull: reader.pull,
+    write: writer.write,
+    buffered: () => wire.writableLength,
+    drained: flushed(wire),
+  }
+  return held
+})
+
+/**
+ * Upgrades a request and holds its socket for a Person until the relay lets it go or `ended`
+ * completes. The socket belongs to the scope: whichever way this ends, it is closed, and that
+ * close is what tells the desktop app to end its streams and dial again.
+ */
+export const held = Effect.fn('Egress.held')(function* <E, R>(
+  request: HttpServerRequest.HttpServerRequest,
+  person: PersonId,
+  ended: Effect.Effect<void, E, R>,
+) {
+  const relay = yield* Egress
+  yield* Effect.raceFirst(relay.carry(person, yield* exitSocket(request)), ended)
+})
 
 /**
  * Where a desktop app opens its egress socket: one WebSocket upgrade, as the app's own signed-in
@@ -38,12 +80,9 @@ const egress = Effect.fn('Egress.route')(function* () {
     Effect.catchTag('Unauthenticated', () => Effect.succeedNone),
   )
   if (Option.isNone(auth)) return notFound()
-  const relay = yield* Egress
-  const socket = yield* request.upgrade
-  const reader = yield* socket.reader
-  const writer = yield* socket.writer
-  yield* Effect.raceFirst(
-    relay.carry(auth.value.person.id, { pull: reader.pull, write: writer.write }),
+  yield* held(
+    request,
+    auth.value.person.id,
     sessionEnded(auth.value.person.id, auth.value.sessionId).pipe(
       Effect.catchTag('Unauthenticated', () => Effect.void),
     ),
