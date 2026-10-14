@@ -123,6 +123,7 @@ function VividSection({ me }: { me: MeResponse }) {
 }
 
 function Preferences({ settings }: { settings: Settings }) {
+  const egress = useLive(live.egress)
   const [unsaved, setUnsaved] = useState(false)
   /**
    * Saves the one setting that was changed and shows it at once. Only that field is sent: sending
@@ -212,6 +213,7 @@ function Preferences({ settings }: { settings: Settings }) {
         </Row>
         <Egress
           enabled={settings.egress}
+          status={egress}
           onChange={(egress) => void act(save(new PatchSettingsRequest({ egress })))}
         />
       </Section>
