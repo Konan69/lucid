@@ -97,8 +97,8 @@ it('cuts more bytes than a frame holds into frames that are read back in order',
   expect(frames.map((frame) => frame.length)).toEqual([EGRESS_FRAME_LIMIT, EGRESS_FRAME_LIMIT, 8])
   const read = frames.flatMap((frame) => {
     const data = Result.getOrThrow(decodeEgressFrame(frame))
-    return EgressFrame.guards.Data(data) ? [...data.payload] : []
+    return EgressFrame.guards.Data(data) ? Array.from(data.payload) : []
   })
-  expect(read).toEqual([...payload])
+  expect(read).toEqual(Array.from(payload))
   expect(egressData(stream, new Uint8Array(0))).toEqual([])
 })

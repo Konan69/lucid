@@ -173,9 +173,7 @@ const isHost = Schema.is(EgressHost)
  * however long or however wrong, does more than be refused. A data payload is a view of the
  * message, not a copy.
  */
-export const decodeEgressFrame = (
-  bytes: Uint8Array,
-): Result.Result<EgressFrame, EgressRefusal> => {
+export const decodeEgressFrame = (bytes: Uint8Array): Result.Result<EgressFrame, EgressRefusal> => {
   if (bytes.length > EGRESS_FRAME_LIMIT)
     return Result.fail(EgressRefusal.cases.Oversized.make({ size: bytes.length }))
   if (bytes.length < HEAD) return Result.fail(EgressRefusal.cases.Short.make({}))

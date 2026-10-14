@@ -4,18 +4,32 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
+import {
+  EGRESS_FRAME_LIMIT,
+  EGRESS_LINK_BUDGET,
+  EGRESS_PAYLOAD_LIMIT,
+  EGRESS_STREAM_BUDGET,
+  EgressFrame,
+  EgressStream,
+  decodeEgressFrame,
+  encodeEgressFrame,
+} from '@vivid/contracts'
 import * as Arr from 'effect/Array'
 import * as Deferred from 'effect/Deferred'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as TestClock from 'effect/testing/TestClock'
 import { Unresolved } from './reach.ts'
 import {
+  DRAIN,
   ExitStatus,
   QUEUE_BOUND,
+  QUIET,
   checkedAddress,
   exitLink,
   type ExitDependencies,
@@ -124,7 +138,7 @@ const attached = Effect.fn(function* (
   const link = yield* exitLink({
     socket: () => Option.some(tunnel.exit),
     resolve: never,
-    dial: (address, port) => NodeNet.createConnection({ host: address, port }),
+    dial: (address, port) => NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
     allowPrivateTargets: true,
     ...overrides,
     onStatus: (status) => {
@@ -181,6 +195,111 @@ const site = (body: Buffer) => {
   return { server, seen }
 }
 
+/**
+ * The tunnel's socket with the test at its far end, for what the Computer's real proxy never
+ * does: frames that break the protocol, and streams held exactly where the test wants them.
+ * What the exit client sends is read back as frames; `closed` is the client closing the socket.
+ */
+const byHand = Effect.fn('EgressTest.byHand')(function* () {
+  const events = new EventTarget()
+  const sent = yield* Queue.unbounded<EgressFrame>()
+  const closed = yield* Deferred.make<void>()
+  const exit: ExitSocket = {
+    binaryType: 'arraybuffer',
+    bufferedAmount: 0,
+    send: (data) => {
+      Queue.offerUnsafe(sent, Result.getOrThrow(decodeEgressFrame(data)))
+    },
+    close: () => {
+      if (Deferred.doneUnsafe(closed, Effect.void)) events.dispatchEvent(new Event('close'))
+    },
+    addEventListener: (type, listener) => events.addEventListener(type, listener),
+  }
+  const raw = (bytes: Uint8Array) =>
+    Effect.sync(() => events.dispatchEvent(new MessageEvent('message', { data: bytes })))
+  return {
+    exit,
+    opened: Effect.sync(() => events.dispatchEvent(new Event('open'))),
+    raw,
+    say: (frame: EgressFrame) => raw(encodeEgressFrame(frame)),
+    /** The next frame the exit client sent. */
+    frame: Queue.take(sent),
+    sent,
+    closed: Deferred.await(closed),
+  }
+})
+
+/** An exit client on a hand-driven socket, open, dialling loopback targets itself. */
+const handDriven = Effect.fn('EgressTest.handDriven')(function* (
+  overrides: Partial<Pick<ExitDependencies, 'resolve' | 'allowPrivateTargets'>>,
+) {
+  const hand = yield* byHand()
+  const statuses = yield* Queue.unbounded<ExitStatus>()
+  const targets = yield* Queue.unbounded<{
+    readonly socket: NodeNet.Socket
+    readonly closed: Effect.Effect<void>
+  }>()
+  const link = yield* exitLink({
+    socket: () => Option.some(hand.exit),
+    resolve: never,
+    dial: (address, port) => {
+      const socket = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
+      const closed = Deferred.makeUnsafe<void>()
+      socket.on('close', () => Deferred.doneUnsafe(closed, Effect.void))
+      Queue.offerUnsafe(targets, { socket, closed: Deferred.await(closed) })
+      return socket
+    },
+    allowPrivateTargets: true,
+    ...overrides,
+    onStatus: (status) => {
+      Queue.offerUnsafe(statuses, status)
+    },
+  })
+  const fiber = yield* Effect.forkScoped(link.run)
+  const until = Effect.fn(function* (matches: (status: ExitStatus) => boolean) {
+    for (;;) {
+      const status = yield* Queue.take(statuses)
+      if (matches(status)) return status
+    }
+  })
+  yield* until(ExitStatus.guards.Connecting)
+  yield* hand.opened
+  /** Waits until this many targets have been dialled since the socket opened. */
+  const dialled = (count: number) =>
+    until((status) => ExitStatus.guards.Connected(status) && status.relayed === count)
+  return {
+    ...hand,
+    fiber,
+    until,
+    dialled,
+    /** The next socket this computer dialled, and its close: the socket's own, on this side. */
+    target: Queue.take(targets),
+  }
+})
+
+/**
+ * A site that takes connections and never reads them. A socket that is not read never learns
+ * that its far end went, so what a test watches is the socket this computer dialled
+ * (`handDriven`, `target`).
+ */
+const stalledSite = Effect.fn('EgressTest.stalledSite')(function* () {
+  const server = NodeNet.createServer({ pauseOnConnect: true, allowHalfOpen: true }, (socket) => {
+    socket.on('error', () => undefined)
+  })
+  return { port: yield* listening(server) }
+})
+
+const one = EgressStream.make(1)
+const two = EgressStream.make(2)
+const openTo = (stream: EgressStream, port: number) =>
+  EgressFrame.cases.Open.make({ stream, host: '127.0.0.1', port })
+/** The longest frame of one stream, a megabyte, made once and sent as often as a test needs. */
+const megabyte = (stream: EgressStream) =>
+  encodeEgressFrame(
+    EgressFrame.cases.Data.make({ stream, payload: new Uint8Array(EGRESS_PAYLOAD_LIMIT) }),
+  )
+const megabytes = (bytes: number) => Math.ceil(bytes / (1 << 20))
+
 describe('egress through the Person’s computer', () => {
   it.live(
     'a page larger than the queue bound arrives whole, and the target is paused meanwhile',
@@ -195,7 +314,7 @@ describe('egress through the Person’s computer', () => {
         const { tunnel } = yield* attached(ports.tunnel, {
           dial: (address, port) => {
             dialled.push(`${address}:${port}`)
-            const target = NodeNet.createConnection({ host: address, port })
+            const target = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
             const pause = target.pause.bind(target)
             target.pause = () => {
               Deferred.doneUnsafe(paused, Effect.succeed(tunnel.socket.writableLength))
@@ -231,7 +350,7 @@ describe('egress through the Person’s computer', () => {
       yield* attached(ports.tunnel, {
         dial: (address, port) => {
           dialled.push(port)
-          return NodeNet.createConnection({ host: address, port })
+          return NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
         },
       })
       const answer = yield* Effect.callback<string>((resume) => {
@@ -264,7 +383,7 @@ describe('egress through the Person’s computer', () => {
             : Effect.fail(new Unresolved({})),
         dial: (address, port) => {
           dialled.push(address)
-          return NodeNet.createConnection({ host: address, port })
+          return NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
         },
       })
       const loopback = yield* tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/')
@@ -319,6 +438,189 @@ describe('egress through the Person’s computer', () => {
       }),
   )
 
+  it.live('a request ended before its answer still gets the answer', () =>
+    Effect.gen(function* () {
+      // A site that answers only once it has read the whole request.
+      const server = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
+        const chunks: Array<Buffer> = []
+        socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+        socket.on('end', () => socket.end(`heard ${Buffer.concat(chunks).toString('utf8')}`))
+      })
+      const sitePort = yield* listening(server)
+      const ports = yield* computerProxy()
+      const { until } = yield* attached(ports.tunnel, {})
+      const answer = yield* Effect.callback<string>((resume) => {
+        const socket = NodeNet.connect({
+          port: ports.proxy,
+          host: '127.0.0.1',
+          allowHalfOpen: true,
+        })
+        const chunks: Array<Buffer> = []
+        socket.on('connect', () =>
+          socket.end(`CONNECT 127.0.0.1:${sitePort} HTTP/1.1\r\n\r\nthe whole request`),
+        )
+        socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+        socket.on('end', () => {
+          socket.end()
+          resume(Effect.succeed(Buffer.concat(chunks).toString('utf8')))
+        })
+        return Effect.sync(() => socket.destroy())
+      })
+      expect(answer.endsWith('heard the whole request')).toBe(true)
+      // Both sides ended, so the stream is over, and nobody had to drop it.
+      yield* until((status) => ExitStatus.guards.Connected(status) && status.active === 0)
+    }),
+  )
+
+  it.live('a stream the Computer dropped is still this computer’s to end', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      // More than the site's socket will take while it reads nothing, then the Computer drops it.
+      const data = megabyte(one)
+      for (let at = 0; at < 16; at += 1) yield* hand.raw(data)
+      yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
+      yield* hand.until((status) => ExitStatus.guards.Connected(status) && status.active === 0)
+      // The link goes: every connection it made goes with it, the one being let out included.
+      yield* Fiber.interrupt(hand.fiber)
+      yield* target.closed
+    }),
+  )
+
+  it.effect('a dropped stream’s target is given a bounded time to take what was written', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      const data = megabyte(one)
+      for (let at = 0; at < 16; at += 1) yield* hand.raw(data)
+      yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
+      yield* hand.until((status) => ExitStatus.guards.Connected(status) && status.active === 0)
+      yield* TestClock.adjust(Duration.millis(Duration.toMillis(DRAIN) - 1))
+      expect(target.socket.destroyed).toBe(false)
+      yield* TestClock.adjust('1 millis')
+      yield* target.closed
+    }),
+  )
+
+  it.effect('a site that stays silent after the request ended is let go', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      yield* hand.say(EgressFrame.cases.End.make({ stream: one }))
+      yield* TestClock.adjust(QUIET)
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+      yield* target.closed
+    }),
+  )
+
+  it.live('a site that has stopped reading costs its own stream at the budget, and no other', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const echo = NodeNet.createServer((socket) => socket.pipe(socket))
+      const echoPort = yield* listening(echo)
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.say(openTo(two, echoPort))
+      yield* hand.dialled(2)
+      const target = yield* hand.target
+      const data = megabyte(one)
+      for (let at = 0; at < megabytes(EGRESS_STREAM_BUDGET) + 8; at += 1) yield* hand.raw(data)
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+      yield* target.closed
+      yield* hand.say(EgressFrame.cases.Data.make({ stream: two, payload: Buffer.from('ping') }))
+      const back = yield* hand.frame
+      expect(EgressFrame.guards.Data(back) && Buffer.from(back.payload).toString()).toBe('ping')
+    }),
+  )
+
+  it.live('a stream whose name is still being resolved is held to the same budget', () =>
+    Effect.gen(function* () {
+      const hand = yield* handDriven({ resolve: () => Effect.never })
+      yield* hand.say(EgressFrame.cases.Open.make({ stream: one, host: 'slow.example', port: 80 }))
+      const data = megabyte(one)
+      for (let at = 0; at <= megabytes(EGRESS_STREAM_BUDGET); at += 1) yield* hand.raw(data)
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+    }),
+  )
+
+  it.live('all the streams of a link together are held to the link’s budget', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      // Each stream stays under its own budget; together they go over the link's.
+      const each = megabytes(EGRESS_STREAM_BUDGET) - 2
+      const count = Math.ceil(megabytes(EGRESS_LINK_BUDGET) / each)
+      const streams = Arr.makeBy(count, (at) => EgressStream.make(at + 1))
+      for (const stream of streams) yield* hand.say(openTo(stream, stalled.port))
+      yield* hand.dialled(count)
+      for (const stream of streams) {
+        const data = megabyte(stream)
+        for (let at = 0; at < each; at += 1) yield* hand.raw(data)
+      }
+      // The stream whose bytes crossed the bound is the one that is closed.
+      expect(yield* hand.frame).toEqual(
+        EgressFrame.cases.Close.make({ stream: EgressStream.make(count) }),
+      )
+    }),
+  )
+
+  it.live('a frame that breaks the protocol costs at most its own stream', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      // Short, of no known kind, and data for a stream nobody has: passed over.
+      yield* hand.raw(Uint8Array.from([2, 0]))
+      yield* hand.raw(Uint8Array.from([9, 0, 0, 0, 1]))
+      yield* hand.say(EgressFrame.cases.Data.make({ stream: two, payload: Buffer.from('x') }))
+      // An open that names no host: that stream is refused, so its browser is not left waiting.
+      yield* hand.raw(Uint8Array.from([1, 0, 0, 0, 7, 0, 80]))
+      expect(yield* hand.frame).toEqual(
+        EgressFrame.cases.Close.make({ stream: EgressStream.make(7) }),
+      )
+      // A number in use cannot be two connections: both sides forget it, and the first target
+      // is not left connected.
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      yield* hand.say(openTo(one, stalled.port))
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+      yield* target.closed
+      // Data after a close is for a stream nobody has.
+      yield* hand.say(EgressFrame.cases.Data.make({ stream: one, payload: Buffer.from('late') }))
+      expect(yield* Queue.size(hand.sent)).toBe(0)
+      // The number is free again.
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(2)
+    }),
+  )
+
+  it.live('a message longer than a frame ends the link, and it is dialled again', () =>
+    Effect.gen(function* () {
+      const stalled = yield* stalledSite()
+      const hand = yield* handDriven({})
+      yield* hand.say(openTo(one, stalled.port))
+      yield* hand.dialled(1)
+      const target = yield* hand.target
+      const long = new Uint8Array(EGRESS_FRAME_LIMIT + 1)
+      long.set([1, 0, 0, 0, 2, 0, 80])
+      yield* hand.raw(long)
+      yield* hand.closed
+      yield* target.closed
+      // Not a defect: the link is still running, and waits its two seconds to dial again.
+      yield* hand.until(ExitStatus.guards.Connecting)
+      expect(hand.fiber.pollUnsafe()).toBeUndefined()
+    }),
+  )
+
   it.live('with nothing attached the Computer’s proxy dials from the Computer itself', () =>
     Effect.gen(function* () {
       const body = Buffer.from('reached directly')
@@ -352,7 +654,8 @@ describe('egress through the Person’s computer', () => {
             })
           },
           resolve: never,
-          dial: (address, port) => NodeNet.createConnection({ host: address, port }),
+          dial: (address, port) =>
+            NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
           allowPrivateTargets: false,
           onStatus: (status) => {
             statuses.push(status._tag)
@@ -402,7 +705,8 @@ describe('egress through the Person’s computer', () => {
           })
         },
         resolve: never,
-        dial: (address, port) => NodeNet.createConnection({ host: address, port }),
+        dial: (address, port) =>
+          NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
         allowPrivateTargets: false,
         onStatus: () => undefined,
       })

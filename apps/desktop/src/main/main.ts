@@ -306,7 +306,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       )
     },
     resolve: resolveHost,
-    dial: (address, port) => NodeNet.createConnection({ host: address, port }),
+    dial: (address, port) => NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
     // Never from the app: a page on the Computer must not reach into this computer's network.
     allowPrivateTargets: false,
     onStatus: () => undefined,

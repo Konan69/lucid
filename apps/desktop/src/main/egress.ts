@@ -1,20 +1,25 @@
 import {
+  EGRESS_LINK_BUDGET,
   EGRESS_PATH,
+  EGRESS_STREAM_BUDGET,
   EgressFrame,
+  EgressRefusal,
   type EgressStream,
   decodeEgressFrame,
+  egressData,
   encodeEgressFrame,
 } from '@vivid/contracts'
 import * as NodeNet from 'node:net'
 import * as Arr from 'effect/Array'
-import type * as Cause from 'effect/Cause'
+import * as Deferred from 'effect/Deferred'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
+import * as FiberSet from 'effect/FiberSet'
 import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
 import * as Result from 'effect/Result'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
-import * as Stream from 'effect/Stream'
 import type { Unresolved } from './reach.ts'
 import { isReserved } from './reserved.ts'
 
@@ -31,7 +36,7 @@ import { isReserved } from './reserved.ts'
  * `EgressTunnelExitClient`), and keeps its mechanism: the frames, a stream table keyed by the
  * stream number, bytes that arrive before the target is dialled held and then written in order,
  * a refused or unresolvable target answered with a close, a bound on what is queued toward the
- * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Two things are
+ * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Four things are
  * Vivid's:
  *
  * - The reference dials the machine's own hosted port. Vivid's Computer has no port a home
@@ -41,6 +46,12 @@ import { isReserved } from './reserved.ts'
  * - The reference's socket is the `ws` package's, which calls back when a send has left. This
  *   app's is Electron's, a web `WebSocket`, which has no such call: the queue is looked at
  *   again on a short timer while a target is paused (`draining`).
+ * - The reference writes whatever the Computer sends to a target, however slowly the target
+ *   takes it, and forgets a stream the moment the Computer closes it, with its socket still
+ *   open. Here what a target has not taken is counted and bounded (the contract's "How much a
+ *   hop may hold"), and a socket this module dialled is this module's until it has closed.
+ * - A stream's two directions end apart (the contract's `End`): a browser that has sent its
+ *   whole request still gets the answer.
  */
 
 /** Where the tunnel is opened on a chosen server: the same origin, on the socket scheme. */
@@ -74,6 +85,22 @@ export interface ExitSocket {
  */
 export const QUEUE_BOUND = 1 << 20
 
+/**
+ * How long a target is given to take what was already written to it once the Computer has
+ * dropped its stream. The browser's connection is gone, so nothing waits for this; it is a
+ * courtesy to the site, and when it runs out the socket is destroyed.
+ */
+export const DRAIN = Duration.seconds(10)
+
+/**
+ * How long a site may neither send nor take anything once the browser has finished sending,
+ * before its stream is closed. A browser does not end its side of a connection it still uses,
+ * so an end means it has let go; only this computer then holds the socket, and a site that
+ * never answers would be held for ever. A minute is a web server's own usual patience with a
+ * silent peer.
+ */
+export const QUIET = Duration.seconds(60)
+
 /** How often the queue is looked at again while a target is paused, in milliseconds. */
 const DRAIN_MILLIS = 10
 
@@ -104,7 +131,10 @@ export interface ExitDependencies {
   readonly socket: () => Option.Option<ExitSocket>
   /** What a name leads to, asked on this computer (`reach.ts`, `resolveHost`). */
   readonly resolve: (host: string) => Effect.Effect<ReadonlyArray<string>, Unresolved>
-  /** Dials one checked address. `node:net`'s `createConnection` in the app. */
+  /**
+   * Dials one checked address: `node:net`'s `createConnection` in the app, with `allowHalfOpen`,
+   * so that a site that has finished sending does not end what the browser is still sending.
+   */
   readonly dial: (address: string, port: number) => NodeNet.Socket
   /**
    * Whether a target inside this computer's own networks may be dialled. Never in the app; a
@@ -182,145 +212,316 @@ const draining = (socket: ExitSocket) => {
 /** A stream whose target is still being resolved: what arrived for it meanwhile. */
 interface Resolving {
   readonly pending: Array<Uint8Array>
-  closedByPeer: boolean
+  /** The bytes of `pending`. */
+  held: number
+  /** The Computer has said it will send no more. */
+  heardEnd: boolean
 }
+
+/** A stream with a dialled target. */
+interface Relaying {
+  readonly target: NodeNet.Socket
+  /** Bytes written to the target that it has not taken yet. */
+  queued: number
+  /** Bytes the target has sent or taken, ever: whether it is still doing anything (`QUIET`). */
+  moved: number
+  /** The Computer has said it will send no more, and the target was told so. */
+  heardEnd: boolean
+  /** The target sent its last byte, and the Computer was told so. */
+  sentEnd: boolean
+}
+
+/**
+ * One open socket's streams, and what they hold.
+ *
+ * A stream is in exactly one place. `resolving`: its name is being looked up. `relaying`: its
+ * target is dialled and the Computer knows it by its number. `leaving`: the Computer dropped
+ * it, and its target is being let out. A socket this module dialled is in `relaying` or
+ * `leaving` until it has closed, so the scope that owns the link can always destroy it.
+ */
+interface Link {
+  readonly dependencies: ExitDependencies
+  readonly socket: ExitSocket
+  /** Starts work that lives as long as the link: resolving a name, and the waits on the clock. */
+  readonly fork: (work: Effect.Effect<void>) => void
+  readonly flow: ReturnType<typeof draining>
+  readonly resolving: Map<EgressStream, Resolving>
+  readonly relaying: Map<EgressStream, Relaying>
+  readonly leaving: Set<Relaying>
+  /** `held` is every byte waiting for a target on this link: what the link's budget bounds. */
+  readonly state: { open: boolean; closed: boolean; relayed: number; held: number }
+}
+
+const publish = (link: Link) =>
+  link.dependencies.onStatus(
+    link.state.open && !link.state.closed
+      ? ExitStatus.cases.Connected.make({
+          relayed: link.state.relayed,
+          active: link.relaying.size,
+        })
+      : ExitStatus.cases.Connecting.make({}),
+  )
+
+const transmit = (link: Link, bytes: Uint8Array) => {
+  if (link.state.open && !link.state.closed) link.socket.send(bytes)
+}
+
+const send = (link: Link, frame: EgressFrame) => transmit(link, encodeEgressFrame(frame))
+
+/** The contract's third rule: whether a stream holding `own` bytes has crossed a bound. */
+const overBudget = (link: Link, own: number) =>
+  own > EGRESS_STREAM_BUDGET || link.state.held > EGRESS_LINK_BUDGET
+
+/** Nothing of this leg is waiting any more, whether or not the target took it. */
+const settled = (link: Link, leg: Relaying) => {
+  link.state.held -= leg.queued
+  leg.queued = 0
+  link.flow.forget(leg.target)
+}
+
+/** Writes bytes already counted in `queued` and `held`, and uncounts them once they are taken. */
+const write = (link: Link, leg: Relaying, payload: Uint8Array) => {
+  leg.target.write(payload, () => {
+    // A leg that is settled has nothing left to count, whatever a late callback says.
+    const taken = Math.min(payload.length, leg.queued)
+    leg.queued -= taken
+    link.state.held -= taken
+    leg.moved += taken
+  })
+}
+
+/**
+ * Ends a stream from this side, now: its target is destroyed and the Computer is told. For a
+ * stream over its budget, a number opened twice, and a site that has gone silent.
+ */
+const cut = (link: Link, stream: EgressStream, leg: Relaying) => {
+  link.relaying.delete(stream)
+  settled(link, leg)
+  leg.target.destroy()
+  send(link, EgressFrame.cases.Close.make({ stream }))
+  publish(link)
+}
+
+/** A stream that never got a target is forgotten, and the Computer is told. */
+const refuse = (link: Link, stream: EgressStream, entry: Resolving) => {
+  link.resolving.delete(stream)
+  link.state.held -= entry.held
+  send(link, EgressFrame.cases.Close.make({ stream }))
+}
+
+/**
+ * A target's socket has closed, for any reason. If the Computer still knows the stream and the
+ * two sides had not both finished, it is told; a stream that ended on both sides, or one the
+ * Computer dropped, needs no word.
+ */
+const gone = (link: Link, stream: EgressStream, leg: Relaying) => {
+  settled(link, leg)
+  link.leaving.delete(leg)
+  if (link.relaying.get(stream) !== leg) return
+  link.relaying.delete(stream)
+  if (!(leg.sentEnd && leg.heardEnd)) send(link, EgressFrame.cases.Close.make({ stream }))
+  publish(link)
+}
+
+/** Closes a stream whose site has done nothing for `QUIET` since the browser finished. */
+const watched = Effect.fn('DesktopEgress.watched')(function* (
+  link: Link,
+  stream: EgressStream,
+  leg: Relaying,
+) {
+  for (;;) {
+    const before = leg.moved
+    yield* Effect.sleep(QUIET)
+    if (link.relaying.get(stream) !== leg) return
+    if (leg.moved === before) return cut(link, stream, leg)
+  }
+})
+
+/** The Computer will send no more: the target is told, and its answer is still carried. */
+const ended = (link: Link, stream: EgressStream, leg: Relaying) => {
+  leg.heardEnd = true
+  leg.target.end()
+  link.fork(watched(link, stream, leg))
+}
+
+/**
+ * The Computer dropped a stream. Its number is free at once, and the socket stays this
+ * module's: what was written is let out for at most `DRAIN`, what the site still sends is read
+ * and thrown away so that its close is seen, and then the socket is destroyed. The reference
+ * ends the socket and forgets it (`handleFrame`), so a site that never took the bytes kept the
+ * socket, and what was queued for it, for as long as the app ran.
+ */
+const dropped = (link: Link, stream: EgressStream, leg: Relaying) => {
+  link.relaying.delete(stream)
+  link.leaving.add(leg)
+  link.flow.forget(leg.target)
+  leg.target.resume()
+  leg.target.end()
+  link.fork(Effect.sleep(DRAIN).pipe(Effect.andThen(Effect.sync(() => leg.target.destroy()))))
+  publish(link)
+}
+
+/**
+ * Resolves, checks and dials one target. The stream may be gone by the time the name resolves
+ * (the Computer closed it, or it went over its budget), and then nothing is dialled.
+ */
+const open = Effect.fn('DesktopEgress.open')(function* (
+  link: Link,
+  stream: EgressStream,
+  place: { readonly host: string; readonly port: number },
+  entry: Resolving,
+) {
+  const address = yield* checkedAddress(place.host, link.dependencies)
+  if (link.resolving.get(stream) !== entry) return
+  // Unresolvable, or it leads into this computer's own networks: refused with a close.
+  if (Option.isNone(address) || link.state.closed) return refuse(link, stream, entry)
+  link.resolving.delete(stream)
+  const target = link.dependencies.dial(address.value, place.port)
+  const leg: Relaying = { target, queued: entry.held, moved: 0, heardEnd: false, sentEnd: false }
+  link.relaying.set(stream, leg)
+  link.state.relayed += 1
+  publish(link)
+  target.on('data', (payload: Uint8Array) => {
+    // A stream the Computer dropped is read to its end and not passed on.
+    if (link.relaying.get(stream) !== leg) return
+    leg.moved += payload.length
+    for (const frame of egressData(stream, payload)) transmit(link, frame)
+    link.flow.sent(target)
+  })
+  target.on('end', () => {
+    if (link.relaying.get(stream) !== leg) return
+    leg.sentEnd = true
+    send(link, EgressFrame.cases.End.make({ stream }))
+  })
+  // A failure is always followed by a close, which is where a target is let go.
+  target.on('error', () => undefined)
+  target.on('close', () => gone(link, stream, leg))
+  for (const payload of entry.pending) write(link, leg, payload)
+  if (entry.heardEnd) ended(link, stream, leg)
+})
+
+/** Bytes for one stream: counted, then held for its name or written to its target. */
+const taken = (link: Link, stream: EgressStream, payload: Uint8Array) => {
+  const waiting = link.resolving.get(stream)
+  const leg = link.relaying.get(stream)
+  if (waiting !== undefined) {
+    link.state.held += payload.length
+    waiting.held += payload.length
+    waiting.pending.push(payload)
+    if (overBudget(link, waiting.held)) refuse(link, stream, waiting)
+  }
+  // After its end the Computer has no more to say on this stream; more is not the protocol.
+  if (leg !== undefined && !leg.heardEnd) {
+    link.state.held += payload.length
+    leg.queued += payload.length
+    write(link, leg, payload)
+    if (overBudget(link, leg.queued)) cut(link, stream, leg)
+  }
+}
+
+/** One frame from the Computer. A frame for a stream nobody has is passed over. */
+const handle = (link: Link, frame: EgressFrame) =>
+  EgressFrame.match(frame, {
+    Open: ({ stream, host, port }) => {
+      const waiting = link.resolving.get(stream)
+      const leg = link.relaying.get(stream)
+      // A number already in use cannot be two connections. The reference answers with a close
+      // and keeps relaying the first, which the Computer then no longer knows; here both sides
+      // forget the number.
+      if (waiting !== undefined) return refuse(link, stream, waiting)
+      if (leg !== undefined) return cut(link, stream, leg)
+      const entry: Resolving = { pending: [], held: 0, heardEnd: false }
+      link.resolving.set(stream, entry)
+      link.fork(open(link, stream, { host, port }, entry))
+      return undefined
+    },
+    Data: ({ stream, payload }) => taken(link, stream, payload),
+    End: ({ stream }) => {
+      const waiting = link.resolving.get(stream)
+      const leg = link.relaying.get(stream)
+      if (waiting !== undefined) waiting.heardEnd = true
+      if (leg !== undefined && !leg.heardEnd) ended(link, stream, leg)
+    },
+    Close: ({ stream }) => {
+      const waiting = link.resolving.get(stream)
+      const leg = link.relaying.get(stream)
+      // Never dialled: there is nothing to let out, and `open` finds the entry gone.
+      if (waiting !== undefined) {
+        link.resolving.delete(stream)
+        link.state.held -= waiting.held
+      }
+      if (leg !== undefined) dropped(link, stream, leg)
+    },
+  })
 
 /**
  * One open socket, from its first event to its close. Answers whether it ever opened.
  *
- * Frames are handled one at a time, in the order they arrived; only resolving a name is forked,
- * so the data that follows an open is held for that stream and not lost. The scope owns
- * everything: when it closes, every target is destroyed, the timer is cleared and the socket is
- * closed.
+ * A message is handled where it arrives, whole, before the next one: nothing waits in a queue
+ * of this module's between the socket and a stream, so every byte held is held by a stream and
+ * counted against the budgets. The scope owns everything: when it closes, what was forked is
+ * interrupted, every target is destroyed, the timer is cleared and the socket is closed.
  */
 const carry = Effect.fn('DesktopEgress.carry')(function* (
   dependencies: ExitDependencies,
   socket: ExitSocket,
 ) {
-  const inbox = yield* Queue.unbounded<Uint8Array, Cause.Done>()
-  const resolving = new Map<EgressStream, Resolving>()
-  const relaying = new Map<EgressStream, NodeNet.Socket>()
-  const flow = draining(socket)
-  const state = { open: false, closed: false, relayed: 0 }
-  const publish = () =>
-    dependencies.onStatus(
-      state.open && !state.closed
-        ? ExitStatus.cases.Connected.make({ relayed: state.relayed, active: relaying.size })
-        : ExitStatus.cases.Connecting.make({}),
-    )
-  const send = (frame: EgressFrame) => {
-    if (state.open && !state.closed) socket.send(encodeEgressFrame(frame))
+  const over = yield* Deferred.make<void>()
+  const run = yield* FiberSet.makeRuntime<never, void, never>()
+  const link: Link = {
+    dependencies,
+    socket,
+    fork: (work) => {
+      run(work)
+    },
+    flow: draining(socket),
+    resolving: new Map(),
+    relaying: new Map(),
+    leaving: new Set(),
+    state: { open: false, closed: false, relayed: 0, held: 0 },
   }
-
+  /** This socket is done, by its own close or because it sent what no frame can be. */
+  const finished = () => {
+    link.state.closed = true
+    Deferred.doneUnsafe(over, Effect.void)
+  }
   socket.binaryType = 'arraybuffer'
   socket.addEventListener('open', () => {
-    state.open = true
-    publish()
+    link.state.open = true
+    publish(link)
   })
   socket.addEventListener('message', (event) => {
-    Option.map(messageBytes(event), (bytes) => Queue.offerUnsafe(inbox, bytes))
+    if (link.state.closed) return
+    Option.map(messageBytes(event), (bytes) =>
+      Result.match(decodeEgressFrame(bytes), {
+        onSuccess: (frame) => handle(link, frame),
+        onFailure: (refusal) =>
+          EgressRefusal.match(refusal, {
+            // Not this protocol at all: this socket is ended, and a new one is dialled.
+            Oversized: finished,
+            Short: () => undefined,
+            Unknown: () => undefined,
+            Unopenable: ({ stream }) => send(link, EgressFrame.cases.Close.make({ stream })),
+          }),
+      }),
+    )
   })
   // A failure is always followed by a close, which is what ends this socket.
   socket.addEventListener('error', () => undefined)
-  socket.addEventListener('close', () => {
-    state.closed = true
-    Queue.endUnsafe(inbox)
-  })
+  socket.addEventListener('close', finished)
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
-      state.closed = true
-      flow.stop()
-      for (const target of relaying.values()) target.destroy()
-      relaying.clear()
-      resolving.clear()
+      link.state.closed = true
+      link.flow.stop()
+      for (const leg of [...link.relaying.values(), ...link.leaving]) leg.target.destroy()
+      link.relaying.clear()
+      link.leaving.clear()
+      link.resolving.clear()
       socket.close()
     }),
   )
-
-  /** A target ended, by itself or by failing: the Computer is told once, and it is forgotten. */
-  const ended = (stream: EgressStream, target: NodeNet.Socket) => {
-    if (relaying.get(stream) !== target) return
-    relaying.delete(stream)
-    flow.forget(target)
-    target.destroy()
-    send(EgressFrame.cases.Close.make({ stream }))
-    publish()
-  }
-
-  /**
-   * Resolves, checks and dials one target. The stream may be gone by the time the name
-   * resolves (the socket closed, or the Computer closed the stream and opened it again), and
-   * then nothing is dialled.
-   */
-  const open = Effect.fn('DesktopEgress.open')(function* (
-    stream: EgressStream,
-    host: string,
-    port: number,
-    entry: Resolving,
-  ) {
-    const address = yield* checkedAddress(host, dependencies)
-    if (resolving.get(stream) !== entry) return
-    resolving.delete(stream)
-    if (Option.isNone(address) || state.closed) {
-      // Unresolvable, or it leads into this computer's own networks: refused with a close.
-      send(EgressFrame.cases.Close.make({ stream }))
-      return
-    }
-    const target = dependencies.dial(address.value, port)
-    relaying.set(stream, target)
-    state.relayed += 1
-    publish()
-    target.on('data', (payload: Uint8Array) => {
-      send(EgressFrame.cases.Data.make({ stream, payload }))
-      flow.sent(target)
-    })
-    target.on('error', () => ended(stream, target))
-    target.on('close', () => ended(stream, target))
-    for (const payload of entry.pending) target.write(payload)
-    if (entry.closedByPeer) target.end()
-  })
-
-  const handle = (bytes: Uint8Array) =>
-    Result.match(decodeEgressFrame(bytes), {
-      // Not a frame of this protocol: dropped, and the tunnel stays (the reference's `handleFrame`).
-      onFailure: () => Effect.void,
-      onSuccess: (frame) =>
-        EgressFrame.match(frame, {
-          Open: ({ stream, host, port }) => {
-            // A number already in use cannot be two connections: the second is refused.
-            if (resolving.has(stream) || relaying.has(stream)) {
-              send(EgressFrame.cases.Close.make({ stream }))
-              return Effect.void
-            }
-            const entry: Resolving = { pending: [], closedByPeer: false }
-            resolving.set(stream, entry)
-            return Effect.forkScoped(open(stream, host, port, entry)).pipe(Effect.asVoid)
-          },
-          Data: ({ stream, payload }) => {
-            const target = relaying.get(stream)
-            const waiting = resolving.get(stream)
-            if (target !== undefined) target.write(payload)
-            else if (waiting !== undefined) waiting.pending.push(payload)
-            return Effect.void
-          },
-          End: () => Effect.void,
-          Close: ({ stream }) => {
-            const target = relaying.get(stream)
-            const waiting = resolving.get(stream)
-            if (target !== undefined) {
-              // What was written is still sent; the target's own close is not reported back.
-              relaying.delete(stream)
-              flow.forget(target)
-              target.end()
-              publish()
-            } else if (waiting !== undefined) waiting.closedByPeer = true
-            return Effect.void
-          },
-        }),
-    })
-
-  yield* Stream.fromQueue(inbox).pipe(Stream.runForEach(handle))
-  return state.open
+  yield* Deferred.await(over)
+  return link.state.open
 })
 
 /**
