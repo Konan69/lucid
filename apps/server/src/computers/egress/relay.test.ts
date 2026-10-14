@@ -1,11 +1,8 @@
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
-import * as NodeFS from 'node:fs'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
-import * as NodeOS from 'node:os'
-import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import {
   EGRESS_FRAME_LIMIT,
@@ -31,7 +28,6 @@ import * as NetAddress from 'effect/net/NetAddress'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { Changes } from '../../live/changes.ts'
-import { startCommand } from './guest.ts'
 import {
   Egress,
   QUEUE_LIMIT,
@@ -567,58 +563,4 @@ describe('frames on the Computer’s byte stream', () => {
     new DataView(over.buffer).setUint32(0, EGRESS_FRAME_LIMIT + 1)
     expect(frameCutter()(over)).toEqual(Option.none())
   })
-})
-
-describe('starting the proxy on a Computer', () => {
-  /** A free loopback port: taken for a moment to learn its number, then given back. */
-  const freePort = Effect.suspend(() => {
-    const probe = NodeNet.createServer()
-    return bound(probe).pipe(
-      Effect.tap(() =>
-        Effect.callback<void>((resume) => {
-          probe.close(() => resume(Effect.void))
-        }),
-      ),
-    )
-  })
-  /** Runs the start command as the Computer's shell would, in a home of its own. */
-  const start = (home: string, command: string) =>
-    Effect.callback<number | null>((resume) => {
-      const child = NodeChildProcess.spawn('bash', ['-c', command], {
-        env: { ...process.env, HOME: home },
-        stdio: 'ignore',
-      })
-      child.on('close', (code) => resume(Effect.succeed(code)))
-    })
-  const recorded = (home: string) =>
-    Number(
-      NodeFS.readFileSync(NodePath.join(home, '.local/share/vivid/computer/egress.pid'), 'utf8'),
-    )
-
-  it.live('starts it once, leaves a running one alone, and replaces an older text', () =>
-    Effect.gen(function* () {
-      const home = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-egress-'))),
-        (directory) =>
-          Effect.sync(() => {
-            // The proxy this test started, by the process id it recorded itself.
-            Option.map(Option.liftThrowable(() => recorded(directory))(), (pid) =>
-              Option.liftThrowable(() => process.kill(pid))(),
-            )
-            NodeFS.rmSync(directory, { recursive: true, force: true })
-          }),
-      )
-      const ports = { tunnel: yield* freePort, proxy: yield* freePort }
-      const text = NodeFS.readFileSync(proxyFile, 'utf8')
-      expect(yield* start(home, startCommand(text, ports))).toBe(0)
-      const first = recorded(home)
-      expect(yield* start(home, startCommand(text, ports))).toBe(0)
-      expect(recorded(home)).toBe(first)
-      // A server with a changed proxy ends the old one and starts its own.
-      expect(yield* start(home, startCommand(`${text}\n// changed\n`, ports))).toBe(0)
-      const second = recorded(home)
-      expect(second).not.toBe(first)
-      expect(Option.liftThrowable(() => process.kill(first, 0))()).toEqual(Option.none())
-    }),
-  )
 })

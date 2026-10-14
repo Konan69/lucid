@@ -28,7 +28,10 @@ const END_OF_TEXT = 'VIVID_EGRESS_PROXY_TEXT'
  * server's own. It may be run any number of times:
  *
  * - The file's name carries the hash of its text (as the program runner's does,
- *   `code/computer.ts`), and it is written only when it is not there, through a temporary file.
+ *   `code/computer.ts`), and it is written only when it is not there, through a temporary file
+ *   named for the shell that writes it. Two runs at the same moment (a browser step and a join
+ *   both make sure of the proxy) once shared one temporary name: the first moved it into place
+ *   and the second, finding it gone, failed. Each now moves its own whole copy.
  * - The proxy records its own process id when it starts. When the process with that id is this
  *   same file and the proxy port answers, nothing is done.
  * - When the recorded process is an older text of Vivid's proxy, that one process is ended, by
@@ -53,7 +56,7 @@ export const startCommand = (
     `listening() { (exec 3<>/dev/tcp/127.0.0.1/${ports.proxy}) 2>/dev/null; }`,
     'recorded() { [ -f "$pid" ] && tr "\\0" " " < "/proc/$(cat "$pid")/cmdline" 2>/dev/null | grep -qF -- "$1"; }',
     'mkdir -p "$dir" || exit 1',
-    `[ -f "$file" ] || { cat > "$file.new" <<'${END_OF_TEXT}' && mv "$file.new" "$file" || exit 1; }`,
+    `[ -f "$file" ] || { cat > "$file.$$.new" <<'${END_OF_TEXT}' && mv "$file.$$.new" "$file" || exit 1; }`,
     text,
     END_OF_TEXT,
     'if recorded "$file" && listening; then exit 0; fi',
