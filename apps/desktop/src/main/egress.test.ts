@@ -23,6 +23,7 @@ import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Queue from 'effect/Queue'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
@@ -32,6 +33,7 @@ import {
   DRAIN,
   ExitStatus,
   QUEUE_BOUND,
+  STEADY,
   checkedAddress,
   dialTarget,
   exitLink,
@@ -142,6 +144,8 @@ const windows = () => {
 const joined = (tunnelPort: number) => {
   const socket = NodeNet.connect(tunnelPort, '127.0.0.1')
   const window = windows()
+  /** Called after each message from the Computer has been handled by the exit client. */
+  const handled = new Set<() => void>()
   // The events a WebSocket has, from a real event target.
   const events = new EventTarget()
   let held = Buffer.alloc(0)
@@ -156,6 +160,8 @@ const joined = (tunnelPort: number) => {
       // From the Computer: the browser's bytes, on their way up to the site.
       window.passed('up', message)
       events.dispatchEvent(new MessageEvent('message', { data: message }))
+      // The exit client has done all it does with the message by now: a test may look.
+      for (const look of handled) look()
       held = held.subarray(4 + size)
     }
   })
@@ -174,7 +180,7 @@ const joined = (tunnelPort: number) => {
     close: () => socket.destroy(),
     addEventListener: (type, listener) => events.addEventListener(type, listener),
   }
-  return { exit, socket, window }
+  return { exit, socket, window, handled }
 }
 
 const never = () => Effect.fail(new Unresolved({}))
@@ -379,8 +385,9 @@ describe('egress through the Person’s computer', () => {
         // Nothing leaves toward the Computer until the tunnel is uncorked, so no grant comes
         // back either: every site is read until its window or the tunnel's queue is full.
         tunnel.socket.cork()
-        const replies = yield* Effect.forEach(Arr.makeBy(pages, () => undefined), () =>
-          Effect.forkScoped(tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/')),
+        const replies = yield* Effect.forEach(
+          Arr.makeBy(pages, () => undefined),
+          () => Effect.forkScoped(tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/')),
         )
         // Each stream alone could put a window in the queue; together they stop at its bound,
         // give or take the one read that crossed it.
@@ -544,7 +551,9 @@ describe('egress through the Person’s computer', () => {
       Effect.sync(() => NodeNet.connect({ port: proxyPort, host: '127.0.0.1' })),
       (opened) => Effect.sync(() => opened.destroy()),
     )
-    socket.on('connect', () => socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`))
+    socket.on('connect', () =>
+      socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`),
+    )
     socket.on('error', () => undefined)
     socket.on('close', () => Deferred.doneUnsafe(cut, Effect.void))
     // The proxy's own reply is 39 bytes and comes alone, before anything of the stream's.
@@ -604,14 +613,11 @@ describe('egress through the Person’s computer', () => {
         const { tunnel } = yield* attached(ports.tunnel, {
           dial: (address, port) => {
             const target = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
-            if (port !== sitePort) return target
             // What this computer holds for the site: written to the socket and not yet taken.
-            const write = target.write.bind(target)
-            target.write = (...given: Parameters<typeof write>) => {
-              const more = write(...given)
-              most.waiting = Math.max(most.waiting, target.writableLength)
-              return more
-            }
+            if (port === sitePort)
+              tunnel.handled.add(() => {
+                most.waiting = Math.max(most.waiting, target.writableLength)
+              })
             return target
           },
         })
@@ -793,53 +799,59 @@ describe('egress through the Person’s computer', () => {
     }),
   )
 
-  it.live('a stream that goes while its name is being resolved lets go of its work and its bytes', () =>
-    Effect.gen(function* () {
-      // A resolver that never answers, and says when it is entered and when it is let go.
-      const entered = yield* Queue.unbounded<void>()
-      const released = yield* Queue.unbounded<void>()
-      const resolve = () =>
-        Effect.acquireUseRelease(
-          Queue.offer(entered, undefined),
-          () => Effect.never,
-          () => Queue.offer(released, undefined),
-        )
-      const hand = yield* handDriven({ resolve })
-      NodeV8.setFlagsFromString('--expose-gc')
-      const collect: unknown = NodeVM.runInNewContext('gc')
-      const turn = Effect.callback<void>((resume) => {
-        setImmediate(() => resume(Effect.void))
-      })
-      /** Whether anything still holds the bytes of a message, after a collection. */
-      const kept = (memory: WeakRef<ArrayBufferLike>) =>
-        turn.pipe(
-          Effect.andThen(Effect.sync(() => (typeof collect === 'function' ? collect() : undefined))),
-          Effect.map(() => memory.deref() !== undefined),
-        )
-      /** Opens a stream to a name and sends it a megabyte nothing else refers to. */
-      const waiting = Effect.fn(function* (stream: EgressStream) {
-        yield* hand.say(EgressFrame.cases.Open.make({ stream, host: 'slow.example', port: 80 }))
-        yield* Queue.take(entered)
-        return yield* Effect.suspend(() => {
-          const data = Uint8Array.from(megabyte(stream))
-          return hand.raw(data).pipe(Effect.as(new WeakRef(data.buffer)))
+  it.live(
+    'a stream that goes while its name is being resolved lets go of its work and its bytes',
+    () =>
+      Effect.gen(function* () {
+        // A resolver that never answers, and says when it is entered and when it is let go.
+        const entered = yield* Queue.unbounded<void>()
+        const released = yield* Queue.unbounded<void>()
+        const resolve = () =>
+          Effect.acquireUseRelease(
+            Queue.offer(entered, undefined),
+            () => Effect.never,
+            () => Queue.offer(released, undefined),
+          )
+        const hand = yield* handDriven({ resolve })
+        NodeV8.setFlagsFromString('--expose-gc')
+        const collect: unknown = NodeVM.runInNewContext('gc')
+        const turn = Effect.callback<void>((resume) => {
+          setImmediate(() => resume(Effect.void))
         })
-      })
+        /** Whether anything still holds the bytes of a message, after a collection. */
+        const kept = (memory: WeakRef<ArrayBufferLike>) =>
+          turn.pipe(
+            Effect.andThen(
+              Effect.sync(() => (Predicate.isFunction(collect) ? collect() : undefined)),
+            ),
+            Effect.map(() => memory.deref() !== undefined),
+          )
+        /** Opens a stream to a name and sends it a megabyte nothing else refers to. */
+        const waiting = Effect.fn(function* (stream: EgressStream) {
+          yield* hand.say(EgressFrame.cases.Open.make({ stream, host: 'slow.example', port: 80 }))
+          yield* Queue.take(entered)
+          return yield* Effect.suspend(() => {
+            const data = Uint8Array.from(megabyte(stream))
+            return hand.raw(data).pipe(Effect.as(new WeakRef(data.buffer)))
+          })
+        })
 
-      // The Computer closes it.
-      const closed = yield* waiting(one)
-      yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
-      expect(yield* kept(closed)).toBe(false)
-      yield* Queue.take(released)
+        // The Computer closes it.
+        const closed = yield* waiting(one)
+        yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
+        expect(yield* kept(closed)).toBe(false)
+        yield* Queue.take(released)
 
-      // The Computer opens its number again: both sides forget it.
-      const again = yield* waiting(two)
-      yield* hand.say(EgressFrame.cases.Open.make({ stream: two, host: 'slow.example', port: 80 }))
-      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: two }))
-      expect(yield* kept(again)).toBe(false)
-      yield* Queue.take(released)
-      expect(yield* Queue.size(entered)).toBe(0)
-    }),
+        // The Computer opens its number again: both sides forget it.
+        const again = yield* waiting(two)
+        yield* hand.say(
+          EgressFrame.cases.Open.make({ stream: two, host: 'slow.example', port: 80 }),
+        )
+        expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: two }))
+        expect(yield* kept(again)).toBe(false)
+        yield* Queue.take(released)
+        expect(yield* Queue.size(entered)).toBe(0)
+      }),
   )
 
   it.live('all the streams of a link together are held to the link’s budget', () =>
@@ -923,7 +935,7 @@ describe('egress through the Person’s computer', () => {
   )
 
   it.effect(
-    'dials again after the link drops: two seconds, then doubling while it cannot open',
+    'dials again two seconds after a link that had held, and waits longer each time one does not',
     () =>
       Effect.gen(function* () {
         /** Each socket dialled, as the event target the test opens and closes by hand. */
@@ -944,8 +956,7 @@ describe('egress through the Person’s computer', () => {
             })
           },
           resolve: never,
-          dial: (address, port) =>
-            NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
+          dial: dialTarget,
           allowPrivateTargets: false,
           onStatus: (status) => {
             statuses.push(status._tag)
@@ -957,23 +968,33 @@ describe('egress through the Person’s computer', () => {
         happens(0, 'open')
         expect(link.state()).toEqual(ExitStatus.cases.Connected.make({ relayed: 0, active: 0 }))
 
-        // The link drops. Nothing is dialled until two seconds have passed.
+        // A link that held, then dropped: dialled again after two seconds, and not before.
+        yield* TestClock.adjust(STEADY)
         happens(0, 'close')
         yield* TestClock.adjust('1999 millis')
         expect(sockets.length).toBe(1)
         yield* TestClock.adjust('1 millis')
         expect(sockets.length).toBe(2)
 
-        // The server is still away: the next tries wait two seconds, then four.
+        // A socket that opens and is closed at once (a join that ends as soon as it is made) is
+        // no better than one that never opened: the wait grows, two seconds and then four.
+        happens(1, 'open')
         happens(1, 'close')
         yield* TestClock.adjust('2 seconds')
         expect(sockets.length).toBe(3)
+        happens(2, 'open')
         happens(2, 'close')
         yield* TestClock.adjust('3999 millis')
         expect(sockets.length).toBe(3)
         yield* TestClock.adjust('1 millis')
         expect(sockets.length).toBe(4)
-        happens(3, 'open')
+        // And eight when the server is not there at all.
+        happens(3, 'close')
+        yield* TestClock.adjust('7999 millis')
+        expect(sockets.length).toBe(4)
+        yield* TestClock.adjust('1 millis')
+        expect(sockets.length).toBe(5)
+        happens(4, 'open')
         expect(link.state()._tag).toBe('Connected')
         expect(statuses.at(-1)).toBe('Connected')
       }),

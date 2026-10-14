@@ -128,6 +128,16 @@ export const dialTarget = (address: string, port: number) =>
     keepAliveInitialDelay: KEEP_ALIVE_MILLIS,
   })
 
+/**
+ * How long a socket must stay open before its end is a drop and not a failure to hold: thirty
+ * seconds, the longest the app ever waits between two tries (`redial`), so a socket that has
+ * outlasted every wait is the only thing that makes the waits start over. The reference starts
+ * over the moment a socket opens (`connect`, `reconnectAttempt = 0`); a server that accepts a
+ * socket and ends its join at once (the Computer's proxy will not start, say) would then be
+ * dialled, and its start command run on the Computer, every two seconds for ever.
+ */
+export const STEADY = Duration.seconds(30)
+
 /** How often the queue is looked at again while a target is paused, in milliseconds. */
 const DRAIN_MILLIS = 10
 
@@ -146,11 +156,15 @@ export const ExitStatus = Schema.TaggedUnion({
 })
 export type ExitStatus = typeof ExitStatus.Type
 
-/** The socket closed before it ever opened: the server is not there, or said no. */
-class ExitUnopened extends Schema.TaggedError<ExitUnopened>()(
-  'ExitUnopened',
+/**
+ * The socket did not hold: it closed before it opened (the server is not there, or said no),
+ * or it opened and closed before `STEADY` had passed (the join it was given ended at once).
+ * Both are answered the same way, by waiting longer before the next.
+ */
+class ExitUnsteady extends Schema.TaggedError<ExitUnsteady>()(
+  'ExitUnsteady',
   {},
-  { title: 'The egress tunnel could not be opened' },
+  { title: 'The egress tunnel did not stay open' },
 ) {}
 
 export interface ExitDependencies {
@@ -297,7 +311,14 @@ interface Link {
   readonly relaying: Map<EgressStream, Relaying>
   readonly leaving: Set<Relaying>
   /** `held` is every byte waiting for a target on this link: what the link's budget bounds. */
-  readonly state: { open: boolean; closed: boolean; relayed: number; held: number }
+  readonly state: {
+    open: boolean
+    closed: boolean
+    /** It has been open for `STEADY`. */
+    steady: boolean
+    relayed: number
+    held: number
+  }
 }
 
 const publish = (link: Link) =>
@@ -560,7 +581,8 @@ const handle = (link: Link, frame: EgressFrame) =>
   })
 
 /**
- * One open socket, from its first event to its close. Answers whether it ever opened.
+ * One open socket, from its first event to its close. Answers whether it held: opened, and
+ * stayed open for `STEADY`.
  *
  * A message is handled where it arrives, whole, before the next one: nothing waits in a queue
  * of this module's between the socket and a stream, so every byte held is held by a stream and
@@ -583,7 +605,7 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
     resolving: new Map(),
     relaying: new Map(),
     leaving: new Set(),
-    state: { open: false, closed: false, relayed: 0, held: 0 },
+    state: { open: false, closed: false, steady: false, relayed: 0, held: 0 },
   }
   /** This socket is done, by its own close or because it sent what no frame can be. */
   const finished = () => {
@@ -593,6 +615,15 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
   socket.binaryType = 'arraybuffer'
   socket.addEventListener('open', () => {
     link.state.open = true
+    link.fork(
+      Effect.sleep(STEADY).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            link.state.steady = true
+          }),
+        ),
+      ),
+    )
     publish(link)
   })
   socket.addEventListener('message', (event) => {
@@ -626,13 +657,14 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
     }),
   )
   yield* Deferred.await(over)
-  return link.state.open
+  return link.state.steady
 })
 
 /**
  * How long to wait before dialling again: two seconds, doubling, never more than thirty. The
  * reference's `sand-egress-tunnel-reconnect` policy (`createRetryPolicy`: factor two, no
- * jitter), which starts over once a socket has opened.
+ * jitter). It starts over once a socket has held (`STEADY`), where the reference's starts over
+ * once one has opened.
  */
 export const redial = Schedule.min([
   Schedule.exponential('2 seconds'),
@@ -642,9 +674,10 @@ export const redial = Schedule.min([
 /**
  * Keeps this computer available as the way out for as long as someone is signed in.
  *
- * One pass is one socket. A socket that never opens is dialled again on the schedule; one that
- * opened and then closed is dialled again after the schedule's first wait, as the reference
- * does. With nobody to dial as, it rests until `restart`. Whether anything is carried is the
+ * One pass is one socket. A socket that does not hold (it never opens, or it is closed as soon
+ * as it opens) is dialled again on the schedule, each wait longer than the last; one that held
+ * and then closed is dialled again after the schedule's first wait, and the schedule starts
+ * over. With nobody to dial as, it rests until `restart`. Whether anything is carried is the
  * server's decision (the Person's setting, and whether their Computer is running): the app only
  * holds the socket open, so turning egress on needs nothing from this computer.
  */
@@ -658,15 +691,15 @@ export const exitLink = Effect.fn('DesktopEgress.link')(function* (dependencies:
   }
   const watching: ExitDependencies = { ...dependencies, onStatus: publish }
 
-  /** One socket. `Resting`: nobody to dial as. `Dropped`: it had opened, and has closed. */
+  /** One socket. `Resting`: nobody to dial as. `Dropped`: it had held, and has closed. */
   const pass = Effect.scoped(
     Effect.gen(function* () {
       const socket = dependencies.socket()
       if (Option.isNone(socket)) return 'Resting' as const
       publish(ExitStatus.cases.Connecting.make({}))
-      const opened = yield* carry(watching, socket.value)
+      const held = yield* carry(watching, socket.value)
       publish(ExitStatus.cases.Connecting.make({}))
-      if (!opened) return yield* new ExitUnopened({})
+      if (!held) return yield* new ExitUnsteady({})
       return 'Dropped' as const
     }),
   )
