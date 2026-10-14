@@ -1,5 +1,6 @@
 import type * as NodeStream from 'node:stream'
 import { and, eq } from 'drizzle-orm'
+import * as Arr from 'effect/Array'
 import type * as Cause from 'effect/Cause'
 import * as Context from 'effect/Context'
 import * as Deferred from 'effect/Deferred'
@@ -49,6 +50,15 @@ import { egressChosen } from './setting.ts'
  * therefore needs nothing from the app, and issue 61, which removes the choice, changes one
  * condition here (`egressChosen`).
  *
+ * A Person has one way out at a time, and it has a stable owner: the first socket of theirs
+ * this server holds. A second desktop app signed in as the same Person is kept and waits its
+ * turn, joined to nothing, and becomes the way out only when the first's socket goes. Which
+ * computer a Person would rather go out through is their choice to make and is not made here
+ * (issue 61); this is the rule that needs no setting. The earlier rule let the newest socket
+ * take the join: with two apps each displaced the other, dialled again and displaced it back,
+ * for ever, and every round ended the browser's connections and ran the start command on the
+ * Computer.
+ *
  * One socket is one join. When a join ends for any reason (egress turned off, the Computer
  * stopped, the channel closed, a frame that is not one), the app's socket is closed with it and
  * the app dials again. The other way to end the app's streams would be a `Close` for each, on a
@@ -70,10 +80,11 @@ const Carrying = Schema.TaggedUnion({
 })
 type Carrying = typeof Carrying.Type
 
-/** One desktop app's socket: what it is doing, and the signal that a newer one took its place. */
+/** One desktop app's socket: what it is doing, and the word that it is the Person's way out. */
 interface Held {
   phase: Carrying
-  readonly replaced: Deferred.Deferred<void>
+  /** Completed when no socket of the Person's is ahead of this one. */
+  readonly turn: Deferred.Deferred<void>
 }
 
 /** The first five bytes of a frame: its kind and its stream (`egress.ts`). */
@@ -140,10 +151,10 @@ export interface EgressService {
   /** What egress is doing for a Person at this moment. */
   readonly status: (person: PersonId) => Effect.Effect<EgressStatus, DatabaseInfrastructureError>
   /**
-   * Holds one desktop app's socket, parked until egress is on and the Computer runs, then
-   * joined to the Person's Computer. It returns when that join ends or a newer socket of the
-   * Person's takes its place (a Person has one way out at a time), and whoever called it then
-   * closes the socket. The scope owns the channel to the Computer.
+   * Holds one desktop app's socket: behind any socket of the Person's held before it, then
+   * parked until egress is on and the Computer runs, then joined to the Person's Computer. It
+   * returns when that join ends, and whoever called it then closes the socket. The scope owns
+   * the channel to the Computer and this socket's place in the Person's line.
    */
   readonly carry: (
     person: PersonId,
@@ -297,8 +308,11 @@ export const egressRelay = (
   machine: Pick<MachineOperations, 'run' | 'tunnel'>,
   changes: Changes['Service'],
 ): EgressService => {
-  /** In this process only: a socket is held by the server that accepted it. */
-  const held = new Map<PersonId, Held>()
+  /**
+   * Each Person's sockets in the order they came: the first is their way out, the rest wait.
+   * In this process only: a socket is held by the server that accepted it.
+   */
+  const held = new Map<PersonId, Array<Held>>()
   const told = (person: PersonId) => changes.publish([Topic.person(person)])
   const { chosen, running } = reads
   const wanted = Effect.fn('Egress.wanted')(function* (person: PersonId) {
@@ -307,9 +321,9 @@ export const egressRelay = (
 
   const status = Effect.fn('Egress.status')(function* (person: PersonId) {
     if (!(yield* chosen(person))) return EgressStatus.cases.Off.make({})
-    const entry = held.get(person)
-    if (entry === undefined) return EgressStatus.cases.Waiting.make({})
-    return Carrying.match(entry.phase, {
+    const entry = Arr.head(held.get(person) ?? [])
+    if (Option.isNone(entry)) return EgressStatus.cases.Waiting.make({})
+    return Carrying.match(entry.value.phase, {
       Parked: (): EgressStatus => EgressStatus.cases.Waiting.make({}),
       Joined: ({ streams }): EgressStatus => EgressStatus.cases.Routing.make({ streams }),
       Failed: (): EgressStatus => EgressStatus.cases.Failed.make({ reason: 'Computer' }),
@@ -365,16 +379,25 @@ export const egressRelay = (
   const carry = Effect.fn('Egress.carry')(function* (person: PersonId, app: ExitSocket) {
     const entry: Held = {
       phase: Carrying.cases.Parked.make({}),
-      replaced: yield* Deferred.make<void>(),
+      turn: yield* Deferred.make<void>(),
     }
-    const before = held.get(person)
-    held.set(person, entry)
-    if (before !== undefined) yield* Deferred.succeed(before.replaced, undefined)
+    // Taking a place in the line and leaving it are each one step with nothing between, so the
+    // line is never seen half changed.
+    const line = held.get(person) ?? []
+    held.set(person, line)
+    line.push(entry)
+    if (line[0] === entry) yield* Deferred.succeed(entry.turn, undefined)
     yield* Effect.addFinalizer(() =>
       Effect.suspend(() => {
-        if (held.get(person) !== entry) return Effect.void
-        held.delete(person)
-        return told(person)
+        const first = line[0] === entry
+        line.splice(line.indexOf(entry), 1)
+        if (line.length === 0 && held.get(person) === line) held.delete(person)
+        // One that only waited changes nothing anyone can see by leaving.
+        if (!first) return Effect.void
+        return Option.match(Arr.head(line), {
+          onNone: () => Effect.void,
+          onSome: (next) => Deferred.succeed(next.turn, undefined).pipe(Effect.asVoid),
+        }).pipe(Effect.andThen(told(person)))
       }),
     )
     // Subscribed before the first look, so a change between the look and the wait is not lost.
@@ -403,14 +426,16 @@ export const egressRelay = (
         return changed ? told(person) : Effect.void
       })
     /**
-     * Parked, then joined once, and then over: a join that ends for any reason ends the hold,
+     * Behind the sockets before it, then parked, then joined once, and then over: a join that ends for any reason ends the hold,
      * which closes the socket (see the module's note on one socket being one join). Exactly one
-     * thing reads the socket at a time: while parked nothing is expected from the app, and what
-     * arrives is read and dropped so that its close is seen; while joined the join reads it. A
+     * thing reads the socket at a time: while waiting or parked nothing is expected from the
+     * app, and what arrives is read and dropped so that its close is seen; while joined the
+     * join reads it. A
      * join that could not be made carried nothing, so the socket is kept and it is tried again
      * at the next look, never in a loop.
      */
     const life = Effect.fn('Egress.life')(function* () {
+      yield* Effect.raceFirst(Deferred.await(entry.turn), app.pull.pipe(Effect.forever))
       for (;;) {
         yield* Effect.raceFirst(until(true), app.pull.pipe(Effect.forever))
         if (yield* Effect.scoped(attempt(person, entry, app, until(false)))) return
@@ -419,7 +444,7 @@ export const egressRelay = (
     })
     yield* told(person)
     yield* Queue.offer(looks, undefined)
-    yield* Effect.raceFirst(life(), Deferred.await(entry.replaced))
+    yield* life()
   })
 
   return { status, carry }

@@ -154,10 +154,14 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
   const app = Effect.fn('EgressTest.app')(function* () {
     const sent = yield* Queue.unbounded<Uint8Array>()
     const received = yield* Queue.unbounded<Uint8Array>()
+    const read = yield* Deferred.make<void>()
     const fiber = yield* Effect.forkScoped(
       Effect.scoped(
         relay.carry(person, {
-          pull: Queue.take(sent).pipe(Effect.map(Arr.of)),
+          pull: Deferred.succeed(read, undefined).pipe(
+            Effect.andThen(Queue.take(sent)),
+            Effect.map(Arr.of),
+          ),
           write: (frame) => Queue.offer(received, frame).pipe(Effect.asVoid),
           // Queues take everything at once: nothing is ever waiting to leave.
           buffered: () => 0,
@@ -171,7 +175,8 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
     )
     const say = (value: EgressFrame) => Queue.offer(sent, encodeEgressFrame(value))
     const raw = (bytes: Uint8Array) => Queue.offer(sent, bytes)
-    return { fiber, frame, say, raw, received }
+    /** The relay has this socket in hand: it has begun to read it. */
+    return { fiber, frame, say, raw, received, held: Deferred.await(read) }
   })
   const turn = (change: Partial<typeof facts>) =>
     Effect.sync(() => Object.assign(facts, change)).pipe(Effect.andThen(changes.publish([])))
@@ -428,18 +433,41 @@ describe('the egress relay', () => {
     }),
   )
 
-  it.live('a newer socket of the same Person takes the place of the one before', () =>
-    Effect.gen(function* () {
-      const { proxy, relay, app, turn } = yield* relaying()
-      const first = yield* app()
-      yield* turn({ chosen: true })
-      yield* proxy.attached(true)
-      yield* app()
-      yield* Fiber.join(first.fiber)
-      // The second socket joins in its turn: the tunnel is let go and taken again.
-      yield* proxy.attached(true)
-      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
-    }),
+  it.live(
+    'a second desktop app of the same Person waits, and takes over when the first’s socket goes',
+    () =>
+      Effect.gen(function* () {
+        const { proxy, relay, facts, app, turn } = yield* relaying()
+        const first = yield* app()
+        yield* turn({ chosen: true })
+        yield* proxy.attached(true)
+        const second = yield* app()
+        yield* second.held
+        // The first is still the way out: a connection the browser opens now is opened by it.
+        const page = yield* Effect.forkScoped(
+          tunnelled(proxy.ports.proxy, 'site.example:443', 'a'),
+        )
+        const carried = yield* Effect.raceFirst(
+          first.frame.pipe(Effect.as('The first app carries it')),
+          Effect.raceFirst(
+            second.frame.pipe(Effect.as('The second app carries it')),
+            Fiber.join(first.fiber).pipe(Effect.as('The first app was displaced')),
+          ),
+        )
+        expect(carried).toBe('The first app carries it')
+        // The second cost nothing: no second start on the Computer, and nothing sent to it.
+        expect(facts.started).toBe(1)
+        expect(yield* Queue.size(second.received)).toBe(0)
+
+        // The first app's socket goes: the one that waited is the way out now.
+        yield* Fiber.interrupt(first.fiber)
+        yield* Fiber.join(page)
+        yield* proxy.attached(true)
+        expect(facts.started).toBe(2)
+        yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'b'))
+        expect((yield* second.frame)._tag).toBe('Open')
+        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+      }),
   )
 
   it.live(
