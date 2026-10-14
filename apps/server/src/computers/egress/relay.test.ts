@@ -1,4 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node'
+import { NodeWS } from '@effect/platform-node/NodeSocket'
 import { describe, expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeHttp from 'node:http'
@@ -37,7 +38,7 @@ import {
   frameCutter,
   lengthPrefixed,
 } from './relay.ts'
-import { held } from './route.ts'
+import { exitSocket, held } from './route.ts'
 
 /**
  * The relay against the real program that runs on the Computer (`proxy.mjs`), over real sockets
@@ -444,9 +445,7 @@ describe('the egress relay', () => {
         const second = yield* app()
         yield* second.held
         // The first is still the way out: a connection the browser opens now is opened by it.
-        const page = yield* Effect.forkScoped(
-          tunnelled(proxy.ports.proxy, 'site.example:443', 'a'),
-        )
+        const page = yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
         const carried = yield* Effect.raceFirst(
           first.frame.pipe(Effect.as('The first app carries it')),
           Effect.raceFirst(
@@ -505,7 +504,6 @@ describe('the egress relay', () => {
             Effect.provideService(Egress, watched),
             Effect.catchTags({
               SocketError: () => Effect.succeed(HttpServerResponse.empty()),
-              HttpServerError: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),
             }),
           ),
         )
@@ -552,6 +550,71 @@ describe('the egress relay', () => {
       const { relay, turn } = yield* relaying()
       yield* turn({ chosen: true })
       expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Waiting.make({}))
+    }),
+  )
+})
+
+describe('the desktop app’s socket on the server', () => {
+  /** A server that upgrades every request as the egress route does, and says what it read. */
+  const upgrading = Effect.fn('EgressTest.upgrading')(function* () {
+    const read = yield* Queue.unbounded<number>()
+    const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+      host: '127.0.0.1',
+      port: 0,
+    })
+    yield* server.serve(
+      Effect.gen(function* () {
+        const app = yield* exitSocket(yield* HttpServerRequest.HttpServerRequest)
+        // Reads until the socket ends, which is a failure of the read and the end of this.
+        return yield* app.pull.pipe(
+          Effect.flatMap((messages) =>
+            Effect.forEach(messages, (message) => Queue.offer(read, message.length)),
+          ),
+          Effect.forever,
+        )
+      }).pipe(
+        Effect.scoped,
+        Effect.catchTags({
+          SocketError: () => Effect.succeed(HttpServerResponse.empty()),
+        }),
+      ),
+    )
+    if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('No TCP address')
+    const port = server.address.port
+    const client = yield* Effect.acquireRelease(
+      Effect.callback<NodeWS.WebSocket>((resume) => {
+        const opened = new NodeWS.WebSocket(`ws://127.0.0.1:${port}`)
+        opened.on('error', () => undefined)
+        opened.on('open', () => resume(Effect.succeed(opened)))
+      }),
+      (opened) => Effect.sync(() => opened.terminate()),
+    )
+    return { client, read }
+  })
+
+  it.live('a message longer than a frame is refused before it is whole, however it is cut up', () =>
+    Effect.gen(function* () {
+      const { client, read } = yield* upgrading()
+      const outcome = yield* Effect.callback<string>((resume) => {
+        client.once('close', (code) => resume(Effect.succeed(`Closed with ${code}`)))
+        client.once('pong', () => resume(Effect.succeed('The server went on taking it')))
+        // Two pieces of one message, each within a frame and together over it. The message is
+        // never finished, so a server that waits for the whole of it holds both.
+        client.send(Buffer.alloc(EGRESS_FRAME_LIMIT), { binary: true, fin: false })
+        client.send(Buffer.alloc(EGRESS_FRAME_LIMIT), { binary: true, fin: false })
+        client.ping()
+      })
+      // 1009 is the WebSocket protocol's "message too big".
+      expect(outcome).toBe('Closed with 1009')
+      expect(yield* Queue.size(read)).toBe(0)
+    }),
+  )
+
+  it.live('the longest frame is taken whole', () =>
+    Effect.gen(function* () {
+      const { client, read } = yield* upgrading()
+      client.send(Buffer.alloc(EGRESS_FRAME_LIMIT), { binary: true })
+      expect(yield* Queue.take(read)).toBe(EGRESS_FRAME_LIMIT)
     }),
   )
 })

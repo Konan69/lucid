@@ -1,10 +1,13 @@
 import { NodeHttpServerRequest } from '@effect/platform-node'
+import { NodeWS } from '@effect/platform-node/NodeSocket'
+import type * as NodeStream from 'node:stream'
 import { Effect, Option } from 'effect'
 import type { PersonId } from '@vivid/contracts'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { EGRESS_PATH } from '@vivid/contracts'
+import * as Socket from 'effect/socket/Socket'
+import { EGRESS_FRAME_LIMIT, EGRESS_PATH } from '@vivid/contracts'
 import { authenticate } from '../../auth/session.ts'
 import { ServerConfig } from '../../config.ts'
 import { sessionEnded } from '../../live/query.ts'
@@ -15,7 +18,53 @@ const notFound = () =>
   HttpServerResponse.empty({ status: 404, headers: { 'cache-control': 'no-store' } })
 
 /**
- * A request's upgraded WebSocket as the relay holds it (`relay.ts`, `ExitSocket`).
+ * Where an egress socket's messages are received: a WebSocket boundary of its own, which takes
+ * no message longer than a frame (`EGRESS_FRAME_LIMIT`, which counts the frame's own five
+ * bytes).
+ *
+ * The server's shared boundary (`NodeHttpServer`, `request.upgrade`) keeps the `ws` package's
+ * limit of 100 MiB, which its other sockets rely on, and `ws` puts a message together before it
+ * hands it over: a message sent in pieces was held whole, up to that limit, before the relay's
+ * own check on its length ever ran. Here `ws` refuses at the piece that crosses the limit and
+ * closes the socket with 1009, so a socket of this kind, joined or parked or waiting its turn,
+ * never holds more than one frame of what the app sent.
+ */
+const receiving = new NodeWS.WebSocketServer({ noServer: true, maxPayload: EGRESS_FRAME_LIMIT })
+
+/**
+ * Nothing is handed on from the upgrade request's own read: a client sends no frame before it
+ * has the answer to its handshake (RFC 6455, section 4.1), and the server's upgrade handler
+ * does not give a route the bytes that came with the request.
+ */
+const NO_HEAD = Buffer.alloc(0)
+
+/** The socket closed before it was a WebSocket: the handshake was refused, or the app went. */
+const unopened = () =>
+  new Socket.SocketError({
+    reason: new Socket.SocketOpenError({
+      kind: 'Unknown',
+      cause: new Error('The socket closed before the upgrade'),
+    }),
+  })
+
+/**
+ * Closes an egress socket and waits until its connection is gone.
+ *
+ * The wait is what keeps the connection clean. This route upgrades the connection itself, so
+ * the server's handler does not know it was upgraded, and writes the route's HTTP response to
+ * any connection that is still open when the route returns. A connection that has closed gets
+ * nothing. `ws` closes it when the app answers the close, or after its own thirty seconds.
+ */
+const closed = (socket: NodeWS.WebSocket, wire: NodeStream.Duplex) =>
+  Effect.callback<void>((resume) => {
+    if (wire.destroyed) return resume(Effect.void)
+    wire.once('close', () => resume(Effect.void))
+    return socket.close(1000)
+  })
+
+/**
+ * A request's upgraded WebSocket as the relay holds it (`relay.ts`, `ExitSocket`), upgraded at
+ * the egress boundary (`receiving`).
  *
  * Effect's socket says nothing about what it has written and not sent, and the relay must know,
  * or it reads the Computer as fast as the Computer sends while a slow app's frames pile up
@@ -27,10 +76,24 @@ const notFound = () =>
 export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
-  const socket = yield* request.upgrade
+  const incoming = NodeHttpServerRequest.toIncomingMessage(request)
+  const wire = incoming.socket
+  const socket = yield* Socket.fromWebSocket(
+    Effect.acquireRelease(
+      Effect.callback<NodeWS.WebSocket, Socket.SocketError>((resume) => {
+        const gone = () => resume(Effect.fail(unopened()))
+        if (wire.destroyed) return gone()
+        wire.once('close', gone)
+        return receiving.handleUpgrade(incoming, wire, NO_HEAD, (upgraded) => {
+          wire.off('close', gone)
+          resume(Effect.succeed(upgraded))
+        })
+      }),
+      (upgraded) => closed(upgraded, wire),
+    ),
+  )
   const reader = yield* socket.reader
   const writer = yield* socket.writer
-  const wire = NodeHttpServerRequest.toIncomingMessage(request).socket
   const held: ExitSocket = {
     pull: reader.pull,
     write: writer.write,
@@ -96,11 +159,8 @@ export const egressRoutes = HttpRouter.add(
   EGRESS_PATH,
   egress().pipe(
     Effect.scoped,
-    Effect.catchTags({
-      // The app's socket closing is how every hold ends; it is not a fault.
-      SocketError: () => Effect.succeed(HttpServerResponse.empty()),
-      HttpServerError: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),
-    }),
+    // The app's socket closing, or never becoming one, is how every hold ends; it is not a fault.
+    Effect.catchTag('SocketError', () => Effect.succeed(HttpServerResponse.empty())),
     Effect.catchTag(
       ['DatabaseFailure', 'DatabaseUnavailable', 'DatabaseConstraintViolation'],
       (error) =>
