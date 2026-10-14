@@ -43,7 +43,7 @@ import {
   frameCutter,
   lengthPrefixed,
 } from './relay.ts'
-import { exitSocket, held } from './route.ts'
+import { CLOSE_DEADLINE_MILLIS, exitSocket, held } from './route.ts'
 
 /**
  * The relay against the real program that runs on the Computer (`proxy.mjs`), over real sockets
@@ -613,6 +613,67 @@ describe('the desktop app’s socket on the server', () => {
       expect(outcome).toBe('Closed with 1009')
       expect(yield* Queue.size(read)).toBe(0)
     }),
+  )
+
+  it.effect(
+    'an app that never answers the close is let go at the close deadline, and no later',
+    () =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<void>()
+        const ended = yield* Deferred.make<void>()
+        const reads = yield* Queue.unbounded<Buffer>()
+        const dropped = yield* Deferred.make<void>()
+        const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+          host: '127.0.0.1',
+          port: 0,
+        })
+        // The route's own shape: the socket belongs to the request's scope, and the handler
+        // returns only when that scope has closed.
+        yield* server.serve(
+          Effect.gen(function* () {
+            yield* exitSocket(yield* HttpServerRequest.HttpServerRequest)
+            yield* Deferred.await(release)
+            return HttpServerResponse.empty()
+          }).pipe(
+            Effect.scoped,
+            Effect.onExit(() => Deferred.succeed(ended, undefined)),
+          ),
+        )
+        if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('No TCP address')
+        const port = server.address.port
+        // A connection that upgrades and then says nothing more, whatever it is sent: a close
+        // is read here and never answered.
+        const app = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeNet.connect(port, '127.0.0.1')),
+          (socket) => Effect.sync(() => socket.destroy()),
+        )
+        app.on('error', () => undefined)
+        app.on('data', (bytes: Buffer) => Queue.offerUnsafe(reads, bytes))
+        app.on('close', () => Deferred.doneUnsafe(dropped, Effect.void))
+        app.on('connect', () =>
+          app.write(
+            'GET /egress HTTP/1.1\r\nHost: vivid.test\r\nUpgrade: websocket\r\n' +
+              'Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n' +
+              'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n',
+          ),
+        )
+        expect((yield* Queue.take(reads)).toString()).toContain('101 Switching Protocols')
+        yield* Deferred.succeed(release, undefined)
+        // 0x88: the server's close, the whole of one WebSocket frame.
+        expect((yield* Queue.take(reads)).readUInt8(0)).toBe(0x88)
+
+        // Until the deadline the handler waits for the answer, as it does for an app that is
+        // only slow. At the deadline the connection is ended under the socket, and only then
+        // does the handler return: it never returns with the connection still open.
+        yield* TestClock.adjust(CLOSE_DEADLINE_MILLIS - 1)
+        expect(Deferred.isDoneUnsafe(ended)).toBe(false)
+        expect(app.destroyed).toBe(false)
+        yield* TestClock.adjust(1)
+        yield* Deferred.await(ended)
+        yield* Deferred.await(dropped)
+        // Nothing was written to the connection after the close: no HTTP answer followed it.
+        expect(yield* Queue.size(reads)).toBe(0)
+      }),
   )
 
   it.live('the longest frame is taken whole', () =>

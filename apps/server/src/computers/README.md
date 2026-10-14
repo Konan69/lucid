@@ -157,6 +157,10 @@ listens beyond loopback.
   socket that never opens, or is closed sooner than that, makes the next wait twice as long, up
   to thirty seconds, so a join that ends as soon as it is made does not run the start command
   on the Computer every two seconds.
+- When a hold ends the server closes the socket and waits until its connection is gone, so
+  nothing is written to it afterwards. An app that does not answer the close within five
+  seconds has the connection ended under it (`egress/route.ts`, `closed`); the server's
+  shutdown waits that long for such a socket and no longer.
 - The app's socket is upgraded at a WebSocket boundary of its own (`egress/route.ts`) that
   takes no message longer than a frame and closes with 1009 at the piece that crosses it. The
   server's other sockets keep their own limit.

@@ -54,19 +54,44 @@ const unopened = () =>
   })
 
 /**
+ * How long an app is given to answer the close of its socket: five seconds. An app that is there
+ * answers in one round trip; this is for the one that is not. The `ws` package's own wait is
+ * thirty seconds, on a timer of its own that no test and no shutdown can move.
+ */
+export const CLOSE_DEADLINE_MILLIS = 5000
+
+/** Completes once a connection has closed. Interrupted, it stops listening. */
+const departed = (wire: NodeStream.Duplex) =>
+  Effect.callback<void>((resume) => {
+    if (wire.destroyed) return resume(Effect.void)
+    const done = () => resume(Effect.void)
+    wire.once('close', done)
+    return Effect.sync(() => wire.off('close', done))
+  })
+
+/**
  * Closes an egress socket and waits until its connection is gone.
  *
  * The wait is what keeps the connection clean. This route upgrades the connection itself, so
  * the server's handler does not know it was upgraded, and writes the route's HTTP response to
  * any connection that is still open when the route returns. A connection that has closed gets
- * nothing. `ws` closes it when the app answers the close, or after its own thirty seconds.
+ * nothing.
+ *
+ * The wait is bounded. `ws` closes the connection when the app answers the close; an app that
+ * never answers was waited for, uninterruptibly, for the thirty seconds `ws` takes to give up,
+ * and that was how long one such socket held the server's shutdown. Past
+ * `CLOSE_DEADLINE_MILLIS` the connection is ended under the socket (`terminate`), and its close
+ * is still waited for, which is then a matter of the system and not of the app: the rule that
+ * the connection is gone before the route returns holds either way.
  */
 const closed = (socket: NodeWS.WebSocket, wire: NodeStream.Duplex) =>
-  Effect.callback<void>((resume) => {
-    if (wire.destroyed) return resume(Effect.void)
-    wire.once('close', () => resume(Effect.void))
-    return socket.close(1000)
-  })
+  Effect.sync(() => socket.close(1000)).pipe(
+    Effect.andThen(departed(wire)),
+    Effect.timeoutOrElse({
+      duration: CLOSE_DEADLINE_MILLIS,
+      orElse: () => Effect.sync(() => socket.terminate()).pipe(Effect.andThen(departed(wire))),
+    }),
+  )
 
 /** How many pings in a row may go by with nothing heard before the socket is gone. */
 const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
