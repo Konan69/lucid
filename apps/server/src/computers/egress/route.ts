@@ -98,8 +98,8 @@ const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
 
 /**
  * Asks an egress socket whether its app is still there, for as long as the scope holds it, and
- * ends it when the answer stops coming (the contract's `EGRESS_PING_MILLIS`). Answers the
- * moment the socket is over: it closed, or it was ended here.
+ * ends it when the answer stops coming (the contract's `EGRESS_PING_MILLIS`). What it answers
+ * is completed the moment the socket is over: it closed, or it was ended here.
  *
  * Without this a socket was held until TCP said it had closed, and a computer that sleeps says
  * nothing: its socket stayed the Person's way out, the browser's connections went to it and
@@ -150,7 +150,7 @@ const watched = Effect.fn('Egress.watched')(function* (socket: NodeWS.WebSocket)
   yield* Effect.forkScoped(
     Effect.sleep(EGRESS_PING_MILLIS).pipe(Effect.andThen(check), Effect.forever),
   )
-  return Deferred.await(over)
+  return over
 })
 
 /**
@@ -181,7 +181,7 @@ export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
     }),
     (opened) => closed(opened, wire),
   )
-  const gone = yield* watched(upgraded)
+  const over = yield* watched(upgraded)
   const socket = yield* Socket.fromWebSocket(Effect.succeed(upgraded))
   const reader = yield* socket.reader
   const writer = yield* socket.writer
@@ -192,7 +192,7 @@ export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
     drained: flushed(wire),
   }
   /** `gone` completes when the socket is over, whatever the relay is doing with it then. */
-  return { ...app, gone }
+  return { ...app, gone: Deferred.await(over) }
 })
 
 /**

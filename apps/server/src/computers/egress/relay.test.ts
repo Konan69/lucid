@@ -923,6 +923,23 @@ describe('a desktop app that has gone without a word', () => {
     return { channel, took: Deferred.await(took) }
   })
 
+  /**
+   * Waits until the Person's status is the one meant, reading it at each change their watchers
+   * are told of. `told` is a subscription taken before whatever makes the change.
+   */
+  const until = Effect.fn('EgressTest.until')(function* (
+    relay: EgressService,
+    told: PubSub.Subscription<void>,
+    meant: (status: EgressStatus) => boolean,
+  ) {
+    let said = yield* relay.status(person)
+    while (!meant(said)) {
+      yield* PubSub.take(told)
+      said = yield* relay.status(person)
+    }
+    return said
+  })
+
   /** The longest frame, of a stream nobody has: something for the relay to pass on. */
   const piece = encodeEgressFrame(
     EgressFrame.cases.Data.make({
@@ -938,24 +955,23 @@ describe('a desktop app that has gone without a word', () => {
         const stuck = yield* stuckChannel()
         const { relay, turn, hub } = yield* relaying(stuck.channel)
         const server = yield* routed(relay)
+        const told = yield* PubSub.subscribe(hub)
         const awake = yield* desktopApp(server.port, true)
         yield* server.held
         yield* turn({ chosen: true })
+        // Joined first: what an app sends to a socket that is only parked is read and dropped.
+        yield* until(relay, told, EgressStatus.guards.Routing)
         awake.socket.send(piece)
         yield* stuck.took
         // The relay is waiting for the Computer, and is not reading the app. The app goes.
-        const told = yield* PubSub.subscribe(hub)
         awake.socket.terminate()
         yield* server.ended
-        // Its place is free: the next app of the Person's is joined. Read at each change the
-        // Person's watchers are told of, until the join is made.
+        // Its place is free, and the next app of the Person's is joined.
+        yield* until(relay, told, EgressStatus.guards.Waiting)
         yield* desktopApp(server.port, true)
-        let said = yield* relay.status(person)
-        while (!EgressStatus.guards.Routing(said)) {
-          yield* PubSub.take(told)
-          said = yield* relay.status(person)
-        }
-        expect(said).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+        expect(yield* until(relay, told, EgressStatus.guards.Routing)).toEqual(
+          EgressStatus.cases.Routing.make({ streams: 0 }),
+        )
       }),
     20_000,
   )
@@ -965,11 +981,13 @@ describe('a desktop app that has gone without a word', () => {
     () =>
       Effect.gen(function* () {
         const stuck = yield* stuckChannel()
-        const { relay, turn } = yield* relaying(stuck.channel)
+        const { relay, turn, hub } = yield* relaying(stuck.channel)
         const server = yield* routed(relay)
+        const told = yield* PubSub.subscribe(hub)
         const awake = yield* desktopApp(server.port, true)
         yield* server.held
         yield* turn({ chosen: true })
+        yield* until(relay, told, EgressStatus.guards.Routing)
         // More than the server will hold for a Computer that takes nothing: it stops reading
         // the app, so the app's answers to its pings are not read either.
         for (let at = 0; at < 4; at += 1) awake.socket.send(piece)
@@ -1013,13 +1031,9 @@ describe('a desktop app that has gone without a word', () => {
         yield* TestClock.adjust(EGRESS_PING_MILLIS)
         yield* asleep.closed
         yield* proxy.attached(false)
-        // Read at each change the Person's watchers are told of, until it is the one meant.
-        let said = yield* relay.status(person)
-        while (!EgressStatus.guards.Waiting(said)) {
-          yield* PubSub.take(told)
-          said = yield* relay.status(person)
-        }
-        expect(said).toEqual(EgressStatus.cases.Waiting.make({}))
+        expect(yield* until(relay, told, EgressStatus.guards.Waiting)).toEqual(
+          EgressStatus.cases.Waiting.make({}),
+        )
       }),
     20_000,
   )

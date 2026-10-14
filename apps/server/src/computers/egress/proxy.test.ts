@@ -178,10 +178,14 @@ const browser = Effect.fn('ProxyTest.browser')(function* (proxyPort: number, fir
     ),
     ended: Deferred.await(ended),
     /**
-     * The connection is gone, however it went. A proxy that drops a connection whose browser
-     * was still sending resets it, and a reset is a close with no end before it.
+     * The connection is gone, however the proxy ended it: with an end, after which the browser
+     * hangs up as in `closed`, or with a reset, which a proxy sends when it drops a connection
+     * whose browser was still sending, and which is a close with no end before it.
      */
-    gone: Deferred.await(closed),
+    gone: Effect.raceFirst(Deferred.await(ended), Deferred.await(closed)).pipe(
+      Effect.andThen(Effect.sync(() => socket.end())),
+      Effect.andThen(Deferred.await(closed)),
+    ),
     closed: Deferred.await(ended).pipe(
       Effect.andThen(Effect.sync(() => socket.end())),
       Effect.andThen(Deferred.await(closed)),
@@ -549,13 +553,12 @@ describe('the Computer’s egress proxy', () => {
       }
       // Half a window was sent and half is granted back: the window is whole again. The same
       // grant a second time is for bytes that were never sent.
+      // The browser sends nothing between the two: had it used the window meanwhile, the
+      // second would be a grant like any other, and nothing could tell it from one.
       const grant = EgressFrame.cases.Grant.make({ stream: open.stream, bytes: EGRESS_GRANT })
       yield* tunnel.say(grant)
       yield* tunnel.say(grant)
-      page.socket.write(Buffer.alloc(2 * EGRESS_WINDOW))
-      const upload = yield* uploaded(tunnel, open.stream, 2 * EGRESS_WINDOW)
-      expect(upload.closed).toBe(true)
-      expect(upload.sent).toBeLessThanOrEqual(EGRESS_WINDOW)
+      expect(yield* tunnel.frame).toEqual(EgressFrame.cases.Close.make({ stream: open.stream }))
       yield* page.gone
     }),
   )
