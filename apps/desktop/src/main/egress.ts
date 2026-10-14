@@ -214,13 +214,25 @@ const draining = (socket: ExitSocket) => {
   }
 }
 
-/** A stream whose target is still being resolved: what arrived for it meanwhile. */
+/**
+ * A stream whose target is still being resolved: what arrived for it meanwhile, and the word
+ * that ends the resolving.
+ *
+ * The Computer has the first window for such a stream and is granted no more until a target
+ * has taken something (`write`), so `pending` is at most `EGRESS_WINDOW` from a Computer that
+ * keeps the rule. The resolving belongs to the stream: `forgotten` is the one way an entry
+ * leaves the table without being dialled, and it stops the lookup and lets the bytes go. The
+ * lookup was once only left to find its entry gone, and until it did (a resolver may take as
+ * long as it likes) it kept the entry and every byte in it, counted against nothing.
+ */
 interface Resolving {
   readonly pending: Array<Uint8Array>
   /** The bytes of `pending`. */
   held: number
   /** The Computer has said it will send no more. */
   heardEnd: boolean
+  /** Completed when the stream goes before it is dialled: the lookup races it. */
+  readonly gone: Deferred.Deferred<void>
 }
 
 /**
@@ -363,10 +375,18 @@ const cut = (link: Link, stream: EgressStream, leg: Relaying) => {
   publish(link)
 }
 
-/** A stream that never got a target is forgotten, and the Computer is told. */
-const refuse = (link: Link, stream: EgressStream, entry: Resolving) => {
+/** A stream leaves before it has a target: its bytes are let go and its lookup is stopped. */
+const forgotten = (link: Link, stream: EgressStream, entry: Resolving) => {
   link.resolving.delete(stream)
   link.state.held -= entry.held
+  entry.held = 0
+  entry.pending.length = 0
+  Deferred.doneUnsafe(entry.gone, Effect.void)
+}
+
+/** A stream that never got a target is forgotten, and the Computer is told. */
+const refuse = (link: Link, stream: EgressStream, entry: Resolving) => {
+  forgotten(link, stream, entry)
   send(link, EgressFrame.cases.Close.make({ stream }))
 }
 
@@ -424,8 +444,8 @@ const dropped = (link: Link, stream: EgressStream, leg: Relaying) => {
 }
 
 /**
- * Resolves, checks and dials one target. The stream may be gone by the time the name resolves
- * (the Computer closed it, or it went over its budget), and then nothing is dialled.
+ * Resolves, checks and dials one target. When the stream goes first (the Computer closed it, or
+ * it went over its budget) the lookup is interrupted where it stands and nothing is dialled.
  */
 const open = Effect.fn('DesktopEgress.open')(function* (
   link: Link,
@@ -433,8 +453,12 @@ const open = Effect.fn('DesktopEgress.open')(function* (
   place: { readonly host: string; readonly port: number },
   entry: Resolving,
 ) {
-  const address = yield* checkedAddress(place.host, link.dependencies)
-  if (link.resolving.get(stream) !== entry) return
+  const found = yield* Effect.raceFirst(
+    checkedAddress(place.host, link.dependencies).pipe(Effect.asSome),
+    Deferred.await(entry.gone).pipe(Effect.as(Option.none<Option.Option<string>>())),
+  )
+  if (Option.isNone(found) || link.resolving.get(stream) !== entry) return
+  const address = found.value
   // Unresolvable, or it leads into this computer's own networks: refused with a close.
   if (Option.isNone(address) || link.state.closed) return refuse(link, stream, entry)
   link.resolving.delete(stream)
@@ -501,7 +525,12 @@ const handle = (link: Link, frame: EgressFrame) =>
       // forget the number.
       if (waiting !== undefined) return refuse(link, stream, waiting)
       if (leg !== undefined) return cut(link, stream, leg)
-      const entry: Resolving = { pending: [], held: 0, heardEnd: false }
+      const entry: Resolving = {
+        pending: [],
+        held: 0,
+        heardEnd: false,
+        gone: Deferred.makeUnsafe<void>(),
+      }
       link.resolving.set(stream, entry)
       link.fork(open(link, stream, { host, port }, entry))
       return undefined
@@ -523,11 +552,8 @@ const handle = (link: Link, frame: EgressFrame) =>
     Close: ({ stream }) => {
       const waiting = link.resolving.get(stream)
       const leg = link.relaying.get(stream)
-      // Never dialled: there is nothing to let out, and `open` finds the entry gone.
-      if (waiting !== undefined) {
-        link.resolving.delete(stream)
-        link.state.held -= waiting.held
-      }
+      // Never dialled: there is nothing to let out.
+      if (waiting !== undefined) forgotten(link, stream, waiting)
       if (leg !== undefined) dropped(link, stream, leg)
     },
   })
@@ -594,7 +620,7 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
       for (const leg of [...link.relaying.values(), ...link.leaving]) leg.target.destroy()
       link.relaying.clear()
       link.leaving.clear()
-      link.resolving.clear()
+      for (const [stream, entry] of link.resolving) forgotten(link, stream, entry)
       socket.close()
     }),
   )

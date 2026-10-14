@@ -4,6 +4,8 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
+import * as NodeV8 from 'node:v8'
+import * as NodeVM from 'node:vm'
 import {
   EGRESS_FRAME_LIMIT,
   EGRESS_LINK_BUDGET,
@@ -775,6 +777,55 @@ describe('egress through the Person’s computer', () => {
       const data = megabyte(one)
       for (let at = 0; at <= megabytes(EGRESS_STREAM_BUDGET); at += 1) yield* hand.raw(data)
       expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
+    }),
+  )
+
+  it.live('a stream that goes while its name is being resolved lets go of its work and its bytes', () =>
+    Effect.gen(function* () {
+      // A resolver that never answers, and says when it is entered and when it is let go.
+      const entered = yield* Queue.unbounded<void>()
+      const released = yield* Queue.unbounded<void>()
+      const resolve = () =>
+        Effect.acquireUseRelease(
+          Queue.offer(entered, undefined),
+          () => Effect.never,
+          () => Queue.offer(released, undefined),
+        )
+      const hand = yield* handDriven({ resolve })
+      NodeV8.setFlagsFromString('--expose-gc')
+      const collect: unknown = NodeVM.runInNewContext('gc')
+      const turn = Effect.callback<void>((resume) => {
+        setImmediate(() => resume(Effect.void))
+      })
+      /** Whether anything still holds the bytes of a message, after a collection. */
+      const kept = (memory: WeakRef<ArrayBufferLike>) =>
+        turn.pipe(
+          Effect.andThen(Effect.sync(() => (typeof collect === 'function' ? collect() : undefined))),
+          Effect.map(() => memory.deref() !== undefined),
+        )
+      /** Opens a stream to a name and sends it a megabyte nothing else refers to. */
+      const waiting = Effect.fn(function* (stream: EgressStream) {
+        yield* hand.say(EgressFrame.cases.Open.make({ stream, host: 'slow.example', port: 80 }))
+        yield* Queue.take(entered)
+        return yield* Effect.suspend(() => {
+          const data = Uint8Array.from(megabyte(stream))
+          return hand.raw(data).pipe(Effect.as(new WeakRef(data.buffer)))
+        })
+      })
+
+      // The Computer closes it.
+      const closed = yield* waiting(one)
+      yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
+      expect(yield* kept(closed)).toBe(false)
+      yield* Queue.take(released)
+
+      // The Computer opens its number again: both sides forget it.
+      const again = yield* waiting(two)
+      yield* hand.say(EgressFrame.cases.Open.make({ stream: two, host: 'slow.example', port: 80 }))
+      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: two }))
+      expect(yield* kept(again)).toBe(false)
+      yield* Queue.take(released)
+      expect(yield* Queue.size(entered)).toBe(0)
     }),
   )
 
