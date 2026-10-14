@@ -177,6 +177,11 @@ const browser = Effect.fn('ProxyTest.browser')(function* (proxyPort: number, fir
       Effect.map((chunks) => chunks.reduce((sum, chunk) => sum + chunk.length, 0)),
     ),
     ended: Deferred.await(ended),
+    /**
+     * The connection is gone, however it went. A proxy that drops a connection whose browser
+     * was still sending resets it, and a reset is a close with no end before it.
+     */
+    gone: Deferred.await(closed),
     closed: Deferred.await(ended).pipe(
       Effect.andThen(Effect.sync(() => socket.end())),
       Effect.andThen(Deferred.await(closed)),
@@ -521,7 +526,7 @@ describe('the Computer’s egress proxy', () => {
       const upload = yield* uploaded(tunnel, open.stream, 2 * EGRESS_WINDOW)
       expect(upload.closed).toBe(true)
       expect(upload.sent).toBeLessThanOrEqual(EGRESS_WINDOW)
-      yield* page.closed
+      yield* page.gone
       // The other connection is as it was, both ways.
       other.socket.write('unharmed')
       expect(text(yield* tunnel.next('Data', second.stream))).toBe('unharmed')
@@ -551,7 +556,7 @@ describe('the Computer’s egress proxy', () => {
       const upload = yield* uploaded(tunnel, open.stream, 2 * EGRESS_WINDOW)
       expect(upload.closed).toBe(true)
       expect(upload.sent).toBeLessThanOrEqual(EGRESS_WINDOW)
-      yield* page.closed
+      yield* page.gone
     }),
   )
 
