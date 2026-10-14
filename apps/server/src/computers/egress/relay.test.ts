@@ -13,7 +13,7 @@ import {
   decodeEgressFrame,
   encodeEgressFrame,
 } from '@vivid/contracts'
-import { Array as Arr, Effect, Fiber, Option, PubSub, Queue, Schema, Stream } from 'effect'
+import { Array as Arr, Effect, Fiber, Option, PubSub, Queue, Result, Schema, Stream } from 'effect'
 import { Changes } from '../../live/changes.ts'
 import { startCommand } from './guest.ts'
 import { egressRelay, frameCutter, lengthPrefixed } from './relay.ts'
@@ -143,7 +143,7 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
     )
     const frame = Queue.take(received).pipe(
       Effect.map(decodeEgressFrame),
-      Effect.map(Option.getOrThrow),
+      Effect.map(Result.getOrThrow),
     )
     const say = (value: EgressFrame) => Queue.offer(sent, encodeEgressFrame(value))
     return { fiber, frame, say, received }

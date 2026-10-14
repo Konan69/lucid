@@ -1,6 +1,15 @@
 import { expect, it } from '@effect/vitest'
-import { Option } from 'effect'
-import { EgressFrame, EgressStream, decodeEgressFrame, encodeEgressFrame } from './egress.js'
+import { Result } from 'effect'
+import {
+  EGRESS_FRAME_LIMIT,
+  EGRESS_PAYLOAD_LIMIT,
+  EgressFrame,
+  EgressRefusal,
+  EgressStream,
+  decodeEgressFrame,
+  egressData,
+  encodeEgressFrame,
+} from './egress.js'
 
 const stream = EgressStream.make(0x0102_0304)
 
@@ -18,22 +27,78 @@ it('reads back every kind of frame it writes', () => {
   const frames = [
     EgressFrame.cases.Open.make({ stream, host: 'xn--bcher-kva.example', port: 8080 }),
     EgressFrame.cases.Data.make({ stream, payload }),
+    EgressFrame.cases.End.make({ stream }),
     EgressFrame.cases.Close.make({ stream }),
   ]
   expect(frames.map((frame) => decodeEgressFrame(encodeEgressFrame(frame)))).toEqual(
-    frames.map(Option.some),
+    frames.map((frame) => Result.succeed(frame)),
   )
 })
 
-it('reads nothing from bytes that are not a frame', () => {
-  expect(decodeEgressFrame(Uint8Array.from([2, 0, 0]))).toEqual(Option.none())
-  expect(decodeEgressFrame(Uint8Array.from([9, 0, 0, 0, 1]))).toEqual(Option.none())
-  // An open with no port, and one whose port is zero.
-  expect(decodeEgressFrame(Uint8Array.from([1, 0, 0, 0, 1, 0]))).toEqual(Option.none())
-  expect(decodeEgressFrame(Uint8Array.from([1, 0, 0, 0, 1, 0, 0, 97]))).toEqual(Option.none())
-  // A host with a byte outside printable ASCII, and one with no host at all.
-  expect(decodeEgressFrame(Uint8Array.from([1, 0, 0, 0, 1, 0, 80, 97, 0xc3, 0xbc]))).toEqual(
-    Option.none(),
+/** The reference's three kinds keep their numbers; the half-close has one of its own. */
+it('writes data as kind 2, a close as kind 3 and an end as kind 4', () => {
+  expect([
+    encodeEgressFrame(EgressFrame.cases.Data.make({ stream, payload: Uint8Array.from([9]) })),
+    encodeEgressFrame(EgressFrame.cases.Close.make({ stream })),
+    encodeEgressFrame(EgressFrame.cases.End.make({ stream })),
+  ]).toEqual([
+    Uint8Array.from([2, 1, 2, 3, 4, 9]),
+    Uint8Array.from([3, 1, 2, 3, 4]),
+    Uint8Array.from([4, 1, 2, 3, 4]),
+  ])
+})
+
+const refused = (bytes: Uint8Array) => Result.flip(decodeEgressFrame(bytes))
+
+it('says why bytes are not a frame', () => {
+  expect(refused(Uint8Array.from([2, 0, 0]))).toEqual(
+    Result.succeed(EgressRefusal.cases.Short.make({})),
   )
-  expect(decodeEgressFrame(Uint8Array.from([1, 0, 0, 0, 1, 0, 80]))).toEqual(Option.none())
+  expect(refused(Uint8Array.from([9, 0, 0, 0, 1]))).toEqual(
+    Result.succeed(EgressRefusal.cases.Unknown.make({ kind: 9 })),
+  )
+  const unopenable = Result.succeed(
+    EgressRefusal.cases.Unopenable.make({ stream: EgressStream.make(1) }),
+  )
+  // An open with no port, one whose port is zero, one with no host, and one whose host has a
+  // byte outside printable ASCII.
+  expect(refused(Uint8Array.from([1, 0, 0, 0, 1, 0]))).toEqual(unopenable)
+  expect(refused(Uint8Array.from([1, 0, 0, 0, 1, 0, 0, 97]))).toEqual(unopenable)
+  expect(refused(Uint8Array.from([1, 0, 0, 0, 1, 0, 80]))).toEqual(unopenable)
+  expect(refused(Uint8Array.from([1, 0, 0, 0, 1, 0, 80, 97, 0xc3, 0xbc]))).toEqual(unopenable)
+})
+
+it('refuses an open far longer than any host without throwing', () => {
+  const bytes = new Uint8Array(200_000).fill(97)
+  bytes.set([1, 0, 0, 0, 1, 0, 80])
+  expect(refused(bytes)).toEqual(
+    Result.succeed(EgressRefusal.cases.Unopenable.make({ stream: EgressStream.make(1) })),
+  )
+  // The longest host there is, and one byte more.
+  const longest = bytes.subarray(0, 7 + 255)
+  expect(Result.isSuccess(decodeEgressFrame(longest))).toBe(true)
+  expect(refused(bytes.subarray(0, 7 + 256))).toEqual(
+    Result.succeed(EgressRefusal.cases.Unopenable.make({ stream: EgressStream.make(1) })),
+  )
+})
+
+it('refuses a message longer than a frame, whatever its kind', () => {
+  const data = new Uint8Array(EGRESS_FRAME_LIMIT + 1)
+  data[0] = 2
+  expect(refused(data)).toEqual(
+    Result.succeed(EgressRefusal.cases.Oversized.make({ size: EGRESS_FRAME_LIMIT + 1 })),
+  )
+  expect(Result.isSuccess(decodeEgressFrame(data.subarray(0, EGRESS_FRAME_LIMIT)))).toBe(true)
+})
+
+it('cuts more bytes than a frame holds into frames that are read back in order', () => {
+  const payload = Uint8Array.from({ length: EGRESS_PAYLOAD_LIMIT * 2 + 3 }, (_, at) => at % 251)
+  const frames = egressData(stream, payload)
+  expect(frames.map((frame) => frame.length)).toEqual([EGRESS_FRAME_LIMIT, EGRESS_FRAME_LIMIT, 8])
+  const read = frames.flatMap((frame) => {
+    const data = Result.getOrThrow(decodeEgressFrame(frame))
+    return EgressFrame.guards.Data(data) ? [...data.payload] : []
+  })
+  expect(read).toEqual([...payload])
+  expect(egressData(stream, new Uint8Array(0))).toEqual([])
 })

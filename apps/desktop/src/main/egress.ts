@@ -11,6 +11,7 @@ import type * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
+import * as Result from 'effect/Result'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
@@ -280,10 +281,10 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
   })
 
   const handle = (bytes: Uint8Array) =>
-    Option.match(decodeEgressFrame(bytes), {
+    Result.match(decodeEgressFrame(bytes), {
       // Not a frame of this protocol: dropped, and the tunnel stays (the reference's `handleFrame`).
-      onNone: () => Effect.void,
-      onSome: (frame) =>
+      onFailure: () => Effect.void,
+      onSuccess: (frame) =>
         EgressFrame.match(frame, {
           Open: ({ stream, host, port }) => {
             // A number already in use cannot be two connections: the second is refused.
@@ -302,6 +303,7 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
             else if (waiting !== undefined) waiting.pending.push(payload)
             return Effect.void
           },
+          End: () => Effect.void,
           Close: ({ stream }) => {
             const target = relaying.get(stream)
             const waiting = resolving.get(stream)
