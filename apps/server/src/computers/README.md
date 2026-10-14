@@ -122,9 +122,12 @@ server: SSH channel to 8790 <----+        (`ssh/link.ts` `tunnel`, `egress/relay
 desktop app: resolves the name, dials the site, carries the bytes (`apps/desktop/src/main/egress.ts`)
 ```
 
-The frames are Grok Bot's (`packages/contracts/src/egress.ts`), with one kind added: `End`, so
-that a stream's two directions end apart and a browser that has sent its whole request still
-gets the answer. Grok Bot's desktop app dials its machine's hosted port; a Computer here has no
+The frames are Grok Bot's (`packages/contracts/src/egress.ts`), with two kinds added. `End`: a
+stream's two directions end apart, so a browser that has sent its whole request still gets the
+answer, however long the site takes; nothing here times a quiet stream out, and a site that has
+vanished is found by TCP keep-alive on the socket the desktop app dialled. `Grant`: each
+direction of each stream has a window, so a slow site or a browser that is not reading slows
+that one connection. Grok Bot's desktop app dials its machine's hosted port; a Computer here has no
 port a home network can be sure of reaching, so the desktop app dials the server and the server
 joins it to the Computer over the SSH connection it already holds. Nothing on the Computer
 listens beyond loopback.
@@ -133,10 +136,22 @@ listens beyond loopback.
   egress is on and the Computer's record says running, then starts the proxy on the Computer
   (`egress/guest.ts`, any number of times, and at the same moment) and joins the two. It never
   wakes a Computer for this.
+- A Person has one way out at a time: the first desktop app of theirs whose socket this server
+  holds. A second app signed in as the same Person is kept and waits, joined to nothing, and
+  becomes the way out only when the first's socket goes. Nothing is sent to tell it so: its
+  socket stays open, which is all an app needs in order not to dial again. Which computer a
+  Person would rather use is not chosen anywhere yet (issue 61); this rule needs no setting.
 - One socket is one join. When a join ends for any reason (egress turned off, the Computer
   stopped, the channel closed, a frame that is not one), the server closes the app's socket. The
-  app ends every connection it had made and dials again two seconds later, with an empty table.
-  Nothing of an old join can then be read as part of a new one (`egress/relay.ts`).
+  app ends every connection it had made and dials again, with an empty table. Nothing of an old
+  join can then be read as part of a new one (`egress/relay.ts`).
+- The app dials again two seconds after a socket that had stayed open for thirty seconds. A
+  socket that never opens, or is closed sooner than that, makes the next wait twice as long, up
+  to thirty seconds, so a join that ends as soon as it is made does not run the start command
+  on the Computer every two seconds.
+- The app's socket is upgraded at a WebSocket boundary of its own (`egress/route.ts`) that
+  takes no message longer than a frame and closes with 1009 at the piece that crosses it. The
+  server's other sockets keep their own limit.
 - A browser's way out is decided when it starts: a step that has to start Chrome gives it the
   proxy only when egress is on (`boat/browser.ts`). A Chrome that was already running, or one the
   Person started from the launcher, goes out directly until it is started again.
@@ -146,11 +161,16 @@ listens beyond loopback.
 - The desktop app refuses a target inside its own networks (`apps/desktop/src/main/reserved.ts`)
   after resolving the name, and dials the address it checked. For IPv6 it dials only what a
   public host can have, which is stricter than the reference.
-- Every hop holds a bounded amount (the contract's "How much a hop may hold"): a frame is at
-  most one mebibyte, a stream may have 32 MiB waiting for a slow site or a browser that is not
-  reading, and a link 96 MiB in all. The stream that crosses a bound is closed and the others
-  go on. The cost is an upload larger than that to a site slower than the Computer's own
-  connection: it is cut. The protocol has no window for one stream, and none was added.
+- Every hop holds a bounded amount (the contract's "How much a hop may hold"). A frame is at
+  most one mebibyte. Each direction of a stream has a window of 256 KiB, yamux's: the sender
+  stops reading that stream's own socket when the window is used, and the receiver grants more,
+  half a window at a time, only as the stream's own socket takes what was written. So an upload
+  of any size to a slow site arrives whole at the site's pace, and the other streams go on. The
+  server holds nothing for any one stream and passes grants through. The older bounds remain
+  for a far end that ignores the window: a stream holding 32 MiB, or a link 96 MiB in all, is
+  closed.
+- A site that hangs up in the middle of a plain HTTP answer ends the browser's request: the
+  proxy drops the browser's connection, which is how a browser learns an answer is not whole.
 - The status (`WatchEgress`) is this server process's reading of the sockets it holds; with more
   than one server process, a Person whose desktop app is held by another reads "waiting" here.
 
