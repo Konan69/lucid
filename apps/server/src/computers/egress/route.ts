@@ -1,7 +1,7 @@
 import { NodeHttpServerRequest } from '@effect/platform-node'
 import { NodeWS } from '@effect/platform-node/NodeSocket'
 import type * as NodeStream from 'node:stream'
-import { Effect, Option } from 'effect'
+import { Deferred, Effect, Option } from 'effect'
 import type { PersonId } from '@vivid/contracts'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
@@ -98,7 +98,8 @@ const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
 
 /**
  * Asks an egress socket whether its app is still there, for as long as the scope holds it, and
- * ends it when the answer stops coming (the contract's `EGRESS_PING_MILLIS`).
+ * ends it when the answer stops coming (the contract's `EGRESS_PING_MILLIS`). Answers the
+ * moment the socket is over: it closed, or it was ended here.
  *
  * Without this a socket was held until TCP said it had closed, and a computer that sleeps says
  * nothing: its socket stayed the Person's way out, the browser's connections went to it and
@@ -107,34 +108,50 @@ const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
  * socket and not to what the relay is doing with it.
  *
  * Anything that arrives counts, a frame as much as the answer to a ping: an app that is busy
- * carrying a page is there. A check that finds the socket paused is not counted either way. It
- * is paused by this server, which has not yet passed on what the app sent (`relay.ts`,
- * `pumped`), and a socket that is not read can bring neither a frame nor an answer; holding the
- * app to a deadline then would end a healthy one for the Computer's slowness. The pause ends
- * when the Computer takes what waits or its channel goes, and the count goes on from there.
+ * carrying a page is there. One case is not the app's doing. While the Computer takes nothing
+ * of what the app sent, this server stops reading the app (`relay.ts`, `pumped`), and a socket
+ * that is not read brings neither a frame nor an answer. A Computer that is only slow is read
+ * again with each piece it takes, and each piece read is heard here. One that takes nothing
+ * for the whole deadline is a join that carries nothing, so its socket is ended like any
+ * other, and the app dials again and is joined afresh. No exception is made for it: an
+ * exception would keep a socket whose app had gone for as long as the Computer was stuck.
  *
  * `terminate` ends the connection without a close handshake, which a gone app would not answer.
- * The read of the socket then fails, and the hold ends as it does when an app closes its own.
+ *
+ * The end is told to whoever holds the socket (`held`), and not left for the relay to find when
+ * it next reads: a relay that is waiting for the Computer to take something is not reading, and
+ * would hold a socket that had ended, and the Person's way out with it, until the Computer
+ * moved.
  */
-const watched = (socket: NodeWS.WebSocket) => {
+const watched = Effect.fn('Egress.watched')(function* (socket: NodeWS.WebSocket) {
+  const over = yield* Deferred.make<void>()
   const quiet = { pings: 0 }
   const heard = () => {
     quiet.pings = 0
   }
+  const ended = () => {
+    Deferred.doneUnsafe(over, Effect.void)
+  }
   socket.on('pong', heard)
   socket.on('message', heard)
+  socket.once('close', ended)
   const check = Effect.sync(() => {
-    if (socket.readyState !== NodeWS.WebSocket.OPEN || socket.isPaused) return
+    if (socket.readyState !== NodeWS.WebSocket.OPEN) return
     quiet.pings += 1
-    if (quiet.pings >= QUIET_PINGS) return socket.terminate()
+    if (quiet.pings >= QUIET_PINGS) {
+      socket.terminate()
+      ended()
+      return
+    }
     socket.ping()
     // What a desktop app can see: its own deadline runs on this (`EGRESS_BEAT`).
-    return socket.send(EGRESS_BEAT)
+    socket.send(EGRESS_BEAT)
   })
-  return Effect.forkScoped(
+  yield* Effect.forkScoped(
     Effect.sleep(EGRESS_PING_MILLIS).pipe(Effect.andThen(check), Effect.forever),
   )
-}
+  return Deferred.await(over)
+})
 
 /**
  * A request's upgraded WebSocket as the relay holds it (`relay.ts`, `ExitSocket`), upgraded at
@@ -164,23 +181,25 @@ export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
     }),
     (opened) => closed(opened, wire),
   )
-  yield* watched(upgraded)
+  const gone = yield* watched(upgraded)
   const socket = yield* Socket.fromWebSocket(Effect.succeed(upgraded))
   const reader = yield* socket.reader
   const writer = yield* socket.writer
-  const held: ExitSocket = {
+  const app: ExitSocket = {
     pull: reader.pull,
     write: writer.write,
     buffered: () => wire.writableLength,
     drained: flushed(wire),
   }
-  return held
+  /** `gone` completes when the socket is over, whatever the relay is doing with it then. */
+  return { ...app, gone }
 })
 
 /**
- * Upgrades a request and holds its socket for a Person until the relay lets it go or `ended`
- * completes. The socket belongs to the scope: whichever way this ends, it is closed, and that
- * close is what tells the desktop app to end its streams and dial again.
+ * Upgrades a request and holds its socket for a Person until the relay lets it go, `ended`
+ * completes, or the socket is over (`watched`). The socket belongs to the scope: whichever way
+ * this ends, it is closed, and that close is what tells the desktop app to end its streams and
+ * dial again.
  */
 export const held = Effect.fn('Egress.held')(function* <E, R>(
   request: HttpServerRequest.HttpServerRequest,
@@ -188,7 +207,8 @@ export const held = Effect.fn('Egress.held')(function* <E, R>(
   ended: Effect.Effect<void, E, R>,
 ) {
   const relay = yield* Egress
-  yield* Effect.raceFirst(relay.carry(person, yield* exitSocket(request)), ended)
+  const app = yield* exitSocket(request)
+  yield* Effect.raceFirst(relay.carry(person, app), Effect.raceFirst(ended, app.gone))
 })
 
 /**

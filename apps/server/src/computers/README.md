@@ -153,6 +153,11 @@ listens beyond loopback.
   app of theirs becomes the way out. The app keeps the same rule toward the server and dials
   again. The numbers are the SSH connection's to the Computer, the tunnel's other leg, and are
   in the contract (`EGRESS_PING_MILLIS`).
+- A socket's end, by its own close or at that deadline, ends its hold at once, whatever the
+  relay is doing: a relay that is waiting for the Computer to take something is not reading the
+  app, and would otherwise keep a socket that had gone. A join whose Computer takes nothing
+  for the whole deadline is ended the same way, though its app is there: nothing can be heard
+  from an app that is not being read, and the app dials again into a new join.
 - The app dials again two seconds after a socket that had stayed open for thirty seconds. A
   socket that never opens, or is closed sooner than that, makes the next wait twice as long, up
   to thirty seconds, so a join that ends as soon as it is made does not run the start command

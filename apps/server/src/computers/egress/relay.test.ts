@@ -4,6 +4,7 @@ import { describe, expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
+import * as NodeStream from 'node:stream'
 import * as NodeURL from 'node:url'
 import {
   EGRESS_BEAT,
@@ -13,6 +14,7 @@ import {
   EGRESS_WINDOW,
   EgressFrame,
   EgressStatus,
+  EgressStream,
   PersonId,
   decodeEgressFrame,
   encodeEgressFrame,
@@ -30,6 +32,7 @@ import {
   Stream,
 } from 'effect'
 import * as NetAddress from 'effect/net/NetAddress'
+import type * as Scope from 'effect/Scope'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as TestClock from 'effect/testing/TestClock'
@@ -123,8 +126,14 @@ const tunnelled = (proxyPort: number, target: string, sent: string) =>
     return Effect.sync(() => socket.destroy())
   })
 
-/** A relay over a real proxy, with the Person's two facts in the test's hands. */
-const relaying = Effect.fn('EgressTest.relaying')(function* () {
+/** The channel to the Computer's tunnel port, as the relay asks the machine for it. */
+type Channel = Effect.Effect<NodeStream.Duplex, never, Scope.Scope>
+
+/**
+ * A relay over a real proxy, with the Person's two facts in the test's hands. `channel` stands
+ * in for the channel to the Computer where a test needs one that the real proxy never is.
+ */
+const relaying = Effect.fn('EgressTest.relaying')(function* (channel?: Channel) {
   const proxy = yield* computerProxy()
   const hub = yield* PubSub.unbounded<void>()
   const changes = Changes.of({
@@ -145,6 +154,7 @@ const relaying = Effect.fn('EgressTest.relaying')(function* () {
           return { stdout: '', stderr: '', exitCode: 0, timedOut: false, truncated: false }
         }),
       tunnel: () =>
+        channel ??
         Effect.acquireRelease(
           Effect.callback<NodeNet.Socket>((resume) => {
             const socket = NodeNet.connect(proxy.ports.tunnel, '127.0.0.1')
@@ -719,6 +729,7 @@ describe('a desktop app that has gone without a word', () => {
    */
   const routed = Effect.fn('EgressTest.routed')(function* (relay: EgressService) {
     const began = yield* Queue.unbounded<void>()
+    const ended = yield* Queue.unbounded<void>()
     const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
       host: '127.0.0.1',
       port: 0,
@@ -747,10 +758,16 @@ describe('a desktop app that has gone without a word', () => {
           }),
         ),
         Effect.catchTags({ SocketError: () => Effect.succeed(HttpServerResponse.empty()) }),
+        Effect.onExit(() => Queue.offer(ended, undefined)),
       ),
     )
     if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('No TCP address')
-    return { port: server.address.port, held: Queue.take(began) }
+    return {
+      port: server.address.port,
+      held: Queue.take(began),
+      /** A hold is over: its socket is closed, and its place in the Person's line is free. */
+      ended: Queue.take(ended),
+    }
   })
 
   /**
@@ -882,6 +899,99 @@ describe('a desktop app that has gone without a word', () => {
         expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
       }),
     20_000,
+  )
+
+  /**
+   * A channel to a Computer that takes one piece and no more: what is written to it is never
+   * said to have been taken, as when the Computer's side has stopped. `took` is that first
+   * piece arriving, after which the relay waits for the Computer and reads the app no further.
+   */
+  const stuckChannel = Effect.fn('EgressTest.stuckChannel')(function* () {
+    const took = yield* Deferred.make<void>()
+    const channel: Channel = Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new NodeStream.Duplex({
+            read: () => undefined,
+            write: () => {
+              Deferred.doneUnsafe(took, Effect.void)
+            },
+          }),
+      ),
+      (stream) => Effect.sync(() => stream.destroy()),
+    )
+    return { channel, took: Deferred.await(took) }
+  })
+
+  /** The longest frame, of a stream nobody has: something for the relay to pass on. */
+  const piece = encodeEgressFrame(
+    EgressFrame.cases.Data.make({
+      stream: EgressStream.make(1),
+      payload: new Uint8Array(EGRESS_FRAME_LIMIT - 5),
+    }),
+  )
+
+  it.effect(
+    'an app that closes its socket while the Computer takes nothing is let go at once',
+    () =>
+      Effect.gen(function* () {
+        const stuck = yield* stuckChannel()
+        const { relay, turn, hub } = yield* relaying(stuck.channel)
+        const server = yield* routed(relay)
+        const awake = yield* desktopApp(server.port, true)
+        yield* server.held
+        yield* turn({ chosen: true })
+        awake.socket.send(piece)
+        yield* stuck.took
+        // The relay is waiting for the Computer, and is not reading the app. The app goes.
+        const told = yield* PubSub.subscribe(hub)
+        awake.socket.terminate()
+        yield* server.ended
+        // Its place is free: the next app of the Person's is joined. Read at each change the
+        // Person's watchers are told of, until the join is made.
+        yield* desktopApp(server.port, true)
+        let said = yield* relay.status(person)
+        while (!EgressStatus.guards.Routing(said)) {
+          yield* PubSub.take(told)
+          said = yield* relay.status(person)
+        }
+        expect(said).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+      }),
+    20_000,
+  )
+
+  it.effect(
+    'a join whose Computer takes nothing for the deadline is ended, though its app is there',
+    () =>
+      Effect.gen(function* () {
+        const stuck = yield* stuckChannel()
+        const { relay, turn } = yield* relaying(stuck.channel)
+        const server = yield* routed(relay)
+        const awake = yield* desktopApp(server.port, true)
+        yield* server.held
+        yield* turn({ chosen: true })
+        // More than the server will hold for a Computer that takes nothing: it stops reading
+        // the app, so the app's answers to its pings are not read either.
+        for (let at = 0; at < 4; at += 1) awake.socket.send(piece)
+        yield* stuck.took
+        // Each ping either reaches the app or finds the socket ended. What the app had sent
+        // before the server stopped reading is heard first, so the count may start late.
+        const ended = Effect.fn('EgressTest.ended')(function* () {
+          for (let ping = 0; ping < 4 * deadline; ping += 1) {
+            yield* TestClock.adjust(EGRESS_PING_MILLIS)
+            const next = yield* Effect.raceFirst(
+              awake.pinged.pipe(Effect.as('Pinged' as const)),
+              awake.closed.pipe(Effect.as('Closed' as const)),
+            )
+            if (next === 'Closed') return ping
+          }
+          return yield* Effect.die('The socket was kept')
+        })
+        // Never before the deadline, counted from the first ping.
+        expect(yield* ended()).toBeGreaterThanOrEqual(deadline - 1)
+        yield* server.ended
+      }),
+    30_000,
   )
 
   it.effect(
