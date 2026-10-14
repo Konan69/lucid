@@ -78,7 +78,13 @@ export function Reply({
         stretch.kind === 'words' ? (
           <Finished key={stretch.from} text={stretch.text} />
         ) : (
-          <Display key={stretch.from} text={stretch.text} arriving={!stretch.whole} live={live} onSay={onSay} />
+          <Display
+            key={stretch.from}
+            text={stretch.text}
+            arriving={!stretch.whole}
+            live={live}
+            onSay={onSay}
+          />
         ),
       )}
     </>

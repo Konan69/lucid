@@ -254,11 +254,6 @@ describe('what Vivid did', () => {
     expect(stepsSummary(steps, false)).toBe('Searching the Library and 1 more step')
   })
 
-  it('keeps show calls out of steps even when their input cannot be drawn', () => {
-    expect(stepsOf([tool('show', {}), running])).toEqual(stepsOf([running]))
-    expect(stepsOf([tool('show', {})])).toEqual([])
-  })
-
   it('offers Watch only for the current computer step while the reply is working', () => {
     const computer = ['bash', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
       type: 'dynamic-tool',

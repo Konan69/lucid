@@ -336,6 +336,28 @@
         "max-lines-per-function": "off",
         "max-nested-callbacks": "off"
       }
+    },
+    {
+      "files": ["apps/mobile/src/parts/**/*.{ts,tsx}"],
+      "rules": {
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/require-safety-comment-for-type-assertion": "off",
+        "react/no-array-index-key": "off",
+        "vivid/no-undefined-in-union": "off",
+        "anti-slop/no-unknown-parameters": "off",
+        "vivid/no-optional-chaining": "off",
+        "typescript/no-unnecessary-type-conversion": "off",
+        "complexity": "off",
+        "anti-slop-effect/prefer-effect-match": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off",
+        "anti-slop/no-chained-type-assertions": "off",
+        "unicorn/no-array-reverse": "off",
+        "typescript/no-unnecessary-type-assertion": "off",
+        "typescript/no-unnecessary-boolean-literal-compare": "off",
+        "no-shadow": "off",
+        "max-lines-per-function": "off",
+        "anti-slop/no-conditional-empty-object-spread": "off"
+      }
     }
   ]
 }

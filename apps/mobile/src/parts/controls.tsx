@@ -10,7 +10,17 @@ import {
 import { createElement, useState, type ReactNode } from 'react'
 import { StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native'
 import { z } from 'zod/v4'
-import { children, color, mix, option, radiusSchema, toOption, useInk, useSkin, type Option } from './style'
+import {
+  children,
+  color,
+  mix,
+  option,
+  radiusSchema,
+  toOption,
+  useInk,
+  useSkin,
+  type Option,
+} from './style'
 import { glyphOf } from './glyph'
 import { Press } from '../ui/motion/Pressable'
 import { Segmented } from '../ui/ui'
@@ -46,7 +56,8 @@ function useRunAction() {
  * drawn control. (The web's last resort — a generated id — has no phone reading, because a field
  * written outside any statement always carries one of the two.)
  */
-const useFieldName = (label: unknown, statementId?: string) => (typeof label === 'string' && label) || statementId || 'field'
+const useFieldName = (label: unknown, statementId?: string) =>
+  (typeof label === 'string' && label) || statementId || 'field'
 
 /** A lucide icon, tinted for where it stands. An unknown name draws nothing, as the web's does. */
 function Glyph({ name, size, tint }: { name: string; size: number; tint: string }) {
@@ -56,7 +67,11 @@ function Glyph({ name, size, tint }: { name: string; size: number; tint: string 
 }
 
 /** How one kind of button is painted in the skin in force. */
-function buttonPaint(skin: ReturnType<typeof useSkin>, variant: 'solid' | 'outline' | 'soft' | 'ghost', kind: 'primary' | 'danger' | 'success') {
+function buttonPaint(
+  skin: ReturnType<typeof useSkin>,
+  variant: 'solid' | 'outline' | 'soft' | 'ghost',
+  kind: 'primary' | 'danger' | 'success',
+) {
   const status = kind === 'primary' ? skin.accent : kind === 'danger' ? skin.danger : skin.success
   return {
     solid: { fill: status, on: skin.onAccent, line: false },
@@ -86,7 +101,11 @@ export const Button = defineComponent({
     const label = props.label ?? ''
     const disabled = !!props.disabled || streaming
     // The app's own button shape, at the finger's height even at the `sm` size the web writes.
-    const paint = buttonPaint(skin, props.variant ?? 'solid', props.color == null || props.color === 'primary' ? 'primary' : props.color)
+    const paint = buttonPaint(
+      skin,
+      props.variant ?? 'solid',
+      props.color == null || props.color === 'primary' ? 'primary' : props.color,
+    )
     const minHeight = props.size === 'sm' ? 38 : props.size === 'lg' ? 50 : 44
     return (
       <Press
@@ -112,7 +131,9 @@ export const Button = defineComponent({
           opacity: disabled ? 0.55 : pressed && paint.fill == null ? 0.65 : 1,
         })}
       >
-        {props.icon ? <Glyph name={props.icon} size={props.size === 'sm' ? 14 : 16} tint={paint.on} /> : null}
+        {props.icon ? (
+          <Glyph name={props.icon} size={props.size === 'sm' ? 14 : 16} tint={paint.on} />
+        ) : null}
         <Text style={[styles.buttonText, { color: paint.on }]}>{label}</Text>
       </Press>
     )
@@ -150,7 +171,10 @@ export const Pressable = defineComponent({
           if (!disabled) run('', props.action, false)
         }}
         accessibilityRole="button"
-        accessibilityState={{ disabled, selected: props.selected == null ? undefined : props.selected !== null }}
+        accessibilityState={{
+          disabled,
+          selected: props.selected == null ? undefined : props.selected !== null,
+        }}
         style={({ pressed }) => ({
           padding: props.padding == null ? undefined : Math.max(0, props.padding) * 4,
           backgroundColor: filled,
@@ -160,7 +184,9 @@ export const Pressable = defineComponent({
           opacity: pressed && filled == null ? 0.7 : 1,
         })}
       >
-        {props.selected ? <View style={[styles.selectedRing, { borderColor: skin.accent }]} pointerEvents="none" /> : null}
+        {props.selected ? (
+          <View style={[styles.selectedRing, { borderColor: skin.accent }]} pointerEvents="none" />
+        ) : null}
         <View>{renderNode(props.children)}</View>
       </Press>
     )
@@ -208,7 +234,14 @@ export const Input = defineComponent({
     const numeric = props.type === 'number'
     // A number field shows what is typed ("1." or "-") until it parses, as the web's does.
     const [draft, setDraft] = useState<string | null>(null)
-    const stringOf = (value: unknown) => (typeof value === 'string' ? value : value == null ? '' : typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')
+    const stringOf = (value: unknown) =>
+      typeof value === 'string'
+        ? value
+        : value == null
+          ? ''
+          : typeof value === 'number' && Number.isFinite(value)
+            ? value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+            : ''
     return (
       <Field label={props.label}>
         <TextInput
@@ -253,7 +286,10 @@ export const TextArea = defineComponent({
     return (
       <Field label={props.label}>
         <TextInput
-          style={[useFieldStyle(), textareaHeight(Math.min(20, Math.max(2, Math.round(props.rows ?? 3))))]}
+          style={[
+            useFieldStyle(),
+            textareaHeight(Math.min(20, Math.max(2, Math.round(props.rows ?? 3)))),
+          ]}
           multiline
           textAlignVertical="top"
           value={field.value == null ? '' : String(field.value)}
@@ -268,7 +304,8 @@ export const TextArea = defineComponent({
 })
 
 const options = z.array(option)
-const optionList = (value: unknown) => (Array.isArray(value) ? (value.flat() as Option[]).filter((o) => o != null).map(toOption) : [])
+const optionList = (value: unknown) =>
+  Array.isArray(value) ? (value.flat() as Option[]).filter((o) => o != null).map(toOption) : []
 
 export const Select = defineComponent({
   name: 'Select',
@@ -297,14 +334,27 @@ export const Select = defineComponent({
             accessibilityState={{ expanded: open }}
             style={({ pressed }) => [
               useFieldStyle(),
-              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, opacity: pressed ? 0.7 : 1 },
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                opacity: pressed ? 0.7 : 1,
+              },
             ]}
           >
-            <Text style={{ color: drawn ? skin.ink : skin.faint }}>{drawn ? drawn.label : (props.placeholder ?? 'Choose…')}</Text>
+            <Text style={{ color: drawn ? skin.ink : skin.faint }}>
+              {drawn ? drawn.label : (props.placeholder ?? 'Choose…')}
+            </Text>
             <Text style={{ color: skin.faint }}>{open ? '▲' : '▼'}</Text>
           </Press>
           {open && (
-            <View style={[styles.choiceSheet, { borderColor: skin.border, backgroundColor: skin.sheet }]}>
+            <View
+              style={[
+                styles.choiceSheet,
+                { borderColor: skin.border, backgroundColor: skin.sheet },
+              ]}
+            >
               {choices.map((o, i) => (
                 <Press
                   key={`${o.value}-${i}`}
@@ -314,9 +364,16 @@ export const Select = defineComponent({
                     field.setValue(o.value)
                   }}
                   accessibilityRole="menuitem"
-                  style={({ pressed }) => ({ minHeight: 40, justifyContent: 'center', paddingHorizontal: 12, opacity: pressed ? 0.6 : 1 })}
+                  style={({ pressed }) => ({
+                    minHeight: 40,
+                    justifyContent: 'center',
+                    paddingHorizontal: 12,
+                    opacity: pressed ? 0.6 : 1,
+                  })}
                 >
-                  <Text style={{ color: o.value === value ? skin.accent : skin.ink }}>{o.label}</Text>
+                  <Text style={{ color: o.value === value ? skin.accent : skin.ink }}>
+                    {o.label}
+                  </Text>
                 </Press>
               ))}
             </View>
@@ -350,7 +407,11 @@ export const SegmentedControl = defineComponent({
 
 export const Checkbox = defineComponent({
   name: 'Checkbox',
-  props: z.object({ checked: reactive(z.boolean()), label: z.string(), lineThrough: z.boolean().optional() }),
+  props: z.object({
+    checked: reactive(z.boolean()),
+    label: z.string(),
+    lineThrough: z.boolean().optional(),
+  }),
   description: 'lineThrough strikes the label when checked, for to-do lists.',
   component: ({ props, statementId }) => {
     const skin = useSkin()
@@ -363,9 +424,23 @@ export const Checkbox = defineComponent({
         accessibilityRole="checkbox"
         accessibilityLabel={props.label ?? ''}
         accessibilityState={{ checked }}
-        style={({ pressed }) => ({ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, opacity: pressed ? 0.65 : 1 })}
+        style={({ pressed }) => ({
+          minHeight: 44,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          opacity: pressed ? 0.65 : 1,
+        })}
       >
-        <View style={[styles.tick, { borderColor: checked ? skin.accent : skin.border, backgroundColor: checked ? skin.accent : 'transparent' }]}>
+        <View
+          style={[
+            styles.tick,
+            {
+              borderColor: checked ? skin.accent : skin.border,
+              backgroundColor: checked ? skin.accent : 'transparent',
+            },
+          ]}
+        >
           {checked ? <Glyph name="check" size={13} tint={skin.onAccent} /> : null}
         </View>
         <Text
@@ -383,10 +458,17 @@ export const Checkbox = defineComponent({
   },
 })
 
-const choice = z.union([z.string(), z.object({ value: z.string(), label: z.string(), description: z.string().optional() })])
+const choice = z.union([
+  z.string(),
+  z.object({ value: z.string(), label: z.string(), description: z.string().optional() }),
+])
 type Choice = { value: string; label: string; description?: string }
 const choiceList = (value: unknown): Choice[] =>
-  Array.isArray(value) ? (value.flat() as (string | Choice)[]).filter((o) => o != null).map((o) => (typeof o === 'string' ? { value: o, label: o } : o)) : []
+  Array.isArray(value)
+    ? (value.flat() as (string | Choice)[])
+        .filter((o) => o != null)
+        .map((o) => (typeof o === 'string' ? { value: o, label: o } : o))
+    : []
 
 export const RadioGroup = defineComponent({
   name: 'RadioGroup',
@@ -407,7 +489,9 @@ export const RadioGroup = defineComponent({
     if (variant === 'pills') {
       return (
         <View style={styles.labeled}>
-          {props.label ? <Text style={[styles.fieldLabel, { color: skin.muted }]}>{props.label}</Text> : null}
+          {props.label ? (
+            <Text style={[styles.fieldLabel, { color: skin.muted }]}>{props.label}</Text>
+          ) : null}
           <View style={styles.pills}>
             {choiceList(props.options).map((o, i) => (
               <Press
@@ -423,7 +507,8 @@ export const RadioGroup = defineComponent({
                   borderRadius: 999,
                   borderWidth: 1,
                   borderColor: o.value === value ? skin.accent : skin.border,
-                  backgroundColor: o.value === value ? mix(skin.accent, skin.sheet, 0.1) : 'transparent',
+                  backgroundColor:
+                    o.value === value ? mix(skin.accent, skin.sheet, 0.1) : 'transparent',
                   opacity: pressed && o.value !== value ? 0.65 : 1,
                 })}
               >
@@ -438,7 +523,9 @@ export const RadioGroup = defineComponent({
     // label, drawn as sheets so a card choice is picked up as one.
     return (
       <View style={styles.labeled}>
-        {props.label ? <Text style={[styles.fieldLabel, { color: skin.muted }]}>{props.label}</Text> : null}
+        {props.label ? (
+          <Text style={[styles.fieldLabel, { color: skin.muted }]}>{props.label}</Text>
+        ) : null}
         <View style={{ gap: 8 }}>
           {choiceList(props.options).map((o, i) => {
             const selected = o.value === value
@@ -460,16 +547,25 @@ export const RadioGroup = defineComponent({
                   paddingVertical: variant === 'cards' ? 10 : 0,
                   paddingHorizontal: variant === 'cards' ? 12 : 4,
                   borderColor: selected ? skin.accent : skin.border,
-                  backgroundColor: selected && variant === 'cards' ? mix(skin.accent, skin.sheet, 0.06) : 'transparent',
+                  backgroundColor:
+                    selected && variant === 'cards'
+                      ? mix(skin.accent, skin.sheet, 0.06)
+                      : 'transparent',
                   opacity: pressed && !selected ? 0.65 : 1,
                 })}
               >
                 <View style={[styles.radio, { borderColor: selected ? skin.accent : ringInk }]}>
-                  {selected && <View style={[styles.radioFill, { backgroundColor: skin.accent }]} />}
+                  {selected && (
+                    <View style={[styles.radioFill, { backgroundColor: skin.accent }]} />
+                  )}
                 </View>
                 <View style={{ flexShrink: 1 }}>
                   <Text style={{ color: skin.ink }}>{o.label}</Text>
-                  {o.description ? <Text style={{ color: skin.muted, fontSize: 14, lineHeight: 19 }}>{o.description}</Text> : null}
+                  {o.description ? (
+                    <Text style={{ color: skin.muted, fontSize: 14, lineHeight: 19 }}>
+                      {o.description}
+                    </Text>
+                  ) : null}
                 </View>
               </Press>
             )

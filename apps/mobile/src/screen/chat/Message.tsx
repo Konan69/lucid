@@ -273,6 +273,11 @@ function Stamp({ moment }: { moment: number }) {
   )
 }
 
+/** What Vivid said, once it has said anything: its words and the displays among them. */
+function Spoken(props: { text: string; streaming: boolean; live: boolean; onSay: Say }) {
+  return props.text.length === 0 ? null : <Reply {...props} />
+}
+
 /** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
   message,
@@ -311,9 +316,12 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && (
-          <Reply text={text} streaming={isStreaming(message)} live={latest && !working} onSay={onContinue} />
-        )}
+        <Spoken
+          text={text}
+          streaming={isStreaming(message)}
+          live={latest && !working}
+          onSay={onContinue}
+        />
         <Cards
           tools={tools}
           detail={detail}

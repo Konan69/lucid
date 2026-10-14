@@ -22,7 +22,8 @@ import { useTheme, type Colors } from '../theme'
 // A model-written style value could otherwise name a resource. CSS has no meaning on the phone,
 // so nothing model-written is ever read as CSS here; only plain colours pass through, checked the
 // same way the web checks them before it lets them into a style.
-const UNSAFE_CSS = /(url|image|image-set|cross-fade|element|expression|paint|var|attr|env)\s*\(|@import|[\\;{}<>]/i
+const UNSAFE_CSS =
+  /(url|image|image-set|cross-fade|element|expression|paint|var|attr|env)\s*\(|@import|[\\;{}<>]/i
 const isSafeColor = (value: string) => !UNSAFE_CSS.test(value)
 
 /** An absolute http(s) URL, or null. Relative URLs would resolve against the app. */
@@ -67,14 +68,12 @@ const STATUS = ['info', 'success', 'warning', 'danger', 'purple', 'pink'] as con
  * (`apps/web/src/parts/skin.css`, `--iui-chart-1` through `--iui-chart-6`), mixed over the sheet
  * the display sits on. The same proportions, mixed in sRGB.
  */
-export function chartColors(accent: string, sheet: string, faint: string, ink: string): [
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-] {
+export function chartColors(
+  accent: string,
+  sheet: string,
+  faint: string,
+  ink: string,
+): [string, string, string, string, string, string] {
   return [
     accent,
     mix(accent, sheet, 0.62),
@@ -211,7 +210,9 @@ export function skin(colors: Colors, accent: string): Skin {
     'surface-strong': mix(accent, sheet, 0.12),
     border: colors['line-3'],
     ...Object.fromEntries(STATUS.map((s) => [s, colors[`status-${s}` as keyof Colors] ?? accent])),
-    ...Object.fromEntries(STATUS.map((s) => [`${s}-soft`, colors[`status-${s}-soft` as keyof Colors] ?? sheet])),
+    ...Object.fromEntries(
+      STATUS.map((s) => [`${s}-soft`, colors[`status-${s}-soft` as keyof Colors] ?? sheet]),
+    ),
     ...Object.fromEntries(family.map((c, i) => [`chart${i + 1}`, c])),
   } satisfies Record<string, string>
   return {
@@ -231,8 +232,14 @@ export function skin(colors: Colors, accent: string): Skin {
     successSoft: colors['status-success-soft'],
     danger: colors['status-danger'],
     dangerSoft: colors['status-danger-soft'],
-    fg: (value) => (typeof value === 'string' && value.trim() && isSafeColor(value) ? (token[value.trim() as keyof typeof token] ?? value.trim()) : undefined),
-    bg: (value) => (typeof value === 'string' && value.trim() && isSafeColor(value) ? (token[value.trim() as keyof typeof token] ?? value.trim()) : undefined),
+    fg: (value) =>
+      typeof value === 'string' && value.trim() && isSafeColor(value)
+        ? (token[value.trim() as keyof typeof token] ?? value.trim())
+        : undefined,
+    bg: (value) =>
+      typeof value === 'string' && value.trim() && isSafeColor(value)
+        ? (token[value.trim() as keyof typeof token] ?? value.trim())
+        : undefined,
     radius: (value) => {
       if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value)
       // The web's skin rounds a display's own sheet at 14; the parts' named sizes map to the

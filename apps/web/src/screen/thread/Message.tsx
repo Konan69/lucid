@@ -387,7 +387,6 @@ function Signal({
   })
 }
 
-
 /**
  * What Vivid said: its words, with each display it wrote drawn where it stands in them. A display
  * is drawn from the first of its lines to arrive, so it fills in as the reply does. Each stretch is

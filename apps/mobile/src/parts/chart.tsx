@@ -1,7 +1,17 @@
 import { defineComponent } from '@openuidev/react-lang'
 import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
-import Svg, { Circle, Defs, G, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg'
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  Line,
+  LinearGradient,
+  Path,
+  Rect,
+  Stop,
+  Text as SvgText,
+} from 'react-native-svg'
 import { z } from 'zod/v4'
 import { useSkin } from './style'
 
@@ -29,11 +39,18 @@ type Spec = {
   highlight: string | null
 }
 
-const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : Number(value) || 0)
-const label = (row: Row, x: string) => (typeof row[x] === 'string' ? row[x] : typeof row[x] === 'number' && Number.isFinite(row[x]) ? String(row[x]) : '')
+const num = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : Number(value) || 0
+const label = (row: Row, x: string) =>
+  typeof row[x] === 'string'
+    ? row[x]
+    : typeof row[x] === 'number' && Number.isFinite(row[x])
+      ? String(row[x])
+      : ''
 
 function makeFormat(kind: string | undefined, currency: string | undefined): Format {
-  const code = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? currency.toUpperCase() : 'USD'
+  const code =
+    typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? currency.toUpperCase() : 'USD'
   // Axis ticks are compact ("$2B"); a pressed column keeps two decimals ("$1.24B").
   return (value, compact) => {
     if (kind === 'percent') return `${Number(value.toFixed(compact ? 1 : 2))}%`
@@ -43,7 +60,10 @@ function makeFormat(kind: string | undefined, currency: string | undefined): For
       maximumFractionDigits: compact && big ? 1 : 2,
       ...(big ? { notation: 'compact' } : {}),
     }
-    return value.toLocaleString('en-US', kind === 'currency' ? { ...options, style: 'currency', currency: code } : options)
+    return value.toLocaleString(
+      'en-US',
+      kind === 'currency' ? { ...options, style: 'currency', currency: code } : options,
+    )
   }
 }
 
@@ -103,11 +123,15 @@ function Cartesian({
     let total = 0
     return series.map((s) => (total += Math.max(0, num(row[s]))))
   })
-  const values = stacked ? tops.map((t) => t[t.length - 1] ?? 0) : rows.flatMap((row) => series.map((s) => num(row[s])))
+  const values = stacked
+    ? tops.map((t) => t[t.length - 1] ?? 0)
+    : rows.flatMap((row) => series.map((s) => num(row[s])))
   const step = niceStep((Math.max(0, ...values) - Math.min(0, ...values)) / 5)
   const lo = Math.floor(Math.min(0, ...values) / step) * step
   // With one bar in focus there is no scale to read, so the tallest bar fills the plot.
-  const hi = focus ? Math.max(lo + 1, ...values) : Math.max(lo + step, Math.ceil(Math.max(0, ...values) / step) * step)
+  const hi = focus
+    ? Math.max(lo + 1, ...values)
+    : Math.max(lo + step, Math.ceil(Math.max(0, ...values) / step) * step)
   const ticks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, k) => lo + k * step)
   const { top, left, w, h, band } = frame
   const xAt = (i: number) => left + band * i + band / 2
@@ -123,16 +147,38 @@ function Cartesian({
         <Defs>
           {series.map((s, si) => (
             <LinearGradient key={s} id={`${gradient}-${si}`} x1="0" x2="0" y1="0" y2="1">
-              <Stop offset="0" stopColor={colors[si % colors.length]} stopOpacity={stacked ? 0.5 : 0.24} />
-              <Stop offset="1" stopColor={colors[si % colors.length]} stopOpacity={stacked ? 0.3 : 0.02} />
+              <Stop
+                offset="0"
+                stopColor={colors[si % colors.length]}
+                stopOpacity={stacked ? 0.5 : 0.24}
+              />
+              <Stop
+                offset="1"
+                stopColor={colors[si % colors.length]}
+                stopOpacity={stacked ? 0.3 : 0.02}
+              />
             </LinearGradient>
           ))}
         </Defs>
         {!focus &&
           ticks.map((t) => (
             <G key={t}>
-              <Line x1={left} x2={left + w} y1={y(t)} y2={y(t)} stroke={colors[5]} strokeWidth={1} strokeDasharray={t === 0 ? undefined : '3 4'} />
-              <SvgText x={left - 8} y={y(t) + 4} textAnchor="end" fill={focused ? colors[1] : colors[4]} fontSize={10}>
+              <Line
+                x1={left}
+                x2={left + w}
+                y1={y(t)}
+                y2={y(t)}
+                stroke={colors[5]}
+                strokeWidth={1}
+                strokeDasharray={t === 0 ? undefined : '3 4'}
+              />
+              <SvgText
+                x={left - 8}
+                y={y(t) + 4}
+                textAnchor="end"
+                fill={focused ? colors[1] : colors[4]}
+                fontSize={10}
+              >
                 {format(t, true)}
               </SvgText>
             </G>
@@ -153,19 +199,42 @@ function Cartesian({
           ) : null,
         )}
         {at !== null && spec.type === 'bar' && !focus && (
-          <Rect x={left + band * at} y={top} width={band} height={h} fill={colors[5]} fillOpacity={0.18} />
+          <Rect
+            x={left + band * at}
+            y={top}
+            width={band}
+            height={h}
+            fill={colors[5]}
+            fillOpacity={0.18}
+          />
         )}
         {spec.type === 'bar' &&
           rows.map((row, i) => {
-            const inner = focus ? Math.min(band - 6, Math.max(44, band * 0.5)) : Math.min(band * 0.7, 72 * Math.max(1, stacked ? 1 : series.length))
+            const inner = focus
+              ? Math.min(band - 6, Math.max(44, band * 0.5))
+              : Math.min(band * 0.7, 72 * Math.max(1, stacked ? 1 : series.length))
             if (focus) {
               const v = num(row[series[0]])
               const on = label(row, x) === spec.highlight
               return (
                 <G key={i}>
-                  <Rect x={xAt(i) - inner / 2} y={y(v)} width={inner} height={Math.max(2, y(0) - y(v))} rx={7} fill={on ? colors[0] : colors[5]} />
+                  <Rect
+                    x={xAt(i) - inner / 2}
+                    y={y(v)}
+                    width={inner}
+                    height={Math.max(2, y(0) - y(v))}
+                    rx={7}
+                    fill={on ? colors[0] : colors[5]}
+                  />
                   {on && (
-                    <SvgText x={xAt(i)} y={y(v) - 8} textAnchor="middle" fill={colors[0]} fontSize={11} fontWeight="600">
+                    <SvgText
+                      x={xAt(i)}
+                      y={y(v) - 8}
+                      textAnchor="middle"
+                      fill={colors[0]}
+                      fontSize={11}
+                      fontWeight="600"
+                    >
                       {format(v, true)}
                     </SvgText>
                   )}
@@ -176,7 +245,17 @@ function Cartesian({
               return series.map((s, si) => {
                 const topAt = y(tops[i][si] ?? 0)
                 const base = y(tops[i][si - 1] ?? 0)
-                return <Rect key={`${i}-${s}`} x={xAt(i) - inner / 2} y={topAt} width={inner} height={Math.max(0, base - topAt)} fill={colors[si % colors.length]} rx={si === series.length - 1 ? 4 : 0} />
+                return (
+                  <Rect
+                    key={`${i}-${s}`}
+                    x={xAt(i) - inner / 2}
+                    y={topAt}
+                    width={inner}
+                    height={Math.max(0, base - topAt)}
+                    fill={colors[si % colors.length]}
+                    rx={si === series.length - 1 ? 4 : 0}
+                  />
+                )
               })
             const each = inner / series.length
             return series.map((s, si) => {
@@ -199,20 +278,52 @@ function Cartesian({
             const peak = (i: number) => (stacked ? tops[i][si] : num(rows[i][s]))
             const base = (i: number) => (stacked ? (tops[i][si - 1] ?? 0) : 0)
             const points = rows.map((_, i) => `${xAt(i).toFixed(1)},${y(peak(i)).toFixed(1)}`)
-            const under = rows.map((_, i) => `${xAt(i).toFixed(1)},${y(base(i)).toFixed(1)}`).reverse()
+            const under = rows
+              .map((_, i) => `${xAt(i).toFixed(1)},${y(base(i)).toFixed(1)}`)
+              .reverse()
             return (
               <G key={s}>
-                {spec.type === 'area' && rows.length > 1 && <Path d={`M${points.join('L')}L${under.join('L')}Z`} fill={`url(#${gradient}-${si})`} />}
-                <Path d={`M${points.join('L')}`} fill="none" stroke={colors[si % colors.length]} strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
+                {spec.type === 'area' && rows.length > 1 && (
+                  <Path
+                    d={`M${points.join('L')}L${under.join('L')}Z`}
+                    fill={`url(#${gradient}-${si})`}
+                  />
+                )}
+                <Path
+                  d={`M${points.join('L')}`}
+                  fill="none"
+                  stroke={colors[si % colors.length]}
+                  strokeWidth={2.2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
                 {rows.map((_, i) =>
                   rows.length <= 16 || i === at ? (
-                    <Circle key={i} cx={xAt(i)} cy={y(peak(i))} r={i === at ? 4.5 : 3} fill={colors[si % colors.length]} stroke={colors[5]} strokeWidth={1.5} />
+                    <Circle
+                      key={i}
+                      cx={xAt(i)}
+                      cy={y(peak(i))}
+                      r={i === at ? 4.5 : 3}
+                      fill={colors[si % colors.length]}
+                      stroke={colors[5]}
+                      strokeWidth={1.5}
+                    />
                   ) : null,
                 )}
               </G>
             )
           })}
-        {at !== null && spec.type !== 'bar' && <Line x1={xAt(Math.max(0, at))} x2={xAt(Math.max(0, at))} y1={top} y2={top + h} stroke={colors[4]} strokeWidth={1} strokeDasharray="3 4" />}
+        {at !== null && spec.type !== 'bar' && (
+          <Line
+            x1={xAt(Math.max(0, at))}
+            x2={xAt(Math.max(0, at))}
+            y1={top}
+            y2={top + h}
+            stroke={colors[4]}
+            strokeWidth={1}
+            strokeDasharray="3 4"
+          />
+        )}
       </Svg>
       {guide && at !== null && (
         <View
@@ -247,15 +358,37 @@ function axisOf(values: number[], zero: boolean) {
   const step = niceStep((max - min || Math.abs(max) || 1) / 5)
   const lo = Math.floor(min / step) * step
   const hi = Math.max(lo + step, Math.ceil(max / step) * step)
-  return { lo, hi, ticks: Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, k) => lo + k * step) }
+  return {
+    lo,
+    hi,
+    ticks: Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, k) => lo + k * step),
+  }
 }
 
 /** Points with a numeric x; each series is a colour. The first text key names a point's column. */
-function Scatter({ spec, frame, colors, at }: { spec: Spec; frame: Frame; colors: [string, string, string, string, string, string]; at: number | null }) {
+function Scatter({
+  spec,
+  frame,
+  colors,
+  at,
+}: {
+  spec: Spec
+  frame: Frame
+  colors: [string, string, string, string, string, string]
+  at: number | null
+}) {
   const { rows, series, format, x } = spec
-  const name = rows[0] ? Object.keys(rows[0]).find((k) => k !== x && typeof rows[0][k] === 'string') : undefined
-  const ya = axisOf(rows.flatMap((r) => series.map((s) => num(r[s]))), false)
-  const xa = axisOf(rows.map((r) => num(r[x])), false)
+  const name = rows[0]
+    ? Object.keys(rows[0]).find((k) => k !== x && typeof rows[0][k] === 'string')
+    : undefined
+  const ya = axisOf(
+    rows.flatMap((r) => series.map((s) => num(r[s]))),
+    false,
+  )
+  const xa = axisOf(
+    rows.map((r) => num(r[x])),
+    false,
+  )
   const { top, left, w, h } = frame
   const px = (v: number) => left + ((v - xa.lo) / (xa.hi - xa.lo)) * w
   const py = (v: number) => top + h - ((v - ya.lo) / (ya.hi - ya.lo)) * h
@@ -267,7 +400,15 @@ function Scatter({ spec, frame, colors, at }: { spec: Spec; frame: Frame; colors
       <Svg width={frame.width} height={frame.height}>
         {ya.ticks.map((t) => (
           <G key={`y${t}`}>
-            <Line x1={left} x2={left + w} y1={py(t)} y2={py(t)} stroke={colors[5]} strokeWidth={1} strokeDasharray="3 4" />
+            <Line
+              x1={left}
+              x2={left + w}
+              y1={py(t)}
+              y2={py(t)}
+              stroke={colors[5]}
+              strokeWidth={1}
+              strokeDasharray="3 4"
+            />
             <SvgText x={left - 8} y={py(t) + 4} textAnchor="end" fill={colors[4]} fontSize={10}>
               {format(t, true)}
             </SvgText>
@@ -275,14 +416,32 @@ function Scatter({ spec, frame, colors, at }: { spec: Spec; frame: Frame; colors
         ))}
         {xa.ticks.map((t, k) =>
           k % every === 0 ? (
-            <SvgText key={`x${t}`} x={px(t)} y={frame.height - 6} textAnchor="middle" fill={colors[4]} fontSize={10}>
-              {Number(t.toFixed(6)).toLocaleString('en-US', { notation: Math.abs(t) >= 1e4 ? 'compact' : 'standard' })}
+            <SvgText
+              key={`x${t}`}
+              x={px(t)}
+              y={frame.height - 6}
+              textAnchor="middle"
+              fill={colors[4]}
+              fontSize={10}
+            >
+              {Number(t.toFixed(6)).toLocaleString('en-US', {
+                notation: Math.abs(t) >= 1e4 ? 'compact' : 'standard',
+              })}
             </SvgText>
           ) : null,
         )}
         {series.map((s, si) =>
           rows.map((r, i) => (
-            <Circle key={`${si}-${i}`} cx={px(num(r[x]))} cy={py(num(r[s]))} r={at === i ? 6.5 : 5} fill={colors[si % colors.length]} fillOpacity={0.78} stroke={colors[5]} strokeWidth={1.5} />
+            <Circle
+              key={`${si}-${i}`}
+              cx={px(num(r[x]))}
+              cy={py(num(r[s]))}
+              r={at === i ? 6.5 : 5}
+              fill={colors[si % colors.length]}
+              fillOpacity={0.78}
+              stroke={colors[5]}
+              strokeWidth={1.5}
+            />
           )),
         )}
       </Svg>
@@ -312,19 +471,35 @@ function Scatter({ spec, frame, colors, at }: { spec: Spec; frame: Frame; colors
   )
 }
 
-function Pie({ spec, frame, colors, ink }: { spec: Spec; frame: Frame; colors: [string, string, string, string, string, string]; ink: string }) {
+function Pie({
+  spec,
+  frame,
+  colors,
+  ink,
+}: {
+  spec: Spec
+  frame: Frame
+  colors: [string, string, string, string, string, string]
+  ink: string
+}) {
   const key = spec.series[0]
-  const items = spec.rows.map((row) => ({ at: label(row, spec.x), value: Math.max(0, num(key ? row[key] : 0)) }))
+  const items = spec.rows.map((row) => ({
+    at: label(row, spec.x),
+    value: Math.max(0, num(key ? row[key] : 0)),
+  }))
   const total = items.reduce((sum, item) => sum + item.value, 0) || 1
   const size = Math.max(80, Math.min(200, frame.width < 420 ? frame.width * 0.62 : 200))
   const r = size / 2
   const inner = spec.type === 'donut' ? r * 0.62 : 0
-  const point = (radius: number, a: number) => `${(r + radius * Math.cos(a)).toFixed(2)},${(r + radius * Math.sin(a)).toFixed(2)}`
+  const point = (radius: number, a: number) =>
+    `${(r + radius * Math.cos(a)).toFixed(2)},${(r + radius * Math.sin(a)).toFixed(2)}`
   // Each slice's own start and end angle, accumulated without a running variable: a map that
   // mutates a total re-runs out of order on a re-render, which would swing the slices.
   const slices = items.map((item, i) => {
     const sweep = (item.value / total) * Math.PI * 2
-    const a0 = -Math.PI / 2 + (items.slice(0, i).reduce((sum, it) => sum + (it.value / total) * Math.PI * 2, 0))
+    const a0 =
+      -Math.PI / 2 +
+      items.slice(0, i).reduce((sum, it) => sum + (it.value / total) * Math.PI * 2, 0)
     return { i, a0, a1: a0 + sweep, large: sweep > Math.PI ? 1 : 0, sweep }
   })
   return (
@@ -333,14 +508,24 @@ function Pie({ spec, frame, colors, ink }: { spec: Spec; frame: Frame; colors: [
         {slices.map(({ i, a0, a1, large, sweep }) => {
           if (sweep >= Math.PI * 2 - 1e-6)
             return inner ? (
-              <Circle key={i} cx={r} cy={r} r={(r + inner) / 2} fill="none" stroke={colors[i % colors.length]} strokeWidth={r - inner} />
+              <Circle
+                key={i}
+                cx={r}
+                cy={r}
+                r={(r + inner) / 2}
+                fill="none"
+                stroke={colors[i % colors.length]}
+                strokeWidth={r - inner}
+              />
             ) : (
               <Circle key={i} cx={r} cy={r} r={r} fill={colors[i % colors.length]} />
             )
           const d = inner
             ? `M${point(r, a0)}A${r},${r} 0 ${large} 1 ${point(r, a1)}L${point(inner, a1)}A${inner},${inner} 0 ${large} 0 ${point(inner, a0)}Z`
             : `M${r},${r}L${point(r, a0)}A${r},${r} 0 ${large} 1 ${point(r, a1)}Z`
-          return <Path key={i} d={d} fill={colors[i % colors.length]} stroke="#ffffff" strokeWidth={2} />
+          return (
+            <Path key={i} d={d} fill={colors[i % colors.length]} stroke="#ffffff" strokeWidth={2} />
+          )
         })}
       </Svg>
       <View style={styles.pieLegend}>
@@ -350,7 +535,9 @@ function Pie({ spec, frame, colors, ink }: { spec: Spec; frame: Frame; colors: [
             <Text style={[styles.legendText, { color: ink }]} numberOfLines={1}>
               {item.at}
             </Text>
-            <Text style={styles.legendShare}>{`${Math.round((item.value / total) * 1000) / 10}%`}</Text>
+            <Text
+              style={styles.legendShare}
+            >{`${Math.round((item.value / total) * 1000) / 10}%`}</Text>
           </View>
         ))}
       </View>
@@ -371,24 +558,35 @@ const chartProps = z.object({
 })
 
 function toSpec(props: z.infer<typeof chartProps>): Spec | null {
-  const rows = ((Array.isArray(props.data) ? props.data : []) as unknown[]).filter((r): r is Row => !!r && typeof r === 'object' && !Array.isArray(r))
+  const rows = ((Array.isArray(props.data) ? props.data : []) as unknown[]).filter(
+    (r): r is Row => !!r && typeof r === 'object' && !Array.isArray(r),
+  )
   const first = rows[0]
   if (!first) return null
   const x =
     (props.x && props.x in first ? props.x : null) ??
-    Object.keys(first).find((k) => (props.type === 'scatter' ? typeof first[k] === 'number' : typeof first[k] === 'string')) ??
+    Object.keys(first).find((k) =>
+      props.type === 'scatter' ? typeof first[k] === 'number' : typeof first[k] === 'string',
+    ) ??
     Object.keys(first)[0]
   const series = (
-    props.series?.length ? props.series.filter((s) => typeof s === 'string') : Object.keys(first).filter((k) => k !== x && typeof first[k] === 'number')
+    props.series?.length
+      ? props.series.filter((s) => typeof s === 'string')
+      : Object.keys(first).filter((k) => k !== x && typeof first[k] === 'number')
   ).slice(0, 8)
-  const type = (['bar', 'line', 'area', 'pie', 'donut', 'scatter'] as const).includes(props.type) ? props.type : 'bar'
+  const type = (['bar', 'line', 'area', 'pie', 'donut', 'scatter'] as const).includes(props.type)
+    ? props.type
+    : 'bar'
   return {
     type,
     rows,
     x,
     series,
     stacked: !!props.stacked,
-    height: Math.min(480, Math.max(typeof props.highlight === 'string' ? 88 : 140, props.height ?? 240)),
+    height: Math.min(
+      480,
+      Math.max(typeof props.highlight === 'string' ? 88 : 140, props.height ?? 240),
+    ),
     format: makeFormat(props.format, props.currency),
     highlight: typeof props.highlight === 'string' ? props.highlight : null,
   }
@@ -401,7 +599,14 @@ export const Chart = defineComponent({
     'Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like "EUR". highlight names the one x value a single-series bar chart is about: its bar carries its value and the others recede.',
   component: function ChartView({ props }) {
     const skin = useSkin()
-    const colors: [string, string, string, string, string, string] = [skin.chart(0), skin.chart(1), skin.chart(2), skin.chart(3), skin.chart(4), skin.chart(5)]
+    const colors: [string, string, string, string, string, string] = [
+      skin.chart(0),
+      skin.chart(1),
+      skin.chart(2),
+      skin.chart(3),
+      skin.chart(4),
+      skin.chart(5),
+    ]
     const [at, setAt] = useState<number | null>(null)
     const [width, setWidth] = useState(0)
     const spec = toSpec(props)
@@ -413,13 +618,32 @@ export const Chart = defineComponent({
     }
     // The y column is as wide as the longest tick label needs: the web's own estimate,
     // 6.4 units of tick type a character, with a column's padding.
-    const left = Math.max(...spec.type === 'pie' || spec.type === 'donut' ? [0] : axisOf(spec.rows.flatMap((r) => spec.series.map((s) => num(r[s]))), spec.type !== 'scatter').ticks.map((t) => spec.format(t, true).length)) * 6.4 + 12
-    const pad = spec.highlight !== null && spec.type === 'bar' && spec.series.length === 1
-      ? { top: 24, right: 0, bottom: 24, left: 0 }
-      : { top: 10, right: 4, bottom: 26, left }
+    const left =
+      Math.max(
+        ...(spec.type === 'pie' || spec.type === 'donut'
+          ? [0]
+          : axisOf(
+              spec.rows.flatMap((r) => spec.series.map((s) => num(r[s]))),
+              spec.type !== 'scatter',
+            ).ticks.map((t) => spec.format(t, true).length)),
+      ) *
+        6.4 +
+      12
+    const pad =
+      spec.highlight !== null && spec.type === 'bar' && spec.series.length === 1
+        ? { top: 24, right: 0, bottom: 24, left: 0 }
+        : { top: 10, right: 4, bottom: 26, left }
     const w = Math.max(10, width - pad.left - pad.right)
     const h = Math.max(10, spec.height - pad.top - pad.bottom)
-    const frame: Frame = { width, height: spec.height, top: pad.top, left: pad.left, w, h, band: w / Math.max(1, spec.rows.length) }
+    const frame: Frame = {
+      width,
+      height: spec.height,
+      top: pad.top,
+      left: pad.left,
+      w,
+      h,
+      band: w / Math.max(1, spec.rows.length),
+    }
     return (
       <View
         onLayout={(event) => {
@@ -433,7 +657,9 @@ export const Chart = defineComponent({
               setAt(null)
               return
             }
-            const column = Math.floor((event.nativeEvent.locationX - frame.left) / Math.max(1, frame.band))
+            const column = Math.floor(
+              (event.nativeEvent.locationX - frame.left) / Math.max(1, frame.band),
+            )
             setAt(column >= 0 && column < spec.rows.length ? column : null)
           }}
           accessibilityLabel={`${spec.type} chart of ${spec.series.join(', ')} by ${spec.x}`}

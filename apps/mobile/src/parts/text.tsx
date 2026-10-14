@@ -14,11 +14,19 @@ import { openWebLink } from '../data/links'
  * way the app's own words do (`apps/mobile/src/data/links.ts` `openWebLink`), one door for
  * both so a Person learns it once.
  */
-const str = (value: unknown) => (typeof value === 'string' ? value : value == null ? '' : typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')
+const str = (value: unknown) =>
+  typeof value === 'string'
+    ? value
+    : value == null
+      ? ''
+      : typeof value === 'number' && Number.isFinite(value)
+        ? value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+        : ''
 
 /** A `color` token or plain colour, falling back to the display's own ink. */
 const inked = {
-  using: (skin: ReturnType<typeof useSkin>, value: string | undefined): string => skin.fg(value) ?? skin.ink,
+  using: (skin: ReturnType<typeof useSkin>, value: string | undefined): string =>
+    skin.fg(value) ?? skin.ink,
 }
 
 // Title sizes: the web's named steps, on the phone's scale. 3xl is a whole display's opening
@@ -42,13 +50,18 @@ export const Title = defineComponent({
   description: 'Heading; lg for a card title, 2xl for a big number.',
   component: ({ props }) => {
     const skin = useSkin()
-    return <RNText style={[TITLE[props.size ?? 'md'], { color: inked.using(skin, props.color) }]}>{str(props.text)}</RNText>
+    return (
+      <RNText style={[TITLE[props.size ?? 'md'], { color: inked.using(skin, props.color) }]}>
+        {str(props.text)}
+      </RNText>
+    )
   },
 })
 
 /** Text, or a run of strings and inline components such as Icon, Badge, Link or Math. */
 const richText = z.union([z.string(), children])
-const isNode = (value: unknown) => !!value && typeof value === 'object' && (value as { type?: unknown }).type === 'element'
+const isNode = (value: unknown) =>
+  !!value && typeof value === 'object' && (value as { type?: unknown }).type === 'element'
 
 // The reading text's steps, drawn from the phone's own (`data/typography.ts`).
 const BODY = {
@@ -75,7 +88,10 @@ export const Text = defineComponent({
   component: ({ props, renderNode }) => {
     const skin = useSkin()
     const runs = runStyles(skin, openLink)
-    const weight = { normal: '400', medium: '500', semibold: '600' } satisfies Record<string, TextStyle['fontWeight']>
+    const weight = { normal: '400', medium: '500', semibold: '600' } satisfies Record<
+      string,
+      TextStyle['fontWeight']
+    >
     const lines = props.maxLines && props.maxLines > 0 ? Math.round(props.maxLines) : undefined
     const own: StyleProp<TextStyle> = [
       BODY[props.size ?? 'md'],
@@ -114,7 +130,11 @@ export const Caption = defineComponent({
   description: 'Small secondary text.',
   component: ({ props }) => {
     const skin = useSkin()
-    return <RNText style={[styles.caption, { color: inked.using(skin, props.color) ?? skin.faint }]}>{inline(str(props.text), runStyles(skin, openLink))}</RNText>
+    return (
+      <RNText style={[styles.caption, { color: inked.using(skin, props.color) ?? skin.faint }]}>
+        {inline(str(props.text), runStyles(skin, openLink))}
+      </RNText>
+    )
   },
 })
 
@@ -141,8 +161,15 @@ export const Badge = defineComponent({
     // colour, as the web's badge does; a nameless badge is quiet, a wash of the display's tint.
     const tinted = props.color != null && props.color !== 'neutral'
     return (
-      <View style={[styles.badge, { backgroundColor: tinted ? skin.bg(props.color) : mix(skin.accent, skin.sheet, 0.1) }]}>
-        <RNText style={[styles.badgeText, { color: tinted ? skin.fg(props.color) : skin.muted }]}>{str(props.text)}</RNText>
+      <View
+        style={[
+          styles.badge,
+          { backgroundColor: tinted ? skin.bg(props.color) : mix(skin.accent, skin.sheet, 0.1) },
+        ]}
+      >
+        <RNText style={[styles.badgeText, { color: tinted ? skin.fg(props.color) : skin.muted }]}>
+          {str(props.text)}
+        </RNText>
       </View>
     )
   },
@@ -166,7 +193,10 @@ export const Link = defineComponent({
 
 type ItemElement = { type: 'element'; typeName: string; props: Record<string, unknown> }
 const isItem = (value: unknown): value is ItemElement =>
-  !!value && typeof value === 'object' && (value as ItemElement).type === 'element' && (value as ItemElement).typeName === 'ListItem'
+  !!value &&
+  typeof value === 'object' &&
+  (value as ItemElement).type === 'element' &&
+  (value as ItemElement).typeName === 'ListItem'
 
 export const ListItem = defineComponent({
   name: 'ListItem',
@@ -182,9 +212,17 @@ export const ListItem = defineComponent({
     const skin = useSkin()
     return (
       <View>
-        <RNText style={[styles.listTitle, { color: skin.ink }]}>{inline(str(props.title), runStyles(skin, openLink))}</RNText>
-        {props.description ? <RNText style={[styles.listDescription, { color: skin.muted }]}>{inline(str(props.description), runStyles(skin, openLink))}</RNText> : null}
-        {props.children ? <View style={styles.listChildren}>{renderNode(props.children)}</View> : null}
+        <RNText style={[styles.listTitle, { color: skin.ink }]}>
+          {inline(str(props.title), runStyles(skin, openLink))}
+        </RNText>
+        {props.description ? (
+          <RNText style={[styles.listDescription, { color: skin.muted }]}>
+            {inline(str(props.description), runStyles(skin, openLink))}
+          </RNText>
+        ) : null}
+        {props.children ? (
+          <View style={styles.listChildren}>{renderNode(props.children)}</View>
+        ) : null}
       </View>
     )
   },
@@ -206,17 +244,26 @@ export const List = defineComponent({
       <View style={styles.list}>
         {items.map((item, i) => {
           if (item == null) return null
-          const custom = isItem(item) && typeof item.props.marker === 'string' && item.props.marker ? item.props.marker : null
+          const custom =
+            isItem(item) && typeof item.props.marker === 'string' && item.props.marker
+              ? item.props.marker
+              : null
           const number = marker === 'number' ? `${i + 1}.` : marker === 'bullet' ? '•' : ''
           return (
             <View key={i} style={styles.listRow}>
-              <RNText                 // A long marker (a time, a word) sits in its own share; a bullet or number is a
+              <RNText // A long marker (a time, a word) sits in its own share; a bullet or number is a
                 // tick in the same column, so the words line up under each other.
                 style={[styles.listMarker, { color: custom ? skin.muted : skin.faint }]}
               >
                 {custom ?? number}
               </RNText>
-              {isItem(item) ? renderNode(item) : <RNText style={styles.listBody}>{inline(str(item), runStyles(skin, openLink))}</RNText>}
+              {isItem(item) ? (
+                renderNode(item)
+              ) : (
+                <RNText style={styles.listBody}>
+                  {inline(str(item), runStyles(skin, openLink))}
+                </RNText>
+              )}
             </View>
           )
         })}

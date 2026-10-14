@@ -33,7 +33,10 @@ export function Display({
   const skin = useSkin()
   const answer = (event: ActionEvent) => {
     if (!live || event.type !== BuiltinActionType.ContinueConversation) return
-    const words = said(event.humanFriendlyMessage, event.formState === undefined ? {} : event.formState)
+    const words = said(
+      event.humanFriendlyMessage,
+      event.formState === undefined ? {} : event.formState,
+    )
     // An answer with no words is never sent: a press that names nothing would arrive as an empty
     // letter, and saying nothing is not saying something quietly.
     if (words.trim() !== '') onSay(words)

@@ -14,7 +14,8 @@ import { MONO } from '../ui/ui'
  * checks it — absolute http(s) only — and a model-written `javascript:` or relative address is
  * drawn as plain text, not a link.
  */
-const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*|__[^_\n]+?__)|(~~[^~\n]+?~~)|(\*[^*\s][^*\n]*?\*|_[^_\s][^_\n]*?_)|(\[[^\]\n]+\]\([^)\s]+\))/
+const INLINE =
+  /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*|__[^_\n]+?__)|(~~[^~\n]+?~~)|(\*[^*\s][^*\n]*?\*|_[^_\s][^_\n]*?_)|(\[[^\]\n]+\]\([^)\s]+\))/
 
 export interface RunStyle {
   readonly base: StyleProp<TextStyle>
@@ -40,13 +41,38 @@ export function inline(text: string, style: RunStyle, key = 'i'): ReactNode {
       )
       break
     }
-    if (found.index) out.push(<Text key={`${key}-p${n}`} style={style.base}>{rest.slice(0, found.index)}</Text>)
+    if (found.index)
+      out.push(
+        <Text key={`${key}-p${n}`} style={style.base}>
+          {rest.slice(0, found.index)}
+        </Text>,
+      )
     const token = found[0]
     const k = `${key}-${n++}`
-    if (found[1]) out.push(<Text key={k} style={[style.base, style.code]}>{token.slice(1, -1)}</Text>)
-    else if (found[2]) out.push(<Text key={k} style={[style.base, style.strong]}>{inline(token.slice(2, -2), style, k)}</Text>)
-    else if (found[3]) out.push(<Text key={k} style={[style.base, style.strike]}>{inline(token.slice(2, -2), style, k)}</Text>)
-    else if (found[4]) out.push(<Text key={k} style={[style.base, style.emphasis]}>{inline(token.slice(1, -1), style, k)}</Text>)
+    if (found[1])
+      out.push(
+        <Text key={k} style={[style.base, style.code]}>
+          {token.slice(1, -1)}
+        </Text>,
+      )
+    else if (found[2])
+      out.push(
+        <Text key={k} style={[style.base, style.strong]}>
+          {inline(token.slice(2, -2), style, k)}
+        </Text>,
+      )
+    else if (found[3])
+      out.push(
+        <Text key={k} style={[style.base, style.strike]}>
+          {inline(token.slice(2, -2), style, k)}
+        </Text>,
+      )
+    else if (found[4])
+      out.push(
+        <Text key={k} style={[style.base, style.emphasis]}>
+          {inline(token.slice(1, -1), style, k)}
+        </Text>,
+      )
     else {
       const close = token.indexOf('](')
       const label = token.slice(1, close)

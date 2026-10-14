@@ -209,9 +209,15 @@ const examples = [
     'show a table',
     'root = Col([Title("Rehearsal workload", "lg"), Table(["Project", "Hours", "Owner"], [["Research", "4", "Rae"], ["Writing", "3", "Rae"], ["Review", "2", "Sam"]]), Caption("Example values for this rehearsal.")], 3)',
   ),
-  ...(['bar', 'line', 'donut'] as const).map((kind) =>
+  ...(
+    [
+      ['bar', 'show a chart'],
+      ['line', 'show a line chart'],
+      ['donut', 'show a share chart'],
+    ] as const
+  ).map(([kind, phrase]) =>
     display(
-      kind === 'bar' ? 'show a chart' : kind === 'line' ? 'show a line chart' : 'show a share chart',
+      phrase,
       `root = Col([Title("Rehearsal hours", "lg"), Chart("${kind}", rows, "task", ["hours"])], 3)\nrows = [{task: "Research", hours: 4}, {task: "Writing", hours: 3}, {task: "Review", hours: 2}]`,
     ),
   ),

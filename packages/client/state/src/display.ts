@@ -1,4 +1,4 @@
-import { Option, Schema } from 'effect'
+import { Option, Predicate, Schema } from 'effect'
 
 /**
  * A display is part of Vivid's reply: a short program in OpenUI Lang between the fences OpenUI's
@@ -62,9 +62,9 @@ const readForm = Schema.decodeUnknownOption(Schema.Record(Schema.String, Field))
 
 /** A ticked box reads as a word; an empty or unticked field says nothing. */
 function fieldWords(value: string | number | boolean): Option.Option<string> {
-  if (typeof value === 'boolean') return value ? Option.some('yes') : Option.none()
-  const words = String(value).trim()
-  return words === '' ? Option.none() : Option.some(words)
+  if (Predicate.isBoolean(value)) return value ? Option.some('yes') : Option.none()
+  const typed = String(value).trim()
+  return typed === '' ? Option.none() : Option.some(typed)
 }
 
 /**
@@ -73,7 +73,7 @@ function fieldWords(value: string | number | boolean): Option.Option<string> {
  * the forms under names that start with `$`; a display already writes those into the Button's
  * words, so they are left out here.
  */
-export function said(pressed: string, formState: Readonly<Record<string, unknown>>): string {
+export function said(pressed: string, formState: object): string {
   const lines = Object.entries(formState)
     .filter(([name]) => !name.startsWith('$'))
     .flatMap(([, form]) =>

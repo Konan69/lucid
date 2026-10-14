@@ -5,7 +5,16 @@ import { Table } from './table'
 import { Badge, Caption, Label, Link, List, ListItem, Text, Title } from './text'
 import { Carousel } from './carousel'
 import { Chart } from './chart'
-import { Button, Checkbox, Input, Pressable, RadioGroup, SegmentedControl, Select, TextArea } from './controls'
+import {
+  Button,
+  Checkbox,
+  Input,
+  Pressable,
+  RadioGroup,
+  SegmentedControl,
+  Select,
+  TextArea,
+} from './controls'
 
 /**
  * Every part Vivid may draw a display from, on the phone. The component names, prop schemas and
@@ -18,15 +27,70 @@ import { Button, Checkbox, Input, Pressable, RadioGroup, SegmentedControl, Selec
 export const library = createLibrary({
   root: 'Col',
   components: [
-    Col, Row, Box, Grid, Card, Carousel, Media, Divider, Spacer,
-    Title, Text, Caption, Label, Badge, Link, List, ListItem, Icon,
-    Image, Table, Chart,
-    Button, Pressable, Input, TextArea, Select, SegmentedControl, Checkbox, RadioGroup, Form,
+    Col,
+    Row,
+    Box,
+    Grid,
+    Card,
+    Carousel,
+    Media,
+    Divider,
+    Spacer,
+    Title,
+    Text,
+    Caption,
+    Label,
+    Badge,
+    Link,
+    List,
+    ListItem,
+    Icon,
+    Image,
+    Table,
+    Chart,
+    Button,
+    Pressable,
+    Input,
+    TextArea,
+    Select,
+    SegmentedControl,
+    Checkbox,
+    RadioGroup,
+    Form,
   ],
   componentGroups: [
-    { name: 'Layout', components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Media', 'Divider', 'Spacer'] },
-    { name: 'Text', components: ['Title', 'Text', 'Caption', 'Label', 'Badge', 'Link', 'List', 'ListItem', 'Icon'] },
+    {
+      name: 'Layout',
+      components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Media', 'Divider', 'Spacer'],
+    },
+    {
+      name: 'Text',
+      components: [
+        'Title',
+        'Text',
+        'Caption',
+        'Label',
+        'Badge',
+        'Link',
+        'List',
+        'ListItem',
+        'Icon',
+      ],
+    },
     { name: 'Data and pictures', components: ['Table', 'Chart', 'Image'] },
-    { name: 'Inputs', components: ['Button', 'Pressable', 'Input', 'TextArea', 'Select', 'SegmentedControl', 'Checkbox', 'RadioGroup', 'Form'] },
+    {
+      name: 'Inputs',
+      components: [
+        'Button',
+        'Pressable',
+        'Input',
+        'TextArea',
+        'Select',
+        'SegmentedControl',
+        'Checkbox',
+        'RadioGroup',
+        'Form',
+      ],
+    },
   ],
 })

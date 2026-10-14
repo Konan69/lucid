@@ -113,7 +113,7 @@ catalog:
   vite: 8.3.0
   vitest: 5.0.1
 
-  zod: 4.6.6
+  zod: 4.5.4
 # Root-only convergence keeps transitive peers on the same RCs as the direct
 # stack. Catalog references keep the override and direct declaration identical.
 overrides:

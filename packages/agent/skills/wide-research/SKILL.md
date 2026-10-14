@@ -18,4 +18,4 @@ Run the same lookup for every input, each scoped to its own item, with the same 
 
 When completeness matters and some inputs failed, retry only the failed inputs, once. Then stop and report them as gaps.
 
-Return one result set, using `show` for a table when there are three or more rows. Always report coverage as successes out of the total, list the unresolved inputs and say why each failed. Reading needs no extra approval; contacting anyone on the list or changing external records needs the appropriate Approval.
+Return one result set, with a table in a display in your reply when there are three or more rows. Always report coverage as successes out of the total, list the unresolved inputs and say why each failed. Reading needs no extra approval; contacting anyone on the list or changing external records needs the appropriate Approval.

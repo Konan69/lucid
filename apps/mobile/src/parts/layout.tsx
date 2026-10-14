@@ -3,7 +3,17 @@ import { useState, type ReactNode } from 'react'
 import type { ViewStyle } from 'react-native'
 import { StyleSheet, View } from 'react-native'
 import { z } from 'zod/v4'
-import { children, color, contrastOn, length, OnColorContext, radiusSchema, sizeOf, space, useSkin } from './style'
+import {
+  children,
+  color,
+  contrastOn,
+  length,
+  OnColorContext,
+  radiusSchema,
+  sizeOf,
+  space,
+  useSkin,
+} from './style'
 
 /**
  * The parts that arrange (`apps/web/vendor/openui/layout.tsx`), drawn as React Native views. The
@@ -30,7 +40,12 @@ const JUSTIFY = {
 
 /** Flex alignment and spacing, shared by every arranging part. Alignment and positioning name
  * different RN keys, and a value has no meaning under the other key. */
-function flexStyle(p: { gap?: number; align?: string; justify?: string; wrap?: boolean }): ViewStyle {
+function flexStyle(p: {
+  gap?: number
+  align?: string
+  justify?: string
+  wrap?: boolean
+}): ViewStyle {
   return {
     gap: space(p.gap),
     alignItems: p.align ? ALIGN[p.align as keyof typeof ALIGN] : undefined,
@@ -80,7 +95,8 @@ export const Box = defineComponent({
             height: sizeOf(props.height),
             // null, like an omitted argument, means no flex. A width in px is meant: a Row with
             // long text beside it must not squeeze it.
-            flex: props.flex != null ? Math.max(0, props.flex) : props.width != null ? 0 : undefined,
+            flex:
+              props.flex != null ? Math.max(0, props.flex) : props.width != null ? 0 : undefined,
             flexGrow: props.flex != null ? Math.max(0, props.flex) : undefined,
             flexShrink: props.flex != null ? 1 : undefined,
             flexBasis: props.flex != null ? 0 : undefined,
@@ -104,9 +120,7 @@ export const Row = defineComponent({
   }),
   description: 'Horizontal layout; items are vertically centered.',
   component: ({ props, renderNode }) => (
-    <View style={[flexStyle(props), styles.row]}>
-      {renderNode(props.children)}
-    </View>
+    <View style={[flexStyle(props), styles.row]}>{renderNode(props.children)}</View>
   ),
 })
 
@@ -129,7 +143,8 @@ export const Grid = defineComponent({
     minChildWidth: z.number().optional(),
     gap: z.number().optional(),
   }),
-  description: 'Equal columns (default 2). With minChildWidth (px), columns drop on narrow screens.',
+  description:
+    'Equal columns (default 2). With minChildWidth (px), columns drop on narrow screens.',
   component: ({ props, renderNode }) => <GridRows {...props} renderNode={renderNode} />,
 })
 
@@ -138,17 +153,27 @@ export const Grid = defineComponent({
  * column count drops on a narrow display, which only its own width can answer. The children are
  * cut into rows of that count and each cell is given an equal share, `gap` between them.
  */
-function GridRows(props: { children?: unknown; columns?: number; minChildWidth?: number; gap?: number; renderNode: (node: unknown) => ReactNode }) {
+function GridRows(props: {
+  children?: unknown
+  columns?: number
+  minChildWidth?: number
+  gap?: number
+  renderNode: (node: unknown) => ReactNode
+}) {
   const gap = space(props.gap) ?? 12
-  const parts = (Array.isArray(props.children) ? props.children.flat() : []).filter((c) => c != null)
+  const parts = (Array.isArray(props.children) ? props.children.flat() : []).filter(
+    (c) => c != null,
+  )
   const ordered = Math.min(6, Math.max(1, Math.round(props.columns ?? 2)))
   const [width, setWidth] = useState<number | null>(null)
   // At most `columns` columns, each at least `minChildWidth` wide; fewer when they would not fit.
-  const columns = width == null || props.minChildWidth == null || props.minChildWidth <= 0
-    ? ordered
-    : Math.max(1, Math.min(ordered, Math.floor((width + gap) / (props.minChildWidth + gap))))
+  const columns =
+    width == null || props.minChildWidth == null || props.minChildWidth <= 0
+      ? ordered
+      : Math.max(1, Math.min(ordered, Math.floor((width + gap) / (props.minChildWidth + gap))))
   const rows: unknown[][] = []
-  for (let start = 0; start < parts.length; start += columns) rows.push(parts.slice(start, start + columns))
+  for (let start = 0; start < parts.length; start += columns)
+    rows.push(parts.slice(start, start + columns))
   return (
     <View
       onLayout={(event) => {
@@ -240,16 +265,25 @@ export const Form = defineComponent({
  */
 export const Media = defineComponent({
   name: 'Media',
-  props: z.object({ children, height: z.number().optional(), weights: z.array(z.number()).optional() }),
+  props: z.object({
+    children,
+    height: z.number().optional(),
+    weights: z.array(z.number()).optional(),
+  }),
   description:
     'Edge-to-edge strip of media that opens a feed card: a Map, photos, or both side by side at one height (default 150). weights sets their relative widths, e.g. [3, 2]. Put it first in the root Col.',
   component: ({ props, renderNode }) => {
-    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter((c) => c != null)
+    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter(
+      (c) => c != null,
+    )
     const height = Math.min(360, Math.max(96, props.height ?? 150))
     return (
       <View style={{ flexDirection: 'row', height, overflow: 'hidden' as const }}>
         {items.map((item, i) => (
-          <View key={i} style={{ flexGrow: Math.max(1, props.weights?.[i] ?? 1), flexShrink: 1, minWidth: 0 }}>
+          <View
+            key={i}
+            style={{ flexGrow: Math.max(1, props.weights?.[i] ?? 1), flexShrink: 1, minWidth: 0 }}
+          >
             {renderNode(item)}
           </View>
         ))}

@@ -125,17 +125,7 @@
   "componentGroups": [
     {
       "name": "Layout",
-      "components": [
-        "Col",
-        "Row",
-        "Box",
-        "Grid",
-        "Card",
-        "Carousel",
-        "Media",
-        "Divider",
-        "Spacer"
-      ]
+      "components": ["Col", "Row", "Box", "Grid", "Card", "Carousel", "Media", "Divider", "Spacer"]
     },
     {
       "name": "Text",
@@ -153,11 +143,7 @@
     },
     {
       "name": "Data and pictures",
-      "components": [
-        "Table",
-        "Chart",
-        "Image"
-      ]
+      "components": ["Table", "Chart", "Image"]
     },
     {
       "name": "Inputs",
@@ -315,17 +301,10 @@
           },
           "align": {
             "type": "string",
-            "enum": [
-              "start",
-              "center",
-              "end",
-              "stretch"
-            ]
+            "enum": ["start", "center", "end", "stretch"]
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Vertical layout. Without gap it spaces blocks like an article."
       },
@@ -341,29 +320,17 @@
           },
           "align": {
             "type": "string",
-            "enum": [
-              "start",
-              "center",
-              "end",
-              "stretch"
-            ]
+            "enum": ["start", "center", "end", "stretch"]
           },
           "justify": {
             "type": "string",
-            "enum": [
-              "start",
-              "center",
-              "end",
-              "between"
-            ]
+            "enum": ["start", "center", "end", "between"]
           },
           "wrap": {
             "type": "boolean"
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Horizontal layout; items are vertically centered."
       },
@@ -376,10 +343,7 @@
           },
           "direction": {
             "type": "string",
-            "enum": [
-              "row",
-              "col"
-            ]
+            "enum": ["row", "col"]
           },
           "gap": {
             "type": "number"
@@ -394,13 +358,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg",
-                  "xl",
-                  "full"
-                ]
+                "enum": ["sm", "md", "lg", "xl", "full"]
               },
               {
                 "type": "number"
@@ -411,37 +369,21 @@
             "type": "boolean"
           },
           "width": {
-            "type": [
-              "number",
-              "string"
-            ]
+            "type": ["number", "string"]
           },
           "height": {
-            "type": [
-              "number",
-              "string"
-            ]
+            "type": ["number", "string"]
           },
           "flex": {
             "type": "number"
           },
           "align": {
             "type": "string",
-            "enum": [
-              "start",
-              "center",
-              "end",
-              "stretch"
-            ]
+            "enum": ["start", "center", "end", "stretch"]
           },
           "justify": {
             "type": "string",
-            "enum": [
-              "start",
-              "center",
-              "end",
-              "between"
-            ]
+            "enum": ["start", "center", "end", "between"]
           },
           "wrap": {
             "type": "boolean"
@@ -467,9 +409,7 @@
             "type": "number"
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Equal columns (default 2). With minChildWidth (px), columns drop on narrow screens."
       },
@@ -482,10 +422,7 @@
           },
           "variant": {
             "type": "string",
-            "enum": [
-              "outline",
-              "soft"
-            ]
+            "enum": ["outline", "soft"]
           },
           "padding": {
             "type": "number"
@@ -494,9 +431,7 @@
             "type": "number"
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Panel with a border; soft is a filled panel for summaries."
       },
@@ -514,9 +449,7 @@
             "type": "number"
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Horizontal row that scrolls and snaps, each child an item itemWidth px wide (default 240): photos, cards, options, days."
       },
@@ -537,9 +470,7 @@
             }
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Edge-to-edge strip of media that opens a feed card: a Map, photos, or both side by side at one height (default 150). weights sets their relative widths, e.g. [3, 2]. Put it first in the root Col."
       },
@@ -562,22 +493,13 @@
           },
           "size": {
             "type": "string",
-            "enum": [
-              "sm",
-              "md",
-              "lg",
-              "xl",
-              "2xl",
-              "3xl"
-            ]
+            "enum": ["sm", "md", "lg", "xl", "2xl", "3xl"]
           },
           "color": {
             "type": "string"
           }
         },
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "additionalProperties": false,
         "description": "Heading; lg for a card title, 2xl for a big number."
       },
@@ -597,23 +519,14 @@
           },
           "size": {
             "type": "string",
-            "enum": [
-              "xs",
-              "sm",
-              "md",
-              "lg"
-            ]
+            "enum": ["xs", "sm", "md", "lg"]
           },
           "color": {
             "type": "string"
           },
           "weight": {
             "type": "string",
-            "enum": [
-              "normal",
-              "medium",
-              "semibold"
-            ]
+            "enum": ["normal", "medium", "semibold"]
           },
           "italic": {
             "type": "boolean"
@@ -628,9 +541,7 @@
             "type": "number"
           }
         },
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "additionalProperties": false,
         "description": "Paragraph; supports **bold**, *italic*, `code` and [links](https://…). text may be a list mixing strings and inline components: [Icon(\"clock\", \"sm\"), \" 25 min · \", Badge(\"Easy\")]."
       },
@@ -644,9 +555,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "additionalProperties": false,
         "description": "Small secondary text."
       },
@@ -657,9 +566,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "additionalProperties": false,
         "description": "Field or group label."
       },
@@ -671,20 +578,10 @@
           },
           "color": {
             "type": "string",
-            "enum": [
-              "neutral",
-              "info",
-              "success",
-              "warning",
-              "danger",
-              "purple",
-              "pink"
-            ]
+            "enum": ["neutral", "info", "success", "warning", "danger", "purple", "pink"]
           }
         },
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "additionalProperties": false
       },
       "Link": {
@@ -697,10 +594,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "text",
-          "url"
-        ],
+        "required": ["text", "url"],
         "additionalProperties": false,
         "description": "Opens an http(s) URL in a new tab."
       },
@@ -722,19 +616,13 @@
           },
           "marker": {
             "type": "string",
-            "enum": [
-              "bullet",
-              "number",
-              "none"
-            ]
+            "enum": ["bullet", "number", "none"]
           },
           "timeline": {
             "type": "boolean"
           }
         },
-        "required": [
-          "items"
-        ],
+        "required": ["items"],
         "additionalProperties": false,
         "description": "timeline joins the markers with a line."
       },
@@ -755,9 +643,7 @@
             "items": {}
           }
         },
-        "required": [
-          "title"
-        ],
+        "required": ["title"],
         "additionalProperties": false,
         "description": "marker replaces the bullet or number, e.g. a time or an emoji."
       },
@@ -769,20 +655,13 @@
           },
           "size": {
             "type": "string",
-            "enum": [
-              "sm",
-              "md",
-              "lg",
-              "xl"
-            ]
+            "enum": ["sm", "md", "lg", "xl"]
           },
           "color": {
             "type": "string"
           }
         },
-        "required": [
-          "name"
-        ],
+        "required": ["name"],
         "additionalProperties": false,
         "description": "Lucide icon by name, e.g. \"map-pin\"."
       },
@@ -802,13 +681,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg",
-                  "xl",
-                  "full"
-                ]
+                "enum": ["sm", "md", "lg", "xl", "full"]
               },
               {
                 "type": "number"
@@ -817,19 +690,13 @@
           },
           "fit": {
             "type": "string",
-            "enum": [
-              "cover",
-              "contain"
-            ]
+            "enum": ["cover", "contain"]
           },
           "width": {
             "type": "number"
           }
         },
-        "required": [
-          "src",
-          "alt"
-        ],
+        "required": ["src", "alt"],
         "additionalProperties": false,
         "description": "Photo from an http(s) URL the user or a tool gave. alt says what it shows."
       },
@@ -850,10 +717,7 @@
             }
           }
         },
-        "required": [
-          "columns",
-          "rows"
-        ],
+        "required": ["columns", "rows"],
         "additionalProperties": false,
         "description": "Each row lists its cells in column order; a cell may be a component. Number columns align right."
       },
@@ -862,14 +726,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": [
-              "bar",
-              "line",
-              "area",
-              "pie",
-              "donut",
-              "scatter"
-            ]
+            "enum": ["bar", "line", "area", "pie", "donut", "scatter"]
           },
           "data": {
             "type": "array",
@@ -879,10 +736,7 @@
                 "type": "string"
               },
               "additionalProperties": {
-                "type": [
-                  "string",
-                  "number"
-                ]
+                "type": ["string", "number"]
               }
             }
           },
@@ -897,11 +751,7 @@
           },
           "format": {
             "type": "string",
-            "enum": [
-              "number",
-              "currency",
-              "percent"
-            ]
+            "enum": ["number", "currency", "percent"]
           },
           "currency": {
             "type": "string"
@@ -916,10 +766,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "type",
-          "data"
-        ],
+        "required": ["type", "data"],
         "additionalProperties": false,
         "description": "Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like \"EUR\". highlight names the one x value a single-series bar chart is about: its bar carries its value and the others recede."
       },
@@ -934,28 +781,15 @@
           },
           "variant": {
             "type": "string",
-            "enum": [
-              "solid",
-              "outline",
-              "soft",
-              "ghost"
-            ]
+            "enum": ["solid", "outline", "soft", "ghost"]
           },
           "color": {
             "type": "string",
-            "enum": [
-              "primary",
-              "danger",
-              "success"
-            ]
+            "enum": ["primary", "danger", "success"]
           },
           "size": {
             "type": "string",
-            "enum": [
-              "sm",
-              "md",
-              "lg"
-            ]
+            "enum": ["sm", "md", "lg"]
           },
           "icon": {
             "type": "string"
@@ -967,9 +801,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "label"
-        ],
+        "required": ["label"],
         "additionalProperties": false,
         "description": "icon is a lucide name."
       },
@@ -986,10 +818,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "type",
-              "url"
-            ],
+            "required": ["type", "url"],
             "additionalProperties": false
           },
           {
@@ -1003,9 +832,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "type"
-            ],
+            "required": ["type"],
             "additionalProperties": false
           },
           {
@@ -1022,9 +849,7 @@
                 "additionalProperties": {}
               }
             },
-            "required": [
-              "type"
-            ],
+            "required": ["type"],
             "additionalProperties": false
           }
         ]
@@ -1052,13 +877,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg",
-                  "xl",
-                  "full"
-                ]
+                "enum": ["sm", "md", "lg", "xl", "full"]
               },
               {
                 "type": "number"
@@ -1066,9 +885,7 @@
             ]
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Makes any content clickable, such as a tile or a swatch."
       },
@@ -1076,28 +893,20 @@
         "type": "object",
         "properties": {
           "value": {
-            "type": [
-              "string",
-              "number"
-            ]
+            "type": ["string", "number"]
           },
           "label": {
             "type": "string"
           },
           "type": {
             "type": "string",
-            "enum": [
-              "text",
-              "number"
-            ]
+            "enum": ["text", "number"]
           },
           "placeholder": {
             "type": "string"
           }
         },
-        "required": [
-          "value"
-        ],
+        "required": ["value"],
         "additionalProperties": false,
         "description": "Text or number field; a number field stores numbers."
       },
@@ -1117,9 +926,7 @@
             "type": "number"
           }
         },
-        "required": [
-          "value"
-        ],
+        "required": ["value"],
         "additionalProperties": false
       },
       "Select": {
@@ -1145,10 +952,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "value",
-                    "label"
-                  ],
+                  "required": ["value", "label"],
                   "additionalProperties": false
                 }
               ]
@@ -1161,10 +965,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "value",
-          "options"
-        ],
+        "required": ["value", "options"],
         "additionalProperties": false,
         "description": "Dropdown, for long option lists."
       },
@@ -1191,10 +992,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "value",
-                    "label"
-                  ],
+                  "required": ["value", "label"],
                   "additionalProperties": false
                 }
               ]
@@ -1204,10 +1002,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "value",
-          "options"
-        ],
+        "required": ["value", "options"],
         "additionalProperties": false,
         "description": "2 to 4 short choices in a row."
       },
@@ -1224,10 +1019,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "checked",
-          "label"
-        ],
+        "required": ["checked", "label"],
         "additionalProperties": false,
         "description": "lineThrough strikes the label when checked, for to-do lists."
       },
@@ -1257,10 +1049,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "value",
-                    "label"
-                  ],
+                  "required": ["value", "label"],
                   "additionalProperties": false
                 }
               ]
@@ -1271,17 +1060,10 @@
           },
           "variant": {
             "type": "string",
-            "enum": [
-              "list",
-              "pills",
-              "cards"
-            ]
+            "enum": ["list", "pills", "cards"]
           }
         },
-        "required": [
-          "value",
-          "options"
-        ],
+        "required": ["value", "options"],
         "additionalProperties": false,
         "description": "pills for short choices; cards for choices that need a description line."
       },
@@ -1293,9 +1075,7 @@
             "items": {}
           }
         },
-        "required": [
-          "children"
-        ],
+        "required": ["children"],
         "additionalProperties": false,
         "description": "Groups fields; their values go with any @ToAssistant inside."
       }

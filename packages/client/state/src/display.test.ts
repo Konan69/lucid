@@ -22,9 +22,19 @@ describe('a reply with displays in it', () => {
   it('draws a display that is still arriving, and keeps its place when the rest lands', () => {
     const arriving = `Look:\n${FENCE}openui-lang\nroot = Col([a])\na = Tit`
     const [, early] = stretches(arriving)
-    expect(early).toEqual({ kind: 'display', from: 6, text: 'root = Col([a])\na = Tit', whole: false })
+    expect(early).toEqual({
+      kind: 'display',
+      from: 6,
+      text: 'root = Col([a])\na = Tit',
+      whole: false,
+    })
     const [, late] = stretches(`${arriving}le("Hi")\n${FENCE}\nDone.`)
-    expect(late).toEqual({ kind: 'display', from: 6, text: 'root = Col([a])\na = Title("Hi")\n', whole: true })
+    expect(late).toEqual({
+      kind: 'display',
+      from: 6,
+      text: 'root = Col([a])\na = Title("Hi")\n',
+      whole: true,
+    })
   })
 
   it('shows nothing of a fence line it is still in the middle of', () => {

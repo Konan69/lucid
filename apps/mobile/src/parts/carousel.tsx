@@ -18,7 +18,9 @@ export const Carousel = defineComponent({
   component: ({ props, renderNode }) => {
     const skin = useSkin()
     void skin
-    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter((c) => c != null)
+    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter(
+      (c) => c != null,
+    )
     const width = Math.min(640, Math.max(80, props.itemWidth ?? 240))
     return (
       <ScrollView
