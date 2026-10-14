@@ -6,6 +6,7 @@ import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
 import {
   EGRESS_FRAME_LIMIT,
+  EGRESS_WINDOW,
   EgressFrame,
   EgressStatus,
   PersonId,
@@ -486,41 +487,30 @@ describe('the egress relay', () => {
         yield* proxy.attached(true)
         yield* desktop.stall
 
-        // The browser uploads far more than may wait anywhere, to an app that reads nothing.
-        const megabyte = Buffer.alloc(1 << 20)
-        const total = 64
-        const sent = { megabytes: 0 }
-        const uploaded = yield* Deferred.make<void>()
-        const browser = yield* Effect.acquireRelease(
-          Effect.sync(() => NodeNet.connect(proxy.ports.proxy, '127.0.0.1')),
-          (socket) => Effect.sync(() => socket.destroy()),
-        )
-        browser.on('error', () => undefined)
-        const more = () => {
-          if (sent.megabytes === total) {
-            Deferred.doneUnsafe(uploaded, Effect.void)
-            return
-          }
-          sent.megabytes += 1
-          browser.write(megabyte, more)
+        // Many connections of the browser's upload at once, to an app that reads nothing and so
+        // grants nothing: each may send one window, and together that is far more than may wait
+        // for the app on this server.
+        const pages = 32
+        for (let at = 0; at < pages; at += 1) {
+          const browser = yield* Effect.acquireRelease(
+            Effect.sync(() => NodeNet.connect(proxy.ports.proxy, '127.0.0.1')),
+            (socket) => Effect.sync(() => socket.destroy()),
+          )
+          browser.on('error', () => undefined)
+          browser.on('connect', () => {
+            browser.write('CONNECT site.example:443 HTTP/1.1\r\n\r\n')
+            browser.write(Buffer.alloc(2 * EGRESS_WINDOW))
+          })
         }
-        browser.on('connect', () =>
-          browser.write('CONNECT site.example:443 HTTP/1.1\r\n\r\n', more),
-        )
-        const outcome = yield* Effect.raceFirst(
-          Deferred.await(uploaded).pipe(Effect.as('The relay took everything')),
-          Deferred.await(waited).pipe(Effect.as('The relay waited for the app')),
-        )
-        expect(outcome).toBe('The relay waited for the app')
-        // What is held for the app is the bound and the frames of the one chunk that crossed it.
+        yield* Deferred.await(waited)
+        // What is held for the app is the bound and the frames of the one chunk that crossed it,
+        // not the eight mebibytes the Computer was free to send.
         const app = yield* Deferred.await(handed)
         expect(app.buffered()).toBeGreaterThan(QUEUE_LIMIT)
         expect(app.buffered()).toBeLessThan(4 * QUEUE_LIMIT)
-        expect(sent.megabytes).toBeLessThan(total)
 
-        // The app reads again: everything arrives, and only then is the upload all taken.
-        yield* desktop.read(total << 20)
-        yield* Deferred.await(uploaded)
+        // The app reads again: every stream's window arrives.
+        yield* desktop.read(pages * EGRESS_WINDOW)
 
         // The join ends: the server closes the app's socket, not only the join.
         yield* turn({ chosen: false })

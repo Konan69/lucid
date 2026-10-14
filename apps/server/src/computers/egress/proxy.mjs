@@ -12,9 +12,10 @@
 // image of that app's exit client (`EgressTunnelExitClient`): it opens the streams the client
 // accepts, in the frames the client reads. Two things differ and are Vivid's: the tunnel reaches
 // this machine over the server's SSH connection, which is a byte stream and not a WebSocket, so
-// here each frame is preceded by its length (unsigned 32 bits, big-endian); and a stream's two
+// here each frame is preceded by its length (unsigned 32 bits, big-endian); a stream's two
 // directions end apart (`END`), so a browser that has sent its whole request still gets its
-// answer.
+// answer; and each direction of a stream has a window (`GRANT`), so a slow site or a browser
+// that is not reading slows that one connection and costs nothing else.
 //
 // The browser must never lose the internet because nobody is at home: while no tunnel is
 // attached every connection is dialled from this machine directly, exactly as without egress.
@@ -32,11 +33,15 @@ const OPEN = 1
 const DATA = 2
 const CLOSE = 3
 const END = 4
-// The contract's own numbers (`EGRESS_FRAME_LIMIT`, `EGRESS_STREAM_BUDGET`, `EGRESS_LINK_BUDGET`),
-// and its rule for how much a hop may hold ("How much a hop may hold"): `proxy.test.ts` sends
-// this program the contract's numbers and fails when these are not the same.
+const GRANT = 5
+// The contract's own numbers (`EGRESS_FRAME_LIMIT`, `EGRESS_WINDOW`, `EGRESS_GRANT`,
+// `EGRESS_STREAM_BUDGET`, `EGRESS_LINK_BUDGET`), and its rule for how much a hop may hold ("How
+// much a hop may hold"): `proxy.test.ts` sends this program the contract's numbers and fails
+// when these are not the same.
 const FRAME_LIMIT = 1 << 20
 const PAYLOAD_LIMIT = FRAME_LIMIT - 5
+const WINDOW = 256 * 1024
+const GRANT_AT = WINDOW / 2
 const STREAM_BUDGET = 32 * 1024 * 1024
 const LINK_BUDGET = 96 * 1024 * 1024
 
@@ -59,10 +64,13 @@ const NOTHING = Buffer.alloc(0)
 /**
  * One connection of the browser's as a stream over the tunnel.
  *
- * Toward the far end it is the contract's first rule: a write is finished only when the tunnel's
- * socket has taken the bytes, so a browser that uploads faster than the tunnel drains is paused
- * by `pipe`, not buffered. From the far end it is the third: what the browser has not read waits
- * in this Duplex, up to the budgets (`received`).
+ * Each direction has a window (the contract's "How much a hop may hold"). Toward the far end
+ * this program is the sender: a write of the browser's is finished only when the far end has
+ * room for all of it and the tunnel's socket has taken it, so a browser that uploads faster
+ * than the site takes it is paused by `pipe`, and nothing but the one write in hand waits here
+ * (`pour`). From the far end it is the receiver: what arrives waits in `queue` until the
+ * browser's side asks for it, and the far end is granted more only for what was asked for
+ * (`feed`), so the queue never holds more than the window.
  *
  * The two directions end apart. The browser finishing its request is an `End`: the stream stays
  * open the other way, for the answer. The stream is over when both sides have ended, or at once
@@ -75,20 +83,83 @@ const openStream = (tunnel, host, port) => {
   do tunnel.last = (tunnel.last + 1) >>> 0
   while (tunnel.streams.has(tunnel.last))
   const id = tunnel.last
-  const entry = { sentEnd: false, heardEnd: false, over: false, duplex: null }
+  const entry = {
+    sentEnd: false,
+    heardEnd: false,
+    over: false,
+    duplex: null,
+    // How many more of the browser's bytes the far end will take: a whole window at the open.
+    credit: WINDOW,
+    // The browser's write in hand, when the far end has no room for all of it yet.
+    waiting: null,
+    // What the far end sent that the browser's side has not asked for yet, and its size.
+    queue: [],
+    queued: 0,
+    // The browser's side asked for more than the queue had: the next bytes go straight to it.
+    wanted: false,
+    // Bytes the browser's side took that the far end has not been granted yet.
+    taken: 0,
+    // Nothing more will be queued: the browser's side is told once the queue is empty.
+    last: false,
+    pour: () => undefined,
+    feed: () => undefined,
+  }
   const say = (kind, more, done = () => undefined) => {
     if (tunnel.socket.destroyed) return done()
     return tunnel.socket.write(framed(kind, id, more), done)
   }
+  // Sends the write in hand as far as the far end's window allows; a grant calls it again. A
+  // write for a stream that is over is taken and dropped, so the browser's side is never left
+  // waiting on a far end that will not answer.
+  entry.pour = () => {
+    const held = entry.waiting
+    if (held === null) return
+    if (entry.over) {
+      entry.waiting = null
+      held.done()
+      return
+    }
+    while (entry.credit > 0) {
+      const part = held.chunk.subarray(0, Math.min(entry.credit, PAYLOAD_LIMIT))
+      held.chunk = held.chunk.subarray(part.length)
+      entry.credit -= part.length
+      if (held.chunk.length > 0) say(DATA, part)
+      else {
+        entry.waiting = null
+        say(DATA, part, () => held.done())
+        return
+      }
+    }
+  }
+  // Hands the browser's side what it asked for, and grants the far end that much more once it
+  // comes to half a window. Bytes nobody asked for stay in the queue and are not granted.
+  entry.feed = () => {
+    while (entry.wanted && entry.queue.length > 0) {
+      const chunk = entry.queue.shift()
+      entry.queued -= chunk.length
+      entry.taken += chunk.length
+      entry.wanted = entry.duplex.push(chunk)
+    }
+    if (entry.taken >= GRANT_AT && !entry.heardEnd && !entry.over) {
+      const more = Buffer.allocUnsafe(4)
+      more.writeUInt32BE(entry.taken, 0)
+      entry.taken = 0
+      say(GRANT, more)
+    }
+    if (entry.last && entry.queue.length === 0) {
+      entry.last = false
+      entry.duplex.push(null)
+    }
+  }
   entry.duplex = new NodeStream.Duplex({
-    read() {},
+    read() {
+      entry.wanted = true
+      entry.feed()
+    },
     write(chunk, _encoding, done) {
-      if (entry.over) return done()
-      // One socket read is far under a frame; nothing promises that, so more is cut into frames.
-      for (let at = 0; at + PAYLOAD_LIMIT < chunk.length; at += PAYLOAD_LIMIT)
-        say(DATA, chunk.subarray(at, at + PAYLOAD_LIMIT))
-      const rest = chunk.length % PAYLOAD_LIMIT || Math.min(chunk.length, PAYLOAD_LIMIT)
-      return say(DATA, chunk.subarray(chunk.length - rest), () => done())
+      if (chunk.length === 0) return done()
+      entry.waiting = { chunk, done }
+      return entry.pour()
     },
     // The browser has no more to send. The answer may still be on its way.
     final(done) {
@@ -103,6 +174,9 @@ const openStream = (tunnel, host, port) => {
     destroy(error, done) {
       if (!entry.over) say(CLOSE, NOTHING)
       entry.over = true
+      entry.queue.length = 0
+      entry.queued = 0
+      entry.pour()
       if (tunnel.streams.get(id) === entry) tunnel.streams.delete(id)
       done(error)
     },
@@ -119,21 +193,26 @@ const openStream = (tunnel, host, port) => {
   return entry.duplex
 }
 
+/** What one stream holds that its browser connection has not read yet. */
+const holding = (entry) => entry.queued + entry.duplex.readableLength
+
 /** What every stream of a tunnel holds that its browser connection has not read yet. */
 const held = (tunnel) => {
   let bytes = 0
-  for (const { duplex } of tunnel.streams.values()) bytes += duplex.readableLength
+  for (const entry of tunnel.streams.values()) bytes += holding(entry)
   return bytes
 }
 
-/** Bytes of a stream from the far end: held for the browser, up to the budgets. */
+/**
+ * Bytes of a stream from the far end. A far end that keeps its window never has more than the
+ * window waiting here; one that does not is held to the budgets, and its stream is closed.
+ */
 const heardData = (tunnel, entry, payload) => {
   if (entry.heardEnd) return
-  entry.duplex.push(payload)
-  // The browser is not reading this connection (a paused video, say), or not reading enough of
-  // them. This one is closed; the browser asks again when it wants more.
-  if (entry.duplex.readableLength > STREAM_BUDGET || held(tunnel) > LINK_BUDGET)
-    entry.duplex.destroy()
+  entry.queue.push(payload)
+  entry.queued += payload.length
+  entry.feed()
+  if (holding(entry) > STREAM_BUDGET || held(tunnel) > LINK_BUDGET) entry.duplex.destroy()
 }
 
 /** The far end has no more to send. The browser may still be sending. */
@@ -141,7 +220,15 @@ const heardEnd = (entry) => {
   if (entry.heardEnd) return
   entry.heardEnd = true
   entry.over = entry.sentEnd
-  entry.duplex.push(null)
+  entry.last = true
+  entry.feed()
+}
+
+/** The far end has room for more of what the browser sends. */
+const heardGrant = (entry, frame) => {
+  if (frame.length < 9) return
+  entry.credit += frame.readUInt32BE(5)
+  entry.pour()
 }
 
 /**
@@ -151,14 +238,19 @@ const heardEnd = (entry) => {
  */
 const heardClose = (entry) => {
   entry.over = true
+  entry.pour()
   entry.duplex.once('end', () => entry.duplex.destroy())
-  if (!entry.heardEnd) entry.duplex.push(null)
+  if (!entry.heardEnd) {
+    entry.last = true
+    entry.feed()
+  }
   if (entry.duplex.readableEnded) entry.duplex.destroy()
 }
 
 /**
  * What the far end said about one stream. A stream it does not know, or one that is over, is
- * passed over, and so is anything that is not `Data`, `End` or `Close`: the far end never opens.
+ * passed over, and so is anything that is not `Data`, `End`, `Grant` or `Close`: the far end
+ * never opens.
  */
 const received = (tunnel, frame) => {
   if (frame.length < 5) return
@@ -166,6 +258,7 @@ const received = (tunnel, frame) => {
   if (entry === undefined || entry.over) return
   if (frame[0] === DATA) heardData(tunnel, entry, frame.subarray(5))
   if (frame[0] === END) heardEnd(entry)
+  if (frame[0] === GRANT) heardGrant(entry, frame)
   if (frame[0] === CLOSE) heardClose(entry)
 }
 

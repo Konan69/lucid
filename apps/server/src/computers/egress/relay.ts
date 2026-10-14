@@ -40,7 +40,9 @@ import { egressChosen } from './setting.ts'
  * one frame, and toward the Computer each frame is written with its length in front, because an
  * SSH channel is a byte stream and does not keep a message's edges (`proxy.mjs` reads them the
  * same way). It holds nothing for any one stream (the contract's "How much a hop may hold",
- * rule 2): each side is read only as fast as the other takes what was read (`pumped`).
+ * rule 3): each side is read only as fast as the other takes what was read (`pumped`), and a
+ * stream's `Grant` passes through like any other frame, so the two ends keep each stream's
+ * window between themselves.
  *
  * A desktop app's socket is held whether or not egress is on. While it is off, or the Computer
  * is not running, the socket is parked: nothing is read from it but its end. Turning egress on

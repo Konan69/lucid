@@ -28,6 +28,7 @@ it('reads back every kind of frame it writes', () => {
     EgressFrame.cases.Open.make({ stream, host: 'xn--bcher-kva.example', port: 8080 }),
     EgressFrame.cases.Data.make({ stream, payload }),
     EgressFrame.cases.End.make({ stream }),
+    EgressFrame.cases.Grant.make({ stream, bytes: 0xffff_ffff }),
     EgressFrame.cases.Close.make({ stream }),
   ]
   expect(frames.map((frame) => decodeEgressFrame(encodeEgressFrame(frame)))).toEqual(
@@ -35,17 +36,28 @@ it('reads back every kind of frame it writes', () => {
   )
 })
 
-/** The reference's three kinds keep their numbers; the half-close has one of its own. */
-it('writes data as kind 2, a close as kind 3 and an end as kind 4', () => {
+/**
+ * The reference's three kinds keep their numbers, and so does each kind added since: the two
+ * ends of a link may be different builds, so a number in use is never given another meaning.
+ */
+it('writes data as kind 2, a close as kind 3, an end as kind 4 and a grant as kind 5', () => {
   expect([
     encodeEgressFrame(EgressFrame.cases.Data.make({ stream, payload: Uint8Array.from([9]) })),
     encodeEgressFrame(EgressFrame.cases.Close.make({ stream })),
     encodeEgressFrame(EgressFrame.cases.End.make({ stream })),
+    encodeEgressFrame(EgressFrame.cases.Grant.make({ stream, bytes: 0x0002_0000 })),
   ]).toEqual([
     Uint8Array.from([2, 1, 2, 3, 4, 9]),
     Uint8Array.from([3, 1, 2, 3, 4]),
     Uint8Array.from([4, 1, 2, 3, 4]),
+    Uint8Array.from([5, 1, 2, 3, 4, 0, 2, 0, 0]),
   ])
+})
+
+it('a grant that is cut short, or allows nothing, is passed over', () => {
+  const short = Result.fail(EgressRefusal.cases.Short.make({}))
+  expect(decodeEgressFrame(Uint8Array.from([5, 1, 2, 3, 4, 0, 2, 0]))).toEqual(short)
+  expect(decodeEgressFrame(Uint8Array.from([5, 1, 2, 3, 4, 0, 0, 0, 0]))).toEqual(short)
 })
 
 const refused = (bytes: Uint8Array) => Result.flip(decodeEgressFrame(bytes))

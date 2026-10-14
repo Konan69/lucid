@@ -5,8 +5,10 @@ import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
 import {
   EGRESS_FRAME_LIMIT,
+  EGRESS_GRANT,
   EGRESS_LINK_BUDGET,
   EGRESS_STREAM_BUDGET,
+  EGRESS_WINDOW,
   EgressFrame,
   type EgressStream,
   decodeEgressFrame,
@@ -170,6 +172,10 @@ const browser = Effect.fn('ProxyTest.browser')(function* (proxyPort: number, fir
   return {
     socket,
     until,
+    /** How many bytes have arrived that `until` has not taken. */
+    rest: Queue.clear(received).pipe(
+      Effect.map((chunks) => chunks.reduce((sum, chunk) => sum + chunk.length, 0)),
+    ),
     ended: Deferred.await(ended),
     closed: Deferred.await(ended).pipe(
       Effect.andThen(Effect.sync(() => socket.end())),
@@ -381,6 +387,62 @@ describe('the Computer’s egress proxy', () => {
     }),
   )
 
+  it.live('an upload stops at the window, and goes on by exactly what is granted', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      page.socket.write(Buffer.alloc(4 * EGRESS_WINDOW, 7))
+      const open = yield* tunnel.frame
+      let sent = 0
+      while (sent < EGRESS_WINDOW) {
+        const data = yield* tunnel.next('Data', open.stream)
+        sent += EgressFrame.guards.Data(data) ? data.payload.length : 0
+      }
+      // Not a byte over the window: the program's number is the contract's.
+      expect(sent).toBe(EGRESS_WINDOW)
+      // The far end has room for three more bytes. Had the upload not stopped, the next frame
+      // would be whatever the browser's socket gave, not these three.
+      yield* tunnel.say(EgressFrame.cases.Grant.make({ stream: open.stream, bytes: 3 }))
+      expect(yield* tunnel.frame).toEqual(
+        EgressFrame.cases.Data.make({ stream: open.stream, payload: Uint8Array.from([7, 7, 7]) }),
+      )
+      // A second connection is not held back by the first.
+      const other = yield* browser(proxy.ports.proxy, connect('other.example:443'))
+      const second = yield* tunnel.frame
+      expect(second._tag).toBe('Open')
+      other.socket.write('unharmed')
+      expect(text(yield* tunnel.next('Data', second.stream))).toBe('unharmed')
+    }),
+  )
+
+  it.live('the far end is granted more only as the browser reads, half a window at a time', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      const open = yield* tunnel.frame
+      // A far end that keeps its window: it sends what it may, and waits for a grant.
+      const body = Buffer.alloc(4 * EGRESS_WINDOW, 9)
+      let credit = EGRESS_WINDOW
+      for (let at = 0; at < body.length; ) {
+        if (credit === 0) {
+          const grant = yield* tunnel.next('Grant', open.stream)
+          const more = EgressFrame.guards.Grant(grant) ? grant.bytes : 0
+          expect(more).toBeGreaterThanOrEqual(EGRESS_GRANT)
+          credit += more
+        }
+        const part = body.subarray(at, at + Math.min(credit, 65_536))
+        yield* tunnel.send(open.stream, part)
+        credit -= part.length
+        at += part.length
+      }
+      yield* tunnel.say(EgressFrame.cases.End.make({ stream: open.stream }))
+      yield* page.ended
+      expect(yield* page.rest).toBe(body.length)
+    }),
+  )
+
   it.live('a connection the browser has stopped reading is closed at its budget, alone', () =>
     Effect.gen(function* () {
       const { proxy, tunnel } = yield* attachedProxy()
@@ -413,8 +475,10 @@ describe('the Computer’s egress proxy', () => {
         streams.push((yield* tunnel.frame).stream)
       }
       for (const stream of streams) yield* tunnel.send(stream, Buffer.alloc(each))
-      // The one whose bytes crossed the bound is the one that is closed.
-      const closed = yield* tunnel.frame
+      // The one whose bytes crossed the bound is the one that is closed. Grants come first, for
+      // the little each paused connection took before it stopped.
+      let closed = yield* tunnel.frame
+      while (!EgressFrame.guards.Close(closed)) closed = yield* tunnel.frame
       expect(closed).toEqual(
         EgressFrame.cases.Close.make({ stream: streams.at(-1) ?? closed.stream }),
       )

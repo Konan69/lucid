@@ -14,38 +14,54 @@ import { Result, Schema } from 'effect'
  * `decodeFrame`, `encodeData`, `encodeClose`): one kind byte, the stream number as an unsigned
  * 32-bit big-endian integer, then for an open the port as an unsigned 16-bit big-endian integer
  * followed by the host in UTF-8, and for data the payload. A close carries nothing more. Its
- * three kinds keep their numbers and their bytes. One kind is Vivid's: `End` (see `EgressFrame`).
+ * three kinds keep their numbers and their bytes. Two kinds are Vivid's: `End` and `Grant` (see
+ * `EgressFrame`).
  *
  * ## How much a hop may hold
  *
  * There are three hops: the proxy on the Computer, the server between, and the desktop app. The
- * reference has no bound on what waits toward a slow site, and the protocol has no way to tell
- * the far end to slow one stream down. This is the one rule every hop keeps, in both directions:
+ * reference has no bound on what waits toward a slow site and no way to slow one stream down, so
+ * a slow destination either filled memory or cost the connection. A Person's home connection is
+ * slower than a datacentre's, so an ordinary upload is exactly that case. Each direction of each
+ * stream therefore has a window, as a stream of yamux has
+ * (`github.com/hashicorp/yamux` v0.1.2, `const.go` `initialStreamWindow`, and `stream.go`
+ * `sendWindowUpdate`), and this is the one rule, the same in both directions:
  *
- * 1. Where a hop reads a stream's bytes from a socket of that stream's own (the browser's on the
- *    Computer, the site's on the Person's computer), it stops reading that socket while the link
- *    ahead is full. Nothing is held and nothing is lost.
- * 2. Where a hop reads from the link and writes to the link (the server), it holds nothing for
- *    any one stream: it reads one link only as fast as the other takes what was read.
- * 3. Where a stream's bytes come off the link toward a socket of that stream's own, the hop
- *    cannot slow that one stream without stopping all of them. It holds what the socket has not
- *    taken, up to `EGRESS_STREAM_BUDGET` for one stream and `EGRESS_LINK_BUDGET` for all the
- *    streams of the link together. The stream whose bytes cross either bound is ended with a
- *    `Close`, and the others go on.
+ * 1. Whoever sends a stream's bytes (the proxy for what the browser sends, the desktop app for
+ *    what the site sends) may have at most `EGRESS_WINDOW` bytes of that stream sent and not yet
+ *    granted. It starts with the whole window at the `Open`, before the name is resolved. With
+ *    none left it stops reading that stream's own socket, and reads it again when a `Grant`
+ *    comes. The other streams go on.
+ * 2. Whoever receives them writes them to the stream's own socket, and grants back only what
+ *    that socket has taken, once that is `EGRESS_GRANT` bytes or more (half the window, yamux's
+ *    own threshold, so a grant is not sent for every packet). So what a receiver holds for one
+ *    stream is never more than the window. A stream whose name is still being resolved has
+ *    taken nothing, so it is granted nothing: it holds the first window and no more.
+ * 3. The server between holds nothing for any one stream and does not read the frames: a
+ *    `Grant` passes through it like any other. It reads one link only as fast as the other
+ *    takes what was read, which is the link's own pace and no stream's.
  *
- * So a hop's memory for a link is bounded, and a slow site or a browser that has stopped reading
- * costs that one connection, never the others. What it costs is real: an upload larger than the
- * budget, to a site that takes it more slowly than the Computer sends it, is cut. A window for
- * each stream would remove that; the reference has none, and none is added here.
+ * `EGRESS_STREAM_BUDGET` and `EGRESS_LINK_BUDGET` are what a receiver does when the far end does
+ * not keep rule 1: a stream holding more than the first, or a link holding more than the second
+ * in all, is ended with a `Close`. A far end that keeps the rule never reaches either.
  */
 
 /** The most bytes one frame may be. A longer one is not this protocol, wherever it arrives. */
 export const EGRESS_FRAME_LIMIT = 1 << 20
 
-/** The most a hop holds for one stream that its socket has not taken (rule 3 above). */
+/**
+ * How many bytes of one stream, in one direction, may be sent and not yet granted: yamux's
+ * initial stream window, 256 KiB.
+ */
+export const EGRESS_WINDOW = 256 * 1024
+
+/** A receiver grants once its socket has taken this much: half the window, as yamux does. */
+export const EGRESS_GRANT = EGRESS_WINDOW / 2
+
+/** The most a receiver holds for one stream from a far end that ignores the window. */
 export const EGRESS_STREAM_BUDGET = 32 * 1024 * 1024
 
-/** The most a hop holds for all the streams of one link together (rule 3 above). */
+/** The most a receiver holds for all the streams of one link, from a far end that ignores it. */
 export const EGRESS_LINK_BUDGET = 96 * 1024 * 1024
 
 /** One stream's number, chosen by the side that opens it (the Computer). Unsigned 32 bits. */
@@ -67,6 +83,9 @@ export const EgressHost = Schema.String.check(Schema.isPattern(/^[\x21-\x7e]{1,2
 /** A TCP port a stream may be opened to. */
 export const EgressPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))
 
+/** How many more bytes a `Grant` allows: unsigned 32 bits, and never nothing. */
+export const EgressCredit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffff_ffff }))
+
 /**
  * What crosses the tunnel.
  *
@@ -78,6 +97,9 @@ export const EgressPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximu
  *   word the answer had nowhere to go. A stream is over when each side has sent one. It is
  *   Vivid's addition, with a kind number the reference does not use; the reference's client
  *   passes over a kind it does not know.
+ * - `Grant`: the sender of this frame has passed `bytes` more of this stream on to the stream's
+ *   own socket, and the far end may send that many more ("How much a hop may hold"). It is
+ *   Vivid's addition, like `End`, and is passed over by a client that does not know it.
  * - `Close`: this stream is over in both directions, now, from either side: the connection was
  *   dropped or failed, or the stream went over its budget. An `Open` that is refused (the name
  *   does not resolve, or it leads into the Person's own network) is answered with a `Close` and
@@ -88,12 +110,17 @@ export const EgressFrame = Schema.TaggedUnion({
   Open: { stream: EgressStream, host: EgressHost, port: EgressPort },
   Data: { stream: EgressStream, payload: Schema.Uint8Array },
   End: { stream: EgressStream },
+  Grant: { stream: EgressStream, bytes: EgressCredit },
   Close: { stream: EgressStream },
 })
 export type EgressFrame = typeof EgressFrame.Type
 
-/** The kind byte of each frame: the reference's own numbers, and four for `End`. */
-const KIND = { Open: 1, Data: 2, Close: 3, End: 4 } as const
+/**
+ * The kind byte of each frame: the reference's own numbers, then four for `End` and five for
+ * `Grant`. A number is never given a second meaning: both ends of a link may be different
+ * builds.
+ */
+const KIND = { Open: 1, Data: 2, Close: 3, End: 4, Grant: 5 } as const
 
 /** Kind byte and stream number: every frame begins with these five bytes. */
 const HEAD = 5
@@ -127,6 +154,11 @@ export const encodeEgressFrame = (frame: EgressFrame): Uint8Array =>
       return bytes
     },
     End: ({ stream }) => headed(KIND.End, stream, 0),
+    Grant: ({ stream, bytes: credit }) => {
+      const bytes = headed(KIND.Grant, stream, 4)
+      new DataView(bytes.buffer).setUint32(HEAD, credit)
+      return bytes
+    },
     Close: ({ stream }) => headed(KIND.Close, stream, 0),
   })
 
@@ -151,7 +183,8 @@ export const egressData = (stream: EgressStream, payload: Uint8Array): ReadonlyA
  *
  * - `Oversized`: longer than any frame. The sender is not keeping the protocol, and the link it
  *   came over is ended; nothing else is.
- * - `Short` and `Unknown`: too few bytes to say which stream, or a kind this side does not know.
+ * - `Short` and `Unknown`: too few bytes to say which stream or how much is granted, a grant of
+ *   nothing, or a kind this side does not know.
  *   Passed over, and the link stays, as the reference does (`handleFrame`): one bad message does
  *   not end every stream, and a kind added later is not an attack.
  * - `Unopenable`: an open whose port or host is not one. The stream is known, so it is answered
@@ -166,6 +199,33 @@ export const EgressRefusal = Schema.TaggedUnion({
 export type EgressRefusal = typeof EgressRefusal.Type
 
 const isHost = Schema.is(EgressHost)
+
+/** A grant's four bytes. Cut short, or allowing nothing, it is not a grant, and is passed over. */
+const decodeGrant = (
+  stream: EgressStream,
+  view: DataView,
+): Result.Result<EgressFrame, EgressRefusal> => {
+  const credit = view.byteLength < HEAD + 4 ? 0 : view.getUint32(HEAD)
+  return credit === 0
+    ? Result.fail(EgressRefusal.cases.Short.make({}))
+    : Result.succeed(EgressFrame.cases.Grant.make({ stream, bytes: credit }))
+}
+
+/** An open's port and host. The stream is known, so one that names no place is `Unopenable`. */
+const decodeOpen = (
+  stream: EgressStream,
+  bytes: Uint8Array,
+  view: DataView,
+): Result.Result<EgressFrame, EgressRefusal> => {
+  const unopenable = Result.fail(EgressRefusal.cases.Unopenable.make({ stream }))
+  const named = bytes.subarray(HEAD + 2)
+  // The length is checked before a string is made of the bytes.
+  if (bytes.length < HEAD + 2 || named.length > HOST_LIMIT) return unopenable
+  const port = view.getUint16(HEAD)
+  const host = String.fromCharCode(...named)
+  if (port === 0 || !isHost(host)) return unopenable
+  return Result.succeed(EgressFrame.cases.Open.make({ stream, host, port }))
+}
 
 /**
  * Reads one message as a frame, once, where it arrives, or says why it is not one
@@ -184,14 +244,9 @@ export const decodeEgressFrame = (bytes: Uint8Array): Result.Result<EgressFrame,
     return Result.succeed(EgressFrame.cases.Data.make({ stream, payload: bytes.subarray(HEAD) }))
   if (kind === KIND.End) return Result.succeed(EgressFrame.cases.End.make({ stream }))
   if (kind === KIND.Close) return Result.succeed(EgressFrame.cases.Close.make({ stream }))
-  if (kind !== KIND.Open) return Result.fail(EgressRefusal.cases.Unknown.make({ kind }))
-  const unopenable = Result.fail(EgressRefusal.cases.Unopenable.make({ stream }))
-  const named = bytes.subarray(HEAD + 2)
-  if (bytes.length < HEAD + 2 || named.length > HOST_LIMIT) return unopenable
-  const port = view.getUint16(HEAD)
-  const host = String.fromCharCode(...named)
-  if (port === 0 || !isHost(host)) return unopenable
-  return Result.succeed(EgressFrame.cases.Open.make({ stream, host, port }))
+  if (kind === KIND.Grant) return decodeGrant(stream, view)
+  if (kind === KIND.Open) return decodeOpen(stream, bytes, view)
+  return Result.fail(EgressRefusal.cases.Unknown.make({ kind }))
 }
 
 /** Why egress is on and cannot work. */

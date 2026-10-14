@@ -9,6 +9,7 @@ import {
   EGRESS_LINK_BUDGET,
   EGRESS_PAYLOAD_LIMIT,
   EGRESS_STREAM_BUDGET,
+  EGRESS_WINDOW,
   EgressFrame,
   EgressStream,
   decodeEgressFrame,
@@ -86,14 +87,59 @@ const listening = (server: NodeNet.Server) =>
       }),
   )
 
+/** Which way a stream's bytes are going: toward the site, or toward the browser. */
+type Way = 'up' | 'down'
+
+/**
+ * What the middle of the tunnel sees of every stream's window (the contract's "How much a hop
+ * may hold"): the bytes of a stream that have passed one way, less what was granted back the
+ * other way. A sender never has more than the window out, and a receiver grants only what its
+ * socket took, so this is never over the window, and it is the most either end can be holding.
+ */
+const windows = () => {
+  const out = new Map<string, number>()
+  const full = new Map<string, Deferred.Deferred<void>>()
+  const reached = (key: string) => {
+    const made = full.get(key) ?? Deferred.makeUnsafe<void>()
+    full.set(key, made)
+    return made
+  }
+  /** `most` is the most any stream had out; `up` and `down` are all the bytes that passed. */
+  const seen = { most: 0, up: 0, down: 0 }
+  const moved = (way: Way, stream: EgressStream, bytes: number) => {
+    const key = `${way}:${stream}`
+    const now = (out.get(key) ?? 0) + bytes
+    out.set(key, now)
+    seen.most = Math.max(seen.most, now)
+    if (now >= EGRESS_WINDOW) Deferred.doneUnsafe(reached(key), Effect.void)
+  }
+  return {
+    seen,
+    /** One frame passing: `sender` is the way a stream's bytes go when this side sends them. */
+    passed: (sender: Way, bytes: Uint8Array) =>
+      Option.map(Result.getSuccess(decodeEgressFrame(bytes)), (frame) => {
+        if (EgressFrame.guards.Data(frame)) {
+          seen[sender] += frame.payload.length
+          moved(sender, frame.stream, frame.payload.length)
+        }
+        // A grant is for the bytes that go the other way.
+        if (EgressFrame.guards.Grant(frame))
+          moved(sender === 'up' ? 'down' : 'up', frame.stream, -frame.bytes)
+      }),
+    /** Completes once a stream's sender has used its whole window that way. */
+    full: (way: Way, stream: EgressStream) => Deferred.await(reached(`${way}:${stream}`)),
+  }
+}
+
 /**
  * The tunnel's socket as the exit client sees it, joined straight to the Computer's tunnel
  * port: each message is written with its length in front, and each length-prefixed frame that
  * arrives is one message. `bufferedAmount` is what the socket has not written yet, as a
- * WebSocket's is.
+ * WebSocket's is. `window` is what passed, as the middle saw it (`windows`).
  */
 const joined = (tunnelPort: number) => {
   const socket = NodeNet.connect(tunnelPort, '127.0.0.1')
+  const window = windows()
   // The events a WebSocket has, from a real event target.
   const events = new EventTarget()
   let held = Buffer.alloc(0)
@@ -104,9 +150,10 @@ const joined = (tunnelPort: number) => {
     held = Buffer.concat([held, chunk])
     while (held.length >= 4 && held.length >= 4 + held.readUInt32BE(0)) {
       const size = held.readUInt32BE(0)
-      events.dispatchEvent(
-        new MessageEvent('message', { data: Uint8Array.from(held.subarray(4, 4 + size)) }),
-      )
+      const message = Uint8Array.from(held.subarray(4, 4 + size))
+      // From the Computer: the browser's bytes, on their way up to the site.
+      window.passed('up', message)
+      events.dispatchEvent(new MessageEvent('message', { data: message }))
       held = held.subarray(4 + size)
     }
   })
@@ -116,6 +163,8 @@ const joined = (tunnelPort: number) => {
       return socket.writableLength
     },
     send: (data) => {
+      // From this computer: the site's bytes, on their way down to the browser.
+      window.passed('down', data)
       const size = Buffer.alloc(4)
       size.writeUInt32BE(data.length)
       socket.write(Buffer.concat([size, data]))
@@ -123,7 +172,7 @@ const joined = (tunnelPort: number) => {
     close: () => socket.destroy(),
     addEventListener: (type, listener) => events.addEventListener(type, listener),
   }
-  return { exit, socket }
+  return { exit, socket, window }
 }
 
 const never = () => Effect.fail(new Unresolved({}))
@@ -302,41 +351,48 @@ const megabytes = (bytes: number) => Math.ceil(bytes / (1 << 20))
 
 describe('egress through the Person’s computer', () => {
   it.live(
-    'a page larger than the queue bound arrives whole, and the target is paused meanwhile',
+    'many pages at once into a slow tunnel: the sites are read no further than the queue bound',
     () =>
       Effect.gen(function* () {
-        const body = NodeCrypto.randomBytes(QUEUE_BOUND * 4)
+        const pages = 8
+        const body = NodeCrypto.randomBytes(1 << 20)
         const { server, seen } = site(body)
         const sitePort = yield* listening(server)
         const ports = yield* computerProxy()
-        const paused = yield* Deferred.make<number>()
-        const dialled: Array<string> = []
+        const paused = new Set<NodeNet.Socket>()
+        const allPaused = yield* Deferred.make<number>()
         const { tunnel } = yield* attached(ports.tunnel, {
           dial: (address, port) => {
-            dialled.push(`${address}:${port}`)
             const target = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
             const pause = target.pause.bind(target)
             target.pause = () => {
-              Deferred.doneUnsafe(paused, Effect.succeed(tunnel.socket.writableLength))
+              paused.add(target)
+              if (paused.size === pages)
+                Deferred.doneUnsafe(allPaused, Effect.succeed(tunnel.socket.writableLength))
               return pause()
             }
             return target
           },
         })
-        // Nothing leaves toward the Computer until the tunnel is uncorked, so the queue must fill
-        // and the exit client must stop reading the site.
+        // Nothing leaves toward the Computer until the tunnel is uncorked, so no grant comes
+        // back either: every site is read until its window or the tunnel's queue is full.
         tunnel.socket.cork()
-        const reply = yield* Effect.forkScoped(tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/'))
-        // The stream's open went out before the cork; the site's answer is what queues behind it.
-        const queued = yield* Deferred.await(paused)
+        const replies = yield* Effect.forEach(Arr.makeBy(pages, () => undefined), () =>
+          Effect.forkScoped(tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/')),
+        )
+        // Each stream alone could put a window in the queue; together they stop at its bound,
+        // give or take the one read that crossed it.
+        const queued = yield* Deferred.await(allPaused)
         expect(queued).toBeGreaterThan(QUEUE_BOUND)
-        expect(queued).toBeLessThan(body.length)
+        expect(queued).toBeLessThan(pages * EGRESS_WINDOW)
         tunnel.socket.uncork()
-        const received = bodyOf(yield* Fiber.join(reply))
-        expect(received.length).toBe(body.length)
-        expect(digest(received)).toBe(digest(body))
-        expect(dialled).toEqual([`127.0.0.1:${sitePort}`])
-        expect(seen.requests).toBe(1)
+        for (const reply of replies) {
+          const received = bodyOf(yield* Fiber.join(reply))
+          expect(received.length).toBe(body.length)
+          expect(digest(received)).toBe(digest(body))
+        }
+        expect(seen.requests).toBe(pages)
+        expect(tunnel.window.seen.most).toBeLessThanOrEqual(EGRESS_WINDOW)
       }),
   )
 
@@ -470,6 +526,176 @@ describe('egress through the Person’s computer', () => {
       // Both sides ended, so the stream is over, and nobody had to drop it.
       yield* until((status) => ExitStatus.guards.Connected(status) && status.active === 0)
     }),
+  )
+
+  /**
+   * A browser's connection to the proxy, by hand, for what a test must do slowly: `CONNECT`,
+   * then nothing is read until the test says so. `cut` is the proxy dropping the connection.
+   */
+  const slowBrowser = Effect.fn('EgressTest.slowBrowser')(function* (
+    proxyPort: number,
+    target: string,
+  ) {
+    const established = yield* Deferred.make<void>()
+    const cut = yield* Deferred.make<void>()
+    const socket = yield* Effect.acquireRelease(
+      Effect.sync(() => NodeNet.connect({ port: proxyPort, host: '127.0.0.1' })),
+      (opened) => Effect.sync(() => opened.destroy()),
+    )
+    socket.on('connect', () => socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`))
+    socket.on('error', () => undefined)
+    socket.on('close', () => Deferred.doneUnsafe(cut, Effect.void))
+    // The proxy's own reply is 39 bytes and comes alone, before anything of the stream's.
+    socket.once('data', () => {
+      socket.pause()
+      Deferred.doneUnsafe(established, Effect.void)
+    })
+    yield* Deferred.await(established)
+    return { socket, cut: Deferred.await(cut) }
+  })
+
+  /** Reads a socket one piece for each turn of the event loop: slower than anything sends. */
+  const slowly = (socket: NodeNet.Socket, each: (chunk: Buffer) => void) => {
+    socket.on('data', (chunk: Buffer) => {
+      each(chunk)
+      socket.pause()
+      setImmediate(() => socket.resume())
+    })
+    socket.resume()
+  }
+
+  const large = 64 << 20
+  const block = NodeCrypto.randomBytes(1 << 20)
+  const largeDigest = () => {
+    const hash = NodeCrypto.createHash('sha256')
+    for (let at = 0; at < large; at += block.length) hash.update(block)
+    return hash.digest('hex')
+  }
+  /** Writes the large body to a socket, a block at a time, each when the last was taken. */
+  const pourInto = (socket: NodeNet.Socket) => {
+    const more = (left: number) => {
+      if (left === 0) socket.end()
+      else socket.write(block, () => more(left - block.length))
+    }
+    more(large)
+  }
+  /** A second connection through the same tunnel, while the first is held back. */
+  const stillAnswers = Effect.fn('EgressTest.stillAnswers')(function* (proxyPort: number) {
+    const { server } = site(Buffer.from('still answering'))
+    const port = yield* listening(server)
+    const reply = yield* tunnelled(proxyPort, `127.0.0.1:${port}`, '/')
+    expect(bodyOf(reply).toString()).toBe('still answering')
+  })
+
+  it.live(
+    'an upload larger than any budget, to a site that takes it slowly, arrives whole within the window',
+    () =>
+      Effect.gen(function* () {
+        const accepted = yield* Deferred.make<NodeNet.Socket>()
+        const server = NodeNet.createServer({ pauseOnConnect: true }, (socket) => {
+          socket.on('error', () => undefined)
+          Deferred.doneUnsafe(accepted, Effect.succeed(socket))
+        })
+        const sitePort = yield* listening(server)
+        const ports = yield* computerProxy()
+        const most = { waiting: 0 }
+        const { tunnel } = yield* attached(ports.tunnel, {
+          dial: (address, port) => {
+            const target = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
+            if (port !== sitePort) return target
+            // What this computer holds for the site: written to the socket and not yet taken.
+            const write = target.write.bind(target)
+            target.write = (...given: Parameters<typeof write>) => {
+              const more = write(...given)
+              most.waiting = Math.max(most.waiting, target.writableLength)
+              return more
+            }
+            return target
+          },
+        })
+        const browser = yield* slowBrowser(ports.proxy, `127.0.0.1:${sitePort}`)
+        pourInto(browser.socket)
+        // The site reads nothing. The upload must stop with a window out, not be cut.
+        const held = yield* Effect.raceFirst(
+          tunnel.window.full('up', one).pipe(Effect.as('The upload waits for the site')),
+          browser.cut.pipe(Effect.as('The upload was cut')),
+        )
+        expect(held).toBe('The upload waits for the site')
+        yield* stillAnswers(ports.proxy)
+
+        const hash = NodeCrypto.createHash('sha256')
+        const taken = { bytes: 0 }
+        const whole = yield* Deferred.make<void>()
+        const half = yield* Deferred.make<void>()
+        const socket = yield* Deferred.await(accepted)
+        socket.on('end', () => Deferred.doneUnsafe(whole, Effect.void))
+        slowly(socket, (chunk) => {
+          hash.update(chunk)
+          taken.bytes += chunk.length
+          if (taken.bytes >= large / 2) Deferred.doneUnsafe(half, Effect.void)
+        })
+        yield* Deferred.await(half)
+        yield* stillAnswers(ports.proxy)
+        yield* Deferred.await(whole)
+        expect(taken.bytes).toBe(large)
+        expect(hash.digest('hex')).toBe(largeDigest())
+        expect(most.waiting).toBeLessThanOrEqual(EGRESS_WINDOW)
+        expect(tunnel.window.seen.most).toBeLessThanOrEqual(EGRESS_WINDOW)
+      }),
+    60_000,
+  )
+
+  it.live(
+    'a download larger than any budget, to a browser that reads it slowly, arrives whole within the window',
+    () =>
+      Effect.gen(function* () {
+        const server = NodeNet.createServer((socket) => {
+          socket.on('error', () => undefined)
+          pourInto(socket)
+        })
+        const sitePort = yield* listening(server)
+        const ports = yield* computerProxy()
+        const targets: Array<NodeNet.Socket> = []
+        const { tunnel } = yield* attached(ports.tunnel, {
+          dial: (address, port) => {
+            const target = NodeNet.createConnection({ host: address, port, allowHalfOpen: true })
+            if (port === sitePort) targets.push(target)
+            return target
+          },
+        })
+        /** What this computer has read from the site and not yet sent on to the Computer. */
+        const ahead = () =>
+          Arr.reduce(targets, 0, (sum, target) => sum + target.bytesRead) - tunnel.window.seen.down
+        const browser = yield* slowBrowser(ports.proxy, `127.0.0.1:${sitePort}`)
+        // The browser reads nothing. The download must stop with a window out, not be cut.
+        const held = yield* Effect.raceFirst(
+          tunnel.window.full('down', one).pipe(Effect.as('The download waits for the browser')),
+          browser.cut.pipe(Effect.as('The download was cut')),
+        )
+        expect(held).toBe('The download waits for the browser')
+        // The site is not read while the browser's window is used up.
+        expect(ahead()).toBeLessThanOrEqual(EGRESS_WINDOW)
+        yield* stillAnswers(ports.proxy)
+
+        const hash = NodeCrypto.createHash('sha256')
+        const taken = { bytes: 0 }
+        const whole = yield* Deferred.make<void>()
+        const half = yield* Deferred.make<void>()
+        browser.socket.on('end', () => Deferred.doneUnsafe(whole, Effect.void))
+        slowly(browser.socket, (chunk) => {
+          hash.update(chunk)
+          taken.bytes += chunk.length
+          if (taken.bytes >= large / 2) Deferred.doneUnsafe(half, Effect.void)
+        })
+        yield* Deferred.await(half)
+        expect(ahead()).toBeLessThanOrEqual(EGRESS_WINDOW)
+        yield* stillAnswers(ports.proxy)
+        yield* Deferred.await(whole)
+        expect(taken.bytes).toBe(large)
+        expect(hash.digest('hex')).toBe(largeDigest())
+        expect(tunnel.window.seen.most).toBeLessThanOrEqual(EGRESS_WINDOW)
+      }),
+    60_000,
   )
 
   it.live('a stream the Computer dropped is still this computer’s to end', () =>

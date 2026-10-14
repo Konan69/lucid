@@ -1,7 +1,9 @@
 import {
+  EGRESS_GRANT,
   EGRESS_LINK_BUDGET,
   EGRESS_PATH,
   EGRESS_STREAM_BUDGET,
+  EGRESS_WINDOW,
   EgressFrame,
   EgressRefusal,
   type EgressStream,
@@ -36,7 +38,7 @@ import { isReserved } from './reserved.ts'
  * `EgressTunnelExitClient`), and keeps its mechanism: the frames, a stream table keyed by the
  * stream number, bytes that arrive before the target is dialled held and then written in order,
  * a refused or unresolvable target answered with a close, a bound on what is queued toward the
- * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Four things are
+ * tunnel, and reconnecting after two seconds, doubling, to at most thirty. Five things are
  * Vivid's:
  *
  * - The reference dials the machine's own hosted port. Vivid's Computer has no port a home
@@ -47,9 +49,12 @@ import { isReserved } from './reserved.ts'
  *   app's is Electron's, a web `WebSocket`, which has no such call: the queue is looked at
  *   again on a short timer while a target is paused (`draining`).
  * - The reference writes whatever the Computer sends to a target, however slowly the target
- *   takes it, and forgets a stream the moment the Computer closes it, with its socket still
- *   open. Here what a target has not taken is counted and bounded (the contract's "How much a
- *   hop may hold"), and a socket this module dialled is this module's until it has closed.
+ *   takes it, and sends the Computer whatever a target sends, however slowly the browser reads
+ *   it. Here each direction of each stream has a window (the contract's "How much a hop may
+ *   hold"): the Computer is granted more only as the target takes what was written, and a
+ *   target is read only while the Computer has room for what it sends.
+ * - The reference forgets a stream the moment the Computer closes it, with its socket still
+ *   open. A socket this module dialled is this module's until it has closed.
  * - A stream's two directions end apart (the contract's `End`): a browser that has sent its
  *   whole request still gets the answer.
  */
@@ -80,8 +85,9 @@ export interface ExitSocket {
 }
 
 /**
- * How much may wait to be sent to the tunnel before a target is paused: one mebibyte, the
- * reference's own bound. A fast site and a slow tunnel would otherwise fill this app's memory.
+ * How much may wait to be sent to the tunnel, for all streams together, before the targets are
+ * no longer read: one mebibyte, the reference's own bound. A stream's window bounds what one
+ * site may send ahead of its browser; this bounds many sites sending at once into a slow tunnel.
  */
 export const QUEUE_BOUND = 1 << 20
 
@@ -177,34 +183,33 @@ const messageBytes = (event: Event): Option.Option<Uint8Array> => {
 }
 
 /**
- * Holds back the targets that send faster than the tunnel drains (`QUEUE_BOUND`).
+ * Says whether the tunnel's own queue is full (`QUEUE_BOUND`), and calls back when it no longer
+ * is.
  *
- * A target is paused when what it just sent left more than the bound waiting, and every paused
- * target is resumed once the queue is back under it. A web socket says nothing when it has
- * sent, so the queue is asked on a timer; the timer does nothing while nothing is paused, and
- * does not keep the app from quitting.
+ * A web socket says nothing when it has sent, so the queue is asked on a timer; the timer does
+ * nothing while nobody waits, and does not keep the app from quitting.
  */
 const draining = (socket: ExitSocket) => {
-  const paused = new Set<NodeNet.Socket>()
+  const waiting = new Set<() => void>()
   const timer = setInterval(() => {
-    if (paused.size === 0 || socket.bufferedAmount > QUEUE_BOUND) return
-    for (const target of paused) target.resume()
-    paused.clear()
+    if (waiting.size === 0 || socket.bufferedAmount > QUEUE_BOUND) return
+    const ready = [...waiting]
+    waiting.clear()
+    for (const again of ready) again()
   }, DRAIN_MILLIS)
   timer.unref()
   return {
-    /** Called after each send for a target: pauses it when the queue is over the bound. */
-    sent: (target: NodeNet.Socket) => {
-      if (socket.bufferedAmount <= QUEUE_BOUND) return
-      target.pause()
-      paused.add(target)
+    full: () => socket.bufferedAmount > QUEUE_BOUND,
+    /** Calls `again` once, the next time the queue is seen under the bound. */
+    wait: (again: () => void) => {
+      waiting.add(again)
     },
-    forget: (target: NodeNet.Socket) => {
-      paused.delete(target)
+    forget: (again: () => void) => {
+      waiting.delete(again)
     },
     stop: () => {
       clearInterval(timer)
-      paused.clear()
+      waiting.clear()
     },
   }
 }
@@ -218,16 +223,31 @@ interface Resolving {
   heardEnd: boolean
 }
 
-/** A stream with a dialled target. */
+/**
+ * A stream with a dialled target, and the two windows of the contract's "How much a hop may
+ * hold". Toward the target this side is the receiver: `queued` is what it holds, and `taken` is
+ * what it owes the Computer a grant for. From the target this side is the sender: `credit` is
+ * what the Computer will still take, and `owed` is what the site sent beyond that.
+ */
 interface Relaying {
   readonly target: NodeNet.Socket
   /** Bytes written to the target that it has not taken yet. */
   queued: number
+  /** Bytes the target has taken that the Computer has not been granted yet. */
+  taken: number
+  /** How many more of the site's bytes the Computer will take. */
+  credit: number
+  /** What the site sent that the Computer has no room for yet, in order. */
+  readonly owed: Array<Uint8Array>
+  /** Looks at this stream again: what `pour` is for it, as one value the link can call back. */
+  readonly again: () => void
   /** Bytes the target has sent or taken, ever: whether it is still doing anything (`QUIET`). */
   moved: number
   /** The Computer has said it will send no more, and the target was told so. */
   heardEnd: boolean
-  /** The target sent its last byte, and the Computer was told so. */
+  /** The site sent its last byte. The Computer is told once nothing is owed (`sentEnd`). */
+  finished: boolean
+  /** The Computer was told that the site sent its last byte. */
   sentEnd: boolean
 }
 
@@ -272,22 +292,63 @@ const send = (link: Link, frame: EgressFrame) => transmit(link, encodeEgressFram
 const overBudget = (link: Link, own: number) =>
   own > EGRESS_STREAM_BUDGET || link.state.held > EGRESS_LINK_BUDGET
 
-/** Nothing of this leg is waiting any more, whether or not the target took it. */
+/** Nothing of this leg is waiting any more, in either direction, whether or not it was taken. */
 const settled = (link: Link, leg: Relaying) => {
   link.state.held -= leg.queued
   leg.queued = 0
-  link.flow.forget(leg.target)
+  leg.owed.length = 0
+  link.flow.forget(leg.again)
 }
 
-/** Writes bytes already counted in `queued` and `held`, and uncounts them once they are taken. */
-const write = (link: Link, leg: Relaying, payload: Uint8Array) => {
-  leg.target.write(payload, () => {
+/**
+ * Writes bytes already counted in `queued` and `held`. Once the target has taken them they are
+ * uncounted, and the Computer is granted that many more when they come to `EGRESS_GRANT`: what
+ * the target has not taken is never granted, so what waits here stays within the window.
+ */
+const write = (link: Link, stream: EgressStream, leg: Relaying, payload: Uint8Array) => {
+  leg.target.write(payload, (failed) => {
     // A leg that is settled has nothing left to count, whatever a late callback says.
     const taken = Math.min(payload.length, leg.queued)
     leg.queued -= taken
     link.state.held -= taken
     leg.moved += taken
+    // Bytes a failed socket gave up are not bytes it took, and a stream that is gone is owed
+    // nothing.
+    if (failed instanceof Error || link.relaying.get(stream) !== leg) return
+    leg.taken += taken
+    if (leg.taken < EGRESS_GRANT) return
+    send(link, EgressFrame.cases.Grant.make({ stream, bytes: leg.taken }))
+    leg.taken = 0
   })
+}
+
+/**
+ * Sends the Computer what the site sent, as far as the Computer's window and the tunnel's queue
+ * allow, and reads the site only while nothing of its is waiting here. Called whenever one of
+ * those may have changed: the site sent or ended, a grant came, the tunnel's queue emptied.
+ */
+const pour = (link: Link, stream: EgressStream, leg: Relaying) => {
+  // A stream the Computer dropped is read to its end and not passed on (`dropped`).
+  if (link.relaying.get(stream) !== leg) return
+  while (leg.credit > 0 && !link.flow.full()) {
+    const next = leg.owed.shift()
+    if (next === undefined) break
+    const now = next.subarray(0, leg.credit)
+    if (now.length < next.length) leg.owed.unshift(next.subarray(now.length))
+    leg.credit -= now.length
+    for (const frame of egressData(stream, now)) transmit(link, frame)
+  }
+  if (leg.owed.length > 0) {
+    leg.target.pause()
+    // Out of window, a grant calls this again; with the tunnel full, the link does.
+    if (leg.credit > 0) link.flow.wait(leg.again)
+    return
+  }
+  if (leg.finished && !leg.sentEnd) {
+    leg.sentEnd = true
+    send(link, EgressFrame.cases.End.make({ stream }))
+  }
+  leg.target.resume()
 }
 
 /**
@@ -354,7 +415,8 @@ const ended = (link: Link, stream: EgressStream, leg: Relaying) => {
 const dropped = (link: Link, stream: EgressStream, leg: Relaying) => {
   link.relaying.delete(stream)
   link.leaving.add(leg)
-  link.flow.forget(leg.target)
+  leg.owed.length = 0
+  link.flow.forget(leg.again)
   leg.target.resume()
   leg.target.end()
   link.fork(Effect.sleep(DRAIN).pipe(Effect.andThen(Effect.sync(() => leg.target.destroy()))))
@@ -377,26 +439,35 @@ const open = Effect.fn('DesktopEgress.open')(function* (
   if (Option.isNone(address) || link.state.closed) return refuse(link, stream, entry)
   link.resolving.delete(stream)
   const target = link.dependencies.dial(address.value, place.port)
-  const leg: Relaying = { target, queued: entry.held, moved: 0, heardEnd: false, sentEnd: false }
+  const leg: Relaying = {
+    target,
+    queued: entry.held,
+    taken: 0,
+    // The Computer's side has a whole window for a stream it has just opened.
+    credit: EGRESS_WINDOW,
+    owed: [],
+    again: () => pour(link, stream, leg),
+    moved: 0,
+    heardEnd: false,
+    finished: false,
+    sentEnd: false,
+  }
   link.relaying.set(stream, leg)
   link.state.relayed += 1
   publish(link)
   target.on('data', (payload: Uint8Array) => {
-    // A stream the Computer dropped is read to its end and not passed on.
-    if (link.relaying.get(stream) !== leg) return
     leg.moved += payload.length
-    for (const frame of egressData(stream, payload)) transmit(link, frame)
-    link.flow.sent(target)
+    leg.owed.push(payload)
+    pour(link, stream, leg)
   })
   target.on('end', () => {
-    if (link.relaying.get(stream) !== leg) return
-    leg.sentEnd = true
-    send(link, EgressFrame.cases.End.make({ stream }))
+    leg.finished = true
+    pour(link, stream, leg)
   })
   // A failure is always followed by a close, which is where a target is let go.
   target.on('error', () => undefined)
   target.on('close', () => gone(link, stream, leg))
-  for (const payload of entry.pending) write(link, leg, payload)
+  for (const payload of entry.pending) write(link, stream, leg, payload)
   if (entry.heardEnd) ended(link, stream, leg)
 })
 
@@ -414,7 +485,7 @@ const taken = (link: Link, stream: EgressStream, payload: Uint8Array) => {
   if (leg !== undefined && !leg.heardEnd) {
     link.state.held += payload.length
     leg.queued += payload.length
-    write(link, leg, payload)
+    write(link, stream, leg, payload)
     if (overBudget(link, leg.queued)) cut(link, stream, leg)
   }
 }
@@ -441,6 +512,13 @@ const handle = (link: Link, frame: EgressFrame) =>
       const leg = link.relaying.get(stream)
       if (waiting !== undefined) waiting.heardEnd = true
       if (leg !== undefined && !leg.heardEnd) ended(link, stream, leg)
+    },
+    // The Computer has room for more of what the site sends.
+    Grant: ({ stream, bytes }) => {
+      const leg = link.relaying.get(stream)
+      if (leg === undefined) return
+      leg.credit += bytes
+      pour(link, stream, leg)
     },
     Close: ({ stream }) => {
       const waiting = link.resolving.get(stream)
