@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "c994ea76-85bb-45b5-be5d-80c1a23d8d06",
+  "id": "897ed1e1-1f1a-4063-a31e-f123e280131e",
   "prevIds": [
-    "22fbf127-4302-45d9-ac5f-be0a2d009683"
+    "ec9aa657-176b-418f-be81-295e687226c4"
   ],
   "ddl": [
     {
@@ -1159,6 +1159,19 @@
       "generated": null,
       "identity": null,
       "name": "references",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "executor_app",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"
@@ -4282,6 +4295,27 @@
       "entityType": "indexes",
       "schema": "public",
       "table": "vivid_computers"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "executor_app",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "vivid_connections_executor_app",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "vivid_connections"
     },
     {
       "nameExplicit": true,
