@@ -2812,9 +2812,10 @@ function makeRetire(http: ExecutorHttp) {
       yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
     for (const app of eligible) {
       if ((yield* links(app.id)).length > 0)
-        yield* ExecutorConflict.make({ service: 'connections', tool: null })
+        return yield* ExecutorConflict.make({ service: 'connections', tool: null })
       yield* remove(`/apps/${query(app.id)}`, 'App')
     }
+    return yield* Effect.void
   })
 }
 

@@ -198,6 +198,8 @@ const makeMigration = Effect.fn('Connections.makeMigration')(function* () {
       }),
     )
   })
+  // Complete the first pass before any store or polling entry point can observe legacy rows.
+  yield* run()
   return { run }
 })
 
@@ -288,9 +290,9 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         .returning({ id: connections.id }),
     )
     if (saved.length === 0)
-      yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
+      return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
   }
-  yield* database.transaction((tx) =>
+  return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(connectionLock)
       const current = (yield* tx
@@ -298,13 +300,13 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         .from(connections)
         .where(eq(connections.id, row.id))
         .for('update'))[0]
-      if (current === undefined) return
+      if (current === undefined) return yield* Effect.void
       if (
         current.updatedAt !== revision ||
         current.personId !== row.personId ||
         current.companyId !== row.companyId
       )
-        yield* new Conflict({
+        return yield* new Conflict({
           message: 'This integration changed before removal; reload it.',
         })
       const target = yield* decodeRow(current)
@@ -318,6 +320,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         yield* executor.remove(target.references).pipe(Effect.mapError(executorFailure))
       }
       yield* tx.delete(connections).where(eq(connections.id, row.id))
+      return yield* Effect.void
     }),
   )
 })

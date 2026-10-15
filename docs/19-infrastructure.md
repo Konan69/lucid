@@ -192,8 +192,8 @@ image is ready.
    because only beta.23 can answer the new server's first reconciliation pass. A server-first
    deployment would hit the incompatible old inventory shape and can permanently refuse legacy
    rows before the image is replaced. It does not remove Integration downtime.
-5. Verify server and Executor health, then list existing Integrations to run the reconciliation
-   pass. Check per-row reconciliation outcomes and confirm active app claims agree with stored
+5. Verify server and Executor health, check the startup reconciliation outcomes, then list existing
+   Integrations to retry any deferred rows. Confirm active app claims agree with stored
    references. Deferred rows must recover on a later pass once Executor is ready; permanent
    refusals must show the reconnect state without hiding healthy rows. Prove two Persons retain
    distinct accounts, perform one safe authenticated read per migrated account, add and remove

@@ -4,8 +4,8 @@ The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, ups
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 
 Each Connection owns a dedicated Executor app. Its reference records the requirement and scope,
-plus the saved account or pending authorization. An explicit, idempotent migration pass runs on
-first store access, under a cross-process lock. Decoding rows performs no network calls or writes.
+plus the saved account or pending authorization. An explicit, idempotent migration pass runs when
+the store starts, under a cross-process lock. Decoding rows performs no network calls or writes.
 The pass maps `copiedFrom.reference` and exact requirement/account links, saving each outcome.
 Permanent refusals retain the exact credential and copy identities for safe removal. Transient
 failures, undeployed copies and unfinished copy plans retain retryable legacy selections. A healthy
