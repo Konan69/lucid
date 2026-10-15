@@ -2310,7 +2310,7 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
     const saved = yield* http
       .readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
       .pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTag('ExecutorResourceMissing', (error) =>
           error.resource === 'App' ? Effect.succeedNone : Effect.fail(error),
         ),
