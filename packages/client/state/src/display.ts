@@ -1,5 +1,6 @@
+import { VividRpcClient } from '@vivid/client-runtime'
 import { ToolOutcome } from '@vivid/contracts'
-import { Option, Predicate, Schema } from 'effect'
+import { Effect, Option, Predicate, Result, Schema } from 'effect'
 
 /**
  * A display is part of Vivid's reply: a short program in OpenUI Lang between the fences OpenUI's
@@ -149,4 +150,33 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
     ApprovalRequired: ({ summary }) => failed(`This needs your approval first: ${summary}`),
     ConnectionNotReady: ({ serviceName }) => failed(`${serviceName} needs to be connected again.`),
     OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
+  })
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
+
+/**
+ * One call a display makes into the Person's Integrations, as OpenUI's renderer asks for it: a
+ * `Query` unless the program runs this tool in a `Mutation`. The server runs it for the Person.
+ */
+export const callDisplayTool = Effect.fn('Display.callTool')(function* (
+  name: string,
+  given: Readonly<Record<string, unknown>> | undefined,
+  writes: ReadonlySet<string>,
+) {
+  const client = yield* VividRpcClient
+  const input = yield* decodeJson(given === undefined ? {} : given)
+  return yield* client.UseDisplayTool({
+    name,
+    input,
+    kind: writes.has(name) ? 'Mutation' : 'Query',
+  })
+})
+
+/** The answer a surface hands back to the renderer: the server's outcome, or that none came. */
+export const displayToolAnswer = <Failure>(
+  answered: Result.Result<ToolOutcome, Failure>,
+): DisplayToolResult =>
+  Result.match(answered, {
+    onSuccess: displayToolResult,
+    onFailure: () => failed('Vivid could not reach this.'),
   })

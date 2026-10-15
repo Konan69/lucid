@@ -5,9 +5,7 @@ import {
   type ActionEvent,
   type McpClientLike,
 } from '@openuidev/react-lang'
-import { VividRpcClient } from '@vivid/client-runtime'
-import { displayToolResult, said, writtenTools } from '@vivid/state'
-import { Effect, Result, Schema } from 'effect'
+import { callDisplayTool, displayToolAnswer, said, writtenTools } from '@vivid/state'
 import { run } from '../data/app'
 import { library } from './library'
 
@@ -22,26 +20,8 @@ const parser = createParser(library.toJSONSchema(), 'Col')
  */
 function integrations(writes: ReadonlySet<string>): McpClientLike {
   return {
-    callTool: async ({ name, arguments: given }) => {
-      const answered = await run(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          const input = yield* Schema.decodeUnknownEffect(Schema.Json)(given ?? {})
-          return yield* client.UseDisplayTool({
-            name,
-            input,
-            kind: writes.has(name) ? 'Mutation' : 'Query',
-          })
-        }),
-      )
-      return Result.match(answered, {
-        onSuccess: displayToolResult,
-        onFailure: () => ({
-          content: [{ type: 'text', text: 'Vivid could not reach this.' }],
-          isError: true,
-        }),
-      })
-    },
+    callTool: ({ name, arguments: given }) =>
+      run(callDisplayTool(name, given, writes)).then(displayToolAnswer),
   }
 }
 
