@@ -1,7 +1,7 @@
 import { tagSchemaId } from '@openuidev/react-lang'
 import { createContext, useContext } from 'react'
 import { z } from 'zod/v4'
-import { useTheme, type Colors } from '../theme'
+import { useTheme } from '../theme'
 
 /**
  * The parts' shared prop schemas and the skin over them, for the phone. Every schema here is
@@ -11,11 +11,9 @@ import { useTheme, type Colors } from '../theme'
  * against the runtime's `parts.json`, which the web's library was generated from, so drift fails
  * a test rather than a Person's display.
  *
- * The value helpers (`fg`, `bgOf`, `radiusOf`, `space`, `sizeOf`) are the phone's reading of the
- * web's skin (`apps/web/src/parts/skin.css`): a display sits on a tint of Vivid's colour, what it
- * holds is raised on that tint, a chart is one family of Vivid's colour, and status colours read
- * from the theme in force. The web mixes in oklab in CSS; the phone mixes the same proportions in
- * plain sRGB here, which lands within a step of the web's result for these few tints.
+ * The value helpers (`fg`, `bgOf`, `radiusOf`, `space`, `sizeOf`) read OpenUI's own theme
+ * (`OPENUI` below, the phone's copy of the web's `vendor/openui/theme.css`), so a display looks
+ * as OpenUI draws it on both surfaces.
  */
 
 // Safety
@@ -60,29 +58,6 @@ export type Option = z.infer<typeof option>
 export const toOption = (o: Option) => (typeof o === 'string' ? { value: o, label: o } : o)
 
 // Colours
-
-const STATUS = ['info', 'success', 'warning', 'danger', 'purple', 'pink'] as const
-
-/**
- * One colour of the chart's family: the web's skin draws a chart as one colour in six strengths
- * (`apps/web/src/parts/skin.css`, `--iui-chart-1` through `--iui-chart-6`), mixed over the sheet
- * the display sits on. The same proportions, mixed in sRGB.
- */
-export function chartColors(
-  accent: string,
-  sheet: string,
-  faint: string,
-  ink: string,
-): [string, string, string, string, string, string] {
-  return [
-    accent,
-    mix(accent, sheet, 0.62),
-    mix(accent, sheet, 0.38),
-    mix(accent, ink, 0.7),
-    faint,
-    mix(accent, sheet, 0.22),
-  ]
-}
 
 /**
  * `p` of `a` over `b`, in sRGB: what CSS `color-mix(in srgb, a p%, b)` does. Handles the three
@@ -139,10 +114,7 @@ export function useInk(value: string | undefined, skin: Skin): string {
 }
 
 /** The skin in force, read from the theme every part is drawn under. */
-export const useSkin = () => {
-  const { colors } = useTheme()
-  return skin(colors, colors['primary'])
-}
+export const useSkin = () => skin(useTheme().dark)
 
 // Values to styles
 
@@ -196,42 +168,103 @@ export interface Skin {
   chart: (index: number) => string
 }
 
-export function skin(colors: Colors, accent: string): Skin {
-  // `Colors` carries the same keys on every family; these five exist on all of them.
-  const sheet = colors['surface-3']
-  const faint = colors['ink-3']
-  const family = chartColors(accent, sheet, faint, colors['ink'])
+/**
+ * OpenUI's own theme, the phone's copy of the `--iui-*` variables in the web's
+ * `vendor/openui/theme.css` (light, then dark). A display looks as OpenUI draws it on both
+ * surfaces; changing the look is changing these values, never restyling a part.
+ */
+const OPENUI = {
+  light: {
+    canvas: '#ffffff',
+    surface: '#f7f7f8',
+    surfaceStrong: '#ececec',
+    ink: '#0d0d0d',
+    onInk: '#ffffff',
+    muted: '#676767',
+    faint: '#8f8f8f',
+    border: '#e7e7e7',
+    info: '#0068bc',
+    infoSoft: '#edf5ff',
+    success: '#00805d',
+    successSoft: '#edf9f2',
+    warning: '#946200',
+    warningSoft: '#fff8e7',
+    danger: '#c1322c',
+    dangerSoft: '#fff0ee',
+    purple: '#7040c1',
+    purpleSoft: '#f4f0ff',
+    pink: '#b7377c',
+    pinkSoft: '#fff0f6',
+    chart: ['#0285ff', '#00a67d', '#8b5cf6', '#f4a340', '#e46d91', '#4b9ca6'],
+  },
+  dark: {
+    canvas: '#212121',
+    surface: '#2a2a2a',
+    surfaceStrong: '#3a3a3a',
+    ink: '#ececec',
+    onInk: '#171717',
+    muted: '#ababab',
+    faint: '#8c8c8c',
+    border: '#383838',
+    info: '#7cb8ff',
+    infoSoft: '#16273b',
+    success: '#5bcf9c',
+    successSoft: '#13291f',
+    warning: '#f0b84f',
+    warningSoft: '#30250f',
+    danger: '#ff7d74',
+    dangerSoft: '#3a1b19',
+    purple: '#b49cff',
+    purpleSoft: '#261f3a',
+    pink: '#f28cc0',
+    pinkSoft: '#371b2a',
+    chart: ['#3d9dff', '#22bf91', '#a07cff', '#f6ae55', '#ec84a3', '#5fb3bd'],
+  },
+} as const
+
+export function skin(dark: boolean): Skin {
+  const theme = dark ? OPENUI.dark : OPENUI.light
+  const family = theme.chart
   const token = {
-    ink: colors['ink'],
-    muted: colors['ink-2'],
-    faint: colors['ink-3'],
-    canvas: sheet,
-    surface: sheet,
-    'surface-strong': mix(accent, sheet, 0.12),
-    border: colors['line-3'],
-    ...Object.fromEntries(STATUS.map((s) => [s, colors[`status-${s}` as keyof Colors] ?? accent])),
-    ...Object.fromEntries(
-      STATUS.map((s) => [`${s}-soft`, colors[`status-${s}-soft` as keyof Colors] ?? sheet]),
-    ),
+    ink: theme.ink,
+    muted: theme.muted,
+    faint: theme.faint,
+    canvas: theme.canvas,
+    surface: theme.surface,
+    'surface-strong': theme.surfaceStrong,
+    border: theme.border,
+    info: theme.info,
+    success: theme.success,
+    warning: theme.warning,
+    danger: theme.danger,
+    purple: theme.purple,
+    pink: theme.pink,
+    'info-soft': theme.infoSoft,
+    'success-soft': theme.successSoft,
+    'warning-soft': theme.warningSoft,
+    'danger-soft': theme.dangerSoft,
+    'purple-soft': theme.purpleSoft,
+    'pink-soft': theme.pinkSoft,
     ...Object.fromEntries(family.map((c, i) => [`chart${i + 1}`, c])),
   } satisfies Record<string, string>
   return {
-    tint: mix(accent, sheet, 0.07),
-    sheet,
-    sheetStrong: mix(accent, sheet, 0.12),
-    border: colors['line-3'],
-    codeBackground: mix(accent, sheet, 0.06),
-    ink: colors['ink'],
-    muted: colors['ink-2'],
-    faint: colors['ink-3'],
-    onAccent: colors['primary-foreground'],
-    accent,
-    info: accent,
-    infoSoft: mix(accent, sheet, 0.07),
-    success: colors['status-success'],
-    successSoft: colors['status-success-soft'],
-    danger: colors['status-danger'],
-    dangerSoft: colors['status-danger-soft'],
+    tint: theme.canvas,
+    sheet: theme.canvas,
+    sheetStrong: theme.surfaceStrong,
+    border: theme.border,
+    codeBackground: theme.surface,
+    ink: theme.ink,
+    muted: theme.muted,
+    faint: theme.faint,
+    // OpenUI's solid button and selection ring are its ink.
+    onAccent: theme.onInk,
+    accent: theme.ink,
+    info: theme.info,
+    infoSoft: theme.infoSoft,
+    success: theme.success,
+    successSoft: theme.successSoft,
+    danger: theme.danger,
+    dangerSoft: theme.dangerSoft,
     fg: (value) =>
       typeof value === 'string' && value.trim() && isSafeColor(value)
         ? (token[value.trim() as keyof typeof token] ?? value.trim())
@@ -242,9 +275,8 @@ export function skin(colors: Colors, accent: string): Skin {
         : undefined,
     radius: (value) => {
       if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value)
-      // The web's skin rounds a display's own sheet at 14; the parts' named sizes map to the
-      // phone's own steps, read from the tokens the app's controls are drawn with.
-      const named = { sm: 6, md: 10, lg: 16, xl: 20, full: 999 } as const
+      // OpenUI's own radii (`--iui-radius-sm` to `--iui-radius-xl`).
+      const named = { sm: 6, md: 10, lg: 12, xl: 16, full: 999 } as const
       return typeof value === 'string' ? named[value] : undefined
     },
     chart: (index) => family[Math.max(0, index) % family.length],

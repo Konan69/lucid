@@ -1,3 +1,4 @@
+// @ts-nocheck: written for a compiler without noUncheckedIndexedAccess; Vivid's own code is checked.
 import { defineComponent, FormNameContext } from "@openuidev/react-lang";
 import { useId, type CSSProperties } from "react";
 import { z } from "zod/v4";
@@ -162,30 +163,6 @@ export const Form = defineComponent({
           {renderNode(props.children)}
         </form>
       </FormNameContext.Provider>
-    );
-  },
-});
-
-/**
- * Vivid's addition to the library: the media of a feed card. It runs edge to edge under what Vivid
- * says, the way a photo does in a social feed, and holds a map, photos or both at one height.
- */
-export const Media = defineComponent({
-  name: "Media",
-  props: z.object({ children, height: z.number().optional(), weights: z.array(z.number()).optional() }),
-  description:
-    "Edge-to-edge strip of media that opens a feed card: a Map, photos, or both side by side at one height (default 150). weights sets their relative widths, e.g. [3, 2]. Put it first in the root Col.",
-  component: ({ props, renderNode }) => {
-    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter((c) => c != null);
-    const height = Math.min(360, Math.max(96, props.height ?? 150));
-    return (
-      <div className="iui-media" style={{ height }}>
-        {items.map((item, i) => (
-          <div key={i} className="iui-media-cell" style={{ flexGrow: Math.max(1, props.weights?.[i] ?? 1) }}>
-            {renderNode(item)}
-          </div>
-        ))}
-      </div>
     );
   },
 });

@@ -295,6 +295,22 @@ export const UseToolRequest = Schema.Struct({
 export interface UseToolRequest extends Schema.Schema.Type<typeof UseToolRequest> {}
 
 /**
+ * A display's own call into one of the Person's Integrations: OpenUI's `Query` (read when it is
+ * drawn and again when what it reads changes) and `Mutation` (run only when the Person presses the
+ * button that names it). A display names the tool as `tool@account`, with the tool and account
+ * exactly as `find_tools` showed them to Vivid, so the name stays words and never an identifier.
+ */
+export const DisplayToolKind = Schema.Literals(['Query', 'Mutation'] as const)
+export type DisplayToolKind = typeof DisplayToolKind.Type
+
+export const UseDisplayToolRequest = Schema.Struct({
+  name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(600)),
+  input: Schema.Json,
+  kind: DisplayToolKind,
+})
+export interface UseDisplayToolRequest extends Schema.Schema.Type<typeof UseDisplayToolRequest> {}
+
+/**
  * What came of the request. Every variant is something Vivid can act on truthfully: use the
  * output, wait for a decision, offer the Connection, or tell the Person it may not.
  */

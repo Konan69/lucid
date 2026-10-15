@@ -1,14 +1,55 @@
-import { BuiltinActionType, Renderer, type ActionEvent } from '@openuidev/react-lang'
+import {
+  BuiltinActionType,
+  createParser,
+  Renderer,
+  type ActionEvent,
+  type McpClientLike,
+} from '@openuidev/react-lang'
 import { StyleSheet, View } from 'react-native'
-import { said } from '@vivid/state'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { displayToolResult, said, writtenTools } from '@vivid/state'
+import { Effect, Result, Schema } from 'effect'
+import { useLiveData, type LiveData } from '../data/live'
 import { library } from './library'
-import { useSkin } from './style'
+
+/** One parser for every display: it only reads which tools a program writes with. */
+const parser = createParser(library.toJSONSchema(), 'Col')
+
+/**
+ * The tools a display may call: the Person's own Integrations, named `tool@account` as Vivid
+ * found them, run through the server for the Person looking at it. The web's `Display` does the
+ * same; a `Query` that would change anything is refused there.
+ */
+function integrations(run: LiveData['run'], writes: ReadonlySet<string>): McpClientLike {
+  return {
+    callTool: async ({ name, arguments: given }) => {
+      const answered = await run(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          const input = yield* Schema.decodeUnknownEffect(Schema.Json)(given ?? {})
+          return yield* client.UseDisplayTool({
+            name,
+            input,
+            kind: writes.has(name) ? 'Mutation' : 'Query',
+          })
+        }),
+      )
+      return Result.match(answered, {
+        onSuccess: displayToolResult,
+        onFailure: () => ({
+          content: [{ type: 'text', text: 'Vivid could not reach this.' }],
+          isError: true,
+        }),
+      })
+    },
+  }
+}
 
 /**
  * A display in Vivid's reply, drawn from its program by OpenUI's `Renderer` with the phone's
  * parts, from its first line: while the reply is still arriving the renderer draws what it has
- * and fills the rest in. The skin under it is the display's own tint, as the web's is, so a
- * display reads as one raised thing inside the words.
+ * and fills the rest in. It looks as OpenUI draws it (`style.ts`, `OPENUI`), with nothing laid
+ * under it.
  *
  * A Button that answers Vivid (`@ToAssistant`) says its words as the Person's next message, with
  * the fields of its form as lines under them. That is only live on the newest reply: an older
@@ -30,7 +71,7 @@ export function Display({
   live: boolean
   onSay: (words: string) => void
 }) {
-  const skin = useSkin()
+  const data = useLiveData()
   const answer = (event: ActionEvent) => {
     if (!live || event.type !== BuiltinActionType.ContinueConversation) return
     const words = said(
@@ -43,12 +84,15 @@ export function Display({
   }
   return (
     // An older display's answers read as spent by their own drawn opacity (`controls.tsx` turns a
-    // press away when the display is not live); the tint carries the whole display on both.
-    <View
-      data-parts={live ? 'live' : 'spent'}
-      style={[styles.sheet, { backgroundColor: skin.tint }]}
-    >
-      <Renderer response={text} library={library} isStreaming={arriving} onAction={answer} />
+    // press away when the display is not live).
+    <View data-parts={live ? 'live' : 'spent'} style={styles.sheet}>
+      <Renderer
+        response={text}
+        library={library}
+        isStreaming={arriving}
+        onAction={answer}
+        toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
+      />
     </View>
   )
 }
@@ -56,8 +100,6 @@ export function Display({
 const styles = StyleSheet.create({
   sheet: {
     marginTop: 8,
-    padding: 12,
-    borderRadius: 16,
     minWidth: 0,
     overflow: 'hidden',
   },

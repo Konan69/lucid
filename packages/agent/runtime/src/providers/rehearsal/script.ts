@@ -259,7 +259,7 @@ const examples = [
   ),
   display(
     'show pictures',
-    'root = Col([Media([Image("https://example.com/one.jpg", "First rehearsal picture"), Image("https://example.com/two.jpg", "Second rehearsal picture")], 150), Caption("Example pictures for this rehearsal.")], 3)',
+    'root = Col([Carousel([Image("https://example.com/one.jpg", "First rehearsal picture"), Image("https://example.com/two.jpg", "Second rehearsal picture")]), Caption("Example pictures for this rehearsal.")], 3)',
   ),
   toolScene('write a document', 'write_document', {
     summary: 'Rehearsal plan',

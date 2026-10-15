@@ -1,3 +1,4 @@
+import { ToolOutcome } from '@vivid/contracts'
 import { Option, Predicate, Schema } from 'effect'
 
 /**
@@ -94,3 +95,58 @@ export function said(pressed: string, formState: FormState): string {
     )
   return [pressed, ...lines].join('\n')
 }
+
+/** One statement of a display that writes, as OpenUI's parser reports it: the tool it names. */
+interface WritingStatement {
+  readonly toolAST: { readonly k: string; readonly v?: unknown } | null
+}
+
+/**
+ * The tools a display names in a `Mutation`. OpenUI's renderer calls the same provider for a
+ * `Query` and a `Mutation`, so the surface tells them apart from the program itself: a tool named
+ * here is run only when the Person presses the button that runs it.
+ */
+export const writtenTools = (parsed: {
+  readonly mutationStatements: ReadonlyArray<WritingStatement>
+}): ReadonlySet<string> =>
+  new Set(
+    parsed.mutationStatements.flatMap((statement) =>
+      statement.toolAST !== null &&
+      statement.toolAST.k === 'Str' &&
+      Predicate.isString(statement.toolAST.v)
+        ? [statement.toolAST.v]
+        : [],
+    ),
+  )
+
+/**
+ * What OpenUI's renderer reads back from a tool: MCP's shape, which it unwraps itself. Its
+ * `content` is a plain array because OpenUI's `McpClientLike` declares it so.
+ */
+export interface DisplayToolResult {
+  readonly content: Array<{ readonly type: 'text'; readonly text: string }>
+  readonly structuredContent?: unknown
+  readonly isError?: boolean
+}
+
+const failed = (text: string): DisplayToolResult => ({
+  content: [{ type: 'text', text }],
+  isError: true,
+})
+
+/**
+ * The server's answer to a display's call, as the renderer reads it. Only a completed call has
+ * data; every other outcome is an error whose words the display can show (`result.error`).
+ */
+export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
+  ToolOutcome.match(outcome, {
+    Completed: ({ output }) => ({
+      content: [{ type: 'text', text: JSON.stringify(output) }],
+      structuredContent: output,
+    }),
+    Rejected: ({ message }) => failed(message),
+    Blocked: ({ rule }) => failed(rule),
+    ApprovalRequired: ({ summary }) => failed(`This needs your approval first: ${summary}`),
+    ConnectionNotReady: ({ serviceName }) => failed(`${serviceName} needs to be connected again.`),
+    OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
+  })

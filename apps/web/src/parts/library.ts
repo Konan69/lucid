@@ -19,7 +19,6 @@ import {
   Link,
   List,
   ListItem,
-  Media,
   Pressable,
   RadioGroup,
   Row,
@@ -47,7 +46,6 @@ export const library = createLibrary({
     Grid,
     Card,
     Carousel,
-    Media,
     Divider,
     Spacer,
     Title,
@@ -75,7 +73,7 @@ export const library = createLibrary({
   componentGroups: [
     {
       name: 'Layout',
-      components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Media', 'Divider', 'Spacer'],
+      components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Divider', 'Spacer'],
     },
     {
       name: 'Text',

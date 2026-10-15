@@ -13,8 +13,6 @@ type Spec = {
   stacked: boolean;
   height: number;
   format: Format;
-  /** The category a bar chart is about. Its bar carries its value; the others recede and the axis goes. */
-  highlight: string | null;
 };
 
 const COLORS = 6;
@@ -74,7 +72,6 @@ function Cartesian({ spec, width }: { spec: Spec; width: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const { rows, series, type, height, format, x } = spec;
   const stacked = spec.stacked && type !== "line";
-  const focus = spec.highlight !== null && type === "bar" && series.length === 1;
   const tops = rows.map((row) => {
     let total = 0;
     return series.map((s) => (total += Math.max(0, num(row[s]))));
@@ -82,11 +79,10 @@ function Cartesian({ spec, width }: { spec: Spec; width: number }) {
   const values = stacked ? tops.map((t) => t[t.length - 1] ?? 0) : rows.flatMap((row) => series.map((s) => num(row[s])));
   const step = niceStep((Math.max(0, ...values) - Math.min(0, ...values)) / 5);
   const lo = Math.floor(Math.min(0, ...values) / step) * step;
-  // With one bar in focus there is no scale to read, so the tallest bar fills the plot.
-  const hi = focus ? Math.max(lo + 1, ...values) : Math.max(lo + step, Math.ceil(Math.max(0, ...values) / step) * step);
+  const hi = Math.max(lo + step, Math.ceil(Math.max(0, ...values) / step) * step);
   const ticks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, k) => lo + k * step);
   const left = Math.max(...ticks.map((t) => format(t, true).length)) * 6.4 + 12;
-  const pad = focus ? { top: 24, right: 0, bottom: 24, left: 0 } : { top: 10, right: 4, bottom: 26, left };
+  const pad = { top: 10, right: 4, bottom: 26, left };
   const w = Math.max(10, width - pad.left - pad.right);
   const h = Math.max(10, height - pad.top - pad.bottom);
   const band = w / Math.max(1, rows.length);
@@ -113,7 +109,7 @@ function Cartesian({ spec, width }: { spec: Spec; width: number }) {
             </linearGradient>
           ))}
         </defs>
-        {!focus && ticks.map((t) => (
+        {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.left} x2={pad.left + w} y1={y(t)} y2={y(t)} className="iui-chart-grid" strokeDasharray={t === 0 ? undefined : "3 4"} />
             <text x={pad.left - 10} y={y(t) + 4} textAnchor="end" className="iui-chart-tick">
@@ -123,25 +119,15 @@ function Cartesian({ spec, width }: { spec: Spec; width: number }) {
         ))}
         {rows.map((row, i) =>
           shown(i) ? (
-            <text key={i} x={xAt(i)} y={height - 6} textAnchor="middle" className={focus && label(row, x) === spec.highlight ? "iui-chart-category is-on" : "iui-chart-category"}>
+            <text key={i} x={xAt(i)} y={height - 6} textAnchor="middle" className="iui-chart-category">
               {label(row, x)}
             </text>
           ) : null,
         )}
-        {hover !== null && type === "bar" && !focus && <rect x={pad.left + band * hover} y={pad.top} width={band} height={h} className="iui-chart-hover" />}
+        {hover !== null && type === "bar" && <rect x={pad.left + band * hover} y={pad.top} width={band} height={h} className="iui-chart-hover" />}
         {type === "bar" &&
           rows.map((row, i) => {
-            const inner = focus ? Math.min(band - 6, Math.max(44, band * 0.5)) : Math.min(band * 0.7, 72 * Math.max(1, stacked ? 1 : series.length));
-            if (focus) {
-              const v = num(row[series[0]]);
-              const on = label(row, x) === spec.highlight;
-              return (
-                <g key={i}>
-                  <rect x={xAt(i) - inner / 2} y={y(v)} width={inner} height={Math.max(2, y(0) - y(v))} rx={7} className={on ? "iui-chart-bar is-on" : "iui-chart-bar"} />
-                  {on && <text x={xAt(i)} y={y(v) - 8} textAnchor="middle" className="iui-chart-value">{format(v, true)}</text>}
-                </g>
-              );
-            }
+            const inner = Math.min(band * 0.7, 72 * Math.max(1, stacked ? 1 : series.length));
             if (stacked)
               return series.map((s, si) => {
                 const top = y(tops[i][si]);
@@ -293,7 +279,6 @@ const chartProps = z.object({
   currency: z.string().optional(),
   stacked: z.boolean().optional(),
   height: z.number().optional(),
-  highlight: z.string().optional(),
 });
 
 function toSpec(props: z.infer<typeof chartProps>): Spec | null {
@@ -309,16 +294,15 @@ function toSpec(props: z.infer<typeof chartProps>): Spec | null {
     x,
     series,
     stacked: !!props.stacked,
-    height: Math.min(480, Math.max(typeof props.highlight === "string" ? 88 : 140, props.height ?? 240)),
+    height: Math.min(480, Math.max(140, props.height ?? 240)),
     format: makeFormat(props.format, props.currency),
-    highlight: typeof props.highlight === "string" ? props.highlight : null,
   };
 }
 
 export const Chart = defineComponent({
   name: "Chart",
   props: chartProps,
-  description: 'Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like "EUR". highlight names the one x value a single-series bar chart is about: its bar carries its value and the others recede.',
+  description: 'Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like "EUR".',
   component: function ChartView({ props }) {
     const [ref, width] = useWidth();
     const spec = toSpec(props);

@@ -333,10 +333,3 @@
   .iui-flashcard-inner { transition: none; }
   .iui-confetti { display: none; }
 }
-
-/* Media: a strip of maps and photos at one height. Each fills its cell; the strip's owner clips the corners. */
-.iui-media { display: flex; gap: 2px; min-width: 0; overflow: hidden; }
-.iui-media-cell { position: relative; flex: 1 1 0; min-width: 0; height: 100%; overflow: hidden; }
-.iui-media-cell > .iui-image { height: 100%; aspect-ratio: auto !important; border-radius: 0 !important; }
-.iui-media-cell > .iui-map-slot { height: 100%; min-height: 0 !important; }
-.iui-media-cell > .iui-map-slot > .iui-map { height: 100% !important; border-radius: 0; }

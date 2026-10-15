@@ -11,13 +11,14 @@ import type {
   FindToolsRequest,
   OfferConnectionRequest,
   RenameConnectionRequest,
+  UseDisplayToolRequest,
   UseToolRequest,
 } from '@vivid/contracts'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
 import { addIntegration, findIntegrations, testIntegration } from './integrations.ts'
-import { findTools, offerConnection, resolveTool, useTool } from './tools.ts'
+import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
 /** Both inventory calls share the persisted Connection loader. */
@@ -101,6 +102,11 @@ export const connectionHandlers = {
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
     yield* requireVivid()
     return yield* useTool(yield* requireActor(), request)
+  }),
+  /** A display's Query or Mutation, for the Person looking at it; never Vivid's own call. */
+  UseDisplayTool: Effect.fn('Rpc.UseDisplayTool')(function* (request: UseDisplayToolRequest) {
+    yield* requirePerson()
+    return yield* useDisplayTool(yield* requireActor(), request)
   }),
   /** Connection requests are contributions made by Vivid in a Run. */
   OfferConnection: Effect.fn('Rpc.OfferConnection')(function* (request: OfferConnectionRequest) {

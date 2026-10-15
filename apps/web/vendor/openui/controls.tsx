@@ -1,3 +1,4 @@
+// @ts-nocheck: written for a compiler without noUncheckedIndexedAccess; Vivid's own code is checked.
 import {
   action,
   defineComponent,
@@ -146,7 +147,7 @@ export const Pressable = defineComponent({
         tabIndex={0}
         aria-pressed={props.selected === undefined ? undefined : !!props.selected}
         aria-disabled={streaming || undefined}
-        className={cx("iui-pressable", props.selected && "is-selected", props.background != null && "is-filled")}
+        className={cx("iui-pressable", props.selected && "is-selected")}
         style={{ padding: space(props.padding), background: bg(props.background), ...onColor(props.background), borderRadius: radius(props.radius) }}
         onClick={onClick}
         onKeyDown={onKeyDown}
