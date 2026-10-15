@@ -40,14 +40,14 @@ export const WatchInstruction = Schema.String.check(
 /**
  * Why a Watch stopped. `removed`: the Person or Vivid stopped it. `refused`: Executor no longer
  * lets this Vivid use the event. `changed`: the app no longer declares the event or a filter it
- * names. `unreachable`: the subscription lapsed before it could be renewed.
+ * names. An unreachable Executor never stops a Watch: renewal keeps trying, even past expiry.
  */
-export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed', 'unreachable'])
+export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed'])
 export type WatchStopReason = typeof WatchStopReason.Type
 
 /**
- * Where a Watch is in its life. `Pending` exists only while Executor verifies the callback and
- * answers the subscribe call. `Active` holds the time its subscription must be renewed before,
+ * Where a Watch is in its life. `Pending`: subscribed but not yet confirmed (Executor is verifying
+ * the callback, or its answer was lost); the renewal pass finishes it with the same subscription. `Active` holds the time its subscription must be renewed before,
  * in epoch milliseconds (Executor's `refreshBefore` is the subscription's actual expiry).
  */
 export const WatchState = Schema.TaggedUnion({

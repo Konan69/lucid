@@ -43,6 +43,10 @@ export const FeedPost = Schema.Struct({
 })
 export interface FeedPost extends Schema.Schema.Type<typeof FeedPost> {}
 
+/** What the work stopped on, waiting for the Person: the same Approval and question a Thread shows. */
+export const FeedAsk = Schema.Literals(['approval', 'question'] as const)
+export type FeedAsk = typeof FeedAsk.Type
+
 /**
  * One piece of Vivid's own work, as the Feed shows it: the face of one background Thread. The Feed
  * knows nothing of where work comes from (an Integration's event, a timer, whatever wakes Vivid
@@ -51,7 +55,9 @@ export interface FeedPost extends Schema.Schema.Type<typeof FeedPost> {}
  * know is the closed life of the work, and that is the union:
  *
  * - `Working`: a Run is going now. It may already have posted (a first look, progress).
- * - `Waiting`: it posted and the Person has not settled it. `seen` once it has been in view.
+ * - `Waiting`: it needs the Person: Vivid posted and they have not settled it, or the work stopped
+ *   on an Approval or a question (`asking`), which in the background reaches them only here.
+ *   `seen` once the post has been in view.
  * - `Settled`: the Person dealt with it, or Vivid finished without needing them (no post).
  */
 const Item = {
@@ -63,7 +69,13 @@ const Item = {
 }
 export const FeedItem = Schema.TaggedUnion({
   Working: { ...Item, since: Schema.Finite, post: Schema.NullOr(FeedPost) },
-  Waiting: { ...Item, at: Schema.Finite, post: FeedPost, seen: Schema.Boolean },
+  Waiting: {
+    ...Item,
+    at: Schema.Finite,
+    post: Schema.NullOr(FeedPost),
+    seen: Schema.Boolean,
+    asking: Schema.Array(FeedAsk),
+  },
   Settled: { ...Item, at: Schema.Finite, post: Schema.NullOr(FeedPost) },
 })
 export type FeedItem = typeof FeedItem.Type
