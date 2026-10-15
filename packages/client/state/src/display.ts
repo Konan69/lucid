@@ -160,7 +160,7 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
  */
 export const callDisplayTool = Effect.fn('Display.callTool')(function* (
   name: string,
-  given: Option.Option<Readonly<Record<string, unknown>>>,
+  given: Option.Option<FormState>,
   writes: ReadonlySet<string>,
 ) {
   const client = yield* VividRpcClient
