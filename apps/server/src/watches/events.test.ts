@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
-import { answerIn, failureOf } from './events.ts'
+import { describe, expect, it } from '@effect/vitest'
+import { Deferred, Effect, Fiber, Option, Redacted } from 'effect'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
+import * as TestClock from 'effect/testing/TestClock'
+import { answerIn, failureOf, makeExecutorEvents } from './events.ts'
 import { eventsOfApp } from './lifecycle.ts'
 
 /** The MCP answers Executor writes, read as the patched `effect/ai` transport writes them. */
@@ -52,4 +55,40 @@ describe('Executor events answers', () => {
       },
     ])
   })
+})
+
+/** A whole Executor call is bounded, so a stalled answer cannot hold up a renewal pass. */
+describe('Executor events calls', () => {
+  it.effect('gives up on an answer whose headers arrived and whose body never ends', () =>
+    Effect.gen(function* () {
+      const answered = yield* Deferred.make<void>()
+      // Headers and the first bytes of the body, then nothing more, ever.
+      const stalled = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(answered, undefined)
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0","id":1,'))
+            },
+          })
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(body, { headers: { 'content-type': 'application/json' } }),
+          )
+        }),
+      )
+      const events = makeExecutorEvents(stalled, {
+        url: 'http://executor.test',
+        key: Redacted.make('test-key'),
+        organization: 'org_test',
+      })
+      const listing = yield* Effect.forkChild(events.list)
+      yield* Deferred.await(answered)
+      yield* TestClock.adjust('29 seconds')
+      expect(listing.pollUnsafe()).toBeUndefined()
+      yield* TestClock.adjust('1 second')
+      const failure = yield* Effect.flip(Fiber.join(listing))
+      expect(failure._tag).toBe('ExecutorEventsUnreachable')
+    }),
+  )
 })

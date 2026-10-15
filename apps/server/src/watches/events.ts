@@ -227,8 +227,8 @@ export type ExecutorSettings = Effect.Success<ReturnType<typeof executorSettings
 export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: ExecutorSettings) => {
   // The call's Scope releases each response, read or not.
   const client = HttpClient.withScope(transport)
-  /** One JSON-RPC call: headers as the event fixture sends them, the answer decoded at ingress. */
-  const call = Effect.fn('ExecutorEvents.call')(function* (
+  /** Send the request and read request 1's answer out of the body, in the caller's Scope. */
+  const exchange = Effect.fn('ExecutorEvents.exchange')(function* (
     method: string,
     params: Readonly<Record<string, Schema.Json>>,
   ) {
@@ -256,10 +256,9 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
         'application/json',
       ),
     )
-    const response = yield* client.execute(request).pipe(
-      Effect.timeout(CALL_TIMEOUT),
-      Effect.mapError(() => new ExecutorEventsUnreachable({})),
-    )
+    const response = yield* client
+      .execute(request)
+      .pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
     if (response.status === 401 || response.status === 403)
       return yield* new ExecutorEventRefused({})
     const body = yield* response.text.pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
@@ -271,38 +270,56 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
     if (Option.isNone(answer)) return yield* new ExecutorEventsUnreachable({})
     if (isRefusal(answer.value)) return yield* failureOf(answer.value.error)
     return answer.value.result
-  }, Effect.scoped)
+  })
 
-  /** A result in the shape this method promises, or Executor answered something else. */
-  const read = <A, I>(schema: Schema.Codec<A, I>) => {
-    const decode = Schema.decodeUnknownEffect(schema)
-    return (value: Schema.Json) =>
-      decode(value).pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
-  }
-  const readList = read(ListResult)
-  const readSubscribe = read(SubscribeResult)
+  /**
+   * One JSON-RPC call: headers as the event fixture sends them, the answer decoded at ingress into
+   * the shape this method promises. The timeout bounds the whole exchange, the body and its
+   * decoding included: a server that sends headers and then stalls or drips the body would
+   * otherwise hold the call, and with it every later Watch in a renewal pass, for as long as it
+   * liked. Interruption releases the response through the call's Scope.
+   */
+  const call = <A, I>(
+    method: string,
+    params: Readonly<Record<string, Schema.Json>>,
+    result: Schema.Codec<A, I>,
+  ) =>
+    exchange(method, params).pipe(
+      Effect.flatMap((value) =>
+        Schema.decodeUnknownEffect(result)(value).pipe(
+          Effect.mapError(() => new ExecutorEventsUnreachable({})),
+        ),
+      ),
+      Effect.scoped,
+      Effect.timeoutOrElse({
+        duration: CALL_TIMEOUT,
+        orElse: () => Effect.fail(new ExecutorEventsUnreachable({})),
+      }),
+    )
 
   return ExecutorEvents.of({
-    list: call('events/list', {}).pipe(
-      Effect.flatMap(readList),
-      Effect.map((result) => result.events),
-    ),
-    subscribe: Effect.fn('ExecutorEvents.subscribe')(function* (input) {
-      const result = yield* call('events/subscribe', {
-        name: input.name,
-        arguments: input.arguments,
-        delivery: { mode: 'webhook', url: input.url, secret: Redacted.value(input.secret) },
-        ttlMs: input.ttlMs,
-      })
-      return yield* readSubscribe(result)
-    }),
-    unsubscribe: Effect.fn('ExecutorEvents.unsubscribe')(function* (input) {
-      yield* call('events/unsubscribe', {
-        name: input.name,
-        arguments: input.arguments,
-        delivery: { mode: 'webhook', url: input.url },
-      })
-    }),
+    list: call('events/list', {}, ListResult).pipe(Effect.map((result) => result.events)),
+    subscribe: (input) =>
+      call(
+        'events/subscribe',
+        {
+          name: input.name,
+          arguments: input.arguments,
+          delivery: { mode: 'webhook', url: input.url, secret: Redacted.value(input.secret) },
+          ttlMs: input.ttlMs,
+        },
+        SubscribeResult,
+      ),
+    unsubscribe: (input) =>
+      call(
+        'events/unsubscribe',
+        {
+          name: input.name,
+          arguments: input.arguments,
+          delivery: { mode: 'webhook', url: input.url },
+        },
+        Schema.Unknown,
+      ).pipe(Effect.asVoid),
   })
 }
 
