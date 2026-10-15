@@ -324,6 +324,37 @@ it.effect('refuses Person B pending on Person A ready shared app without changin
   }).pipe(Effect.scoped),
 )
 
+/** An empty app permits continuing the exact pending request, but grants no deletion authority. */
+it.effect('keeps an empty shared original unowned when a pending request migrates', () =>
+  Effect.gen(function* () {
+    const remote = yield* hostedExecutorFixture()
+    const replies = pendingSharedReplies()
+    replies.set(`GET ${hostedPrefix}/inventory`, {
+      status: 200,
+      body: {
+        apps: [{ id: original, name: 'Shared', activeVersion: 'version', copiedFrom: null }],
+        accounts: [],
+        links: [],
+      },
+    })
+    replies.set(`GET ${hostedPrefix}/apps/${original}/accounts/user`, { status: 200, body: [] })
+    replies.set(`GET ${hostedPrefix}/apps/${original}/accounts/app`, { status: 200, body: [] })
+    yield* Ref.set(remote.replies, replies)
+    const context = yield* Layer.build(remote.configured)
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const pending = yield* reconcile(executor, pendingB)
+      if (!ExecutorReferences.guards.EnteringKey(pending))
+        expect.fail('Pending request must migrate')
+      expect(pending.appOwnership).toEqual(ExecutorAppOwnership.cases.Unproven.make({}))
+      yield* executor.remove(pending)
+    }).pipe(Effect.provide(context))
+    expect(
+      (yield* Ref.get(remote.requests)).filter((request) => request.path.startsWith('DELETE')),
+    ).toEqual([])
+  }).pipe(Effect.scoped),
+)
+
 /** An undeployed copy and an account awaiting its copy plan can recover without reconnecting. */
 it.effect('defers undeployed copies and pending copy plans', () =>
   Effect.gen(function* () {
