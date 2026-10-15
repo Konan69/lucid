@@ -159,62 +159,104 @@ The Executor service configuration pins the published image
 No fork build is needed. This configuration change does not deploy the service.
 
 Beta.23 replaces profiles with app and user account links. Vivid allocates one app per Connection.
-An explicit migration pass uses copy provenance and exact requirement/account links, then saves
-one outcome per legacy row. Missing or ambiguous selections require reconnection. Transient
-failures, undeployed copies and copy plans that have not finished remain retryable. The pass is
-idempotent and serialized with credential reclamation. Executor migrates its own storage from
-4.0.5 through 4.0.15; the old image cannot open that migrated volume.
+A scoped background worker reconciles legacy rows using copy provenance and exact account links.
+Boot, `/health`, Integration reads and tool discovery never wait for this pass. Each pass probes
+`/inventory` once before touching rows. An old, malformed or unreachable inventory leaves every
+row untouched; the decoder presents legacy rows as `MigrationPending`. After a compatible probe,
+per-row transient failures retry with backoff from five seconds to one minute. Unchanged outcomes
+are not rewritten. A missing, undeployed or unreachable per-row target has a persisted 24-hour
+deadline before requiring reconnection. Global protocol failures never expire this deadline or
+refuse all rows. Permanent refusals retain the exact credential and copy identities for removal.
+Executor migrates its own storage from 4.0.5 through 4.0.15; the old image cannot open that volume.
 
-**Production cutover.** This is a coordinated maintenance window. Neither mixed pairing supports
-Integrations: the old server requires profiles that beta.23 removed; the new server requires
-beta.23 inventory, requirements, links and tool versions that `src-304bf60` does not supply.
-The new server retries transient migration failures, but the old inventory shape is a permanent
-protocol refusal and can move legacy rows to reconnect states. It cannot operate Integrations
-against the old image. There is no rolling compatibility window. Do not start it before the new
-image is ready.
+**Production cutover.** The supported order is server first, then image. Merging updates the server
+through Railway's repository trigger; infrastructure deployment requires clean current `main`.
+The new server against `src-304bf60` boots and serves health, but Integrations are unavailable and
+legacy rows remain pending without writes. The old server against beta.23 breaks Integration
+routes because profiles were removed. Neither mixed pairing can perform Integration work.
 
-1. Announce an Integration maintenance window and pause Integration mutations and scheduled
-   Integration work. Stop the server and Executor before taking backups, so neither backup
-   contains writes absent from the other. Keep them stopped until both backups are complete.
-2. Back up the **entire Executor Railway volume**, including generated/encrypted keys, and the
-   **entire Vivid PostgreSQL database**, including auth and product tables. Record the server
-   commit, image tag/digest and configuration with this matched backup pair. Check that both
-   backups can be restored before proceeding. A copy of `vivid_connections` alone is insufficient
-   for a coordinated restore of other product writes made in the same window.
-3. From the authorized deploy checkout containing this infrastructure revision, use the normal
-   production `pnpm infra:deploy` entry point (`alchemy deploy --stage production --env-file .env.production`) to update the Executor service to
-   `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Start Executor and wait for `/health`
-   to pass and its storage/app-copy migrations to finish. Keep the old server stopped; its
-   profile routes cannot work on the new image.
-4. Push the upgraded server revision through the normal production release path, which builds
-   and deploys the server. Its migration runner applies the generated product schema migration
-   before serving requests. Start the server and resume its normal workers. The image goes first
-   because only beta.23 can answer the new server's first reconciliation pass. A server-first
-   deployment would hit the incompatible old inventory shape and can permanently refuse legacy
-   rows before the image is replaced. It does not remove Integration downtime.
-5. Verify server and Executor health, check the startup reconciliation outcomes, then list existing
-   Integrations to retry any deferred rows. Confirm active app claims agree with stored
-   references. Deferred rows must recover on a later pass once Executor is ready; permanent
-   refusals must show the reconnect state without hiding healthy rows. Prove two Persons retain
-   distinct accounts, perform one safe authenticated read per migrated account, add and remove
-   a disposable keyed/public Connection, and confirm removal revokes only its own credentials
-   and app. Resume scheduled Integration work and end the maintenance window only after these
-   checks pass.
+1. Announce a maintenance window. Record the enabled Routines and pause them through their
+   existing `PatchRoutine` RPC (`patch: { enabled: false }`) with each owning Person's authority;
+   this also withdraws unadmitted deliveries (`routines/store.ts`, `withdrawPending`). Let admitted
+   Runs settle before backup. There is no operator-wide Integration pause flag. Before merging,
+   use Railway's [deployment Remove action](https://docs.railway.com/deployments/deployment-actions#remove)
+   to stop the Server and Runtime deployments (stops their in-process schedules), then Executor.
+   Do not accept product writes while taking the matched backups. These stops are temporary:
+   merging may deploy the server again; the subsequent steps explicitly tolerate that.
+2. Create Railway **volume backups** of both the entire Executor volume (including encrypted
+   keys) and the Vivid PostgreSQL volume (all auth, product and runtime data). The GraphQL create
+   mutation is `volumeInstanceBackupCreate(volumeInstanceId, name)`; give the two backups one
+   cutover name and record both backup IDs, volume-instance IDs, server SHA, old image digest
+   and configuration. Wait for both backups to finish before continuing. Use each service's
+   Backups tab to verify the pair completed. Before the window, rehearse
+   `volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)` on a disposable backup
+   pair in its own environment; verify PostgreSQL recovery and the old image's access to its
+   restored encrypted store. Railway restores within the original environment; this rehearsal
+   proves the procedure, not the production backups. Never rehearse against production volumes.
+   Railway's [GraphQL schema](https://github.com/railwayapp/cli/blob/master/src/gql/schema.json),
+   [API cookbook](https://docs.railway.com/integrations/api/api-cookbook#volumes) and
+   [backup restore procedure](https://docs.railway.com/volumes/backups) describe these operations.
+3. Merge the reviewed upgrade to `main`. Railway deploys the new server against the **old**
+   Executor image; start that old service again if needed. Confirm the new server's `/health`
+   succeeds. Its log should show `Integration migration waiting for compatible inventory` with
+   a failure tag. Legacy selections must stay pending; do not ask Persons to reconnect during
+   this interval. Keep the recorded Routines disabled and Runtime stopped until verification;
+   avoid Integration actions and new scheduled work in this window. If another push restarts
+   Runtime, remove that deployment again; persisted Routine pauses survive server redeployment.
+4. From a **clean checkout of current main**, run `pnpm infra:deploy --yes` (the authorized
+   `alchemy deploy --stage production --env-file .env.production` entry point). This changes the
+   Executor image to `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Wait for its health
+   check and storage migration. The server keeps retrying in its own scope; the next pass starts
+   within one minute after the current attempt finishes. No screen read is needed to trigger it.
+5. Check `Integration app reconciliation` log entries: each has `connectionId` and `result`
+   (`Authorized`, `Public`, a pending authorization variant, `MigrationPending`, or
+   `ReconnectRequired`). Check the read-only SQL below. Pending rows mean the upstream copy
+   plan or deployment has not finished; inspect exact `copiedFrom.reference`, account links and
+   active versions rather than assuming `/health` alone proves every copy ready. Confirm two
+   Persons keep distinct account/app identities, perform a safe authenticated read for each,
+   and add/remove a disposable keyed/public Connection. Verify removal preserves the other
+   Person's access. Resume Runtime and re-enable only the previously enabled Routines through
+   `PatchRoutine` after these checks pass, then resume ordinary use.
 
-Plan a 10–15 minute maintenance window for image startup, storage migration, server deployment
-and verification. This is an operational allowance, not a production measurement. Large volumes,
-app builds or provider outages can extend it. Integration operations are unavailable throughout
-the mixed-version interval; stopping the server also makes the rest of Vivid unavailable during
-the backup and deployment window.
+```sql
+-- Raw legacy JSON is projected as pending until its first successful compatible-protocol pass.
+SELECT CASE WHEN "references" ? 'profile' THEN 'LegacyPending'
+            ELSE "references"->>'_tag' END AS outcome,
+       "references"->>'reason' AS reason, count(*)
+FROM vivid_connections GROUP BY 1, 2 ORDER BY 1, 2;
 
-**Rollback.** Stop the new server, workers and Executor first. Restore **both** the matched Vivid
-PostgreSQL backup and the entire Executor volume backup, including its original keys. Restore the
-old Executor image `ghcr.io/konan69/executor-selfhost:src-304bf60` and revert the server to the
-recorded pre-upgrade commit through the normal release path. Verify both services and the old
-Connection/profile behavior before resuming writes. Reverting only the image cannot open the
-migrated volume. Reverting only the server cannot decode reconciled Connection JSON. Restoring
-only one database breaks the account/profile relations across the two stores. Writes after the
-backup pair are lost on rollback and must be accounted for before reopening the service.
+-- Must return zero rows: only active states hold an app claim.
+SELECT id, executor_app, "references"->>'_tag' AS outcome
+FROM vivid_connections
+WHERE executor_app IS DISTINCT FROM
+  CASE WHEN "references" ? 'profile'
+         OR "references"->>'_tag' IN ('MigrationPending', 'ReconnectRequired')
+       THEN NULL ELSE "references"->>'app' END;
+```
+
+Allow 10–15 minutes for backups, build, image startup and verification; this is an operational
+allowance, not a measured production duration. Backup stops briefly affect all Vivid requests.
+Integrations are unavailable from the server cutover until the image is healthy and the worker
+finishes reconciling each selection. Provider outages or large copy plans extend that interval;
+server health stays independent. Rows with permanent ambiguity require the Person to reconnect.
+
+**Rollback.** Quiesce writes and remove the Server, Runtime and Executor deployments again.
+Do not push the server revert yet. Stage **both** recorded volume restorations with
+`volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)`. Before applying the
+Executor volume replacement, set its staged service image to the recorded old tag
+`ghcr.io/konan69/executor-selfhost:src-304bf60`; review the image and volume together in Railway's
+Details panel. Never restart beta.23 against the restored old store, since it would migrate it
+again. Apply the PostgreSQL and Executor restorations while Server and Runtime remain stopped;
+the previous volumes remain unmounted. Verify the old image opens its restored store.
+
+Only after both stores are restored, publish the reviewed revert of the server upgrade and
+infrastructure image pin to `main`. The old server's automatic deploy now sees the old protocol
+and original Connection JSON. The emergency image selection and the reverted Alchemy declaration
+must agree before any subsequent clean-main `infra:deploy`. Keep Runtime stopped until both
+services and the original Connection/profile behavior are verified, then resume it and the
+recorded Routines. A server-only, image-only or single-volume rollback is invalid. The old image
+cannot open the migrated volume; the old server cannot decode reconciled JSON. Writes since the
+backup pair are lost on restoration and must be accounted for before reopening service.
 
 ### Executor's trace exporter is off
 

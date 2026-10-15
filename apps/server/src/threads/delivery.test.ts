@@ -1579,6 +1579,13 @@ layer(
               },
             }),
           )
+          // A second rejection on this reconstructed key must not replace its original receipt.
+          const rejectedAgain = yield* post(
+            { ...test, conversation },
+            { ...body, body: 'Another changed message', attachments: [] },
+          )
+          expect(rejectedAgain.status).toBe(409)
+          expect((yield* post({ ...test, conversation }, body)).status).toBe(202)
           expect(yield* Ref.get(test.admitted)).toHaveLength(1)
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         }).pipe(Effect.scoped),

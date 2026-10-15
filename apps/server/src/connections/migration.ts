@@ -1,19 +1,8 @@
 import { and, eq, ne, sql } from 'drizzle-orm'
-import {
-  Clock,
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Ref,
-  Result,
-  Schema,
-  Semaphore,
-} from 'effect'
+import { Clock, Effect, Layer, Duration, Schedule, Match, Option, Result, Schema } from 'effect'
 import { Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
-import { executorFailure } from './errors.ts'
+import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
 import {
   Executor,
   ExecutorAppId,
@@ -31,6 +20,7 @@ import {
   decodeStoredRow,
   encodeReferences,
   type ConnectionRecord,
+  storedRowSchema,
 } from './records.ts'
 import { connections } from './tables.ts'
 
@@ -105,110 +95,166 @@ function legacySelection(
   )
 }
 
-/** Each row gets its own durable result. Permanent refusals cannot fail the inventory list;
- * transient rows retain their original JSON and retry on the next explicit pass. The lock
- * serializes claims across processes and CAS also refuses stale row revisions.
+/** Only legacy or retryable selections belong to this worker; invalid rows are reported
+ * by identity and cannot keep the retry schedule alive on their own.
  */
-export const migrateConnections = Effect.fn('Connections.migrate')(function* () {
+const retryable = sql`(${connections.references} ? 'profile' OR ${connections.references}->>'_tag' = 'MigrationPending')`
+const legacyRows = Effect.fn('Connections.legacyRows')(function* () {
   const database = yield* Database
-  const executor = yield* Executor
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(connections)
+      .where(retryable)
+      .orderBy(connections.createdAt, connections.id),
+  )
+  const valid: Array<typeof storedRowSchema.Type> = []
+  for (const raw of rows) {
+    const decoded = yield* decodeStoredRow(raw).pipe(Effect.result)
+    if (Result.isFailure(decoded)) {
+      yield* Effect.logError('Invalid legacy Connection row', { connectionId: raw.id })
+      continue
+    }
+    if (Option.isSome(legacySelection(decoded.success.references))) valid.push(decoded.success)
+  }
+  return valid
+})
+
+/** A retry deadline starts at the first compatible-protocol attempt, not at Connection creation
+ * or deployment. A mixed server/image rollout can therefore never expire all old selections.
+ */
+function timedOutcome(
+  row: typeof storedRowSchema.Type,
+  references: ExecutorReferences,
+  now: number,
+) {
+  if (!ExecutorReferences.guards.MigrationPending(references)) return references
+  const prior = ExecutorReferences.guards.MigrationPending(row.references)
+    ? row.references.since
+    : Option.none<number>()
+  const since = Option.getOrElse(prior, () => now)
+  if (now - since >= Duration.toMillis('24 hours')) {
+    const reason = Match.value(references.reason).pipe(
+      Match.when('CopyPending', () => 'MigrationTargetMissing' as const),
+      Match.when('NotReady', () => 'MigrationTargetNotReady' as const),
+      Match.whenOr('Unavailable', 'Unattempted', () => 'MigrationTargetUnavailable' as const),
+      Match.exhaustive,
+    )
+    return reconnectRequired(references.legacy, reason, [])
+  }
+  return ExecutorReferences.cases.MigrationPending.make({
+    ...references,
+    since: Option.some(since),
+  })
+}
+
+/** All HTTP work finishes before this short transaction. A shared lock serializes app claims
+ * with reclamation, while revision/predicate CAS refuses stale selections. Equal JSON does not
+ * update the row, so a healthy retry cannot invalidate an unrelated resume or removal.
+ */
+const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
+  row: typeof storedRowSchema.Type,
+  outcome: ExecutorReferences,
+) {
+  const database = yield* Database
+  const selection = legacySelection(row.references)
+  if (Option.isNone(selection)) return yield* Effect.void
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(connectionLock)
-      const rows = yield* tx
-        .select()
-        .from(connections)
-        .where(
-          sql`${connections.references} ? 'profile' OR ${connections.references}->>'_tag' = 'MigrationPending'`,
-        )
-        .orderBy(connections.createdAt, connections.id)
-      for (const raw of rows) {
-        const decoded = yield* decodeStoredRow(raw).pipe(Effect.result)
-        if (Result.isFailure(decoded)) {
-          yield* Effect.logError('Invalid legacy Connection row', raw.id)
-          continue
-        }
-        const row = decoded.success
-        const selection = legacySelection(row.references)
-        if (Option.isNone(selection)) continue
-        const legacy = selection.value
-        const result = yield* executor.reconcile(legacy).pipe(Effect.result)
-        let references = Result.isSuccess(result) ? result.success : refused(legacy, result.failure)
-        const app = claimedApp(references)
-        if (app !== null) {
-          const claims = yield* tx
-            .select({ id: connections.id })
-            .from(connections)
-            .where(and(eq(connections.executorApp, app), ne(connections.id, row.id)))
-            .limit(1)
-          if (claims.length > 0) references = shared(legacy, references)
-        }
-        const reconnect = ExecutorReferences.guards.ReconnectRequired(references)
-        const saved = yield* tx
-          .update(connections)
-          .set({
-            references: yield* encodeReferences(references),
-            executorApp: claimedApp(references),
-            status: reconnect ? 'failed' : row.status,
-            reason: reconnect ? executorReconnectMessage : row.reason,
-            updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
-          })
-          .where(
-            and(
-              eq(connections.id, row.id),
-              eq(connections.updatedAt, row.updatedAt),
-              sql`(${connections.references} ? 'profile' OR ${connections.references}->>'_tag' = 'MigrationPending')`,
-            ),
-          )
-          .returning({ id: connections.id })
-        if (saved.length > 0)
-          yield* Effect.logInfo('Integration app reconciliation').pipe(
-            Effect.annotateLogs({ connectionId: row.id, result: references._tag }),
-          )
+      let references = outcome
+      const app = claimedApp(references)
+      if (app !== null) {
+        const claims = yield* tx
+          .select({ id: connections.id })
+          .from(connections)
+          .where(and(eq(connections.executorApp, app), ne(connections.id, row.id)))
+          .limit(1)
+        if (claims.length > 0) references = shared(selection.value, references)
       }
-      const remaining = yield* tx
-        .select({ id: connections.id })
-        .from(connections)
+      const encoded = yield* encodeReferences(references)
+      const reconnect = ExecutorReferences.guards.ReconnectRequired(references)
+      const saved = yield* tx
+        .update(connections)
+        .set({
+          references: encoded,
+          executorApp: claimedApp(references),
+          status: reconnect ? 'failed' : row.status,
+          reason: reconnect ? executorReconnectMessage : row.reason,
+          updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
+        })
         .where(
-          sql`${connections.references} ? 'profile' OR ${connections.references}->>'_tag' = 'MigrationPending'`,
+          and(
+            eq(connections.id, row.id),
+            eq(connections.updatedAt, row.updatedAt),
+            retryable,
+            sql`${connections.references} IS DISTINCT FROM ${JSON.stringify(encoded)}::jsonb`,
+          ),
         )
-        .limit(1)
-      return remaining.length > 0
+        .returning({ id: connections.id })
+      if (saved.length > 0)
+        yield* Effect.logInfo('Integration app reconciliation').pipe(
+          Effect.annotateLogs({ connectionId: row.id, result: references._tag }),
+        )
     }),
   )
 })
 
-/** A store runs the pass once after a successful cutover. Only persisted retry outcomes make
- * later reads run it again; healthy inventories do not take a migration lock on every lookup.
+/** The organization-wide protocol probe happens once before any row write. An old-shape,
+ * malformed, missing or unreachable inventory leaves all selections untouched and retryable.
+ * Per-row failures are isolated only after the shared beta.23 contract has been established.
  */
-const makeMigration = Effect.fn('Connections.makeMigration')(function* () {
-  const database = yield* Database
+export const migrateConnections = Effect.fn('Connections.migrate')(function* () {
   const executor = yield* Executor
-  const done = yield* Ref.make(false)
-  const lock = yield* Semaphore.make(1)
-  const run = Effect.fn('Connections.migrationPass')(function* () {
-    yield* lock.withPermit(
-      Effect.gen(function* () {
-        if (yield* Ref.get(done)) return
-        const remaining = yield* migrateConnections().pipe(
-          Effect.provideService(Database, database),
-          Effect.provideService(Executor, executor),
-        )
-        if (!remaining) yield* Ref.set(done, true)
-      }),
-    )
-  })
-  // Complete the first pass before any store or polling entry point can observe legacy rows.
-  yield* run()
-  return { run }
+  const rows = yield* legacyRows()
+  if (rows.length === 0) return false
+  const inventory = yield* executor.inventory.pipe(Effect.result)
+  if (Result.isFailure(inventory)) {
+    yield* Effect.logWarning('Integration migration waiting for compatible inventory', {
+      reason: inventory.failure._tag,
+    })
+    return true
+  }
+  for (const row of rows) {
+    const selection = legacySelection(row.references)
+    if (Option.isNone(selection)) continue
+    const result = yield* executor.reconcile(selection.value, inventory.success).pipe(Effect.result)
+    const outcome = Result.isSuccess(result)
+      ? result.success
+      : refused(selection.value, result.failure)
+    yield* saveOutcome(row, timedOutcome(row, outcome, yield* Clock.currentTimeMillis))
+  }
+  return (yield* legacyRows()).length > 0
 })
 
-/** Shared startup/read migration lifecycle; database and Executor authority come from its Layer. */
-export class ConnectionMigration extends Context.Service<
-  ConnectionMigration,
-  Effect.Success<ReturnType<typeof makeMigration>>
->()('vivid/ConnectionMigration') {}
-export const migrationLayer = Layer.effect(ConnectionMigration, makeMigration())
+/** Like the Routine scheduler, the pass is forked into the server Layer's scope. Boot/health and
+ * reads never await reconciliation. Failed or unfinished passes back off from five seconds to a minute;
+ * no retryable rows ends this upgrade worker. Cancellation interrupts both HTTP and scheduled waits.
+ */
+export const migrationLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const database = yield* Database
+    const executor = yield* Executor
+    const pass = migrateConnections().pipe(
+      Effect.provideService(Database, database),
+      Effect.provideService(Executor, executor),
+      Effect.catch((error) =>
+        Effect.logError('Integration migration pass failed', { reason: error._tag }).pipe(
+          Effect.as(true),
+        ),
+      ),
+    )
+    const backoff = Schedule.exponential('5 seconds').pipe(
+      Schedule.modifyDelay(({ duration }) =>
+        Effect.succeed(Duration.min(duration, Duration.minutes(1))),
+      ),
+    )
+    yield* pass.pipe(
+      Effect.repeat({ schedule: backoff, while: (remaining) => remaining }),
+      Effect.forkScoped,
+    )
+  }),
+)
 
 interface ConnectionResources {
   readonly apps: ReadonlyArray<typeof ExecutorAppId.Type>
@@ -248,7 +294,14 @@ const heldResources = Effect.fn('Connections.heldResources')(function* (
   const held = yield* Effect.forEach(
     rows,
     Effect.fnUntraced(function* (row) {
-      return storedResources((yield* decodeStoredRow(row)).references)
+      const decoded = yield* decodeStoredRow(row).pipe(Effect.result)
+      if (Result.isFailure(decoded)) {
+        yield* Effect.logError('Integration reclamation blocked by invalid row', {
+          connectionId: row.id,
+        })
+        return yield* new ConnectionReclamationBlocked({ recordId: row.id })
+      }
+      return storedResources(decoded.success.references)
     }),
   )
   return {
@@ -266,6 +319,18 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
 ) {
   const database = yield* Database
   const executor = yield* Executor
+  if (!ExecutorReferences.isAnyOf(['MigrationPending', 'ReconnectRequired'])(row.references)) {
+    yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
+    const removed = yield* database.run(
+      database
+        .delete(connections)
+        .where(and(eq(connections.id, row.id), eq(connections.updatedAt, row.updatedAt)))
+        .returning({ id: connections.id }),
+    )
+    if (removed.length === 0)
+      return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
+    return yield* Effect.void
+  }
   let references = row.references
   let revision = row.updatedAt
   if (ExecutorReferences.guards.MigrationPending(references))
@@ -317,7 +382,9 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
           .retire({ resources: target.references.retired, ...claims })
           .pipe(Effect.mapError(executorFailure))
       } else {
-        yield* executor.remove(target.references).pipe(Effect.mapError(executorFailure))
+        return yield* new Conflict({
+          message: 'This integration changed before removal; reload it.',
+        })
       }
       yield* tx.delete(connections).where(eq(connections.id, row.id))
       return yield* Effect.void

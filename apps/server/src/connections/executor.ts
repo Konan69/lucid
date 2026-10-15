@@ -59,8 +59,7 @@ export const ExecutorBinding = Schema.TaggedUnion({
 })
 const ExecutorOrganizationId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOrganizationId'))
 const ExecutorProviderId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProviderId'))
-export const executorReconnectMessage =
-  'Remove this integration and connect it again to finish the Executor upgrade.'
+export const executorReconnectMessage = 'Remove this integration and connect it again.'
 export const connectionSetupMessage = 'This integration is not set up on this Vivid yet.'
 export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOwnerId'))
 export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
@@ -159,12 +158,20 @@ export const ExecutorReferences = Schema.TaggedUnion({
     service: ServiceId,
     owner: ExecutorOwnerId,
     retired: ExecutorRetired,
-    reason: Schema.Literals(['UnresolvedMigration', 'AmbiguousMigration', 'SharedSelection']),
+    reason: Schema.Literals([
+      'UnresolvedMigration',
+      'AmbiguousMigration',
+      'SharedSelection',
+      'MigrationTargetMissing',
+      'MigrationTargetNotReady',
+      'MigrationTargetUnavailable',
+    ]),
   },
   MigrationPending: {
     service: ServiceId,
     owner: ExecutorOwnerId,
     legacy: LegacyExecutorReferences,
+    since: Schema.OptionFromOptionalKey(Schema.Finite),
     reason: Schema.Literals(['Unattempted', 'Unavailable', 'NotReady', 'CopyPending']),
   },
   EnteringKey: {
@@ -194,8 +201,7 @@ export type ExecutorActiveReferences = Exclude<
   ExecutorReferences,
   { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
 >
-export const executorMigrationMessage =
-  'This integration is waiting for the Executor upgrade. Retry shortly.'
+export const executorMigrationMessage = 'Vivid is updating this integration. Try again shortly.'
 /** Deferred selections have no live app binding and expose only their recovery instruction. */
 const isMigrationOnly = ExecutorReferences.isAnyOf(['ReconnectRequired', 'MigrationPending'])
 const migrationReason = (
@@ -506,8 +512,11 @@ export interface ExecutorService {
     readonly service: ServiceId
     readonly returnAddress: string
   }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
+  /** One decoded organization snapshot is shared by all rows in a migration pass. */
+  readonly inventory: Effect.Effect<typeof ExecutorInventory.Type, ExecutorFailure>
   readonly reconcile: (
     legacy: typeof LegacyExecutorReferences.Type,
+    inventory: typeof ExecutorInventory.Type,
   ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
   /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
   readonly prepareRetirement: (
@@ -580,7 +589,7 @@ const WireApp = Schema.Struct({
 })
 // Inventory identifies app provenance only. Unrelated apps may use requirement shapes this
 // adapter cannot authorize; decode requirements only on the selected app's detail endpoint.
-const WireInventory = Schema.Struct({
+export const ExecutorInventory = Schema.Struct({
   apps: Schema.Array(
     Schema.Struct({
       id: ExecutorAppId,
@@ -1049,7 +1058,7 @@ function referenceIdentity(references: ExecutorActiveReferences) {
 function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const read = responseReader(client)
   const readApp = read(WireApp)
-  const readInventory = read(WireInventory)
+  const readInventory = read(ExecutorInventory)
   const readLinks = read(
     Schema.Array(
       Schema.Struct({
@@ -2526,7 +2535,10 @@ function migratedReferences(
  * beta.23 packages/sdk/src/implementation/apps.ts:611-639 records `app:<original id>` on copyAs;
  * apps/hosted/server/src/implementation/profile-app-copies.ts:17-20 uses that exact operation.
  */
-function migratedApps(inventory: typeof WireInventory.Type, original: typeof ExecutorAppId.Type) {
+function migratedApps(
+  inventory: typeof ExecutorInventory.Type,
+  original: typeof ExecutorAppId.Type,
+) {
   return inventory.apps.filter(
     (app) =>
       app.id === original ||
@@ -2571,6 +2583,7 @@ export function migrationPending(
     service: legacy.service,
     owner: legacy.owner,
     legacy,
+    since: Option.none(),
     reason,
   })
 }
@@ -2582,7 +2595,7 @@ function reconcilePending(http: ExecutorHttp) {
       typeof LegacyExecutorReferences.Type,
       { readonly _tag: 'Authorized' | 'Public' }
     >,
-    inventory: typeof WireInventory.Type,
+    inventory: typeof ExecutorInventory.Type,
   ) {
     const connection = yield* http.readConnection(
       Effect.succeed(HttpClientRequest.get(`/connections/${query(legacy.authorization)}`)),
@@ -2619,7 +2632,7 @@ function reconcilePending(http: ExecutorHttp) {
 function reconcilePublic(http: ExecutorHttp) {
   return Effect.fn('Executor.reconcilePublic')(function* (
     legacy: typeof LegacyExecutorReferences.cases.Public.Type,
-    inventory: typeof WireInventory.Type,
+    inventory: typeof ExecutorInventory.Type,
   ) {
     const apps = migratedApps(inventory, legacy.app)
     const copies: ReadonlyArray<typeof ExecutorAppId.Type> = []
@@ -2653,11 +2666,8 @@ function makeLegacyReconciliation(http: ExecutorHttp) {
   const publicApp = reconcilePublic(http)
   return Effect.fn('Executor.reconcileLegacy')(function* (
     legacy: typeof LegacyExecutorReferences.Type,
+    inventory: typeof ExecutorInventory.Type,
   ) {
-    const inventory = yield* http.readInventory(
-      Effect.succeed(HttpClientRequest.get('/inventory')),
-      null,
-    )
     const apps = migratedApps(inventory, legacy.app)
     if (LegacyExecutorReferences.guards.Public(legacy)) return yield* publicApp(legacy, inventory)
     if (!LegacyExecutorReferences.guards.Authorized(legacy))
@@ -2691,6 +2701,21 @@ function makeLegacyReconciliation(http: ExecutorHttp) {
   })
 }
 
+/** A completed request proves account ownership only on the original or a provenance copy. */
+function retirementAccount(
+  inventory: typeof ExecutorInventory.Type,
+  resources: typeof ExecutorRetired.Type,
+  saved: typeof WireConnection.Type,
+) {
+  const ours = migratedApps(inventory, resources.original).some(
+    (app) => app.id === saved.target.app,
+  )
+  if (!ours) return Option.none<typeof ExecutorAccountId.Type>()
+  if (WireConnection.fields.state.guards.completed(saved.state))
+    return Option.some(saved.state.account.id)
+  return Option.fromNullOr(saved.reconnectAccount).pipe(Option.map((account) => account.id))
+}
+
 /** Retain every known copy before deleting credentials. Inventory exposes exact copy lineage;
  * the selected account identifies additional copies even when the earlier refusal could not.
  */
@@ -2713,21 +2738,12 @@ function makePrepareRetirement(http: ExecutorHttp) {
         )
         .pipe(
           Effect.asSome,
-          Effect.catchTag('ExecutorNotReady', () => Effect.succeedNone),
+          Effect.catchTags({
+            ExecutorNotReady: () => Effect.succeedNone,
+            ExecutorResourceMissing: () => Effect.succeedNone,
+          }),
         )
-      if (Option.isSome(saved)) {
-        if (
-          !migratedApps(inventory, resources.original).some(
-            (app) => app.id === saved.value.target.app,
-          )
-        )
-          return yield* ExecutorRequirementChanged.make({ service: 'connections', tool: null })
-        const state = saved.value.state
-        if (WireConnection.fields.state.guards.completed(state))
-          account = Option.some(state.account.id)
-        else if (saved.value.reconnectAccount !== null)
-          account = Option.some(saved.value.reconnectAccount.id)
-      }
+      if (Option.isSome(saved)) account = retirementAccount(inventory, resources, saved.value)
     }
     const copies = migratedApps(inventory, resources.original)
       .filter(
@@ -2773,12 +2789,13 @@ function makeRetire(http: ExecutorHttp) {
   const unlink = Effect.fn('Executor.unlinkRetired')(function* (
     app: typeof ExecutorAppId.Type,
     input: Parameters<ExecutorService['retire']>[0],
+    selected: Effect.Success<ReturnType<typeof links>>,
   ) {
     const { resources, retainedApps, retainedAccounts } = input
     if (Option.isNone(resources.account)) return
     const account = resources.account.value
     if (retainedApps.includes(app) && retainedAccounts.includes(account)) return
-    for (const link of yield* links(app)) {
+    for (const link of selected) {
       if (link.account.id === account)
         yield* remove(
           `/apps/${query(app)}/accounts/${link.scope}/${query(link.requirement)}/${query(account)}`,
@@ -2807,14 +2824,31 @@ function makeRetire(http: ExecutorHttp) {
         !retainedApps.includes(app.id) &&
         (app.id !== resources.original || resources.ownership === 'Dedicated'),
     )
-    for (const app of targets) yield* unlink(app.id, { resources, retainedApps, retainedAccounts })
-    if (Option.isSome(resources.account) && !retainedAccounts.includes(resources.account.value))
-      yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
-    for (const app of eligible) {
-      if ((yield* links(app.id)).length > 0)
-        return yield* ExecutorConflict.make({ service: 'connections', tool: null })
+    // Inspect every app before revocation. A provenance copy may have acquired unrelated links;
+    // those links grant no deletion authority and are never a reason to strand the product row.
+    const inspected = yield* Effect.forEach(
+      targets,
+      Effect.fnUntraced(function* (app) {
+        return { app, selected: yield* links(app.id) }
+      }),
+    )
+    for (const { app, selected } of inspected)
+      yield* unlink(app.id, { resources, retainedApps, retainedAccounts }, selected)
+    for (const { app, selected } of inspected) {
+      if (!eligible.some((candidate) => candidate.id === app.id)) continue
+      if (
+        selected.some(
+          (link) => Option.isNone(resources.account) || link.account.id !== resources.account.value,
+        )
+      )
+        continue
+      // Protect links added outside Vivid since inspection. Retain the app instead of refusing
+      // after its credential was revoked; the exact account is deleted only after all app checks.
+      if ((yield* links(app.id)).length > 0) continue
       yield* remove(`/apps/${query(app.id)}`, 'App')
     }
+    if (Option.isSome(resources.account) && !retainedAccounts.includes(resources.account.value))
+      yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
     return yield* Effect.void
   })
 }
@@ -2925,6 +2959,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
     reauthorize: makeReauthorize(http, availability),
+    inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
     reconcile: makeLegacyReconciliation(http),
     retire: makeRetire(http),
     prepareRetirement: makePrepareRetirement(http),

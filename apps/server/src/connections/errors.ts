@@ -1,4 +1,4 @@
-import { Match } from 'effect'
+import { Match, Schema } from 'effect'
 import {
   Conflict,
   InvalidRequest,
@@ -72,3 +72,10 @@ function unavailable() {
     message: 'Integrations are unavailable.',
   })
 }
+
+/** Reclamation cannot revoke credentials while an undecodable row might still hold them. */
+export class ConnectionReclamationBlocked extends Schema.TaggedError<ConnectionReclamationBlocked>()(
+  'ConnectionReclamationBlocked',
+  { recordId: Schema.String },
+  { title: 'ConnectionReclamationBlocked' },
+) {}

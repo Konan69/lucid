@@ -60,7 +60,8 @@ const released = (path: string) =>
     })
   })
 
-/** The proof runner copies only this seed section into an archive of origin/main. All deployment, profile,
+/** The proof runner copies only this seed section into the pre-upgrade origin/main archive
+ * at 1c01a1f8. All deployment, profile,
  * credential and persistence code used by seed is that archive's original Vivid implementation.
  * It never loads this branch's adapter while writing the old store.
  */
@@ -146,6 +147,38 @@ const retainedDatabase = Layer.unwrap(
     )
   }),
 )
+
+/** The real release deploys this server before the image. An old inventory must leave all
+ * original rows and revisions intact, while the pure decoder presents a retryable state.
+ */
+describe.skipIf(mode !== 'waiting')('new server against original image', () => {
+  layer(configured.pipe(Layer.provideMerge(retainedDatabase)), {
+    excludeTestServices: true,
+    timeout: 120_000,
+  })((it) => {
+    it.effect('preserves every original selection through the mixed-version interval', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const before = yield* database.run(
+          database.select().from(connections).orderBy(connections.id),
+        )
+        expect(before).toHaveLength(3)
+        expect(yield* migrateConnections()).toBe(true)
+        const after = yield* database.run(
+          database.select().from(connections).orderBy(connections.id),
+        )
+        expect(after).toEqual(before)
+        const rows = yield* Effect.forEach(after, decodeRow)
+        expect(
+          rows.every((row) => ExecutorReferences.guards.MigrationPending(row.references)),
+        ).toBe(true)
+        NodeProcess.stdout.write(
+          'mixed-version reconciliation: all 3 legacy rows unchanged and pending\n',
+        )
+      }),
+    )
+  })
+})
 
 /** Verification uses this branch and the retained real rows, not a reconstructed JSON fixture.
  * Distinct account selections must stay distinct across the upstream app-copy migration.

@@ -1,3 +1,4 @@
+import { migrationLayer } from './connections/migration.ts'
 import * as NodeHttp from 'node:http'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -169,6 +170,7 @@ const serverProgram = Effect.gen(function* () {
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
     routineSchedulerLayer,
+    migrationLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,

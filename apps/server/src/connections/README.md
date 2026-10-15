@@ -4,13 +4,16 @@ The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, ups
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 
 Each Connection owns a dedicated Executor app. Its reference records the requirement and scope,
-plus the saved account or pending authorization. An explicit, idempotent migration pass runs when
-the store starts, under a cross-process lock. Decoding rows performs no network calls or writes.
-The pass maps `copiedFrom.reference` and exact requirement/account links, saving each outcome.
-Permanent refusals retain the exact credential and copy identities for safe removal. Transient
-failures, undeployed copies and unfinished copy plans retain retryable legacy selections. A healthy
-store stops running the pass; a deferred store retries it on its next access. One upstream refusal
-cannot fail the list. The `executor_app` claim is unique and checked against active references.
+plus the saved account or pending authorization. A scoped background worker starts at server boot;
+reads and health never invoke or await it. Each idempotent pass probes inventory once before any
+write. An old-shape or unreachable inventory leaves every legacy selection pending and untouched.
+The pass maps `copiedFrom.reference` and exact requirement/account links, saving changed outcomes
+under a cross-process claim lock. Permanent refusals retain exact credentials and copies for safe
+removal. Transient failures, undeployed copies and unfinished copy plans retry with capped backoff;
+per-row attempts have a persisted 24-hour deadline after the first compatible inventory probe.
+Global protocol failures cannot turn the mixed-version rollout into permanent refusals. Invalid
+rows are logged and excluded from the retry count; no retryable rows ends the worker. The
+`executor_app` claim is unique and checked against active references.
 
 Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire
 Executor volume with its keys and Vivid PostgreSQL. See the cutover and rollback sequence in
@@ -22,7 +25,10 @@ archive of original Vivid and the old image. Copy only that section into the arc
 branch-only `migration.ts` import; the verifier stays in this checkout. Keep the seed process alive
 on its release FIFO, start beta.23 on that same volume, migrate only its disposable PostgreSQL
 worker database, then run verify mode. The receipt contains only fixture IDs and its disposable
-database name. Verify runs the explicit pass and checks both original account identities, separate
+database name. Before replacing the old image, run `VIVID_EXECUTOR_MIGRATION=waiting` against
+that retained database after applying this branch's generated product migration. It proves the
+new server leaves all three original selections and revisions intact on the old protocol. Then
+switch the same volume to beta.23. Verify runs the explicit pass and checks both original account identities, separate
 app IDs and a retained unfinished key card before releasing seed.
 
 For a fresh-image proof, run from the repository root:

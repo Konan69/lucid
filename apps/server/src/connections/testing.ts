@@ -119,6 +119,7 @@ const authorized = (input: ExecutorReferences) => {
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
+    inventory: Effect.succeed({ apps: [], accounts: [], links: [] }),
     reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
     prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
       Effect.succeed(resources),

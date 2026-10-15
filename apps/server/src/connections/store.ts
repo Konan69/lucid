@@ -72,7 +72,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { namedAccounts } from './names.ts'
-import { ConnectionMigration, migrationLayer, removeConnection } from './migration.ts'
+import { removeConnection } from './migration.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
@@ -518,7 +518,6 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
-  const migration = yield* ConnectionMigration
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
   // Retain only authorities; the caller owns its span, Scope and Clock after construction ends.
   const dependencies = Context.pick(
@@ -571,8 +570,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
-  const get = (actor: Actor, id: ConnectionId) =>
-    provide(Effect.andThen(migration.run(), getRecord(actor, id, false)))
+  const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
   const management = makeManagement({ executor, database, provide, get })
 
   return {
@@ -594,7 +592,6 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
      * bundled logo or the service's initial.
      */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
-      yield* provide(migration.run())
       // Named oldest first, which is what fixes each account's name; shown newest first.
       const named = namedAccounts(yield* provide(listRecords(actor))).toReversed()
       const items = yield* Effect.forEach(named, ({ row, account }) =>
@@ -605,7 +602,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       )
       return { connections: withCatalogMarks(items, catalog) }
     }),
-    records: (actor: Actor) => provide(Effect.andThen(migration.run(), listRecords(actor))),
+    records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
@@ -865,7 +862,19 @@ const makeManagement = (input: {
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
-      yield* provide(removeConnection(row))
+      yield* provide(
+        removeConnection(row).pipe(
+          Effect.catchTag(
+            'ConnectionReclamationBlocked',
+            () =>
+              new ServiceUnavailable({
+                service: 'connections',
+                message:
+                  'This Integration cannot be removed until its stored references are repaired.',
+              }),
+          ),
+        ),
+      )
       yield* provide(recordChanged(actor, row))
       yield* provide(
         Effect.flatMap(Audit, (audit) =>
@@ -907,5 +916,4 @@ export class ConnectionStore extends Context.Service<
 >()('vivid/ConnectionStore') {}
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
-  Layer.provideMerge(migrationLayer),
 )

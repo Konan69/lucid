@@ -4,6 +4,7 @@ import { ServiceId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import {
   Executor,
+  type ExecutorService,
   ExecutorBinding,
   executorReconnectMessage,
   ExecutorAccountId,
@@ -34,6 +35,14 @@ const accountMissing = Schema.TaggedStruct('AccountNotFound', {})
 const storageFailed = Schema.TaggedStruct('StorageError', {})
 
 const encodeLegacy = Schema.encodeEffect(LegacyExecutorReferences)
+
+/** Individual adapter examples explicitly obtain their one migration snapshot. */
+const reconcile = Effect.fn('Migration.test.reconcile')(function* (
+  executor: ExecutorService,
+  selection: typeof LegacyExecutorReferences.Type,
+) {
+  return yield* executor.reconcile(selection, yield* executor.inventory)
+})
 
 const original = ExecutorAppId.make('original')
 const copied = ExecutorAppId.make('copied')
@@ -107,7 +116,7 @@ it.effect('uses exact migrated copy provenance and selected account, never an ap
     )
     const context = yield* Layer.build(remote.configured)
     const references = yield* Effect.flatMap(Executor, (executor) =>
-      executor.reconcile(legacy),
+      reconcile(executor, legacy),
     ).pipe(Effect.provide(context))
     expect(references).toEqual(
       ExecutorReferences.cases.Authorized.make({
@@ -155,7 +164,7 @@ it.effect('requires reconnection when the exact legacy account cannot be mapped'
     const context = yield* Layer.build(remote.configured)
     yield* Effect.gen(function* () {
       const executor = yield* Executor
-      const references = yield* executor.reconcile(legacy)
+      const references = yield* reconcile(executor, legacy)
       expect(ExecutorReferences.guards.ReconnectRequired(references)).toBe(true)
       expect((yield* executor.tools(references).pipe(Effect.flip))._tag).toBe('ExecutorNotReady')
       yield* executor.remove(references)
@@ -297,11 +306,11 @@ it.effect('refuses Person B pending on Person A ready shared app without changin
     const context = yield* Layer.build(remote.configured)
     yield* Effect.gen(function* () {
       const executor = yield* Executor
-      const b = yield* executor.reconcile(pendingB)
+      const b = yield* reconcile(executor, pendingB)
       if (!ExecutorReferences.guards.ReconnectRequired(b)) expect.fail('B must reconnect')
       expect(b.reason).toBe('SharedSelection')
       expect(b.retired.account).toEqual(Option.none())
-      const a = yield* executor.reconcile(legacy)
+      const a = yield* reconcile(executor, legacy)
       if (!ExecutorReferences.guards.Authorized(a)) expect.fail('A must keep its exact account')
       expect(a.account).toBe(account)
       expect(a.app).toBe(original)
@@ -341,9 +350,9 @@ it.effect('defers undeployed copies and pending copy plans', () =>
           ],
         ]),
       )
-      const result = yield* Effect.flatMap(Executor, (executor) => executor.reconcile(legacy)).pipe(
-        Effect.provide(context),
-      )
+      const result = yield* Effect.flatMap(Executor, (executor) =>
+        reconcile(executor, legacy),
+      ).pipe(Effect.provide(context))
       if (!ExecutorReferences.guards.MigrationPending(result))
         expect.fail('The selection must stay retryable')
       expect(result.reason).toBe(linked ? 'NotReady' : 'CopyPending')
