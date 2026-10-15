@@ -2,6 +2,7 @@ import * as Effect from 'effect/Effect'
 import { Forbidden, type MarkFeedCardRequest, type PostRequest } from '@vivid/contracts'
 import { requireActor, requireVivid } from '../auth/access.ts'
 import { live } from '../live/query.ts'
+import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
 import { FeedStore } from './store.ts'
 
@@ -11,7 +12,8 @@ export const feedHandlers = {
     return yield* (yield* FeedStore).list((yield* requireActor()).person.id)
   }),
   WatchFeed: () =>
-    live('WatchFeed', ['feed'], (actor) =>
+    // A Run starting or settling moves `activity`, which changes an item's stage.
+    live('WatchFeed', ['feed', 'activity'], (actor) =>
       Effect.flatMap(FeedStore, (store) => store.list(actor.person.id)),
     ),
   /** The Person looked at a card or dealt with it. */
@@ -30,6 +32,12 @@ export const feedHandlers = {
         Effect.fail(new Forbidden({ message: 'Posting to the Feed needs an acting Run.' })),
       ),
     )
+    // In a conversation the Person is already reading the reply; the Feed is for work they are not.
+    const thread = yield* requireThread(auth.threadId, auth.person.id)
+    if (thread.place !== 'Background')
+      return yield* new Forbidden({
+        message: 'The Person is in this conversation: answer here instead of posting to the Feed.',
+      })
     return yield* (yield* FeedStore).post({
       person: auth.person.id,
       thread: auth.threadId,

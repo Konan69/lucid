@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, desc, eq, gte, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, exists, gte, inArray, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -19,6 +19,7 @@ import {
 } from '@vivid/contracts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
+import { readableBy, readableThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { feedCards } from './tables.ts'
 
@@ -26,6 +27,10 @@ const decodePost = decodeStored(Schema.NullOr(FeedPost), 'Feed post')
 
 /** How far back settled work stays on the Feed: the last day, so morning still shows the night. */
 const SETTLED_WINDOW = 24 * 60 * 60 * 1000
+/** Open work is never cut by age; this bounds one read, far above what one Person has open. */
+const OPEN_LIMIT = 200
+/** Settled lines are history: the newest are enough. */
+const HISTORY_LIMIT = 100
 
 /** Every Feed write moves only the Person's Feed, so open Thread lists do not reload for it. */
 const feedTopic = (person: PersonId) => [Topic.part('feed')(Topic.person(person))]
@@ -81,30 +86,45 @@ const atOf = (item: FeedItem) =>
 
 const makeStore = (database: Database['Service']) => {
   /**
-   * The Person's background Threads the Feed shows: every one with a card still open, and every
-   * one that moved in the last day. Each comes with its card when Vivid posted one.
+   * The Person's background Threads the Feed shows, readable by them now (a Company Thread stops
+   * showing when they leave the Company). Two reads with their own bounds: everything still open
+   * (a card waiting, or a Run going) whatever its age, so a burst of quiet events can never push
+   * waiting work off the Feed; and the last day's settled history, capped.
    */
   const recent = Effect.fn('FeedStore.recent')(function* (person: PersonId, since: number) {
-    return yield* database.run(
+    const fields = {
+      thread: threads.id,
+      from: threads.title,
+      moved: threads.updatedAt,
+      card: feedCards,
+    }
+    const mine = and(readableBy(person), eq(threads.place, 'Background'))
+    const going = exists(
       database
-        .select({
-          thread: threads.id,
-          from: threads.title,
-          moved: threads.updatedAt,
-          card: feedCards,
-        })
+        .select({ id: runs.id })
+        .from(runs)
+        .where(and(eq(runs.threadId, threads.id), eq(runs.state, 'working'))),
+    )
+    const open = yield* database.run(
+      database
+        .select(fields)
         .from(threads)
         .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
-        .where(
-          and(
-            eq(threads.personId, person),
-            eq(threads.place, 'Background'),
-            or(gte(threads.updatedAt, since), inArray(feedCards.state, ['new', 'seen'])),
-          ),
-        )
+        .where(and(mine, or(inArray(feedCards.state, ['new', 'seen']), going)))
         .orderBy(desc(threads.updatedAt))
-        .limit(100),
+        .limit(OPEN_LIMIT),
     )
+    const history = yield* database.run(
+      database
+        .select(fields)
+        .from(threads)
+        .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
+        .where(and(mine, gte(threads.updatedAt, since)))
+        .orderBy(desc(threads.updatedAt))
+        .limit(HISTORY_LIMIT),
+    )
+    const seen = new Set(open.map((row) => row.thread))
+    return [...open, ...history.filter((row) => !seen.has(row.thread))]
   })
 
   /** For each of those Threads, when its working Run began (if one is going) and its last end. */
@@ -209,12 +229,20 @@ const makeStore = (database: Database['Service']) => {
     person: PersonId,
     request: typeof MarkFeedCardRequest.Type,
   ) {
+    const now = yield* Clock.currentTimeMillis
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        // The time moves too: a card put away now is settled now, not when it was posted.
         const rows = yield* tx
           .update(feedCards)
-          .set({ state: request.state })
-          .where(and(eq(feedCards.id, request.card), eq(feedCards.personId, person)))
+          .set({ state: request.state, updatedAt: now })
+          .where(
+            and(
+              eq(feedCards.id, request.card),
+              eq(feedCards.personId, person),
+              readableThread(feedCards.threadId, person),
+            ),
+          )
           .returning({ id: feedCards.id })
         if (rows.length === 0) return yield* new NotFound({ message: 'That card is gone.' })
         yield* announce(tx, feedTopic(person))
