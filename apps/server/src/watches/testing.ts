@@ -100,14 +100,23 @@ export type Subscribed = {
   readonly secret: Redacted.Redacted
 }
 
-/** What the stand-in Executor answers subscribe with: a grant, or a failure. */
-export type Answer = { readonly id: string; readonly refreshBefore: Date } | ExecutorEventsFailure
+/** A subscription Executor granted. */
+export type Grant = { readonly id: string; readonly refreshBefore: Date }
+
+/**
+ * What the stand-in Executor answers subscribe with: a grant, a failure, or a grant Vivid never
+ * hears of. `lost` records the grant at Executor and then never answers, as when Vivid's process
+ * dies, or its request is interrupted, after Executor subscribed and before the Watch was activated.
+ */
+export type Answer = Grant | ExecutorEventsFailure | { readonly lost: Grant }
 
 /** The calls made to the stand-in Executor and the answers it gives, controlled by the test. */
 export interface ExecutorControl {
   readonly subscribed: Queue.Queue<Subscribed>
   readonly answers: Queue.Queue<Answer>
   readonly unsubscribed: Ref.Ref<ReadonlyArray<string>>
+  /** The id of each grant Executor made that Vivid never heard of, as it makes it. */
+  readonly lost: Queue.Queue<string>
 }
 export class Executor extends Context.Service<Executor, ExecutorControl>()('test/WatchExecutor') {}
 
@@ -130,17 +139,22 @@ export const executorLayer = Layer.effectContext(
     const subscribed = yield* Queue.unbounded<Subscribed>()
     const answers = yield* Queue.unbounded<Answer>()
     const unsubscribed = yield* Ref.make<ReadonlyArray<string>>([])
+    const lost = yield* Queue.unbounded<string>()
     const events = ExecutorEvents.of({
       list: Effect.succeed(definitions),
       subscribe: Effect.fn('Test.Executor.subscribe')(function* (input) {
         yield* Queue.offer(subscribed, input)
         const answer = yield* Queue.take(answers)
+        if ('lost' in answer) {
+          yield* Queue.offer(lost, answer.lost.id)
+          return yield* Effect.never
+        }
         return 'refreshBefore' in answer ? answer : yield* answer
       }),
       unsubscribe: (input) => Ref.update(unsubscribed, (previous) => [...previous, input.name]),
     })
     return Context.make(ExecutorEvents, events).pipe(
-      Context.add(Executor, { subscribed, answers, unsubscribed }),
+      Context.add(Executor, { subscribed, answers, unsubscribed, lost }),
     )
   }),
 )

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, lt, ne } from 'drizzle-orm'
+import { and, asc, eq, isNull, lt, ne, or } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -227,19 +227,31 @@ const makeReads = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
-  /** Active Watches whose subscription expires before `before` (epoch milliseconds). */
-  const renewable = Effect.fn('WatchStore.renewable')(function* (before: number) {
+  /**
+   * The Watches the renewal pass owes a subscribe call, oldest first: Active ones whose
+   * subscription expires before `activeBefore`, expired ones included, and Pending ones not
+   * touched since `pendingBefore`, which a creation left behind (epoch milliseconds both).
+   */
+  const due = Effect.fn('WatchStore.due')(function* (input: {
+    readonly activeBefore: number
+    readonly pendingBefore: number
+  }) {
     const rows = yield* database.run(
       database
         .select()
         .from(watches)
-        .where(and(eq(watches.state, 'Active'), lt(watches.refreshBefore, before)))
-        .orderBy(asc(watches.refreshBefore)),
+        .where(
+          or(
+            and(eq(watches.state, 'Active'), lt(watches.refreshBefore, input.activeBefore)),
+            and(eq(watches.state, 'Pending'), lt(watches.updatedAt, input.pendingBefore)),
+          ),
+        )
+        .orderBy(asc(watches.createdAt), asc(watches.id)),
     )
     return yield* Effect.forEach(rows, record)
   })
 
-  return { list, named, find, renewable }
+  return { list, named, find, due }
 }
 
 /** Arrivals: one row per event occurrence, the dedupe key for Executor's redeliveries. */

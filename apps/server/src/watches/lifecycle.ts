@@ -95,25 +95,52 @@ export const eventsOfApp = (definitions: ReadonlyArray<EventDefinition>, slug: s
       : [],
   )
 
-/** What a failed renewal does to its Watch: stop it for a reason, or try again on the next pass. */
-export const renewalOutcome = (
-  failure: ExecutorEventsFailure,
-  expired: boolean,
-): Option.Option<WatchStopReason> => {
+/**
+ * What a failed renewal or recovery does to its Watch: stop it for a reason, or try again on the
+ * next pass. Executor down, the callback not verifying or events off are transient whether or not
+ * the subscription has expired meanwhile: subscribing again with the same key creates it afresh
+ * once Executor answers (executor@2.0.0-beta.23 `packages/sdk/src/implementation/events.ts`
+ * subscribe), so an outage that outlasts the subscription costs the events of the outage and not
+ * the Watch. An expired Watch stays Active with its past `refreshBefore`, which says it has lapsed.
+ */
+export const renewalOutcome = (failure: ExecutorEventsFailure): Option.Option<WatchStopReason> => {
   const stop = (reason: WatchStopReason) => () => Option.some(reason)
-  // Executor down, the callback not verifying or events off: transient while the subscription
-  // lives, and the Watch has lapsed once it has expired.
-  const transient = () => (expired ? Option.some<WatchStopReason>('unreachable') : Option.none())
+  const again = () => Option.none<WatchStopReason>()
   return Match.valueTags(failure, {
     ExecutorEventChanged: stop('changed'),
     ExecutorEventMissing: stop('changed'),
     ExecutorEventArgumentsInvalid: stop('changed'),
     ExecutorEventRefused: stop('refused'),
-    ExecutorCallbackFailed: transient,
-    ExecutorEventsUnsupported: transient,
-    ExecutorEventsUnreachable: transient,
+    ExecutorCallbackFailed: again,
+    ExecutorEventsUnsupported: again,
+    ExecutorEventsUnreachable: again,
   })
 }
+
+/**
+ * Whether a failed first subscribe may have created the subscription anyway. Only an answer
+ * Vivid could not read leaves that open (Executor down, the call timed out, a body it could not
+ * decode): the subscription may exist and deliver. Every other failure is Executor's own answer
+ * that it did not subscribe.
+ */
+const outcomeUnknown = (failure: ExecutorEventsFailure) =>
+  Match.valueTags(failure, {
+    ExecutorEventChanged: () => false,
+    ExecutorEventMissing: () => false,
+    ExecutorEventArgumentsInvalid: () => false,
+    ExecutorEventRefused: () => false,
+    ExecutorCallbackFailed: () => false,
+    ExecutorEventsUnsupported: () => false,
+    ExecutorEventsUnreachable: () => true,
+  })
+
+/**
+ * How long a Watch may stay Pending before the renewal pass takes it over: twice the longest a
+ * subscribe call may take (`CALL_TIMEOUT` in `events.ts`), so a pass does not race a creation
+ * that is still waiting on Executor. A Pending row older than this was left by a creation that
+ * was interrupted, died with its process, or failed between Executor's grant and activation.
+ */
+export const RECOVER_AFTER_MS = 60_000
 
 /** Build the service over its stores, Executor and the server's address and secret. */
 const make = Effect.fn('Watches.make')(function* () {
@@ -157,7 +184,12 @@ const make = Effect.fn('Watches.make')(function* () {
   /**
    * Resolve the account's app, insert the Watch Pending, then subscribe. The row must exist first:
    * Executor POSTs its signed challenge to the callback before it answers `events/subscribe`, and
-   * the receiver answers only for a Watch it knows. A refusal removes the Pending row.
+   * the receiver answers only for a Watch it knows.
+   *
+   * Executor's refusal removes the Pending row and is the caller's answer. An answer Vivid could
+   * not read leaves the row Pending and returns it ("starting" to the model): the subscription may
+   * exist, and the renewal pass subscribes again with the same key until Executor answers. So does
+   * a creation interrupted anywhere after the insert, the row being its durable record.
    */
   const create = Effect.fn('Watches.create')(function* (actor: Actor, request: CreateWatchRequest) {
     const app = yield* apps.appOf(actor, request.account)
@@ -178,8 +210,16 @@ const make = Effect.fn('Watches.make')(function* () {
       instruction: request.instruction,
       callbackUrl: `${base}/api/watches/${id}`,
     })
-    const grant = yield* subscribe(pending).pipe(Effect.tapError(() => store.discard(id)))
-    const active = yield* activate(pending, grant)
+    const granted = yield* Effect.result(subscribe(pending))
+    if (Result.isFailure(granted)) {
+      if (outcomeUnknown(granted.failure)) {
+        yield* publish(pending)
+        return pending.watch
+      }
+      yield* store.discard(id)
+      return yield* granted.failure
+    }
+    const active = yield* activate(pending, granted.success)
     yield* publish(active)
     return active.watch
   })
@@ -210,29 +250,36 @@ const make = Effect.fn('Watches.make')(function* () {
     return stopped.value.watch
   })
 
-  /** Renew one Watch, or stop it when Executor says it can never be renewed. */
-  const renewOne = Effect.fn('Watches.renewOne')(function* (record: WatchRecord, now: number) {
-    const expired = WatchState.match(record.watch.state, {
-      Active: ({ refreshBefore }) => refreshBefore <= now,
-      Pending: () => false,
-      Stopped: () => false,
-    })
+  /**
+   * Renew an Active Watch, or finish a Pending one a creation left behind, with the key it was
+   * created with: Executor's subscription id is derived from that key, so this is the same
+   * subscription whether or not the first attempt reached Executor. Stop it only when Executor
+   * says it can never be subscribed; anything else is tried again on the next pass.
+   */
+  const renewOne = Effect.fn('Watches.renewOne')(function* (record: WatchRecord) {
     const renewed = yield* Effect.result(subscribe(record))
     if (Result.isSuccess(renewed)) {
-      yield* activate(record, renewed.success)
+      const active = yield* activate(record, renewed.success)
+      if (WatchState.guards.Pending(record.watch.state)) yield* publish(active)
       return
     }
-    const reason = renewalOutcome(renewed.failure, expired)
+    const reason = renewalOutcome(renewed.failure)
     if (Option.isNone(reason)) return
     yield* store.stop(record.watch.id, reason.value)
     yield* publish(record)
   })
 
-  /** One pass over every Watch due for renewal. One Watch's failure does not hold up the others. */
+  /**
+   * One pass over every Watch due: Active ones near or past expiry and Pending ones left behind.
+   * One Watch's failure does not hold up the others.
+   */
   const renew = Effect.fn('Watches.renew')(function* () {
     const now = yield* Clock.currentTimeMillis
-    const due = yield* store.renewable(now + RENEW_WITHIN_MS)
-    const outcomes = yield* Effect.forEach(due, (record) => Effect.exit(renewOne(record, now)))
+    const due = yield* store.due({
+      activeBefore: now + RENEW_WITHIN_MS,
+      pendingBefore: now - RECOVER_AFTER_MS,
+    })
+    const outcomes = yield* Effect.forEach(due, (record) => Effect.exit(renewOne(record)))
     for (const outcome of outcomes) yield* outcome
   })
 
