@@ -27,6 +27,8 @@ import { noteTools } from '../tools/notes.ts'
 import { notifyTools } from '../tools/notify.ts'
 import { openTools } from '../tools/open.ts'
 import { routineTools } from '../tools/routines.ts'
+import { feedTools } from '../tools/feed.ts'
+import { watchTools } from '../tools/watches.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
 import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
@@ -173,7 +175,10 @@ export function Vivid({ id }: { id: string }) {
     notifyTools(runTool),
     openTools(runTool),
     skillTools(runTool),
-    routineTools(runTool),
+    // Watches own find_events now; the Routine one leaves with the Routines.
+    routineTools(runTool).filter((tool) => tool.name !== 'find_events'),
+    watchTools(runTool),
+    feedTools(runTool),
     projectTools(runTool),
     codeTools(runTool),
     documentTools(runTool),

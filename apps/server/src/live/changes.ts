@@ -30,7 +30,7 @@ import { LiveTally, type Moved } from './tally.ts'
  * turn reloading each of a Person's twenty open queries three times, and their session twenty
  * times each, for three queries that had anything new to send.
  */
-export const Part = Schema.Literals(['activity', 'notifications', 'drafts'])
+export const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed'])
 export type Part = typeof Part.Type
 
 type Owner = `p:${string}` | `c:${string}` | `t:${string}`

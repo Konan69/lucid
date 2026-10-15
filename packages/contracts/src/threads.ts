@@ -170,6 +170,8 @@ export const RunOrigin = Schema.TaggedUnion({
   Routine: { person: PersonSummary, routineName: Schema.String },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
+  /** An Integration event a Watch subscribed to, named by the Watch. */
+  Watch: { person: PersonSummary, watchName: Schema.String },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -265,6 +267,8 @@ export const SignalType = Schema.Literals([
   'approval',
   'answer',
   'first-conversation',
+  // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
+  'event',
 ] as const)
 export type SignalType = typeof SignalType.Type
 

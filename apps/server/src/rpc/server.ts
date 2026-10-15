@@ -14,6 +14,8 @@ import { computerHandlers } from '../computers/handlers.ts'
 import { connectionHandlers } from '../connections/handlers.ts'
 import { draftHandlers } from '../drafts/handlers.ts'
 import { draftStoreLayer } from '../drafts/store.ts'
+import { feedHandlers } from '../feed/handlers.ts'
+import { feedStoreLayer } from '../feed/store.ts'
 import { inputHandlers } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
 import { memoryHandlers } from '../memory/handlers.ts'
@@ -26,6 +28,7 @@ import { searchHandlers } from '../search/handlers.ts'
 import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
+import { watchHandlers } from '../watches/handlers.ts'
 
 /**
  * Every product call, implemented once. `VividRpc.toLayer` is total over the contract: a call
@@ -54,7 +57,9 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...skillHandlers,
   ...computerHandlers,
   ...searchHandlers,
-}).pipe(Layer.provide(draftStoreLayer))
+  ...watchHandlers,
+  ...feedHandlers,
+}).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer)))
 
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every

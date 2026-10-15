@@ -13,6 +13,7 @@ export * from './memory.js'
 export * from './notifications.js'
 export * from './projects.js'
 export * from './push.js'
+export * from './feed.js'
 export * from './routines.js'
 export * from './rules.js'
 export * from './search.js'
@@ -20,6 +21,7 @@ export * from './settings.js'
 export * from './artifacts.js'
 export * from './skills.js'
 export * from './threads.js'
+export * from './watches.js'
 export {
   ApiError,
   Conflict,

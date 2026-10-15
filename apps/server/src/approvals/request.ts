@@ -59,6 +59,8 @@ const signalOf = (message: Message) =>
  *   Routine to record who wrote it first. Until then a Routine acts on the Person's own
  *   Integrations through an Allow rule or an Approval.
  * - `Standing`, `Attention`, `FirstConversation`: the server or Vivid wrote the body. Never.
+ * - `Watch`: not trusted, like a Routine: Vivid can create a Watch and write its instruction, and
+ *   the event it carries is an outside app's text.
  */
 const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>) => {
   const tag = signalOf(message)
@@ -69,6 +71,7 @@ const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>
     Standing: () => false,
     Attention: () => false,
     FirstConversation: () => false,
+    Watch: () => false,
   })
 }
 

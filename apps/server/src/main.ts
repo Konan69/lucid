@@ -78,6 +78,10 @@ import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
 import { threadStoreLayer } from './threads/store.ts'
 import { updateRoutes } from './updates/routes.ts'
+import { watchedAppsLayer } from './watches/apps.ts'
+import { executorEventsLayer } from './watches/events.ts'
+import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { watchStoreLayer } from './watches/store.ts'
 
 /**
  * Memory is part of every Vivid. `VIVID_HELIX_URL` and the model gateway key are required while
@@ -164,15 +168,21 @@ const serverProgram = Effect.gen(function* () {
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     routineStoreLayer,
+    watchStoreLayer,
+    executorEventsLayer,
+    watchedAppsLayer,
     codeCallsLayer,
     codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
   ).pipe(Layer.provideMerge(decisions))
-  const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
+  const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(
+    Layer.provideMerge(work),
+  )
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
     routineSchedulerLayer,
     migrationLayer,
     refusedLayer,
+    watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
