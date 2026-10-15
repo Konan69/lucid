@@ -1806,14 +1806,14 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   }
 })
 
-/** packages/sdk/src/contracts/apps.ts AppName is bounded at 120 characters. Hash the Integration
- * identity so arbitrary URL lengths share a stable name across Connections without truncation.
+/** packages/sdk/src/contracts/apps.ts AppName is bounded at 120 characters. Hash the Connection
+ * identity so retries retain one dedicated app without sharing another Connection's accounts.
  */
-function integrationAppName(service: ServiceId) {
-  return `Vivid Integration ${NodeCrypto.createHash('sha256').update(service).digest('hex')}`
+function connectionAppName(connection: ConnectionId) {
+  return `Vivid Integration ${NodeCrypto.createHash('sha256').update(connection).digest('hex')}`
 }
 
-/** Inventory matches only shared app code by its deterministic name. Full requirements enter
+/** Inventory matches only this Connection's app by its deterministic name. Full requirements enter
  * through that app's detail endpoint; ordinary provisioning never selects an account from inventory.
  */
 function makeFindInstalled(http: ExecutorHttp) {
@@ -1899,7 +1899,7 @@ function makeBegin(
     const app = yield* Effect.acquireRelease(
       Option.match(googleService(input.service), {
         onNone: () =>
-          install(integrationAppName(ServiceId.make(input.connectionId)), (name) =>
+          install(connectionAppName(input.connectionId), (name) =>
             http.readApp(post('/apps/install', { entry: entry.id, name }), null),
           ),
         onSome: (google) =>
@@ -2077,7 +2077,7 @@ function makeAdd(
     if (policy !== undefined || input.source.authorization === 'apiKey')
       return yield* keyed(input, transport)
     const app = yield* Effect.acquireRelease(
-      install(integrationAppName(ServiceId.make(`import:${input.connectionId}`)), (name) => {
+      install(connectionAppName(input.connectionId), (name) => {
         // Executor resolves the inspected URL again; production requires public-only egress.
         const source = WireImportSource.make({ name, url: input.source.address })
         return http.readApp(post('/apps/import', { source }), null)
