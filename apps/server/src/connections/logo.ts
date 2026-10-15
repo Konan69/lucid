@@ -2,7 +2,7 @@ import { getDomain } from 'tldts'
 import { Service } from '@vivid/contracts'
 import type { ExecutorServiceEntry } from './executor.ts'
 
-/** Project a catalog entry into a Service: its icon is found by the site the catalog names. */
+/** Preserve catalog icon addresses; authored services may instead declare their known site. */
 export function catalogService(entry: typeof ExecutorServiceEntry.Type): Service {
   return Service.make({
     id: entry.id,

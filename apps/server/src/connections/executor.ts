@@ -532,7 +532,7 @@ const WireApp = Schema.Struct({
   name: Schema.NonEmptyString,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
 })
-// Inventory identifies shared code only. Unrelated apps may use requirement shapes this
+// Inventory identifies app provenance only. Unrelated apps may use requirement shapes this
 // adapter cannot authorize; decode requirements only on the selected app's detail endpoint.
 const WireInventory = Schema.Struct({
   apps: Schema.Array(
@@ -1835,7 +1835,7 @@ function makeFindInstalled(http: ExecutorHttp) {
 
 const isAppNameTaken = Schema.is(ExecutorAppNameTaken)
 
-/** A name conflict is the sole proof another process may have installed this shared app.
+/** A name conflict is the sole proof another process may have installed this Connection's app.
  * Reread once and return that exact winner; absence preserves the original conflict.
  */
 function makeProvision(http: ExecutorHttp) {
