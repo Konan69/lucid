@@ -5,6 +5,7 @@ import {
   type ActionEvent,
   type McpClientLike,
 } from '@openuidev/react-lang'
+import { Option } from 'effect'
 import { callDisplayTool, displayToolAnswer, said, writtenTools } from '@vivid/state'
 import { run } from '../data/app'
 import { library } from './library'
@@ -21,7 +22,7 @@ const parser = createParser(library.toJSONSchema(), 'Col')
 function integrations(writes: ReadonlySet<string>): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
-      run(callDisplayTool(name, given, writes)).then(displayToolAnswer),
+      run(callDisplayTool(name, Option.fromUndefinedOr(given), writes)).then(displayToolAnswer),
   }
 }
 

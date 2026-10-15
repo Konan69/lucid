@@ -6,6 +6,7 @@ import {
   type McpClientLike,
 } from '@openuidev/react-lang'
 import { StyleSheet, View } from 'react-native'
+import { Option } from 'effect'
 import { callDisplayTool, displayToolAnswer, said, writtenTools } from '@vivid/state'
 import { useLiveData, type LiveData } from '../data/live'
 import { library } from './library'
@@ -21,7 +22,7 @@ const parser = createParser(library.toJSONSchema(), 'Col')
 function integrations(run: LiveData['run'], writes: ReadonlySet<string>): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
-      run(callDisplayTool(name, given, writes)).then(displayToolAnswer),
+      run(callDisplayTool(name, Option.fromUndefinedOr(given), writes)).then(displayToolAnswer),
   }
 }
 
