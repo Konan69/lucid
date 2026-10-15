@@ -6,6 +6,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { Database } from '../database/client.ts'
 import type { ChainFixture } from '../runtime/chains.ts'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAccountId,
   ExecutorAppId,
@@ -122,6 +123,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   )
   created = Option.some(deployed.id)
   const references = ExecutorReferences.cases.Public.make({
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
     app: deployed.id,
     binding: ExecutorBinding.cases.Public.make({}),
     owner,
@@ -256,6 +258,7 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
       ),
     )
     const references = ExecutorReferences.cases.Authorized.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       app: deployed.id,
       binding: ExecutorBinding.cases.Account.make({ requirement: 'service', scope: 'user' }),
       owner,

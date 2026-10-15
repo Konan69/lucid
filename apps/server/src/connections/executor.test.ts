@@ -12,6 +12,7 @@ import { ConfigurationError } from '../config.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -108,6 +109,7 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       }),
     )
     const references = ExecutorReferences.cases.Public.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       service: hostedService,
       app: ExecutorAppId.make('app'),
       binding: ExecutorBinding.cases.Public.make({}),
@@ -175,6 +177,7 @@ it.effect('does not echo a token when credential submission fails', () =>
       }),
     )
     const references = ExecutorReferences.cases.EnteringKey.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       service: hostedService,
       app: ExecutorAppId.make('app'),
       binding: ExecutorBinding.cases.Public.make({}),

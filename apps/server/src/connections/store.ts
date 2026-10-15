@@ -869,8 +869,7 @@ const makeManagement = (input: {
             () =>
               new ServiceUnavailable({
                 service: 'connections',
-                message:
-                  'This Integration cannot be removed until its stored references are repaired.',
+                message: 'Vivid cannot remove this integration right now. Try again later.',
               }),
           ),
         ),

@@ -3,6 +3,7 @@ import { Effect, Layer, Ref, Schema, Clock, Option } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import {
+  ExecutorAppOwnership,
   Executor,
   type ExecutorService,
   ExecutorBinding,
@@ -120,6 +121,7 @@ it.effect('uses exact migrated copy provenance and selected account, never an ap
     ).pipe(Effect.provide(context))
     expect(references).toEqual(
       ExecutorReferences.cases.Authorized.make({
+        appOwnership: ExecutorAppOwnership.cases.Copied.make({ original }),
         service: legacy.service,
         owner: legacy.owner,
         app: copied,
@@ -127,7 +129,7 @@ it.effect('uses exact migrated copy provenance and selected account, never an ap
         binding: ExecutorBinding.cases.Account.make({ requirement: 'service', scope: 'user' }),
       }),
     )
-    expect(JSON.stringify(references)).not.toMatch(/profile|appOwnership/u)
+    expect(JSON.stringify(references)).not.toMatch(/profile/u)
     expect(
       (yield* Ref.get(remote.requests)).some((request) => request.path.includes('/apps/unrelated')),
     ).toBe(false)
@@ -186,6 +188,7 @@ describe.skipIf(!testDatabaseConfigured)('legacy app claims', () => {
           const database = yield* Database
           const prior = yield* Executor
           const canonical = ExecutorReferences.cases.Authorized.make({
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
             service: legacy.service,
             app: original,
             owner: legacy.owner,
@@ -413,6 +416,7 @@ describe.skipIf(!testDatabaseConfigured)('migration outcomes and reclamation', (
               if (value.owner === 'retry' && !(yield* Ref.get(recovering)))
                 return yield* ExecutorTransportFailure.make({ service: 'connections', tool: null })
               return ExecutorReferences.cases.Authorized.make({
+                appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
                 service: value.service,
                 owner: value.owner,
                 app: ExecutorAppId.make(`app-${value.owner}`),
@@ -515,7 +519,11 @@ describe.skipIf(!testDatabaseConfigured)('migration outcomes and reclamation', (
         const rowA = Option.getOrThrow(Option.fromUndefinedOr(rows.find((row) => row.id === a)))
         const rowB = Option.getOrThrow(Option.fromUndefinedOr(rows.find((row) => row.id === b)))
         expect(rowA.status).toBe('ready')
-        expect(rowA.executorApp).toBe(original)
+        expect(rowA.executorApp).toBeNull()
+        if (!ExecutorReferences.guards.Authorized(rowA.references))
+          expect.fail('A must remain authorized')
+        expect(rowA.references.appOwnership._tag).toBe('Unproven')
+        expect(rowA.references.app).toBe(original)
         expect(rowB.executorApp).toBeNull()
         if (!ExecutorReferences.guards.ReconnectRequired(rowB.references))
           expect.fail('B must reconnect')
@@ -535,6 +543,7 @@ describe.skipIf(!testDatabaseConfigured)('migration outcomes and reclamation', (
         const { ownerActor } = yield* fixture()
         const database = yield* Database
         const references = ExecutorReferences.cases.Public.make({
+          appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
           service: legacy.service,
           owner: legacy.owner,
           app: original,
@@ -570,6 +579,7 @@ describe.skipIf(!testDatabaseConfigured)('migration outcomes and reclamation', (
           const remote = yield* hostedExecutorFixture()
           const other = ExecutorAccountId.make('person-a-account')
           const kept = ExecutorReferences.cases.Authorized.make({
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
             service: legacy.service,
             owner: ExecutorOwnerId.make('person-a'),
             app: original,

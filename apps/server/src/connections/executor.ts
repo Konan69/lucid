@@ -80,11 +80,19 @@ export const AccountIdentity = Schema.String.check(
 export type AccountIdentity = typeof AccountIdentity.Type
 const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 
+/** Deletion authority is either a Vivid allocation, a proven migration copy, or access only. */
+export const ExecutorAppOwnership = Schema.TaggedUnion({
+  Dedicated: {},
+  Copied: { original: ExecutorAppId },
+  Unproven: {},
+})
+
 const referenceFields = {
   service: ServiceId,
   app: ExecutorAppId,
   owner: ExecutorOwnerId,
   binding: ExecutorBinding,
+  appOwnership: ExecutorAppOwnership,
 }
 
 /** Pre-beta.23 persistence ingress only. No product operation accepts these removed selections. */
@@ -171,7 +179,9 @@ export const ExecutorReferences = Schema.TaggedUnion({
     service: ServiceId,
     owner: ExecutorOwnerId,
     legacy: LegacyExecutorReferences,
-    since: Schema.OptionFromOptionalKey(Schema.Finite),
+    compatibleAttempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(0)),
+    ),
     reason: Schema.Literals(['Unattempted', 'Unavailable', 'NotReady', 'CopyPending']),
   },
   EnteringKey: {
@@ -1050,6 +1060,7 @@ function referenceIdentity(references: ExecutorActiveReferences) {
     service: references.service,
     app: references.app,
     binding: references.binding,
+    appOwnership: references.appOwnership,
     owner: references.owner,
   }
 }
@@ -2010,6 +2021,7 @@ function makeConfigure(
     const references = ExecutorReferences.cases.Public.make({
       service: input.service,
       app: app.id,
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       owner: input.owner,
       binding: ExecutorBinding.cases.Public.make({}),
     })
@@ -2324,15 +2336,14 @@ function makeRemoval(http: ExecutorHttp) {
   )
 }
 
-/** Unlink the exact requirement/account, delete credentials, then remove its dedicated app.
- * App deletion is last so a lost final response cannot leave an undiscoverable credential.
- * A failed unlink or active-work conflict stops deletion. Unresolved legacy rows own no app.
+/** Ordinary removal shares retirement's ownership and preflight policy. A shared original is
+ * never deleted, and app/link failures cannot follow deletion of the selected credential.
  */
 function makeRemove(http: ExecutorHttp) {
-  const remove = makeRemoval(http)
+  const retire = makeRetire(http)
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
-    if (isMigrationOnly(references)) return
+    if (isMigrationOnly(references)) return yield* Effect.void
     const account = yield* ExecutorReferences.match(references, {
       Public: () => Effect.succeedNone,
       ReconnectRequired: () => Effect.succeedNone,
@@ -2343,25 +2354,11 @@ function makeRemove(http: ExecutorHttp) {
       OAuthSigningIn: resolveRemovalAccount,
       GoogleSigningIn: resolveRemovalAccount,
     })
-    if (Option.isSome(account)) {
-      const path = yield* bindingPath(references)
-      yield* http
-        .readRemoval(
-          Effect.succeed(HttpClientRequest.delete(`${path}/${query(account.value)}`)),
-          null,
-        )
-        .pipe(
-          Effect.catchTag('ExecutorResourceMissing', ({ resource }) =>
-            resource === 'App' || resource === 'Account'
-              ? Effect.void
-              : Effect.fail(
-                  ExecutorResourceMissing.make({ service: 'connections', tool: null, resource }),
-                ),
-          ),
-        )
-    }
-    if (Option.isSome(account)) yield* remove(`/accounts/${query(account.value)}`, 'Account')
-    yield* remove(`/apps/${query(references.app)}`, 'App')
+    return yield* retire({
+      resources: ExecutorRetired.make({ ...retirementOf(references), account }),
+      retainedApps: [],
+      retainedAccounts: [],
+    })
   })
 }
 
@@ -2382,8 +2379,8 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
           error.resource === 'App' ? Effect.succeedNone : Effect.fail(error),
         ),
       )
-    // Our app is removed only after credential deletion. A retry may therefore finish without
-    // its expired request once the host proves that exact dedicated app no longer exists.
+    // App deletion precedes final credential revocation; a missing request on retry cannot
+    // manufacture an account identity. Authorized references keep their exact account directly.
     if (Option.isNone(saved)) return Option.none<typeof ExecutorAccountId.Type>()
     const connection = saved.value
     yield* validateConnectionTarget(connection, references)
@@ -2512,22 +2509,54 @@ export function reconnectRequired(
   })
 }
 
+/** Active app access carries separate deletion authority. Pending requests preserve their exact
+ * correlation so retirement can discover a completed account without inventing a selection.
+ */
+export function retirementOf(references: ExecutorActiveReferences) {
+  const app = ExecutorAppOwnership.match<
+    Pick<typeof ExecutorRetired.Type, 'original' | 'ownership' | 'copies'>
+  >(references.appOwnership, {
+    Dedicated: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
+    Copied: ({ original }) => ({
+      original,
+      ownership: 'Unproven' as const,
+      copies: [references.app],
+    }),
+    Unproven: () => ({ original: references.app, ownership: 'Unproven' as const, copies: [] }),
+  })
+  return ExecutorRetired.make({
+    ...app,
+    account: ExecutorReferences.guards.Authorized(references)
+      ? Option.some(references.account)
+      : Option.none(),
+    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references)
+      ? Option.none()
+      : Option.some(references.authorization),
+  })
+}
+
 /** Conversion discards removed persistence fields. Only known protocol correlation survives. */
 function migratedReferences(
   legacy: typeof LegacyExecutorReferences.Type,
-  identity: ReturnType<typeof referenceIdentity>,
+  identity: Omit<ReturnType<typeof referenceIdentity>, 'appOwnership'>,
 ) {
+  let appOwnership: typeof ExecutorAppOwnership.Type = ExecutorAppOwnership.cases.Unproven.make({})
+  if (identity.app !== legacy.app)
+    appOwnership = ExecutorAppOwnership.cases.Copied.make({ original: legacy.app })
+  else if (legacy.appOwnership === 'Dedicated')
+    appOwnership = ExecutorAppOwnership.cases.Dedicated.make({})
+  const owned = { ...identity, appOwnership }
   return LegacyExecutorReferences.match<ExecutorReferences>(legacy, {
-    Public: () => ExecutorReferences.cases.Public.make(identity),
-    Authorized: ({ account }) => ExecutorReferences.cases.Authorized.make({ ...identity, account }),
+    Public: () => ExecutorReferences.cases.Public.make(owned),
+    Authorized: ({ account }) => ExecutorReferences.cases.Authorized.make({ ...owned, account }),
     EnteringKey: ({ authorization, method, label }) =>
-      ExecutorReferences.cases.EnteringKey.make({ ...identity, authorization, method, label }),
+      ExecutorReferences.cases.EnteringKey.make({ ...owned, authorization, method, label }),
     SigningIn: ({ authorization }) =>
-      ExecutorReferences.cases.SigningIn.make({ ...identity, authorization }),
+      ExecutorReferences.cases.SigningIn.make({ ...owned, authorization }),
     OAuthSigningIn: ({ authorization, stateHash }) =>
-      ExecutorReferences.cases.OAuthSigningIn.make({ ...identity, authorization, stateHash }),
+      ExecutorReferences.cases.OAuthSigningIn.make({ ...owned, authorization, stateHash }),
     GoogleSigningIn: ({ authorization, googleState }) =>
-      ExecutorReferences.cases.GoogleSigningIn.make({ ...identity, authorization, googleState }),
+      ExecutorReferences.cases.GoogleSigningIn.make({ ...owned, authorization, googleState }),
   })
 }
 
@@ -2583,7 +2612,7 @@ export function migrationPending(
     service: legacy.service,
     owner: legacy.owner,
     legacy,
-    since: Option.none(),
+    compatibleAttempts: 0,
     reason,
   })
 }

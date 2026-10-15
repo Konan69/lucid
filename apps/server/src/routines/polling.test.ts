@@ -6,6 +6,7 @@ import { Effect, Layer, Ref } from 'effect'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import {
+  ExecutorAppOwnership,
   ExecutorAccountId,
   ExecutorCallOutcome,
   ExecutorTool,
@@ -80,6 +81,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
         const row = yield* (yield* ConnectionStore).get(ownerActor, connected.connection.id)
         const account = ExecutorAccountId.make('PRIVATE-provider-account')
         const references = ExecutorReferences.cases.Authorized.make({
+          appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
           service: row.references.service,
           app: activeReferences(row.references).app,
           binding: activeReferences(row.references).binding,

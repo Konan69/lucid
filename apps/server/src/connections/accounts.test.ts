@@ -1,3 +1,4 @@
+import { ExecutorAppOwnership } from './executor.ts'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -415,6 +416,7 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
   layer(connectionTestLayer)((test) => {
     const references = (account: Option.Option<string>) => {
       const identity = {
+        appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
         service: hostedService,
         app: ExecutorAppId.make('app'),
         binding: ExecutorBinding.cases.Public.make({}),
@@ -512,6 +514,7 @@ describe('the name an account has among a Person’s accounts', () => {
     personId: PersonId.make('ada'),
     companyId: null,
     references: ExecutorReferences.cases.Public.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       service: ServiceId.make('google/gmail'),
       app: ExecutorAppId.make('app'),
       binding: ExecutorBinding.cases.Public.make({}),

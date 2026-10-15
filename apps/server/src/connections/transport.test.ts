@@ -23,6 +23,7 @@ import * as HttpServer from 'effect/http/HttpServer'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAccountId,
   ExecutorAppId,
@@ -49,6 +50,7 @@ import {
 } from './testing.ts'
 
 const identity = {
+  appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
   service: hostedService,
   app: ExecutorAppId.make('app'),
   binding: ExecutorBinding.cases.Public.make({}),
@@ -1288,10 +1290,26 @@ describe('Executor hosted transport', () => {
   )
 
   it.effect(
-    'unlinks only the exact account, removes credentials, and deletes the dedicated app last',
+    'preflights links, unlinks the exact account, deletes its dedicated app, and revokes credentials last',
     () =>
       scenario((remote) =>
         Effect.gen(function* () {
+          yield* Ref.set(remote.apps, [{ id: 'app', name: 'Dedicated' }])
+          yield* failRoute(remote, 'GET /apps/app/accounts/user', {
+            status: 200,
+            body: [{ requirement: 'slot', account: { id: 'account' } }],
+          })
+          yield* failRoute(remote, 'GET /apps/app/accounts/app', { status: 200, body: [] })
+          yield* Ref.set(remote.intercept, (request) =>
+            request.path === `DELETE ${hostedPrefix}/apps/app/accounts/user/slot/account`
+              ? Ref.update(remote.replies, (replies) =>
+                  new Map(replies).set(`GET ${hostedPrefix}/apps/app/accounts/user`, {
+                    status: 200,
+                    body: [],
+                  }),
+                )
+              : Effect.void,
+          )
           yield* (yield* Executor).remove(authorized)
           expect(
             (yield* Ref.get(remote.requests))
@@ -1299,8 +1317,8 @@ describe('Executor hosted transport', () => {
               .map((request) => request.path),
           ).toEqual([
             `DELETE ${hostedPrefix}/apps/app/accounts/user/slot/account`,
-            `DELETE ${hostedPrefix}/accounts/account`,
             `DELETE ${hostedPrefix}/apps/app`,
+            `DELETE ${hostedPrefix}/accounts/account`,
           ])
         }),
       ),
@@ -1318,7 +1336,10 @@ describe('Executor hosted transport', () => {
           (yield* Ref.get(remote.requests))
             .filter((request) => request.path.startsWith('DELETE'))
             .map((request) => request.path),
-        ).toEqual([`DELETE ${hostedPrefix}/apps/app`])
+        ).toEqual([])
+        expect((yield* Ref.get(remote.requests)).map((request) => request.path)).toContain(
+          `GET ${hostedPrefix}/inventory`,
+        )
       }),
     ),
   )
@@ -1326,6 +1347,12 @@ describe('Executor hosted transport', () => {
   it.effect('does not delete the app or account after unlink refusal', () =>
     scenario((remote) =>
       Effect.gen(function* () {
+        yield* Ref.set(remote.apps, [{ id: 'app', name: 'Dedicated' }])
+        yield* failRoute(remote, 'GET /apps/app/accounts/user', {
+          status: 200,
+          body: [{ requirement: 'slot', account: { id: 'account' } }],
+        })
+        yield* failRoute(remote, 'GET /apps/app/accounts/app', { status: 200, body: [] })
         yield* failRoute(remote, 'DELETE /apps/app/accounts/user/slot/account', {
           status: 409,
           body: Schema.TaggedStruct('AppWebhooksActive', {}).make({}),

@@ -13,7 +13,7 @@ import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { proofAccounts } from './proof.ts'
 import { connections } from './tables.ts'
 import { decodeRow } from './records.ts'
-import { migrateConnections } from './migration.ts'
+import { migrateConnections, removeConnection } from './migration.ts'
 
 const mode = NodeProcess.env['VIVID_EXECUTOR_MIGRATION']
 const receiptFile = NodeProcess.env['VIVID_TEST_MIGRATION_RECEIPT']
@@ -224,7 +224,12 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
             if (!ExecutorReferences.guards.Authorized(row.references))
               expect.fail('The original selected account must remain authorized')
             expect(row.references.account).toBe(target.account)
-            expect(row.executorApp).toBe(row.references.app)
+            expect(row.references.appOwnership._tag).toBe(
+              row.references.app === receipt.originalApp ? 'Unproven' : 'Copied',
+            )
+            expect(row.executorApp).toBe(
+              row.references.app === receipt.originalApp ? null : row.references.app,
+            )
             expect(row.personId).toBe(receipt.person)
             expect(JSON.stringify(row.references)).not.toContain('profile')
             expect((yield* executor.status(row.references))._tag).toBe('Ready')
@@ -265,6 +270,44 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
           NodeProcess.stdout.write(
             `migration ${receipt.pending} => ${row.references.app} ${row.references._tag}\n`,
           )
+        }),
+      { timeout: 120_000 },
+    )
+    it.effect(
+      'removing the migrated original preserves the shared app and the other account',
+      () =>
+        Effect.gen(function* () {
+          if (receiptFile === undefined) expect.fail('Supply the original fixture receipt')
+          const receipt = yield* decodeReceipt(
+            yield* Effect.sync(() => NodeFS.readFileSync(receiptFile, 'utf8')),
+          )
+          const database = yield* Database
+          const executor = yield* Executor
+          const rows = yield* database.run(database.select().from(connections))
+          const first = rows.find((row) => row.id === receipt.first)
+          const second = rows.find((row) => row.id === receipt.second)
+          if (first === undefined || second === undefined)
+            expect.fail('Both migrated rows must exist')
+          yield* removeConnection(yield* decodeRow(first))
+          const inventory = yield* executor.inventory
+          expect(inventory.apps.some((app) => app.id === receipt.originalApp)).toBe(true)
+          expect(inventory.accounts.some((account) => account.id === receipt.firstAccount)).toBe(
+            false,
+          )
+          expect(inventory.accounts.some((account) => account.id === receipt.secondAccount)).toBe(
+            true,
+          )
+          const remaining = yield* decodeRow(second)
+          expect((yield* executor.status(remaining.references))._tag).toBe('Ready')
+          const read = yield* executor.call({
+            references: remaining.references,
+            tool: 'records',
+            input: { subject: `migration-${receipt.second}` },
+          })
+          expect(read._tag).toBe('Completed')
+          expect(JSON.stringify(read)).toContain('second@example.test')
+          expect(JSON.stringify(read)).not.toContain('first@example.test')
+          NodeProcess.stdout.write('migration shared-original removal: PASS\n')
         }),
       { timeout: 120_000 },
     )

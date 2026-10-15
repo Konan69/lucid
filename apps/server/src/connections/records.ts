@@ -22,6 +22,7 @@ import { changed, Topic } from '../live/changes.ts'
 import {
   AccountIdentity,
   ExecutorReferences,
+  ExecutorAppOwnership,
   ExecutorAppId,
   LegacyExecutorReferences,
   migrationPending,
@@ -55,11 +56,12 @@ const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, 
 export const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
 const isLegacy = Schema.is(LegacyExecutorReferences)
 
-/** Active references own exactly one app claim. Deferred/refused selections own no app. */
+/** Only dedicated allocations and proven copies own an app claim; shared original access does not. */
 export function claimedApp(references: ExecutorReferences) {
   if (
     ExecutorReferences.guards.ReconnectRequired(references) ||
-    ExecutorReferences.guards.MigrationPending(references)
+    ExecutorReferences.guards.MigrationPending(references) ||
+    ExecutorAppOwnership.guards.Unproven(references.appOwnership)
   )
     return null
   return references.app

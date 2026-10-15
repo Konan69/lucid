@@ -33,6 +33,7 @@ import { Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import {
+  ExecutorAppOwnership,
   executorLayer,
   type AccountIdentity,
   type ExecutorService,
@@ -107,6 +108,7 @@ export function activeReferences(references: ExecutorReferences): ExecutorActive
 const authorized = (input: ExecutorReferences) => {
   const references = activeReferences(input)
   return ExecutorReferences.cases.Authorized.make({
+    appOwnership: references.appOwnership,
     service: references.service,
     app: references.app,
     binding: references.binding,
@@ -144,6 +146,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
       const identity = {
+        appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
         service: input.service,
         owner: input.owner,
 
@@ -176,6 +179,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
     /** Renewal deliberately retains the provider target while returning a fresh next step. */
     reauthorize: Effect.fn('Executor.Test.reauthorize')(function* (input) {
       const identity = {
+        appOwnership: activeReferences(input.references).appOwnership,
         service: input.references.service,
         owner: input.references.owner,
 

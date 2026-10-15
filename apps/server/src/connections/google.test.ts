@@ -4,7 +4,13 @@ import { HttpRouter, HttpServerRequest } from 'effect/http'
 import { ConnectionId, ConnectionStep, ServiceAuthorization } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { Executor, ExecutorOwnerId, ExecutorReferences, ExecutorStep } from './executor.ts'
+import {
+  ExecutorAppOwnership,
+  Executor,
+  ExecutorOwnerId,
+  ExecutorReferences,
+  ExecutorStep,
+} from './executor.ts'
 import { GoogleState, googleReturnPath, googleServices } from './google.ts'
 import { connectionReturnRoutes } from './return.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
@@ -167,6 +173,7 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
               if (!ExecutorStep.guards.OpenSignIn(step)) expect.fail('Sign-in fixture required')
               return ExecutorStep.cases.OpenSignIn.make({
                 references: ExecutorReferences.cases.GoogleSigningIn.make({
+                  appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
                   service: step.references.service,
                   app: step.references.app,
                   binding: step.references.binding,

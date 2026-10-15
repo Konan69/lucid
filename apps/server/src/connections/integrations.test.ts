@@ -20,6 +20,7 @@ import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionAddress, ConnectionSource } from './address.ts'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorReferences,
   ExecutorAppId,
@@ -263,6 +264,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         const database = yield* Database
         const copied = () =>
           ExecutorReferences.cases.Public.make({
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
             service: row.references.service,
             owner: row.references.owner,
             binding: activeReferences(row.references).binding,

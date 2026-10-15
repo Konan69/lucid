@@ -1,11 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Deferred, Effect, Layer, Option, Queue, Ref, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, Option, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { eq, sql } from 'drizzle-orm'
 import { ServiceId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAccountId,
   ExecutorAppId,
@@ -134,33 +135,46 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
       )
     }
 
-    test.effect(
-      'does not rewrite unchanged retries and expires a missing copy after 24 hours',
-      () =>
-        Effect.gen(function* () {
-          const seeded = yield* seed(yield* encodeLegacy(legacy))
-          const executor = yield* Executor
-          const probes = yield* Ref.make(0)
-          const retrying = Executor.of({
-            ...executor,
-            inventory: executor.inventory.pipe(Effect.tap(() => Ref.update(probes, (n) => n + 1))),
-            reconcile: () => Effect.succeed(migrationPending(legacy, 'CopyPending')),
-          })
-          const pass = migrateConnections().pipe(Effect.provideService(Executor, retrying))
-          expect(yield* pass).toBe(true)
-          const first = yield* seeded.read
-          yield* TestClock.adjust('1 hour')
-          expect(yield* pass).toBe(true)
-          expect(yield* seeded.read).toEqual(first)
-          yield* TestClock.adjust('23 hours')
-          expect(yield* pass).toBe(false)
-          const final = yield* decodeRow(yield* seeded.read)
-          if (!ExecutorReferences.guards.ReconnectRequired(final.references))
-            expect.fail('Missing copy must reach a permanent outcome')
-          expect(final.references.reason).toBe('MigrationTargetMissing')
-          expect(final.updatedAt).toBeGreaterThan(first.updatedAt)
-          expect(yield* Ref.get(probes)).toBe(3)
-        }),
+    test.effect('counts compatible attempts without aging rows through a later global outage', () =>
+      Effect.gen(function* () {
+        const seeded = yield* seed(
+          yield* encodeReferences(
+            ExecutorReferences.cases.MigrationPending.make({
+              ...migrationPending(legacy, 'CopyPending'),
+              compatibleAttempts: 1437,
+            }),
+          ),
+        )
+        const executor = yield* Executor
+        const available = yield* Ref.make(true)
+        const retrying = Executor.of({
+          ...executor,
+          inventory: Effect.flatMap(Ref.get(available), (ready) =>
+            ready
+              ? executor.inventory
+              : ExecutorTransportFailure.make({ service: 'connections', tool: null }),
+          ),
+          reconcile: () => Effect.succeed(migrationPending(legacy, 'CopyPending')),
+        })
+        const pass = migrateConnections().pipe(Effect.provideService(Executor, retrying))
+        expect(yield* pass).toBe(true)
+        const first = yield* seeded.read
+        yield* Ref.set(available, false)
+        yield* TestClock.adjust('48 hours')
+        expect(yield* pass).toBe(true)
+        expect(yield* seeded.read).toEqual(first)
+        yield* Ref.set(available, true)
+        expect(yield* pass).toBe(true)
+        const recovered = yield* decodeRow(yield* seeded.read)
+        if (!ExecutorReferences.guards.MigrationPending(recovered.references))
+          expect.fail('Recovery must not consume outage time')
+        expect(recovered.references.compatibleAttempts).toBe(1439)
+        expect(yield* pass).toBe(false)
+        const final = yield* decodeRow(yield* seeded.read)
+        if (!ExecutorReferences.guards.ReconnectRequired(final.references))
+          expect.fail('Compatible budget must finish')
+        expect(final.references.reason).toBe('MigrationTargetMissing')
+      }),
     )
 
     test.effect(
@@ -225,11 +239,265 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
         }).pipe(Effect.scoped),
     )
 
+    test.effect(
+      'removes a migrated shared selection without deleting the app or another Person account',
+      () =>
+        Effect.gen(function* () {
+          const a = yield* seed(yield* encodeLegacy(legacy))
+          const b = yield* seed(
+            yield* encodeLegacy({ ...legacy, account: ExecutorAccountId.make('other-person') }),
+          )
+          expect(a.ownerActor.person.id).not.toBe(b.ownerActor.person.id)
+          const remote = yield* hostedExecutorFixture()
+          yield* Ref.set(
+            remote.replies,
+            new Map<string, { status: number; body: Schema.Json }>([
+              [
+                `GET ${hostedPrefix}/inventory`,
+                {
+                  status: 200,
+                  body: {
+                    apps: [
+                      { id: original, name: 'Shared', activeVersion: 'version', copiedFrom: null },
+                    ],
+                    accounts: [{ id: account }, { id: 'other-person' }],
+                    links: [
+                      { app: original, account },
+                      { app: original, account: 'other-person' },
+                    ],
+                  },
+                },
+              ],
+              [
+                `GET ${hostedPrefix}/apps/${original}`,
+                {
+                  status: 200,
+                  body: {
+                    id: original,
+                    name: 'Shared',
+                    requirements: {
+                      accounts: {
+                        service: {
+                          scope: 'user',
+                          cardinality: 'one',
+                          provider: 'provider',
+                          definition: {
+                            auth: {
+                              key: { type: 'secrets', fields: { properties: { token: {} } } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+              [
+                `GET ${hostedPrefix}/apps/${original}/accounts/user`,
+                { status: 200, body: [{ requirement: 'service', account: { id: account } }] },
+              ],
+              [
+                `GET ${hostedPrefix}/apps/${original}/accounts/app`,
+                { status: 200, body: [{ requirement: 'other', account: { id: 'other-person' } }] },
+              ],
+              [`DELETE ${hostedPrefix}/accounts/${account}`, { status: 200, body: {} }],
+            ]),
+          )
+          const context = yield* Layer.build(remote.configured)
+          yield* migrateConnections().pipe(Effect.provide(context))
+          const ready = yield* decodeRow(yield* a.read)
+          if (!ExecutorReferences.guards.Authorized(ready.references)) expect.fail('A must migrate')
+          expect(ready.references.appOwnership._tag).toBe('Unproven')
+          expect(ready.executorApp).toBeNull()
+          const beforeB = yield* b.read
+          yield* removeConnection(ready).pipe(Effect.provide(context))
+          expect(yield* listRecords(a.ownerActor)).toEqual([])
+          expect(yield* b.read).toEqual(beforeB)
+          expect(
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([
+            `DELETE ${hostedPrefix}/apps/${original}/accounts/user/service/${account}`,
+            `DELETE ${hostedPrefix}/accounts/${account}`,
+          ])
+        }).pipe(Effect.scoped),
+    )
+
+    test.effect(
+      'ordinary removal refuses a failed app preflight before deleting any credential',
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* hostedExecutorFixture()
+          yield* Ref.set(
+            remote.replies,
+            new Map<string, { status: number; body: Schema.Json }>([
+              [
+                `GET ${hostedPrefix}/inventory`,
+                {
+                  status: 200,
+                  body: {
+                    apps: [
+                      {
+                        id: original,
+                        name: 'Dedicated',
+                        activeVersion: 'version',
+                        copiedFrom: null,
+                      },
+                    ],
+                    accounts: [{ id: account }],
+                    links: [{ app: original, account }],
+                  },
+                },
+              ],
+              [
+                `GET ${hostedPrefix}/apps/${original}/accounts/user`,
+                { status: 503, body: storageError.make({}) },
+              ],
+              [`GET ${hostedPrefix}/apps/${original}/accounts/app`, { status: 200, body: [] }],
+            ]),
+          )
+          const context = yield* Layer.build(remote.configured)
+          const references = ExecutorReferences.cases.Authorized.make({
+            service: legacy.service,
+            owner: legacy.owner,
+            app: original,
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+            account,
+            binding: ExecutorBinding.cases.Account.make({ requirement: 'service', scope: 'user' }),
+          })
+          yield* Effect.flatMap(Executor, (executor) => executor.remove(references)).pipe(
+            Effect.provide(context),
+            Effect.flip,
+          )
+          expect(
+            (yield* Ref.get(remote.requests)).filter((request) =>
+              request.path.startsWith('DELETE'),
+            ),
+          ).toEqual([])
+        }).pipe(Effect.scoped),
+    )
+
+    test.effect('does not resurrect a row removed while its migration response was in flight', () =>
+      Effect.gen(function* () {
+        const seeded = yield* seed(yield* encodeLegacy(legacy))
+        const executor = yield* Executor
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const delayed = Executor.of({
+          ...executor,
+          reconcile: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(
+                ExecutorReferences.cases.Authorized.make({
+                  service: legacy.service,
+                  owner: legacy.owner,
+                  app: copied,
+                  appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+                  account,
+                  binding: ExecutorBinding.cases.Account.make({
+                    requirement: 'service',
+                    scope: 'user',
+                  }),
+                }),
+              ),
+            ),
+        })
+        const running = yield* migrateConnections().pipe(
+          Effect.provideService(Executor, delayed),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(entered)
+        yield* removeConnection(yield* decodeRow(yield* seeded.read))
+        yield* Deferred.succeed(release, undefined)
+        expect(yield* Fiber.join(running)).toBe(false)
+        expect(yield* listRecords(seeded.ownerActor)).toEqual([])
+      }).pipe(Effect.scoped),
+    )
+
+    test.effect('keeps snapshot claims when another row removes the app during a pass', () =>
+      Effect.gen(function* () {
+        const owned = yield* seed(
+          yield* encodeReferences(
+            ExecutorReferences.cases.Authorized.make({
+              service: legacy.service,
+              owner: legacy.owner,
+              app: copied,
+              appOwnership: ExecutorAppOwnership.cases.Copied.make({ original }),
+              account,
+              binding: ExecutorBinding.cases.Account.make({
+                requirement: 'service',
+                scope: 'user',
+              }),
+            }),
+          ),
+        )
+        yield* owned.database.run(
+          owned.database
+            .update(connections)
+            .set({ executorApp: copied })
+            .where(eq(connections.id, owned.id)),
+        )
+        const pendingRow = yield* seed(yield* encodeLegacy(legacy))
+        const executor = yield* Executor
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const authorized = yield* decodeRow(yield* owned.read)
+        const delayed = Executor.of({
+          ...executor,
+          reconcile: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(authorized.references),
+            ),
+        })
+        const running = yield* migrateConnections().pipe(
+          Effect.provideService(Executor, delayed),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(entered)
+        yield* removeConnection(authorized)
+        yield* Deferred.succeed(release, undefined)
+        expect(yield* Fiber.join(running)).toBe(false)
+        const refused = yield* decodeRow(yield* pendingRow.read)
+        if (!ExecutorReferences.guards.ReconnectRequired(refused.references))
+          expect.fail('Deleted app must never be claimed')
+        expect(refused.references.reason).toBe('SharedSelection')
+        expect(refused.executorApp).toBeNull()
+      }).pipe(Effect.scoped),
+    )
+
+    test.effect('logs a terminating worker defect with its cause', () =>
+      Effect.gen(function* () {
+        yield* seed(yield* encodeLegacy(legacy))
+        const executor = yield* Executor
+        const logged = yield* Deferred.make<void>()
+        const lines: Array<string> = []
+        const logger = Logger.make((entry) => {
+          const line = Logger.formatSimple.log(entry)
+          lines.push(line)
+          if (line.includes('Integration migration worker stopped'))
+            Deferred.doneUnsafe(logged, Effect.void)
+        })
+        const broken = Executor.of({
+          ...executor,
+          inventory: Effect.die('migration defect fixture'),
+        })
+        yield* Layer.build(migrationLayer.pipe(Layer.provide(Logger.layer([logger])))).pipe(
+          Effect.provideService(Executor, broken),
+        )
+        yield* Deferred.await(logged)
+        expect(lines.join('\n')).toContain('migration defect fixture')
+      }).pipe(Effect.scoped),
+    )
+
     test.effect('ordinary removal proceeds while another reclamation holds the global lock', () =>
       Effect.gen(function* () {
         const seeded = yield* seed(
           yield* encodeReferences(
             ExecutorReferences.cases.Public.make({
+              appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
               service: legacy.service,
               owner: legacy.owner,
               app: original,

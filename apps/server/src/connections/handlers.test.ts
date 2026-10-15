@@ -22,6 +22,7 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers, connectionRunner } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAccessDenied,
   ExecutorCallOutcome,
@@ -239,6 +240,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           })
           const row = yield* store.get(ownerActor, begun.connection.id)
           const pending = ExecutorReferences.cases.SigningIn.make({
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
             service: row.service,
             app: activeReferences(row.references).app,
             binding: activeReferences(row.references).binding,

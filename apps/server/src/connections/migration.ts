@@ -1,5 +1,16 @@
 import { and, eq, ne, sql } from 'drizzle-orm'
-import { Clock, Effect, Layer, Duration, Schedule, Match, Option, Result, Schema } from 'effect'
+import {
+  Cause,
+  Clock,
+  Effect,
+  Layer,
+  Duration,
+  Schedule,
+  Match,
+  Option,
+  Result,
+  Schema,
+} from 'effect'
 import { Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
@@ -8,11 +19,14 @@ import {
   ExecutorAppId,
   ExecutorAccountId,
   ExecutorReferences,
+  ExecutorAppOwnership,
   LegacyExecutorReferences,
   migrationPending,
   reconnectRequired,
+  retirementOf,
   executorReconnectMessage,
   type ExecutorFailure,
+  type ExecutorActiveReferences,
 } from './executor.ts'
 import {
   claimedApp,
@@ -102,38 +116,36 @@ const retryable = sql`(${connections.references} ? 'profile' OR ${connections.re
 const legacyRows = Effect.fn('Connections.legacyRows')(function* () {
   const database = yield* Database
   const rows = yield* database.run(
-    database
-      .select()
-      .from(connections)
-      .where(retryable)
-      .orderBy(connections.createdAt, connections.id),
+    database.select().from(connections).orderBy(connections.createdAt, connections.id),
   )
   const valid: Array<typeof storedRowSchema.Type> = []
   for (const raw of rows) {
     const decoded = yield* decodeStoredRow(raw).pipe(Effect.result)
     if (Result.isFailure(decoded)) {
-      yield* Effect.logError('Invalid legacy Connection row', { connectionId: raw.id })
+      yield* Effect.logError('Invalid Connection migration row', { connectionId: raw.id })
       continue
     }
     if (Option.isSome(legacySelection(decoded.success.references))) valid.push(decoded.success)
   }
-  return valid
+  return {
+    pending: valid,
+    claims: rows.flatMap((row) =>
+      row.executorApp === null ? [] : [{ id: row.id, app: row.executorApp }],
+    ),
+  }
 })
 
-/** A retry deadline starts at the first compatible-protocol attempt, not at Connection creation
- * or deployment. A mixed server/image rollout can therefore never expire all old selections.
+/** Only compatible unsuccessful attempts consume the budget. At the worker's one-minute
+ * cap, 1,440 attempts represent roughly 24 hours. Failed global probes and downtime consume
+ * no attempts, including an outage that starts after a row already made compatible progress.
  */
-function timedOutcome(
-  row: typeof storedRowSchema.Type,
-  references: ExecutorReferences,
-  now: number,
-) {
+function timedOutcome(row: typeof storedRowSchema.Type, references: ExecutorReferences) {
   if (!ExecutorReferences.guards.MigrationPending(references)) return references
   const prior = ExecutorReferences.guards.MigrationPending(row.references)
-    ? row.references.since
-    : Option.none<number>()
-  const since = Option.getOrElse(prior, () => now)
-  if (now - since >= Duration.toMillis('24 hours')) {
+    ? row.references.compatibleAttempts
+    : 0
+  const compatibleAttempts = prior + 1
+  if (compatibleAttempts >= 24 * 60) {
     const reason = Match.value(references.reason).pipe(
       Match.when('CopyPending', () => 'MigrationTargetMissing' as const),
       Match.when('NotReady', () => 'MigrationTargetNotReady' as const),
@@ -142,10 +154,7 @@ function timedOutcome(
     )
     return reconnectRequired(references.legacy, reason, [])
   }
-  return ExecutorReferences.cases.MigrationPending.make({
-    ...references,
-    since: Option.some(since),
-  })
+  return ExecutorReferences.cases.MigrationPending.make({ ...references, compatibleAttempts })
 }
 
 /** All HTTP work finishes before this short transaction. A shared lock serializes app claims
@@ -155,22 +164,28 @@ function timedOutcome(
 const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
   row: typeof storedRowSchema.Type,
   outcome: ExecutorReferences,
+  claims: ReadonlyArray<{ readonly id: string; readonly app: string }>,
 ) {
   const database = yield* Database
   const selection = legacySelection(row.references)
   if (Option.isNone(selection)) return yield* Effect.void
+  // Keep pre-inventory claims even if their rows disappear while HTTP work is in flight.
+  const selected = claimedApp(outcome)
+  const held =
+    selected !== null && claims.some((claim) => claim.app === selected && claim.id !== row.id)
+  const initial = held ? shared(selection.value, outcome) : outcome
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(connectionLock)
-      let references = outcome
+      let references = initial
       const app = claimedApp(references)
       if (app !== null) {
-        const claims = yield* tx
+        const current = yield* tx
           .select({ id: connections.id })
           .from(connections)
           .where(and(eq(connections.executorApp, app), ne(connections.id, row.id)))
           .limit(1)
-        if (claims.length > 0) references = shared(selection.value, references)
+        if (current.length > 0) references = shared(selection.value, references)
       }
       const encoded = yield* encodeReferences(references)
       const reconnect = ExecutorReferences.guards.ReconnectRequired(references)
@@ -206,8 +221,8 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
  */
 export const migrateConnections = Effect.fn('Connections.migrate')(function* () {
   const executor = yield* Executor
-  const rows = yield* legacyRows()
-  if (rows.length === 0) return false
+  const snapshot = yield* legacyRows()
+  if (snapshot.pending.length === 0) return false
   const inventory = yield* executor.inventory.pipe(Effect.result)
   if (Result.isFailure(inventory)) {
     yield* Effect.logWarning('Integration migration waiting for compatible inventory', {
@@ -215,16 +230,16 @@ export const migrateConnections = Effect.fn('Connections.migrate')(function* () 
     })
     return true
   }
-  for (const row of rows) {
+  for (const row of snapshot.pending) {
     const selection = legacySelection(row.references)
     if (Option.isNone(selection)) continue
     const result = yield* executor.reconcile(selection.value, inventory.success).pipe(Effect.result)
     const outcome = Result.isSuccess(result)
       ? result.success
       : refused(selection.value, result.failure)
-    yield* saveOutcome(row, timedOutcome(row, outcome, yield* Clock.currentTimeMillis))
+    yield* saveOutcome(row, timedOutcome(row, outcome), snapshot.claims)
   }
-  return (yield* legacyRows()).length > 0
+  return (yield* legacyRows()).pending.length > 0
 })
 
 /** Like the Routine scheduler, the pass is forked into the server Layer's scope. Boot/health and
@@ -251,6 +266,11 @@ export const migrationLayer = Layer.effectDiscard(
     )
     yield* pass.pipe(
       Effect.repeat({ schedule: backoff, while: (remaining) => remaining }),
+      Effect.tapCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logError('Integration migration worker stopped', cause),
+      ),
       Effect.forkScoped,
     )
   }),
@@ -259,6 +279,14 @@ export const migrationLayer = Layer.effectDiscard(
 interface ConnectionResources {
   readonly apps: ReadonlyArray<typeof ExecutorAppId.Type>
   readonly account: Option.Option<typeof ExecutorAccountId.Type>
+}
+
+/** Proven copies retain their source identity too: another row's unresolved selection may
+ * still refer to that original app or account while this row uses the deployed copy.
+ */
+function activeResources(references: ExecutorActiveReferences): ConnectionResources {
+  const retired = retirementOf(references)
+  return { apps: [retired.original, ...retired.copies], account: retired.account }
 }
 
 /** Resource identities are compared across every Person and Company, including unresolved rows. */
@@ -278,12 +306,12 @@ export function storedResources(
       account: retired.account,
     }),
     MigrationPending: ({ legacy }) => storedResources(legacy),
-    Authorized: ({ app, account }) => ({ apps: [app], account: Option.some(account) }),
-    Public: ({ app }) => ({ apps: [app], account: Option.none() }),
-    EnteringKey: ({ app }) => ({ apps: [app], account: Option.none() }),
-    SigningIn: ({ app }) => ({ apps: [app], account: Option.none() }),
-    OAuthSigningIn: ({ app }) => ({ apps: [app], account: Option.none() }),
-    GoogleSigningIn: ({ app }) => ({ apps: [app], account: Option.none() }),
+    Authorized: activeResources,
+    Public: activeResources,
+    EnteringKey: activeResources,
+    SigningIn: activeResources,
+    OAuthSigningIn: activeResources,
+    GoogleSigningIn: activeResources,
   })
 }
 
@@ -319,7 +347,10 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
 ) {
   const database = yield* Database
   const executor = yield* Executor
-  if (!ExecutorReferences.isAnyOf(['MigrationPending', 'ReconnectRequired'])(row.references)) {
+  if (
+    !ExecutorReferences.isAnyOf(['MigrationPending', 'ReconnectRequired'])(row.references) &&
+    ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)
+  ) {
     yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
     const removed = yield* database.run(
       database
@@ -332,6 +363,13 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
     return yield* Effect.void
   }
   let references = row.references
+  if (!ExecutorReferences.isAnyOf(['MigrationPending', 'ReconnectRequired'])(references))
+    references = ExecutorReferences.cases.ReconnectRequired.make({
+      service: references.service,
+      owner: references.owner,
+      retired: retirementOf(references),
+      reason: 'SharedSelection',
+    })
   let revision = row.updatedAt
   if (ExecutorReferences.guards.MigrationPending(references))
     references = reconnectRequired(references.legacy, 'UnresolvedMigration', [])

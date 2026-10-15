@@ -3,17 +3,21 @@
 The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 
-Each Connection owns a dedicated Executor app. Its reference records the requirement and scope,
+Each new Connection allocates a dedicated Executor app. Its reference records the requirement and scope,
 plus the saved account or pending authorization. A scoped background worker starts at server boot;
 reads and health never invoke or await it. Each idempotent pass probes inventory once before any
 write. An old-shape or unreachable inventory leaves every legacy selection pending and untouched.
 The pass maps `copiedFrom.reference` and exact requirement/account links, saving changed outcomes
 under a cross-process claim lock. Permanent refusals retain exact credentials and copies for safe
 removal. Transient failures, undeployed copies and unfinished copy plans retry with capped backoff;
-per-row attempts have a persisted 24-hour deadline after the first compatible inventory probe.
+per-row retries have a persisted budget of 1,440 compatible unsuccessful attempts (roughly
+24 hours at the capped cadence). Global outages never consume that budget.
 Global protocol failures cannot turn the mixed-version rollout into permanent refusals. Invalid
 rows are logged and excluded from the retry count; no retryable rows ends the worker. The
-`executor_app` claim is unique and checked against active references.
+`executor_app` claim is unique and checked against dedicated allocations and proven migration
+copies; copies retain their original app identity for safe reclamation. Legacy selections
+on shared originals retain Unproven ownership and no app claim. Removal revokes only their exact
+unretained credential and preserves the shared app and other links.
 
 Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire
 Executor volume with its keys and Vivid PostgreSQL. See the cutover and rollback sequence in
@@ -29,7 +33,8 @@ database name. Before replacing the old image, run `VIVID_EXECUTOR_MIGRATION=wai
 that retained database after applying this branch's generated product migration. It proves the
 new server leaves all three original selections and revisions intact on the old protocol. Then
 switch the same volume to beta.23. Verify runs the explicit pass and checks both original account identities, separate
-app IDs and a retained unfinished key card before releasing seed.
+app IDs and a retained unfinished key card. It then removes the Connection on the shared original
+and verifies that app and the other account still work before releasing seed.
 
 For a fresh-image proof, run from the repository root:
 
