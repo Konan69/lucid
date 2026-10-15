@@ -158,11 +158,63 @@ The Executor service configuration pins the published image
 `executor@2.0.0-beta.23` at commit `26d03a48953c948c794c5cd9d22eb3f6253c1482`.
 No fork build is needed. This configuration change does not deploy the service.
 
-Beta.23 replaces profiles with app and user account links. Vivid allocates one app per Connection
-and reconciles stored selections using exact copy provenance and requirement/account links.
-Missing, ambiguous or shared selections require reconnection. Executor migrates its own storage
-from 4.0.5 through 4.0.15; keep a backup of the full old volume and its original keys. The old image
-cannot open the migrated volume. Rollback needs the pre-upgrade backup, not just the old tag.
+Beta.23 replaces profiles with app and user account links. Vivid allocates one app per Connection.
+An explicit migration pass uses copy provenance and exact requirement/account links, then saves
+one outcome per legacy row. Missing or ambiguous selections require reconnection. Transient
+failures, undeployed copies and copy plans that have not finished remain retryable. The pass is
+idempotent and serialized with credential reclamation. Executor migrates its own storage from
+4.0.5 through 4.0.15; the old image cannot open that migrated volume.
+
+**Production cutover.** This is a coordinated maintenance window. Neither mixed pairing supports
+Integrations: the old server requires profiles that beta.23 removed; the new server requires
+beta.23 inventory, requirements, links and tool versions that `src-304bf60` does not supply.
+The new server retries transient migration failures, but the old inventory shape is a permanent
+protocol refusal and can move legacy rows to reconnect states. It cannot operate Integrations
+against the old image. There is no rolling compatibility window. Do not start it before the new
+image is ready.
+
+1. Announce an Integration maintenance window and pause Integration mutations and scheduled
+   Integration work. Stop the server and Executor before taking backups, so neither backup
+   contains writes absent from the other. Keep them stopped until both backups are complete.
+2. Back up the **entire Executor Railway volume**, including generated/encrypted keys, and the
+   **entire Vivid PostgreSQL database**, including auth and product tables. Record the server
+   commit, image tag/digest and configuration with this matched backup pair. Check that both
+   backups can be restored before proceeding. A copy of `vivid_connections` alone is insufficient
+   for a coordinated restore of other product writes made in the same window.
+3. From the authorized deploy checkout containing this infrastructure revision, use the normal
+   production `pnpm infra:deploy` entry point (`alchemy deploy --stage production --env-file .env.production`) to update the Executor service to
+   `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Start Executor and wait for `/health`
+   to pass and its storage/app-copy migrations to finish. Keep the old server stopped; its
+   profile routes cannot work on the new image.
+4. Push the upgraded server revision through the normal production release path, which builds
+   and deploys the server. Its migration runner applies the generated product schema migration
+   before serving requests. Start the server and resume its normal workers. The image goes first
+   because only beta.23 can answer the new server's first reconciliation pass. A server-first
+   deployment would hit the incompatible old inventory shape and can permanently refuse legacy
+   rows before the image is replaced. It does not remove Integration downtime.
+5. Verify server and Executor health, then list existing Integrations to run the reconciliation
+   pass. Check per-row reconciliation outcomes and confirm active app claims agree with stored
+   references. Deferred rows must recover on a later pass once Executor is ready; permanent
+   refusals must show the reconnect state without hiding healthy rows. Prove two Persons retain
+   distinct accounts, perform one safe authenticated read per migrated account, add and remove
+   a disposable keyed/public Connection, and confirm removal revokes only its own credentials
+   and app. Resume scheduled Integration work and end the maintenance window only after these
+   checks pass.
+
+Plan a 10–15 minute maintenance window for image startup, storage migration, server deployment
+and verification. This is an operational allowance, not a production measurement. Large volumes,
+app builds or provider outages can extend it. Integration operations are unavailable throughout
+the mixed-version interval; stopping the server also makes the rest of Vivid unavailable during
+the backup and deployment window.
+
+**Rollback.** Stop the new server, workers and Executor first. Restore **both** the matched Vivid
+PostgreSQL backup and the entire Executor volume backup, including its original keys. Restore the
+old Executor image `ghcr.io/konan69/executor-selfhost:src-304bf60` and revert the server to the
+recorded pre-upgrade commit through the normal release path. Verify both services and the old
+Connection/profile behavior before resuming writes. Reverting only the image cannot open the
+migrated volume. Reverting only the server cannot decode reconciled Connection JSON. Restoring
+only one database breaks the account/profile relations across the two stores. Writes after the
+backup pair are lost on rollback and must be accounted for before reopening the service.
 
 ### Executor's trace exporter is off
 
