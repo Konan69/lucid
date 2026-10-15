@@ -288,7 +288,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         .returning({ id: connections.id }),
     )
     if (saved.length === 0)
-      return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
+      yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
   }
   yield* database.transaction((tx) =>
     Effect.gen(function* () {
@@ -304,7 +304,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         current.personId !== row.personId ||
         current.companyId !== row.companyId
       )
-        return yield* new Conflict({
+        yield* new Conflict({
           message: 'This integration changed before removal; reload it.',
         })
       const target = yield* decodeRow(current)

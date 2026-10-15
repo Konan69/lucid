@@ -1540,9 +1540,10 @@ layer(
       { name: 'adding a picture', body: 'Look', attachments: [png, secondPicture, png] },
       { name: 'message text', body: 'Different text', attachments: [png, secondPicture] },
     ]
-    it.effect(
-      'keyed picture admission rejects every immutable payload mutation after reconstruction',
-      () =>
+    // Each mutation is an independent replay contract. Separate cases retain the real gateway,
+    // reconstruction and single-Run checks without charging seven requests to one test budget.
+    for (const change of keyedChanges) {
+      it.effect(`keyed picture admission rejects ${change.name} after reconstruction`, () =>
         Effect.gen(function* () {
           const test = yield* harness()
           yield* privateThread(test)
@@ -1560,30 +1561,29 @@ layer(
             ),
           )
           const conversation = yield* Conversation.pipe(Effect.provideContext(context))
-          for (const change of keyedChanges) {
-            const response = yield* post(
-              { ...test, conversation },
-              {
-                ...body,
-                body: change.body,
-                attachments: change.attachments,
+          const response = yield* post(
+            { ...test, conversation },
+            {
+              ...body,
+              body: change.body,
+              attachments: change.attachments,
+            },
+          )
+          expect(response.status).toBe(409)
+          expect(response.body).toHaveProperty(
+            'text',
+            JSON.stringify({
+              error: {
+                message:
+                  'This message key was already used for different text or pictures. Send it with a new key.',
               },
-            )
-            expect(response.status).toBe(409)
-            expect(response.body).toHaveProperty(
-              'text',
-              JSON.stringify({
-                error: {
-                  message:
-                    'This message key was already used for different text or pictures. Send it with a new key.',
-                },
-              }),
-            )
-            expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-            expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
-          }
+            }),
+          )
+          expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+          expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         }).pipe(Effect.scoped),
-    )
+      )
+    }
 
     it.effect(
       'serves private bytes inline with safe headers and hides them from a non-participant',

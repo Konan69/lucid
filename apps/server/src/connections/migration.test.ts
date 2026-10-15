@@ -721,3 +721,36 @@ it.effect(
       ])
     }).pipe(Effect.scoped),
 )
+
+/** App retention and credential retention are independent: another row may hold a different account. */
+it.effect(
+  'revokes an unclaimed credential while preserving a copy retained by another Connection',
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* hostedExecutorFixture()
+      const other = ExecutorAccountId.make('other-account')
+      yield* Ref.set(
+        remote.replies,
+        retirementReplies(other).set(`DELETE ${hostedPrefix}/accounts/${account}`, {
+          status: 200,
+          body: {},
+        }),
+      )
+      const context = yield* Layer.build(remote.configured)
+      const refused = reconnectRequired(legacy, 'AmbiguousMigration', [copied])
+      yield* Effect.flatMap(Executor, (executor) =>
+        executor.retire({
+          resources: refused.retired,
+          retainedApps: [original, copied],
+          retainedAccounts: [other],
+        }),
+      ).pipe(Effect.provide(context))
+      const deleted = (yield* Ref.get(remote.requests))
+        .filter((request) => request.path.startsWith('DELETE'))
+        .map((request) => request.path)
+      expect(deleted).toEqual([
+        `DELETE ${hostedPrefix}/apps/${copied}/accounts/user/service/${account}`,
+        `DELETE ${hostedPrefix}/accounts/${account}`,
+      ])
+    }).pipe(Effect.scoped),
+)

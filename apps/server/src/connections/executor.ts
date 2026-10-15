@@ -2795,23 +2795,24 @@ function makeRetire(http: ExecutorHttp) {
       Effect.succeed(HttpClientRequest.get('/inventory')),
       null,
     )
-    const eligible = inventory.apps.filter(
+    const targets = inventory.apps.filter(
+      (app) =>
+        app.id === resources.original ||
+        (resources.copies.includes(app.id) &&
+          app.copiedFrom !== null &&
+          app.copiedFrom.reference === `app:${resources.original}`),
+    )
+    const eligible = targets.filter(
       (app) =>
         !retainedApps.includes(app.id) &&
-        ((app.id === resources.original && resources.ownership === 'Dedicated') ||
-          (resources.copies.includes(app.id) &&
-            app.copiedFrom !== null &&
-            app.copiedFrom.reference === `app:${resources.original}`)),
-    )
-    const targets = inventory.apps.filter(
-      (app) => app.id === resources.original || eligible.some((item) => item.id === app.id),
+        (app.id !== resources.original || resources.ownership === 'Dedicated'),
     )
     for (const app of targets) yield* unlink(app.id, { resources, retainedApps, retainedAccounts })
     if (Option.isSome(resources.account) && !retainedAccounts.includes(resources.account.value))
       yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
     for (const app of eligible) {
       if ((yield* links(app.id)).length > 0)
-        return yield* ExecutorConflict.make({ service: 'connections', tool: null })
+        yield* ExecutorConflict.make({ service: 'connections', tool: null })
       yield* remove(`/apps/${query(app.id)}`, 'App')
     }
   })
