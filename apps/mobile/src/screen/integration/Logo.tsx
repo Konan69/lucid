@@ -49,10 +49,7 @@ export function Logo({
     >
       {Option.isSome(drawn) ? (
         // The server sends a whole address, sized where it is made (`connections/logo.ts`).
-        <Image
-          source={{ uri: drawn.value }}
-          style={{ width: size, height: size }}
-        />
+        <Image source={{ uri: drawn.value }} style={{ width: size, height: size }} />
       ) : (
         <ServiceMark service={service} size={size} />
       )}
