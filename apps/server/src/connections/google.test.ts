@@ -70,80 +70,78 @@ describe('Google Integrations', () => {
     }),
   )
 
-  it.effect(
-    'deploys separate Google apps and signs in with the installation client',
-    () =>
-      Effect.gen(function* () {
-        const hosted = yield* hostedExecutorFixture()
-        const gmail = googleServices.find((service) => service.name === 'Gmail')
-        if (gmail === undefined) expect.fail('Gmail is one of the Google services')
-        // What Executor reports for the deployed source: one account, signed in by OAuth.
-        yield* Ref.set(hosted.accounts, {
-          google: {
-            provider: 'provider',
-            definition: { auth: { googleOAuth2: { type: 'oauth2' } } },
-          },
-        })
-        const input = {
-          connectionId: ConnectionId.make('first'),
-          service: gmail.service,
-          owner: ExecutorOwnerId.make('owner'),
-          subject: 'person',
-          label: 'Work',
-          returnAddress: hostedReturnAddress,
-        }
-        const { first, second } = yield* Effect.gen(function* () {
-          // The installation recorder proves separate Connections deploy separate Google apps.
-          const context = yield* Layer.build(hosted.configured)
-          return yield* Effect.gen(function* () {
-            const executor = yield* Executor
-            return {
-              first: yield* executor.begin(input),
-              second: yield* executor.begin({
-                ...input,
-                connectionId: ConnectionId.make('second'),
-              }),
-            }
-          }).pipe(Effect.provide(context))
-        }).pipe(Effect.scoped)
-        if (!ExecutorStep.guards.OpenSignIn(first) || !ExecutorStep.guards.OpenSignIn(second))
-          expect.fail('A Google service begins with a sign-in')
-        expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
-        // Separate Connections cannot replace each other's app account link.
-        expect(second.references.app).not.toBe(first.references.app)
+  it.effect('deploys separate Google apps and signs in with the installation client', () =>
+    Effect.gen(function* () {
+      const hosted = yield* hostedExecutorFixture()
+      const gmail = googleServices.find((service) => service.name === 'Gmail')
+      if (gmail === undefined) expect.fail('Gmail is one of the Google services')
+      // What Executor reports for the deployed source: one account, signed in by OAuth.
+      yield* Ref.set(hosted.accounts, {
+        google: {
+          provider: 'provider',
+          definition: { auth: { googleOAuth2: { type: 'oauth2' } } },
+        },
+      })
+      const input = {
+        connectionId: ConnectionId.make('first'),
+        service: gmail.service,
+        owner: ExecutorOwnerId.make('owner'),
+        subject: 'person',
+        label: 'Work',
+        returnAddress: hostedReturnAddress,
+      }
+      const { first, second } = yield* Effect.gen(function* () {
+        // The installation recorder proves separate Connections deploy separate Google apps.
+        const context = yield* Layer.build(hosted.configured)
+        return yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          return {
+            first: yield* executor.begin(input),
+            second: yield* executor.begin({
+              ...input,
+              connectionId: ConnectionId.make('second'),
+            }),
+          }
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
+      if (!ExecutorStep.guards.OpenSignIn(first) || !ExecutorStep.guards.OpenSignIn(second))
+        expect.fail('A Google service begins with a sign-in')
+      expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
+      // Separate Connections cannot replace each other's app account link.
+      expect(second.references.app).not.toBe(first.references.app)
 
-        const requests = yield* Ref.get(hosted.requests)
-        const sent = (method: 'GET' | 'POST', path: string) =>
-          requests.filter((request) => request.path === `${method} ${hostedPrefix}${path}`)
-        // Deploy Vivid's authored Google source for each Connection rather than a catalog entry.
-        const deployed = sent('POST', '/apps/deploy')
-        expect(deployed).toHaveLength(2)
-        const [deployment] = deployed
-        if (deployment === undefined) expect.fail('Expected Gmail deployment')
-        expect(deployment.body).toMatchObject({
-          name: expect.stringMatching(/^Vivid Gmail [0-9a-f]{16} /u),
-        })
-        const source = JSON.stringify(deployment.body)
-        for (const required of [
-          'https://accounts.google.com/o/oauth2/v2/auth',
-          'https://oauth2.googleapis.com/token',
-          'https://mail.google.com/',
-          'https://www.googleapis.com/auth/gmail.settings.basic',
-        ])
-          expect(source).toContain(required)
-        expect(sent('POST', '/apps/install')).toHaveLength(0)
-        // Executor is not asked whether a client is set up: Vivid sends its own on each start.
-        expect(requests.filter((request) => request.path.includes('/providers/'))).toHaveLength(0)
-        expect(
-          sent('POST', '/connections/authorization/oauth/start').map((request) => request.body),
-        ).toEqual(
-          ['first', 'second'].map(() => ({
-            method: 'googleOAuth2',
-            label: 'Work',
-            client: { clientId: 'isolated-test-client', clientSecret: 'isolated-test-secret' },
-          })),
-        )
-      }),
+      const requests = yield* Ref.get(hosted.requests)
+      const sent = (method: 'GET' | 'POST', path: string) =>
+        requests.filter((request) => request.path === `${method} ${hostedPrefix}${path}`)
+      // Deploy Vivid's authored Google source for each Connection rather than a catalog entry.
+      const deployed = sent('POST', '/apps/deploy')
+      expect(deployed).toHaveLength(2)
+      const [deployment] = deployed
+      if (deployment === undefined) expect.fail('Expected Gmail deployment')
+      expect(deployment.body).toMatchObject({
+        name: expect.stringMatching(/^Vivid Gmail [0-9a-f]{16} /u),
+      })
+      const source = JSON.stringify(deployment.body)
+      for (const required of [
+        'https://accounts.google.com/o/oauth2/v2/auth',
+        'https://oauth2.googleapis.com/token',
+        'https://mail.google.com/',
+        'https://www.googleapis.com/auth/gmail.settings.basic',
+      ])
+        expect(source).toContain(required)
+      expect(sent('POST', '/apps/install')).toHaveLength(0)
+      // Executor is not asked whether a client is set up: Vivid sends its own on each start.
+      expect(requests.filter((request) => request.path.includes('/providers/'))).toHaveLength(0)
+      expect(
+        sent('POST', '/connections/authorization/oauth/start').map((request) => request.body),
+      ).toEqual(
+        ['first', 'second'].map(() => ({
+          method: 'googleOAuth2',
+          label: 'Work',
+          client: { clientId: 'isolated-test-client', clientSecret: 'isolated-test-secret' },
+        })),
+      )
+    }),
   )
 })
 
