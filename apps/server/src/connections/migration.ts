@@ -1,5 +1,16 @@
 import { and, eq, ne, sql } from 'drizzle-orm'
-import { Clock, Effect, Match, Option, Ref, Result, Schema, Semaphore } from 'effect'
+import {
+  Clock,
+  Context,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Ref,
+  Result,
+  Schema,
+  Semaphore,
+} from 'effect'
 import { Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure } from './errors.ts'
@@ -28,7 +39,7 @@ const isLegacy = Schema.is(LegacyExecutorReferences)
 /** Reconciliation and resource reclamation share one cross-process transaction lock. Normal
  * new Connections allocate fresh account/app identities and cannot claim legacy resources.
  */
-export const connectionLock = sql`SELECT pg_advisory_xact_lock(hashtextextended('vivid-executor-migration', 0))`
+const connectionLock = sql`SELECT pg_advisory_xact_lock(hashtextextended('vivid-executor-migration', 0))`
 
 /** Expected upstream availability failures preserve the original selection for another pass. */
 function refused(legacy: typeof LegacyExecutorReferences.Type, failure: ExecutorFailure) {
@@ -170,12 +181,12 @@ export const migrateConnections = Effect.fn('Connections.migrate')(function* () 
 /** A store runs the pass once after a successful cutover. Only persisted retry outcomes make
  * later reads run it again; healthy inventories do not take a migration lock on every lookup.
  */
-export const makeMigrationPass = Effect.fn('Connections.makeMigrationPass')(function* () {
+const makeMigration = Effect.fn('Connections.makeMigration')(function* () {
   const database = yield* Database
   const executor = yield* Executor
   const done = yield* Ref.make(false)
   const lock = yield* Semaphore.make(1)
-  return Effect.fn('Connections.migrationPass')(function* () {
+  const run = Effect.fn('Connections.migrationPass')(function* () {
     yield* lock.withPermit(
       Effect.gen(function* () {
         if (yield* Ref.get(done)) return
@@ -187,7 +198,15 @@ export const makeMigrationPass = Effect.fn('Connections.makeMigrationPass')(func
       }),
     )
   })
+  return { run }
 })
+
+/** Shared startup/read migration lifecycle; database and Executor authority come from its Layer. */
+export class ConnectionMigration extends Context.Service<
+  ConnectionMigration,
+  Effect.Success<ReturnType<typeof makeMigration>>
+>()('vivid/ConnectionMigration') {}
+export const migrationLayer = Layer.effect(ConnectionMigration, makeMigration())
 
 interface ConnectionResources {
   readonly apps: ReadonlyArray<typeof ExecutorAppId.Type>
