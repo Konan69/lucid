@@ -15,7 +15,12 @@ import {
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
-import { WatchedApps, type WatchAccountNotReady, type WatchAccountUnknown } from './apps.ts'
+import {
+  WatchedApps,
+  type WatchAccountNotReady,
+  type WatchAccountShared,
+  type WatchAccountUnknown,
+} from './apps.ts'
 import type { ExecutorEventsFailure } from './events.ts'
 import { Watches, type WatchEventUnknown } from './lifecycle.ts'
 import type { WatchNameTaken } from './store.ts'
@@ -63,6 +68,7 @@ const resolved = <A, R>(
     | ExecutorEventsFailure
     | WatchAccountUnknown
     | WatchAccountNotReady
+    | WatchAccountShared
     | DatabaseInfrastructureError
     | WatchEventUnknown
     | WatchNameTaken,
@@ -82,6 +88,13 @@ const resolved = <A, R>(
       WatchAccountNotReady: () =>
         Effect.fail(
           new InvalidRequest({ message: 'Reconnect this Integration before watching it.' }),
+        ),
+      WatchAccountShared: () =>
+        Effect.fail(
+          new InvalidRequest({
+            message:
+              'This Integration still runs on an app it may share with other accounts, so its events cannot be told apart. Remove it and connect it again before watching it.',
+          }),
         ),
       WatchEventUnknown: ({ known }) =>
         Effect.fail(
