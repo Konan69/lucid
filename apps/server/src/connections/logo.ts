@@ -14,14 +14,17 @@ export function catalogService(entry: typeof ExecutorServiceEntry.Type): Service
 }
 
 /**
- * The address of a site's icon, without a size; the client adds the size it draws at.
+ * The address of a site's icon, ready to draw: clients use it as sent, because a catalog entry's
+ * own icon (Executor's `icons[].src`) is a whole address with no size to add.
  *
  * It was `integrations.sh/logo/<domain>`, the service Executor's own pages use
  * (packages/ui/src/contracts/icons.ts `faviconUrl`). That service answers with the site's
  * 16-pixel favicon whatever size is asked (measured 4 October 2026: context7.com 15x16,
  * deepwiki.com 16x16), which is a blur in a 44-pixel tile. Google's icon service returns the
  * site's largest icon up to the size asked (74x75 and 128x128 for the same two). Only the
- * registrable domain is sent, never the address a Person gave.
+ * registrable domain is sent, never the address a Person gave. It answers only at its own sizes
+ * and falls to the 16-pixel favicon for any other (asking for 88 returned 15x16 on production);
+ * 128 covers every tile the clients draw at two or three times its drawn size.
  */
 const ICONS = 'https://www.google.com/s2/favicons'
 
@@ -29,7 +32,7 @@ const ICONS = 'https://www.google.com/s2/favicons'
 export function serviceLogo(address: string | null): string | null {
   if (address === null) return null
   const domain = getDomain(address)
-  return domain === null ? null : `${ICONS}?domain=${domain}`
+  return domain === null ? null : `${ICONS}?domain=${domain}&sz=128`
 }
 
 /** How an added server's Service is identified: its checked address behind this prefix. */
