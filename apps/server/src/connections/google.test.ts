@@ -65,12 +65,13 @@ describe('Google Integrations', () => {
           Effect.provide(context),
         )
       }).pipe(Effect.scoped)
-      expect(without.map((entry) => entry.name)).toEqual(names)
+      // Authored key services remain available independently of the upstream feed too.
+      expect(without.map((entry) => entry.name)).toEqual([...names, 'GitHub'])
     }),
   )
 
   it.effect(
-    'deploys its own source once, finds it again, and signs in with the installation client',
+    'deploys separate Google apps and signs in with the installation client',
     () =>
       Effect.gen(function* () {
         const hosted = yield* hostedExecutorFixture()
