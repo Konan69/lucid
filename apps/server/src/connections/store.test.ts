@@ -559,7 +559,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
                 expect((yield* store.list(ownerActor)).connections).toMatchObject([
                   {
                     id: step.connection.id,
-                    mark: 'https://www.google.com/s2/favicons?domain=google.com',
+                    mark: 'https://www.google.com/s2/favicons?domain=google.com&sz=128',
                   },
                 ])
                 expect(yield* Ref.get(calls)).toBe(2)
@@ -567,7 +567,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
                 expect((yield* store.list(ownerActor)).connections).toMatchObject([
                   {
                     id: step.connection.id,
-                    mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
+                    mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com&sz=128',
                   },
                 ])
                 expect(yield* Ref.get(calls)).toBe(3)

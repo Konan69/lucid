@@ -54,6 +54,18 @@ export function keyedService(service: ServiceId) {
   return keyedCatalog[service]
 }
 
+/** The checked-in keyed sources remain Vivid-owned services when upstream replaces its feed.
+ * Their identities come from the same checked manifest as search; no new upstream alias is made.
+ * Both declarations must decode before this server can offer its authored services.
+ */
+const keyedIdentities = Result.getOrThrow(
+  Schema.decodeResult(Schema.Array(CatalogIdentity))(data.catalog),
+)
+export const keyedServices = Arr.filterMap(keyedIdentities, (entry) => {
+  const policy = keyedCatalog[entry.id]
+  return policy === undefined ? Result.failVoid : Result.succeed({ ...entry, policy })
+})
+
 /** Address registration reuses declared header policy by the complete endpoint, never by a
  * host heuristic: two services on the same host may require different authorization headers. */
 export function keyedAddress(address: URL) {

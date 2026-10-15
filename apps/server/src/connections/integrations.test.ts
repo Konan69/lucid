@@ -20,6 +20,8 @@ import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionAddress, ConnectionSource } from './address.ts'
 import {
   Executor,
+  ExecutorReferences,
+  ExecutorAppId,
   ExecutorPublicAddressRequired,
   ExecutorTool,
   connectionSetupMessage,
@@ -258,6 +260,16 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         if (row === undefined) return yield* Effect.die('Expected imported account')
         yield* store.failed(ownerActor, row, 'Previous attempt failed')
         const database = yield* Database
+        const copied = () =>
+          ExecutorReferences.cases.Public.make({
+            service: row.references.service,
+            owner: row.references.owner,
+            binding: row.references.binding,
+            app: ExecutorAppId.make(crypto.randomUUID()),
+          })
+        const older = copied()
+        const newest = copied()
+        const pending = copied()
         // Seed the earlier bug's duplicates through SQL; public Add correctly refuses to create them.
         yield* database.run(
           database.insert(connections).values([
@@ -267,7 +279,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               name: 'Older Ready',
               identity: null,
               serviceName: 'Records',
-              references: yield* encodeReferences(row.references),
+              executorApp: older.app,
+              references: yield* encodeReferences(older),
               status: 'ready',
               reason: null,
               createdAt: row.createdAt + 1,
@@ -278,7 +291,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               name: 'Newest Ready',
               identity: null,
               serviceName: 'Records',
-              references: yield* encodeReferences(row.references),
+              executorApp: newest.app,
+              references: yield* encodeReferences(newest),
               status: 'ready',
               reason: null,
               createdAt: row.createdAt + 2,
@@ -288,7 +302,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               id: crypto.randomUUID(),
               name: 'Newest Pending',
               identity: null,
-              references: yield* encodeReferences(row.references),
+              executorApp: pending.app,
+              references: yield* encodeReferences(pending),
               status: 'needs-authorization',
               reason: null,
               createdAt: row.createdAt + 3,

@@ -24,6 +24,18 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
       new InvalidRequest({
         message: 'This Integration could not prepare sign-in. Review its OAuth configuration.',
       }),
+    ExecutorRequirementChanged: () =>
+      new Conflict({ message: 'Integration account setup changed. Reconnect it.' }),
+    ExecutorConnectionRefused: () =>
+      new InvalidRequest({ message: 'Integration access does not allow connecting this account.' }),
+    ExecutorAccountChoiceUnsupported: () =>
+      new InvalidRequest({
+        message: 'This integration requires account selection Vivid does not support.',
+      }),
+    ExecutorOAuthClientUnavailable: () =>
+      new InvalidRequest({ message: 'The sign-in client is unavailable. Review its setup.' }),
+    ExecutorOAuthClientAmbiguous: () =>
+      new InvalidRequest({ message: 'Select one sign-in client in the integration setup.' }),
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorInputInvalid: () =>
       new InvalidRequest({ message: 'Tool input did not match its schema.' }),

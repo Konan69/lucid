@@ -8,7 +8,7 @@ export function catalogService(entry: typeof ExecutorServiceEntry.Type): Service
     id: entry.id,
     name: entry.name,
     description: entry.description,
-    mark: serviceLogo(entry.domain),
+    mark: entry.icon === null ? serviceLogo(entry.domain) : entry.icon,
     authorization: entry.authorization,
   })
 }

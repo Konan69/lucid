@@ -159,7 +159,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           expect(yield* Ref.get(probe.begins)).toBe(begins)
           const after = yield* store.get(ownerActor, begun.connection.id)
           expect(after.references.app).toBe(before.references.app)
-          expect(after.references.profile).toBe(before.references.profile)
+          expect(after.references.app).toBe(before.references.app)
           if (ConnectionStep.guards.OpenSignIn(resumed) && ConnectionStep.guards.OpenSignIn(begun))
             expect(resumed.address).not.toBe(begun.address)
           if (ConnectionStep.guards.EnterKey(resumed))
@@ -236,9 +236,9 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           const pending = ExecutorReferences.cases.SigningIn.make({
             service: row.service,
             app: row.references.app,
-            profile: row.references.profile,
+            binding: row.references.binding,
             owner: row.references.owner,
-            appOwnership: row.references.appOwnership,
+
             authorization: ExecutorAuthorizationId.make('retained-renewal'),
           })
           const executor = yield* Executor

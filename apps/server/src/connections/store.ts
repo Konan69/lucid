@@ -113,7 +113,7 @@ const rowActor = Effect.fn('Connections.rowActor')(function* (actor: Actor, row:
 })
 
 /**
- * What Executor files a Connection's profile and account under in its own records: the service's
+ * What Executor files a Connection's account under in its own records: the service's
  * name, in the 40 characters its label takes. Vivid never reads it back.
  */
 const executorLabel = (serviceName: string) => serviceName.slice(0, 40)
@@ -308,6 +308,7 @@ const begin = Effect.fn('Connections.begin')(function* (
           personId: actor.person.id,
           companyId,
           references: yield* encodeReferences(step.references),
+          executorApp: step.references.app,
           status,
           returnsTo: request.from,
           reason: null,
@@ -800,6 +801,9 @@ const makeManagement = (input: {
   ) => Effect.Effect<
     ConnectionRecord,
     | import('@vivid/contracts').NotFound
+    | Conflict
+    | InvalidRequest
+    | ServiceUnavailable
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {

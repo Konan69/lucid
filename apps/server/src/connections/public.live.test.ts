@@ -40,6 +40,7 @@ const liveExecutor = executorLayer.pipe(
         GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: executorUrl,
         VIVID_EXECUTOR_KEY: executorKey,
+        VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
         VIVID_EXECUTOR_PUBLIC_ONLY: true,
       }),
     ),
@@ -57,7 +58,7 @@ const sources: readonly {
     name: 'Public Exa',
     address: 'https://mcp.exa.ai/mcp',
     query: 'web_search_exa',
-    tool: 'queries.web_search_exa',
+    tool: 'web_search_exa',
     input: {
       query: 'Effect TypeScript official documentation',
       objective:
@@ -125,7 +126,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 console.info(JSON.stringify({ source: source.name, added }))
                 expect(AddIntegrationOutcome.guards.Added(added)).toBe(true)
                 const rows = yield* store.records(personalActor)
-                const row = rows.find((entry) => entry.name === source.name)
+                const row = rows.find((entry) => entry.service === `url:${source.address}`)
                 if (row === undefined)
                   return yield* Effect.die('Public registration did not persist')
                 const discovery = yield* store.tools(personalActor, row)

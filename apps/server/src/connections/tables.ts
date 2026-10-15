@@ -1,4 +1,4 @@
-import { bigint, index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
+import { bigint, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 
 /**
@@ -35,6 +35,8 @@ export const connections = pgTable(
     personId: personColumn().notNull(),
     companyId: companyColumn(),
     references: jsonb('references').notNull(),
+    // Null only until a legacy selection is reconciled or while reconnection is required.
+    executorApp: text('executor_app'),
     status: text('status').notNull(),
     // Existing trips returned to the web; each new client trip writes its own surface.
     returnsTo: text('returns_to').notNull().default('Web'),
@@ -43,6 +45,7 @@ export const connections = pgTable(
     updatedAt: epoch('updated_at').notNull(),
   },
   (table) => [
+    uniqueIndex('vivid_connections_executor_app').on(table.executorApp),
     index('vivid_connections_person').on(table.personId),
     index('vivid_connections_company').on(table.companyId),
   ],

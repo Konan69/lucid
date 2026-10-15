@@ -81,9 +81,8 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
         const references = ExecutorReferences.cases.Authorized.make({
           service: row.references.service,
           app: row.references.app,
-          profile: row.references.profile,
+          binding: row.references.binding,
           owner: row.references.owner,
-          appOwnership: row.references.appOwnership,
           account,
         })
         yield* (yield* Database).run(

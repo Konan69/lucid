@@ -24,7 +24,7 @@ import {
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorOwnerId,
-  ExecutorProfileId,
+  ExecutorBinding,
   ExecutorReferences,
   ExecutorTransportFailure,
 } from './executor.ts'
@@ -417,9 +417,8 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       const identity = {
         service: hostedService,
         app: ExecutorAppId.make('app'),
-        profile: ExecutorProfileId.make('profile'),
+        binding: ExecutorBinding.cases.Public.make({}),
         owner: ExecutorOwnerId.make('p-test'),
-        appOwnership: 'Shared' as const,
       }
       return Option.match(account, {
         onNone: () => ExecutorReferences.cases.Public.make(identity),
@@ -507,6 +506,7 @@ describe('the name an account has among a Person’s accounts', () => {
     id: ConnectionId.make(id),
     service: ServiceId.make('google/gmail'),
     serviceName: 'Gmail',
+    executorApp: null,
     name: null,
     identity: null,
     personId: PersonId.make('ada'),
@@ -514,9 +514,8 @@ describe('the name an account has among a Person’s accounts', () => {
     references: ExecutorReferences.cases.Public.make({
       service: ServiceId.make('google/gmail'),
       app: ExecutorAppId.make('app'),
-      profile: ExecutorProfileId.make(`profile-${id}`),
+      binding: ExecutorBinding.cases.Public.make({}),
       owner: ExecutorOwnerId.make('p-ada'),
-      appOwnership: 'Shared',
     }),
     status: 'ready',
     returnsTo: 'Web',

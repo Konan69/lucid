@@ -316,6 +316,7 @@ export const integrationPollingServiceLayer = Layer.effect(
       discover: Effect.fn('IntegrationWatch.discover')(function* (actor, account) {
         const { row } = yield* accountOf(actor, account).pipe(
           Effect.provideService(Database, database),
+          Effect.provideService(Executor, executor),
         )
         if (row.status !== 'ready')
           return yield* new InvalidRequest({
@@ -329,13 +330,17 @@ export const integrationPollingServiceLayer = Layer.effect(
       prepare: Effect.fn('IntegrationWatch.prepare')(function* (actor, trigger) {
         const found = yield* accountOf(actor, trigger.account).pipe(
           Effect.provideService(Database, database),
+          Effect.provideService(Executor, executor),
         )
         return yield* bind(found, trigger)
       }),
       /** The same baseline for a watch that exists, found by the Connection it is bound to. */
       rebase: Effect.fn('IntegrationWatch.rebase')(function* (actor, watch) {
         const found = namedAccounts(
-          yield* listRecords(actor).pipe(Effect.provideService(Database, database)),
+          yield* listRecords(actor).pipe(
+            Effect.provideService(Database, database),
+            Effect.provideService(Executor, executor),
+          ),
         ).find((item) => item.row.id === watch.connectionId)
         if (found === undefined)
           return yield* new InvalidRequest({ message: 'Integration account not found.' })
@@ -361,7 +366,19 @@ export const integrationPollingServiceLayer = Layer.effect(
         const raw = rows[0]
         if (raw === undefined)
           return yield* new IntegrationRevoked({ connectionId: watch.connectionId })
-        const items = yield* observe(yield* decodeRow(raw), watch.trigger)
+        const row = yield* decodeRow(raw).pipe(
+          Effect.provideService(Database, database),
+          Effect.provideService(Executor, executor),
+          Effect.catchTags({
+            Conflict: () =>
+              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
+            InvalidRequest: () =>
+              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
+            ServiceUnavailable: () =>
+              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
+          }),
+        )
+        const items = yield* observe(row, watch.trigger)
         return yield* newBatch(watch, items)
       }),
     })

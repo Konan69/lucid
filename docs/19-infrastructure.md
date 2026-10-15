@@ -153,23 +153,28 @@ and the region.
 
 ### Executor's image
 
-Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
-choice to move to current upstream source, not a requirement: adding an Integration by a
-personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
-data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
-and going back to the tag is safe.
+The Executor service configuration pins the published image
+`ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
+`executor@2.0.0-beta.23` at commit `26d03a48953c948c794c5cd9d22eb3f6253c1482`.
+No fork build is needed. This configuration change does not deploy the service.
 
-### Executor's tracing is off
+Beta.23 replaces profiles with app and user account links. Vivid allocates one app per Connection
+and reconciles stored selections using exact copy provenance and requirement/account links.
+Missing, ambiguous or shared selections require reconnection. Executor migrates its own storage
+from 4.0.5 through 4.0.15; keep a backup of the full old volume and its original keys. The old image
+cannot open the migrated volume. Rollback needs the pre-upgrade backup, not just the old tag.
 
-Executor's image traces itself into a collector bundled in the same process, and has no setting
-to stop. Idle, it produced about 48,000 spans an hour; the collector's store filled its 1 GiB
-limit in 14 hours and the process grew about 80 MB an hour until Railway killed it at 8 GB. That
-memory was 84% of the project's Railway usage on 9 October 2026. Upstream issues 2194 and 2216
-describe both and were open, with no fix in `2.0.0-beta.12`. `infra/railway.ts` sets
-`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` on the Executor, which leaves the image with no tracer; the
-comment there names the source lines. To check it, read the service's memory in Railway's
-metrics: it should stay near its starting value for days, not climb.
+### Executor's trace exporter is off
+
+`infra/railway.ts` supplies only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, without a trace or base
+endpoint. Beta.23's `apps/hosted/self-host/src/worker.ts:136-146` then skips the bundled telemetry
+fallback, and `packages/telemetry/src/layer.ts:40-60` installs no trace exporter. Idle scheduler
+spans still exist in upstream code.
+
+The setting does not stop the bundled collector. Beta.23's `apps/hosted/self-host/native/main.go:709-719`
+starts Motel as a separate supervised process on a private Unix socket. The configured TCP logs
+address does not reach it; console logs remain while OTLP log exports fail and retry. A real
+external logs destination can replace that address while retaining logs-only trace suppression.
 
 ### Telemetry volume
 

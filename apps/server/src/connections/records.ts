@@ -19,28 +19,109 @@ import {
 import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
-import { AccountIdentity, ExecutorReferences } from './executor.ts'
+import {
+  AccountIdentity,
+  ExecutorReferences,
+  ExecutorAppId,
+  LegacyExecutorReferences,
+  Executor,
+  reconnectRequired,
+  executorReconnectMessage,
+} from './executor.ts'
 import { connectionLogo, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
+import { executorFailure } from './errors.ts'
 import { connections } from './tables.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
-const rowSchema = createSelectSchema(connections, {
+const storedRowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,
   name: Schema.NullOr(AccountName),
   identity: Schema.NullOr(AccountIdentity),
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
-  references: ExecutorReferences,
+  executorApp: Schema.NullOr(ExecutorAppId),
+  references: Schema.Union([ExecutorReferences, LegacyExecutorReferences]),
   returnsTo: SignInSurface,
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 }).mapFields(({ label: _retired, ...fields }) => fields)
+const rowSchema = storedRowSchema.mapFields((fields) => ({
+  ...fields,
+  references: ExecutorReferences,
+}))
 export type ConnectionRecord = typeof rowSchema.Type
 const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
-export const decodeRow = decodeStored(rowSchema, 'Connection')
+const decodeCurrentRow = decodeStored(rowSchema, 'Connection')
+const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
+
+/** Claim one app per Connection after API reconciliation. The unique index arbitrates competing
+ * legacy claims; only that constraint failure requests reconnection. CAS refuses stale readers.
+ */
+const saveMigration = Effect.fn('Connections.saveMigration')(function* (
+  row: typeof storedRowSchema.Type,
+  references: ExecutorReferences,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(connections)
+      .set({
+        references: yield* encodeReferences(references),
+        executorApp: ExecutorReferences.guards.ReconnectRequired(references)
+          ? null
+          : references.app,
+        status: ExecutorReferences.guards.ReconnectRequired(references) ? 'failed' : row.status,
+        reason: ExecutorReferences.guards.ReconnectRequired(references)
+          ? executorReconnectMessage
+          : row.reason,
+      })
+      .where(
+        and(
+          eq(connections.id, row.id),
+          eq(connections.updatedAt, row.updatedAt),
+          isNull(connections.executorApp),
+        ),
+      )
+      .returning(),
+  )
+  const saved = rows[0]
+  if (saved !== undefined) return yield* decodeCurrentRow(saved)
+  const current = yield* database.run(
+    database.select().from(connections).where(eq(connections.id, row.id)),
+  )
+  return yield* decodeCurrentRow(yield* returned(current, 'Reconciled Connection'))
+})
+
+const isCurrentReferences = Schema.is(ExecutorReferences)
+
+/** Old JSON is decoded only here. Normal product operations receive no removed selection fields. */
+export const decodeRow = Effect.fn('Connections.decodeRow')(function* (
+  input: typeof connections.$inferSelect,
+) {
+  const row = yield* decodeStoredRow(input)
+  if (isCurrentReferences(row.references)) return { ...row, references: row.references }
+  const executor = yield* Executor
+  const references = yield* executor
+    .reconcile(row.references)
+    .pipe(Effect.mapError(executorFailure))
+  const saved = yield* saveMigration(row, references).pipe(
+    Effect.catchTag('DatabaseConstraintViolation', () =>
+      saveMigration(row, reconnectRequired(row.references, 'SharedSelection')),
+    ),
+  )
+  yield* Effect.logInfo('Integration app reconciliation').pipe(
+    Effect.annotateLogs({
+      connectionId: row.id,
+      previousApp: row.references.app,
+      app: saved.references.app,
+      result: saved.references._tag,
+    }),
+  )
+  return saved
+})
 export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')
 
 /** Personal accounts follow their Person across workspaces; Company accounts stay in their Company. */
@@ -206,6 +287,9 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       .update(connections)
       .set({
         references: yield* encodeReferences(references),
+        executorApp: ExecutorReferences.guards.ReconnectRequired(references)
+          ? null
+          : references.app,
         status,
         reason,
         updatedAt: yield* Clock.currentTimeMillis,

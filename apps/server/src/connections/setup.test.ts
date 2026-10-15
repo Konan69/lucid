@@ -2,13 +2,13 @@ import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { ServiceAuthorization } from '@vivid/contracts'
+import { ServiceAuthorization, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Ref } from 'effect'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as NetAddress from 'effect/net/NetAddress'
-import { Executor, executorLayer, connectionSetupMessage } from './executor.ts'
+import { Executor, executorLayer } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connectionHandlers } from './handlers.ts'
 import {
@@ -23,10 +23,18 @@ import {
 import { ServerConfig } from '../config.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 
+const catalogHints = {
+  public: { authorization: 'None', auth: [] },
+  key: { authorization: 'KnownAfterInstall', auth: [{ method: 'key', kind: 'secrets' }] },
+  mixed: { authorization: 'SignIn', auth: [{ method: 'oauth', kind: 'oauth2' }] },
+} as const
+
 // A made-up service family: Google is not a catalogue install, the server carries it itself.
 const calendar = {
   id: 'curated/acme-calendar',
-  kind: 'app',
+  package: '@test/acme',
+  auth: [{ method: 'key', kind: 'secrets' }],
+  icons: [],
   name: 'Acme Calendar',
   description: 'Manage Acme calendars',
 }
@@ -52,15 +60,15 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
           id: 'unknown-auth',
           name: 'Unknown',
           description: 'An unsupported authorization method',
-          auth: { kind: 'future' },
+          auth: [{ method: 'future', kind: 'future' }],
         },
-        { ...calendar, id: 'unsupported', kind: 'graphql' },
+        { ...calendar, id: 'unsupported', icons: 'malformed' },
         {
           ...calendar,
           id: 'public',
           name: 'Public',
           description: 'Public API',
-          auth: { kind: 'none' },
+          auth: [],
         },
       ])
     return HttpServerResponse.empty({ status: 404 })
@@ -85,37 +93,34 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
   return { requests, configured }
 })
 
-it.effect(
-  'defers absent auth until installation and preserves unknown hints as setup required through Executor HTTP',
-  () =>
-    Effect.gen(function* () {
-      const http = yield* remote()
-      yield* Effect.gen(function* () {
-        // This HTTP feed records discovery of absent and unknown installation hints.
-        const context = yield* Layer.build(http.configured)
-        return yield* Effect.gen(function* () {
-          const executor = yield* Executor
-          const entries = remoteEntries(yield* executor.catalog)
-          expect(entries).toHaveLength(5)
-          expect(entries.slice(0, 4).map((entry) => entry.authorization._tag)).toEqual([
-            'KnownAfterInstall',
-            'KnownAfterInstall',
-            'KnownAfterInstall',
-            'SetupRequired',
-          ])
-          expect(entries[4]).toHaveProperty('authorization._tag', 'None')
-          expect(
-            (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
-          ).toBe(true)
-        }).pipe(Effect.provide(context))
-      }).pipe(Effect.scoped)
-    }).pipe(Effect.scoped),
+it.effect('decodes declared methods and skips malformed auth entries through Executor HTTP', () =>
+  Effect.gen(function* () {
+    const http = yield* remote()
+    yield* Effect.gen(function* () {
+      // This HTTP feed records discovery of absent and unknown installation hints.
+      const context = yield* Layer.build(http.configured)
+      return yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        const entries = remoteEntries(yield* executor.catalog)
+        expect(entries).toHaveLength(4)
+        expect(entries.slice(0, 3).map((entry) => entry.authorization._tag)).toEqual([
+          'KnownAfterInstall',
+          'KnownAfterInstall',
+          'KnownAfterInstall',
+        ])
+        expect(entries[3]).toHaveProperty('authorization._tag', 'None')
+        expect(
+          (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
+        ).toBe(true)
+      }).pipe(Effect.provide(context))
+    }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped),
 )
 
 describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () => {
   layer(connectionTestLayer)((test) => {
     test.effect(
-      'preserves deferred setup for a catalogue service and refuses an unknown auth hint before import',
+      'preserves key setup for catalogue services and withholds malformed auth entries',
       () =>
         Effect.gen(function* () {
           const { ownerActor, threadId } = yield* fixture()
@@ -150,19 +155,20 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
                   connected: false,
                 },
               ])
-              const service = (yield* (yield* ConnectionStore).catalog()).find(
-                (entry) => entry.id === 'unknown-auth',
-              )
-              if (service === undefined) expect.fail('Expected the unknown-auth service')
+              expect(
+                (yield* (yield* ConnectionStore).catalog()).some(
+                  (entry) => entry.id === 'unknown-auth',
+                ),
+              ).toBe(false)
               const error = yield* connectionHandlers
                 .OfferConnection({
-                  service: service.id,
+                  service: ServiceId.make('unknown-auth'),
                   reason: 'Read calendar',
                   wanted: 'Service',
                 })
                 .pipe(Effect.flip)
               expect(error._tag).toBe('InvalidRequest')
-              expect(error.message).toBe(connectionSetupMessage)
+              expect(error.message).toBe('Unknown integration.')
               expect(
                 (yield* Ref.get(http.requests)).every(
                   (path) => path === `GET ${hostedPrefix}/catalog`,
@@ -176,7 +182,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
 })
 
 /** Cross the real store and hosted HTTP adapter: no fake availability result can hide the Begin guard. */
-describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', () => {
+describe.skipIf(!testDatabaseConfigured)('catalogue Begin with declared auth methods', () => {
   layer(connectionTestLayer)((test) => {
     for (const [name, accounts, expected] of [
       ['public', {}, 'Done'],
@@ -213,6 +219,16 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
           const { ownerActor } = yield* fixture()
           const host = yield* hostedExecutorFixture()
           yield* Ref.set(host.accounts, accounts)
+          yield* Ref.set(host.catalog, [
+            {
+              id: hostedService,
+              name: 'Test Integration',
+              description: '',
+              package: '@test/source',
+              icons: [],
+              auth: catalogHints[name].auth,
+            },
+          ])
           yield* Ref.set(
             host.redirectUri,
             new URL('/api/connections/return', (yield* ServerConfig).PUBLIC_URL).href,
@@ -227,7 +243,7 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
                 const store = yield* ConnectionStore
                 expect(remoteEntries(yield* store.catalog())[0]).toHaveProperty(
                   'authorization._tag',
-                  'KnownAfterInstall',
+                  catalogHints[name].authorization,
                 )
                 const step = yield* store.begin(ownerActor, {
                   from: 'Web',

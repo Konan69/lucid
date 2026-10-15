@@ -1,22 +1,32 @@
+# Executor integration proofs
+
+The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
+`executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
+
+Each Connection owns a dedicated Executor app. Its reference records the requirement and scope,
+plus the saved account or pending authorization. Legacy JSON is reconciled once on read using
+`copiedFrom.reference` and exact requirement/account links. Missing, ambiguous or shared selections
+require reconnection. A unique `executor_app` index prevents two Connections claiming one app.
+Executor's storage migration does not update Vivid's PostgreSQL rows. Keep the original full volume
+and keys backed up; the old image cannot open the migrated store.
+
+The opt-in `migration.live.test.ts` has a two-process proof. Run its seed mode against an archive
+of `origin/main` and the old image. Keep that process alive on its release FIFO, start beta.23 on
+that same volume, migrate only its disposable PostgreSQL worker database, then run verify mode.
+The receipt contains only fixture IDs and its disposable database name. Verify checks both original
+account identities, separate app IDs and a retained unfinished key card before releasing seed.
+
+For a fresh-image proof, run from the repository root:
+
 ```sh
-# Run from Vivid's repository root. Set EXECUTOR_SOURCE to your clean fork checkout first.
 set -eu
 set +x
+# Allow slow public TCP connections on hosts whose default family-attempt timeout is too short.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--network-family-autoselection-attempt-timeout=2000"
 VIVID_SOURCE="$PWD"
-EXECUTOR_COMMIT=7f9cc0dbffd3000d47381fac3be82047bd589aad
-test "$(git -C "$EXECUTOR_SOURCE" rev-parse HEAD)" = "$EXECUTOR_COMMIT"
-git -C "$EXECUTOR_SOURCE" diff --quiet HEAD
-EXECUTOR_IMAGE=executor-selfhost:fork-7f9cc0d
-docker build --network=host --memory=6g \
-  --build-arg "EXECUTOR_BUILD_VERSION=$EXECUTOR_COMMIT" \
-  -f "$EXECUTOR_SOURCE/apps/hosted/self-host/Dockerfile" \
-  -t "$EXECUTOR_IMAGE" "$EXECUTOR_SOURCE"
-
+EXECUTOR_IMAGE=ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23
+docker pull "$EXECUTOR_IMAGE"
 # Disposable resources only; never reuse a production or development data volume.
-# This fork supports storage 4.0.0/4.0.1; beta.8 writes 4.0.5. Never attach its volume.
-# Evidence: beta.8 image revision 4930a44 matches source export 1d6befb; compare
-# packages/sdk/src/implementation/{storage-schema,storage-migrations,storage}.ts.
-# makeExecutorStorage.checkMigration rejects an unregistered version before auth migrations.
 EXECUTOR_VOLUME=
 EXECUTOR_CONTAINER=
 PG_CONTAINER=
@@ -30,7 +40,10 @@ trap cleanup EXIT HUP INT TERM
 EXECUTOR_VOLUME=$(docker volume create)
 EXECUTOR_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EXECUTOR_CONTAINER=$(docker run --detach --init \
-  --publish 127.0.0.1::4400 \
+  --publish 127.0.0.1:44217:4400 \
+  --env BETTER_AUTH_URL=http://127.0.0.1:44217 \
+  --env EXECUTOR_OAUTH_CALLBACK_URL=https://vivid.example.test/api/connections/return \
+  --env OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:9/ \
   --volume "$EXECUTOR_VOLUME:/app/data" \
   --env EXECUTOR_URL_ALLOW_LOOPBACK_HTTP=false \
   --env 'EXECUTOR_URL_ALLOW_HTTP_ORIGINS=[]' \
@@ -112,13 +125,20 @@ wait_healthy "$PG_CONTAINER" "$PG_STARTED"
 
 # Resolve the Person's token only for the test invocation. Never paste it into a command.
 cd "$VIVID_SOURCE"
-VIVID_LIVE_GITHUB=1 VIVID_LIVE_ADDRESS_POLICY=1 \
+VIVID_LIVE_CONNECTIONS=1 VIVID_LIVE_GITHUB=1 VIVID_LIVE_ADDRESS_POLICY=1 \
+  VIVID_LIVE_GOOGLE=1 VIVID_LIVE_PUBLIC_INTEGRATIONS=1 \
+  VIVID_TEST_GITHUB_LOGIN="$(gh api user --jq .login)" \
+  VIVID_TEST_GITHUB_ACCOUNT_ID="$(gh api user --jq .id)" \
   VIVID_TEST_GITHUB_TOKEN="$(gh auth token)" \
   pnpm exec vitest run --project @vivid/server --maxWorkers 1 \
+  apps/server/src/connections/executor.live.test.ts \
   apps/server/src/connections/executorgithub.live.test.ts \
   apps/server/src/connections/executorread.live.test.ts \
   apps/server/src/connections/executorisolation.live.test.ts \
-  apps/server/src/connections/addresspolicy.live.test.ts
+  apps/server/src/connections/addresspolicy.live.test.ts \
+  apps/server/src/connections/keyed.live.test.ts \
+  apps/server/src/connections/google.live.test.ts \
+  apps/server/src/connections/public.live.test.ts
 
 # EXIT removes only captured disposable container IDs and their temporary volumes.
 ```

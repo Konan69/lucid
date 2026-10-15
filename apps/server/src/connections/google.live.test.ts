@@ -143,7 +143,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
                 return references.app
               })
               const second = yield* begun(google, (_step, references) => references.app)
-              expect(second === first).toBe(true)
+              expect(second === first).toBe(false)
             }
           }),
         { timeout: 240_000 },

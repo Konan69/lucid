@@ -109,9 +109,7 @@ describe('Google Integrations', () => {
           expect.fail('A Google service begins with a sign-in')
         expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
         // The app is shared code: removing a Connection must never delete it.
-        expect(first.references.appOwnership).toBe('Shared')
-        expect(second.references.app).toBe(first.references.app)
-        expect(second.references.profile).not.toBe(first.references.profile)
+        expect(second.references.app).not.toBe(first.references.app)
 
         const requests = yield* Ref.get(hosted.requests)
         const sent = (method: 'GET' | 'POST', path: string) =>
@@ -119,11 +117,11 @@ describe('Google Integrations', () => {
         // One deploy for two Connections, and never a catalogue install: Executor's catalogue
         // cannot install an OpenAPI entry.
         const deployed = sent('POST', '/apps/deploy')
-        expect(deployed).toHaveLength(1)
+        expect(deployed).toHaveLength(2)
         const [deployment] = deployed
         if (deployment === undefined) expect.fail('Expected Gmail deployment')
         expect(deployment.body).toMatchObject({
-          name: expect.stringMatching(/^Vivid Gmail [0-9a-f]{16}$/u),
+          name: expect.stringMatching(/^Vivid Gmail [0-9a-f]{16} /u),
         })
         const source = JSON.stringify(deployment.body)
         for (const required of [
@@ -173,9 +171,9 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
                 references: ExecutorReferences.cases.GoogleSigningIn.make({
                   service: step.references.service,
                   app: step.references.app,
-                  profile: step.references.profile,
+                  binding: step.references.binding,
                   owner: step.references.owner,
-                  appOwnership: step.references.appOwnership,
+
                   authorization: step.references.authorization,
                   googleState: GoogleState.make(crypto.randomUUID()),
                 }),

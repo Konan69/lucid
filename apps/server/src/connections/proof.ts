@@ -10,7 +10,7 @@ import {
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorOwnerId,
-  ExecutorProfileId,
+  ExecutorBinding,
   ExecutorReferences,
   ExecutorCallOutcome,
   ExecutorStatus,
@@ -33,7 +33,6 @@ export default defineApp({ accounts: {}, database }, async () => ({
 }));`
 
 const Deployment = Schema.Struct({ id: ExecutorAppId })
-const Profile = Schema.Struct({ id: ExecutorProfileId })
 export const ProofRecords = Schema.Array(
   Schema.Struct({ id: Schema.String, subject: Schema.String }),
 )
@@ -80,12 +79,12 @@ const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
 })
 
 /** HostedApps.deploy returns App directly; HostedProfiles.create derives owner/subject from
- * membership. Allocate an isolated real service/profile before linking it to this fixture's Person. Cleanup
+ * membership. Allocate an isolated real service/app before linking it to this fixture's Person. Cleanup
  * is installed before deployment; provider resources are removed before the Person cascades.
  * Only private test rows are inserted; credentials remain exclusively inside Executor.
  */
 export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
-  fixture: ChainFixture,
+  fixture: Pick<ChainFixture, 'personId'>,
 ) {
   const endpoint = yield* hostedEndpoint()
   const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
@@ -108,23 +107,25 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   const deployed = yield* HttpClientResponse.schemaBodyJson(Deployment)(
     yield* executorRequest('/apps/deploy', {
       name: `Proof Records ${NodeCrypto.randomUUID()}`,
-      files: [{ path: 'index.ts', content: source }],
+      files: [
+        { path: 'index.ts', content: source },
+        {
+          path: 'package.json',
+          content: JSON.stringify({
+            private: true,
+            type: 'module',
+            dependencies: { apps: '0.0.1-beta.19' },
+          }),
+        },
+      ],
     }),
   )
   created = Option.some(deployed.id)
-  const profile = yield* HttpClientResponse.schemaBodyJson(Profile)(
-    yield* executorRequest(`/apps/${encodeURIComponent(deployed.id)}/profiles`, {
-      name: 'Proof Records',
-      accounts: {},
-      idempotencyKey: NodeCrypto.randomUUID(),
-    }),
-  )
   const references = ExecutorReferences.cases.Public.make({
     app: deployed.id,
-    profile: profile.id,
+    binding: ExecutorBinding.cases.Public.make({}),
     owner,
     service: ServiceId.make('proof-records'),
-    appOwnership: 'Shared',
   })
   const context = yield* Layer.build(executorLayer)
   const executor = yield* Executor.pipe(Effect.provideContext(context))
@@ -156,7 +157,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   const records = Effect.fn('ThreadProof.records')(function* () {
     const result = yield* executor.call({ references, tool: 'queries.records', input: {} })
     if (!ExecutorCallOutcome.guards.Completed(result))
-      return yield* Effect.sync(() => expect.fail('Executor record read did not complete'))
+      return expect.fail('Executor record read did not complete')
     return yield* decodeRecords(result.value)
   })
   return { id, references, executor, records }
@@ -168,7 +169,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
  * The provider takes a key and a plain `who`: the address the account answers to. Its `health`
  * says that address, as Vivid's Google apps say a Google account's (`google.ts`), so Executor has
  * an identity to give when it is asked. `save` records which account saved each record, because
- * profiles of one app share its data: that field is the only evidence of the account a call went
+ * each app has its own data: that field also proves the account a call went
  * through. A package manifest names the `apps` version the hosted build requires, and the tools
  * sit in a router under `tools`, which that version requires too (its `storage.md`); the older
  * `queries`/`mutations` shape of `source` above no longer loads there.
@@ -189,8 +190,8 @@ export const AccountRecords = Schema.Array(
 const decodeAccountRecords = Schema.decodeUnknownEffect(AccountRecords)
 
 /**
- * Two real accounts on one real Executor app, linked to this fixture's Person as two Connections
- * of one service. Each is connected the way a keyed service is (a profile, a targeted connection
+ * Two real accounts on separate real Executor apps, linked to this fixture's Person as two Connections
+ * of one service. Each is connected the way a keyed service is (a dedicated app, a targeted connection
  * request, a submitted key), so each Connection holds its own Executor account. Who each account
  * is comes from Executor itself, through the adapter (`Executor.identity`), and is written on the
  * row as the store writes it once a Connection is ready. The rows are inserted because the proof
@@ -198,7 +199,7 @@ const decodeAccountRecords = Schema.decodeUnknownEffect(AccountRecords)
  * afterwards (names, discovery, approval, the call) is the product's own path.
  */
 export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
-  fixture: ChainFixture,
+  fixture: Pick<ChainFixture, 'personId'>,
   whose: readonly [string, string],
 ) {
   const endpoint = yield* hostedEndpoint()
@@ -206,55 +207,45 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
   const http = yield* HttpClient.HttpClient
   const owner = ExecutorOwnerId.make(`accounts-proof-${NodeCrypto.randomUUID()}`)
   const service = ServiceId.make('proof-accounts')
-  let created = Option.none<typeof ExecutorAppId.Type>()
-  yield* Effect.addFinalizer(() =>
-    Option.match(created, {
-      onNone: () => Effect.void,
-      onSome: (id) =>
-        http
-          .execute(
-            HttpClientRequest.delete(`${endpoint}/apps/${encodeURIComponent(id)}`).pipe(
-              HttpClientRequest.bearerToken(key),
-            ),
-          )
-          .pipe(Effect.tap(successfulRemoval), Effect.asVoid, Effect.catch(cleanupFailed)),
-    }),
-  )
-  const deployed = yield* HttpClientResponse.schemaBodyJson(Deployment)(
-    yield* executorRequest('/apps/deploy', {
-      name: `Proof Accounts ${NodeCrypto.randomUUID()}`,
-      files: [
-        { path: 'index.ts', content: accountsSource },
-        {
-          path: 'package.json',
-          content: JSON.stringify({
-            name: 'vivid-proof-accounts',
-            private: true,
-            type: 'module',
-            dependencies: { apps: googleAppsVersion },
-          }),
-        },
-      ],
-    }),
-  )
-  created = Option.some(deployed.id)
-  const app = encodeURIComponent(deployed.id)
   const executor = yield* Executor.pipe(Effect.provideContext(yield* Layer.build(executorLayer)))
   const database = yield* Database
-  /** One account: its own profile, its own Executor account, its own Connection row. */
+  /** One account owns its app, its Executor account, and its Connection row. */
   const connect = Effect.fn('ThreadProof.account')(function* (who: string) {
-    const profile = yield* HttpClientResponse.schemaBodyJson(Profile)(
-      yield* executorRequest(`/apps/${app}/profiles`, {
-        name: 'Proof Accounts',
-        accounts: {},
-        idempotencyKey: NodeCrypto.randomUUID(),
+    let created = Option.none<typeof ExecutorAppId.Type>()
+    yield* Effect.addFinalizer(() =>
+      Option.match(created, {
+        onNone: () => Effect.void,
+        onSome: (id) =>
+          http
+            .execute(
+              HttpClientRequest.delete(`${endpoint}/apps/${encodeURIComponent(id)}`).pipe(
+                HttpClientRequest.bearerToken(key),
+              ),
+            )
+            .pipe(Effect.tap(successfulRemoval), Effect.asVoid, Effect.catch(cleanupFailed)),
       }),
     )
-    const authorization = yield* HttpClientResponse.schemaBodyJson(Authorization)(
-      yield* executorRequest(`/apps/${app}/connections`, {
-        requirement: 'service',
-        profile: profile.id,
+    const deployed = yield* HttpClientResponse.schemaBodyJson(Deployment)(
+      yield* executorRequest('/apps/deploy', {
+        name: `Proof Accounts ${NodeCrypto.randomUUID()}`,
+        files: [
+          { path: 'index.ts', content: accountsSource },
+          {
+            path: 'package.json',
+            content: JSON.stringify({
+              name: 'vivid-proof-accounts',
+              private: true,
+              type: 'module',
+              dependencies: { apps: googleAppsVersion },
+            }),
+          },
+        ],
       }),
+    )
+    created = Option.some(deployed.id)
+    const app = encodeURIComponent(deployed.id)
+    const authorization = yield* HttpClientResponse.schemaBodyJson(Authorization)(
+      yield* executorRequest(`/apps/${app}/accounts/user/service/connections`, {}),
     )
     const account = yield* HttpClientResponse.schemaBodyJson(Account)(
       yield* executorRequest(
@@ -265,10 +256,9 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
     )
     const references = ExecutorReferences.cases.Authorized.make({
       app: deployed.id,
-      profile: profile.id,
+      binding: ExecutorBinding.cases.Account.make({ requirement: 'service', scope: 'user' }),
       owner,
       service,
-      appOwnership: 'Shared',
       account: account.id,
     })
     expect(ExecutorStatus.guards.Ready(yield* executor.status(references))).toBe(true)
@@ -299,17 +289,20 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
   const second = yield* connect(whose[1])
   /** Observe real storage through Executor: every record says which account saved it. */
   const records = Effect.fn('ThreadProof.accountRecords')(function* (subject: string) {
-    const result = yield* executor.call({
-      references: first.references,
-      tool: 'records',
-      input: { subject },
-    })
-    if (!ExecutorCallOutcome.guards.Completed(result))
-      return yield* Effect.sync(() => expect.fail('Executor record read did not complete'))
-    return (yield* decodeAccountRecords(result.value)).map((record) => ({
-      subject: record.subject,
-      by: record.by,
-    }))
+    const pages = yield* Effect.forEach(
+      [first, second],
+      Effect.fnUntraced(function* (connection) {
+        const result = yield* executor.call({
+          references: connection.references,
+          tool: 'records',
+          input: { subject },
+        })
+        if (!ExecutorCallOutcome.guards.Completed(result))
+          return expect.fail('Executor record read did not complete')
+        return yield* decodeAccountRecords(result.value)
+      }),
+    )
+    return pages.flat().map((record) => ({ subject: record.subject, by: record.by }))
   })
   return { first, second, records }
 })

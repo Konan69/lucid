@@ -37,9 +37,9 @@ export const correlateSignIn = Effect.fn('Connections.correlateSignIn')(function
     references: ExecutorReferences.cases.OAuthSigningIn.make({
       service: references.service,
       app: references.app,
-      profile: references.profile,
+      binding: references.binding,
       owner: references.owner,
-      appOwnership: references.appOwnership,
+
       authorization: references.authorization,
       stateHash,
     }),
