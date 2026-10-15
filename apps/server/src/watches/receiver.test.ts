@@ -1,18 +1,21 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { CreateWatchRequest, WatchId } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
-import { Effect, Option, Queue, Ref } from 'effect'
+import { Clock, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
+import * as HttpRouter from 'effect/http/HttpRouter'
 import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
+import type { Changes } from '../live/changes.ts'
+import { DeliveryMessage, StoredRunOrigin, type Conversation } from '../threads/conversation.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { Watches } from './lifecycle.ts'
-import { BACKGROUND_INSTRUCTION, threadOf } from './receiver.ts'
-import { secretFor } from './signature.ts'
+import { BACKGROUND_INSTRUCTION, threadOf, watchRoutes } from './receiver.ts'
+import { secretFor, sign } from './signature.ts'
+import type { WatchStore } from './store.ts'
 import { watchArrivals } from './tables.ts'
-import { Delivered, Executor, person, receiver, testLayer } from './testing.ts'
+import { Delivered, Executor, person, testLayer } from './testing.ts'
 
 const request = CreateWatchRequest.make({
   name: 'New mail in Work Mail',
@@ -50,6 +53,50 @@ const activeWatch = Effect.fn('WatchTest.activeWatch')(function* () {
   // The secret Executor was given is the one the receiver derives: the handshake depends on it.
   expect(asked.secret).toEqual(secret)
   return { actor, watch, url: asked.url, secret }
+})
+
+/** The receiver route, served in process with the test's own services and clock. */
+const receiver = Effect.fn('WatchTest.receiver')(function* () {
+  const context = yield* Effect.context<
+    WatchStore | ThreadStore | Conversation | ServerConfig | Changes
+  >()
+  const web = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      HttpRouter.toWebHandler(watchRoutes.pipe(Layer.provideMerge(Layer.succeedContext(context))), {
+        disableLogger: true,
+      }),
+    ),
+    (handler) => Effect.promise(() => handler.dispose()),
+  )
+  /**
+   * POST a body to a Watch's callback, signed as Executor signs it now on the test clock, or with
+   * the given signature header to test a forgery.
+   */
+  return Effect.fn('WatchTest.post')(function* (
+    url: string,
+    body: string,
+    secret: Redacted.Redacted,
+    forged: Option.Option<string>,
+  ) {
+    const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000))
+    const id = 'msg_test'
+    const signature = Option.getOrElse(forged, () => sign(secret, { id, timestamp, body }))
+    const response = yield* Effect.promise(() =>
+      web.handler(
+        new Request(url, {
+          method: 'POST',
+          body,
+          headers: {
+            'content-type': 'application/json',
+            'webhook-id': id,
+            'webhook-timestamp': timestamp,
+            'webhook-signature': signature,
+          },
+        }),
+      ),
+    )
+    return { status: response.status, text: yield* Effect.promise(() => response.text()) }
+  })
 })
 
 describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {

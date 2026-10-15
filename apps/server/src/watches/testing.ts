@@ -10,22 +10,18 @@ import {
   type WatchArguments,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
-import * as HttpRouter from 'effect/http/HttpRouter'
+import { Context, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
-import type { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseLayer } from '../database/testdb.ts'
-import { silentChangesLayer, type Changes } from '../live/changes.ts'
+import { silentChangesLayer } from '../live/changes.ts'
 import { Conversation, type Delivery } from '../threads/conversation.ts'
-import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
+import { threadStoreLayer } from '../threads/store.ts'
 import { WatchedApps } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
 import { watchesLayer } from './lifecycle.ts'
-import { watchRoutes } from './receiver.ts'
-import { sign } from './signature.ts'
-import { WatchStore, watchStoreLayer } from './store.ts'
+import { watchStoreLayer } from './store.ts'
 
 /**
  * Watch test seams. PostgreSQL, the Watch store and the Thread store are always the real ones;
@@ -188,47 +184,3 @@ export const testLayer = watchesLayer.pipe(
   ),
   Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, testConfigLayer)),
 )
-
-/** The receiver route, served in process with the test's own services and clock. */
-export const receiver = Effect.fn('WatchTest.receiver')(function* () {
-  const context = yield* Effect.context<
-    WatchStore | ThreadStore | Conversation | ServerConfig | Changes
-  >()
-  const web = yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      HttpRouter.toWebHandler(watchRoutes.pipe(Layer.provideMerge(Layer.succeedContext(context))), {
-        disableLogger: true,
-      }),
-    ),
-    (handler) => Effect.promise(() => handler.dispose()),
-  )
-  /**
-   * POST a body to a Watch's callback, signed as Executor signs it now on the test clock, or with
-   * the given signature header to test a forgery.
-   */
-  return Effect.fn('WatchTest.post')(function* (
-    url: string,
-    body: string,
-    secret: Redacted.Redacted,
-    forged: Option.Option<string>,
-  ) {
-    const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000))
-    const id = 'msg_test'
-    const signature = Option.getOrElse(forged, () => sign(secret, { id, timestamp, body }))
-    const response = yield* Effect.promise(() =>
-      web.handler(
-        new Request(url, {
-          method: 'POST',
-          body,
-          headers: {
-            'content-type': 'application/json',
-            'webhook-id': id,
-            'webhook-timestamp': timestamp,
-            'webhook-signature': signature,
-          },
-        }),
-      ),
-    )
-    return { status: response.status, text: yield* Effect.promise(() => response.text()) }
-  })
-})
