@@ -78,8 +78,8 @@ const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
   return response
 })
 
-/** HostedApps.deploy returns App directly; HostedProfiles.create derives owner/subject from
- * membership. Allocate an isolated real service/app before linking it to this fixture's Person. Cleanup
+/** HostedApps.deploy returns App directly. Allocate an isolated real service/app before linking
+ * it to this fixture's Person. Cleanup
  * is installed before deployment; provider resources are removed before the Person cascades.
  * Only private test rows are inserted; credentials remain exclusively inside Executor.
  */
@@ -146,6 +146,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
       serviceName: 'Proof Records',
       name: null,
       identity: null,
+      executorApp: references.app,
       references: yield* encodeReferences(references),
       status: 'ready',
       reason: null,
@@ -276,6 +277,7 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
         serviceName: 'Proof Accounts',
         name: null,
         identity: identity.value,
+        executorApp: references.app,
         references: yield* encodeReferences(references),
         status: 'ready',
         reason: null,

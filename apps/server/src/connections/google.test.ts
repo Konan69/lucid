@@ -92,7 +92,7 @@ describe('Google Integrations', () => {
           returnAddress: hostedReturnAddress,
         }
         const { first, second } = yield* Effect.gen(function* () {
-          // This installation recorder proves two sign-ins reuse one deployed Google source.
+          // The installation recorder proves separate Connections deploy separate Google apps.
           const context = yield* Layer.build(hosted.configured)
           return yield* Effect.gen(function* () {
             const executor = yield* Executor
@@ -108,14 +108,13 @@ describe('Google Integrations', () => {
         if (!ExecutorStep.guards.OpenSignIn(first) || !ExecutorStep.guards.OpenSignIn(second))
           expect.fail('A Google service begins with a sign-in')
         expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
-        // The app is shared code: removing a Connection must never delete it.
+        // Separate Connections cannot replace each other's app account link.
         expect(second.references.app).not.toBe(first.references.app)
 
         const requests = yield* Ref.get(hosted.requests)
         const sent = (method: 'GET' | 'POST', path: string) =>
           requests.filter((request) => request.path === `${method} ${hostedPrefix}${path}`)
-        // One deploy for two Connections, and never a catalogue install: Executor's catalogue
-        // cannot install an OpenAPI entry.
+        // Deploy Vivid's authored Google source for each Connection rather than a catalog entry.
         const deployed = sent('POST', '/apps/deploy')
         expect(deployed).toHaveLength(2)
         const [deployment] = deployed
