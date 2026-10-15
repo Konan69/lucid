@@ -292,6 +292,50 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           }),
         ),
     )
+    it.effect('notify_person from a Background Thread is refused: Vivid posts to the Feed', () =>
+      withPush(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          yield* owner.database.run(
+            owner.database
+              .update(threads)
+              .set({ place: 'Background' })
+              .where(eq(threads.id, owner.threadId)),
+          )
+          const runs = yield* RunStore
+          const id = RunId.make(NodeCrypto.randomUUID())
+          const reserved = yield* runs.start({
+            id,
+            threadId: owner.threadId,
+            personId: owner.person.id,
+            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+            libraryFolder: null,
+          })
+          if (!TurnReservation.guards.Reserved(reserved))
+            expect.fail('Expected a fresh Run reservation')
+          yield* runs.admitted({ runId: id, offset: '0', incarnation: 'test' })
+          const auth = AuthState.Vivid({
+            person: owner.person,
+            workspace: owner.auth.workspace,
+            threadId: owner.threadId,
+          })
+          const refused = yield* Effect.flip(
+            pushHandlers
+              .NotifyPerson({ title: 'New mail', body: 'A client wrote.' })
+              .pipe(Effect.provideService(AuthContext, auth)),
+          )
+          expect(refused._tag).toBe('Forbidden')
+          expect(
+            yield* owner.database.run(
+              owner.database
+                .select()
+                .from(notifications)
+                .where(eq(notifications.personId, owner.person.id)),
+            ),
+          ).toEqual([])
+        }),
+      ),
+    )
   })
   layer(pushTestFoundation)(
     'Clock for a session transfer survives old-session deletion and an old Expo gone receipt; expiry prunes it',

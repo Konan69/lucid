@@ -14,3 +14,12 @@ import * as Schema from 'effect/Schema'
  */
 export const ThreadPlace = Schema.Literals(['Conversation', 'Background'])
 export type ThreadPlace = typeof ThreadPlace.Type
+
+/**
+ * Whether a notification may quote a Thread in this place. A Background Thread reaches its Person
+ * only through what Vivid posts to the Feed (`feed/`), so nothing that happens there (a Run
+ * settling, failing or ending unknown, a follow-up the Person sent from the Feed, an approval or
+ * a question raised there) is announced as a notification; the Feed shows what needs the Person.
+ * Every place that decides to notify about a Thread asks this, and nowhere else spells the rule.
+ */
+export const notifiesFrom = (place: ThreadPlace) => place === 'Conversation'

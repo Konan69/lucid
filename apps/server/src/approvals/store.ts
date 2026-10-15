@@ -42,6 +42,7 @@ import { changed, Topic, Changes } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
+import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import {
@@ -502,17 +503,18 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
     }),
   )
   const approval = yield* returned(yield* view([result.row]), 'Approval')
-  if (result.inserted) {
-    yield* changed(actor, Topic.thread(threadId))
-    yield* (yield* Notifier).notify({
-      personId: actor.person.id,
-      companyId: companyColumnOf(actor.workspace),
-      kind: 'needs-you',
-      title: 'Vivid needs your approval',
-      body: action.summary,
-      threadId,
-    })
-  }
+  if (!result.inserted) return approval
+  yield* changed(actor, Topic.thread(threadId))
+  // An approval raised in a Background Thread is shown by the Feed, never as a notification.
+  if (!notifiesFrom(thread.place)) return approval
+  yield* (yield* Notifier).notify({
+    personId: actor.person.id,
+    companyId: companyColumnOf(actor.workspace),
+    kind: 'needs-you',
+    title: 'Vivid needs your approval',
+    body: action.summary,
+    threadId,
+  })
   return approval
 })
 
