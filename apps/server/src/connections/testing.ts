@@ -1,4 +1,5 @@
 import * as NodeHttp from 'node:http'
+import { expect } from '@effect/vitest'
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
@@ -35,6 +36,7 @@ import {
   executorLayer,
   type AccountIdentity,
   type ExecutorService,
+  type ExecutorActiveReferences,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -91,9 +93,20 @@ export class ConnectionProbe extends Context.Service<ConnectionProbe, Connection
   'vivid/ConnectionProbe',
 ) {}
 
+/** Fixtures requiring a live app refuse migration-only states before building protocol values. */
+export function activeReferences(references: ExecutorReferences): ExecutorActiveReferences {
+  if (
+    ExecutorReferences.guards.ReconnectRequired(references) ||
+    ExecutorReferences.guards.MigrationPending(references)
+  )
+    expect.fail('An active app reference is required by this fixture')
+  return references
+}
+
 /** Completion retains provider identity and supplies only an opaque account reference. */
-const authorized = (references: ExecutorReferences) =>
-  ExecutorReferences.cases.Authorized.make({
+const authorized = (input: ExecutorReferences) => {
+  const references = activeReferences(input)
+  return ExecutorReferences.cases.Authorized.make({
     service: references.service,
     app: references.app,
     binding: references.binding,
@@ -101,11 +114,16 @@ const authorized = (references: ExecutorReferences) =>
 
     account: ExecutorAccountId.make(crypto.randomUUID()),
   })
+}
 
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
     reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
+    prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
+      Effect.succeed(resources),
+    ),
+    retire: Effect.fn('Executor.Test.retire')(() => Effect.void),
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),
@@ -160,8 +178,8 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
         service: input.references.service,
         owner: input.references.owner,
 
-        app: input.references.app,
-        binding: input.references.binding,
+        app: activeReferences(input.references).app,
+        binding: activeReferences(input.references).binding,
       }
       const step = yield* Ref.get(probe.step)
       if (step === 'OpenSignIn')
@@ -459,7 +477,13 @@ const hostedApp = Effect.fn('Executor.HostedTest.app')(function* (
       { ...value, scope: 'user', cardinality: 'one' },
     ]),
   )
-  return { id: app.id, name: app.name, copiedFrom: null, requirements: { accounts } }
+  return {
+    id: app.id,
+    name: app.name,
+    activeVersion: 'version',
+    copiedFrom: null,
+    requirements: { accounts },
+  }
 })
 
 /** The name a request creates an app under: install and deploy name it at the top of the body,

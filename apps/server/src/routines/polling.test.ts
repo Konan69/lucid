@@ -1,3 +1,4 @@
+import { activeReferences } from '../connections/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { InvalidRequest, RoutineId, RoutineTrigger } from '@vivid/contracts'
@@ -80,8 +81,8 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
         const account = ExecutorAccountId.make('PRIVATE-provider-account')
         const references = ExecutorReferences.cases.Authorized.make({
           service: row.references.service,
-          app: row.references.app,
-          binding: row.references.binding,
+          app: activeReferences(row.references).app,
+          binding: activeReferences(row.references).binding,
           owner: row.references.owner,
           account,
         })

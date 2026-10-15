@@ -24,18 +24,16 @@ import {
   ExecutorReferences,
   ExecutorAppId,
   LegacyExecutorReferences,
-  Executor,
-  reconnectRequired,
-  executorReconnectMessage,
+  migrationPending,
+  executorMigrationMessage,
 } from './executor.ts'
 import { connectionLogo, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
-import { executorFailure } from './errors.ts'
 import { connections } from './tables.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
-const storedRowSchema = createSelectSchema(connections, {
+export const storedRowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,
   name: Schema.NullOr(AccountName),
@@ -54,73 +52,36 @@ const rowSchema = storedRowSchema.mapFields((fields) => ({
 export type ConnectionRecord = typeof rowSchema.Type
 const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
-const decodeCurrentRow = decodeStored(rowSchema, 'Connection')
-const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
+export const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
+const isLegacy = Schema.is(LegacyExecutorReferences)
 
-/** Claim one app per Connection after API reconciliation. The unique index arbitrates competing
- * legacy claims; only that constraint failure requests reconnection. CAS refuses stale readers.
+/** Active references own exactly one app claim. Deferred/refused selections own no app. */
+export function claimedApp(references: ExecutorReferences) {
+  if (
+    ExecutorReferences.guards.ReconnectRequired(references) ||
+    ExecutorReferences.guards.MigrationPending(references)
+  )
+    return null
+  return references.app
+}
+
+/** Database decoding performs no I/O or reconciliation. Unprocessed legacy selections project
+ * an explicit unavailable state; only the migration pass writes outcomes or asks Executor.
  */
-const saveMigration = Effect.fn('Connections.saveMigration')(function* (
-  row: typeof storedRowSchema.Type,
-  references: ExecutorReferences,
-) {
-  const database = yield* Database
-  const rows = yield* database.run(
-    database
-      .update(connections)
-      .set({
-        references: yield* encodeReferences(references),
-        executorApp: ExecutorReferences.guards.ReconnectRequired(references)
-          ? null
-          : references.app,
-        status: ExecutorReferences.guards.ReconnectRequired(references) ? 'failed' : row.status,
-        reason: ExecutorReferences.guards.ReconnectRequired(references)
-          ? executorReconnectMessage
-          : row.reason,
-      })
-      .where(
-        and(
-          eq(connections.id, row.id),
-          eq(connections.updatedAt, row.updatedAt),
-          isNull(connections.executorApp),
-        ),
-      )
-      .returning(),
-  )
-  const saved = rows[0]
-  if (saved !== undefined) return yield* decodeCurrentRow(saved)
-  const current = yield* database.run(
-    database.select().from(connections).where(eq(connections.id, row.id)),
-  )
-  return yield* decodeCurrentRow(yield* returned(current, 'Reconciled Connection'))
-})
-
-const isCurrentReferences = Schema.is(ExecutorReferences)
-
-/** Old JSON is decoded only here. Normal product operations receive no removed selection fields. */
 export const decodeRow = Effect.fn('Connections.decodeRow')(function* (
   input: typeof connections.$inferSelect,
 ) {
   const row = yield* decodeStoredRow(input)
-  if (isCurrentReferences(row.references)) return { ...row, references: row.references }
-  const executor = yield* Executor
-  const references = yield* executor
-    .reconcile(row.references)
-    .pipe(Effect.mapError(executorFailure))
-  const saved = yield* saveMigration(row, references).pipe(
-    Effect.catchTag('DatabaseConstraintViolation', () =>
-      saveMigration(row, reconnectRequired(row.references, 'SharedSelection')),
-    ),
-  )
-  yield* Effect.logInfo('Integration app reconciliation').pipe(
-    Effect.annotateLogs({
-      connectionId: row.id,
-      previousApp: row.references.app,
-      app: saved.references.app,
-      result: saved.references._tag,
-    }),
-  )
-  return saved
+  const references = isLegacy(row.references)
+    ? migrationPending(row.references, 'Unattempted')
+    : row.references
+  if (row.executorApp !== claimedApp(references))
+    return yield* new DatabaseFailure({
+      message: 'Connection app claim does not match its references',
+    })
+  if (ExecutorReferences.guards.MigrationPending(references))
+    return { ...row, references, status: 'failed' as const, reason: executorMigrationMessage }
+  return { ...row, references }
 })
 export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')
 
@@ -287,9 +248,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       .update(connections)
       .set({
         references: yield* encodeReferences(references),
-        executorApp: ExecutorReferences.guards.ReconnectRequired(references)
-          ? null
-          : references.app,
+        executorApp: claimedApp(references),
         status,
         reason,
         updatedAt: yield* Clock.currentTimeMillis,

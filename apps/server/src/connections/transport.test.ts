@@ -426,11 +426,13 @@ describe('Executor hosted transport', () => {
           status: 200,
           body: {
             links: [],
+            accounts: [],
             apps: [
               {
                 id: 'foreign-app',
                 name: 'Other app',
                 copiedFrom: null,
+                activeVersion: 'version',
                 requirements: {
                   accounts: { many: { definition: { auth: { alien: { type: 'future-auth' } } } } },
                 },
@@ -439,6 +441,7 @@ describe('Executor hosted transport', () => {
                 id: app.id,
                 name: app.name,
                 copiedFrom: null,
+                activeVersion: 'version',
                 requirements: 'detail must be fetched separately',
               })),
             ],

@@ -29,6 +29,7 @@ import {
 import { executorFailure } from './errors.ts'
 import { decodeRow, listRecords, type ConnectionRecord } from './records.ts'
 import { namedAccounts } from './names.ts'
+import { makeMigrationPass } from './migration.ts'
 import { connections } from './tables.ts'
 
 /** Output paths describe a provider list; only metadata-classified reads may ever be selected.
@@ -269,6 +270,7 @@ export const integrationPollingServiceLayer = Layer.effect(
   Effect.gen(function* () {
     const database = yield* Database
     const executor = yield* Executor
+    const migrate = yield* makeMigrationPass()
     const observe = read(executor)
     /**
      * Binds a trigger to one account: checks the filter and the event against what the account
@@ -314,6 +316,7 @@ export const integrationPollingServiceLayer = Layer.effect(
     return IntegrationWatch.of({
       /** Every event name is an actual provider read operation; discovery does not claim native events. */
       discover: Effect.fn('IntegrationWatch.discover')(function* (actor, account) {
+        yield* migrate()
         const { row } = yield* accountOf(actor, account).pipe(
           Effect.provideService(Database, database),
           Effect.provideService(Executor, executor),
@@ -328,6 +331,7 @@ export const integrationPollingServiceLayer = Layer.effect(
       }),
       /** Baseline excludes existing provider records; a new Routine reacts only to subsequent items. */
       prepare: Effect.fn('IntegrationWatch.prepare')(function* (actor, trigger) {
+        yield* migrate()
         const found = yield* accountOf(actor, trigger.account).pipe(
           Effect.provideService(Database, database),
           Effect.provideService(Executor, executor),
@@ -336,6 +340,7 @@ export const integrationPollingServiceLayer = Layer.effect(
       }),
       /** The same baseline for a watch that exists, found by the Connection it is bound to. */
       rebase: Effect.fn('IntegrationWatch.rebase')(function* (actor, watch) {
+        yield* migrate()
         const found = namedAccounts(
           yield* listRecords(actor).pipe(
             Effect.provideService(Database, database),
@@ -348,6 +353,7 @@ export const integrationPollingServiceLayer = Layer.effect(
       }),
       /** Binding authorization follows the stored Connection, never a later reused/renamed label. */
       newItems: Effect.fn('IntegrationWatch.newItems')(function* (input: WatchInput) {
+        yield* migrate()
         const { watch } = input
         const rows = yield* database.run(
           database
@@ -366,18 +372,7 @@ export const integrationPollingServiceLayer = Layer.effect(
         const raw = rows[0]
         if (raw === undefined)
           return yield* new IntegrationRevoked({ connectionId: watch.connectionId })
-        const row = yield* decodeRow(raw).pipe(
-          Effect.provideService(Database, database),
-          Effect.provideService(Executor, executor),
-          Effect.catchTags({
-            Conflict: () =>
-              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
-            InvalidRequest: () =>
-              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
-            ServiceUnavailable: () =>
-              Effect.fail(new IntegrationReadFailed({ connectionId: watch.connectionId })),
-          }),
-        )
+        const row = yield* decodeRow(raw)
         const items = yield* observe(row, watch.trigger)
         return yield* newBatch(watch, items)
       }),

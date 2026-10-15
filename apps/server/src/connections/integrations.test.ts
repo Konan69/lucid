@@ -1,3 +1,4 @@
+import { activeReferences } from './testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import {
@@ -264,7 +265,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           ExecutorReferences.cases.Public.make({
             service: row.references.service,
             owner: row.references.owner,
-            binding: row.references.binding,
+            binding: activeReferences(row.references).binding,
             app: ExecutorAppId.make(crypto.randomUUID()),
           })
         const older = copied()

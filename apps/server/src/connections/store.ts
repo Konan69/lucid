@@ -1,4 +1,3 @@
-import { and, eq, isNull } from 'drizzle-orm'
 import {
   Cause,
   Clock,
@@ -49,6 +48,7 @@ import {
   ExecutorResourceMissing,
   ExecutorPublicAddressRequired,
   connectionSetupMessage,
+  executorMigrationMessage,
   resourceReason,
   ExecutorStatus,
   ExecutorStep,
@@ -72,6 +72,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { namedAccounts } from './names.ts'
+import { makeMigrationPass, removeConnection } from './migration.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
@@ -517,6 +518,7 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
+  const migrate = yield* makeMigrationPass()
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
   // Retain only authorities; the caller owns its span, Scope and Clock after construction ends.
   const dependencies = Context.pick(
@@ -569,7 +571,8 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
-  const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
+  const get = (actor: Actor, id: ConnectionId) =>
+    provide(Effect.andThen(migrate(), getRecord(actor, id, false)))
   const management = makeManagement({ executor, database, provide, get })
 
   return {
@@ -591,6 +594,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
      * bundled logo or the service's initial.
      */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
+      yield* provide(migrate())
       // Named oldest first, which is what fixes each account's name; shown newest first.
       const named = namedAccounts(yield* provide(listRecords(actor))).toReversed()
       const items = yield* Effect.forEach(named, ({ row, account }) =>
@@ -601,7 +605,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       )
       return { connections: withCatalogMarks(items, catalog) }
     }),
-    records: (actor: Actor) => provide(listRecords(actor)),
+    records: (actor: Actor) => provide(Effect.andThen(migrate(), listRecords(actor))),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
@@ -754,6 +758,11 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
   const { executor, provide, get } = input
   const row = yield* get(actor, id)
   yield* mayManage(actor, row)
+  if (ExecutorReferences.guards.MigrationPending(row.references))
+    return yield* new ServiceUnavailable({
+      service: 'connections',
+      message: executorMigrationMessage,
+    })
   return yield* Match.value(row.status).pipe(
     Match.when('ready', () =>
       // No trip is opened for an account that is already ready, so nothing is written: this is
@@ -807,7 +816,7 @@ const makeManagement = (input: {
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {
-  const { executor, database, provide, get } = input
+  const { executor, provide, get } = input
   const withResume = serializeResumes()
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
@@ -856,20 +865,7 @@ const makeManagement = (input: {
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
-      yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
-      yield* database.run(
-        database
-          .delete(connections)
-          .where(
-            and(
-              eq(connections.id, row.id),
-              eq(connections.personId, row.personId),
-              row.companyId === null
-                ? isNull(connections.companyId)
-                : eq(connections.companyId, row.companyId),
-            ),
-          ),
-      )
+      yield* provide(removeConnection(row))
       yield* provide(recordChanged(actor, row))
       yield* provide(
         Effect.flatMap(Audit, (audit) =>

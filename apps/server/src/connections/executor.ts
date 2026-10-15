@@ -88,36 +88,6 @@ const referenceFields = {
   binding: ExecutorBinding,
 }
 
-/** Pending authorization has no account identity yet; status resolves it after completion. */
-export const ExecutorReferences = Schema.TaggedUnion({
-  Public: referenceFields,
-  ReconnectRequired: {
-    ...referenceFields,
-    reason: Schema.Literals(['UnresolvedMigration', 'AmbiguousMigration', 'SharedSelection']),
-  },
-  EnteringKey: {
-    ...referenceFields,
-    authorization: ExecutorAuthorizationId,
-    method: Schema.NonEmptyString,
-    label: Schema.NonEmptyString,
-  },
-  SigningIn: { ...referenceFields, authorization: ExecutorAuthorizationId },
-  /** Vivid retains a one-way callback correlation only after Executor supplies its provider URL. */
-  OAuthSigningIn: {
-    ...referenceFields,
-    authorization: ExecutorAuthorizationId,
-    stateHash: Schema.NonEmptyString,
-  },
-  /** Google has a registered fixed callback and must persist its exact protocol correlation. */
-  GoogleSigningIn: {
-    ...referenceFields,
-    authorization: ExecutorAuthorizationId,
-    googleState: GoogleState,
-  },
-  Authorized: { ...referenceFields, account: ExecutorAccountId },
-})
-export type ExecutorReferences = typeof ExecutorReferences.Type
-
 /** Pre-beta.23 persistence ingress only. No product operation accepts these removed selections. */
 export const LegacyExecutorReferences = Schema.TaggedUnion({
   Public: {
@@ -172,6 +142,73 @@ export const LegacyExecutorReferences = Schema.TaggedUnion({
     appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
   },
 })
+
+/** Exact legacy resources survive refusal until the store can prove exclusive reclamation. */
+export const ExecutorRetired = Schema.Struct({
+  original: ExecutorAppId,
+  ownership: Schema.Literals(['Dedicated', 'Unproven']),
+  account: Schema.OptionFromNullOr(ExecutorAccountId),
+  copies: Schema.Array(ExecutorAppId),
+  authorization: Schema.OptionFromNullOr(ExecutorAuthorizationId),
+})
+
+/** Pending authorization has no account identity yet; status resolves it after completion. */
+export const ExecutorReferences = Schema.TaggedUnion({
+  Public: referenceFields,
+  ReconnectRequired: {
+    service: ServiceId,
+    owner: ExecutorOwnerId,
+    retired: ExecutorRetired,
+    reason: Schema.Literals(['UnresolvedMigration', 'AmbiguousMigration', 'SharedSelection']),
+  },
+  MigrationPending: {
+    service: ServiceId,
+    owner: ExecutorOwnerId,
+    legacy: LegacyExecutorReferences,
+    reason: Schema.Literals(['Unattempted', 'Unavailable', 'NotReady', 'CopyPending']),
+  },
+  EnteringKey: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    method: Schema.NonEmptyString,
+    label: Schema.NonEmptyString,
+  },
+  SigningIn: { ...referenceFields, authorization: ExecutorAuthorizationId },
+  /** Vivid retains a one-way callback correlation only after Executor supplies its provider URL. */
+  OAuthSigningIn: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    stateHash: Schema.NonEmptyString,
+  },
+  /** Google has a registered fixed callback and must persist its exact protocol correlation. */
+  GoogleSigningIn: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    googleState: GoogleState,
+  },
+  Authorized: { ...referenceFields, account: ExecutorAccountId },
+})
+export type ExecutorReferences = typeof ExecutorReferences.Type
+
+export type ExecutorActiveReferences = Exclude<
+  ExecutorReferences,
+  { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
+>
+export const executorMigrationMessage =
+  'This integration is waiting for the Executor upgrade. Retry shortly.'
+/** Deferred selections have no live app binding and expose only their recovery instruction. */
+const isMigrationOnly = ExecutorReferences.isAnyOf(['ReconnectRequired', 'MigrationPending'])
+const migrationReason = (
+  references: Extract<
+    ExecutorReferences,
+    { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
+  >,
+) =>
+  Match.value(references).pipe(
+    Match.tag('ReconnectRequired', () => executorReconnectMessage),
+    Match.tag('MigrationPending', () => executorMigrationMessage),
+    Match.exhaustive,
+  )
 
 export const ExecutorServiceEntry = Schema.Struct({
   id: ServiceId,
@@ -472,6 +509,15 @@ export interface ExecutorService {
   readonly reconcile: (
     legacy: typeof LegacyExecutorReferences.Type,
   ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
+  readonly prepareRetirement: (
+    resources: typeof ExecutorRetired.Type,
+  ) => Effect.Effect<typeof ExecutorRetired.Type, ExecutorFailure>
+  readonly retire: (input: {
+    readonly resources: typeof ExecutorRetired.Type
+    readonly retainedApps: ReadonlyArray<typeof ExecutorAppId.Type>
+    readonly retainedAccounts: ReadonlyArray<typeof ExecutorAccountId.Type>
+  }) => Effect.Effect<void, ExecutorFailure>
   readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
   readonly begin: (
     input: typeof BeginInput.Type,
@@ -486,11 +532,11 @@ export interface ExecutorService {
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
   readonly complete: (
     input: typeof CompleteInput.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  ) => Effect.Effect<typeof ExecutorReferences.cases.Authorized.Type, ExecutorFailure>
   /** The application server hosts returnAddress and supplies the full callback URL, kept redacted. */
   readonly completeSignIn: (
     input: typeof SignInInput.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  ) => Effect.Effect<typeof ExecutorReferences.cases.Authorized.Type, ExecutorFailure>
   readonly status: (
     references: ExecutorReferences,
   ) => Effect.Effect<typeof ExecutorStatus.Type, ExecutorFailure>
@@ -539,10 +585,12 @@ const WireInventory = Schema.Struct({
     Schema.Struct({
       id: ExecutorAppId,
       name: Schema.NonEmptyString,
+      activeVersion: Schema.NullOr(ExecutorVersionId),
       copiedFrom: Schema.NullOr(Schema.Struct({ reference: Schema.NonEmptyString })),
     }),
   ),
   links: Schema.Array(Schema.Struct({ app: ExecutorAppId, account: ExecutorAccountId })),
+  accounts: Schema.Array(Schema.Struct({ id: ExecutorAccountId })),
 })
 const WireSetup = Schema.Struct({
   mode: Schema.Literals(['automatic', 'client-required']),
@@ -623,7 +671,7 @@ const WireCatalogEntry = Schema.Struct({
   ),
   icons: Schema.Array(
     Schema.Struct({
-      src: Schema.NonEmptyString,
+      src: Schema.String,
       theme: Schema.optionalKey(Schema.Literals(['light', 'dark'])),
     }),
   ),
@@ -923,9 +971,17 @@ function catalogAuthorization(entry: typeof WireCatalogEntry.Type) {
   return ServiceAuthorization.cases.KnownAfterInstall.make({})
 }
 
-/** Icons are whole upstream addresses. A catalog supplies no website domain in beta.23. */
+/** Parse icon addresses once; invalid and non-HTTPS entries carry no rendering authority. */
+const decodeIconAddress = Schema.decodeResult(Schema.URLFromString)
+
+/** Prefer neutral/light HTTPS icons without inferring a website domain from an image URL. */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
-  const icon = entry.icons[0]
+  const icons = Arr.filterMap(entry.icons, (icon) => {
+    const address = decodeIconAddress(icon.src)
+    if (Result.isFailure(address) || address.success.protocol !== 'https:') return Result.failVoid
+    return Result.succeed(icon)
+  })
+  const icon = icons.find((value) => value.theme === undefined || value.theme === 'light')
   return ExecutorServiceEntry.make({
     id: entry.id,
     name: entry.name,
@@ -966,7 +1022,7 @@ function completedCall(value: Schema.Json) {
 }
 
 /** Requirement routes carry the declared scope. A public app has no account route. */
-function bindingPath(references: Pick<ExecutorReferences, 'app' | 'binding'>) {
+function bindingPath(references: Pick<ExecutorActiveReferences, 'app' | 'binding'>) {
   return ExecutorBinding.match<Effect.Effect<string, ExecutorNotReady>>(references.binding, {
     Public: () => Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null })),
     Account: ({ scope, requirement }) =>
@@ -980,7 +1036,7 @@ const query = (value: string) => encodeURIComponent(value)
 const post = (path: string, body: Schema.Json) => jsonBody(HttpClientRequest.post(path), body)
 
 /** Carry only stable identity across state transitions; never copy another variant discriminator. */
-function referenceIdentity(references: ExecutorReferences) {
+function referenceIdentity(references: ExecutorActiveReferences) {
   return {
     service: references.service,
     app: references.app,
@@ -1060,6 +1116,7 @@ function validateSelections(
     OAuthSigningIn: () => false,
     GoogleSigningIn: () => false,
     ReconnectRequired: () => false,
+    MigrationPending: () => false,
   })
   return matches
     ? Effect.void
@@ -1069,7 +1126,7 @@ function validateSelections(
 /** Pin all pages to the first version and refuse changed account selections or cursor cycles. */
 function makeDiscovery(http: ExecutorHttp) {
   return Effect.fn('Executor.discover')(function* (references: ExecutorReferences) {
-    if (ExecutorReferences.guards.ReconnectRequired(references))
+    if (isMigrationOnly(references))
       return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
     const items: (typeof ExecutorTool.Type)[] = []
     let version = Option.none<typeof ExecutorVersionId.Type>()
@@ -1256,7 +1313,7 @@ function makeSignIn(
 /** A pending request must still name this app's exact requirement. */
 const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')(function* (
   connection: typeof WireConnection.Type,
-  references: Pick<ExecutorReferences, 'app' | 'binding'>,
+  references: Pick<ExecutorActiveReferences, 'app' | 'binding'>,
 ) {
   if (
     !ExecutorBinding.guards.Account(references.binding) ||
@@ -1276,7 +1333,7 @@ function makeAuthorize(
   return Effect.fn('Executor.authorize')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
-    references: ExecutorReferences,
+    references: ExecutorActiveReferences,
     authorization: ServiceAuthorization,
   ) {
     const requirements = Object.entries(app.requirements.accounts)
@@ -1401,8 +1458,8 @@ function connectionFailure(failure: typeof ConnectionFailure.Type) {
 function makeStatus(http: ExecutorHttp) {
   return Effect.fn('Executor.status')(
     function* (references: ExecutorReferences) {
-      if (ExecutorReferences.guards.ReconnectRequired(references))
-        return ExecutorStatus.cases.Failed.make({ reason: executorReconnectMessage })
+      if (isMigrationOnly(references))
+        return ExecutorStatus.cases.Failed.make({ reason: migrationReason(references) })
       let resolved = references
       if (isPending(references)) {
         const connection = yield* http.readConnection(
@@ -2127,7 +2184,7 @@ function makeReauthorize(
   return Effect.fn('Executor.reauthorize')(function* (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) {
-    if (ExecutorReferences.guards.ReconnectRequired(input.references))
+    if (isMigrationOnly(input.references))
       return yield* ExecutorRejected.make({
         service: 'connections',
         tool: null,
@@ -2266,16 +2323,17 @@ function makeRemove(http: ExecutorHttp) {
   const remove = makeRemoval(http)
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
+    if (isMigrationOnly(references)) return
     const account = yield* ExecutorReferences.match(references, {
       Public: () => Effect.succeedNone,
       ReconnectRequired: () => Effect.succeedNone,
+      MigrationPending: () => Effect.succeedNone,
       Authorized: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
       OAuthSigningIn: resolveRemovalAccount,
       GoogleSigningIn: resolveRemovalAccount,
     })
-    if (ExecutorReferences.guards.ReconnectRequired(references)) return
     if (Option.isSome(account)) {
       const path = yield* bindingPath(references)
       yield* http
@@ -2348,6 +2406,11 @@ function discoveryFailed() {
 function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>) {
   return Effect.fn('Executor.call')(
     function* ({ references, tool, input }: typeof CallInput.Type) {
+      if (
+        ExecutorReferences.guards.ReconnectRequired(references) ||
+        ExecutorReferences.guards.MigrationPending(references)
+      )
+        return ExecutorCallOutcome.cases.NotReady.make({})
       const catalog = yield* discover(references).pipe(
         Effect.catchTags({
           ExecutorTransportFailure: discoveryFailed,
@@ -2382,6 +2445,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
                   ...ExecutorReferences.match(references, {
                     Public: () => [],
                     ReconnectRequired: () => [],
+                    MigrationPending: () => [],
                     Authorized: ({ account }) => [account],
                     EnteringKey: () => [],
                     SigningIn: () => [],
@@ -2413,16 +2477,28 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
   )
 }
 
-/** A failed migration retains no usable selection. Removing it never deletes shared resources. */
+/** Preserve exact credentials and explicit copy identities; refusal grants no app claim. */
 export function reconnectRequired(
-  legacy: Pick<ExecutorReferences, 'service' | 'app' | 'owner'>,
+  legacy: typeof LegacyExecutorReferences.Type,
   reason: typeof ExecutorReferences.cases.ReconnectRequired.Type.reason,
+  copies: ReadonlyArray<typeof ExecutorAppId.Type>,
 ) {
   return ExecutorReferences.cases.ReconnectRequired.make({
     service: legacy.service,
-    app: legacy.app,
     owner: legacy.owner,
-    binding: ExecutorBinding.cases.Public.make({}),
+    retired: ExecutorRetired.make({
+      original: legacy.app,
+      ownership: legacy.appOwnership === 'Dedicated' ? 'Dedicated' : 'Unproven',
+      account: LegacyExecutorReferences.guards.Authorized(legacy)
+        ? Option.some(legacy.account)
+        : Option.none(),
+      copies,
+      authorization:
+        LegacyExecutorReferences.guards.Public(legacy) ||
+        LegacyExecutorReferences.guards.Authorized(legacy)
+          ? Option.none()
+          : Option.some(legacy.authorization),
+    }),
     reason,
   })
 }
@@ -2486,87 +2562,259 @@ function legacyCandidate(http: ExecutorHttp) {
   })
 }
 
-/** Upstream merges equal selections and creates copies for distinct ones. Match its explicit
- * copy provenance and exact links; Vivid's unique app claim rejects two rows sharing a result.
- * A missing or ambiguous match becomes reconnection, never an inventory/name guess.
+/** Deferred states retain the original selection so a later explicit pass can retry it. */
+export function migrationPending(
+  legacy: typeof LegacyExecutorReferences.Type,
+  reason: typeof ExecutorReferences.cases.MigrationPending.Type.reason,
+) {
+  return ExecutorReferences.cases.MigrationPending.make({
+    service: legacy.service,
+    owner: legacy.owner,
+    legacy,
+    reason,
+  })
+}
+
+/** A pending shared request has no authority over an app that still selects another account. */
+function reconcilePending(http: ExecutorHttp) {
+  return Effect.fn('Executor.reconcilePending')(function* (
+    legacy: Exclude<
+      typeof LegacyExecutorReferences.Type,
+      { readonly _tag: 'Authorized' | 'Public' }
+    >,
+    inventory: typeof WireInventory.Type,
+  ) {
+    const connection = yield* http.readConnection(
+      Effect.succeed(HttpClientRequest.get(`/connections/${query(legacy.authorization)}`)),
+      null,
+    )
+    const app = migratedApps(inventory, legacy.app).find(
+      (item) => item.id === connection.target.app,
+    )
+    if (app === undefined) return migrationPending(legacy, 'CopyPending')
+    const dedicated = legacy.appOwnership === 'Dedicated' && app.id === legacy.app
+    if (!dedicated && inventory.links.some((link) => link.app === app.id))
+      return reconnectRequired(legacy, 'SharedSelection', app.id === legacy.app ? [] : [app.id])
+    if (app.activeVersion === null) return migrationPending(legacy, 'NotReady')
+    const detail = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}`)),
+      null,
+    )
+    const requirement = detail.requirements.accounts[connection.target.requirement]
+    if (requirement === undefined)
+      return reconnectRequired(legacy, 'UnresolvedMigration', app.id === legacy.app ? [] : [app.id])
+    return migratedReferences(legacy, {
+      service: legacy.service,
+      owner: legacy.owner,
+      app: app.id,
+      binding: ExecutorBinding.cases.Account.make({
+        requirement: connection.target.requirement,
+        scope: requirement.scope,
+      }),
+    })
+  })
+}
+
+/** A public legacy app is recoverable only with prior dedicated ownership and no requirements. */
+function reconcilePublic(http: ExecutorHttp) {
+  return Effect.fn('Executor.reconcilePublic')(function* (
+    legacy: typeof LegacyExecutorReferences.cases.Public.Type,
+    inventory: typeof WireInventory.Type,
+  ) {
+    const apps = migratedApps(inventory, legacy.app)
+    const copies: ReadonlyArray<typeof ExecutorAppId.Type> = []
+    if (legacy.appOwnership !== 'Dedicated')
+      return reconnectRequired(legacy, 'SharedSelection', copies)
+    const original = apps.find((app) => app.id === legacy.app)
+    if (original === undefined) return reconnectRequired(legacy, 'UnresolvedMigration', copies)
+    if (original.activeVersion === null) return migrationPending(legacy, 'NotReady')
+    const app = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(legacy.app)}`)),
+      null,
+    )
+    if (Object.keys(app.requirements.accounts).length !== 0)
+      return reconnectRequired(legacy, 'UnresolvedMigration', copies)
+    return migratedReferences(legacy, {
+      service: legacy.service,
+      owner: legacy.owner,
+      app: legacy.app,
+      binding: ExecutorBinding.cases.Public.make({}),
+    })
+  })
+}
+
+/** Upstream copy plans are not exposed by inventory. An existing account without an exact
+ * linked app can still have a pending plan; an undeployed copy can be repaired. Neither is a
+ * permanent refusal. Explicit copy provenance and exact links are the only successful mapping.
  */
 function makeLegacyReconciliation(http: ExecutorHttp) {
   const candidate = legacyCandidate(http)
-  return Effect.fn('Executor.reconcileLegacy')(
-    function* (legacy: typeof LegacyExecutorReferences.Type) {
-      const inventory = yield* http.readInventory(
-        Effect.succeed(HttpClientRequest.get('/inventory')),
-        null,
-      )
-      const apps = migratedApps(inventory, legacy.app)
-      if (LegacyExecutorReferences.guards.Public(legacy)) {
-        if (legacy.appOwnership !== 'Dedicated') return reconnectRequired(legacy, 'SharedSelection')
-        const app = yield* http.readApp(
-          Effect.succeed(HttpClientRequest.get(`/apps/${query(legacy.app)}`)),
-          null,
-        )
-        if (Object.keys(app.requirements.accounts).length !== 0)
-          return reconnectRequired(legacy, 'UnresolvedMigration')
-        return migratedReferences(legacy, {
-          service: legacy.service,
-          owner: legacy.owner,
-          app: legacy.app,
-          binding: ExecutorBinding.cases.Public.make({}),
-        })
-      }
-      if (!LegacyExecutorReferences.guards.Authorized(legacy)) {
-        const connection = yield* http.readConnection(
-          Effect.succeed(HttpClientRequest.get(`/connections/${query(legacy.authorization)}`)),
-          null,
-        )
-        const app = apps.find((item) => item.id === connection.target.app)
-        if (app === undefined) return reconnectRequired(legacy, 'UnresolvedMigration')
-        const detail = yield* http.readApp(
-          Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}`)),
-          null,
-        )
-        const requirement = detail.requirements.accounts[connection.target.requirement]
-        if (requirement === undefined) return reconnectRequired(legacy, 'UnresolvedMigration')
-        return migratedReferences(legacy, {
-          service: legacy.service,
-          owner: legacy.owner,
+  const pending = reconcilePending(http)
+  const publicApp = reconcilePublic(http)
+  return Effect.fn('Executor.reconcileLegacy')(function* (
+    legacy: typeof LegacyExecutorReferences.Type,
+  ) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    const apps = migratedApps(inventory, legacy.app)
+    if (LegacyExecutorReferences.guards.Public(legacy)) return yield* publicApp(legacy, inventory)
+    if (!LegacyExecutorReferences.guards.Authorized(legacy))
+      return yield* pending(legacy, inventory)
+    const linked = apps.filter((app) =>
+      inventory.links.some((link) => link.app === app.id && link.account === legacy.account),
+    )
+    const copies = linked.filter((app) => app.id !== legacy.app).map((app) => app.id)
+    if (linked.some((app) => app.activeVersion === null))
+      return migrationPending(legacy, 'NotReady')
+    const matches = yield* Effect.forEach(
+      linked,
+      Effect.fnUntraced(function* (app) {
+        return Option.map(yield* candidate(app.id, legacy.account), (binding) => ({
           app: app.id,
-          binding: ExecutorBinding.cases.Account.make({
-            requirement: connection.target.requirement,
-            scope: requirement.scope,
-          }),
-        })
-      }
-      const linked = apps.filter((app) =>
-        inventory.links.some((link) => link.app === app.id && link.account === legacy.account),
+          binding,
+        }))
+      }),
+    )
+    const found = Arr.getSomes(matches)
+    const match = found[0]
+    if (linked.length === 0 && inventory.accounts.some((item) => item.id === legacy.account))
+      return migrationPending(legacy, 'CopyPending')
+    if (found.length !== 1 || match === undefined)
+      return reconnectRequired(
+        legacy,
+        found.length > 1 ? 'AmbiguousMigration' : 'UnresolvedMigration',
+        copies,
       )
-      const matches = yield* Effect.forEach(
-        linked,
-        Effect.fnUntraced(function* (app) {
-          return Option.map(yield* candidate(app.id, legacy.account), (binding) => ({
-            app: app.id,
-            binding,
-          }))
-        }),
-      )
-      const found = Arr.getSomes(matches)
-      const match = found[0]
-      if (found.length !== 1 || match === undefined)
-        return reconnectRequired(
-          legacy,
-          found.length > 1 ? 'AmbiguousMigration' : 'UnresolvedMigration',
+    return migratedReferences(legacy, { service: legacy.service, owner: legacy.owner, ...match })
+  })
+}
+
+/** Retain every known copy before deleting credentials. Inventory exposes exact copy lineage;
+ * the selected account identifies additional copies even when the earlier refusal could not.
+ */
+function makePrepareRetirement(http: ExecutorHttp) {
+  return Effect.fn('Executor.prepareRetirement')(function* (
+    resources: typeof ExecutorRetired.Type,
+  ) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    let account = resources.account
+    if (Option.isNone(account) && Option.isSome(resources.authorization)) {
+      const saved = yield* http
+        .readConnection(
+          Effect.succeed(
+            HttpClientRequest.get(`/connections/${query(resources.authorization.value)}`),
+          ),
+          null,
         )
-      return migratedReferences(legacy, { service: legacy.service, owner: legacy.owner, ...match })
-    },
-    (effect, legacy) =>
-      effect.pipe(
-        Effect.catchTags({
-          ExecutorResourceMissing: () =>
-            Effect.succeed(reconnectRequired(legacy, 'UnresolvedMigration')),
-          ExecutorNotReady: () => Effect.succeed(reconnectRequired(legacy, 'UnresolvedMigration')),
-        }),
-      ),
-  )
+        .pipe(
+          Effect.asSome,
+          Effect.catchTag('ExecutorNotReady', () => Effect.succeedNone),
+        )
+      if (Option.isSome(saved)) {
+        if (
+          !migratedApps(inventory, resources.original).some(
+            (app) => app.id === saved.value.target.app,
+          )
+        )
+          return yield* ExecutorRequirementChanged.make({ service: 'connections', tool: null })
+        const state = saved.value.state
+        if (WireConnection.fields.state.guards.completed(state))
+          account = Option.some(state.account.id)
+        else if (saved.value.reconnectAccount !== null)
+          account = Option.some(saved.value.reconnectAccount.id)
+      }
+    }
+    const copies = migratedApps(inventory, resources.original)
+      .filter(
+        (app) =>
+          app.id !== resources.original &&
+          Option.isSome(account) &&
+          inventory.links.some((link) => link.app === app.id && link.account === account.value),
+      )
+      .map((app) => app.id)
+    return ExecutorRetired.make({
+      ...resources,
+      account,
+      copies: [...new Set([...resources.copies, ...copies])],
+    })
+  })
+}
+
+/** Reclamation rereads links before unlinking exact credentials. App deletion requires a
+ * dedicated original or explicit copy provenance and no remaining account links.
+ */
+function makeRetire(http: ExecutorHttp) {
+  const remove = makeRemoval(http)
+  const links = Effect.fn('Executor.retiredLinks')(function* (app: typeof ExecutorAppId.Type) {
+    const groups = yield* Effect.forEach(
+      ['app', 'user'] as const,
+      Effect.fnUntraced(function* (scope) {
+        const values = yield* http.readLinks(
+          Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}/accounts/${scope}`)),
+          null,
+        )
+        return values.map((link) => ({
+          requirement: link.requirement,
+          account: link.account,
+          scope,
+        }))
+      }),
+    )
+    return groups.flat()
+  })
+  /** A held app/account pair still belongs to another Connection. Private copies can unlink
+   * a shared credential without revoking the credential another Connection still stores.
+   */
+  const unlink = Effect.fn('Executor.unlinkRetired')(function* (
+    app: typeof ExecutorAppId.Type,
+    input: Parameters<ExecutorService['retire']>[0],
+  ) {
+    const { resources, retainedApps, retainedAccounts } = input
+    if (Option.isNone(resources.account)) return
+    const account = resources.account.value
+    if (retainedApps.includes(app) && retainedAccounts.includes(account)) return
+    for (const link of yield* links(app)) {
+      if (link.account.id === account)
+        yield* remove(
+          `/apps/${query(app)}/accounts/${link.scope}/${query(link.requirement)}/${query(account)}`,
+          'Account',
+        )
+    }
+  })
+  return Effect.fn('Executor.retire')(function* ({
+    resources,
+    retainedApps,
+    retainedAccounts,
+  }: Parameters<ExecutorService['retire']>[0]) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    const eligible = inventory.apps.filter(
+      (app) =>
+        !retainedApps.includes(app.id) &&
+        ((app.id === resources.original && resources.ownership === 'Dedicated') ||
+          (resources.copies.includes(app.id) &&
+            app.copiedFrom !== null &&
+            app.copiedFrom.reference === `app:${resources.original}`)),
+    )
+    const targets = inventory.apps.filter(
+      (app) => app.id === resources.original || eligible.some((item) => item.id === app.id),
+    )
+    for (const app of targets) yield* unlink(app.id, { resources, retainedApps, retainedAccounts })
+    if (Option.isSome(resources.account) && !retainedAccounts.includes(resources.account.value))
+      yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
+    for (const app of eligible) {
+      if ((yield* links(app.id)).length > 0)
+        return yield* ExecutorConflict.make({ service: 'connections', tool: null })
+      yield* remove(`/apps/${query(app.id)}`, 'App')
+    }
+  })
 }
 
 /** Cache version-pinned schemas while validating a saved account's current link on every use.
@@ -2676,6 +2924,8 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ),
     reauthorize: makeReauthorize(http, availability),
     reconcile: makeLegacyReconciliation(http),
+    retire: makeRetire(http),
+    prepareRetirement: makePrepareRetirement(http),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
       yield* Cache.invalidate(toolCache.snapshots, input.references)

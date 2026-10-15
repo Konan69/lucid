@@ -4,17 +4,26 @@ The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, ups
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 
 Each Connection owns a dedicated Executor app. Its reference records the requirement and scope,
-plus the saved account or pending authorization. Legacy JSON is reconciled once on read using
-`copiedFrom.reference` and exact requirement/account links. Missing, ambiguous or shared selections
-require reconnection. A unique `executor_app` index prevents two Connections claiming one app.
-Executor's storage migration does not update Vivid's PostgreSQL rows. Keep the original full volume
-and keys backed up; the old image cannot open the migrated store.
+plus the saved account or pending authorization. An explicit, idempotent migration pass runs on
+first store access, under a cross-process lock. Decoding rows performs no network calls or writes.
+The pass maps `copiedFrom.reference` and exact requirement/account links, saving each outcome.
+Permanent refusals retain the exact credential and copy identities for safe removal. Transient
+failures, undeployed copies and unfinished copy plans retain retryable legacy selections. A healthy
+store stops running the pass; a deferred store retries it on its next access. One upstream refusal
+cannot fail the list. The `executor_app` claim is unique and checked against active references.
 
-The opt-in `migration.live.test.ts` has a two-process proof. Run its seed mode against an archive
-of `origin/main` and the old image. Keep that process alive on its release FIFO, start beta.23 on
-that same volume, migrate only its disposable PostgreSQL worker database, then run verify mode.
-The receipt contains only fixture IDs and its disposable database name. Verify checks both original
-account identities, separate app IDs and a retained unfinished key card before releasing seed.
+Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire
+Executor volume with its keys and Vivid PostgreSQL. See the cutover and rollback sequence in
+[Executor's image](../../../../docs/19-infrastructure.md#executors-image). Neither mixed server/image
+pairing supports Integrations, and an old image cannot open the migrated store.
+
+The opt-in `migration.live.test.ts` has a two-process proof. Run its seed section against an
+archive of original Vivid and the old image. Copy only that section into the archive, omitting the
+branch-only `migration.ts` import; the verifier stays in this checkout. Keep the seed process alive
+on its release FIFO, start beta.23 on that same volume, migrate only its disposable PostgreSQL
+worker database, then run verify mode. The receipt contains only fixture IDs and its disposable
+database name. Verify runs the explicit pass and checks both original account identities, separate
+app IDs and a retained unfinished key card before releasing seed.
 
 For a fresh-image proof, run from the repository root:
 

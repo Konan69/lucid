@@ -13,6 +13,7 @@ import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { proofAccounts } from './proof.ts'
 import { connections } from './tables.ts'
 import { decodeRow } from './records.ts'
+import { migrateConnections } from './migration.ts'
 
 const mode = NodeProcess.env['VIVID_EXECUTOR_MIGRATION']
 const receiptFile = NodeProcess.env['VIVID_TEST_MIGRATION_RECEIPT']
@@ -59,7 +60,7 @@ const released = (path: string) =>
     })
   })
 
-/** The proof runner copies this test into an archive of origin/main. All deployment, profile,
+/** The proof runner copies only this seed section into an archive of origin/main. All deployment, profile,
  * credential and persistence code used by seed is that archive's original Vivid implementation.
  * It never loads this branch's adapter while writing the old store.
  */
@@ -100,6 +101,8 @@ describe.skipIf(mode !== 'seed')('original Vivid migration fixture', () => {
           const pending = yield* Effect.flatMap(ConnectionStore, (store) =>
             store.get(ownerActor, step.connection.id),
           ).pipe(Effect.provide(context))
+          if (!ExecutorReferences.guards.EnteringKey(pending.references))
+            expect.fail('Pending original app required')
           const receipt = Receipt.make({
             database: target.pathname.slice(1),
             person: ownerActor.person.id,
@@ -162,6 +165,7 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
           )
           const database = yield* Database
           const executor = yield* Executor
+          yield* migrateConnections()
           const targets = [
             {
               id: receipt.first,
@@ -221,7 +225,8 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
           ))[0]
           if (pending === undefined) expect.fail('The unfinished original Connection must exist')
           const row = yield* decodeRow(pending)
-          expect(ExecutorReferences.guards.EnteringKey(row.references)).toBe(true)
+          if (!ExecutorReferences.guards.EnteringKey(row.references))
+            expect.fail('EnteringKey must survive migration')
           expect(row.references.app).toBe(receipt.pendingApp)
           expect((yield* executor.status(row.references))._tag).toBe('NeedsAuthorization')
           NodeProcess.stdout.write(
