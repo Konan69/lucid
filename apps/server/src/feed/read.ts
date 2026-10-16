@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, desc, eq, exists, gt, gte, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, exists, gt, gte, inArray, not, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -29,9 +29,7 @@ const decodePost = decodeStored(Schema.NullOr(FeedPost), 'Feed post')
 
 /** How far back settled work stays on the Feed: the last day, so morning still shows the night. */
 const SETTLED_WINDOW = 24 * 60 * 60 * 1000
-/** Open work is never cut by age; this bounds one read, far above what one Person has open. */
-const OPEN_LIMIT = 200
-/** Settled lines are history: the newest are enough. */
+/** Settled lines are history: the newest are enough. Open work is never capped. */
 const HISTORY_LIMIT = 100
 
 /**
@@ -71,8 +69,18 @@ const fields = {
   card: feedCards,
 }
 
-/** The Person's background Threads, readable by them now: a Company one stops when they leave. */
-const mine = (person: PersonId) => and(readableBy(person), eq(threads.place, 'Background'))
+/**
+ * The Person's own background Threads, and only while they can still read them: a Company one
+ * stops when they leave. Readability alone would admit another Person's readable Thread.
+ */
+const mine = (person: PersonId) =>
+  and(eq(threads.personId, person), readableBy(person), eq(threads.place, 'Background'))
+
+/**
+ * When a Thread last settled, as the Feed dates it: the later of its last activity and the moment
+ * its card was put away, so an old Thread whose card was settled today stays in today's history.
+ */
+const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCards.updatedAt}, 0))`
 
 /**
  * Whether a Thread still needs its stage worked out whatever its age: a card not put away, a Run
@@ -93,8 +101,8 @@ const stillOpen = (now: number) =>
   )
 
 /**
- * Two reads with their own bounds: everything still open, whatever its age, so a burst of quiet
- * events can never push waiting work off the Feed; and the last day's settled history, capped.
+ * Two reads: everything still open, all of it whatever its age, so nothing waiting on the Person
+ * can fall off the Feed; and the settled history of the last day, capped, dated by `settledAt`.
  */
 const readThreads = Effect.fn('Feed.readThreads')(function* (
   db: Db,
@@ -107,20 +115,18 @@ const readThreads = Effect.fn('Feed.readThreads')(function* (
       .from(threads)
       .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
       .where(and(mine(person), stillOpen(now)))
-      .orderBy(desc(threads.updatedAt))
-      .limit(OPEN_LIMIT),
+      .orderBy(desc(threads.updatedAt)),
   )
   const history = yield* db.run(
     db
       .select(fields)
       .from(threads)
       .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
-      .where(and(mine(person), gte(threads.updatedAt, now - SETTLED_WINDOW)))
-      .orderBy(desc(threads.updatedAt))
+      .where(and(mine(person), not(stillOpen(now)), gte(settledAt, now - SETTLED_WINDOW)))
+      .orderBy(desc(settledAt))
       .limit(HISTORY_LIMIT),
   )
-  const kept = new Set(open.map((row) => row.thread))
-  const rows: ReadonlyArray<Row> = [...open, ...history.filter((row) => !kept.has(row.thread))]
+  const rows: ReadonlyArray<Row> = [...open, ...history]
   return rows
 })
 

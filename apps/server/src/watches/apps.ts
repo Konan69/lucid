@@ -127,8 +127,16 @@ export const makeWatchedApps = (
   config: ExecutorSettings,
 ) => {
   const client = HttpClient.withScope(transport)
+  /**
+   * The Actor's OWN Integration accounts. The Connection inventory also lists a Company's shared
+   * Connections, but a Watch runs on its account's credentials for this Person alone, so another
+   * member's account is never watchable here, even when they share it.
+   */
   const accounts = (actor: Actor) =>
-    listRecords(actor).pipe(Effect.map(namedAccounts), Effect.provideService(Database, database))
+    listRecords(actor).pipe(
+      Effect.map((rows) => namedAccounts(rows.filter((row) => row.personId === actor.person.id))),
+      Effect.provideService(Database, database),
+    )
 
   /** GET the app by id under the configured organization, as the Connection adapter addresses it. */
   const slugOf = Effect.fn('WatchedApps.slugOf')(
