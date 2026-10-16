@@ -43,7 +43,7 @@ export function DeviceAsk({
 }) {
   const data = useLiveData()
   const devices = useLiveValue(data.live.devices)
-  const up = free ? Option.flatMap(devices, (list) => deviceAsked(list.devices)) : Option.none()
+  const up = free ? Option.flatMap(devices, deviceAsked) : Option.none()
   const [held, setHeld] = useState<Option.Option<DeviceAsked>>(Option.none())
   if (Option.isNone(held) && Option.isSome(up)) setHeld(up)
   if (Option.isNone(held)) return null

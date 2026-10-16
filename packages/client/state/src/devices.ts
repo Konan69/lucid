@@ -1,10 +1,14 @@
-import { DeviceAccess, DevicePresence, type Device, type DeviceId } from '@vivid/contracts'
+import {
+  DeviceAccess,
+  DevicePresence,
+  type Device,
+  type DeviceId,
+  type DeviceListResponse,
+} from '@vivid/contracts'
 import { Option } from 'effect'
 
-/** What `WatchDevices` answers with: the Person's own computers. */
-export interface DeviceList {
-  readonly devices: ReadonlyArray<Device>
-}
+/** What `WatchDevices` answers with: the Person's own computers, and which are asking. */
+export type DeviceList = typeof DeviceListResponse.Type
 
 /** Whether Vivid may use this computer now. */
 export const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)
@@ -27,6 +31,7 @@ const withAccess = (device: Device, access: DeviceAccess): Device => ({
 export const allowing =
   (id: DeviceId, at: number) =>
   (current: DeviceList): DeviceList => ({
+    asking: current.asking.filter((each) => each !== id),
     devices: current.devices.map((device) => {
       if (device.id === id) {
         return withAccess(device, DeviceAccess.cases.Allowed.make({ since: at }))
@@ -41,6 +46,7 @@ export const allowing =
 export const stopping =
   (id: DeviceId, at: number) =>
   (current: DeviceList): DeviceList => ({
+    asking: current.asking.filter((each) => each !== id),
     devices: current.devices.map((device) =>
       device.id === id
         ? withAccess(device, DeviceAccess.cases.Revoked.make({ since: at }))
@@ -55,8 +61,10 @@ export interface DeviceAsked {
 }
 
 /**
- * The computer Vivid asks this Person about where they already are, over the composer: one whose
- * desktop app is open and listening and which nobody has answered for yet (`Pending`).
+ * The computer Vivid asks this Person about where they already are, over the composer: one that
+ * nobody has answered for yet (`Pending`) and whose desktop app is open and asking to be allowed
+ * now (`DeviceListResponse.asking`, which the server keeps from the app enrolling). A row left by
+ * an app that was closed or removed is not asked about.
  *
  * It is asked only while no allowed computer is listening: with one already in use there is
  * nothing Vivid is waiting on, and a second app signed in somewhere is not a reason to interrupt.
@@ -68,11 +76,14 @@ export interface DeviceAsked {
  * computer sat "Waiting for you to allow it" without saying so anywhere the Person looks. The
  * owner: "why is it waitong forme to allow it? and why is this so hidden".
  */
-export const deviceAsked = (devices: ReadonlyArray<Device>): Option.Option<DeviceAsked> => {
+export const deviceAsked = (list: DeviceList): Option.Option<DeviceAsked> => {
+  const { devices, asking } = list
   if (devices.some((device) => allowed(device) && connected(device))) return Option.none()
   return Option.map(
     Option.fromUndefinedOr(
-      devices.find((device) => DeviceAccess.guards.Pending(device.access) && connected(device)),
+      devices.find(
+        (device) => DeviceAccess.guards.Pending(device.access) && asking.includes(device.id),
+      ),
     ),
     (device) => ({ device, instead: Option.fromUndefinedOr(devices.find(allowed)) }),
   )

@@ -45,6 +45,7 @@ import {
   ThreadId,
   Workspace,
   type Device,
+  DEVICE_ASKING_MILLIS,
   DeviceListResponse,
   DeviceRequest,
 } from '@vivid/contracts'
@@ -509,7 +510,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(ada)
         expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(ada, 'Laptop')
-        expect((yield* nextValue(watch)).devices).toMatchObject([
+        const enrolledNotice = yield* nextValue(watch)
+        expect(enrolledNotice.devices).toMatchObject([
           {
             id: device.id,
             name: 'Laptop',
@@ -517,6 +519,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             presence: DevicePresence.cases.Offline.make({}),
           },
         ])
+        // Its app enrolled just now and it is waiting: it is asking to be allowed.
+        expect(enrolledNotice.asking).toEqual([device.id])
         // Each nextValue advances the debounce clock by 20 ms; access dates precede that advance.
         const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
         const allowedNotice = yield* nextValue(watch)
@@ -529,6 +533,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           },
         ])
         expect(allowedNotice.devices).toEqual([allowed.device])
+        expect(allowedNotice.asking).toEqual([])
         const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
         const live = yield* nextValue(watch)
         expect(live.devices).toMatchObject([
@@ -541,6 +546,26 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         ])
         expect(live.devices).toEqual([revoked.device])
         expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(live)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('a waiting computer asks only while its app keeps enrolling', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        const asking = computerHandlers.ListDevices().pipe(
+          as(ada),
+          Effect.map((list) => list.asking),
+        )
+        expect(yield* asking).toEqual([device.id])
+        yield* TestClock.adjust(DEVICE_ASKING_MILLIS - 1)
+        expect(yield* asking).toEqual([device.id])
+        // The app was closed: a minute without enrolling and it is no longer asked about.
+        yield* TestClock.adjust(1)
+        expect(yield* asking).toEqual([])
+        // The same app enrolling again is asking again.
+        yield* computerHandlers.EnrolDevice({ installation, name: 'Laptop' }).pipe(as(ada))
+        expect(yield* asking).toEqual([device.id])
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 

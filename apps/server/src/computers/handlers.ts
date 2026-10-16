@@ -1,6 +1,8 @@
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  DEVICE_ASKING_MILLIS,
+  DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
   DeviceListResponse,
@@ -44,7 +46,9 @@ const load = Effect.fn('Computer.load')(function* (actor: Actor) {
  * requests can be routed to the replica holding the socket (device.ts#DeviceRegistry).
  */
 const loadDevices = Effect.fn('Computer.loadDevices')(function* (actor: Pick<Actor, 'person'>) {
-  return DeviceListResponse.make({ devices: yield* (yield* DeviceRegistry).list(actor.person.id) })
+  const registry = yield* DeviceRegistry
+  const devices = yield* registry.list(actor.person.id)
+  return DeviceListResponse.make({ devices, asking: yield* registry.asking(devices) })
 })
 
 /** The calling Person's computers, wrapped for the wire. */
@@ -85,10 +89,22 @@ export const computerHandlers = {
     const auth = yield* requireActor()
     return yield* computerInventory(auth.person.id)
   }),
+  /**
+   * A waiting computer's app enrolling is it asking to be allowed (`DeviceListResponse.asking`),
+   * which lasts `DEVICE_ASKING_MILLIS`. Nothing else changes when that runs out, so the lists are
+   * told once more just after it: an app that was closed stops being asked about everywhere. An
+   * open app enrols again before then, and the extra word only repeats what the list says.
+   */
   EnrolDevice: Effect.fn('Rpc.EnrolDevice')(function* (request: EnrolDeviceRequest) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).enrol(auth.person.id, request)
-    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
+    const changes = yield* Changes
+    const topics = [Topic.person(auth.person.id)]
+    yield* changes.publish(topics)
+    if (DeviceAccess.guards.Pending(device.access))
+      yield* Effect.forkDetach(
+        Effect.sleep(DEVICE_ASKING_MILLIS + 1_000).pipe(Effect.andThen(changes.publish(topics))),
+      )
     return one(device)
   }),
   /** Installation and Run ownership are checked by the registry before the shared Stop path. */

@@ -16,28 +16,32 @@ const device = (n: number, access: DeviceAccess, presence: DevicePresence): Devi
   presence,
 })
 
-const askedName = (devices: ReadonlyArray<Device>) =>
-  Option.map(deviceAsked(devices), (asked) => asked.device.name)
+const askedName = (devices: ReadonlyArray<Device>, asking: ReadonlyArray<number>) =>
+  Option.map(
+    deviceAsked({ devices, asking: asking.map((n) => devices[n - 1].id) }),
+    (asked) => asked.device.name,
+  )
 
 describe('which computer is asked about over the composer', () => {
-  it('asks about a waiting computer whose desktop app is open', () => {
-    expect(askedName([device(1, pending, listening)])).toEqual(Option.some('Computer 1'))
+  it('asks about a waiting computer whose desktop app is asking now', () => {
+    expect(askedName([device(1, pending, offline)], [1])).toEqual(Option.some('Computer 1'))
   })
 
-  it('does not ask about a waiting computer whose app is closed, or one already answered no', () => {
-    expect(askedName([device(1, pending, offline), device(2, revoked, listening)])).toEqual(
+  it('does not ask about a row whose app is not asking, or one already answered no', () => {
+    expect(askedName([device(1, pending, offline), device(2, revoked, offline)], [2])).toEqual(
       Option.none(),
     )
   })
 
   it('does not ask while an allowed computer is listening', () => {
-    expect(askedName([device(1, allowedAccess, listening), device(2, pending, listening)])).toEqual(
-      Option.none(),
-    )
+    expect(
+      askedName([device(1, allowedAccess, listening), device(2, pending, offline)], [2]),
+    ).toEqual(Option.none())
   })
 
   it('asks when the allowed computer is offline, and says it would stop being used', () => {
-    const asked = deviceAsked([device(1, allowedAccess, offline), device(2, pending, listening)])
+    const devices = [device(1, allowedAccess, offline), device(2, pending, offline)]
+    const asked = deviceAsked({ devices, asking: [devices[1].id] })
     expect(Option.map(asked, (each) => each.device.name)).toEqual(Option.some('Computer 2'))
     const answers = deviceAnswers(Option.flatMap(asked, (each) => each.instead))
     expect(answers.map((each) => [each.label, each.detail])).toEqual([
@@ -55,8 +59,10 @@ describe('deciding about a computer, shown before the server answers', () => {
   it('allows the one chosen and stops allowing the one that was', () => {
     const list = {
       devices: [computer(1, allowedSince(1)), computer(2, pending), computer(3, revokedSince(1))],
+      asking: [computer(2, pending).id],
     }
     expect(allowing(computer(2, pending).id, 9)(list)).toEqual({
+      asking: [],
       devices: [
         computer(1, revokedSince(9)),
         computer(2, allowedSince(9)),
@@ -67,8 +73,9 @@ describe('deciding about a computer, shown before the server answers', () => {
   })
 
   it('stops allowing one computer and leaves the rest', () => {
-    const list = { devices: [computer(1, allowedSince(1)), computer(2, pending)] }
+    const list = { devices: [computer(1, allowedSince(1)), computer(2, pending)], asking: [] }
     expect(stopping(computer(1, pending).id, 9)(list)).toEqual({
+      asking: [],
       devices: [computer(1, revokedSince(9)), computer(2, pending)],
     })
   })

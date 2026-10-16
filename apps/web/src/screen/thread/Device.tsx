@@ -37,7 +37,7 @@ import { Attached, Head, Panel, Row, SURFACE, digits, steer, type Reach } from '
  */
 export function DeviceAsk({ free }: { free: boolean }) {
   const devices = useLiveValue(live.devices)
-  const up = free ? Option.flatMap(devices, (list) => deviceAsked(list.devices)) : Option.none()
+  const up = free ? Option.flatMap(devices, deviceAsked) : Option.none()
   const [held, setHeld] = useState<Option.Option<Asked>>(Option.none())
   if (Option.isNone(held) && Option.isSome(up)) setHeld(up)
   if (Option.isNone(held)) return null
