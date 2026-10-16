@@ -1,6 +1,6 @@
 import type { Project, ProjectId } from '@vivid/contracts'
 import { projects } from '@vivid/state'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { commit } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { NameSheet } from '../../ui/Sheet'
@@ -31,18 +31,20 @@ export function CreateProject({
       action="Create project"
       maxLength={80}
       onClose={onClose}
-      onSave={async (name) => {
-        const result = await data.change((client) =>
-          client.CreateProject({ name, parentProjectId: inside }),
-        )
-        if (Result.isFailure(result)) {
-          return Option.some('Unable to create the project. Check your connection and try again.')
-        }
-        commit()
-        data.live.projects.expect(projects.confirmed(result.success))(true)
-        onMade(result.success)
-        return Option.none()
-      }}
+      onSave={(name) =>
+        Effect.gen(function* () {
+          const result = yield* data.changing((client) =>
+            client.CreateProject({ name, parentProjectId: inside }),
+          )
+          if (Result.isFailure(result)) {
+            return Option.some('Unable to create the project. Check your connection and try again.')
+          }
+          commit()
+          data.live.projects.expect(projects.confirmed(result.success))(true)
+          onMade(result.success)
+          return Option.none()
+        })
+      }
     />
   )
 }

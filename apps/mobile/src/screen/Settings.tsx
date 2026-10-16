@@ -9,7 +9,7 @@ import {
   mayChangeAppearance,
 } from '@vivid/contracts'
 import { channelWords } from '@vivid/state'
-import { Data, Option } from 'effect'
+import { Data, Effect, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView, Switch, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
@@ -36,6 +36,7 @@ import { Rules } from './settings/Rules'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
 import { useFlow } from './integration/flow'
+import { start } from '../data/app'
 
 const THEMES = [
   { value: 'system', label: 'System' },
@@ -330,7 +331,7 @@ function Setting({
  * settings this screen was drawn with, for the same reason.
  */
 const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
-  data.change(
+  data.changing(
     (client) => client.PatchSettings(edit),
     () =>
       data.live.settings.expect(
@@ -356,8 +357,12 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
   const { colors: c } = useTheme()
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function save(edit: PatchSettingsRequest) {
-    setRefused(refusalOf(await saveSettings(data, edit)))
+  function save(edit: PatchSettingsRequest) {
+    return start(
+      Effect.gen(function* () {
+        setRefused(refusalOf(yield* saveSettings(data, edit)))
+      }),
+    )
   }
 
   return (
@@ -421,8 +426,8 @@ function Zone({ onClose }: { onClose: () => void }) {
       action="Save"
       maxLength={64}
       onClose={onClose}
-      onSave={async (timezone) =>
-        refusalOf(await saveSettings(data, new PatchSettingsRequest({ timezone })))
+      onSave={(timezone) =>
+        saveSettings(data, new PatchSettingsRequest({ timezone })).pipe(Effect.map(refusalOf))
       }
     />
   )

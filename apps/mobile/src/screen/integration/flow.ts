@@ -1,7 +1,7 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { AccountName, Connection, ConnectionId, Service } from '@vivid/contracts'
 import { connecting } from '@vivid/state'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { createContext, useContext, useState } from 'react'
 import {
   refusalOf,
@@ -15,6 +15,7 @@ import { commit, warn } from '../../data/haptics'
 import { refusalSentence } from '../../data/integration'
 import { useLiveData } from '../../data/live'
 import { confirmDestructive } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /**
  * Gives an account the Person's own name for it, or takes that name away with none. It answers
@@ -23,17 +24,21 @@ import { confirmDestructive } from '../../ui/ui'
  */
 const renameWith =
   (data: ReturnType<typeof useLiveData>) =>
-  async (
+  (
     connection: Connection,
     name: Option.Option<AccountName>,
-  ): Promise<Option.Option<string>> => {
-    const result = await data.change((client) =>
-      client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
-    )
-    return Result.isFailure(result)
-      ? Option.some('That name was not saved. Try again.')
-      : Option.none()
-  }
+  ): Effect.Effect<Option.Option<string>> =>
+    data
+      .changing((client) =>
+        client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
+      )
+      .pipe(
+        Effect.map((result) =>
+          Result.isFailure(result)
+            ? Option.some('That name was not saved. Try again.')
+            : Option.none(),
+        ),
+      )
 
 /**
  * Everything the phone app does to an Integration: start one, pick one up where it stopped, name
@@ -71,16 +76,24 @@ export function useFlowHeld() {
   }
 
   /** Removes an Integration once the Person has said yes; a refusal is said on the page. */
-  async function remove(connection: Connection) {
-    warn()
-    setUnremoved(Option.none())
-    // What an attempt left said of this account ("Connected") is no longer true; the live list
-    // is what says how its row stands now. Said before the server is asked, not after.
-    data.connecting.forget(connection.id)
-    const result = await data.change((client) => client.RemoveConnection({ id: connection.id }))
-    if (Result.isFailure(result)) {
-      setUnremoved(Option.some(`${connection.serviceName} could not be disconnected. Try again.`))
-    }
+  function remove(connection: Connection) {
+    return start(
+      Effect.gen(function* () {
+        warn()
+        setUnremoved(Option.none())
+        // What an attempt left said of this account ("Connected") is no longer true; the live list
+        // is what says how its row stands now. Said before the server is asked, not after.
+        data.connecting.forget(connection.id)
+        const result = yield* data.changing((client) =>
+          client.RemoveConnection({ id: connection.id }),
+        )
+        if (Result.isFailure(result)) {
+          setUnremoved(
+            Option.some(`${connection.serviceName} could not be disconnected. Try again.`),
+          )
+        }
+      }),
+    )
   }
 
   return {

@@ -4,6 +4,11 @@ import { Effect, Fiber } from 'effect'
  * The mobile application's Effect runtime boundary: the one place a described program is started
  * and becomes a Promise a screen can await. The programs handed here carry their failures in
  * their value (`Result`), so the Promise only rejects for a defect.
+ *
+ * A press or a submit hands its whole flow here, once (`act` on the web). The program begins in
+ * the turn it is started in (`Effect.runPromise` forks and evaluates the fiber at once, effect
+ * 4.0.2 `internal/effect.ts` `runForkWith`), so what it does before its first wait happens during
+ * the press, as it did when these flows were async functions.
  */
 export const start = <Value>(program: Effect.Effect<Value>) => Effect.runPromise(program)
 

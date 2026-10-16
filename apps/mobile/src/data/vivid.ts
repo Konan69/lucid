@@ -43,10 +43,11 @@ export const facePaintOf = (look: Look, colors: Colors): FacePaint =>
 
 /**
  * Saves a new appearance and shows it at once: the expectation renames and recolours Vivid on
- * every screen before the server has answered, and is taken back if the server refuses.
+ * every screen before the server has answered, and is taken back if the server refuses. Described
+ * and not yet started.
  */
 export const saveAppearance = (data: LiveData, next: Appearance) =>
-  data.change(
+  data.changing(
     (client) => client.SetAppearance(next),
     () => data.live.appearance.expect(() => next),
   )

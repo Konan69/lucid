@@ -1,5 +1,5 @@
 import { ThreadAudience, type Thread } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { Users } from 'lucide-react-native'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -12,6 +12,7 @@ import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
 import { Faces } from '../../ui/Avatar'
 import { confirmDestructive, Dot, GUTTER, Label, radius } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /** Who else is in a Thread: faces for named people, a mark for the whole Company. */
 function Audience({ thread }: { thread: Thread }) {
@@ -134,10 +135,12 @@ export function ThreadRow({
   const [retitling, setRetitling] = useState(false)
 
   /** Follows a quick action to its end and tells the list what came of it. */
-  const follow = async (made: Promise<Result.Result<unknown, unknown>>, words: string) => {
-    const result = await made
-    onRefused(Result.isFailure(result) ? Option.some(words) : Option.none())
-  }
+  const follow = (made: Effect.Effect<Result.Result<unknown, unknown>>, words: string) =>
+    start(
+      Effect.map(made, (result) =>
+        onRefused(Result.isFailure(result) ? Option.some(words) : Option.none()),
+      ),
+    )
 
   const shelve = () => {
     commit()
@@ -155,9 +158,11 @@ export function ThreadRow({
     if (retitling) return
     commit()
     setRetitling(true)
-    const settle = () => setRetitling(false)
-    const asked = retitleThread(data, thread.id)
-    void asked.then(settle, settle)
+    // The title is drawn plainly again however the asking ends, and before the list hears what
+    // came of it, as when both waited on one Promise.
+    const asked = retitleThread(data, thread.id).pipe(
+      Effect.ensuring(Effect.sync(() => setRetitling(false))),
+    )
     void follow(asked, 'Vivid could not think of a better title just now.')
   }
   const remove = () =>

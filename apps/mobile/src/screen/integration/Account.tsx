@@ -7,7 +7,7 @@ import {
   type Connection,
 } from '@vivid/contracts'
 import { asksName, nameTaken, typedAccountName, whichAccount } from '@vivid/state'
-import { Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { useState } from 'react'
 import { Plus } from 'lucide-react-native'
 import { commit } from '../../data/haptics'
@@ -17,6 +17,7 @@ import { FittedSheet } from '../../ui/Sheet'
 import { Button, Field, Label, Labelled, Notice, Skeleton } from '../../ui/ui'
 import type { Routes } from '../../workspace'
 import { useFlow } from './flow'
+import { start } from '../../data/app'
 
 /** What a form says when the name typed is one another account on the service already has. */
 const TAKEN = 'Another account here is already called that. Choose a different name.'
@@ -132,7 +133,7 @@ function Rename({
   connection: Connection
   /** The other accounts on its service: a name one of them has cannot be given to this one. */
   others: ReadonlyArray<Connection>
-  onRename: (name: Option.Option<AccountName>) => Promise<Option.Option<string>>
+  onRename: (name: Option.Option<AccountName>) => Effect.Effect<Option.Option<string>>
 }) {
   const current = Option.fromNullOr(connection.name)
   const [written, setWritten] = useState(Option.getOrElse(current, () => ''))
@@ -143,15 +144,19 @@ function Rename({
   // Said under the field while it is typed, so the server is never asked for a name it refuses.
   const taken = nameTaken(others, name)
 
-  async function save() {
-    if (!changed || taken || busy) return
-    // Felt as the Person commits, not when the answer comes back.
-    commit()
-    setBusy(true)
-    setRefused(Option.none())
-    const refusal = await onRename(name)
-    setBusy(false)
-    setRefused(refusal)
+  function save() {
+    return start(
+      Effect.gen(function* () {
+        if (!changed || taken || busy) return
+        // Felt as the Person commits, not when the answer comes back.
+        commit()
+        setBusy(true)
+        setRefused(Option.none())
+        const refusal = yield* onRename(name)
+        setBusy(false)
+        setRefused(refusal)
+      }),
+    )
   }
 
   return (

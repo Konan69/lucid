@@ -42,9 +42,10 @@ export const UNDELIVERED =
   'That message did not reach Vivid. Check your connection and send it again.'
 
 /**
- * Delivers one message into a Thread. The gateway turns it into an attributed message when the
- * Thread is shared, so the same call serves a private Thread and a shared one. It answers as
- * soon as the server has admitted the message, not when Vivid has replied.
+ * Delivers one message into a Thread, described and not yet started. The gateway turns it into an
+ * attributed message when the Thread is shared, so the same call serves a private Thread and a
+ * shared one. It answers as soon as the server has admitted the message, not when Vivid has
+ * replied.
  *
  * `key` names the delivery: sending again with the same key after a lost answer converges on the
  * first delivery instead of saying the same thing twice.
@@ -53,7 +54,7 @@ export const say = (
   data: LiveData,
   delivery: { readonly id: ThreadId; readonly body: string; readonly key: string },
 ) =>
-  data.run(
+  data.running(
     Effect.tryPromise({
       try: (signal) =>
         conversation(data.session, delivery.id).send({
@@ -84,7 +85,7 @@ const createThread = (
   data: LiveData,
   thread: { readonly id: ThreadId; readonly message: string; readonly projectId: ProjectId | null },
 ) =>
-  data.change((client) =>
+  data.changing((client) =>
     client.CreateThread({
       id: thread.id,
       title: titleFromMessage(thread.message),
@@ -100,19 +101,19 @@ const createThread = (
  * and the message sent once that is confirmed. The first screen does the same two steps, but
  * shows the Thread while they run (`firstWay`).
  */
-export async function startThread(
+export const startThread = Effect.fn('Threads.start')(function* (
   data: LiveData,
   start: { readonly message: string; readonly projectId: ProjectId | null },
-): Promise<Start> {
+) {
   const id = ThreadId.make(randomUUID())
-  const created = await createThread(data, { id, ...start })
+  const created = yield* createThread(data, { id, ...start })
   if (Result.isFailure(created)) return Start.NotCreated({ message: created.failure.message })
   // The Thread's id is also the delivery's name: a first message is said at most once.
-  const said = await say(data, { id, body: start.message, key: firstKey(id) })
+  const said = yield* say(data, { id, body: start.message, key: firstKey(id) })
   return Result.isFailure(said)
     ? Start.NotSaid({ id, message: said.failure.message })
     : Start.Started({ id })
-}
+})
 
 /**
  * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
@@ -125,8 +126,11 @@ export async function startThread(
  */
 export const firstWay = (data: LiveData): Way => ({
   make: (id, start) =>
-    createThread(data, { id, message: start.words, projectId: start.projectId }).then(refusalOf),
-  say: (id, start) => say(data, { id, body: start.words, key: firstKey(id) }).then(refusalOf),
+    createThread(data, { id, message: start.words, projectId: start.projectId }).pipe(
+      Effect.map(refusalOf),
+    ),
+  say: (id, start) =>
+    say(data, { id, body: start.words, key: firstKey(id) }).pipe(Effect.map(refusalOf)),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
   },
@@ -135,7 +139,10 @@ export const firstWay = (data: LiveData): Way => ({
   },
 })
 
-/** Changes a Thread's title or whether it is archived, shown before the server has confirmed it. */
+/**
+ * Changes a Thread's title or whether it is archived, shown before the server has confirmed it.
+ * Described and not yet started, as every Thread change here is: a press starts it (`start`).
+ */
 export const patchThread = (
   data: LiveData,
   id: ThreadId,
@@ -145,7 +152,7 @@ export const patchThread = (
     readonly projectId?: ProjectId | null
   },
 ) =>
-  data.change(
+  data.changing(
     (client) => client.PatchThread({ id, patch }),
     () =>
       data.live.threads.expect((current) => ({
@@ -160,11 +167,12 @@ export const patchThread = (
  * not known until Vivid has thought of it; the server publishes the Thread when it has, and the
  * list shows it then.
  */
-export const retitleThread = (data: LiveData, id: ThreadId) => data.run(regenerateThreadTitle(id))
+export const retitleThread = (data: LiveData, id: ThreadId) =>
+  data.running(regenerateThreadTitle(id))
 
 /** Deletes a Thread for everyone who can see it. It leaves the list at once. */
 export const deleteThread = (data: LiveData, id: ThreadId) =>
-  data.change(
+  data.changing(
     (client) => client.DeleteThread({ id }),
     () =>
       data.live.threads.expect((current) => ({

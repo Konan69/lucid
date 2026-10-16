@@ -4,7 +4,7 @@ import {
   type MemoryId,
   type MemoryListResponse,
 } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
+import { Data, Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import { warn } from '../../data/haptics'
@@ -23,6 +23,7 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /** The most a memory's sentence can hold, as `CorrectMemoryRequest` in the contract checks it. */
 const SENTENCE_LIMIT = 1000
@@ -204,27 +205,35 @@ function Kept({
   const content = draft.trim()
   const asking = Saving.$is('Asking')(saving)
 
-  async function correct() {
-    setSaving(Saving.Asking())
-    const saved = await data.change(
-      (client) => client.CorrectMemory({ id: memory.id, content }),
-      () => data.live.memory.expect(corrected(memory.id, content)),
+  function correct() {
+    return start(
+      Effect.gen(function* () {
+        setSaving(Saving.Asking())
+        const saved = yield* data.changing(
+          (client) => client.CorrectMemory({ id: memory.id, content }),
+          () => data.live.memory.expect(corrected(memory.id, content)),
+        )
+        if (Result.isSuccess(saved)) onClose()
+        else setSaving(Saving.Refused())
+      }),
     )
-    if (Result.isSuccess(saved)) onClose()
-    else setSaving(Saving.Refused())
   }
 
-  async function forget() {
-    warn()
-    onClose()
-    const result = await data.change(
-      (client) => client.ForgetMemory({ id: memory.id }),
-      () => data.live.memory.expect(forgotten(memory.id)),
-    )
-    onRefused(
-      Result.isFailure(result)
-        ? Option.some('That could not be forgotten, so it is back in the list.')
-        : Option.none(),
+  function forget() {
+    return start(
+      Effect.gen(function* () {
+        warn()
+        onClose()
+        const result = yield* data.changing(
+          (client) => client.ForgetMemory({ id: memory.id }),
+          () => data.live.memory.expect(forgotten(memory.id)),
+        )
+        onRefused(
+          Result.isFailure(result)
+            ? Option.some('That could not be forgotten, so it is back in the list.')
+            : Option.none(),
+        )
+      }),
     )
   }
 

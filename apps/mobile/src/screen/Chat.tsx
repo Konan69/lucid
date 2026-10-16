@@ -27,7 +27,7 @@ import {
   workspaceKey,
   type ApprovalUp,
 } from '@vivid/state'
-import { Option, Result, type Array as Arr } from 'effect'
+import { type Array as Arr, Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
@@ -83,6 +83,7 @@ import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
+import { start } from '../data/app'
 
 /**
  * One Thread: the conversation with Vivid, and everything live around it. It is drawn in the
@@ -282,10 +283,14 @@ function useStop(id: ThreadId, working: boolean) {
   const [refused, setRefused] = useState(false)
   if (refused && !working) setRefused(false)
 
-  async function stop() {
-    setRefused(false)
-    const result = await data.change((sdk) => sdk.StopThread({ id }))
-    setRefused(Result.isFailure(result))
+  function stop() {
+    return start(
+      Effect.gen(function* () {
+        setRefused(false)
+        const result = yield* data.changing((sdk) => sdk.StopThread({ id }))
+        setRefused(Result.isFailure(result))
+      }),
+    )
   }
 
   return { refused, stop }
@@ -323,7 +328,7 @@ function useSend(
    */
   const deliver = ({ words, key }: Delivery): Promise<Option.Option<string>> =>
     shared
-      ? say(data, { id, body: words, key }).then(refusalOf)
+      ? start(say(data, { id, body: words, key })).then(refusalOf)
       : agent.sendMessage(words, { idempotencyKey: key }).then(
           () => Option.none(),
           () => Option.some(UNDELIVERED),
@@ -408,19 +413,23 @@ function useAsking(up: Option.Option<InputRequest>) {
   const release = useCallback(() => setHeld(Option.none()), [])
 
   /** Sends a request's answers, one for each of its questions in their order. */
-  async function answer(id: InputRequestId, answers: Arr.NonEmptyReadonlyArray<InputAnswer>) {
-    if (!model.mayAnswer(flying.current, id)) return
-    flying.current.add(id)
-    attempts.current += 1
-    const tried: model.Attempt = { attempt: attempts.current, id }
-    commit()
-    setRefused(Option.none())
-    setPending(Option.some(tried))
-    const result = await data.change((client) => client.AnswerInput({ id, answers }))
-    flying.current.delete(id)
-    if (Result.isSuccess(result)) return
-    setPending((current) => model.afterFailure(current, tried.attempt))
-    setRefused(Option.some(model.refusedOf(tried, result.failure)))
+  function answer(id: InputRequestId, answers: Arr.NonEmptyReadonlyArray<InputAnswer>) {
+    return start(
+      Effect.gen(function* () {
+        if (!model.mayAnswer(flying.current, id)) return
+        flying.current.add(id)
+        attempts.current += 1
+        const tried: model.Attempt = { attempt: attempts.current, id }
+        commit()
+        setRefused(Option.none())
+        setPending(Option.some(tried))
+        const result = yield* data.changing((client) => client.AnswerInput({ id, answers }))
+        flying.current.delete(id)
+        if (Result.isSuccess(result)) return
+        setPending((current) => model.afterFailure(current, tried.attempt))
+        setRefused(Option.some(model.refusedOf(tried, result.failure)))
+      }),
+    )
   }
 
   /** What is kept against one request, when it is about that request. */
@@ -495,19 +504,23 @@ function useAllowing(up: Option.Option<ApprovalUp>) {
   const release = useCallback(() => setHeld(Option.none()), [])
 
   /** Sends one decision about one Approval, as it was shown. */
-  async function decide(approval: Approval, decision: ApprovalDecision) {
-    if (flying.current.has(approval.id)) return
-    flying.current.add(approval.id)
-    attempts.current += 1
-    const attempt = attempts.current
-    if (ApprovalDecision.guards.Deny(decision)) warn()
-    else confirm()
-    setDeciding(Deciding.Flying({ attempt, id: approval.id }))
-    const result = await data.change((client) =>
-      client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
+  function decide(approval: Approval, decision: ApprovalDecision) {
+    return start(
+      Effect.gen(function* () {
+        if (flying.current.has(approval.id)) return
+        flying.current.add(approval.id)
+        attempts.current += 1
+        const attempt = attempts.current
+        if (ApprovalDecision.guards.Deny(decision)) warn()
+        else confirm()
+        setDeciding(Deciding.Flying({ attempt, id: approval.id }))
+        const result = yield* data.changing((client) =>
+          client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
+        )
+        flying.current.delete(approval.id)
+        if (Result.isFailure(result)) setDeciding((now) => refusedAfter(now, attempt))
+      }),
     )
-    flying.current.delete(approval.id)
-    if (Result.isFailure(result)) setDeciding((now) => refusedAfter(now, attempt))
   }
 
   return {
@@ -757,7 +770,7 @@ function Conversation({
     lost,
     unsent: sending.unsent,
     cut: useCut(agent),
-    onFirst: () => void again(firstWay(data), front.firsts, id),
+    onFirst: () => void start(again(firstWay(data), front.firsts, id)),
     onSay: (words) => void speak(words),
     onOpen: () => agent.refresh(),
   })
@@ -779,7 +792,7 @@ function Conversation({
             page={page}
             working={working}
             thinking={thinking}
-            rising={Option.map(first, ({ start }) => ({ id: firstKey(id), at: start.at }))}
+            rising={Option.map(first, (words) => ({ id: firstKey(id), at: words.start.at }))}
             onListed={() => setListed(true)}
             ended={ended}
             trouble={trouble}

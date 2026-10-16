@@ -1,6 +1,6 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import type { ProjectId, ThreadId } from '@vivid/contracts'
-import { Data, Option } from 'effect'
+import { Data, Effect, Option } from 'effect'
 
 /**
  * A Thread's first words, from the moment they leave the composer on the first screen until they
@@ -88,8 +88,8 @@ export type Firsts = ReturnType<typeof makeFirsts>
  * `make` and `say` answer with why they did not go through, when they did not.
  */
 export interface Way {
-  readonly make: (id: ThreadId, start: Start) => Promise<Option.Option<string>>
-  readonly say: (id: ThreadId, start: Start) => Promise<Option.Option<string>>
+  readonly make: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
+  readonly say: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
   /** The words did not arrive: they are the Person's again. */
   readonly returned: (start: Start) => void
   /** The words are with Vivid: nothing of them is left to send. */
@@ -102,12 +102,12 @@ export interface Way {
  * made twice, and the words go out under the Thread's own key (`firstKey`), so the server takes a
  * second attempt as the same delivery and never as a second message.
  */
-export async function deliver(
+export const deliver = Effect.fn('First.deliver')(function* (
   way: Way,
   firsts: Firsts,
   id: ThreadId,
   attempt: { readonly start: Start; readonly born: boolean },
-): Promise<void> {
+) {
   const { start } = attempt
   firsts.put(id, First.Sending({ start }))
   const unsent = (born: boolean) => (why: string) => {
@@ -115,23 +115,29 @@ export async function deliver(
     firsts.put(id, First.Unsent({ start, born, why }))
   }
   if (!attempt.born) {
-    const refused = await way.make(id, start)
-    if (Option.isSome(refused)) return unsent(false)(refused.value)
+    const refused = yield* way.make(id, start)
+    if (Option.isSome(refused)) {
+      unsent(false)(refused.value)
+      return
+    }
   }
-  const refused = await way.say(id, start)
-  if (Option.isSome(refused)) return unsent(true)(refused.value)
+  const refused = yield* way.say(id, start)
+  if (Option.isSome(refused)) {
+    unsent(true)(refused.value)
+    return
+  }
   way.taken(start)
   firsts.put(id, First.Said({ start }))
-}
+})
 
 /** Starts a Thread with its first words. `firsts` says how it goes. */
-export const begin = (way: Way, firsts: Firsts, id: ThreadId, start: Start): Promise<void> =>
+export const begin = (way: Way, firsts: Firsts, id: ThreadId, start: Start): Effect.Effect<void> =>
   deliver(way, firsts, id, { start, born: false })
 
 /** Sends first words that did not arrive again, from where they stopped. */
-export const again = (way: Way, firsts: Firsts, id: ThreadId): Promise<void> =>
+export const again = (way: Way, firsts: Firsts, id: ThreadId): Effect.Effect<void> =>
   Option.match(Option.filter(firsts.of(id), First.$is('Unsent')), {
-    onNone: () => Promise.resolve(),
+    onNone: () => Effect.void,
     onSome: (unsent) => deliver(way, firsts, id, unsent),
   })
 

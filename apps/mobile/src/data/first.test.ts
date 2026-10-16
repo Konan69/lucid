@@ -1,7 +1,7 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import { ThreadId } from '@vivid/contracts'
-import { Option } from 'effect'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@effect/vitest'
+import { Effect, Option } from 'effect'
 import {
   again,
   begin,
@@ -23,14 +23,16 @@ const start: Start = { words: 'Book the flight', projectId: null, at: 1000, plac
 const wayThat = (answers: { make: Option.Option<string>; say: Option.Option<string> }) => {
   const asked: Array<string> = []
   const way: Way = {
-    make: () => {
-      asked.push('make')
-      return Promise.resolve(answers.make)
-    },
-    say: () => {
-      asked.push('say')
-      return Promise.resolve(answers.say)
-    },
+    make: () =>
+      Effect.sync(() => {
+        asked.push('make')
+        return answers.make
+      }),
+    say: () =>
+      Effect.sync(() => {
+        asked.push('say')
+        return answers.say
+      }),
     returned: () => asked.push('returned'),
     taken: () => asked.push('taken'),
   }
@@ -50,48 +52,70 @@ const said = (
 })
 
 describe('a Thread started from the greeting', () => {
-  it('is on its way at once, and with Vivid once made and spoken in', async () => {
-    const firsts = makeFirsts()
-    const { way, asked } = wayThat({ make: Option.none(), say: Option.none() })
-    const sent = begin(way, firsts, id, start)
-    expect(firsts.of(id)).toEqual(Option.some(First.Sending({ start })))
-    await sent
-    expect(asked).toEqual(['make', 'say', 'taken'])
-    expect(firsts.of(id)).toEqual(Option.some(First.Said({ start })))
-  })
+  it.effect(
+    'is on its way before the server is asked, and with Vivid once made and spoken in',
+    () =>
+      Effect.gen(function* () {
+        const firsts = makeFirsts()
+        const { way, asked } = wayThat({ make: Option.none(), say: Option.none() })
+        const whenAsked: Array<Option.Option<First>> = []
+        const watched: Way = {
+          ...way,
+          make: (thread, words) =>
+            Effect.suspend(() => {
+              whenAsked.push(firsts.of(id))
+              return way.make(thread, words)
+            }),
+        }
+        yield* begin(watched, firsts, id, start)
+        expect(whenAsked).toEqual([Option.some(First.Sending({ start }))])
+        expect(asked).toEqual(['make', 'say', 'taken'])
+        expect(firsts.of(id)).toEqual(Option.some(First.Said({ start })))
+      }),
+  )
 
-  it('gives the words back when the Thread could not be made, and makes it on the next try', async () => {
-    const firsts = makeFirsts()
-    const refused = wayThat({ make: Option.some('Offline'), say: Option.none() })
-    await begin(refused.way, firsts, id, start)
-    expect(refused.asked).toEqual(['make', 'returned'])
-    expect(firsts.of(id)).toEqual(Option.some(First.Unsent({ start, born: false, why: 'Offline' })))
-    const open = wayThat({ make: Option.none(), say: Option.none() })
-    await again(open.way, firsts, id)
-    expect(open.asked).toEqual(['make', 'say', 'taken'])
-  })
+  it.effect(
+    'gives the words back when the Thread could not be made, and makes it on the next try',
+    () =>
+      Effect.gen(function* () {
+        const firsts = makeFirsts()
+        const refused = wayThat({ make: Option.some('Offline'), say: Option.none() })
+        yield* begin(refused.way, firsts, id, start)
+        expect(refused.asked).toEqual(['make', 'returned'])
+        expect(firsts.of(id)).toEqual(
+          Option.some(First.Unsent({ start, born: false, why: 'Offline' })),
+        )
+        const open = wayThat({ make: Option.none(), say: Option.none() })
+        yield* again(open.way, firsts, id)
+        expect(open.asked).toEqual(['make', 'say', 'taken'])
+      }),
+  )
 
-  it('never makes a second Thread when only the words did not arrive', async () => {
-    const firsts = makeFirsts()
-    const lost = wayThat({ make: Option.none(), say: Option.some('No answer') })
-    await begin(lost.way, firsts, id, start)
-    expect(firsts.of(id)).toEqual(
-      Option.some(First.Unsent({ start, born: true, why: 'No answer' })),
-    )
-    const open = wayThat({ make: Option.none(), say: Option.none() })
-    await again(open.way, firsts, id)
-    expect(open.asked).toEqual(['say', 'taken'])
-    expect(firsts.of(id)).toEqual(Option.some(First.Said({ start })))
-  })
+  it.effect('never makes a second Thread when only the words did not arrive', () =>
+    Effect.gen(function* () {
+      const firsts = makeFirsts()
+      const lost = wayThat({ make: Option.none(), say: Option.some('No answer') })
+      yield* begin(lost.way, firsts, id, start)
+      expect(firsts.of(id)).toEqual(
+        Option.some(First.Unsent({ start, born: true, why: 'No answer' })),
+      )
+      const open = wayThat({ make: Option.none(), say: Option.none() })
+      yield* again(open.way, firsts, id)
+      expect(open.asked).toEqual(['say', 'taken'])
+      expect(firsts.of(id)).toEqual(Option.some(First.Said({ start })))
+    }),
+  )
 
-  it('sends nothing again for words that are not in doubt', async () => {
-    const firsts = makeFirsts()
-    const { way, asked } = wayThat({ make: Option.none(), say: Option.none() })
-    await begin(way, firsts, id, start)
-    asked.length = 0
-    await again(way, firsts, id)
-    expect(asked).toEqual([])
-  })
+  it.effect('sends nothing again for words that are not in doubt', () =>
+    Effect.gen(function* () {
+      const firsts = makeFirsts()
+      const { way, asked } = wayThat({ make: Option.none(), say: Option.none() })
+      yield* begin(way, firsts, id, start)
+      asked.length = 0
+      yield* again(way, firsts, id)
+      expect(asked).toEqual([])
+    }),
+  )
 
   it('is asked about only once its first words are with Vivid', () => {
     expect(isSettled(Option.none())).toBe(true)

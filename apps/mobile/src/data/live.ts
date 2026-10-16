@@ -461,6 +461,10 @@ function makeLiveData(session: SignedIn) {
     },
     registry: engine.registry,
     live,
+    /** `run`, described and not yet started: the step a flow yields (`running` on the web). */
+    running: engine.run,
+    /** `change`, described and not yet started (`changing` on the web). */
+    changing: engine.change,
     /** Runs one program with the session's client, on the same socket the queries use. */
     run: <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
       start(engine.run(program)),
