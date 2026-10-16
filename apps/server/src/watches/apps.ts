@@ -143,13 +143,17 @@ export const makeWatchedApps = (
 ) => {
   const client = HttpClient.withScope(transport)
   /**
-   * The Actor's OWN Integration accounts. The Connection inventory also lists a Company's shared
-   * Connections, but a Watch runs on its account's credentials for this Person alone, so another
-   * member's account is never watchable here, even when they share it.
+   * The Actor's OWN Integration accounts, under the names the Integration list shows them by. The
+   * whole inventory is named first, a Company's shared Connections included, because each name's
+   * ordinal and suffix depend on all of it (`connections/store.ts` `list`, `connections/tools.ts`);
+   * naming only the Actor's rows would call their "Mail (2)" "Mail". Then another Member's
+   * accounts drop out: a Watch runs on its account's credentials for this Person alone.
    */
   const accounts = (actor: Actor) =>
     listRecords(actor).pipe(
-      Effect.map((rows) => namedAccounts(rows.filter((row) => row.personId === actor.person.id))),
+      Effect.map((rows) =>
+        namedAccounts(rows).filter((item) => item.row.personId === actor.person.id),
+      ),
       Effect.provideService(Database, database),
     )
 

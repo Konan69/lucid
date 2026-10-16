@@ -2,6 +2,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { Company, CompanyId, ConnectionId, ServiceId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Option, Redacted, Ref } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import type { Actor } from '../auth/access.ts'
@@ -199,6 +200,42 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         expect(yield* apps.accountsOf(ben)).toEqual(['Mail'])
         // Ada's refusal never asked Executor for Ben's app.
         expect(yield* Ref.get(asked)).toEqual([app])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('own accounts keep the names the Integration list gives them beside a Member’s', () =>
+      Effect.gen(function* () {
+        const shop = yield* company(yield* person(), yield* person())
+        const { first: ada, second: ben } = shop
+        const database = yield* Database
+        const shared = (id: ConnectionId) =>
+          database.run(
+            database.update(connections).set({ companyId: shop.id }).where(eq(connections.id, id)),
+          )
+        const bens = `app-${crypto.randomUUID()}`
+        const personal = `app-${crypto.randomUUID()}`
+        const companys = `app-${crypto.randomUUID()}`
+        // Oldest first, which is what fixes each name: Ben's shared Mail, then Ada's two.
+        yield* shared(yield* connect(ben, 'Mail', authorized(bens), 'ready'))
+        yield* TestClock.adjust('1 second')
+        yield* connect(ada, 'Mail', authorized(personal), 'ready')
+        yield* TestClock.adjust('1 second')
+        yield* shared(yield* connect(ada, 'Mail', authorized(companys), 'ready'))
+        const asked = yield* Ref.make<ReadonlyArray<string>>([])
+        const apps = makeWatchedApps(database, executor(asked), settings)
+
+        expect(yield* apps.accountsOf(ada)).toEqual(['Mail (2)', 'Mail (3)'])
+        expect(yield* apps.appOf(ada, 'Mail (2)')).toEqual({
+          account: 'Mail (2)',
+          appSlug: `slug-${personal}`,
+        })
+        expect(yield* apps.appOf(ada, 'mail (3)')).toEqual({
+          account: 'Mail (3)',
+          appSlug: `slug-${companys}`,
+        })
+        // "Mail" is Ben's, shown to Ada too, and not hers to watch.
+        expect((yield* Effect.flip(apps.appOf(ada, 'Mail')))._tag).toBe('WatchAccountUnknown')
+        expect(yield* Ref.get(asked)).toEqual([personal, companys])
       }).pipe(Effect.scoped),
     )
   })
