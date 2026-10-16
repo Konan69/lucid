@@ -9,6 +9,7 @@ import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
 import { Composer } from './thread/Composer'
+import { DeviceAsk } from './thread/Device'
 import { HeroButton } from './thread/Header'
 
 // The card around Vivid is the Thread's own and is fetched when it is first opened, as there.
@@ -120,6 +121,8 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
             </p>
           </div>
         </div>
+        {/* A computer waiting to be allowed is asked about where the Person starts. */}
+        <DeviceAsk free />
         <Composer
           place={placeOf(me)}
           placeholder={`Message ${name}`}

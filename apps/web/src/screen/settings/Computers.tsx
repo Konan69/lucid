@@ -1,14 +1,8 @@
 import type { Device } from '@vivid/contracts'
 import { Effect, Option, Result } from 'effect'
 import { Suspense, use, useState } from 'react'
-import {
-  allowed,
-  allowing,
-  nudgeThisComputer,
-  standing,
-  stopping,
-  thisComputer,
-} from '../../data/computers'
+import { allowed, allowing, stopping } from '@vivid/state'
+import { nudgeThisComputer, standing, thisComputer } from '../../data/computers'
 import { act } from '../../data/app'
 import { changing, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/button'

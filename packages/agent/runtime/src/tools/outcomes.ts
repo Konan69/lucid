@@ -105,7 +105,7 @@ export function browseOutcome(outcome: BrowseOutcome): ToolResult {
       output: {
         ok: false,
         message:
-          'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
+          'The Person has not allowed Vivid to use their computer. While its Vivid desktop app is open, they are asked over the message box: tell them to press Allow there, then try again.',
       },
     }),
     Busy: () => ({
