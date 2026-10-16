@@ -79,6 +79,12 @@ const KeptText = Schema.fromJsonString(
 )
 const readKept = Schema.decodeUnknownOption(KeptText)
 
+/** One kept place with each of its pages read on its own; a page that does not read is dropped. */
+const placeOfKept = (kept: typeof KeptPlace.Type): Place => ({
+  thread: kept.thread,
+  pages: Arr.getSomes(kept.pages.map((page) => pageOf(page))),
+})
+
 /**
  * Reads the file's text. Text in a shape this build does not know is nothing kept, but a page this
  * build no longer draws is only that page: it is dropped, and the Thread in front, the other
@@ -89,12 +95,7 @@ const readKept = Schema.decodeUnknownOption(KeptText)
  */
 export const decodePlaces = (text: string): Option.Option<Places> =>
   Option.map(readKept(text), (kept) =>
-    Record.map(kept, (workspaces) =>
-      Record.map(workspaces, (place): Place => ({
-        thread: place.thread,
-        pages: Arr.getSomes(place.pages.map((page) => pageOf(page))),
-      })),
-    ),
+    Record.map(kept, (workspaces) => Record.map(workspaces, placeOfKept)),
   )
 /** The file's text for what is kept. */
 export const encodePlaces = Schema.encodeOption(PlacesText)
