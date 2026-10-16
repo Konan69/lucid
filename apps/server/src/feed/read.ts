@@ -88,7 +88,9 @@ const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCard
  */
 const stillOpen = (now: number) =>
   or(
-    inArray(feedCards.state, ['new', 'seen']),
+    // A Thread without a card has a null state from the left join; it must read as not open,
+    // never as unknown, or `not(stillOpen)` would drop it from history too.
+    sql`coalesce(${feedCards.state} in ('new', 'seen'), false)`,
     exists(
       sql`(select 1 from ${runs} where ${runs.threadId} = ${threads.id} and ${runs.state} = 'working')`,
     ),
