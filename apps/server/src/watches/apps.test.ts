@@ -1,5 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { ConnectionId, ServiceId } from '@vivid/contracts'
+import { Company, CompanyId, ConnectionId, ServiceId, Workspace } from '@vivid/contracts'
+import { eq } from 'drizzle-orm'
 import { Clock, Effect, Option, Redacted, Ref } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
@@ -11,6 +12,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
 } from '../connections/executor.ts'
+import { companyTable, membershipTable } from '../companies/tables.ts'
 import { claimedApp, encodeReferences } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
@@ -54,9 +56,10 @@ const connect = Effect.fn('WatchAppsTest.connect')(function* (
 ) {
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
+  const id = ConnectionId.make(crypto.randomUUID())
   yield* database.run(
     database.insert(connections).values({
-      id: ConnectionId.make(crypto.randomUUID()),
+      id,
       service: references.service,
       serviceName,
       name: null,
@@ -73,6 +76,38 @@ const connect = Effect.fn('WatchAppsTest.connect')(function* (
       updatedAt: now,
     }),
   )
+  return id
+})
+
+/**
+ * A Company with these two People as Members, each as an Actor working in it. The Company is removed
+ * when the test ends; the cleanup is registered before the first write.
+ */
+const company = Effect.fn('WatchAppsTest.company')(function* (first: Actor, second: Actor) {
+  const database = yield* Database
+  const made = Company.make({
+    id: CompanyId.make(crypto.randomUUID()),
+    name: 'Watch Company',
+    slug: crypto.randomUUID(),
+  })
+  yield* Effect.addFinalizer(() =>
+    database
+      .run(database.delete(companyTable).where(eq(companyTable.id, made.id)))
+      .pipe(Effect.catch(() => Effect.sync(() => expect.fail('Company cleanup failed')))),
+  )
+  yield* database.run(database.insert(companyTable).values(made))
+  yield* database.run(
+    database.insert(membershipTable).values(
+      [first, second].map((member) => ({
+        id: crypto.randomUUID(),
+        companyId: made.id,
+        userId: member.person.id,
+        role: 'member',
+      })),
+    ),
+  )
+  const workspace = Workspace.cases.Company.make({ company: made, role: 'member' })
+  return { id: made.id, first: { ...first, workspace }, second: { ...second, workspace } }
 })
 
 /** A ready account on an app of its own, as every Connection since Executor beta.23 has. */
@@ -127,6 +162,29 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         expect(yield* Ref.get(asked)).toEqual([appA, appB])
         expect(yield* apps.accountsOf(ada)).toEqual(['Mail'])
         expect(yield* apps.accountsOf(ben)).toEqual(['Mail'])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a Company account another Member added is not this Person’s to watch', () =>
+      Effect.gen(function* () {
+        const shop = yield* company(yield* person(), yield* person())
+        const { first: ada, second: ben } = shop
+        const app = `app-${crypto.randomUUID()}`
+        // Ben's dedicated, ready account, shared with the Company, so its inventory lists it.
+        const id = yield* connect(ben, 'Mail', authorized(app), 'ready')
+        const database = yield* Database
+        yield* database.run(
+          database.update(connections).set({ companyId: shop.id }).where(eq(connections.id, id)),
+        )
+        const asked = yield* Ref.make<ReadonlyArray<string>>([])
+        const apps = makeWatchedApps(database, executor(asked), settings)
+
+        expect(yield* apps.appOf(ben, 'Mail')).toEqual({ account: 'Mail', appSlug: `slug-${app}` })
+        expect((yield* Effect.flip(apps.appOf(ada, 'Mail')))._tag).toBe('WatchAccountUnknown')
+        expect(yield* apps.accountsOf(ada)).toEqual([])
+        expect(yield* apps.accountsOf(ben)).toEqual(['Mail'])
+        // Ada's refusal never asked Executor for Ben's app.
+        expect(yield* Ref.get(asked)).toEqual([app])
       }).pipe(Effect.scoped),
     )
   })
