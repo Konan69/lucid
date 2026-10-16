@@ -167,8 +167,10 @@ A scoped background worker reconciles legacy rows using copy provenance and exac
 Boot, `/health`, Integration reads and tool discovery never wait for this pass. Each pass probes
 `/inventory` once before touching rows. An old, malformed or unreachable inventory leaves every
 row untouched; the decoder presents legacy rows as `MigrationPending`. After a compatible probe,
-per-row transient failures retry with backoff from five seconds to one minute. Unchanged outcomes
-are not rewritten. A missing, undeployed or unreachable per-row target has a persisted budget of
+per-row transient failures retry with backoff from five seconds to one minute. Identical JSON is
+not rewritten; counter-only bookkeeping preserves `updatedAt`, so it cannot invalidate a concurrent
+removal. Meaningful outcome changes advance that revision. A missing, undeployed or unreachable
+per-row target has a persisted budget of
 1,440 compatible unsuccessful attempts, roughly 24 hours at the worker's one-minute backoff cap.
 Only compatible attempts advance that counter; an outage after migration has started consumes
 none of it, and recovery cannot expire rows merely because wall-clock time passed. Permanent refusals retain the exact credential and copy identities for removal.
@@ -182,8 +184,9 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
 
 1. Announce a maintenance window and let admitted Runs settle. Routines need no operator pause
    or impersonation: Integration polling maps authorization loss to a durable pause and transient
-   reads to backoff (`routines/scheduler.ts`, `observeIntegrations`). Scheduled admission failures
-   are recorded on their Occurrences. Accept those failures during the mixed-version interval;
+   reads to backoff (`routines/scheduler.ts`, `observeIntegrations`). Scheduled work may fail
+   while Runtime is unavailable; inspect Routines/Occurrences after both services return. Accept
+   those failures during the mixed-version interval;
    some Integration-triggered Routines may need their Person to resume them after verification.
    Use Railway's [deployment Remove action](https://docs.railway.com/deployments/deployment-actions#remove)
    to stop Server and Runtime, then Executor, for the paired backups. Do not accept product writes
@@ -218,7 +221,10 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    Verify **both Server and Runtime** have active deployments from the merged main revision and
    passing health checks. Do not assume Alchemy recreated deployments removed for backup. If one
    is still removed, use Railway's Redeploy action for the recorded main deployment, then verify
-   its revision and health again.
+   its revision and health again. Runtime deliberately returns before step-5 verification;
+   Integration readiness and tool selection fail closed while legacy rows remain pending.
+   Scheduled work may fail during this interval. Verification checks Routine/Occurrence outcomes
+   after both services return; it does not assume admission can finish while Runtime is Removed.
 5. Check `Integration app reconciliation` log entries: each has `connectionId` and `result`
    (`Authorized`, `Public`, a pending authorization variant, `MigrationPending`, or
    `ReconnectRequired`). Check the read-only SQL below. Pending rows mean the upstream copy
@@ -269,6 +275,13 @@ services and the original Connection/profile behavior are verified, then resume 
 controls. A server-only, image-only or single-volume rollback is invalid. The old image
 cannot open the migrated volume; the old server cannot decode reconciled JSON. Writes since the
 backup pair are lost on restoration and must be accounted for before reopening service.
+
+A narrow duplicate-selection race remains during removal: two legacy Connections can reference
+one account, and a retirement clears its app claim before taking the reclamation lock. A migration
+pass starting in that gap can select the same copy before retirement deletes it. The resulting
+Connection has missing resources; its removal tolerates missing apps/accounts and finishes cleanup.
+This limitation does not permit selecting a different account. Avoid concurrent removal/reconciliation
+of duplicate legacy selections during cutover; inspect both rows if this occurs.
 
 ### Executor's trace exporter is off
 

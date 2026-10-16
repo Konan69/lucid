@@ -160,8 +160,9 @@ function timedOutcome(row: typeof storedRowSchema.Type, references: ExecutorRefe
 }
 
 /** All HTTP work finishes before this short transaction. A shared lock serializes app claims
- * with reclamation, while revision/predicate CAS refuses stale selections. Equal JSON does not
- * update the row, so a healthy retry cannot invalidate an unrelated resume or removal.
+ * with reclamation, while revision/predicate CAS refuses stale selections. Counter-only writes
+ * preserve the Connection revision, and the observed counter prevents stale passes from replacing
+ * newer bookkeeping. Equal JSON is not rewritten. Removal can finish across a healthy retry.
  */
 const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
   row: typeof storedRowSchema.Type,
@@ -176,6 +177,10 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
   const held =
     selected !== null && claims.some((claim) => claim.app === selected && claim.id !== row.id)
   const initial = held ? shared(selection.value, outcome) : outcome
+  // Pending JSON written before this counter existed decodes with the schema's zero default.
+  const counterRevision = ExecutorReferences.guards.MigrationPending(row.references)
+    ? sql`COALESCE((${connections.references}->>'compatibleAttempts')::integer, 0) = ${row.references.compatibleAttempts}`
+    : sql`TRUE`
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(connectionLock)
@@ -191,6 +196,8 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
       }
       const encoded = yield* encodeReferences(references)
       const reconnect = ExecutorReferences.guards.ReconnectRequired(references)
+      const payload = JSON.stringify(encoded)
+      const revision = Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1)
       const saved = yield* tx
         .update(connections)
         .set({
@@ -198,18 +205,22 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
           executorApp: claimedApp(references),
           status: reconnect ? 'failed' : row.status,
           reason: reconnect ? executorReconnectMessage : row.reason,
-          updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
+          updatedAt: sql`CASE
+            WHEN ${connections.references} - 'compatibleAttempts' = ${payload}::jsonb - 'compatibleAttempts'
+            THEN ${connections.updatedAt} ELSE ${revision} END`,
         })
         .where(
           and(
             eq(connections.id, row.id),
             eq(connections.updatedAt, row.updatedAt),
             retryable,
-            sql`${connections.references} IS DISTINCT FROM ${JSON.stringify(encoded)}::jsonb`,
+            counterRevision,
+            sql`${connections.references} IS DISTINCT FROM ${payload}::jsonb`,
           ),
         )
-        .returning({ id: connections.id })
-      if (saved.length > 0)
+        .returning({ updatedAt: connections.updatedAt })
+      const changed = saved[0]
+      if (changed !== undefined && changed.updatedAt !== row.updatedAt)
         yield* Effect.logInfo('Integration app reconciliation').pipe(
           Effect.annotateLogs({ connectionId: row.id, result: references._tag }),
         )
@@ -340,7 +351,9 @@ const heldResources = Effect.fn('Connections.heldResources')(function* (
   }
 })
 
-/** Retired copy discovery is committed before revocation, so a crash after credential deletion
+/** Pending Dedicated requests resolve and save their account before any revocation. The fast
+ * path is limited to references that already carry the account or cannot have one.
+ * Retired copy discovery is committed before revocation, so a crash after credential deletion
  * cannot lose the copy IDs needed by a retry. Reclamation and row deletion then share the same
  * lock as migration; concurrent removals cannot both defer cleanup to a row being removed.
  */
@@ -350,7 +363,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
   const database = yield* Database
   const executor = yield* Executor
   if (
-    !ExecutorReferences.isAnyOf(['MigrationPending', 'ReconnectRequired'])(row.references) &&
+    ExecutorReferences.isAnyOf(['Public', 'Authorized'])(row.references) &&
     ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)
   ) {
     yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
@@ -370,7 +383,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
       service: references.service,
       owner: references.owner,
       retired: retirementOf(references),
-      reason: 'SharedSelection',
+      reason: 'RemovalPending',
     })
   let revision = row.updatedAt
   if (ExecutorReferences.guards.MigrationPending(references))

@@ -168,6 +168,7 @@ export const ExecutorReferences = Schema.TaggedUnion({
     retired: ExecutorRetired,
     reason: Schema.Literals([
       'UnresolvedMigration',
+      'RemovalPending',
       'AmbiguousMigration',
       'SharedSelection',
       'MigrationTargetMissing',

@@ -11,13 +11,15 @@ The pass maps `copiedFrom.reference` and exact requirement/account links, saving
 under a cross-process claim lock. Permanent refusals retain exact credentials and copies for safe
 removal. Transient failures, undeployed copies and unfinished copy plans retry with capped backoff;
 per-row retries have a persisted budget of 1,440 compatible unsuccessful attempts (roughly
-24 hours at the capped cadence). Global outages never consume that budget.
+24 hours at the capped cadence). Global outages never consume that budget. Counter-only writes
+preserve the Connection revision, so a concurrent removal can continue; identical JSON is not rewritten.
 Global protocol failures cannot turn the mixed-version rollout into permanent refusals. Invalid
 rows are logged and excluded from the retry count; no retryable rows ends the worker. The
 `executor_app` selection is unique and checked against every active reference. Selection grants
 no deletion authority: legacy selections on shared originals retain Unproven ownership, and
 proven copies retain their original app identity for safe reclamation. Removal revokes only their exact
-unretained credential and preserves the shared app and other links.
+unretained credential and preserves the shared app and other links. Pending Dedicated removals
+persist their resolved account before deleting the app, so failed final revocation remains retryable.
 
 Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire
 Executor volume with its keys and Vivid PostgreSQL. See the cutover and rollback sequence in
