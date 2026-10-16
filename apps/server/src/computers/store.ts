@@ -1199,9 +1199,11 @@ export const computerStoreLayer = Layer.effect(
       return yield* state.stop(person)
     })
     return ComputerStore.of({
-      copySignIn: Effect.fn('ComputerStore.copySignIn')((person, cookies) =>
-        execute(person, (key) => state.machine.copySignIn({ key, cookies })),
-      ),
+      // A sign-in can start Chrome too; it must choose the same way out as a browse action.
+      copySignIn: Effect.fn('ComputerStore.copySignIn')(function* (person, cookies) {
+        const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
+        return yield* execute(person, (key) => state.machine.copySignIn({ key, cookies, egress }))
+      }),
       get: state.get,
       start,
       stop,

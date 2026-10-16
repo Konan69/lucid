@@ -378,8 +378,9 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
  * adapter prepares its existing profile and returns its actual PID, never a guessed CDP port. */
 export const signInTarget = Effect.fn('Machine.boat.browser.signInTarget')(function* (
   native: Driver,
+  proxy: Effect.Effect<Option.Option<string>>,
 ) {
-  const window = yield* chrome(native, true)
+  const window = yield* chrome(native, true, proxy)
   yield* prepare(native, window)
   return window.pid
 })

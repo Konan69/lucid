@@ -28,12 +28,15 @@ import { browserProxy, startProxy } from './egress/guest.ts'
  * binding's SSH operation owns the private input and ends with the injection scope. */
 const makeCookieCopy = (input: {
   readonly native: (key: MachineKey) => Effect.Effect<Driver, MachineFailure>
-  readonly operations: Pick<MachineOperations, 'converse'>
+  readonly operations: Pick<MachineOperations, 'converse' | 'run'>
   readonly permit: (key: MachineKey) => Semaphore.Semaphore
 }) =>
   Effect.fn('Machine.boat.copySignIn')(
     function* (request: Parameters<MachineOperations['copySignIn']>[0]) {
-      const pid = yield* signInTarget(yield* input.native(request.key))
+      const pid = yield* signInTarget(
+        yield* input.native(request.key),
+        browserProxy(request.egress, startProxy(input.operations, request.key)),
+      )
       return yield* injectSignInCookies({
         pid,
         cookies: request.cookies,

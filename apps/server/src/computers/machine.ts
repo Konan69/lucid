@@ -298,6 +298,7 @@ export interface MachineOperations {
   /** Import into the same Chrome profile as browser work. Values stay on the private channel. */
   readonly copySignIn: (input: {
     readonly key: MachineKey
+    readonly egress: boolean
     readonly cookies: ReadonlyArray<import('@vivid/contracts').SignInCookie>
   }) => Effect.Effect<number, MachineFailure>
   readonly ensure: (

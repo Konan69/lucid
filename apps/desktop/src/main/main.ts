@@ -192,6 +192,23 @@ function createBrowser(
   })
 }
 
+/** Session and origin are captured together when each egress socket is opened. A signed-out
+ * desktop has no authority to connect, even if the app still has a chosen server. */
+const egressSocket = (
+  session: Session,
+  server: ServerSettings,
+  signedIn: boolean,
+): Option.Option<ExitSocket> => {
+  if (ServerSettings.guards.NoServer(server) || !signedIn) return Option.none()
+  return Option.some(
+    new net.WebSocket(egressAddress(server.origin), {
+      session,
+      useSessionCookies: true,
+      origin: server.origin,
+    }),
+  )
+}
+
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
  * turn keeper works in the Person's apps through Vivid's Computer and owns the notice; the link
@@ -300,17 +317,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       .filter(isSessionCookie),
   )
   const exit = yield* exitLink({
-    socket: (): Option.Option<ExitSocket> => {
-      const server = input.server()
-      if (ServerSettings.guards.NoServer(server) || sessions.size === 0) return Option.none()
-      return Option.some(
-        new net.WebSocket(egressAddress(server.origin), {
-          session: input.session,
-          useSessionCookies: true,
-          origin: server.origin,
-        }),
-      )
-    },
+    socket: () => egressSocket(input.session, input.server(), sessions.size > 0),
     resolve: resolveHost,
     dial: dialTarget,
     // Never from the app: a page on the Computer must not reach into this computer's network.
