@@ -34,7 +34,13 @@ import { retainCatalog } from './catalog.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
-import { keyedService, keyedServices, keyedAddress, personalKeyAuthorization } from './curation.ts'
+import {
+  keyedService,
+  keyedServices,
+  keyedAddress,
+  personalKeyAuthorization,
+  refusedHost,
+} from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 import {
@@ -2969,7 +2975,10 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       ...google,
       ...authoredKeys,
       ...remote.filter(
-        (entry) => Option.isNone(googleService(entry.id)) && keyedService(entry.id) === undefined,
+        (entry) =>
+          Option.isNone(googleService(entry.id)) &&
+          keyedService(entry.id) === undefined &&
+          (entry.domain === null || !refusedHost(entry.domain)),
       ),
     ]
   })

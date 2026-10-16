@@ -41,7 +41,7 @@ describe.skipIf(
         const executor = yield* Executor
         const entries = yield* executor.catalog
         expect(entries.length).toBeGreaterThan(0)
-        expect(entries.some((entry) => entry.id === 'curated/github-com-mcp')).toBe(true)
+        expect(entries.some((entry) => entry.domain?.endsWith('githubcopilot.com'))).toBe(false)
       }),
     )
   })
