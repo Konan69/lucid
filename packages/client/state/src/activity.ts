@@ -49,6 +49,7 @@ const Answered = Schema.Struct({
   results: list,
   tools: list,
   memories: list,
+  watches: list,
 })
 type Answered = typeof Answered.Type
 
@@ -351,11 +352,43 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
-  open_thread: {
+  find_events: {
     said: {
-      running: 'Opening a thread for this',
-      done: 'Opened a thread for this',
-      failed: 'Could not open the thread',
+      running: 'Looking at what can be watched',
+      done: 'Looked at what can be watched',
+      failed: 'Could not look at what can be watched',
+    },
+    detail: (asked) => [said(asked.account)],
+  },
+  watch: {
+    said: {
+      running: 'Starting a watch',
+      done: 'Started a watch',
+      failed: 'Could not start the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  list_watches: {
+    said: {
+      running: 'Checking what is watched',
+      done: 'Checked what is watched',
+      failed: 'Could not read what is watched',
+    },
+    detail: (_asked, answered) => [counted(answered.watches, 'watch', 'watches')],
+  },
+  stop_watching: {
+    said: {
+      running: 'Stopping a watch',
+      done: 'Stopped a watch',
+      failed: 'Could not stop the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  post: {
+    said: {
+      running: 'Putting it on your Feed',
+      done: 'Put it on your Feed',
+      failed: 'Could not put it on your Feed',
     },
     detail: (asked) => [said(asked.title)],
   },
@@ -410,6 +443,7 @@ const NOTHING_ANSWERED: Answered = {
   results: Option.none(),
   tools: Option.none(),
   memories: Option.none(),
+  watches: Option.none(),
   ok: Option.none(),
   created: Option.none(),
   changed: Option.none(),

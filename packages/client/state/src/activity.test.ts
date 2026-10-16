@@ -14,6 +14,31 @@ describe('a step, in words', () => {
     ).toMatchObject({ label: 'Searched the Library', detail: '“pricing” · 2 sources' })
   })
 
+  it('says what each Watch and Feed step did, with the account, Watch or card it was about', () => {
+    const step = (tool: string, asked: object, answered: object) =>
+      describeToolCall(tool, readAsked(asked), readAnswered(answered), 'done')
+    expect(step('find_events', { account: 'Gmail (Work)' }, { events: [] })).toMatchObject({
+      label: 'Looked at what can be watched',
+      detail: 'Gmail (Work)',
+    })
+    expect(step('watch', { name: 'New mail in Work Gmail' }, {})).toMatchObject({
+      label: 'Started a watch',
+      detail: 'New mail in Work Gmail',
+    })
+    expect(step('list_watches', {}, { watches: [{}, {}] })).toMatchObject({
+      label: 'Checked what is watched',
+      detail: '2 watches',
+    })
+    expect(step('stop_watching', { name: 'New mail in Work Gmail' }, {})).toMatchObject({
+      label: 'Stopped a watch',
+      detail: 'New mail in Work Gmail',
+    })
+    expect(step('post', { title: 'Your flight moved' }, { ok: true })).toMatchObject({
+      label: 'Put it on your Feed',
+      detail: 'Your flight moved',
+    })
+  })
+
   it('reads a tool that answered it could not do it as a failed step', () => {
     // The call returned, so the conversation marks it done; the tool's own answer says otherwise.
     expect(
