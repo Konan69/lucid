@@ -1,6 +1,6 @@
 import { Redacted, Schema } from 'effect'
 
-/** A named DNS site, not an address or an arbitrary suffix. Cookie scope never crosses it. */
+/** DNS host syntax. The server additionally rejects public/private suffixes before dispatch. */
 export const SignInSite = Schema.String.check(
   Schema.isMaxLength(253),
   Schema.isPattern(/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u),
@@ -90,6 +90,8 @@ export type CopySignInRequest = typeof CopySignInRequest.Type
 /** Cookies never appear in a public RPC result or model receipt. A fresh invocation is the
  * retry after the Person quits the browser; neither the server nor desktop polls for it. */
 const transportRefusals = {
+  InvalidSite: {},
+  NotAnswered: {},
   NotConnected: {},
   Busy: {},
   RunRequired: {},

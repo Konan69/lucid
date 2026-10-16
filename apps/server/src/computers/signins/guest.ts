@@ -44,9 +44,14 @@ async function main(){
  const input=JSON.parse(text);failureStage=20;const address=await endpoint(input.pid);failureStage=30;const cdp=await connect(address);
  try{
   if(!Array.isArray(input.cookies)||input.cookies.length<1||input.cookies.length>1000)throw Error();
-  failureStage=40;await cdp.call('Storage.setCookies',{cookies:input.cookies});
+  // Chrome M104 caps newly written cookies at 400 days. Bound the requested value first so
+  // exact readback checks the effective expiry without extending the source cookie's life.
+  // https://developer.chrome.com/blog/cookie-max-age-expires
+  const maximum=Date.now()/1000+400*86400;
+  const cookies=input.cookies.map(cookie=>cookie.expires===undefined?cookie:{...cookie,expires:Math.min(cookie.expires,maximum)});
+  failureStage=40;await cdp.call('Storage.setCookies',{cookies});
   failureStage=50;const receipt=await cdp.call('Storage.getCookies',{});
-  for(const wanted of input.cookies){
+  for(const wanted of cookies){
    const domain=wanted.domain||new URL(wanted.url).hostname;
    const actual=receipt.cookies.find(cookie=>cookie.name===wanted.name&&cookie.path===wanted.path&&cookie.domain===domain);
    if(!actual||actual.value!==wanted.value||actual.secure!==wanted.secure||actual.httpOnly!==wanted.httpOnly)throw Error();

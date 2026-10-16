@@ -335,8 +335,8 @@ const signInRequest = CopySignInRequest.make({
 })
 
 /** Actor authority comes from the same runtime-only authentication as existing window tests. */
-const useSignIn = (who: Somebody, threadId: ThreadId) =>
-  computerHandlers.CopySignIn(signInRequest).pipe(
+const useSignIn = (who: Somebody, threadId: ThreadId, request: CopySignInRequest) =>
+  computerHandlers.CopySignIn(request).pipe(
     Effect.provideService(
       AuthContext,
       AuthState.Vivid({
@@ -1536,6 +1536,90 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
 // and Computer browser are hand-controlled; cookie scope and refusal propagation are production.
 describe('copying a sign-in through the device link', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    for (const site of ['co.uk', 'com.au', 'github.io', 'herokuapp.com']) {
+      it.effect(`refuses public suffix ${site} before asking the device`, () =>
+        Effect.gen(function* () {
+          const test = yield* signInNative()
+          const request = CopySignInRequest.make({
+            ...signInRequest,
+            site: SignInSite.make(site),
+          })
+          const outcome = yield* useSignIn(test.who, test.threadId, request).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- Any Computer access would fail this boundary test.
+            Effect.provide(Layer.mock(ComputerStore, {})),
+          )
+          expect(outcome).toHaveProperty('_tag', 'InvalidSite')
+          expect(yield* Queue.size(test.link.requests)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
+
+    for (const refusal of ['foreign site', 'ended Run'] as const) {
+      it.effect(`rejects collected cookies after ${refusal} without injecting`, () =>
+        Effect.gen(function* () {
+          const test = yield* signInNative()
+          const pending = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- No Computer operation is allowed after either guard refuses.
+            Effect.provide(Layer.mock(ComputerStore, {})),
+            Effect.forkScoped,
+          )
+          const work = yield* Queue.take(test.link.requests)
+          if (refusal === 'ended Run') {
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(runs)
+                .set({ state: 'completed', finishedAt: 1 })
+                .where(eq(runs.id, test.runId)),
+            )
+          }
+          const cookie = SignInCookie.make({
+            name: 'session',
+            value: Redacted.make('synthetic-guard-sentinel'),
+            scope: SignInCookie.fields.scope.cases.Host.make({
+              host: SignInSite.make(refusal === 'foreign site' ? 'example.org' : 'github.com'),
+            }),
+            path: '/',
+            secure: true,
+            httpOnly: true,
+            sameSite: 'Lax',
+            expiry: SignInCookie.fields.expiry.cases.Session.make({}),
+          })
+          yield* computerHandlers
+            .AnswerDeviceRequest({
+              device: test.device.id,
+              id: work.id,
+              answer: DeviceAnswer.cases.SignIn.make({
+                read: SignInRead.cases.Collected.make({ cookies: [cookie] }),
+              }),
+            })
+            .pipe(as(test.who))
+          expect(yield* Fiber.join(pending)).toHaveProperty(
+            '_tag',
+            refusal === 'foreign site' ? 'Rejected' : 'RunRequired',
+          )
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
+
+    for (const ending of ['timeout', 'disconnect'] as const) {
+      it.effect(`a sign-in ${ending} before collection says nothing was copied`, () =>
+        Effect.gen(function* () {
+          const test = yield* signInNative()
+          const pending = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- A missing collection must never reach the Computer.
+            Effect.provide(Layer.mock(ComputerStore, {})),
+            Effect.forkScoped,
+          )
+          const work = yield* Queue.take(test.link.requests)
+          expect(work.expiresAt - (yield* Clock.currentTimeMillis)).toBe(300_000)
+          if (ending === 'timeout') yield* TestClock.adjust('5 minutes')
+          else yield* Fiber.interrupt(test.link.ended)
+          expect(yield* Fiber.join(pending)).toHaveProperty('_tag', 'NotAnswered')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
+
     it.effect('returns BrowserLocked without injection and copies on a fresh approved retry', () =>
       Effect.gen(function* () {
         const test = yield* signInNative()
@@ -1547,7 +1631,7 @@ describe('copying a sign-in through the device link', () => {
               return cookies.length
             }),
         })
-        const first = yield* useSignIn(test.who, test.threadId).pipe(
+        const first = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
           // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point for the controlled Computer adapter.
           Effect.provide(computer),
           Effect.forkScoped,
@@ -1567,7 +1651,7 @@ describe('copying a sign-in through the device link', () => {
           SignInRead.cases.BrowserLocked.make({ browser: 'Chrome' }),
         )
         expect(injected).toHaveLength(0)
-        const second = yield* useSignIn(test.who, test.threadId).pipe(
+        const second = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
           // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point for the controlled Computer adapter.
           Effect.provide(computer),
           Effect.forkScoped,
@@ -1610,7 +1694,7 @@ describe('copying a sign-in through the device link', () => {
     it.effect('an older desktop without sign-in capability is refused before dispatch', () =>
       Effect.gen(function* () {
         const test = yield* native()
-        const outcome = yield* useSignIn(test.who, test.threadId).pipe(
+        const outcome = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
           // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point and must prove no Computer operation occurs.
           Effect.provide(Layer.mock(ComputerStore, {})),
         )
@@ -1630,7 +1714,7 @@ describe('copying a sign-in through the device link', () => {
       it.effect(`preserves ${read._tag} without reading or injecting another source`, () =>
         Effect.gen(function* () {
           const test = yield* signInNative()
-          const pending = yield* useSignIn(test.who, test.threadId).pipe(
+          const pending = yield* useSignIn(test.who, test.threadId, signInRequest).pipe(
             // @effect-diagnostics-next-line strictEffectProvide:off -- This invocation is the test entry point and must prove no Computer operation occurs.
             Effect.provide(Layer.mock(ComputerStore, {})),
             Effect.forkScoped,
@@ -1645,6 +1729,12 @@ describe('copying a sign-in through the device link', () => {
             .pipe(as(test.who))
           expect(yield* Fiber.join(pending)).toEqual(read)
           expect(yield* Queue.size(test.link.requests)).toBe(0)
+          const database = yield* Database
+          const rows = yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.id, work.id)),
+          )
+          expect(rows).toHaveLength(1)
+          expect(rows[0]).toHaveProperty('status', 'Failed')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       )
     }

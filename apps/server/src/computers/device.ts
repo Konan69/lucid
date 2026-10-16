@@ -68,6 +68,8 @@ import { deviceRequests, devices } from './tables.ts'
  * (artifacts/night/reviews/chatgpt-latest.md, section 2, "Routing").
  */
 const REQUEST_BUDGET_MILLIS = 30_000
+// Consent and an OS key prompt take human time; other device actions keep their existing budget.
+const SIGN_IN_BUDGET_MILLIS = 300_000
 
 /**
  * How long a request waits for the computer to finish an earlier one before giving up. Shorter
@@ -830,7 +832,10 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
       if (link === undefined) return yield* new NoDeviceConnected({})
       if (!link.ability.apps) return yield* new WindowUnavailable({})
     }
-    const expiresAt = (yield* Clock.currentTimeMillis) + REQUEST_BUDGET_MILLIS
+    const budget = DeviceWork.guards.SignIn(input.work)
+      ? SIGN_IN_BUDGET_MILLIS
+      : REQUEST_BUDGET_MILLIS
+    const expiresAt = (yield* Clock.currentTimeMillis) + budget
     return yield* inTurn(
       turnOf(id),
       id,
@@ -949,7 +954,7 @@ const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
     }).pipe(
       Effect.map((answer) =>
         Option.match(answer, {
-          onNone: (): SignInDelivery => SignInDelivery.cases.OutcomeUnknown.make({}),
+          onNone: (): SignInDelivery => SignInDelivery.cases.NotAnswered.make({}),
           onSome: (value): SignInDelivery =>
             DeviceAnswer.match<SignInDelivery>(value, {
               SignIn: ({ read }) => read,
@@ -957,10 +962,10 @@ const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
                 SignInDelivery.cases.Unavailable.make({
                   reason: 'Sign-in copying is unavailable on this connected device.',
                 }),
-              Done: () => SignInDelivery.cases.OutcomeUnknown.make({}),
-              Refused: () => SignInDelivery.cases.OutcomeUnknown.make({}),
-              Did: () => SignInDelivery.cases.OutcomeUnknown.make({}),
-              Declined: () => SignInDelivery.cases.OutcomeUnknown.make({}),
+              Done: () => SignInDelivery.cases.NotAnswered.make({}),
+              Refused: () => SignInDelivery.cases.NotAnswered.make({}),
+              Did: () => SignInDelivery.cases.NotAnswered.make({}),
+              Declined: () => SignInDelivery.cases.NotAnswered.make({}),
             }),
         }),
       ),
@@ -1051,7 +1056,7 @@ export const deviceLayer = Layer.effect(
     // Once now, for what a previous process left behind and whose deadline has passed; once more
     // when every deadline that process could have issued has passed too.
     yield* ledger.reconcile()
-    yield* Effect.sleep(REQUEST_BUDGET_MILLIS).pipe(
+    yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS).pipe(
       Effect.andThen(ledger.reconcile()),
       Effect.catch((failure) =>
         Effect.logError('Abandoned device requests could not be closed', failure._tag),

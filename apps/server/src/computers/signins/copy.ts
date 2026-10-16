@@ -6,6 +6,7 @@ import {
   signInHostMatches,
 } from '@vivid/contracts'
 import { Effect, Option, Struct } from 'effect'
+import { getDomain } from 'tldts'
 import type { Actor } from '../../auth/access.ts'
 import { ActionOrigin, actionOrigin } from '../../approvals/gate.ts'
 import { DeviceRegistry } from '../device.ts'
@@ -18,6 +19,10 @@ export const copySignIn = Effect.fn('Computer.copySignIn')(function* (
   actor: Actor,
   request: CopySignInRequest,
 ) {
+  // Public suffixes span unrelated people, including privately hosted sites such as github.io.
+  // Refuse them before a desktop request or native consent can authorize a cross-site read.
+  if (getDomain(request.site, { allowPrivateDomains: true }) === null)
+    return CopySignInOutcome.cases.InvalidSite.make({})
   const origin = yield* actionOrigin(actor).pipe(
     Effect.asSome,
     Effect.catchTag('NotFound', () => Effect.succeedNone),

@@ -5,7 +5,7 @@ import * as NodePath from 'node:path'
 import { CopySignInOutcome, SignInBrowser } from '@vivid/contracts'
 import { Data, Effect, Option, Redacted, Schema } from 'effect'
 import { CookieReadFailed } from './database.ts'
-import { cookieReadFailure } from './failure.ts'
+import { cookieKeyFailure, cookieReadFailure } from './failure.ts'
 
 /** OSCrypt keys have different algorithms on Windows and POSIX. A prefix selects exactly one
  * key, never a list of guesses. Derived from Grok Bot chrome-import-worker and Openbot ChromiumKeys. */
@@ -36,9 +36,13 @@ const readKey = Effect.fn('DesktopSignIn.readKey')(function* (
     const child = NodeChildProcess.execFile(
       command,
       args,
-      { signal, timeout: 20_000, maxBuffer: 65_536, windowsHide: true },
+      { signal, timeout: 120_000, maxBuffer: 65_536, windowsHide: true },
       (error, output) =>
-        resume(error === null ? Effect.succeed(output) : Effect.fail(refused(browser))),
+        resume(
+          error === null
+            ? Effect.succeed(output)
+            : Effect.fail(new CookieReadFailed({ outcome: cookieKeyFailure(browser, error) })),
+        ),
     )
     if (child.stdin !== null) child.stdin.end(input)
   })

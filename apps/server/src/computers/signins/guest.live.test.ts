@@ -89,6 +89,16 @@ const inject = Effect.fn('SignInProof.inject')((pid: number) =>
             httpOnly: true,
             sameSite: 'Lax',
           },
+          {
+            name: '__Host-signin-persistent-proof',
+            value: 'synthetic-persistent-cookie',
+            url: 'https://signin.example.test/',
+            path: '/',
+            secure: true,
+            httpOnly: true,
+            sameSite: 'Lax',
+            expires: Date.now() / 1000 + 500 * 86400,
+          },
         ],
       })}\n`,
     )
@@ -97,7 +107,7 @@ const inject = Effect.fn('SignInProof.inject')((pid: number) =>
 
 describe.skipIf(!enabled)('cookie injection into a real isolated Chrome', () => {
   it.live(
-    'sets and reads back a host-only sign-in cookie through the production private command',
+    'sets and reads back host-only session and capped persistent cookies through the private command',
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -107,7 +117,7 @@ describe.skipIf(!enabled)('cookie injection into a real isolated Chrome', () => 
             ),
             (owned) => Effect.promise(() => NodeFSP.rm(owned, { recursive: true, force: true })),
           )
-          expect(yield* inject(yield* chrome(directory))).toBe('{"cookies":1}')
+          expect(yield* inject(yield* chrome(directory))).toBe('{"cookies":2}')
         }),
       ),
     40_000,

@@ -7,7 +7,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { CopySignInRequest, SignInProfile, SignInRead, SignInSite } from '@vivid/contracts'
 import { Effect, Redacted, Result } from 'effect'
 import { readChromeSignIn } from './read.ts'
-import { cookieReadFailure } from './failure.ts'
+import { cookieKeyFailure, cookieReadFailure } from './failure.ts'
 import { signInMessage } from '../../../../../packages/agent/runtime/src/tools/signins.ts'
 
 const request = CopySignInRequest.make({
@@ -212,6 +212,13 @@ describe('copying sign-ins from a browser cookie database', () => {
         expect(denied).toHaveProperty('_tag', 'PermissionDenied')
         expect(denied).toHaveProperty('browser', 'Chrome')
         expect(signInMessage(request, denied)).not.toContain('Quit')
+        const missing = cookieKeyFailure('Chrome', {
+          code: 'ENOENT',
+          message: 'fixture-cookie-secret',
+        })
+        expect(missing).toHaveProperty('_tag', 'UnsupportedEncryption')
+        expect(signInMessage(request, missing)).not.toContain('Grant')
+        expect(JSON.stringify(missing)).not.toContain('fixture-cookie-secret')
       }),
     ),
   )

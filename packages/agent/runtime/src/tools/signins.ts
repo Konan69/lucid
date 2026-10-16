@@ -21,6 +21,9 @@ const parameters = Type.Unsafe<typeof input.Encoded>(
  * invocation retries BrowserLocked. Quit means quit the named browser, not close one tab. */
 export const signInMessage = (request: CopySignInRequest, outcome: CopySignInOutcome): string =>
   CopySignInOutcome.match(outcome, {
+    InvalidSite: () => 'Choose one site, such as github.com. A public suffix cannot be copied.',
+    NotAnswered: () =>
+      'The desktop did not return this sign-in. Nothing was copied. Ask to try again when you are ready to allow it.',
     Copied: ({ cookies }) =>
       `Copied ${cookies} cookies for ${request.site}. Open the site on Vivid’s Computer to check the sign-in.`,
     BrowserLocked: ({ browser }) =>

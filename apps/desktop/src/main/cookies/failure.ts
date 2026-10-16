@@ -9,6 +9,15 @@ const OperatingFailure = Schema.Struct({
 })
 const decodeFailure = Schema.decodeUnknownOption(OperatingFailure)
 
+/** An absent OS key adapter is unsupported, not a permission the Person can grant. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Process creation errors enter only through this errno decoder.
+export const cookieKeyFailure = (browser: SignInBrowser, failure: unknown) => {
+  const parsed = decodeFailure(failure)
+  if (Option.isSome(parsed) && parsed.value.code === 'ENOENT')
+    return CopySignInOutcome.cases.UnsupportedEncryption.make({ browser })
+  return CopySignInOutcome.cases.PermissionDenied.make({ browser })
+}
+
 /** Map observed lock evidence to the one remedy that fixes it. A running browser or empty jar
  * is never evidence here. Source: node:sqlite SQLITE_BUSY(5)/SQLITE_LOCKED(6), libuv EBUSY. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- OS and SQLite errors enter here, and only their closed numeric and errno fields are inspected.
