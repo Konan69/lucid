@@ -71,8 +71,7 @@ describe('Google Integrations', () => {
           Effect.provide(context),
         )
       }).pipe(Effect.scoped)
-      // Authored key services remain available independently of the upstream feed too.
-      expect(without.map((entry) => entry.name)).toEqual([...names, 'GitHub'])
+      expect(without.map((entry) => entry.name)).toEqual(names)
     }),
   )
 

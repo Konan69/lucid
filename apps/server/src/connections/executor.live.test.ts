@@ -3,6 +3,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
 import { ConnectionSource } from './address.ts'
+import { refusedHost } from './curation.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
   Executor,
@@ -41,7 +42,9 @@ describe.skipIf(
         const executor = yield* Executor
         const entries = yield* executor.catalog
         expect(entries.length).toBeGreaterThan(0)
-        expect(entries.some((entry) => entry.domain?.endsWith('githubcopilot.com'))).toBe(false)
+        expect(entries.some((entry) => entry.domain !== null && refusedHost(entry.domain))).toBe(
+          false,
+        )
       }),
     )
   })
