@@ -188,7 +188,7 @@ describe.skipIf(!testDatabaseConfigured)('legacy app claims', () => {
           const database = yield* Database
           const prior = yield* Executor
           const canonical = ExecutorReferences.cases.Authorized.make({
-            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+            appOwnership: ExecutorAppOwnership.cases.Unproven.make({}),
             service: legacy.service,
             app: original,
             owner: legacy.owner,
@@ -550,7 +550,7 @@ describe.skipIf(!testDatabaseConfigured)('migration outcomes and reclamation', (
         const rowA = Option.getOrThrow(Option.fromUndefinedOr(rows.find((row) => row.id === a)))
         const rowB = Option.getOrThrow(Option.fromUndefinedOr(rows.find((row) => row.id === b)))
         expect(rowA.status).toBe('ready')
-        expect(rowA.executorApp).toBeNull()
+        expect(rowA.executorApp).toBe(original)
         if (!ExecutorReferences.guards.Authorized(rowA.references))
           expect.fail('A must remain authorized')
         expect(rowA.references.appOwnership._tag).toBe('Unproven')

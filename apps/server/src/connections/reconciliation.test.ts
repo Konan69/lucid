@@ -308,7 +308,7 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
           const ready = yield* decodeRow(yield* a.read)
           if (!ExecutorReferences.guards.Authorized(ready.references)) expect.fail('A must migrate')
           expect(ready.references.appOwnership._tag).toBe('Unproven')
-          expect(ready.executorApp).toBeNull()
+          expect(ready.executorApp).toBe(original)
           const beforeB = yield* b.read
           yield* removeConnection(ready).pipe(Effect.provide(context))
           expect(yield* listRecords(a.ownerActor)).toEqual([])

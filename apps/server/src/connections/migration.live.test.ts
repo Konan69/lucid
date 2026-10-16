@@ -227,9 +227,7 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
             expect(row.references.appOwnership._tag).toBe(
               row.references.app === receipt.originalApp ? 'Unproven' : 'Copied',
             )
-            expect(row.executorApp).toBe(
-              row.references.app === receipt.originalApp ? null : row.references.app,
-            )
+            expect(row.executorApp).toBe(row.references.app)
             expect(row.personId).toBe(receipt.person)
             expect(JSON.stringify(row.references)).not.toContain('profile')
             expect((yield* executor.status(row.references))._tag).toBe('Ready')

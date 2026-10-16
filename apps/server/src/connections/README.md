@@ -14,9 +14,9 @@ per-row retries have a persisted budget of 1,440 compatible unsuccessful attempt
 24 hours at the capped cadence). Global outages never consume that budget.
 Global protocol failures cannot turn the mixed-version rollout into permanent refusals. Invalid
 rows are logged and excluded from the retry count; no retryable rows ends the worker. The
-`executor_app` claim is unique and checked against dedicated allocations and proven migration
-copies; copies retain their original app identity for safe reclamation. Legacy selections
-on shared originals retain Unproven ownership and no app claim. Removal revokes only their exact
+`executor_app` selection is unique and checked against every active reference. Selection grants
+no deletion authority: legacy selections on shared originals retain Unproven ownership, and
+proven copies retain their original app identity for safe reclamation. Removal revokes only their exact
 unretained credential and preserves the shared app and other links.
 
 Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire

@@ -160,7 +160,8 @@ No fork build is needed. This configuration change does not deploy the service.
 
 Beta.23 replaces profiles with app and user account links. Vivid allocates one app per new
 Connection. Migrated references distinguish dedicated allocations, proven copies (with original
-app provenance), and unproven shared-original access. Only the first two own an app claim. A
+app provenance), and unproven shared-original access. Every active app selection is unique;
+selection grants no deletion authority. A
 shared original is never deleted; copy reclamation checks provenance and other stored holders.
 A scoped background worker reconciles legacy rows using copy provenance and exact account links.
 Boot, `/health`, Integration reads and tool discovery never wait for this pass. Each pass probes
@@ -236,13 +237,12 @@ SELECT CASE WHEN "references" ? 'profile' THEN 'LegacyPending'
        "references"->>'reason' AS reason, count(*)
 FROM vivid_connections GROUP BY 1, 2 ORDER BY 1, 2;
 
--- Must return zero rows: only dedicated allocations and proven copies own an app claim.
+-- Must return zero rows: every active selection agrees with its unique app column.
 SELECT id, executor_app, "references"->>'_tag' AS outcome
 FROM vivid_connections
 WHERE executor_app IS DISTINCT FROM
   CASE WHEN NOT ("references" ? 'profile')
          AND "references"->>'_tag' NOT IN ('MigrationPending', 'ReconnectRequired')
-         AND "references"->'appOwnership'->>'_tag' IN ('Dedicated', 'Copied')
        THEN "references"->>'app' ELSE NULL END;
 ```
 
