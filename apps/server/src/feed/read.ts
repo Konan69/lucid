@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { and, desc, eq, exists, gt, gte, inArray, not, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   FeedCardId,
@@ -44,16 +45,9 @@ type Db = Database['Service']
 interface Row {
   readonly thread: ThreadId
   readonly from: string
-  readonly moved: number
+  readonly settled: number
   readonly card: typeof feedCards.$inferSelect | null
 }
-
-interface RunTimes {
-  readonly working: number | null
-  readonly finished: number | null
-}
-/** A background Thread whose first Run has not been recorded yet: it has neither time. */
-const NO_RUNS: RunTimes = { working: null, finished: null }
 
 /** What one Thread is waiting on the Person for, and since when. */
 interface Asks {
@@ -65,7 +59,8 @@ const NO_ASKS: Asks = { asking: [], since: 0 }
 const fields = {
   thread: threads.id,
   from: threads.title,
-  moved: threads.updatedAt,
+  // Postgres sends the bigint `greatest` as text.
+  settled: settledAt.mapWith(Number),
   card: feedCards,
 }
 
@@ -79,6 +74,8 @@ const mine = (person: PersonId) =>
 /**
  * When a Thread last settled, as the Feed dates it: the later of its last activity and the moment
  * its card was put away, so an old Thread whose card was settled today stays in today's history.
+ * A Run settling touches its Thread (`threads/store.ts`), so this covers the last Run too. It is the
+ * one rule: the history window, the history order and cap, and the `at` a Settled item shows.
  */
 const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCards.updatedAt}, 0))`
 
@@ -128,30 +125,28 @@ const readThreads = Effect.fn('Feed.readThreads')(function* (
       .orderBy(desc(settledAt))
       .limit(HISTORY_LIMIT),
   )
-  const rows: ReadonlyArray<Row> = [...open, ...history]
+  // The two reads see the database at different moments: work that settles between them is in
+  // both. One item per Thread; the open reading stands, and the write that settled it announces
+  // the Feed again, so the next read shows it settled.
+  const seen = new Set(open.map((row) => row.thread))
+  const rows: ReadonlyArray<Row> = [...open, ...history.filter((row) => !seen.has(row.thread))]
   return rows
 })
 
-/** A nullable aggregate as a number or null; Postgres sends bigints as text. */
-const epochOrNull = (value: string | number | null) => (value === null ? null : Number(value))
-
-/** For each Thread, when its working Run began (if one is going) and when its last one ended. */
-const readRuns = Effect.fn('Feed.readRuns')(function* (db: Db, ids: ReadonlyArray<ThreadId>) {
-  if (ids.length === 0) return new Map<ThreadId, RunTimes>()
+/** For each Thread with a Run going, when the earliest working one began. */
+const readWorking = Effect.fn('Feed.readWorking')(function* (db: Db, ids: ReadonlyArray<ThreadId>) {
+  if (ids.length === 0) return new Map<ThreadId, number>()
   const rows = yield* db.run(
     db
       .select({
         thread: runs.threadId,
-        working: sql<
-          number | null
-        >`min(${runs.startedAt}) filter (where ${runs.state} = 'working')`.mapWith(epochOrNull),
-        finished: sql<number | null>`max(${runs.finishedAt})`.mapWith(epochOrNull),
+        since: sql<number>`min(${runs.startedAt})`.mapWith(Number),
       })
       .from(runs)
-      .where(inArray(runs.threadId, [...ids]))
+      .where(and(inArray(runs.threadId, [...ids]), eq(runs.state, 'working')))
       .groupBy(runs.threadId),
   )
-  return new Map(rows.map((row) => [row.thread, row] as const))
+  return new Map(rows.map((row) => [row.thread, row.since] as const))
 })
 
 /** For each Thread, the Approvals and questions still waiting on the Person, and the earliest. */
@@ -198,10 +193,15 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
  * a Run stopped on an Approval or a question is still open while it waits; then a Run going;
  * then a card not put away; anything else is settled.
  */
-const stageOf = (row: Row, post: FeedPost | null, times: RunTimes, asks: Asks): FeedItem => {
+const stageOf = (
+  row: Row,
+  post: FeedPost | null,
+  working: Option.Option<number>,
+  asks: Asks,
+): FeedItem => {
   const base = { card: cardIdOf(row.thread), thread: row.thread, from: row.from }
   const cardOpen = row.card !== null && row.card.state !== 'done'
-  if (asks.asking.length > 0 || (cardOpen && post !== null && times.working === null))
+  if (asks.asking.length > 0 || (cardOpen && post !== null && Option.isNone(working)))
     return FeedItem.cases.Waiting.make({
       ...base,
       at: Math.max(asks.since, row.card === null ? 0 : row.card.updatedAt),
@@ -209,11 +209,9 @@ const stageOf = (row: Row, post: FeedPost | null, times: RunTimes, asks: Asks): 
       seen: row.card !== null && row.card.state === 'seen',
       asking: asks.asking,
     })
-  if (times.working !== null)
-    return FeedItem.cases.Working.make({ ...base, since: times.working, post })
-  // Settled when the Person put the card away, else when the last Run ended, else when it moved.
-  const at = row.card !== null ? row.card.updatedAt : (times.finished ?? row.moved)
-  return FeedItem.cases.Settled.make({ ...base, at, post })
+  if (Option.isSome(working))
+    return FeedItem.cases.Working.make({ ...base, since: working.value, post })
+  return FeedItem.cases.Settled.make({ ...base, at: row.settled, post })
 }
 
 /** When an item last moved, for ordering every stage in one list. */
@@ -237,11 +235,16 @@ export const readFeed = Effect.fn('Feed.read')(function* (db: Db, person: Person
   const now = yield* Clock.currentTimeMillis
   const rows = yield* readThreads(db, person, now)
   const ids = rows.map((row) => row.thread)
-  const times = yield* readRuns(db, ids)
+  const working = yield* readWorking(db, ids)
   const asks = yield* readAsks(db, ids, now)
   const items = yield* Effect.forEach(rows, (row) =>
     Effect.map(postOf(row.card), (post) =>
-      stageOf(row, post, times.get(row.thread) ?? NO_RUNS, asks.get(row.thread) ?? NO_ASKS),
+      stageOf(
+        row,
+        post,
+        Option.fromNullishOr(working.get(row.thread)),
+        asks.get(row.thread) ?? NO_ASKS,
+      ),
     ),
   )
   return FeedResponse.make({ items: items.toSorted((a, b) => atOf(b) - atOf(a)) })

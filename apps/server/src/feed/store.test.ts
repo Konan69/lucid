@@ -229,6 +229,58 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         }).pipe(Effect.scoped),
     )
 
+    it.effect(
+      'a put-away card whose Thread ran again is dated by the later settlement, everywhere',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const database = yield* Database
+          const store = yield* FeedStore
+          const posted = now - 3 * day
+          const thread = yield* background(test.ada, posted)
+          yield* TestClock.setTime(posted)
+          yield* store.post({ person: test.ada, thread, request: firstPost })
+          yield* store.mark(
+            test.ada,
+            MarkFeedCardRequest.make({ card: cardIdOf(thread), state: 'done' }),
+          )
+          // Today a Run finishes there without posting: it ended an hour ago, and settling it
+          // touched the Thread now. The card's time, the Run's and the Thread's all disagree.
+          yield* database.run(
+            database.insert(runs).values({
+              id: RunId.make(`run-${crypto.randomUUID()}`),
+              threadId: thread,
+              personId: test.ada,
+              turn: 2,
+              origin: {},
+              state: 'completed',
+              startedAt: now - 2 * hour,
+              finishedAt: now - hour,
+            }),
+          )
+          yield* database.run(
+            database.update(threads).set({ updatedAt: now }).where(eq(threads.id, thread)),
+          )
+          const quieter = yield* background(test.ada, now - hour / 2, 'Calendar')
+          yield* TestClock.setTime(now)
+
+          const shown = yield* items(test.ada)
+          expect(shown.map((item) => [item._tag, item.thread])).toEqual([
+            ['Settled', thread],
+            ['Settled', quieter],
+          ])
+          expect(shown.map((item) => (FeedItem.guards.Settled(item) ? item.at : 0))).toEqual([
+            now,
+            now - hour / 2,
+          ])
+          // The same time decides when it leaves history.
+          yield* TestClock.setTime(now + day)
+          expect((yield* items(test.ada)).map((item) => item.thread)).toEqual([thread])
+          yield* TestClock.setTime(now + day + 1)
+          expect(yield* items(test.ada)).toEqual([])
+        }).pipe(Effect.scoped),
+    )
+
     it.effect('only the Person’s own background Threads reach their Feed', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -253,6 +305,32 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           ['Waiting', bens],
         ])
       }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'a Company Thread leaves the Feed, and cannot be marked, once its Person leaves',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const database = yield* Database
+          const store = yield* FeedStore
+          yield* TestClock.setTime(now)
+          const adas = yield* insertThread(
+            { person: test.ada, place: 'Background', company: test.company, updatedAt: now },
+            'Company mail',
+          )
+          yield* store.post({ person: test.ada, thread: adas, request: firstPost })
+          expect((yield* items(test.ada)).map((item) => item.thread)).toEqual([adas])
+
+          yield* database.run(
+            database.delete(membershipTable).where(eq(membershipTable.userId, test.ada)),
+          )
+          expect(yield* items(test.ada)).toEqual([])
+          const refused = yield* Effect.flip(
+            store.mark(test.ada, MarkFeedCardRequest.make({ card: cardIdOf(adas), state: 'seen' })),
+          )
+          expect(refused._tag).toBe('NotFound')
+        }).pipe(Effect.scoped),
     )
 
     it.effect(
