@@ -82,7 +82,8 @@ const echoed = (state: FlueConversationState, page: URL) =>
  */
 const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture) {
   const address = new URL(ECHO)
-  address.searchParams.set('vivid-proof', NodeCrypto.randomUUID())
+  // A public echo label must survive modelText, which hides UUID-shaped private references.
+  address.searchParams.set('vivid-proof', NodeCrypto.randomBytes(6).toString('hex'))
   const runId = yield* fixture.send(
     `Navigate the current browser tab on Vivid’s Computer to ${address.href}. This is a new address and needs a fresh navigation. Reply with exactly the IP address the page shows, nothing else.`,
   )
