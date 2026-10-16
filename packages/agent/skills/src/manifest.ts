@@ -5,6 +5,15 @@ import { SkillId } from '@vivid/contracts'
  * and procedure bodies live only in SKILL.md; adding a name also extends the mount-map key type. */
 const definitions = [
   {
+    runtimeName: 'make-an-integration',
+    displayName: 'Make it happen on its own',
+    about:
+      'Sets up reminders, morning check-ins and other things that happen on their own, and tells you on your Feed.',
+    starter: false,
+    needs: ['make_integration', 'find_events', 'watch', 'find_tools', 'use_tool', 'ask_person'],
+    connections: [],
+  },
+  {
     runtimeName: 'connect-a-service',
     displayName: 'Connect a service',
     about: 'Connects the services you need so your work can move forward.',
