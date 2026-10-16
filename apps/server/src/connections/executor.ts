@@ -2364,8 +2364,7 @@ function makeRemove(http: ExecutorHttp) {
 }
 
 /** HostedAccounts reconnect keeps the saved account on reconnectAccount until completion.
- * The Begin cleanups (`store.ts`) use this to revoke that exact account while a replacement
- * key/sign-in is pending; product removal of pending rows goes through retirement instead.
+ * Remove must revoke that exact account even while a replacement key/sign-in is pending.
  * New pending requests have no account; they expire after their dedicated app is removed.
  */
 function makeResolveRemovalAccount(http: ExecutorHttp) {
@@ -2769,11 +2768,10 @@ function makePrepareRetirement(http: ExecutorHttp) {
         )
         .pipe(
           Effect.asSome,
-          // Only a deleted app proves the request can name no account any more. Any other refusal
-          // may hide a live credential, so retirement stops rather than forget it.
-          Effect.catchTag('ExecutorResourceMissing', (error) =>
-            error.resource === 'App' ? Effect.succeedNone : Effect.fail(error),
-          ),
+          Effect.catchTags({
+            ExecutorNotReady: () => Effect.succeedNone,
+            ExecutorResourceMissing: () => Effect.succeedNone,
+          }),
         )
       if (Option.isSome(saved)) account = retirementAccount(inventory, resources, saved.value)
     }
