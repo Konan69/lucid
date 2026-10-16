@@ -22,10 +22,10 @@ every response, like Claude Code's.
 
 ## What it replaces
 
-| Today                                                                 | After                                    |
-| --------------------------------------------------------------------- | ---------------------------------------- |
-| `packages/agent/runtime/src/notes.ts`, `agentfs-sdk`, `VIVID_MEMORY_DIR`, the runtime volume | The cell's `notes` table                 |
-| The single-runtime rule (one process owns every Person's file)        | Gone: celld owns each cell               |
+| Today                                                                                        | After                      |
+| -------------------------------------------------------------------------------------------- | -------------------------- |
+| `packages/agent/runtime/src/notes.ts`, `agentfs-sdk`, `VIVID_MEMORY_DIR`, the runtime volume | The cell's `notes` table   |
+| The single-runtime rule (one process owns every Person's file)                               | Gone: celld owns each cell |
 
 ## Why celld
 
@@ -52,12 +52,12 @@ celld's maturity (0.x, released 7 October 2026).
 
 ```ts
 // packages/contracts/src/memory.ts
-NoteFile    // branded, /^[a-z0-9][a-z0-9-]{0,62}\.md$/ (unchanged)
+NoteFile // branded, /^[a-z0-9][a-z0-9-]{0,62}\.md$/ (unchanged)
 NoteVersion // branded positive integer; 0 means "no note yet" on write
-Source      // { thread: ThreadId, message: MessageId, at: DateTime.Utc }
-Note        // { file, kind: MemoryKind, description, body, sources: NonEmptyArray<Source>,
-            //   version: NoteVersion, updated: DateTime.Utc }
-NoteLine    // { file, kind, description } — the index line, as today
+Source // { thread: ThreadId, message: MessageId, at: DateTime.Utc }
+Note // { file, kind: MemoryKind, description, body, sources: NonEmptyArray<Source>,
+//   version: NoteVersion, updated: DateTime.Utc }
+NoteLine // { file, kind, description } — the index line, as today
 ```
 
 - **Provenance on every note.** Each write cites the Thread and Message it came from. The model
@@ -72,14 +72,14 @@ One Durable Object class, `Memory`, in a new app `apps/memory` (it deploys on it
 per Person, named by `PersonId`. Its SQLite holds `notes` (one row per note, the fields above) and
 `dreams` (when each ran and what it changed).
 
-| Call                      | Does                                                                 |
-| ------------------------- | -------------------------------------------------------------------- |
-| `index`                   | Index lines, most recently changed first, within `INDEX_BUDGET`      |
-| `read(file)`              | One note, or `NoteMissing`                                           |
-| `write(note, expected)`   | Writes if the stored version is `expected`, else `NoteConflict`      |
-| `delete(file, expected)`  | The same rule                                                        |
-| `changed()`               | Arms the dream alarm if none is armed (called after each settled Run)|
-| `dream.commit(batch)`     | All of a dream's writes in one transaction, each with its version    |
+| Call                     | Does                                                                  |
+| ------------------------ | --------------------------------------------------------------------- |
+| `index`                  | Index lines, most recently changed first, within `INDEX_BUDGET`       |
+| `read(file)`             | One note, or `NoteMissing`                                            |
+| `write(note, expected)`  | Writes if the stored version is `expected`, else `NoteConflict`       |
+| `delete(file, expected)` | The same rule                                                         |
+| `changed()`              | Arms the dream alarm if none is armed (called after each settled Run) |
+| `dream.commit(batch)`    | All of a dream's writes in one transaction, each with its version     |
 
 Every call carries a shared token (`Redacted`, checked in the Worker); celld's public listener has
 no authentication of its own. Only the server's private network reaches it.
