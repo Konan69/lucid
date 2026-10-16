@@ -1,5 +1,5 @@
 import { Array as Arr, Order, Schema } from 'effect'
-import { SearchResult, type Thread, type Routine, type LibraryItem } from '@vivid/contracts'
+import { SearchResult, type Thread, type LibraryItem } from '@vivid/contracts'
 
 const Candidate = Schema.Struct({
   result: SearchResult,
@@ -16,14 +16,6 @@ export const threadCandidate = (thread: Thread): Candidate =>
     title: thread.title,
     text: [thread.title, thread.preview],
     updatedAt: thread.updatedAt,
-  })
-/** A Routine's prompt is searchable beside its name. */
-export const routineCandidate = (routine: Routine): Candidate =>
-  Candidate.make({
-    result: SearchResult.cases.Routine.make({ routine }),
-    title: routine.name,
-    text: [routine.name, routine.prompt],
-    updatedAt: routine.updatedAt,
   })
 /** Library search in the palette matches document names, never folders or extracted content. */
 export const itemCandidate = (item: LibraryItem): Candidate =>

@@ -136,9 +136,8 @@ export interface RequestRun {
 /**
  * The newest Runs in a Thread that act for one Person, oldest first, with the stored origin.
  *
- * `list` cannot serve the reviewer of a proposed action (`approvals/request.ts`): it folds
- * `Standing` and `Attention` into `Routine`, and those two start from text the server or Vivid
- * wrote, which must never be read as the Person's instruction. Filtering by Person here, not
+ * The review needs the stored origin so a server-written body never counts as the Person's
+ * instruction. Filtering by Person here, not
  * after a Thread-wide limit, keeps attribution exact in a long shared Thread. Only admitted Runs
  * count, as in `actingRun`: a reserved turn the runtime has not accepted has no words in history.
  */
@@ -206,7 +205,7 @@ const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 const encodeReceipt = encodeStored(Admitted, 'Run admission receipt')
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
 
-/** Standing checks choose attention through notify_person; completing a quiet check stays quiet. */
+/** Watch work reaches the Person through the Feed; completing a quiet check stays quiet. */
 export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')(function* (
   id: RunId,
 ) {
@@ -219,9 +218,6 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
   return StoredRunOrigin.match(yield* decodeOrigin(row.origin), {
     Message: () => true,
     FirstConversation: () => false,
-    Routine: () => true,
-    Standing: () => false,
-    Attention: () => false,
     Decision: () => true,
     // A background wake for the Feed: the Person hears about it only when Vivid posts there.
     Watch: () => false,
@@ -239,10 +235,6 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
   StoredRunOrigin.match(origin, {
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
     FirstConversation: (): RunOrigin => RunOrigin.cases.FirstConversation.make({ person }),
-    Routine: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
-    Standing: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
-    Attention: ({ routineName }): RunOrigin =>
-      RunOrigin.cases.Routine.make({ person, routineName }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
     Watch: ({ watchName }): RunOrigin => RunOrigin.cases.Watch.make({ person, watchName }),
   })
@@ -311,7 +303,7 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
  * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
  * before calling Flue is mandatory. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
- * Same-Person Routine deliveries still join. An admitted replay returns its original receipt before Busy;
+ * Same-Person server deliveries still join. An admitted replay returns its original receipt before Busy;
  * unadmitted reservations remain subject to the current working authority.
  */
 const makeStart = (database: DatabaseService): RunStoreService['start'] =>

@@ -22,9 +22,9 @@ describe('delivery authority outside model text', () => {
     const messages = [
       DeliveryMessage.cases.Said.make({ body: 'Please review this.' }),
       DeliveryMessage.cases.Signal.make({
-        type: 'schedule',
-        body: "Search this Routine's Library folder and cite every source used.",
-        attributes: { routine: 'MARK-routine', name: 'Morning review', libraryFolder: marker },
+        type: 'event',
+        body: 'Search the Library folder and cite every source used.',
+        attributes: { name: 'Morning review', libraryFolder: marker },
       }),
       DeliveryMessage.cases.Signal.make({
         type: 'approval',
@@ -63,7 +63,7 @@ describe('delivery authority outside model text', () => {
         attributes: { from: 'Ada', turn: String(turn) },
       })
       if (forwarded.kind !== 'signal') expect.fail('Shared delivery lost its signal shape')
-      const types = ['message', 'schedule', 'approval', 'answer']
+      const types = ['message', 'event', 'approval', 'answer']
       expect([forwarded.type, forwarded.tagName]).toEqual([types[index], types[index]])
       if (index === 1)
         expect(forwarded.attributes).toEqual({ from: 'Ada', turn: '2', name: 'Morning review' })
@@ -76,7 +76,7 @@ describe('delivery authority outside model text', () => {
     const threadId = ThreadId.make('unprepared-thread')
     const signal = {
       kind: 'signal' as const,
-      type: 'schedule',
+      type: 'event',
       body: 'Review.',
       attributes: { turn: '1' },
     }

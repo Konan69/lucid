@@ -24,7 +24,7 @@ const request = CreateWatchRequest.make({
   arguments: {},
   instruction: 'Tell me when a client writes.',
 })
-const occurrence = (eventId: string) =>
+const event = (eventId: string) =>
   JSON.stringify({
     eventId,
     name: 'mail.message.received',
@@ -117,9 +117,9 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
       Effect.gen(function* () {
         const post = yield* receiver()
         const { actor, watch, url, secret } = yield* activeWatch()
-        const first = yield* post(url, occurrence('evt_1'), secret, Option.none())
+        const first = yield* post(url, event('evt_1'), secret, Option.none())
         expect(first.status).toBe(200)
-        const repeat = yield* post(url, occurrence('evt_1'), secret, Option.none())
+        const repeat = yield* post(url, event('evt_1'), secret, Option.none())
         expect(repeat.status).toBe(200)
         const delivered = yield* deliveriesOf(watch.id)
         expect(delivered).toHaveLength(1)
@@ -155,7 +155,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         )
         expect(arrival).toMatchObject({ threadId: thread, runId: `run-watch:${watch.id}:evt_1` })
         // A second event is a second background Thread.
-        yield* post(url, occurrence('evt_2'), secret, Option.none())
+        yield* post(url, event('evt_2'), secret, Option.none())
         expect(yield* deliveriesOf(watch.id)).toHaveLength(2)
         expect(threadOf(watch.id, 'evt_2')).not.toBe(thread)
       }).pipe(Effect.scoped),
@@ -168,13 +168,13 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         const unknown = url.replace(/[^/]+$/u, 'not-a-watch')
         const missing = yield* post(
           unknown,
-          occurrence('evt_1'),
+          event('evt_1'),
           secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
           Option.none(),
         )
         expect(missing).toEqual({ status: 404, text: '' })
         yield* (yield* Watches).stop(actor, request.name)
-        const gone = yield* post(url, occurrence('evt_9'), secret, Option.none())
+        const gone = yield* post(url, event('evt_9'), secret, Option.none())
         expect(gone.status).toBe(410)
         expect(yield* deliveriesOf(watch.id)).toEqual([])
       }).pipe(Effect.scoped),

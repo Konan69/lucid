@@ -8,14 +8,9 @@ import {
   LibraryFolderId,
   LibraryItem,
   LibraryItemId,
-  Occurrence,
-  OccurrenceId,
   Person,
   PersonId,
   PersonSummary,
-  Routine,
-  RoutineId,
-  RoutineTrigger,
   SearchResult,
   SessionId,
   Thread,
@@ -26,7 +21,6 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
 import { LibraryStore } from '../library/store.ts'
-import { RoutineStore } from '../routines/store.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { searchHandlers } from './handlers.ts'
 import { ConnectionStore } from '../connections/store.ts'
@@ -81,46 +75,13 @@ const item = (id: string, name: string, createdAt: number, shelf: LibraryItem['s
     folderId: null,
   })
 
-/** Occurrences are deliberately supplied out of order to exercise latest-run selection. */
-const occurrence = (id: string, status: Occurrence['status'], startedAt: number) =>
-  Occurrence.make({
-    id: OccurrenceId.make(id),
-    routineId: RoutineId.make('review'),
-    threadId: ThreadId.make('routine-thread'),
-    status,
-    startedAt,
-    finishedAt: startedAt + 1,
-    submissionId: id,
-    output: null,
-    error: null,
-  })
-
-/** Prompt-only matches are searchable, and a Routine's latest failure supplies a next message. */
-const routine = (id: string, name: string, prompt: string, runs: ReadonlyArray<Occurrence>) =>
-  Routine.make({
-    id: RoutineId.make(id),
-    name,
-    prompt,
-    runs,
-    trigger: RoutineTrigger.cases.Webhook.make({}),
-    enabled: true,
-    libraryFolderId: null,
-    nextExpectedAt: null,
-    lastMissedAt: null,
-    createdAt: now,
-    updatedAt: now,
-    nextRunAt: null,
-  })
-
 interface VisibleData {
   readonly threads: ReadonlyArray<Thread>
-  readonly routines: ReadonlyArray<Routine>
   readonly items: ReadonlyArray<LibraryItem>
   readonly workspace: Workspace
 }
 const empty: VisibleData = {
   threads: [],
-  routines: [],
   items: [],
   workspace: Workspace.cases.Personal.make({}),
 }
@@ -144,12 +105,6 @@ const visibleLayer = (data: VisibleData) =>
         expect(actor.person.id).toBe(person.id)
         expect(actor.workspace).toEqual(data.workspace)
         return yield* Effect.succeed(data.threads)
-      }),
-    }),
-    Layer.mock(RoutineStore, {
-      list: Effect.fn('SearchTest.routines')(function* (actor) {
-        expect(actor.person.id).toBe(person.id)
-        return yield* Effect.succeed(data.routines)
       }),
     }),
     Layer.mock(LibraryStore, {
@@ -177,7 +132,6 @@ const visibleLayer = (data: VisibleData) =>
 /** Exhaustive result projection makes mixed-domain ordering assertions readable. */
 const resultId = SearchResult.match({
   Thread: ({ thread: value }): string => value.id,
-  Routine: ({ routine: value }): string => value.id,
   LibraryItem: ({ item: value }): string => value.id,
 })
 
@@ -190,7 +144,6 @@ describe('Search', () => {
       thread('title', 'Annual report', '', now - 3),
       thread('partial', 'Annual', 'No matching body', now),
     ],
-    routines: [routine('routine', 'Review', 'Annual report', [])],
     items: [
       item('mine', 'Annual report', now - 1, 'Mine'),
       item('shared', 'Annual report', now - 2, 'Company'),
@@ -203,7 +156,7 @@ describe('Search', () => {
       () =>
         Effect.gen(function* () {
           const { results } = yield* searchHandlers.Search({ query: '  ANNUAL\tReport  ' })
-          expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body', 'routine'])
+          expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body'])
           const privateText = yield* searchHandlers.Search({ query: 'unsearchable' })
           expect(privateText.results).toEqual([])
         }),
@@ -240,7 +193,6 @@ describe('Search', () => {
       list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
     }),
     Layer.mock(ThreadStore, { list: () => Effect.succeed(recentThreads) }),
-    Layer.mock(RoutineStore, {}),
     Layer.mock(LibraryStore, {}),
   )
 
@@ -276,22 +228,15 @@ describe('Suggestions', () => {
       item('new', 'Your notes', now, 'Mine'),
       item('old', 'Old notes', now - 2 * day, 'Mine'),
     ],
-    routines: [
-      routine('review', 'Morning brief', '', [
-        occurrence('latest', 'failed', now),
-        occurrence('older', 'succeeded', now - day),
-      ]),
-    ],
   }
 
   layer(visibleLayer(recentPersonal))((it) => {
-    it.effect('offers new personal documents before failed Routines', () =>
+    it.effect('offers recent personal documents', () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(now)
         const { suggestions } = yield* searchHandlers.ListSuggestions()
         expect(suggestions).toEqual([
           { text: 'Summarise Your notes', reason: 'Added in the last day' },
-          { text: 'Look at why Morning brief failed', reason: 'Your last run failed' },
         ])
       }),
     )
@@ -300,22 +245,15 @@ describe('Suggestions', () => {
     ...empty,
     workspace: Workspace.cases.Company.make({ company, role: 'member' }),
     items: [item('shared', 'Company notes', now, 'Company')],
-    routines: [
-      routine('review', 'Recovered', '', [
-        occurrence('old', 'failed', now - day),
-        occurrence('new', 'succeeded', now),
-      ]),
-    ],
   }
 
   layer(visibleLayer(recoveredCompany))((it) => {
-    it.effect('excludes shared documents and recovered Routines and offers starters', () =>
+    it.effect('excludes shared documents and offers starters', () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(now)
         const { suggestions } = yield* searchHandlers.ListSuggestions()
         expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
           'Connect a service',
-          'Watch a useful signal',
           'Remember and correct preferences',
           'Learn how we do this',
         ])

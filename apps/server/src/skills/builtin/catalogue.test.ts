@@ -18,12 +18,11 @@ import { askTools } from '../../../../../packages/agent/runtime/src/tools/ask.ts
 import { memoryTools } from '../../../../../packages/agent/runtime/src/tools/memory.ts'
 import { noteTools } from '../../../../../packages/agent/runtime/src/tools/notes.ts'
 import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skills.ts'
-import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
 import { pictureTools } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
 import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
+import { watchTools } from '../../../../../packages/agent/runtime/src/tools/watches.ts'
 import { notifyTools } from '../../../../../packages/agent/runtime/src/tools/notify.ts'
-import { openTools } from '../../../../../packages/agent/runtime/src/tools/open.ts'
 import type { RunTool } from '../../../../../packages/agent/runtime/src/tools/scope.ts'
 import * as views from '../../../../../packages/agent/runtime/src/tools/views.ts'
 import { SavedProcedures } from '../../../../../packages/agent/runtime/src/tools/snapshots.ts'
@@ -42,12 +41,11 @@ const registered = new Set(
     // The directory is never opened here: only the tools' names are read.
     ...noteTools(runner, 'unused'),
     ...skillTools(runner),
-    ...routineTools(runner),
     ...pictureTools(runner),
     ...codeTools(runner),
     ...documentTools(runner),
-    ...openTools(runner),
     ...notifyTools(runner),
+    ...watchTools(runner),
   ].map((tool) => tool.name),
 )
 
@@ -135,9 +133,13 @@ describe('shipped procedure catalogue', () => {
     }
   })
 
-  it('offers connected work only with all dependencies ready, otherwise the four starters', () => {
+  it('offers connected work only with all dependencies ready, otherwise the starter procedures', () => {
     const fallback = procedureSuggestions([])
-    expect(fallback).toHaveLength(4)
+    expect(fallback.map((suggestion) => suggestion.text)).toEqual([
+      'Connect a service',
+      'Remember and correct preferences',
+      'Learn how we do this',
+    ])
     for (const suggestion of fallback) {
       const builtin = builtins.find((skill) => skill.name === suggestion.text)
       if (builtin === undefined) expect.fail('Suggestion must name a shipped skill')

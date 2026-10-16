@@ -66,8 +66,6 @@ import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
 import { pushTargetsLayer } from './push/targets.ts'
-import { routineSchedulerLayer, routineSchedulerServiceLayer } from './routines/scheduler.ts'
-import { routineStoreLayer } from './routines/store.ts'
 import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
@@ -171,7 +169,6 @@ const serverProgram = Effect.gen(function* () {
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
-    routineStoreLayer,
     watchStoreLayer,
     executorEventsLayer,
     watchedAppsLayer,
@@ -181,9 +178,7 @@ const serverProgram = Effect.gen(function* () {
   const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(
     Layer.provideMerge(work),
   )
-  const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
-    routineSchedulerLayer,
     migrationLayer,
     refusedLayer,
     watchRenewalLayer,
@@ -205,7 +200,7 @@ const serverProgram = Effect.gen(function* () {
       staticRoutes(config.VIVID_WEB_DIST),
       background,
     ),
-  ).pipe(Layer.provide(schedules), Layer.provide(server))
+  ).pipe(Layer.provide(channelHandling), Layer.provide(server))
   return yield* Layer.launch(application)
 }).pipe(Effect.withSpan('Server.launch'))
 

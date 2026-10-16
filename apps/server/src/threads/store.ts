@@ -169,7 +169,7 @@ const makeView = (database: DatabaseService) =>
 /**
  * The inserted row owns its private audience. Announce in the insert transaction so failed Flue
  * admission cannot leave an unannounced Thread; an existing ownership receipt writes nothing.
- * A Routine id is predictable, so its presence never proves which Person may receive the work.
+ * A Watch id is predictable, so its presence never proves which Person may receive the work.
  */
 const makeEnsure = (database: DatabaseService, place: ThreadPlace) =>
   Effect.fn('ThreadStore.ensure')(function* (input: Ensured) {
@@ -199,7 +199,7 @@ const makeEnsure = (database: DatabaseService, place: ThreadPlace) =>
           database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
         )
         const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
-        // A predictable Routine id proves no ownership; sharing changes reach, never ownership.
+        // A predictable Watch id proves no ownership; sharing changes reach, never ownership.
         // A predictable id also proves nothing about its place: a Conversation is never reused as
         // a Background Thread, nor the other way round.
         const theirs =
@@ -282,8 +282,8 @@ const makeMarkRead = (database: DatabaseService) =>
 
 const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is taken' }))
 
-/** Ids the server mints for the Threads it opens itself (Routines, Watch arrivals). A client may not claim one. */
-const RESERVED = /^(?:routine|watch)-/u
+/** Ids the server mints for the Threads it opens itself (Watch arrivals). A client may not claim one. */
+const RESERVED = /^watch-/u
 
 /**
  * Insert, Membership check, creator read receipt and notice commit together. The inserted row
@@ -496,7 +496,7 @@ const makeShare = (database: DatabaseService) =>
             message: 'A Thread in your own space has nobody to be shared with',
           })
         }
-        // Routine and Watch work belongs to one Person even when its Thread id is predictable.
+        // Watch work belongs to one Person even when its Thread id is predictable.
         if (RESERVED.test(thread.id)) {
           return yield* new InvalidRequest({
             message: 'Vivid opened this thread for its own work, so it stays private',

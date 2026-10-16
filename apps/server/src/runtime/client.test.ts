@@ -495,8 +495,8 @@ const transport = (receiptId: string, message: RuntimeMessage) =>
 const messages: ReadonlyArray<RuntimeMessage> = [
   {
     kind: 'signal',
-    type: 'schedule',
-    tagName: 'schedule',
+    type: 'event',
+    tagName: 'event',
     body: 'Review.',
     attributes: { from: 'Ada', turn: '3', name: 'Morning review' },
   },

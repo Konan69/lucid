@@ -12,7 +12,6 @@ import { codeTools } from '../../tools/code.ts'
 import { pictureTools } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
-import { routineTools } from '../../tools/routines.ts'
 import type { RunTool } from '../../tools/scope.ts'
 import { phrases, script } from './script.ts'
 import spec from '../../agents/parts.json' with { type: 'json' }
@@ -26,7 +25,6 @@ const tools = [
   ...documentTools(unavailable),
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
-  ...routineTools(unavailable),
 ]
 const nativeTools = pictureTools(unavailable)
 const decodeDesktop = Schema.decodeUnknownSync(UseDesktopRequest)
@@ -198,11 +196,6 @@ describe('Rehearsal scenes', () => {
         expected: 'That didn’t finish: No document has that title.',
       },
       {
-        phrase: 'remind me',
-        output: { name: 'Reminder', nextRunAt: '2026-10-04T08:00:00Z' },
-        expected: 'The reminder is scheduled for 2026-10-04T08:00:00Z as a one-off Routine.',
-      },
-      {
         phrase: 'remember that',
         output: { ok: true, remembered: 'A confirmed preference.' },
         expected: 'I remembered: A confirmed preference.',
@@ -360,25 +353,6 @@ describe('Rehearsal scenes', () => {
     expect(
       next.content.some((block) => block.type === 'text' && block.text.includes('```openui-lang')),
     ).toBe(true)
-  })
-
-  it('schedules tomorrow at 09:00 in the context timezone, including month and year rollover', () => {
-    const start = context('remind me')
-    const first = script(start)
-    expect(first.content).toMatchObject([
-      {
-        arguments: { trigger: { kind: 'Once', localAt: '2026-10-04T09:00' } },
-      },
-    ])
-    const rollover = script({
-      systemPrompt: 'Today is Thursday 31 December 2026 in the Pacific/Auckland time zone.',
-      messages: [
-        { role: 'user', content: 'remind me', timestamp: Date.parse('2026-12-31T10:30:00Z') },
-      ],
-    })
-    expect(rollover.content).toMatchObject([
-      { arguments: { trigger: { kind: 'Once', localAt: '2027-01-01T09:00' } } },
-    ])
   })
 
   it('reports tagged failures and malformed or absent receipts without claiming success', () => {

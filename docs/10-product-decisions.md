@@ -53,7 +53,7 @@ The full model and remaining questions are in [Company and projects](12-company-
 - Combine Open Session's conversation layout, Grok Bot's approachable relationship, and the useful
   information density of T3 Code's sidebar.
 - The sidebar must use product language, not architecture language.
-- Current sidebar exploration: **Today**, **Routines**, and **Library**.
+- Current sidebar exploration: **Today** and **Library**.
 - **Library** replaces both the earlier "Ready when you are" wording and Vivid's use of the label
   "Teach Vivid" or "Teach a task." The latter remains valid only when describing Grok Bot itself.
 - Show Vivid's face and name without a subtitle or status sentence underneath.
@@ -128,7 +128,7 @@ The full model and remaining questions are in [Company and projects](12-company-
 ## Still open
 
 - Which team and organization interactions belong in v1.
-- Whether Today, Routines, and Library are the final sidebar destinations.
+- Whether Today and Library are the final sidebar destinations.
 - The final main-screen hierarchy, active/selected treatment, and thread grouping.
 - The complete settings scope beyond theme.
 - How Vivid closes Flue's acceptance gaps: durable approval, tool-produced vision, per-submission

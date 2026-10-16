@@ -125,12 +125,6 @@ export const OpenFirstThreadResult = Schema.TaggedUnion({
 })
 export type OpenFirstThreadResult = typeof OpenFirstThreadResult.Type
 
-/** A standing check can open private work using words, never ownership or runtime identifiers. */
-export const OpenThreadRequest = Schema.Struct({
-  title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
-  context: Schema.NonEmptyString.check(Schema.isMaxLength(4000)),
-})
-
 /** Partial Thread fields a participant may change. */
 export const PatchThreadRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
@@ -161,13 +155,12 @@ export const ThreadResponse = Schema.Struct({ thread: Thread })
 export interface ThreadResponse extends Schema.Schema.Type<typeof ThreadResponse> {}
 
 /**
- * What started a Run. A Person's Message, a Routine that came due, or a returning decision.
+ * What started a Run. A Person's Message, an Integration event, or a returning decision.
  * Each names the Person on whose behalf Vivid acts for the length of the Run.
  */
 export const RunOrigin = Schema.TaggedUnion({
   Message: { person: PersonSummary },
   FirstConversation: { person: PersonSummary },
-  Routine: { person: PersonSummary, routineName: Schema.String },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
   /** An Integration event a Watch subscribed to, named by the Watch. */
@@ -263,7 +256,6 @@ export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceReque
  */
 export const SignalType = Schema.Literals([
   'message',
-  'schedule',
   'approval',
   'answer',
   'first-conversation',
@@ -274,7 +266,7 @@ export type SignalType = typeof SignalType.Type
 
 /**
  * Who a delivery is for and what it may reach: the Person Vivid acts for, and the Library folder
- * the work is confined to when there is one (a Routine's own folder).
+ * the work is confined to when there is one (a scoped folder).
  *
  * This is never written into the conversation. Flue shows a delivery's attributes to the model as
  * text, so anything put there is something the model can read, repeat to the people in a shared

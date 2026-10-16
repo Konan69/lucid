@@ -28,10 +28,10 @@ export function distinct(labels: readonly string[]): readonly string[] {
   return labels.map((label) => {
     const base = label.trim()
     let name = base
-    let occurrence = 2
+    let suffix = 2
     if (used.has(folded(name))) {
       do {
-        name = `${base} (${occurrence++})`
+        name = `${base} (${suffix++})`
       } while (reserved.has(folded(name)) || used.has(folded(name)))
     }
     used.add(folded(name))
@@ -103,10 +103,10 @@ function distinctSaved(labels: readonly string[]) {
   const used = new Set<string>()
   return bases.map((base) => {
     let name = base
-    let occurrence = 2
+    let suffix = 2
     if (used.has(name)) {
       do {
-        name = `${base}-${occurrence++}`
+        name = `${base}-${suffix++}`
       } while (reserved.has(name) || used.has(name))
     }
     used.add(name)

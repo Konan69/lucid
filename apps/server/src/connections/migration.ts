@@ -255,7 +255,7 @@ export const migrateConnections = Effect.fn('Connections.migrate')(function* () 
   return (yield* legacyRows()).pending.length > 0
 })
 
-/** Like the Routine scheduler, the pass is forked into the server Layer's scope. Boot/health and
+/** The pass is forked into the server Layer's scope. Boot/health and
  * reads never await reconciliation. Failed or unfinished passes back off from five seconds to a minute;
  * no retryable rows ends this upgrade worker. Cancellation interrupts both HTTP and scheduled waits.
  */

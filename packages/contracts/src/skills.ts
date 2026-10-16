@@ -25,7 +25,7 @@ export class SkillReadOnly extends Schema.TaggedError<SkillReadOnly>()(
 
 /**
  * A saved procedure: how to do a piece of work the way this Person or Company does it. Storing one
- * does not schedule it; a Routine does that.
+ * does not arrange future work.
  */
 const content = {
   id: SkillId,

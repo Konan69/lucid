@@ -19,7 +19,7 @@ describe('delivery authority recovery', () => {
   it.effect('shares concurrent recovery, retries a failed lookup and caches only success', () =>
     Effect.gen(function* () {
       // Both scopes share the same recovery policy; a missing folder must stay absent and a
-      // Routine's folder must survive, without duplicating the entire RPC scenario elsewhere.
+      // Scoped folder must survive, without duplicating the entire RPC scenario elsewhere.
       for (const { libraryFolder, folder } of [
         { libraryFolder: null, folder: Option.none<LibraryFolderId>() },
         {

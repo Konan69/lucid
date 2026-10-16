@@ -182,12 +182,7 @@ The new server against `src-304bf60` boots and serves health, but Integrations a
 legacy rows remain pending without writes. The old server against beta.23 breaks Integration
 routes because profiles were removed. Neither mixed pairing can perform Integration work.
 
-1. Announce a maintenance window and let admitted Runs settle. Routines need no operator pause
-   or impersonation: Integration polling maps authorization loss to a durable pause and transient
-   reads to backoff (`routines/scheduler.ts`, `observeIntegrations`). Scheduled work may fail
-   while Runtime is unavailable; inspect Routines/Occurrences after both services return. Accept
-   those failures during the mixed-version interval;
-   some Integration-triggered Routines may need their Person to resume them after verification.
+1. Announce a maintenance window and let admitted Runs settle. Avoid Integration work during the mixed-version interval.
    Use Railway's [deployment Remove action](https://docs.railway.com/deployments/deployment-actions#remove)
    to stop Server and Runtime, then Executor, for the paired backups. Do not accept product writes
    while taking the backups. These stops are temporary; the merge can deploy Server again.
@@ -209,8 +204,7 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    to restart `src-304bf60`; the merge does not restart this image-backed service. Confirm the
    new server's `/health` succeeds. Its log should show `Integration migration waiting for compatible inventory` with
    a failure tag. Legacy selections must stay pending; do not ask Persons to reconnect during
-   this interval. Avoid Integration actions and new scheduled work until verification. Existing
-   Routines fail closed as described in step 1; there is no global pause flag for the operator.
+   this interval. Avoid Integration actions until verification.
 4. Use the deploy checkout `~/agency/vivid-lanes/deploy`, which holds `.alchemy/` state. Back up
    that state as described in [Running the stack's own deploy](#running-the-stacks-own-deploy),
    fast-forward this checkout to current `main`, and confirm it is clean. Then run `pnpm infra:deploy --yes` (the authorized
@@ -223,8 +217,7 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    is still removed, use Railway's Redeploy action for the recorded main deployment, then verify
    its revision and health again. Runtime deliberately returns before step-5 verification;
    Integration readiness and tool selection fail closed while legacy rows remain pending.
-   Scheduled work may fail during this interval. Verification checks Routine/Occurrence outcomes
-   after both services return; it does not assume admission can finish while Runtime is Removed.
+   Verify Run outcomes after both services return; admission cannot finish while Runtime is Removed.
 5. Check `Integration app reconciliation` log entries: each has `connectionId` and `result`
    (`Authorized`, `Public`, a pending authorization variant, `MigrationPending`, or
    `ReconnectRequired`). Check the read-only SQL below. Pending rows mean the upstream copy
@@ -232,8 +225,7 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    active versions rather than assuming `/health` alone proves every copy ready. Confirm two
    Persons keep distinct account/app identities, perform a safe authenticated read for each,
    and add/remove a disposable keyed/public Connection. Verify removal preserves the other
-   Person's access. Check Routine/Occurrence outcomes from the window; let each Person resume
-   any automatically paused Integration-triggered Routine through its normal controls. Resume
+   Person's access. Check Run outcomes from the window. Resume
    ordinary use only after these checks pass.
 
 ```sql
@@ -271,8 +263,7 @@ Only after both stores are restored, publish the reviewed revert of the server u
 infrastructure image pin to `main`. The old server's automatic deploy now sees the old protocol
 and original Connection JSON. The emergency image selection and the reverted Alchemy declaration
 must agree before any subsequent clean-main `infra:deploy`. Keep Runtime stopped until both
-services and the original Connection/profile behavior are verified, then resume Runtime. Each Person can resume any automatically paused Routine through its normal
-controls. A server-only, image-only or single-volume rollback is invalid. The old image
+services and the original Connection/profile behavior are verified, then resume Runtime. A server-only, image-only or single-volume rollback is invalid. The old image
 cannot open the migrated volume; the old server cannot decode reconciled JSON. Writes since the
 backup pair are lost on restoration and must be accounted for before reopening service.
 
@@ -298,7 +289,7 @@ external logs destination can replace that address while retaining logs-only tra
 ### Telemetry volume
 
 The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
-repeats with nobody asking is not traced at all: timer passes (approvals, routines, push,
+repeats with nobody asking is not traced at all: timer passes (approvals, push,
 presence), live query reloads and session watchers run under `untraced`
 (`apps/server/src/observability/quiet.ts`), and functions called once per item of a large list
 are `Effect.fnUntraced`. Before those rules, one Person produced 119,000 spans an hour: 95,000

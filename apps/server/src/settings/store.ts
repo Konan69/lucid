@@ -44,8 +44,8 @@ const toSettings = (row: typeof settingsTable.$inferSelect) =>
   })
 
 /**
- * Whether the platform knows a time zone by this name. Routines and "tomorrow at 9" are resolved
- * in it, so a name nothing can resolve is refused when it is set, not when a Routine comes due.
+ * Whether the platform knows a time zone by this name. Local dates and times are resolved
+ * in it, so a name nothing can resolve is refused when it is set, before interpreting a date.
  */
 const requireTimezone = (timezone: string) =>
   Effect.try({

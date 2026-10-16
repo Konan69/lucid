@@ -4,15 +4,8 @@ import { requireActor } from '../auth/access.ts'
 import { libraryFailure } from '../library/failures.ts'
 import { LibraryStore } from '../library/store.ts'
 import { live } from '../live/query.ts'
-import { RoutineStore } from '../routines/store.ts'
 import { ThreadStore } from '../threads/store.ts'
-import {
-  itemCandidate,
-  rankResults,
-  recentThreads,
-  routineCandidate,
-  threadCandidate,
-} from './ranking.ts'
+import { itemCandidate, rankResults, recentThreads, threadCandidate } from './ranking.ts'
 import { loadSuggestions } from './suggestions.ts'
 
 export const searchHandlers = {
@@ -21,7 +14,6 @@ export const searchHandlers = {
     const actor = yield* requireActor()
     const threads = yield* (yield* ThreadStore).list(actor)
     if (query.trim().length === 0) return { results: recentThreads(threads) }
-    const routines = yield* (yield* RoutineStore).list(actor)
     const library = yield* LibraryStore
     const mine = yield* library.list(actor, { shelf: 'Mine' }).pipe(Effect.mapError(libraryFailure))
     const shared = yield* Workspace.match(actor.workspace, {
@@ -32,7 +24,6 @@ export const searchHandlers = {
     return {
       results: rankResults(query, [
         ...threads.map(threadCandidate),
-        ...routines.map(routineCandidate),
         ...mine.documents.map(itemCandidate),
         ...shared.documents.map(itemCandidate),
       ]),

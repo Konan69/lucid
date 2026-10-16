@@ -25,7 +25,7 @@ mobile, where the thread is the whole screen.
 Top to bottom.
 
 1. **Vivid.** Face and the word Vivid, with no descriptive status line underneath it.
-2. **Product entry points.** Today, Routines, and Library are the current exploration because they
+2. **Product entry points.** Today and Library are the current exploration because they
    describe things a person wants to do. They replace infrastructure nouns such as Agents,
    Skills, Connectors, and Automations.
 3. **New thread** and **search**, one row.

@@ -5,7 +5,7 @@ import { Schema } from 'effect'
  *
  * An Executor app declares events and emits them from its mutations, webhook handlers and
  * workflows. A Watch is Vivid subscribing to one of those events for one Person, with the filter
- * values that narrow it and the instruction of what to do when it fires. Each occurrence wakes
+ * values that narrow it and the instruction of what to do when it fires. Each event wakes
  * Vivid in a background Thread of its own; what needs the Person reaches them through the Feed.
  *
  * Executor's side is `events/list`, `events/subscribe` and `events/unsubscribe` over MCP
@@ -17,7 +17,7 @@ export const WatchId = Schema.String.pipe(Schema.brand('WatchId'))
 export type WatchId = typeof WatchId.Type
 
 /**
- * One filter value. Executor declares filters as scalars and matches an occurrence when every
+ * One filter value. Executor declares filters as scalars and matches an event when every
  * named value is equal (`EventArguments` in executor@2.0.0-beta.23
  * `packages/sdk/src/contracts/events.ts`); nothing richer is accepted there.
  */

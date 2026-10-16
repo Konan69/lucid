@@ -1,6 +1,7 @@
 # Reference mining: what the category ships, and what Vivid takes
 
-2026-10-03: Historical 1 October reference survey and adaptation intent; later product direction lives in [docs/22](22-one-product.md), and implemented behavior superseding its gap claims is in [docs/14](14-product-feature-set-and-grok-bot-parity.md); one-off Routines supersede the retired Tasks model.
+Vivid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Vivid uses Watches and the Feed.
+2026-10-03: Historical 1 October reference survey and adaptation intent; later product direction lives in [docs/22](22-one-product.md), and implemented behavior superseding its gap claims is in [docs/14](14-product-feature-set-and-grok-bot-parity.md); Vivid proactivity is now Watches and the Feed; reminders await the clock app.
 
 **Mined:** 1 October 2026. **Scope:** every reference saved in the seven weeks to that date, read at
 the source rather than at the headline: the full conversation behind each saved post, the linked
@@ -84,9 +85,7 @@ product serving a person and a team. Its rules, verbatim in substance:
 9. **Admins control reach, not content.** Who gets the Bot by default, team rules, connector policy,
    audit log of creation, publication, skill changes and account links.
 
-**Vivid takes:** all nine rules, applied to Vivid itself rather than to a roster of Bots, and the
-conversation, results, approval, routine, skill and attention mechanics above. **Vivid leaves:** the
-roster, the marketplace as a destination, per-Bot settings and the model picker.
+**Vivid takes:** the privacy, attribution, memory, credential and authority rules, applied to Vivid itself rather than to a roster of Bots. Vivid uses Watches and the Feed for proactivity. **Vivid leaves:** scheduled jobs, the roster, the marketplace as a destination, per-Bot settings and the model picker.
 
 ### Meta Muse — the trust model
 
@@ -265,6 +264,6 @@ harness bugs, the asynchronous-tool harness, the Durable Object memory post.
 3. A person's own accounts are never used on another person's behalf. Shared work asks.
 4. Memory has a private part and a shared part, is written by a background pass, and is read with
    the asker's access.
-5. Repeated work is said once and becomes a routine or a skill. Routines belong to a person.
+5. Repeated work can become a skill; app events can wake Vivid through a Watch.
 6. Three attention states are enough: needs you, unread, working.
 7. Shared work needs to know who is speaking, needs a real stop, and needs an audit trail.

@@ -129,7 +129,7 @@ describe('scoped tool execution', () => {
     }),
   )
 
-  it.effect('injects the Routine folder automatically without returning Library references', () =>
+  it.effect('injects the scoped folder automatically without returning Library references', () =>
     Effect.scoped(
       Effect.gen(function* () {
         for (const folder of [

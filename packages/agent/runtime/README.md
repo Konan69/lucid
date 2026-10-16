@@ -43,7 +43,7 @@ checks Thread access and records the Run before forwarding a typed delivery to
 `/agents/vivid/:threadId`. Browsers, phones, and desktop renderers never receive the runtime token.
 `src/app.ts` also serves an unauthenticated `/health` response.
 
-The server owns the Library, Routines, Skills, Input requests, Approvals, Artifacts, and memory.
+The server owns the Library, Watches, Skills, Input requests, Approvals, Artifacts, and memory.
 Integrations run through Executor; the Computer's Boat adapter is server-owned and was proven
 against real Boat on 3 October 2026. See the domain READMEs and
 [current feature status](../../../docs/14-product-feature-set-and-grok-bot-parity.md) for evidence
@@ -60,9 +60,6 @@ three times (`maxAttempts: 3`): Flue keeps recorded tool results and never re-ru
 
 `VIVID_MODEL=rehearsal/script` opts into the deterministic rehearsal provider. It calls real
 tools with fixed inputs and reports real receipts; it proves plumbing, not model judgement.
-The reminder scene schedules tomorrow at 09:00 through the real one-off Routine tool. The server
-resolves its local date-time in the Person's saved zone; it fires once and retains its Thread and
-Occurrence. Checked-in scheduler tests cover restart recovery and refusing past times.
 
 ## Build and deployment limits
 

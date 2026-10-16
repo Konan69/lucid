@@ -134,13 +134,13 @@ describe('RPC result boundary', () => {
                 message: 'secret-token-and-private-output',
               }),
             ),
-            'create_routine',
+            'create_watch',
           )
           yield* settle(Effect.succeed({ output: 'private-successful-output' }), 'read_page')
         }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
         expect(logs).toHaveLength(1)
         expect(logs[0]).toContain('Warn')
-        expect(logs[0]).toContain('create_routine')
+        expect(logs[0]).toContain('create_watch')
         expect(logs[0]).toContain('ServiceUnavailable')
         expect(logs[0]).not.toMatch(/private|secret|read_page/u)
       }),

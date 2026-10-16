@@ -80,7 +80,7 @@ export function skillTools(runTool: RunTool) {
     defineTool({
       name: 'save_skill',
       description:
-        'Save a verified reusable procedure for yourself whenever it will help future work. Do not ask a person to create or manage a skill. Include decisions and approval needs; saving does not create a Routine.',
+        'Save a verified reusable procedure for yourself whenever it will help future work. Do not ask a person to create or manage a skill. Include decisions and approval needs; saving does not arrange future work.',
       input: v.object({
         summary,
         name: text('A lowercase-hyphen runtime name; built-in names are reserved.', 80),

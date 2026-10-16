@@ -56,7 +56,7 @@ access or may only add to what it inherits.
 - Whether child Projects may narrow inherited access.
 - Whether every Thread must belong to a Project or may begin unfiled.
 - Whether a Project can include only individual Members, only Teams, or both explicitly.
-- What else a Project owns beyond Threads and inherited context: goals, files, routines, memory,
+- What else a Project owns beyond Threads and inherited context: goals, files, memory,
   milestones, or other durable work.
 - Whether moving a Thread between Projects changes which inherited context and permissions apply
   to future work only or to its complete history.

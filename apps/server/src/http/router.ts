@@ -6,7 +6,6 @@ import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { computerScreenRoutes } from '../computers/screen.ts'
 import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
-import { routineWebhookRoutes } from '../routines/webhook.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
 import { watchRoutes } from '../watches/receiver.ts'
@@ -47,7 +46,6 @@ const healthRoute = HttpRouter.add(
  * Everything the server answers. Product calls are `VividRpc` (`/api/live`, `/api/rpc`). The rest
  * is plain HTTP only where something other than our client is on the other end: Better Auth, the
  * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, an
- * outside service calling a Routine's webhook, Executor delivering a Watch's events, a browser
  * moving Library bytes, the Computer's screen, a desktop app carrying the Computer's browsing
  * (`computers/egress/route.ts`), and a client reporting that it failed to draw (`faults.ts`). The
  * mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
@@ -61,7 +59,6 @@ export const routerLayer = Layer.mergeAll(
   bytesRoutes,
   faultRoutes,
   connectionReturnRoutes,
-  routineWebhookRoutes,
   watchRoutes,
   computerScreenRoutes,
   egressRoutes,

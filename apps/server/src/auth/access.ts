@@ -110,7 +110,7 @@ interface OwnerColumns {
 /**
  * Everything in the Actor's workspace: in a personal space, what they own with no Company; in a
  * Company, everything that Company holds. A domain that is narrower than the whole Company (a
- * private Thread, a personal Routine) adds its own condition on top.
+ * private Thread, a personal Watch) adds its own condition on top.
  */
 export const inWorkspace = (columns: OwnerColumns, actor: Actor): SQL =>
   Workspace.match(actor.workspace, {

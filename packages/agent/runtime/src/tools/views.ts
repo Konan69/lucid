@@ -2,7 +2,6 @@ import * as Arr from 'effect/Array'
 import {
   AnotherAccountMessage,
   MemoryScope,
-  RoutineTrigger,
   type BrowseResult,
   type DesktopView,
   type ConnectionOffer,
@@ -11,18 +10,14 @@ import {
   type InputRequest,
   type LibrarySearchResult,
   type Memory,
-  type Routine,
   type Skill,
   type SkillSummary,
 } from '@vivid/contracts'
 import { Schema } from 'effect'
 import { SavedProcedures, type ContextSkill } from './snapshots.ts'
-import { catalog, inventory, savedInventory } from './names.ts'
+import { catalog, savedInventory } from './names.ts'
 
 const isAnotherAccount = Schema.is(AnotherAccountMessage)
-
-/** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
-const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
 
 /** Saved context and read resolution share naming; native built-ins never enter this inventory. */
 export function skills(items: readonly ContextSkill[]): SavedProcedures {
@@ -110,30 +105,6 @@ export function passages(items: readonly (typeof LibrarySearchResult.Type)[]) {
         ? `[${modelText(item.filename)}]`
         : `[${modelText(item.filename)}, p.${item.page}]`,
   }))
-}
-
-/** Execution receipts and folder scope belong to the server, not the model's Routine catalog. */
-export function routine(item: Routine, name: string) {
-  return {
-    name: modelText(name),
-    prompt: modelText(item.prompt),
-    schedule: RoutineTrigger.match<{ cron: string; timezone: string } | string>(item.trigger, {
-      Once: ({ at, timezone }) =>
-        `once on ${new Intl.DateTimeFormat('en-GB', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' }).format(at)} · ${timezone}`,
-      Schedule: ({ cron, timezone }) => ({ cron, timezone }),
-      Webhook: () => 'when called',
-      Integration: ({ account, event }) => `when ${event} happens in ${account}`,
-    }),
-    enabled: item.enabled,
-    nextRunAt: date(item.nextRunAt),
-  }
-}
-
-/** Routine names use creation order, so later edits never change duplicate suffixes. */
-export function routines(items: readonly Routine[]) {
-  return inventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
-    routine(item, name),
-  )
 }
 
 /** Browser addresses can contain authority or image URLs; only the readable page is shown. */

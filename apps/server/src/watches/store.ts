@@ -254,10 +254,10 @@ const makeReads = (database: Database['Service']) => {
   return { list, named, find, due }
 }
 
-/** Arrivals: one row per event occurrence, the dedupe key for Executor's redeliveries. */
+/** Arrivals: one row per event event, the dedupe key for Executor's redeliveries. */
 const makeArrivals = (database: Database['Service']) => {
   /**
-   * Record that an occurrence arrived, in the Thread it wakes Vivid in, and answer the Run it
+   * Record that an event arrived, in the Thread it wakes Vivid in, and answer the Run it
    * already has. The primary key makes a redelivery a no-op insert. None means deliver: a first
    * arrival, or a repeat whose earlier delivery failed before admission (Conversation deduplicates
    * by the same idempotency key, so delivering again cannot start a second Run).

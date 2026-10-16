@@ -23,7 +23,6 @@ import { memoryHandlers } from '../memory/handlers.ts'
 import { notificationHandlers } from '../notifications/handlers.ts'
 import { projectHandlers } from '../projects/handlers.ts'
 import { pushHandlers } from '../push/handlers.ts'
-import { routineHandlers } from '../routines/handlers.ts'
 import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
 import { settingsHandlers } from '../settings/handlers.ts'
@@ -50,7 +49,6 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...auditHandlers,
   ...notificationHandlers,
   ...pushHandlers,
-  ...routineHandlers,
   ...projectHandlers,
   ...libraryHandlers,
   ...connectionHandlers,

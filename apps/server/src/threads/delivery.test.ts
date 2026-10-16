@@ -19,7 +19,6 @@ import {
   Conflict,
   PersonId,
   Company,
-  RoutineTrigger,
   Workspace,
   RunId,
   RunState,
@@ -42,7 +41,6 @@ import {
   Schema,
   Stream,
 } from 'effect'
-import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
@@ -52,10 +50,6 @@ import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpServer from 'effect/http/HttpServer'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
-import { RoutineStore, routineStoreServiceLayer } from '../routines/store.ts'
-import { IntegrationWatch } from '../routines/watch.ts'
-import { RoutineScheduler, routineSchedulerServiceLayer } from '../routines/scheduler.ts'
-import { ThreadStore } from './store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
@@ -84,8 +78,7 @@ import {
 import { conversationLayer } from './delivery.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { Presence } from './presence.ts'
-import { RunStore, runStoreLayer, TurnReservation, automaticallyNotifies } from './runs.ts'
-import { openAttentionThread } from './opening.ts'
+import { RunStore, runStoreLayer, TurnReservation } from './runs.ts'
 import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
 
@@ -434,7 +427,7 @@ const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
 
 /** Each producer keeps its actual origin while the common delivery seam handles contention. */
 const signals = [
-  { type: 'schedule', origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }) },
+  { type: 'event', origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }) },
   { type: 'approval', origin: StoredRunOrigin.cases.Decision.make({}) },
   { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
 ] as const
@@ -617,7 +610,7 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('Routine, wake, channel and server-written deliveries withdraw nothing', () =>
+    it.effect('Watch, wake, channel and server-written deliveries withdraw nothing', () =>
       Effect.gen(function* () {
         const test = yield* inputHarness()
         const waiting = yield* askFor(test, test.ben, test.threadId)
@@ -629,10 +622,10 @@ layer(
           },
           {
             ...said(test.threadId, test.ben),
-            origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }),
+            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
-              type: 'schedule',
+              type: 'event',
               body: 'Review now.',
               attributes: { name: 'Review' },
             }),
@@ -703,95 +696,6 @@ layer(
         }).pipe(Effect.scoped),
     )
 
-    it.effect(
-      'a standing finding opens one private Thread and Run through normal admission; a child cannot fan out',
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const test = yield* harness()
-            yield* Ref.set(test.watching, false)
-            const source = yield* test.conversation.admit({
-              threadId: test.threadId,
-              personId: test.ada,
-              speaker: DeliverySpeaker.cases.Vivid.make({}),
-              idempotencyKey: NodeCrypto.randomUUID(),
-              libraryFolder: null,
-              origin: StoredRunOrigin.cases.Standing.make({ routineName: 'Watch what needs me' }),
-              message: DeliveryMessage.cases.Signal.make({
-                type: 'schedule',
-                body: 'Check mail and calendar.',
-                attributes: { name: 'Watch what needs me' },
-              }),
-            })
-            const input = {
-              personId: test.ada,
-              threadId: test.threadId,
-              request: {
-                title: 'Calendar clash',
-                context: 'Two confirmed meetings overlap tomorrow at 10:00. Choose which to move.',
-              },
-            }
-            // Each opening owns its service scope; repeat the same input to verify deduplication.
-            const open = Effect.fn('Delivery.test.openAttention')(function* () {
-              const context = yield* Layer.build(test.services)
-              return yield* openAttentionThread(input).pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.provide(context),
-              )
-            })
-            expect(yield* open()).toEqual({ title: 'Calendar clash' })
-            yield* open()
-            const database = yield* Database
-            const created = yield* database.run(
-              database.select().from(threads).where(eq(threads.personId, test.ada)),
-            )
-            const child = created.find((thread) => thread.title === input.request.title)
-            if (child === undefined) expect.fail('Expected private finding Thread')
-            expect(child).toMatchObject({
-              companyId: null,
-              audience: 'private',
-              titleSource: 'Assigned',
-            })
-            const childRuns = yield* (yield* RunStore).list(child.id)
-            expect(childRuns).toHaveLength(1)
-            const childRun = childRuns[0]
-            if (childRun === undefined) expect.fail('Expected admitted finding Run')
-            expect(yield* automaticallyNotifies(source.runId)).toBe(false)
-            expect(yield* automaticallyNotifies(childRun.id)).toBe(false)
-            const refused = yield* Effect.gen(function* () {
-              const context = yield* Layer.build(test.services)
-              return yield* openAttentionThread({ ...input, threadId: child.id }).pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.result,
-                Effect.provide(context),
-              )
-            })
-            expect(Result.isFailure(refused) && refused.failure._tag).toBe('Forbidden')
-            yield* test.finish(source.runId)
-            yield* test.finish(childRun.id)
-            expect(yield* Ref.get(test.notices)).toEqual([])
-            const ordinary = yield* test.conversation.admit({
-              threadId: test.threadId,
-              personId: test.ada,
-              speaker: DeliverySpeaker.cases.Acting.make({}),
-              origin: StoredRunOrigin.cases.Message.make({}),
-              message: DeliveryMessage.cases.Said.make({ body: 'Now answer me' }),
-              idempotencyKey: NodeCrypto.randomUUID(),
-            })
-            yield* test.finish(ordinary.runId)
-            expect(yield* Ref.get(test.notices)).toEqual([
-              {
-                personId: test.ada,
-                companyId: test.companyId,
-                kind: 'finished',
-                title: 'Delivery test',
-                body: 'Finished',
-                threadId: test.threadId,
-              },
-            ])
-          }),
-        ),
-    )
     it.effect(
       'a Background Thread is never quoted by a notification: follow-ups, failures and questions',
       () =>
@@ -914,16 +818,16 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('allows Ada’s own Routine to join and holds Ben until both joined Runs settle', () =>
+    it.effect('allows Ada’s own Watch to join and holds Ben until both joined Runs settle', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         const first = yield* test.conversation.admit(said(test.threadId, test.ada))
-        const routine = said(test.threadId, test.ada)
+        const wake = said(test.threadId, test.ada)
         const second = yield* test.conversation.admit({
-          ...routine,
-          origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }),
+          ...wake,
+          origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
           message: DeliveryMessage.cases.Signal.make({
-            type: 'schedule',
+            type: 'event',
             body: 'Review now.',
             attributes: { name: 'Review' },
           }),
@@ -1013,102 +917,8 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    layer(
-      databaseLayer.pipe(
-        Layer.provideMerge(silentChangesLayer),
-        Layer.provideMerge(testConfigLayer),
-      ),
-    )('Clock case 2', (clockIt) => {
-      clockIt.effect(
-        'a Busy Routine keeps its tick while another due Routine runs in the same pass',
-        () =>
-          Effect.gen(function* () {
-            const test = yield* harness()
-            const database = yield* Database
-            const person = yield* findPerson(test.ben)
-            if (Option.isNone(person)) expect.fail('Missing Ben')
-            const actor = {
-              person: person.value,
-              workspace: Workspace.cases.Company.make({
-                company: new Company({
-                  id: test.companyId,
-                  name: 'Delivery test',
-                  slug: test.companyId,
-                }),
-                role: 'member',
-              }),
-              by: 'person' as const,
-              threadId: Option.none<ThreadId>(),
-            }
-            const foundation = Layer.mergeAll(
-              test.services,
-              testConfigLayer,
-              Layer.succeed(Conversation, test.conversation),
-            )
-            const schedulerContext = yield* Layer.build(
-              routineSchedulerServiceLayer.pipe(
-                // These Routines run on the clock. Nothing here watches an Integration, so the store
-                // gets a stand-in with no methods; the production Layer would build a real Executor
-                // client from settings this suite does not have.
-                Layer.provideMerge(
-                  routineStoreServiceLayer.pipe(Layer.provide(Layer.mock(IntegrationWatch, {}))),
-                ),
-                Layer.provide(foundation),
-              ),
-            )
-            const store = yield* RoutineStore.pipe(Effect.provideContext(schedulerContext))
-            const scheduler = yield* RoutineScheduler.pipe(Effect.provideContext(schedulerContext))
-            const trigger = RoutineTrigger.cases.Schedule.make({
-              cron: '* * * * *',
-              timezone: 'UTC',
-            })
-            const busy = yield* store.create(actor, { name: 'Busy', prompt: 'Review', trigger })
-            const healthy = yield* store.create(actor, {
-              name: 'Healthy',
-              prompt: 'Review',
-              trigger,
-            })
-            const threadStore = yield* Effect.gen(function* () {
-              const context = yield* Layer.build(test.services)
-              return yield* ThreadStore.pipe(Effect.provide(context))
-            })
-            const busyThread = yield* threadStore.ensure({
-              id: ThreadId.make(`routine-${busy.id}`),
-              title: 'Busy',
-              titleSource: 'Person',
-              personId: test.ben,
-              companyId: test.companyId,
-            })
-            yield* database.run(
-              database
-                .update(threads)
-                .set({ audience: 'company' })
-                .where(eq(threads.id, busyThread.id)),
-            )
-            const ada = yield* test.conversation.admit(said(busyThread.id, test.ada))
-            yield* TestClock.setTime(60_000)
-            const pass = yield* Effect.result(scheduler.runDue)
-            expect(Result.isFailure(pass) && pass.failure).toBeInstanceOf(Conflict)
-            const waiting = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
-            if (waiting === undefined) expect.fail('Missing Busy Routine')
-            expect(waiting.runs).toMatchObject([
-              { submissionId: null, error: 'Delivery was not admitted (Conflict)' },
-            ])
-            const running = (yield* store.list(actor)).find((routine) => routine.id === healthy.id)
-            if (running === undefined) expect.fail('Missing Healthy Routine')
-            expect(running.runs).toMatchObject([{ status: 'running' }])
-            yield* test.finish(ada.runId)
-            yield* scheduler.runDue
-            const replayed = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
-            if (replayed === undefined) expect.fail('Missing replayed Routine')
-            expect(replayed.runs.map((run) => run.id)).toEqual(waiting.runs.map((run) => run.id))
-            expect(replayed.runs).toMatchObject([{ status: 'running', error: null }])
-          }).pipe(Effect.scoped),
-      )
-    })
-
     it.effect(
-      'Routine, approval and answer signals keep their words, speaker and replay key across Busy',
+      'Watch, approval and answer signals keep their words, speaker and replay key across Busy',
       () =>
         Effect.gen(function* () {
           for (const { type, origin } of signals) {

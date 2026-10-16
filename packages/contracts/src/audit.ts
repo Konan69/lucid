@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { AuditEntryId, PersonSummary, RoutineId, ThreadId } from './identity.js'
+import { AuditEntryId, PersonSummary, ThreadId } from './identity.js'
 
 /**
  * What happened, as a closed set. The record answers four questions a year later: who asked, what
@@ -27,12 +27,6 @@ export const AuditEvent = Schema.TaggedUnion({
   ThreadShared: { title: Schema.String, audience: Schema.String },
   MemorySaved: { scope: Schema.String },
   MemoryForgotten: { scope: Schema.String },
-  /**
-   * Vivid stopped a Routine by its own decision, with nobody asking: its owner is no longer a
-   * Member (`Membership`), or the Integration it watches was revoked or needs signing in again
-   * (`Revoked`). Attribution remains the stored owner.
-   */
-  RoutineStopped: { routineId: RoutineId, reason: Schema.Literals(['Membership', 'Revoked']) },
 })
 export type AuditEvent = typeof AuditEvent.Type
 

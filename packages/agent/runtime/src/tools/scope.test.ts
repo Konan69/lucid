@@ -29,7 +29,7 @@ import { asActing } from '../client.ts'
 const folder = '3a1c68db-241e-4b59-a0aa-4b18867d6da1'
 
 /** Server scope is decoded independently of model input, with absent and malformed deliveries safe. */
-describe('Routine Library authority', () => {
+describe('Library authority', () => {
   it.live('keeps the attributed HTTP RPC client alive until the Flue tool finishes', () =>
     Effect.gen(function* () {
       const headers: Record<string, string>[] = []
@@ -141,7 +141,7 @@ describe('Routine Library authority', () => {
     )
     const delivery = {
       kind: 'signal' as const,
-      type: 'schedule',
+      type: 'event',
       body: 'Search.',
       attributes: { turn: '1' },
     }

@@ -6,13 +6,12 @@ import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
-/** Search is read-only; a Routine's folder authority comes exclusively from the server's delivery. */
+/** Search is read-only; folder authority comes exclusively from the server delivery. */
 export function libraryTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'search_library',
-      description:
-        'Search the Library before answering from documents and cite returned passages. A Routine automatically searches its Library folder and descendants.',
+      description: 'Search the Library before answering from documents and cite returned passages.',
       input: v.object({
         summary,
         query: v.pipe(text('The question or passage to search for.', 500), v.minLength(2)),

@@ -24,7 +24,6 @@ const Receipt = Schema.fromJsonString(
       Schema.Union([Schema.Finite, Schema.Struct({ title: Schema.String })]),
     ),
     catalog: Schema.optionalKey(Schema.String),
-    nextRunAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
     remembered: Schema.optionalKey(Schema.String),
     added: Schema.optionalKey(Schema.Boolean),
     account: Schema.optionalKey(Schema.String),
@@ -139,10 +138,6 @@ const success = {
     Predicate.isNumber(value.result)
       ? `The sum is ${value.result}.`
       : 'The program returned no numeric sum.',
-  create_routine: (value: typeof Receipt.Type) =>
-    value.nextRunAt === undefined || value.nextRunAt === null
-      ? 'The routine returned no next run time.'
-      : `The reminder is scheduled for ${modelText(value.nextRunAt)} as a one-off Routine.`,
   remember: (value: typeof Receipt.Type) =>
     value.remembered === undefined
       ? 'The memory was not confirmed.'
@@ -169,34 +164,6 @@ const success = {
 function successWords(name: string, value: typeof Receipt.Type): string {
   const reader = Object.entries(success).find(([tool]) => tool === name)
   return reader === undefined ? 'The result is above.' : reader[1](value)
-}
-
-/** Tomorrow is calculated from the Person message's timestamp in the timezone stated by Vivid's context. */
-function reminder(context: Context): FauxContentBlock[] {
-  const person = Array.findLast(context.messages, isDelivery)
-  if (Option.isNone(person))
-    return [fauxText('Send “remind me” to schedule the rehearsal reminder.')]
-  const match = /Today is .+ in the (.+) time zone\./u.exec(context.systemPrompt ?? '')
-  const timezone = match === null || match[1] === undefined ? 'UTC' : match[1]
-  const local = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(person.value.timestamp)
-  const tomorrow = new Date(`${local}T12:00:00Z`)
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
-  return [
-    call(context, 'create_routine', {
-      summary: 'Tomorrow’s review reminder',
-      name: 'Rehearsal reminder',
-      prompt: 'Tell me it is time to review the rehearsal results.',
-      trigger: {
-        kind: 'Once',
-        localAt: `${tomorrow.toISOString().slice(0, 10)}T09:00`,
-      },
-    }),
-  ]
 }
 
 /** Real tool names and valid example inputs are kept with the scene, with no product authority in the script. */
@@ -290,7 +257,6 @@ const examples = [
     address: 'https://mcp.exa.ai/mcp',
     name: 'Exa',
   }),
-  { phrase: 'remind me', steps: [reminder, completion] },
   toolScene('remember that', 'remember', {
     summary: 'Morning review preference',
     kind: 'preference',

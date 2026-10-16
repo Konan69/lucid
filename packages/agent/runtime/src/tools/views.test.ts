@@ -7,9 +7,6 @@ import {
   MemoryScope,
   PersonId,
   PersonSummary,
-  Routine,
-  RoutineId,
-  RoutineTrigger,
   Skill,
   SkillId,
   SkillScope,
@@ -20,10 +17,6 @@ import {
   ServiceId,
   ServiceAuthorization,
   DiscoveredTool,
-  LibraryFolderId,
-  Occurrence,
-  OccurrenceId,
-  RunId,
   ApprovalId,
   InputRequestId,
   InputRequest,
@@ -40,7 +33,6 @@ import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
 import { projectTools } from './projects.ts'
-import { routineTools } from './routines.ts'
 import { skillTools } from './skills.ts'
 import type { RunTool } from './scope.ts'
 
@@ -73,31 +65,6 @@ const memory = Memory.make({
   learnedFrom: person,
   createdAt: 0,
   updatedAt: 0,
-})
-const occurrence = Occurrence.make({
-  id: OccurrenceId.make(reference),
-  routineId: RoutineId.make('MARK-routine'),
-  threadId: ThreadId.make('MARK-thread'),
-  submissionId: RunId.make('MARK-run'),
-  status: 'succeeded',
-  startedAt: 0,
-  finishedAt: 1000,
-  output: 'MARK-output',
-  error: null,
-})
-const routine = Routine.make({
-  id: RoutineId.make(reference),
-  name: 'Review each morning',
-  prompt: 'Review the agreement.',
-  trigger: RoutineTrigger.cases.Schedule.make({ cron: '0 9 * * *', timezone: 'Africa/Lagos' }),
-  libraryFolderId: LibraryFolderId.make('MARK-folder'),
-  enabled: true,
-  nextExpectedAt: 1000,
-  lastMissedAt: null,
-  createdAt: 0,
-  updatedAt: 0,
-  nextRunAt: 1000,
-  runs: [occurrence],
 })
 const service = Service.make({
   id: ServiceId.make('MARK-service'),
@@ -141,9 +108,6 @@ describe('model views', () => {
           score: 1,
         },
       ]),
-      views.routine(routine, routine.name),
-      views.routines([routine]),
-      views.routine({ ...routine, trigger: RoutineTrigger.cases.Webhook.make({}) }, routine.name),
       views.browse({
         address: 'https://example.test',
         tabs: [{ title: 'Agreement', address: 'https://example.test', showing: true }],
@@ -180,14 +144,6 @@ describe('model views', () => {
           citation: '[Agreement.pdf, p.2]',
         },
       ],
-      {
-        name: 'Review each morning',
-        prompt: 'Review the agreement.',
-        schedule: { cron: '0 9 * * *', timezone: 'Africa/Lagos' },
-        enabled: true,
-      },
-      [{ name: 'Review each morning', prompt: 'Review the agreement.', enabled: true }],
-      { name: 'Review each morning', schedule: 'when called' },
       { title: 'Agreement', outline: 'Signed', tabs: [{ title: 'Agreement', showing: true }] },
     ])
     const json = JSON.stringify(output)
@@ -366,15 +322,7 @@ function isRecord(value: Schema.Json): value is Schema.JsonObject {
 
 /** All mounted tools are inspected, including nested browser actions and input-request choices. */
 it('has no identifier key or UUID validator in any model tool input', () => {
-  const groups = [
-    askTools,
-    connectionTools,
-    libraryTools,
-    memoryTools,
-    routineTools,
-    projectTools,
-    skillTools,
-  ]
+  const groups = [askTools, connectionTools, libraryTools, memoryTools, projectTools, skillTools]
   for (const native of pictureTools(inspectionOnly))
     inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)

@@ -49,15 +49,8 @@ the Notification remains in the app. Provider acceptance does not prove device d
 subscriptions are removed; a scoped worker also reads Expo's late device receipts.
 
 `notify_person` creates a Notification and reports accepted, failed and uncertain target counts,
-or explains presence, missing targets or unavailable push. “Watch what needs me” is an opt-in
-built-in procedure, exposed in `ListRoutines` / `WatchRoutines` as `templates`: pass its complete
-template to `CreateRoutine` from a signed-in Person to enable it, then use ordinary Routine
-enable/disable RPCs. This personal commitment remains visible and manageable by its Person across
-workspace switches; Vivid cannot silently enable or re-enable it. It checks every 30 minutes through the existing scheduler, judges connected
-mail/calendar and remembered commitments, and acts alone only on small reversible work. A
-standing check can use `open_thread` to admit private follow-up work; that Run holds the evidence
-and calls `notify_person` there. Quiet checks and follow-up completion do not emit generic
-finished notifications. No quiet hours, caps or digest controls were added. Real-device push and
+or explains presence, missing targets or unavailable push. Watches receive Integration app events
+through Executor. Their findings reach the Person through the Feed. Real-device push and
 the model's attention judgement remain unverified.
 
 ## Direct messages between bots

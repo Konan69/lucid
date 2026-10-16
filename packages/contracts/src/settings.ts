@@ -8,7 +8,7 @@ export class Settings extends Schema.Class<Settings>('Settings')(
   {
     personId: PersonId,
     theme: Theme,
-    /** The IANA zone Vivid resolves "tomorrow at 9" against, and Routines run in. */
+    /** The IANA zone used to interpret local dates and times. */
     timezone: Schema.String,
     /** Whether Vivid tells this Person when it finishes or needs them in a Thread they left. */
     notify: Schema.Boolean,

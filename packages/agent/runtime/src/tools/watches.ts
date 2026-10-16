@@ -74,9 +74,7 @@ export function watchTools(runTool: RunTool) {
         event: text('The event name exactly as find_events returned it.', 200),
         filters: v.pipe(
           v.record(v.string(), v.union([v.string(), v.number(), v.boolean()])),
-          v.description(
-            'Values for the event’s filters, by filter name; {} to watch every occurrence.',
-          ),
+          v.description('Values for the event’s filters, by filter name; {} to watch every event.'),
         ),
         instruction: text('What to do each time the event happens, in the Person’s words.', 4000),
       }),

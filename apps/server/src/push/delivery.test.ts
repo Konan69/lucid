@@ -243,7 +243,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
       ),
     )
     it.effect(
-      'notify_person returns provider evidence, deduplicates in its acting Run, and a standing Run stays quiet',
+      'notify_person returns provider evidence, deduplicates in its acting Run, and a Watch Run stays quiet',
       () =>
         withPush(
           Effect.gen(function* () {
@@ -259,7 +259,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               id,
               threadId: owner.threadId,
               personId: owner.person.id,
-              origin: StoredRunOrigin.cases.Standing.make({ routineName: 'Watch what needs me' }),
+              origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
               libraryFolder: null,
             })
             if (!TurnReservation.guards.Reserved(reserved))

@@ -130,7 +130,6 @@ import {
   LibraryItemId,
   MembershipId,
   MemoryId,
-  RoutineId,
   RuleId,
   SkillId,
   ThreadId,
@@ -164,17 +163,6 @@ import {
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
 import { ComputerInventory } from './applications.js'
-import {
-  CreateRoutineRequest,
-  CreateOnceRoutineRequest,
-  FindEventsRequest,
-  FindEventsResponse,
-  OccurrenceResponse,
-  PatchRoutineRequest,
-  RoutineListResponse,
-  RoutineResponse,
-  RoutineWebhook,
-} from './routines.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { Appearance } from './appearance.js'
@@ -191,7 +179,6 @@ import {
 import {
   CreateThreadRequest,
   OpenFirstThreadResult,
-  OpenThreadRequest,
   Inbox,
   PatchThreadRequest,
   PresenceRequest,
@@ -366,11 +353,6 @@ const CreateThread = Rpc.make('CreateThread', {
 const OpenFirstThread = Rpc.make('OpenFirstThread', {
   ...call,
   success: OpenFirstThreadResult,
-})
-const OpenThread = Rpc.make('OpenThread', {
-  ...call,
-  payload: OpenThreadRequest,
-  success: Schema.Struct({ title: Schema.String }),
 })
 const PatchThread = Rpc.make('PatchThread', {
   ...call,
@@ -560,43 +542,6 @@ const ReadNotifications = Rpc.make('ReadNotifications', {
   success: NotificationReadResponse,
 })
 
-// ── Routines ───────────────────────────────────────────────────────────────
-const FindEvents = Rpc.make('FindEvents', {
-  ...call,
-  payload: FindEventsRequest,
-  success: FindEventsResponse,
-})
-const ListRoutines = Rpc.make('ListRoutines', { ...call, success: RoutineListResponse })
-const WatchRoutines = Rpc.make('WatchRoutines', { ...live, success: RoutineListResponse })
-const CreateRoutine = Rpc.make('CreateRoutine', {
-  ...call,
-  payload: CreateRoutineRequest,
-  success: RoutineResponse,
-})
-const CreateOnceRoutine = Rpc.make('CreateOnceRoutine', {
-  ...call,
-  payload: CreateOnceRoutineRequest,
-  success: RoutineResponse,
-})
-const PatchRoutine = Rpc.make('PatchRoutine', {
-  ...call,
-  payload: { id: RoutineId, patch: PatchRoutineRequest },
-  success: RoutineResponse,
-})
-const DeleteRoutine = Rpc.make('DeleteRoutine', { ...call, payload: { id: RoutineId } })
-/** Start one Occurrence now, outside the Routine's trigger. */
-const RunRoutine = Rpc.make('RunRoutine', {
-  ...call,
-  payload: { id: RoutineId },
-  success: OccurrenceResponse,
-})
-/** The address and key for a webhook Routine. Asking again issues a new key and ends the old one. */
-const IssueRoutineWebhook = Rpc.make('IssueRoutineWebhook', {
-  ...call,
-  payload: { id: RoutineId },
-  success: RoutineWebhook,
-})
-
 // ── Watches ────────────────────────────────────────────────────────────────
 /** The events an Integration's app declares, named by the account the Person was shown. */
 const FindAppEvents = Rpc.make('FindAppEvents', {
@@ -604,7 +549,7 @@ const FindAppEvents = Rpc.make('FindAppEvents', {
   payload: FindAppEventsRequest,
   success: FindAppEventsResponse,
 })
-/** Subscribe to one of those events for the acting Person; each occurrence wakes Vivid. */
+/** Subscribe to one of those events for the acting Person; each event wakes Vivid. */
 const CreateWatch = Rpc.make('CreateWatch', {
   ...call,
   payload: CreateWatchRequest,
@@ -986,7 +931,6 @@ export const VividRpc = RpcGroup.make(
   WatchThread,
   CreateThread,
   OpenFirstThread,
-  OpenThread,
   PatchThread,
   RegenerateThreadTitle,
   ShareThread,
@@ -1027,15 +971,6 @@ export const VividRpc = RpcGroup.make(
   Post,
   WatchNotifications,
   ReadNotifications,
-  FindEvents,
-  ListRoutines,
-  WatchRoutines,
-  CreateRoutine,
-  CreateOnceRoutine,
-  PatchRoutine,
-  DeleteRoutine,
-  RunRoutine,
-  IssueRoutineWebhook,
   FindAppEvents,
   CreateWatch,
   ListWatches,

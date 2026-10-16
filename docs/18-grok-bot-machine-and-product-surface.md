@@ -1,5 +1,6 @@
 # Grok Bot: machine infrastructure and product surface
 
+Vivid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Vivid uses Watches and the Feed.
 2026-10-03: Historical Grok Bot evidence and Vivid mappings; Boat’s real-service proof supersedes the implementation context, while current Computer behavior and limits live in [docs/04](04-computer.md) and [docs/14](14-product-feature-set-and-grok-bot-parity.md); reference unknowns remain unknown.
 
 **Evidence scope.** This is an artifact map of Grok Bot 0.30/0.39, not a product

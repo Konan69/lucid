@@ -1,33 +1,9 @@
 import { Array as Arr } from 'effect'
 import { SkillId } from '@vivid/contracts'
 
-/** One opt-in standing procedure uses the existing cron scheduler; its working instructions live in SKILL.md. */
-export const standingRoutine = {
-  name: 'Watch what needs me',
-  prompt:
-    'Activate watch-what-needs-me and follow it. This is an authorised standing check. Notify only through notify_person when something needs the Person; otherwise finish silently.',
-  cron: '*/30 * * * *',
-} as const
-
 /** Display names and suggestion dependencies are shared by the server and runtime. Descriptions
  * and procedure bodies live only in SKILL.md; adding a name also extends the mount-map key type. */
 const definitions = [
-  {
-    runtimeName: 'watch-what-needs-me',
-    displayName: standingRoutine.name,
-    about: 'Looks at connected mail, calendar and open work and tells you only what needs you.',
-    starter: false,
-    needs: [
-      'find_integrations',
-      'find_tools',
-      'use_tool',
-      'recall',
-      'remember',
-      'open_thread',
-      'notify_person',
-    ],
-    connections: [],
-  },
   {
     runtimeName: 'connect-a-service',
     displayName: 'Connect a service',
@@ -75,7 +51,7 @@ const definitions = [
     about:
       'Sorts your inbox into what needs you and what does not, and proposes the next step for each.',
     starter: false,
-    needs: ['find_tools', 'use_tool', 'connect', 'recall', 'ask_person', 'create_routine'],
+    needs: ['find_tools', 'use_tool', 'connect', 'recall', 'ask_person'],
     connections: [['Gmail', 'Outlook', 'Microsoft Outlook']],
   },
   {
@@ -91,15 +67,7 @@ const definitions = [
     displayName: 'Morning brief',
     about: 'Brings your meetings, urgent messages, and commitments into a short brief for the day.',
     starter: false,
-    needs: [
-      'create_routine',
-      'list_routines',
-      'find_tools',
-      'use_tool',
-      'connect',
-      'recall',
-      'ask_person',
-    ],
+    needs: ['find_tools', 'use_tool', 'connect', 'recall', 'ask_person'],
     connections: [
       ['Gmail', 'Outlook', 'Microsoft Outlook'],
       ['Google Calendar', 'Outlook', 'Microsoft Outlook'],
@@ -134,28 +102,8 @@ const definitions = [
     displayName: 'Chase an outcome',
     about: 'Checks progress on your commitment and the evidence before calling it done.',
     starter: false,
-    needs: ['create_routine', 'list_routines', 'find_tools', 'use_tool', 'connect', 'ask_person'],
+    needs: ['find_tools', 'use_tool', 'connect', 'ask_person'],
     connections: [['Gmail', 'Outlook', 'Microsoft Outlook', 'Slack', 'Linear', 'Asana']],
-  },
-  {
-    runtimeName: 'watch-a-useful-signal',
-    displayName: 'Watch a useful signal',
-    about:
-      'Checks a public page on your agreed schedule and tells you when a useful change happens.',
-    starter: true,
-    needs: [
-      'create_routine',
-      'list_routines',
-      'read_page',
-      'recall',
-      'remember',
-      'read_note',
-      'write_note',
-      'ask_person',
-      'find_tools',
-      'connect',
-    ],
-    connections: [],
   },
   {
     runtimeName: 'remember-and-correct-preferences',
@@ -264,7 +212,6 @@ const definitions = [
       'read_note',
       'write_note',
       'delete_note',
-      'list_routines',
       'read_document',
       'write_document',
       'ask_person',
@@ -291,13 +238,13 @@ const definitions = [
     runtimeName: 'what-vivid-can-do',
     displayName: 'What Vivid can do',
     about:
-      'Tells you what Vivid can do, knows and has scheduled, from what is actually set up right now.',
+      'Tells you what Vivid can do, knows and watches, from what is actually set up right now.',
     starter: false,
     needs: [
       'find_tools',
       'find_integrations',
       'recall',
-      'list_routines',
+      'list_watches',
       'search_library',
       'activate_skill',
       'read_skill',

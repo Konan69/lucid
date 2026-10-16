@@ -36,7 +36,7 @@ const baseName = (
 
 /**
  * Names every account an Actor can use, once, for every reader: the list a Person sees, discovery,
- * resolution and a Routine's trigger all call this, so one account never has two names.
+ * resolution both call this, so one account never has two names.
  *
  * It names all accessible Connections before any status or query filter, in creation order, so a
  * name does not move when another account is filtered out of a result. Two names that still read
@@ -63,10 +63,10 @@ export function namedAccounts(records: readonly ConnectionRecord[]) {
   const used = new Set<string>()
   return based.map(({ row, base }) => {
     let account = base
-    let occurrence = 2
+    let suffix = 2
     if (used.has(account.toLowerCase())) {
       do {
-        account = `${base} (${occurrence++})`
+        account = `${base} (${suffix++})`
       } while (used.has(account.toLowerCase()) || reserved.has(account.toLowerCase()))
     }
     used.add(account.toLowerCase())

@@ -6,7 +6,7 @@ before adding a file. Extend it in the same change that adds a directory.
 ## Rules
 
 1. **One word per file and per directory.** The directory carries the context:
-   `agent/runtime`, never `agent-runtime`; `routines/store.ts`, never `routine-store.ts`. Components are
+   `agent/runtime`, never `agent-runtime`; `watches/store.ts`, never `watch-store.ts`. Components are
    one PascalCase word (`integration/Card.tsx`). Allowed suffixes: `.test.ts(x)`, `.live.test.ts`,
    `.server.ts`, the React Native platform suffixes, and tool configs that a tool names for us.
 2. **Group what changes together.** A group directory (`agent/`, `design/`, `client/`) exists
@@ -98,10 +98,9 @@ approvals/      ● the trust loop: gate, record, runner, replay           docs/
 rules/          ● standing rules that pre-decide actions, and the judge  docs/22
 artifacts/      ● Thread documents, immutable versions and runtime tools docs/14
 notifications/  ● what needs a Person's attention                        docs/22
-routines/       ● Routines, Occurrences, triggers, the scheduler         docs/13, 22
 library/        ● Library items, folders, ingest, search                 docs/03
 connections/    ● Integrations on Executor: accounts, sign-in, tools     docs/22
-skills/         ● saved procedures and the ones Vivid ships with         docs/13, 22
+skills/         ● saved procedures and the ones Vivid ships with         docs/22
 memory/         ● memory on HelixDB: extraction, graph, recall, the page docs/25
 computers/      ● a machine per Person: Boat and local providers, browser, desktop  docs/04
 code/           ● programs Vivid writes, run on the Person's Computer    docs/22
@@ -114,7 +113,7 @@ audit/          ● the append-only record of consequential actions        docs/
 
 Most persisted domains use `tables.ts` · `store.ts` · `handlers.ts` and behavior tests. Provider
 and projection domains contain only their actual concerns; schedulers and ingestion have named
-modules (`routines/scheduler.ts`, `library/ingest.ts`). Composition adapters may import domain
+modules (`watches/lifecycle.ts`, `library/ingest.ts`). Composition adapters may import domain
 Layers and handlers; domain-to-domain calls go through exported services.
 
 ## Apps

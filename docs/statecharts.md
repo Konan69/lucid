@@ -56,13 +56,12 @@ independent of state-machine choice.
 
 ## Current application fit
 
-| Area                                | Observed behavior                                                                                               | Recommendation                                                                                                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Connection authorization            | Web and mobile separately manage authorization, retry, errors, returning from sign-in, and Thread continuation. | Best first trial: share the transition controller, retain native platform adapters.                                             |
-| Routine Occurrences                 | Three result states plus persisted Flue submission receipts and guarded completion.                             | Keep the current approach until cancellation, approval, pause, or overlapping-run policy adds meaningful transition complexity. |
-| Library ingestion                   | Mostly linear read, extract, and index work.                                                                    | Keep Effect programs; reconsider for resumable stages, cancellation, or richer retries.                                         |
-| Notification read state, navigation | Mostly simple values and updates.                                                                               | Schemas and direct functions suffice.                                                                                           |
-| Conversation streaming              | Flue owns conversation execution and lifecycle.                                                                 | Preserve its authority; do not mirror it into a competing machine.                                                              |
+| Area                                | Observed behavior                                                                                               | Recommendation                                                                          |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Connection authorization            | Web and mobile separately manage authorization, retry, errors, returning from sign-in, and Thread continuation. | Best first trial: share the transition controller, retain native platform adapters.     |
+| Library ingestion                   | Mostly linear read, extract, and index work.                                                                    | Keep Effect programs; reconsider for resumable stages, cancellation, or richer retries. |
+| Notification read state, navigation | Mostly simple values and updates.                                                                               | Schemas and direct functions suffice.                                                   |
+| Conversation streaming              | Flue owns conversation execution and lifecycle.                                                                 | Preserve its authority; do not mirror it into a competing machine.                      |
 
 Local evidence:
 
@@ -70,8 +69,6 @@ Local evidence:
   [mobile Connection request card](../apps/mobile/src/ui/connector/Card.tsx).
 - [Mobile resource store](../apps/mobile/src/data/resource/store.ts): subscription lifetime,
   foreground refresh, and stale-response handling already have an owned implementation.
-- [Routine scheduler](../apps/server/src/routines/scheduler.ts) and
-  [Routine store](../apps/server/src/routines/store.ts), including one-off reminders.
 - [Library ingestion](../packages/agent/runtime/src/library-ingest.ts).
 
 ## Future application fit
@@ -84,7 +81,6 @@ These are evaluation candidates, not claims that the complete features are imple
 | Computer lifecycle                | Starting, restoring, verifying readiness, capturing changes, stopping, and recovery. Work must wait for verified restoration. |
 | Human takeover                    | Control ownership, when Vivid must stop acting, and what authorizes resumption.                                               |
 | Offline commands and reconnection | Local queueing, submission, acknowledgement, rejection, and safe retry.                                                       |
-| Routine installation              | Required Connections, configuration, confirmation, installation, failure, and retry.                                          |
 
 Computer availability, control ownership, and archive synchronization are separate concerns. Model
 their relationships explicitly rather than enumerating every combination in one giant machine.
@@ -92,8 +88,7 @@ Existing [restore verification](../packages/computer/src/restore.ts) and
 [capture conflict handling](../packages/computer/src/capture.ts) remain authoritative guarantees.
 
 Related product direction: [Computer](04-computer.md),
-[platform architecture](09-platform-architecture.md),
-[Routines](13-routines-and-templates.md), including reminders and other one-off commitments.
+[platform architecture](09-platform-architecture.md).
 Older documents contain historical implementation details; verify current source before adoption.
 
 ## Capabilities and limits

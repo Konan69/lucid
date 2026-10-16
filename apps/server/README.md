@@ -61,7 +61,7 @@ both chains. Tests use only a disposable database through `VIVID_TEST_DATABASE_U
 `VividRpc` in `packages/contracts/src/rpc.ts` declares product calls: `/api/live` carries JSON
 RPC over WebSocket, and `/api/rpc` carries NDJSON RPC over HTTP. `http/router.ts` composes the
 plain HTTP adapters for Better Auth, the conversation gateway, Integration sign-in returns,
-Routine webhooks, Library bytes, the Computer screen, and health. Better Auth's organization
+Library bytes, the Computer screen, and health. Better Auth's organization
 mutation routes are closed; Company changes go through the audited product RPCs.
 
 ## External capabilities
@@ -93,8 +93,3 @@ Sheets and Tasks, which the server carries and installs on Executor itself
 (`src/connections/google.ts`). The client must allow two return addresses on the server's public
 address: `/api/auth/callback/google` and `/api/connections/return`
 ([One product](../../docs/22-one-product.md), "Google Integrations").
-
-One-off Routines resolve a local date-time using the Person's saved time zone. The existing
-Routine scheduler claims the Occurrence, disables the Routine and clears its next time in one
-transaction. The Routine, Thread and Occurrence remain available; pending submission receipts
-recover across restarts. Past times are refused before insertion.

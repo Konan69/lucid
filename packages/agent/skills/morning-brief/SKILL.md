@@ -7,10 +7,10 @@ metadata:
     Shipped guidance keeps completion evidence and permission beside the steps.
 ---
 
-Establish the Person's local date and timezone, then the accounts and commitments they want covered. Use `list_routines` for scheduled commitments and what you remember for working preferences. Discover calendar and mail reads with `find_tools`. If either required integration is not connected, offer `connect` and explain which part of the brief cannot yet be checked. Do not imply that an empty result means no commitments when access failed.
+Establish the Person's local date and timezone, then the accounts and commitments they want covered. Use what you remember for working preferences and explicit commitments. Discover calendar and mail reads with `find_tools`. If either required integration is not connected, offer `connect` and explain which part of the brief cannot yet be checked. Do not imply that an empty result means no commitments when access failed.
 
-Read today's real calendar, including cancellations and timezone changes. Read a bounded window of urgent or unanswered mail and check the full conversation before identifying a request. Combine these with upcoming Routines and explicit commitments. Prioritize what changes the Person's day: imminent meetings, decisions waiting for them, deadlines and a conflict that needs attention. Include source links and concrete next steps. Keep informational mail separate and omit noise.
+Read today's real calendar, including cancellations and timezone changes. Read a bounded window of urgent or unanswered mail and check the full conversation before identifying a request. Combine these with explicit commitments. Prioritize what changes the Person's day: imminent meetings, decisions waiting for them, deadlines and a conflict that needs attention. Include source links and concrete next steps. Keep informational mail separate and omit noise.
 
 Return a brief the Person can scan quickly. State the date and account coverage, then the few things needing attention and any material gaps. Do not claim to have handled a commitment merely by mentioning it. Sending replies, moving meetings and changing records still need their own permission and Approval.
 
-For a recurring brief, ask with `ask_person` for the delivery time, timezone and included sources. Inspect `list_routines` to avoid creating a duplicate. Use `create_routine` only after the Person asks for that schedule, with instructions to re-read current sources each time and report in its Thread. Verify the returned schedule; creating a Routine does not mean its first brief has run.
+Reminders are not available until the clock app lands. Explain this when asked for a recurring brief.

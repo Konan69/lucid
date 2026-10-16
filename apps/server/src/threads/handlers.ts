@@ -8,12 +8,11 @@ import {
   type PersonId,
   type PresenceRequest,
   type ShareThreadRequest,
-  type OpenThreadRequest,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
-import { requireActor, requirePerson, requireVivid, summaryOf, type Actor } from '../auth/access.ts'
+import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
@@ -22,7 +21,6 @@ import { requireThread } from './access.ts'
 import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
 import { ThreadStore, type Shared } from './store.ts'
-import { openAttentionThread } from './opening.ts'
 import { openFirstThread } from './arrival.ts'
 
 /**
@@ -75,15 +73,6 @@ export const threadHandlers = {
   OpenFirstThread: Effect.fn('Rpc.OpenFirstThread')(function* () {
     yield* requirePerson()
     return yield* openFirstThread(yield* requireActor())
-  }),
-  /** A standing check opens private follow-up work; the model supplies no ownership fields. */
-  OpenThread: Effect.fn('Rpc.OpenThread')(function* (request: typeof OpenThreadRequest.Type) {
-    const auth = yield* requireVivid()
-    return yield* openAttentionThread({
-      personId: auth.person.id,
-      threadId: auth.threadId,
-      request,
-    })
   }),
   /** Only the unattributed runtime token may retrieve authority; sessions/devices and acting calls cannot. */
   GetDeliveryScope: Effect.fn('Rpc.GetDeliveryScope')(function* (request: DeliveryScopeRequest) {
