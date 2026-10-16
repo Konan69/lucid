@@ -21,7 +21,7 @@ const askedName = (devices: ReadonlyArray<Device>, asking: ReadonlyArray<number>
   Option.map(
     deviceAsked({
       devices,
-      asking: devices.filter((_, place) => asking.includes(place + 1)).map((each) => each.id),
+      asking: devices.flatMap((each, place) => (asking.includes(place + 1) ? [each.id] : [])),
     }),
     (asked) => asked.device.name,
   )
