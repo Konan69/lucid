@@ -20,7 +20,7 @@ declare const __VIVID_BUILT__: string
 
 /** This page's build: its commit when it has one, and when it was built. */
 export const page = {
-  commit: Schema.decodeUnknownOption(Commit)(__VIVID_COMMIT__),
+  commit: Schema.decodeOption(Commit)(__VIVID_COMMIT__),
   built: new Date(__VIVID_BUILT__),
 }
 

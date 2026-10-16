@@ -128,8 +128,11 @@ it.effect('names its build by the commit its host gave it', () =>
     expect((yield* load({ VIVID_COMMIT: full })).BUILD).toEqual(
       ServerBuild.cases.Named.make({ commit: Commit.make(full) }),
     )
-    for (const commit of [{}, { VIVID_COMMIT: '' }, { VIVID_COMMIT: 'ghp_notacommit' }]) {
-      expect((yield* load(commit)).BUILD).toEqual(ServerBuild.cases.Unnamed.make({}))
+    expect((yield* load({})).BUILD).toEqual(ServerBuild.cases.Unnamed.make({}))
+    for (const commit of ['', 'ghp_notacommit']) {
+      expect((yield* load({ VIVID_COMMIT: commit })).BUILD).toEqual(
+        ServerBuild.cases.Unnamed.make({}),
+      )
     }
   }),
 )
