@@ -113,10 +113,36 @@ Helix's learning after each Run stays as it is: that feeds the knowledge graph, 
   own private name (`memory-a.railway.internal`). Two nodes make a write finish when the second
   node holds it, not after a bucket round trip. Declared in `infra/railway.ts` like the other
   services.
-- **One bucket** that celld qualifies: Cloudflare R2, Amazon S3 or Tigris. It must pass
-  `celld diagnose` (conditional writes) before first use.
+- **One Cloudflare R2 bucket** (decided 16 October, open to change): celld's release tests run
+  against R2, so it is the store celld is proven on. S3 and Tigris are also qualified. The bucket
+  must pass `celld diagnose` (conditional writes) before first use.
 - **The cell's code** deploys with `celld deploy apps/memory --bucket …` from a push that touches
   `apps/memory`. Nodes take a new version without a restart.
+
+## How it scales
+
+Memory stops being the reason the server and runtime run as one copy each.
+
+- **Server and runtime copies.** Neither holds memory or a volume, so each can run as many copies
+  as load needs. Every copy reaches every Person's cell, and celld routes each call to the node
+  that owns that cell. The proof showed this: a note written through one node was read through
+  the other, and two copies writing one note at once got one `200` and one `409`. (The server
+  still runs as one replica for another reason, desktop presence; see
+  [Infrastructure](19-infrastructure.md).)
+- **celld nodes.** One more node is one more Railway service pointed at the same bucket, with no
+  other configuration: nodes find each other through the bucket and share the cells between
+  them. Cells nobody is using hibernate and cost only their bucket storage. A node's memory limit
+  decides how many cells it keeps resident.
+- **Per Person cost.** A Person is one small SQLite database. Measured with two nodes over 200
+  Persons: write p50 9.5 ms, p95 40.7 ms; read p50 2.3 ms, p95 2.6 ms. A Person's calls are
+  served by one cell, so one busy Person never slows another Person's memory.
+- **A node dies.** Its Persons move to the surviving node once its lease runs out. Measured
+  10.9 s with the 10 s default lease; calls in that window fail and the model is told its notes
+  are unavailable, never that it has none.
+- **Every node dies.** The bucket is the truth. With both disks wiped, a fresh node restored all
+  200 Persons and answered all 200 reads in 1.9 s.
+- **Two nodes, not one.** With one node every write waits for a bucket round trip (celld cites
+  about 90 ms to a region-local store); with two it finishes once the second node holds it.
 
 ## Order of work
 
@@ -130,6 +156,5 @@ Helix's learning after each Run stays as it is: that feeds the knowledge graph, 
 
 ## Open decisions
 
-- **The bucket provider.** R2 is what celld's release tests run against.
 - **Runtime placement** is changing in another thread (Pi Durable). This design does not depend on
   it: the runtime only calls the server.
