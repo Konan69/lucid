@@ -253,7 +253,7 @@ describe('browser model target and image result', () => {
             BrowseOutcome.cases.NotAllowed.make({}),
             {
               ok: false,
-              message: expect.stringContaining('has not allowed access'),
+              message: expect.stringContaining('has not allowed Vivid to use their computer'),
             },
             false,
           ],
