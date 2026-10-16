@@ -42,9 +42,7 @@ describe.skipIf(
         const executor = yield* Executor
         const entries = yield* executor.catalog
         expect(entries.length).toBeGreaterThan(0)
-        expect(entries.some((entry) => entry.domain !== null && refusedHost(entry.domain))).toBe(
-          false,
-        )
+        expect(entries.some((entry) => refusedService(entry.id))).toBe(false)
       }),
     )
   })
