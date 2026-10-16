@@ -24,7 +24,7 @@ import type { KeyRoute } from './data/connecting'
  *   one Thread, in the same place (`data/front.ts`); a Thread is not a screen of its own, so
  *   starting or choosing one never changes screens.
  * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
- * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
+ * - `Library`: the place beside Threads, in the drawer. `Projects` is reached from
  *   the quiet group under the Threads.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
  *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
@@ -53,7 +53,6 @@ import type { KeyRoute } from './data/connecting'
 export type Routes = {
   Home: undefined
   Computer: undefined
-  Routines: undefined
   Library: undefined
   Folder: { shelf: LibraryShelf; id: LibraryFolderId; name: string }
   Projects: undefined
@@ -128,7 +127,7 @@ export function useFirst(id: ThreadId): Option.Option<First> {
 }
 
 /**
- * Opens a Thread from a screen that is over the first one (a Project, a Routine, a notification):
+ * Opens a Thread from a screen that is over the first one (a Project, a notification):
  * the Thread is put in front, and the stack returns to the first screen, where it is.
  */
 export function useOpenThread(): (id: ThreadId) => void {

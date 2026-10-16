@@ -353,7 +353,7 @@ function makeLeaving() {
 
 /**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
- * moving between Threads, Routines and the Library in the course of a piece of work is instant
+ * moving between Threads, Projects and the Library in the course of a piece of work is instant
  * and current. It costs the server an open subscription, not a refetch.
  */
 const IDLE_FOR_MS = 5 * 60_000

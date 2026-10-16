@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/root'
 import { Route as firstRouteImport } from './routes/first'
 import { Route as libraryRouteImport } from './routes/library'
-import { Route as routinesRouteImport } from './routes/routines'
 import { Route as inviteRouteImport } from './routes/invite'
 import { Route as projectsRouteImport } from './routes/projects'
 import { Route as threadRouteImport } from './routes/thread'
@@ -24,11 +23,6 @@ const firstRoute = firstRouteImport.update({
 const libraryRoute = libraryRouteImport.update({
   id: '/library',
   path: '/library',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const routinesRoute = routinesRouteImport.update({
-  id: '/routines',
-  path: '/routines',
   getParentRoute: () => rootRouteImport,
 } as any)
 const inviteRoute = inviteRouteImport.update({
@@ -50,7 +44,6 @@ const threadRoute = threadRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof firstRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
@@ -58,7 +51,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof firstRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
@@ -67,33 +59,19 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof firstRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/library'
-    | '/routines'
-    | '/invite/$id'
-    | '/projects/{-$id}'
-    | '/t/$id'
+  fullPaths: '/' | '/library' | '/invite/$id' | '/projects/{-$id}' | '/t/$id'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/library'
-    | '/routines'
-    | '/invite/$id'
-    | '/projects/{-$id}'
-    | '/t/$id'
+  to: '/' | '/library' | '/invite/$id' | '/projects/{-$id}' | '/t/$id'
   id:
     | '__root__'
     | '/'
     | '/library'
-    | '/routines'
     | '/invite/$id'
     | '/projects/{-$id}'
     | '/t/$id'
@@ -102,7 +80,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   firstRoute: typeof firstRoute
   libraryRoute: typeof libraryRoute
-  routinesRoute: typeof routinesRoute
   inviteRoute: typeof inviteRoute
   projectsRoute: typeof projectsRoute
   threadRoute: typeof threadRoute
@@ -122,13 +99,6 @@ declare module '@tanstack/react-router' {
       path: '/library'
       fullPath: '/library'
       preLoaderRoute: typeof libraryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/routines': {
-      id: '/routines'
-      path: '/routines'
-      fullPath: '/routines'
-      preLoaderRoute: typeof routinesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invite/$id': {
@@ -158,7 +128,6 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   firstRoute: firstRoute,
   libraryRoute: libraryRoute,
-  routinesRoute: routinesRoute,
   inviteRoute: inviteRoute,
   projectsRoute: projectsRoute,
   threadRoute: threadRoute,

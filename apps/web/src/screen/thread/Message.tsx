@@ -18,7 +18,7 @@ import {
   thisReader,
 } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
+import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
 import { memo, useState } from 'react'
 import { Display } from '../../parts/Display'
 import { PersonAvatar } from '../../ui/Person'
@@ -330,14 +330,13 @@ function picturesOf(message: FlueConversationMessage) {
 
 /** The quiet line each wake is drawn as, by why Vivid woke (`Source.Wake` in `@vivid/state`). */
 const SIGNAL_LINE = {
-  routine: { Icon: Repeat2, label: 'A routine came due' },
   'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
 } as const
 
 /**
  * Something the server or the runtime put in front of Vivid, drawn by where it came from
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
- * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
+ * Thread is drawn as their bubble. A follow-up is a quiet line. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
  * Approval's outcome is told under its own words (`AskedFirst`) and an answer by its own row
  * (`Replied`), and what the runtime says to itself and the model (its instructions were

@@ -112,15 +112,8 @@ describe('who a message is from', () => {
     expect(speakerOf(reply, shared)).toEqual(Speaker.Vivid({ answering: Option.none() }))
   })
 
-  it('reads a Routine or a follow-up as the reason Vivid spoke', () => {
-    const due = message({
-      role: 'system',
-      signal: { tagName: 'schedule', attributes: { name: 'Morning brief' } },
-    })
+  it('reads a follow-up as the reason Vivid spoke', () => {
     const chase = message({ role: 'system', signal: { tagName: 'follow-up' } })
-    expect(speakerOf(due, shared)).toEqual(
-      Speaker.Wake({ reason: 'routine', name: Option.some('Morning brief') }),
-    )
     expect(speakerOf(chase, shared)).toEqual(
       Speaker.Wake({ reason: 'follow-up', name: Option.none() }),
     )

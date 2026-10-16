@@ -1,4 +1,4 @@
-import { AuditEvent, RoutineId } from '@vivid/contracts'
+import { AuditEvent } from '@vivid/contracts'
 import { describe, expect, it } from 'vitest'
 import { auditSentence } from './record.ts'
 
@@ -32,16 +32,5 @@ describe('a line of the record', () => {
         AuditEvent.cases.RuleAdded.make({ action: 'Delete a shared file', decision: 'Never' }),
       ),
     ).toBe('Rule added: never “Delete a shared file”')
-  })
-
-  it('gives each reason Vivid stopped a Routine its own sentence', () => {
-    const stopped = (reason: 'Membership' | 'Revoked') =>
-      auditSentence(
-        AuditEvent.cases.RoutineStopped.make({ routineId: RoutineId.make('routine'), reason }),
-      )
-    expect(stopped('Membership')).toBe('A Routine was stopped: its owner is no longer a member')
-    expect(stopped('Revoked')).toBe(
-      'A Routine was stopped: its integration was disconnected or needs signing in again',
-    )
   })
 })

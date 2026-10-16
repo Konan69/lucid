@@ -63,14 +63,10 @@ describe('where a message in a Thread came from', () => {
     expect(inThread(stopped)).toBe(false)
   })
 
-  it('draws a Routine coming due and a follow-up falling due as the reason Vivid spoke', () => {
-    const due = system({ signal: { tagName: 'schedule', attributes: { name: 'Morning brief' } } })
+  it('draws a follow-up falling due as the reason Vivid spoke', () => {
     const chase = system({ signal: { tagName: 'follow-up' } })
-    expect(sourceOf(due)).toEqual(
-      Source.Wake({ reason: 'routine', name: Option.some('Morning brief') }),
-    )
     expect(sourceOf(chase)).toEqual(Source.Wake({ reason: 'follow-up', name: Option.none() }))
-    expect([due, chase].every(inThread)).toBe(true)
+    expect(inThread(chase)).toBe(true)
   })
 
   it('leaves every other wake to its card or to Vivid’s reply, and an unknown one undrawn', () => {

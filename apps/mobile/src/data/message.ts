@@ -51,7 +51,7 @@ export interface Around {
  *   that arrived without a name is drawn without one, never with an invented one.
  * - `Vivid`: Vivid's reply. `answering` names the Person it acted for, in a shared Thread where
  *   that is not obvious.
- * - `Wake`: a Routine coming due or a follow-up falling due: a quiet line saying why Vivid spoke.
+ * - `Wake`: a follow-up falling due: a quiet line saying why Vivid spoke.
  * - `Notice`: the runtime's word that a reply was not finished. It is the only thing the runtime
  *   says that is drawn, so `failed` is always true.
  * - `Silent`: not drawn. An Approval's outcome and an answer are told by their cards, and the
@@ -61,7 +61,7 @@ export type Speaker = Data.TaggedEnum<{
   Me: {}
   Member: { readonly name: Option.Option<string> }
   Vivid: { readonly answering: Option.Option<string> }
-  Wake: { readonly reason: 'routine' | 'follow-up'; readonly name: Option.Option<string> }
+  Wake: { readonly reason: 'follow-up'; readonly name: Option.Option<string> }
   Notice: { readonly failed: boolean }
   Silent: {}
 }>

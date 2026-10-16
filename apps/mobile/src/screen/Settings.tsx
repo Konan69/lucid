@@ -394,7 +394,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
         />
         <Row
           title="Time zone"
-          detail={`${settings.timezone.replaceAll('_', ' ')}. Routines and “tomorrow at 9” use this.`}
+          detail={`${settings.timezone.replaceAll('_', ' ')}. Times like “tomorrow at 9” use this.`}
           onPress={onZone}
         />
       </Section>

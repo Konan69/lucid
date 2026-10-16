@@ -25,7 +25,7 @@ export interface Sourced {
  * - `Vivid`: Vivid's reply.
  * - `Said`: a Person speaking in a shared Thread. The server delivers it as a `message` signal;
  *   `turn` names the Run that says who they are and `from` their name, when the server gave them.
- * - `Wake`: a Routine coming due or a follow-up falling due, with the Routine's name when given.
+ * - `Wake`: a follow-up falling due, with its name when given.
  * - `Failed`: the runtime's word that a reply was not finished.
  * - `Plumbing`: everything else, which is never drawn. The runtime talking to itself or to the
  *   model (instructions reloaded, tools and skills changed, the environment restated, a stream
@@ -36,17 +36,14 @@ export type Source = Data.TaggedEnum<{
   Person: {}
   Vivid: {}
   Said: { readonly turn: Option.Option<string>; readonly from: Option.Option<string> }
-  Wake: { readonly reason: 'routine' | 'follow-up'; readonly name: Option.Option<string> }
+  Wake: { readonly reason: 'follow-up'; readonly name: Option.Option<string> }
   Failed: {}
   Plumbing: {}
 }>
 export const Source = Data.taggedEnum<Source>()
 
 /** The signals that wake Vivid without a Person speaking, by the tag the server delivers. */
-const WAKES = new Map<string, 'routine' | 'follow-up'>([
-  ['schedule', 'routine'],
-  ['follow-up', 'follow-up'],
-])
+const WAKES = new Map<string, 'follow-up'>([['follow-up', 'follow-up']])
 
 /**
  * Where a `system`-role message came from. Flue projects every signal record as one

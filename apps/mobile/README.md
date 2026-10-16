@@ -111,7 +111,6 @@ This table describes code present today, not native end-to-end proof.
 | Threads                 | Create, rename, archive/restore, delete, title search, attention lanes, durable history, streaming, stop, foreground reconnection, saved drafts. |
 | Shared work             | Personal and Company spaces, Memberships, shared/private Threads, attributed deliveries, People and invitations.                                 |
 | Questions and Approvals | Thread cards use shared server contracts for answers and decisions.                                                                              |
-| Routines                | Live definitions and Occurrences, creation/editing, pause/resume, delete, run now and run history.                                               |
 | Library                 | File picker for PDF/text/Markdown, 10 MiB limit, folders, indexing status, search, authenticated original sharing.                               |
 | Projects                | Persisted recursive Projects and their Threads, read through the same live RPCs as web.                                                          |
 | Integrations            | Thread request cards and Settings management; Executor handles sign-in or key entry. Code calls these `Connection`.                              |

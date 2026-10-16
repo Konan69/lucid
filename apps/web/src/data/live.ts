@@ -45,7 +45,6 @@ export const live = {
   ),
   inbox: one((client) => client.WatchInbox()),
   notifications: kept((client) => client.WatchNotifications()),
-  routines: one((client) => client.WatchRoutines()),
   projects: kept((client) => client.WatchProjects()),
   library: family(
     (shelf: LibraryShelf) => shelf,
@@ -139,7 +138,7 @@ const told = new Map<string, ReadonlySet<string>>()
 /**
  * Says so when something finishes or needs the Person while they are somewhere else in the app.
  *
- * A Routine that ran, a reply that landed in another Thread, an Approval waiting: these only moved
+ * A reply that landed in another Thread, an Approval waiting: these only moved
  * a number on the bell. Each new one now says its title at the foot of the window with a way to
  * open it. What was already waiting when the page opened is not announced, it is in the bell; and
  * nothing is announced about the Thread that is on screen, which the Person is already reading.

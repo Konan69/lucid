@@ -117,7 +117,6 @@ export default defineConfig(({ mode }) => {
         virtualRouteConfig: rootRoute('root.tsx', [
           index('first.tsx'),
           route('/t/$id', 'thread.tsx'),
-          route('/routines', 'routines.tsx'),
           route('/library', 'library.tsx'),
           route('/projects/{-$id}', 'projects.tsx'),
           route('/invite/$id', 'invite.tsx'),

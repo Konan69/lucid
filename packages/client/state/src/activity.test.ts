@@ -168,7 +168,7 @@ describe('the line a reply’s steps collapse to', () => {
   const steps = [
     { id: 'a', label: 'Searched the Library' },
     { id: 'b', label: 'Using its browser' },
-    { id: 'c', label: 'Set up a routine' },
+    { id: 'c', label: 'Started a project' },
   ]
 
   it('says what Vivid is doing right now while it is on a step', () => {

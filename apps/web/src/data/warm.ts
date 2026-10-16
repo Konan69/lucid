@@ -42,11 +42,6 @@ export const warm = {
     begin(live.thread.get(id))
     warmConversation(id)
   },
-  /** Routines, and the settings its screen reads beside them. */
-  routines: (): void => {
-    begin(live.routines)
-    begin(live.settings)
-  },
   /** The Library's own shelf, the one every Person has and the screen opens on. */
   library: (): void => {
     begin(live.library.get('Mine'))
@@ -69,10 +64,9 @@ export const warm = {
   /**
    * The places beside Threads, held open for the life of the page: a handful of small lists the
    * server only speaks about when they change. Called once, when the first screen is up, so a
-   * Person who goes to Routines or the Library an hour into a session still finds them drawn.
+   * Person who goes to the Library an hour into a session still finds them drawn.
    */
   places: (): void => {
-    keep(live.routines)
     keep(live.settings)
     keep(live.library.get('Mine'))
   },

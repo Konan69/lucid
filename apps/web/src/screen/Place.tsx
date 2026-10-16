@@ -7,7 +7,6 @@ import {
   MessageSquare,
   MonitorSmartphone,
   PanelLeft,
-  Repeat2,
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
@@ -19,8 +18,8 @@ import { Emblem, type Hue } from './Emblem'
 
 /**
  * Every place a Person can go, with the one hue and the one glyph it is known by. It is declared
- * once so the palette, Settings and each screen's own empty state cannot disagree: Routines is
- * orange with the repeat arrows wherever it is named, the Library violet, Integrations green.
+ * once so the palette, Settings and each screen's own empty state cannot disagree: the Library is
+ * violet with its shelf of books wherever it is named, Projects cyan, Integrations green.
  *
  * The glyphs are all lucide, one family at one weight. A place a Person makes things in takes a
  * warm or vivid hue; the places that only adjust Vivid (General, the sidebar) take the grey.
@@ -28,7 +27,6 @@ import { Emblem, type Hue } from './Emblem'
 export const PLACES = {
   thread: { hue: 'blue', icon: MessageSquare },
   compose: { hue: 'blue', icon: SquarePen },
-  routines: { hue: 'orange', icon: Repeat2 },
   projects: { hue: 'cyan', icon: FolderKanban },
   library: { hue: 'violet', icon: LibraryBig },
   integrations: { hue: 'green', icon: Blocks },

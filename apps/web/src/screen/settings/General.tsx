@@ -223,7 +223,7 @@ function Preferences({ settings }: { settings: Settings }) {
             }}
           />
         </Row>
-        <Row label="Time zone" detail="Routines and reminders like “tomorrow at 9” use this.">
+        <Row label="Time zone" detail="Times like “tomorrow at 9” use this.">
           <Select
             value={settings.timezone}
             items={zones}

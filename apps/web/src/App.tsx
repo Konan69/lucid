@@ -24,8 +24,8 @@ import { Sayings } from './ui/Sayings'
 // The screens a Person may not open in a session, each in its own file on the wire: the Thread
 // is what loads first, and the Computer's screen client alone is a third of everything else.
 // Each is fetched when it is first drawn, and all of them are fetched once the first screen is
-// up and the browser is idle, so opening one later does not wait on the network. Routines, the
-// Library and Projects are places, so the router holds their files (`src/routes`) and is asked
+// up and the browser is idle, so opening one later does not wait on the network. The Library
+// and Projects are places, so the router holds their files (`src/routes`) and is asked
 // to make them ready; the Computer and Settings open over a place and are held here.
 const overlays = {
   Computer: () => import('./screen/Computer'),
@@ -36,7 +36,6 @@ const Settings = lazy(() => overlays.Settings().then((module) => ({ default: mod
 
 const afterFirst = () => {
   for (const load of Object.values(overlays)) void load()
-  void router.preloadRoute({ to: '/routines' })
   void router.preloadRoute({ to: '/library' })
   void router.preloadRoute({ to: '/projects/{-$id}', params: { id: undefined } })
 }
@@ -44,7 +43,7 @@ if ('requestIdleCallback' in globalThis) requestIdleCallback(afterFirst)
 else setTimeout(afterFirst, 2000)
 
 // The lists of the places beside Threads are begun the moment it is known who is signed in, and
-// held open from then on: a Person who goes to Routines a fifth of a second after the page shows
+// held open from then on: a Person who goes to the Library a fifth of a second after the page shows
 // should find it drawn. It is heard from the query itself, so it happens once and before any
 // screen asks. What it begins is a few small subscriptions on the socket `me` came over.
 const stopWaiting = engine.registry.subscribe(
@@ -98,7 +97,7 @@ const inDialog = () => document.querySelector('[aria-modal="true"]') !== null
 /**
  * Whether going somewhere else now would throw away something being written. The shortcuts that
  * change the screen stand down inside a dialog and while the keyboard is in a field of an editor
- * (a Routine, a Library item, a rule): leaving unmounts it with whatever was typed. The Thread's
+ * (a Library item, a rule): leaving unmounts it with whatever was typed. The Thread's
  * own composer is the exception, because what is typed there is kept for its place.
  */
 const leavingWouldLose = (event: KeyboardEvent) => {
@@ -241,7 +240,7 @@ function Shell({ me }: { me: MeResponse }) {
           {/* A new element for each screen, so its arrival plays; see `SCREEN`. */}
           <div key={screen} className="flex min-w-0 flex-1 motion-screen">
             {/* A screen holds things that belong to the workspace it was opened in: the folder it
-                is in, the item it has open, a half-written Routine. Changing workspace starts each
+                is in, the item it has open, a half-written rule. Changing workspace starts each
                 screen again, so nothing of one Company is left on screen under another's name. */}
             <Fragment key={workspaceKey(me.workspace)}>
               {/* The screen the address names (`src/routes`, `src/place`). */}
@@ -276,8 +275,8 @@ function Shell({ me }: { me: MeResponse }) {
  * Which screen a place is, for the moment one screen takes over from another. Going from one
  * Thread to the next, or from the first screen into the Thread it started, is the same screen
  * with different words in it and changes at once: it is done a hundred times a day, and the
- * shortcuts that do it are the keyboard's. Going to Routines, the Library or Projects is a
- * different screen, and that one arrives (`motion-screen`).
+ * shortcuts that do it are the keyboard's. Going to the Library or Projects is a different
+ * screen, and that one arrives (`motion-screen`).
  *
  * Every route is named, the root too (it is the deepest match while an unknown address is being
  * corrected), so a route added to the tree does not typecheck until it is given a screen here.
@@ -287,7 +286,6 @@ const SCREEN = {
   '/': 'thread',
   '/t/$id': 'thread',
   '/invite/$id': 'thread',
-  '/routines': 'routines',
   '/library': 'library',
   '/projects/{-$id}': 'projects',
 } as const satisfies Record<keyof FileRoutesById, string>

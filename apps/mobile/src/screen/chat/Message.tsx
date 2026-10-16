@@ -4,7 +4,7 @@ import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
+import { AlarmClock, ChevronDown, ChevronRight, Monitor } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
 import { arrive } from '../../data/computer'
@@ -37,8 +37,8 @@ import { Reply } from './Words'
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
  * words are a bubble: the reader's own on the right, anyone else's on the left under their name.
- * Vivid's are plain text with what it did and what it is asking. A Routine or a follow-up that
- * woke Vivid is a quiet line saying why it spoke. The answer to a question of Vivid's is not a
+ * Vivid's are plain text with what it did and what it is asking. A follow-up that woke Vivid is
+ * a quiet line saying why it spoke. The answer to a question of Vivid's is not a
  * message of the conversation; the Thread draws it as a row of its own (`Replied`,
  * `Question.tsx`).
  */
@@ -117,11 +117,10 @@ function Arriving({ arrival, children }: { arrival: keyof typeof ARRIVAL; childr
 }
 
 const WAKE = {
-  routine: { Icon: Repeat2, label: 'A routine came due' },
   'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
 } as const
 
-/** Why Vivid spoke when nobody had: a Routine came due, or a follow-up fell due. */
+/** Why Vivid spoke when nobody had: a follow-up fell due. */
 function Wake({ reason, name }: { reason: keyof typeof WAKE; name: Option.Option<string> }) {
   const { colors: c } = useTheme()
   const { Icon, label } = WAKE[reason]

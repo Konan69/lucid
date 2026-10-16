@@ -49,7 +49,6 @@ const Answered = Schema.Struct({
   results: list,
   tools: list,
   memories: list,
-  routines: list,
 })
 type Answered = typeof Answered.Type
 
@@ -198,22 +197,6 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
-  create_routine: {
-    said: {
-      running: 'Setting up a routine',
-      done: 'Set up a routine',
-      failed: 'Could not set up the routine',
-    },
-    detail: (asked) => [said(asked.name)],
-  },
-  list_routines: {
-    said: {
-      running: 'Checking the routines',
-      done: 'Checked the routines',
-      failed: 'Could not read the routines',
-    },
-    detail: (_asked, answered) => [counted(answered.routines, 'routine', 'routines')],
-  },
   bash: {
     said: {
       running: 'Working on its computer',
@@ -360,14 +343,6 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
-  find_events: {
-    said: {
-      running: 'Looking at what can start a routine',
-      done: 'Looked at what can start a routine',
-      failed: 'Could not look at what can start a routine',
-    },
-    detail: (asked) => [said(asked.account)],
-  },
   notify_person: {
     said: {
       running: 'Sending you a notification',
@@ -435,7 +410,6 @@ const NOTHING_ANSWERED: Answered = {
   results: Option.none(),
   tools: Option.none(),
   memories: Option.none(),
-  routines: Option.none(),
   ok: Option.none(),
   created: Option.none(),
   changed: Option.none(),

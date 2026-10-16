@@ -2,19 +2,10 @@ import { AuditEvent } from '@vivid/contracts'
 
 /**
  * The words of the record of what was done: one sentence for each kind of event. They are the
- * web's, ported word for word from `apps/web/src/screen/settings/Record.tsx` (`STOPPED` and
- * `auditSentence`), and kept apart from the sheet that draws them (`screen/settings/Record.tsx`)
- * so the sentences can be tested without a phone.
+ * web's, ported word for word from `apps/web/src/screen/settings/Record.tsx` (`auditSentence`),
+ * and kept apart from the sheet that draws them (`screen/settings/Record.tsx`) so the sentences
+ * can be tested without a phone.
  */
-
-/**
- * Why Vivid stopped a Routine nobody asked it to stop. Keyed by the contract's own reasons, so a
- * new one cannot be added without its sentence.
- */
-const STOPPED: Record<typeof AuditEvent.cases.RoutineStopped.Type.reason, string> = {
-  Membership: 'A Routine was stopped: its owner is no longer a member',
-  Revoked: 'A Routine was stopped: its integration was disconnected or needs signing in again',
-}
 
 /**
  * One line of the record as a sentence. It says what happened, never what the content was: the
@@ -44,5 +35,4 @@ export const auditSentence = (event: AuditEvent): string =>
     ThreadShared: ({ title, audience }) => `Shared “${title}” with ${audience}`,
     MemorySaved: ({ scope }) => `Vivid kept something (${scope})`,
     MemoryForgotten: ({ scope }) => `Vivid forgot something (${scope})`,
-    RoutineStopped: ({ reason }) => STOPPED[reason],
   })

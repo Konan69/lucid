@@ -348,7 +348,6 @@ function makeLiveData(session: SignedIn) {
           ),
         ),
     ),
-    routines: one((client) => client.WatchRoutines()),
     projects: kept((client) => client.WatchProjects()),
     library: family(
       (shelf: LibraryShelf) => shelf,

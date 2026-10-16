@@ -24,7 +24,7 @@ export type Hue = keyof typeof HUE
  * A place or a kind of thing, as a white glyph on a square of solid colour: the way a phone's
  * Settings marks each section, and how Grok Bot puts its colour in a few saturated shapes on a
  * neutral page (`refs/grok-bot-screenshots/01-give-each-bot-a-job.png`) and none in the chrome.
- * Each place has one hue (Routines orange, Library violet, Integrations green…), so the same
+ * Each place has one hue (Library violet, Projects cyan, Integrations green…), so the same
  * colour means the same place in the palette, in Settings and on the screen itself.
  *
  * The glyph is drawn at three fifths of the square, in the white the tokens keep for text on
