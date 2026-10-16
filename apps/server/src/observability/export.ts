@@ -1,5 +1,5 @@
 import { getTableName, isTable } from 'drizzle-orm'
-import { ModelFailureReason } from '@vivid/contracts'
+import { Commit, ModelFailureReason } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
@@ -9,6 +9,7 @@ import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
+import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import * as Tracer from 'effect/Tracer'
 import * as HttpBody from 'effect/http/HttpBody'
@@ -140,10 +141,10 @@ const sqlState = (admit: (candidate: string) => boolean) =>
   text((candidate) => /^[0-9A-Z]{5}$/.test(candidate) && admit(candidate))
 
 /**
- * A git commit as the host names it: 7 to 40 lowercase hexadecimal digits, the abbreviated and
- * the full form of a SHA-1. Anything else in `VIVID_COMMIT` is not a commit and is not sent.
+ * A git commit as the host names it, by the one rule for a commit (`@vivid/contracts` `Commit`).
+ * Anything else in `VIVID_COMMIT` is not a commit and is not sent.
  */
-const commitHash = text((candidate) => /^[0-9a-f]{7,40}$/.test(candidate))
+const commitHash = text(Schema.is(Commit))
 
 /**
  * The deployment's environment name: letters, digits and `_ . / -`, at most 40 characters. This

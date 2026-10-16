@@ -5,7 +5,14 @@ import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { LibraryFolderId, PersonId, RunId, RuntimeAdmissionBody, ThreadId } from '@vivid/contracts'
+import {
+  LibraryFolderId,
+  PersonId,
+  RunId,
+  RuntimeAdmissionBody,
+  ServerBuild,
+  ThreadId,
+} from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { ServerConfig } from '../config.ts'
 
@@ -30,6 +37,7 @@ const runtimeConfigLayer = Layer.succeed(ServerConfig, {
     clientSecret: Redacted.make('unused'),
     redirectUri: new URL('https://vivid.example.test/google'),
   },
+  BUILD: ServerBuild.cases.Unnamed.make({}),
 })
 
 const decodeWireJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))

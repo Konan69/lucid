@@ -6,6 +6,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
+import { Commit, ServerBuild } from '@vivid/contracts'
 
 const authSecretValue = Schema.String.check(
   Schema.makeFilter((value) => {
@@ -74,6 +75,8 @@ export interface ServerConfigService {
   readonly PORT: number
   readonly PUBLIC_URL: URL
   readonly GOOGLE_OAUTH: GoogleOAuthConfiguration
+  /** The commit this server was built from, as Settings shows it (`@vivid/contracts` `build.ts`). */
+  readonly BUILD: ServerBuild
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigService>()(
@@ -179,7 +182,18 @@ const parseHeaders = (text: string): Option.Option<Readonly<Record<string, strin
     : Option.none()
 }
 
-const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* () {
+/**
+ * A name the host fills from one of its own variables. `infra/railway.ts` fills `VIVID_ENVIRONMENT`
+ * and `VIVID_COMMIT` from Railway's, and the server image carries `VIVID_COMMIT` from its build
+ * (`apps/server/Dockerfile`). Railway names a commit only for a deployment built from one, and a
+ * reference to a variable it did not set arrives as an empty string, so empty means the host did
+ * not say, exactly as an unset name does.
+ */
+const named = (value: Option.Option<string>) => Option.filter(value, (text) => text.length > 0)
+
+const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* (
+  commit: Option.Option<string>,
+) {
   const url = yield* optionalSetting('VIVID_OTLP_URL', Schema.URLFromString, 'an absolute URL')
   const headers = yield* optionalSetting('VIVID_OTLP_HEADERS', secret, 'name=value pairs')
   if (Option.isNone(url) && Option.isNone(headers)) return ObservabilityConfiguration.Disabled()
@@ -193,17 +207,26 @@ const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* 
   if (Option.isNone(parsed)) {
     return yield* configError('VIVID_OTLP_HEADERS', 'name=value pairs separated by commas')
   }
-  // `infra/railway.ts` fills both from Railway's own variables. Railway names a commit only for a
-  // deployment built from one, and a reference to a variable it did not set arrives as an empty
-  // string, so empty means the host did not say, exactly as an unset name does.
-  const named = (value: Option.Option<string>) => Option.filter(value, (text) => text.length > 0)
   return ObservabilityConfiguration.Enabled({
     url: url.value,
     headers: Redacted.make(parsed.value),
     environment: named(yield* optionalSetting('VIVID_ENVIRONMENT', Schema.String)),
-    commit: named(yield* optionalSetting('VIVID_COMMIT', Schema.String)),
+    commit,
   })
 })
+
+const decodeCommit = Schema.decodeUnknownOption(Commit)
+
+/**
+ * The server's build from the commit its host named. A value that is not a commit is not shown as
+ * one, the rule telemetry already follows for the same setting (`observability/export.ts`), so
+ * the server says it was not named rather than refusing to start over a label.
+ */
+const buildOf = (commit: Option.Option<string>): ServerBuild =>
+  Option.match(Option.flatMap(commit, decodeCommit), {
+    onNone: () => ServerBuild.cases.Unnamed.make({}),
+    onSome: (named) => ServerBuild.cases.Named.make({ commit: named }),
+  })
 
 const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
   ServerConfigService & {
@@ -228,6 +251,7 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     ),
     () => 8787,
   )
+  const commit = named(yield* optionalSetting('VIVID_COMMIT', Schema.String))
   const publicUrl = Option.getOrElse(
     yield* optionalSetting('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
     () => new URL('http://localhost:3000'),
@@ -244,9 +268,10 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     // Where `apps/mobile/scripts/publish.mjs` left the mobile app's over-the-air updates.
     VIVID_MOBILE_UPDATES: yield* optionalSetting('VIVID_MOBILE_UPDATES', nonEmptyString),
     // Telemetry export is installed at launch only; domain test Layers never export.
-    OBSERVABILITY: yield* loadObservability(),
+    OBSERVABILITY: yield* loadObservability(commit),
     PUBLIC_URL: publicUrl,
     GOOGLE_OAUTH: yield* loadGoogleOAuth(),
+    BUILD: buildOf(commit),
   }
 })
 

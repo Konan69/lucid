@@ -1,5 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { ConfigProvider, Effect, Option, Redacted } from 'effect'
+import { Commit, ServerBuild } from '@vivid/contracts'
 import { ConfigurationError, loadServerConfig, ObservabilityConfiguration } from './config.ts'
 
 const base = {
@@ -112,6 +113,23 @@ it.effect('reads telemetry export as one atomic pair and keeps its credential re
       expect(failure.variable).toBe(variable)
       // The refusal names the variable and what was expected, never what was supplied.
       expect(failure.message).not.toContain('no-value')
+    }
+  }),
+)
+
+/**
+ * The server says which commit it was built from, with or without telemetry export. A name its
+ * host left empty, or a value that is not a commit, is a build it cannot name, never a launch it
+ * refuses.
+ */
+it.effect('names its build by the commit its host gave it', () =>
+  Effect.gen(function* () {
+    const full = 'c9607b33aa0e7c2d6a1d9f8e0b3c4d5e6f708192'
+    expect((yield* load({ VIVID_COMMIT: full })).BUILD).toEqual(
+      ServerBuild.cases.Named.make({ commit: Commit.make(full) }),
+    )
+    for (const commit of [{}, { VIVID_COMMIT: '' }, { VIVID_COMMIT: 'ghp_notacommit' }]) {
+      expect((yield* load(commit)).BUILD).toEqual(ServerBuild.cases.Unnamed.make({}))
     }
   }),
 )
