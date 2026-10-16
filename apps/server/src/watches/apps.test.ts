@@ -8,6 +8,7 @@ import type { Actor } from '../auth/access.ts'
 import {
   ExecutorAccountId,
   ExecutorAppId,
+  ExecutorAppOwnership,
   ExecutorBinding,
   ExecutorOwnerId,
   ExecutorReferences,
@@ -117,6 +118,7 @@ const authorized = (app: string) =>
     app: ExecutorAppId.make(app),
     owner: ExecutorOwnerId.make('owner_test'),
     binding: ExecutorBinding.cases.Account.make({ requirement: 'mail', scope: 'user' }),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
     account: ExecutorAccountId.make(`account-${app}`),
   })
 
@@ -146,6 +148,17 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         yield* connect(ada, 'Mail', authorized(appA), 'ready')
         yield* connect(ben, 'Mail', authorized(appB), 'ready')
         yield* connect(ada, 'Calendar', shared, 'failed')
+        // Ready, but on an app carried over from before beta.23 that may still hold others.
+        const carried = `app-${crypto.randomUUID()}`
+        yield* connect(
+          ada,
+          'Drive',
+          ExecutorReferences.cases.Authorized.make({
+            ...authorized(carried),
+            appOwnership: ExecutorAppOwnership.cases.Unproven.make({}),
+          }),
+          'ready',
+        )
         const asked = yield* Ref.make<ReadonlyArray<string>>([])
         const apps = makeWatchedApps(yield* Database, executor(asked), settings)
 
@@ -156,6 +169,7 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
 
         const refused = yield* Effect.flip(apps.appOf(ada, 'Calendar'))
         expect(refused._tag).toBe('WatchAccountShared')
+        expect((yield* Effect.flip(apps.appOf(ada, 'Drive')))._tag).toBe('WatchAccountShared')
         // Ada's shared account is not Ben's to name, let alone watch.
         expect((yield* Effect.flip(apps.appOf(ben, 'Calendar')))._tag).toBe('WatchAccountUnknown')
         // Neither refusal asked Executor for any app.

@@ -6,7 +6,11 @@ import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type { Actor } from '../auth/access.ts'
-import { ExecutorReferences, type ExecutorAppId } from '../connections/executor.ts'
+import {
+  ExecutorAppOwnership,
+  ExecutorReferences,
+  type ExecutorAppId,
+} from '../connections/executor.ts'
 import { listRecords, type ConnectionRecord } from '../connections/records.ts'
 import { namedAccounts } from '../connections/names.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -92,9 +96,20 @@ type Dedicated = Result.Result<typeof ExecutorAppId.Type, WatchAccountNotReady |
 const notReady = (): Dedicated => Result.fail(new WatchAccountNotReady({}))
 const shared = (): Dedicated => Result.fail(new WatchAccountShared({}))
 
-/** A live selection's app, once its Connection is ready. */
-const ready = (row: ConnectionRecord, app: typeof ExecutorAppId.Type): Dedicated =>
-  row.status === 'ready' ? Result.succeed(app) : notReady()
+/**
+ * A live selection's app, once its Connection is ready. The app must be provably this
+ * Connection's alone: one installed for it, or a copy made for it from a shared original
+ * (`ExecutorAppOwnership`). An app carried over that may still hold other accounts is
+ * `Unproven`, and its events could be anyone's.
+ */
+const ready = (
+  row: ConnectionRecord,
+  app: typeof ExecutorAppId.Type,
+  ownership: typeof ExecutorAppOwnership.Type,
+): Dedicated => {
+  if (ExecutorAppOwnership.guards.Unproven(ownership)) return shared()
+  return row.status === 'ready' ? Result.succeed(app) : notReady()
+}
 
 /**
  * The app dedicated to this Connection, or why it has none to watch. A live selection claims its
@@ -103,8 +118,8 @@ const ready = (row: ConnectionRecord, app: typeof ExecutorAppId.Type): Dedicated
  */
 const dedicatedApp = (row: ConnectionRecord): Dedicated =>
   ExecutorReferences.match(row.references, {
-    Public: ({ app }) => ready(row, app),
-    Authorized: ({ app }) => ready(row, app),
+    Public: ({ app, appOwnership }) => ready(row, app, appOwnership),
+    Authorized: ({ app, appOwnership }) => ready(row, app, appOwnership),
     ReconnectRequired: shared,
     MigrationPending: notReady,
     EnteringKey: notReady,

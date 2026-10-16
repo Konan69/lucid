@@ -56,14 +56,6 @@ interface Asks {
 }
 const NO_ASKS: Asks = { asking: [], since: 0 }
 
-const fields = {
-  thread: threads.id,
-  from: threads.title,
-  // Postgres sends the bigint `greatest` as text.
-  settled: settledAt.mapWith(Number),
-  card: feedCards,
-}
-
 /**
  * The Person's own background Threads, and only while they can still read them: a Company one
  * stops when they leave. Readability alone would admit another Person's readable Thread.
@@ -78,6 +70,14 @@ const mine = (person: PersonId) =>
  * one rule: the history window, the history order and cap, and the `at` a Settled item shows.
  */
 const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCards.updatedAt}, 0))`
+
+const fields = {
+  thread: threads.id,
+  from: threads.title,
+  // Postgres sends the bigint `greatest` as text.
+  settled: settledAt.mapWith(Number),
+  card: feedCards,
+}
 
 /**
  * Whether a Thread still needs its stage worked out whatever its age: a card not put away, a Run
