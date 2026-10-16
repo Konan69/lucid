@@ -48,6 +48,7 @@ export const signInHostMatches = (site: SignInSite, host: string) => {
 const sourceRefusals = {
   BrowserLocked: { browser: SignInBrowser },
   PermissionDenied: { browser: SignInBrowser },
+  KeyUnavailable: { browser: SignInBrowser },
   UnsupportedEncryption: { browser: SignInBrowser },
   UnsupportedCookieScope: { browser: SignInBrowser },
   SourceMissing: { browser: SignInBrowser },

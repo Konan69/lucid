@@ -1707,6 +1707,7 @@ describe('copying a sign-in through the device link', () => {
       SignInRead.cases.Declined.make({}),
       SignInRead.cases.NothingToCopy.make({}),
       SignInRead.cases.PermissionDenied.make({ browser: 'Chrome' }),
+      SignInRead.cases.KeyUnavailable.make({ browser: 'Chrome' }),
       SignInRead.cases.UnsupportedEncryption.make({ browser: 'Chrome' }),
       SignInRead.cases.UnsupportedCookieScope.make({ browser: 'Chrome' }),
       SignInRead.cases.Unreadable.make({ browser: 'Chrome' }),

@@ -9,13 +9,16 @@ const OperatingFailure = Schema.Struct({
 })
 const decodeFailure = Schema.decodeUnknownOption(OperatingFailure)
 
-/** An absent OS key adapter is unsupported, not a permission the Person can grant. */
+/** Missing adapters, explicit OS denial and an unavailable key need different remedies.
+ * A subprocess exit alone cannot prove that the operating system denied permission. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Process creation errors enter only through this errno decoder.
 export const cookieKeyFailure = (browser: SignInBrowser, failure: unknown) => {
   const parsed = decodeFailure(failure)
   if (Option.isSome(parsed) && parsed.value.code === 'ENOENT')
     return CopySignInOutcome.cases.UnsupportedEncryption.make({ browser })
-  return CopySignInOutcome.cases.PermissionDenied.make({ browser })
+  if (Option.isSome(parsed) && (parsed.value.code === 'EACCES' || parsed.value.code === 'EPERM'))
+    return CopySignInOutcome.cases.PermissionDenied.make({ browser })
+  return CopySignInOutcome.cases.KeyUnavailable.make({ browser })
 }
 
 /** Map observed lock evidence to the one remedy that fixes it. A running browser or empty jar

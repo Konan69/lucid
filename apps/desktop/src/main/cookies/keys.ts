@@ -21,7 +21,7 @@ export const CookieKeys = Data.taggedEnum<CookieKeys>()
 /** Missing, denied and unsupported keys never retain subprocess stderr, paths or key values. */
 const refused = (browser: SignInBrowser) =>
   new CookieReadFailed({
-    outcome: CopySignInOutcome.cases.PermissionDenied.make({ browser }),
+    outcome: CopySignInOutcome.cases.KeyUnavailable.make({ browser }),
   })
 
 /** A narrow platform adapter. Keys enter on piped stdin and leave on private stdout, never in

@@ -30,6 +30,8 @@ export const signInMessage = (request: CopySignInRequest, outcome: CopySignInOut
       `Quit ${browser}, then tell me to retry copying your ${request.site} sign-in. The browser is still using its cookie file. No sign-in was copied.`,
     PermissionDenied: ({ browser }) =>
       `${browser}’s cookie store or encryption key denied access. Grant the operating-system permission, then ask to retry.`,
+    KeyUnavailable: ({ browser }) =>
+      `${browser}’s cookie encryption key could not be obtained on this device. No sign-in was copied. Ask the person to sign in on Vivid’s Computer.`,
     UnsupportedEncryption: ({ browser }) =>
       `${browser}’s cookie encryption cannot be imported on this device. Quitting the browser does not fix this. Ask the person to sign in on Vivid’s Computer.`,
     UnsupportedCookieScope: ({ browser }) =>
@@ -61,9 +63,13 @@ const program = Effect.fn('ComputerTool.copySignIn')(function* (request: CopySig
       outcome,
       message: signInMessage(request, outcome),
     },
-    terminate: CopySignInOutcome.isAnyOf(['BrowserLocked', 'PermissionDenied', 'Declined'])(
-      outcome,
-    ),
+    terminate: CopySignInOutcome.isAnyOf([
+      'BrowserLocked',
+      'PermissionDenied',
+      'KeyUnavailable',
+      'NotAnswered',
+      'Declined',
+    ])(outcome),
   }
 })
 

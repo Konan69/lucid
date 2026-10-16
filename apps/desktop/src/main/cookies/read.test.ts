@@ -219,6 +219,9 @@ describe('copying sign-ins from a browser cookie database', () => {
         expect(missing).toHaveProperty('_tag', 'UnsupportedEncryption')
         expect(signInMessage(request, missing)).not.toContain('Grant')
         expect(JSON.stringify(missing)).not.toContain('fixture-cookie-secret')
+        const absent = cookieKeyFailure('Chrome', { code: 1 })
+        expect(absent).toHaveProperty('_tag', 'KeyUnavailable')
+        expect(signInMessage(request, absent)).not.toContain('Grant')
       }),
     ),
   )

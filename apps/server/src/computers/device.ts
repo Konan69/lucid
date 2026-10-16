@@ -1056,17 +1056,19 @@ export const deviceLayer = Layer.effect(
     // Reconcile abandoned work now, after the ordinary budget and after the longer consent
     // budget. Page/window recovery keeps its existing timing while sign-in work stays bounded.
     yield* ledger.reconcile()
+    const reconcile = ledger
+      .reconcile()
+      .pipe(
+        Effect.catch((failure) =>
+          Effect.logError('Abandoned device requests could not be closed', failure._tag),
+        ),
+      )
     yield* Effect.gen(function* () {
       yield* Effect.sleep(REQUEST_BUDGET_MILLIS)
-      yield* ledger.reconcile()
+      yield* reconcile
       yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS - REQUEST_BUDGET_MILLIS)
-      yield* ledger.reconcile()
-    }).pipe(
-      Effect.catch((failure) =>
-        Effect.logError('Abandoned device requests could not be closed', failure._tag),
-      ),
-      Effect.forkScoped,
-    )
+      yield* reconcile
+    }).pipe(Effect.forkScoped)
 
     const dispatch = makeDispatch({
       database,
