@@ -51,7 +51,7 @@ const openOnDevice = Effect.fn('Documents.openOnDevice')(function* (
     try: () => Sharing.isAvailableAsync(),
     catch: () => new DocumentUnavailable({ message: NOWHERE }),
   })
-  if (!shareable) return yield* Effect.fail(new DocumentUnavailable({ message: NOWHERE }))
+  if (!shareable) return yield* new DocumentUnavailable({ message: NOWHERE })
   return yield* Effect.tryPromise({
     try: () => Sharing.shareAsync(file.uri),
     catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
@@ -64,18 +64,20 @@ const openInBrowser = Effect.fn('Documents.openInBrowser')(function* (
   path: string,
   name: string,
 ) {
-  const blob = yield* Effect.tryPromise({
-    try: async () => {
-      const response = await request(libraryAddress(session.server, path), {
+  const response = yield* Effect.tryPromise({
+    try: () =>
+      request(libraryAddress(session.server, path), {
         method: 'GET',
         headers: bearer(session.token),
-      })
-      if (!response.ok) throw new Error(UNAVAILABLE)
-      return await response.blob()
-    },
+      }),
     catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
   })
-  yield* Effect.sync(() => {
+  if (!response.ok) return yield* new DocumentUnavailable({ message: UNAVAILABLE })
+  const blob = yield* Effect.tryPromise({
+    try: () => response.blob(),
+    catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
+  })
+  return yield* Effect.sync(() => {
     const address = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = address
@@ -131,7 +133,7 @@ export const chooseDocument = Effect.fn('Documents.choose')(function* () {
   const asset = picked.canceled ? undefined : picked.assets[0]
   if (asset === undefined) return Option.none<Chosen>()
   if (asset.size !== undefined && asset.size > LARGEST) {
-    return yield* Effect.fail(new DocumentUnavailable({ message: TOO_LARGE }))
+    return yield* new DocumentUnavailable({ message: TOO_LARGE })
   }
   return Option.some<Chosen>({ name: asset.name, uri: asset.uri })
 })
@@ -146,24 +148,28 @@ export const uploadDocument = Effect.fn('Documents.upload')(function* (
   chosen: Chosen,
   destination: { readonly shelf: LibraryShelf; readonly folderId: LibraryFolderId | null },
 ) {
-  const answer = yield* Effect.tryPromise({
-    try: async (signal) => {
+  const response = yield* Effect.tryPromise({
+    // Building the form is inside the attempt: a file that cannot be read is a file not sent.
+    try: (signal) => {
       const form = new FormData()
       // `expo-file-system`'s File is a Blob read from disk, which is what Expo's fetch sends.
       form.append('file', new File(chosen.uri), chosen.name)
       form.append('shelf', destination.shelf)
       if (destination.folderId !== null) form.append('folderId', destination.folderId)
-      const response = await request(libraryAddress(session.server, ''), {
+      return request(libraryAddress(session.server, ''), {
         method: 'POST',
         headers: bearer(session.token),
         body: form,
         signal,
       })
-      return { status: response.status, body: await response.text() }
     },
     catch: () => new DocumentUnavailable({ message: UNSENT }),
   })
-  return yield* Effect.fromResult(uploadOutcome(answer.status, answer.body))
+  const body = yield* Effect.tryPromise({
+    try: () => response.text(),
+    catch: () => new DocumentUnavailable({ message: UNSENT }),
+  })
+  return yield* Effect.fromResult(uploadOutcome(response.status, body))
 })
 
 /**

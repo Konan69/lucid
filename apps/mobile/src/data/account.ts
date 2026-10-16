@@ -83,10 +83,10 @@ const post = Effect.fn('Account.post')(function* (posting: Posting) {
 const enter = Effect.fn('Account.enter')(function* (posting: Omit<Posting, 'headers'>) {
   const answer = yield* post({ ...posting, headers: {} })
   if (!answer.ok) {
-    return yield* Effect.fail(refusalFor(answer.status, answer.body))
+    return yield* refusalFor(answer.status, answer.body)
   }
   if (Option.isNone(answer.token))
-    return yield* Effect.fail(new AccountRefused({ reason: 'NoSession', message: NO_SESSION }))
+    return yield* new AccountRefused({ reason: 'NoSession', message: NO_SESSION })
   return Redacted.make(answer.token.value)
 })
 
@@ -132,16 +132,23 @@ const decodeEnding = Schema.decodeUnknownOption(Ending)
  * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
  */
 export const sessionExpiry = (session: SignedIn): Effect.Effect<Option.Option<number>> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const response = await request(accountAddress(session.server, 'get-session'), {
-        method: 'GET',
-        headers: bearer(session.token),
-        signal,
-      })
-      return response.ok ? Option.some(await response.text()) : Option.none<string>()
-    },
-    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: (signal) =>
+        request(accountAddress(session.server, 'get-session'), {
+          method: 'GET',
+          headers: bearer(session.token),
+          signal,
+        }),
+      catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+    })
+    if (!response.ok) return Option.none<string>()
+    return Option.some(
+      yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+      }),
+    )
   }).pipe(
     Effect.map((body) =>
       body.pipe(

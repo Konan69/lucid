@@ -153,8 +153,8 @@ export const isStreaming = (message: FlueConversationMessage): boolean =>
   message.parts.some((part) => 'state' in part && part.state === 'streaming')
 
 const Metadata = Schema.Struct({
-  finishedAt: Schema.optionalKey(Schema.Number),
-  startedAt: Schema.optionalKey(Schema.Number),
+  finishedAt: Schema.optionalKey(Schema.Finite),
+  startedAt: Schema.optionalKey(Schema.Finite),
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 

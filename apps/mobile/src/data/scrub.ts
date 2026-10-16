@@ -119,7 +119,7 @@ const Contexts = Schema.Struct({
 /** What a request breadcrumb keeps of its data. Its sizes and its separate query field are not named. */
 const Request = Schema.Struct({
   method: text,
-  status_code: Schema.optionalKey(Schema.Number),
+  status_code: Schema.optionalKey(Schema.Finite),
   url: text,
 })
 

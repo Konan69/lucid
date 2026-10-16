@@ -42,7 +42,7 @@ const Part = Schema.Union([
     type: Schema.Literal('file'),
     mediaType: Schema.String,
     id: Schema.optional(Schema.String),
-    size: Schema.optional(Schema.Number),
+    size: Schema.optional(Schema.Finite),
     url: Schema.optional(Schema.String),
     filename: Schema.optional(Schema.String),
   }),
@@ -60,7 +60,7 @@ const Part = Schema.Union([
     state: Schema.Literal('output-available'),
     input: Schema.Unknown,
     output: Schema.Unknown,
-    durationMs: Schema.optional(Schema.Number),
+    durationMs: Schema.optional(Schema.Finite),
   }),
   Schema.Struct({
     type: Schema.Literal('dynamic-tool'),
@@ -69,7 +69,7 @@ const Part = Schema.Union([
     state: Schema.Literal('output-error'),
     input: Schema.Unknown,
     errorText: Schema.String,
-    durationMs: Schema.optional(Schema.Number),
+    durationMs: Schema.optional(Schema.Finite),
   }),
   Schema.Struct({ type: Schema.TemplateLiteral(['data-', Schema.String]), data: Schema.Unknown }),
 ])
@@ -103,7 +103,7 @@ const Message = Schema.Struct({
 const asFlue = (message: typeof Message.Type): FlueConversationMessage => message
 
 /** One Thread's kept words, and when they were kept, which is what orders the Threads. */
-const Said = Schema.Struct({ at: Schema.Number, messages: Schema.Array(Message) })
+const Said = Schema.Struct({ at: Schema.Finite, messages: Schema.Array(Message) })
 
 /**
  * Whose words are kept: a Person on a server. What a Person was told is theirs alone, so what is

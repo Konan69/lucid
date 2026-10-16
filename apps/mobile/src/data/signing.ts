@@ -40,17 +40,22 @@ const phone: Phone = {
   open: (address) =>
     Effect.asVoid(Effect.tryPromise({ try: () => Linking.openURL(address), catch: unable })),
   post: (address, body) =>
-    Effect.tryPromise({
-      try: async (signal) => {
-        const response = await request(address, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body,
-          signal,
-        })
-        return { ok: response.ok, body: await response.text() }
-      },
-      catch: () => new TradeUnanswered({}),
+    Effect.gen(function* () {
+      const response = yield* Effect.tryPromise({
+        try: (signal) =>
+          request(address, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+            signal,
+          }),
+        catch: () => new TradeUnanswered({}),
+      })
+      const text = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: () => new TradeUnanswered({}),
+      })
+      return { ok: response.ok, body: text }
     }),
 }
 
