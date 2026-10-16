@@ -55,18 +55,17 @@ const sources: readonly {
   input: Schema.Json
 }[] = [
   {
-    name: 'Public DeepWiki',
-    address: 'https://mcp.deepwiki.com/mcp',
-    query: 'read_wiki_structure',
-    tool: 'read_wiki_structure',
-    input: { repoName: 'Effect-TS/effect' },
+    name: 'Public Documentation',
+    address: 'https://developers.openai.com/mcp',
+    query: 'fetch_openai_doc',
+    tool: 'fetch_openai_doc',
+    input: { url: 'https://developers.openai.com/codex/cli' },
   },
 ]
 
-/** DeepWiki's public repository structure proves a real unauthenticated read.
- * The provider documents this tool at
- * https://docs.devin.ai/work-with-devin/deepwiki-mcp; the result must name the requested repo
- * and include its introductory topic, rather than merely returning a successful MCP envelope.
+/** The public documentation server declares fetch_openai_doc readOnlyHint=true in tools/list
+ * at https://developers.openai.com/mcp. Verify the requested page's heading and getting-started
+ * section as well as its completed envelope: a provider quota/error message is not a read.
  * Real public inspection, SQL registration, discovery and use_tool dispatch run as a disposable
  * acting Person in a private Thread. Production Gate permits ordinary reads without consulting
  * the model judge. No address, Executor response, Gate decision or provider call is faked.
@@ -170,8 +169,8 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
                 const response = yield* decodeRead(used.output)
                 const text = response.content.map((part) => part.text).join('\n')
-                expect(text).toContain('Effect-TS/effect')
-                expect(text).toMatch(/^- 1 Introduction to Effect$/mu)
+                expect(text).toMatch(/^# Codex CLI$/mu)
+                expect(text).toMatch(/^## Getting started$/mu)
                 return yield* Effect.void
               }).pipe(
                 Effect.scoped,
