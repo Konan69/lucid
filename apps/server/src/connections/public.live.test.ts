@@ -55,20 +55,19 @@ const sources: readonly {
   input: Schema.Json
 }[] = [
   {
-    name: 'Public Exa',
-    address: 'https://mcp.exa.ai/mcp',
-    query: 'web_search_exa',
-    tool: 'web_search_exa',
-    input: {
-      query: 'Effect TypeScript official documentation',
-      objective:
-        'Find the official Effect documentation home page, excluding third-party tutorials.',
-      numResults: 1,
-    },
+    name: 'Public DeepWiki',
+    address: 'https://mcp.deepwiki.com/mcp',
+    query: 'read_wiki_structure',
+    tool: 'read_wiki_structure',
+    input: { repoName: 'Effect-TS/effect' },
   },
 ]
 
-/** Real public inspection, SQL registration, discovery and use_tool dispatch run as a disposable
+/** DeepWiki's public repository structure proves a real unauthenticated read.
+ * The provider documents this tool at
+ * https://docs.devin.ai/work-with-devin/deepwiki-mcp; the result must name the requested repo
+ * and include its introductory topic, rather than merely returning a successful MCP envelope.
+ * Real public inspection, SQL registration, discovery and use_tool dispatch run as a disposable
  * acting Person in a private Thread. Production Gate permits ordinary reads without consulting
  * the model judge. No address, Executor response, Gate decision or provider call is faked.
  */
@@ -171,7 +170,8 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
                 const response = yield* decodeRead(used.output)
                 const text = response.content.map((part) => part.text).join('\n')
-                expect(text).toMatch(/https:\/\/effect\.website(?:\/|\b)/u)
+                expect(text).toContain('Effect-TS/effect')
+                expect(text).toMatch(/^- 1 Introduction to Effect$/mu)
                 return yield* Effect.void
               }).pipe(
                 Effect.scoped,
