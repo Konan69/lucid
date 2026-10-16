@@ -392,7 +392,10 @@ describe('egress through the Person’s computer', () => {
     () =>
       Effect.gen(function* () {
         const pages = 8
-        const body = NodeCrypto.randomBytes(1 << 20)
+        // Longer than a window, so every site has more to send than its stream may have out and
+        // is paused whichever order the sites answer in. A page within the window can be read to
+        // its end before the queue fills, and is then never paused at all.
+        const body = NodeCrypto.randomBytes(2 * EGRESS_WINDOW)
         const { server, seen } = site(body)
         const sitePort = yield* listening(server)
         const ports = yield* computerProxy()
