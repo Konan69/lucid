@@ -1,10 +1,14 @@
+import { useAtomValue } from '@effect/atom-react'
 import { PatchSettingsRequest, Settings, type MeResponse, type Theme } from '@vivid/contracts'
-import { Effect, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import type * as Atom from 'effect/reactivity/Atom'
 import { LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { reload, signOut } from '../../data/account'
 import { changing, live, LiveState, useLive } from '../../data/live'
 import { act, running } from '../../data/app'
+import { desktopVersion, pageWords, serverWords } from '../../data/build'
 import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
@@ -87,8 +91,48 @@ export function General({ me }: { me: MeResponse }) {
       ) : (
         <Awaiting state={settings} />
       )}
+      <ThisApp />
     </>
   )
+}
+
+/**
+ * Which build is on screen (`data/build.ts`). It is last on the page, where the phone's Settings
+ * says the same about itself, and it is text: there is nothing here to press.
+ *
+ * It is here so that "it is merged" and "it is deployed" can be checked where the Person is. The
+ * server's line is apart from the page's because they can differ: a page left open keeps running
+ * the build it was loaded with, and the desktop app runs the page it was installed with.
+ */
+function ThisApp() {
+  const server = useLive(live.build)
+  return (
+    <Section title="This app">
+      {Option.isSome(desktopVersion) && <DesktopVersion version={desktopVersion.value} />}
+      <Row label="Build">
+        <Value>{pageWords}</Value>
+      </Row>
+      <Row label="Server">
+        {LiveState.$match(server, {
+          // Still, and the width of a short commit, so the row does not jump when it answers.
+          Loading: () => <i aria-hidden className="h-3 w-14 rounded-full bg-wash-hover" />,
+          Ready: ({ value }) => <Value>{serverWords(value)}</Value>,
+          Failed: ({ failure }) => <Value>{failure.message}</Value>,
+        })}
+      </Row>
+    </Section>
+  )
+}
+
+/** The desktop app's own version, which only a new install changes. */
+function DesktopVersion({ version }: { version: Atom.Atom<AsyncResult.AsyncResult<string>> }) {
+  const result = useAtomValue(version)
+  return <Row label="Version">{AsyncResult.isSuccess(result) && <Value>{result.value}</Value>}</Row>
+}
+
+/** A value read out on the right of a row, quieter than what it names. */
+function Value({ children }: { children: string }) {
+  return <span className="text-label text-ink-3 tabular-nums">{children}</span>
 }
 
 /**

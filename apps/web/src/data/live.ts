@@ -35,6 +35,8 @@ const family = engine.family
 export const live = {
   me: kept((client) => client.WatchMe()),
   settings: kept((client) => client.WatchSettings()),
+  /** The build of the server answering, for Settings beside the page's own (`build.ts`). */
+  build: one((client) => client.WatchBuild()),
   people: one((client) => client.WatchPeople()),
   threads: kept((client) => client.WatchThreads()),
   thread: family(
