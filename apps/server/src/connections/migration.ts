@@ -98,7 +98,9 @@ function shared(legacy: typeof LegacyExecutorReferences.Type, references: Execut
   )
 }
 
-/** SQL selects only pending legacy states; a concurrent completed row is skipped safely. */
+/** Only legacy selections and retryable wrappers enter a pass. Completed rows supply app
+ * claims, and the SQL revision/pending predicate refuses a concurrent completion.
+ */
 function legacySelection(
   references: typeof import('./records.ts').storedRowSchema.Type.references,
 ) {
