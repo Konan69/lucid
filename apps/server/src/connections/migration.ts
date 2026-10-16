@@ -179,7 +179,7 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
   const initial = held ? shared(selection.value, outcome) : outcome
   // Pending JSON written before this counter existed decodes with the schema's zero default.
   const counterRevision = ExecutorReferences.guards.MigrationPending(row.references)
-    ? sql`COALESCE((${connections.references}->>'compatibleAttempts')::integer, 0) = ${row.references.compatibleAttempts}`
+    ? sql`COALESCE(${connections.references}->'compatibleAttempts', '0'::jsonb) = ${JSON.stringify(row.references.compatibleAttempts)}::jsonb`
     : sql`TRUE`
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {

@@ -226,6 +226,31 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
       }).pipe(Effect.scoped),
     )
 
+    test.effect('expires an exhausted stored budget even after a large compatible count', () =>
+      Effect.gen(function* () {
+        const seeded = yield* seed(
+          yield* encodeReferences(
+            ExecutorReferences.cases.MigrationPending.make({
+              ...migrationPending(legacy, 'CopyPending'),
+              compatibleAttempts: 2 ** 31,
+            }),
+          ),
+        )
+        const executor = yield* Executor
+        const retrying = Executor.of({
+          ...executor,
+          reconcile: () => Effect.succeed(migrationPending(legacy, 'CopyPending')),
+        })
+        expect(yield* migrateConnections().pipe(Effect.provideService(Executor, retrying))).toBe(
+          false,
+        )
+        const expired = yield* decodeRow(yield* seeded.read)
+        if (!ExecutorReferences.guards.ReconnectRequired(expired.references))
+          expect.fail('Exhausted compatible budget must expire')
+        expect(expired.references.reason).toBe('MigrationTargetMissing')
+      }),
+    )
+
     test.effect('a stale compatible pass cannot replace newer counter progress', () =>
       Effect.gen(function* () {
         const seeded = yield* seed(
