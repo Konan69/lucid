@@ -27,13 +27,14 @@ export const removeRefused = Effect.fn('Connections.removeRefused')(function* ()
   )
   for (const stored of rows) {
     if (!refusedService(stored.service)) continue
-    const row = yield* decodeRow(stored)
-    yield* removeConnection(row).pipe(
+    // One row that cannot be read or removed must not stop the rest.
+    yield* decodeRow(stored).pipe(
+      Effect.flatMap(removeConnection),
       Effect.andThen(Effect.logInfo('Refused Integration removed')),
       Effect.catch((error) =>
         Effect.logWarning('Refused Integration not removed yet', { reason: error._tag }),
       ),
-      Effect.annotateLogs({ connectionId: row.id }),
+      Effect.annotateLogs({ connectionId: stored.id }),
     )
   }
 })

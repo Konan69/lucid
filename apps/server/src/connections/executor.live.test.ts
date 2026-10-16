@@ -3,7 +3,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
 import { ConnectionSource } from './address.ts'
-import { refusedHost } from './curation.ts'
+import { refusedService } from './curation.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
   Executor,
