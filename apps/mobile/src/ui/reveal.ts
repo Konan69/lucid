@@ -1,4 +1,4 @@
-import { revealed, revealer, type Frames } from '@vivid/state'
+import { mended, revealed, revealer, type Frames } from '@vivid/state'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { AppState } from 'react-native'
 import { useReducedMotion } from 'react-native-reanimated'
@@ -20,19 +20,21 @@ const frames: Frames = {
  * arrives afterwards let out at an even pace in place of the lumps it comes in. Nothing runs
  * once it is all shown.
  *
- * `fresh` says the reply is still being written (`streaming`) or still being let out, which is
- * when the words it gains fade in (`Prose`). It is the web's `useRevealed`
- * (`apps/web/src/ui/reveal.ts`) with one difference: the web learns of less motion in its frames,
- * and a phone learns of it from a hook. A Person who asked the phone for less motion gets the
- * text as it lands and nothing fades. A finished reply, and one opened from history, is neither
- * being written nor let out, so it is not fresh.
+ * `fresh` says the reply is still being written (`streaming`) or still being let out. While it
+ * is, the words it gains fade in (`Prose`), and a mark it has left open is closed for it
+ * (`mended`), so half a bold word never shows its stars: the native formatter's own streaming
+ * mode fades new text but does not repair a half-written mark. It is the web's `useRevealed` (`apps/web/src/ui/reveal.ts`) with one difference: the web
+ * learns of less motion in its frames, and a phone learns of it from a hook. A Person who asked
+ * the phone for less motion gets the text as it lands. A finished reply, and one opened from
+ * history, is neither being written nor let out, so it is not fresh and is drawn as written.
  */
 export const useRevealed = (text: string, streaming: boolean) => {
   const still = useReducedMotion()
   const [reveal] = useState(() => revealer(frames, text.length))
   const toward = useMemo(() => reveal.toward(text.length), [reveal, text.length])
   const shown = useSyncExternalStore(toward, reveal.read, reveal.read)
-  return still
-    ? { drawn: text, fresh: false }
-    : { drawn: revealed(text, shown), fresh: streaming || shown < text.length }
+  if (still) return { drawn: text, fresh: false }
+  const fresh = streaming || shown < text.length
+  const drawn = revealed(text, shown)
+  return { drawn: fresh ? mended(drawn) : drawn, fresh }
 }

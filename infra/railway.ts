@@ -61,12 +61,15 @@ const builtFromMain = {
 
 /**
  * What the runtime's image is built from (`packages/agent/runtime/Dockerfile`). A push to the
- * server, the web app or the phone app alone leaves the runtime running.
+ * server, the web app or the phone app alone leaves the runtime running. The phone's native
+ * Markdown view is the exception: it is a tarball in `apps/mobile/deps` that the lockfile names, so
+ * the runtime's install reads it.
  */
 const runtimeInputs = [
   '/packages/**',
   '/patches/**',
   '/apps/*/package.json',
+  '/apps/mobile/deps/**',
   '/package.json',
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
