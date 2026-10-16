@@ -75,10 +75,10 @@ from the developer's PC in eighteen seconds. Before that it uploaded each servic
 which a home connection reset part-way, and was run from the developer's Boat machine for that
 reason; that route is no longer needed.
 
-1. Fast-forward the deploy checkout to `main`. Its `.alchemy/` is the state: copy it aside first.
-   The state files hold the settings' values, so the copy is a secret too.
-2. Give the run `RAILWAY_API_TOKEN` and `GITHUB_TOKEN` in its environment. They are never typed
-   into a command line and never printed.
+1. Fast-forward a clean checkout to `main`. Any checkout serves: none holds the state (see
+   [Where the stack's state lives](#where-the-stacks-state-lives)).
+2. Give the run `RAILWAY_API_TOKEN`, `GITHUB_TOKEN`, `ALCHEMY_STATE_URL` and `ALCHEMY_STATE_TOKEN`
+   in its environment. They are never typed into a command line and never printed.
 3. Run `alchemy plan --stage production --env-file <file>` and read it, as "Before a production
    deploy" says. Then the same with `deploy ... --yes`. That run was made from an export of the
    committed tree (`git archive HEAD`) with the checkout's `node_modules` one directory above it
@@ -88,6 +88,43 @@ reason; that route is no longer needed.
    answers 200 even while `PUBLIC_URL` holds the wrong domain and every new sign-in is refused; a
    deployment reads that variable when it starts, so if the sign-in is refused, redeploy the
    server after the domain is gone.
+
+### Where the stack's state lives
+
+Since 16 October 2026 the production stack's Alchemy state is in Alchemy's own Cloudflare state
+store, not in a checkout. The store is the `alchemy-state-store` Worker and its `Store` Durable
+Object in the personal Cloudflare account, at `https://alchemy-state-store.<subdomain>.workers.dev`.
+The Worker encrypts each record with a key it keeps in the account's Secrets Store.
+`infra/state.ts` opens it for the hosted stack. The local stack keeps its state in the checkout,
+because its resources are that machine's own Docker containers and processes.
+
+A run reads two settings from its environment, like the Railway token:
+
+- `ALCHEMY_STATE_URL`: the store's address.
+- `ALCHEMY_STATE_TOKEN`: its bearer token. It is a secret: never type it into a command line or
+  print it.
+
+On the machine that deployed the store, Alchemy wrote both to
+`~/.alchemy/credentials/<profile>/cloudflare-state-store.json`. A second machine is given them the
+same way as `RAILWAY_API_TOKEN` (over `ssh` standard input into a file only its user can read, and
+removed after the run). With these two, `RAILWAY_API_TOKEN`, `GITHUB_TOKEN` and `.env.production`,
+any machine plans and deploys against the same state. It needs no Cloudflare login. A run that
+cannot reach the store, or finds nothing for `vivid-production/production`, stops before it plans.
+
+The store has no lock. Two runs at once can still overwrite each other's records, so one session
+deploys at a time, as [Before a production deploy](#before-a-production-deploy) says.
+
+After an Alchemy upgrade, run `alchemy provider cloudflare bootstrap --profile <profile>` once
+before the next plan. `Cloudflare.state()` upgrades the Worker by itself, but `infra/state.ts`
+talks to it directly and does not. The bootstrap needs a Cloudflare login for the personal account:
+refresh the Alchemy profile (`alchemy profile refresh --profile <profile> --provider Cloudflare`),
+or give it `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+The state was copied in from the old deploy checkout's `.alchemy/` with `infra/copy/main.ts`, run
+from an extracted backup of it. That directory is now a stale copy that nothing reads. The copy
+refuses to overwrite state the store already holds differently, so a second run cannot roll a
+later deploy back. Dated backups of the old state are kept beside the worktrees as
+`alchemy-before-*.tgz`; they hold the settings' values, so they are secrets too.
 
 ### Before a production deploy
 
@@ -105,8 +142,9 @@ Executor answered `502` for 55 minutes. No data was lost. The rules that came ou
   command prints (`Plan: …` and the `[Resource] update | replace | create` lines). If it touches
   a resource your change does not, find whose change that is (`git log -- infra/railway.ts`)
   before going on.
-- Deploys run only from the one clean checkout that holds the Alchemy state (`.alchemy/`). A
-  second checkout has no state and would create every resource again.
+- Every checkout reads the same state from the hosted store, so a deploy can run from any clean
+  checkout of current `main`. The store does not lock: the one-deployer rule above is what keeps
+  two runs apart.
 - The Railway CLI's session token lasts about an hour, and a deploy that outlives it fails with
   `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
   personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
@@ -205,9 +243,8 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    new server's `/health` succeeds. Its log should show `Integration migration waiting for compatible inventory` with
    a failure tag. Legacy selections must stay pending; do not ask Persons to reconnect during
    this interval. Avoid Integration actions until verification.
-4. Use the deploy checkout `~/agency/vivid-lanes/deploy`, which holds `.alchemy/` state. Back up
-   that state as described in [Running the stack's own deploy](#running-the-stacks-own-deploy),
-   fast-forward this checkout to current `main`, and confirm it is clean. Then run `pnpm infra:deploy --yes` (the authorized
+4. Use a clean checkout of current `main`, with the settings
+   [Running the stack's own deploy](#running-the-stacks-own-deploy) lists. Then run `pnpm infra:deploy --yes` (the authorized
    `alchemy deploy --stage production --env-file .env.production` entry point). This changes the
    Executor image to `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Wait for its health
    check and storage migration. The server keeps retrying in its own scope; the next pass starts

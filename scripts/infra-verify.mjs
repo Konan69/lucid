@@ -262,7 +262,19 @@ const assertStackPolicy = (stackSource, infrastructureSources) => {
     /Command\.Dev\(target\.runtimeProcessId/,
     'runtime must be an Alchemy-managed process',
   )
-  assert.match(stackSource, /Alchemy\.localState\(\)/, 'stack state must remain local')
+  // The local stack's resources are the machine's own Docker and processes, so its state stays in
+  // that checkout. Production's state lives in the hosted store (`infra/state.ts`): read from a
+  // checkout's `.alchemy`, every other machine would plan to create production again.
+  assert.equal(
+    [...stackSource.matchAll(/Alchemy\.localState\(\)/g)].length,
+    1,
+    'only the local stack may keep its state in the checkout',
+  )
+  assert.match(
+    stackSource,
+    /state: hostedState\(deployTarget\.stackName\)/,
+    'the hosted stack must read the hosted state store',
+  )
   assert.match(
     stackSource,
     /requireRunnableTarget\(deployTarget\)/,

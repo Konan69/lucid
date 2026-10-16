@@ -124,7 +124,7 @@ const environmentError = (variable: string) =>
 const requiredString = (name: string) =>
   Config.NonEmptyString(name).pipe(Effect.mapError(() => environmentError(name)))
 
-const requiredSecret = (name: string) => requiredString(name).pipe(Effect.map(Redacted.make))
+export const requiredSecret = (name: string) => requiredString(name).pipe(Effect.map(Redacted.make))
 
 const optionalString = (name: string) =>
   Config.option(Config.String(name)).pipe(Effect.mapError(() => environmentError(name)))

@@ -9,6 +9,7 @@ import { computerBinariesRelease } from './infra/github.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
+import { hostedState } from './infra/state.ts'
 import { deploymentTargetFromConfig, requireRunnableTarget } from './infra/targets.ts'
 
 /**
@@ -159,7 +160,8 @@ const railwayStack = () =>
     deployTarget.stackName,
     {
       providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
-      state: Alchemy.localState(),
+      /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
+      state: hostedState(deployTarget.stackName),
     },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
