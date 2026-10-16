@@ -69,6 +69,7 @@ describe.skipIf(process.env['VIVID_LIVE_SIGNIN_COPY'] !== '1')('sign-in copy, li
             receipts.some((outline) => outline.includes(name) && outline.includes(VALUE)),
           ).toBe(true)
         }).pipe(Effect.scoped),
+      { timeout: 600_000 },
     )
   })
 })
