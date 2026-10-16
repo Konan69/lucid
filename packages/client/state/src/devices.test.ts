@@ -16,9 +16,13 @@ const device = (n: number, access: DeviceAccess, presence: DevicePresence): Devi
   presence,
 })
 
+/** The name of the computer asked about, when the computers at `asking` (counted from 1) ask. */
 const askedName = (devices: ReadonlyArray<Device>, asking: ReadonlyArray<number>) =>
   Option.map(
-    deviceAsked({ devices, asking: asking.map((n) => devices[n - 1].id) }),
+    deviceAsked({
+      devices,
+      asking: devices.filter((_, place) => asking.includes(place + 1)).map((each) => each.id),
+    }),
     (asked) => asked.device.name,
   )
 
@@ -40,8 +44,11 @@ describe('which computer is asked about over the composer', () => {
   })
 
   it('asks when the allowed computer is offline, and says it would stop being used', () => {
-    const devices = [device(1, allowedAccess, offline), device(2, pending, offline)]
-    const asked = deviceAsked({ devices, asking: [devices[1].id] })
+    const waiting = device(2, pending, offline)
+    const asked = deviceAsked({
+      devices: [device(1, allowedAccess, offline), waiting],
+      asking: [waiting.id],
+    })
     expect(Option.map(asked, (each) => each.device.name)).toEqual(Option.some('Computer 2'))
     const answers = deviceAnswers(Option.flatMap(asked, (each) => each.instead))
     expect(answers.map((each) => [each.label, each.detail])).toEqual([
