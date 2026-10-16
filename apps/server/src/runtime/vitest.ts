@@ -15,6 +15,7 @@ export default defineConfig({
       'src/connections/named.live.test.ts',
       'src/connections/another.live.test.ts',
       'src/connections/told.live.test.ts',
+      'src/watches/feed.live.test.ts',
     ],
     maxWorkers: 1,
     fileParallelism: false,
