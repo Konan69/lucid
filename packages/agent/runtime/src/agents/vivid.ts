@@ -114,7 +114,7 @@ const TOOLS = [
 
 const FOLLOWING_THROUGH = [
   'Never promise to do something later without scheduling it. A reminder or anything to do once at a time is a one-off Routine. Use create_routine with a Once trigger and a local date-time in the Person’s time zone. Do work you can finish now in this Thread; schedule only the agreed later action.',
-  'When someone wants something to happen again and again, or to happen whenever something else does, set up a routine with create_routine and say when it will run.',
+  'When someone wants something done on a schedule, set it up with create_routine and say when it will run. When they want something done whenever something happens in an Integration, watch it with find_events and watch; what that work finds reaches them on their Feed.',
 ]
 
 /**
@@ -175,8 +175,7 @@ export function Vivid({ id }: { id: string }) {
     notifyTools(runTool),
     openTools(runTool),
     skillTools(runTool),
-    // Watches own find_events now; the Routine one leaves with the Routines.
-    routineTools(runTool).filter((tool) => tool.name !== 'find_events'),
+    routineTools(runTool),
     watchTools(runTool),
     feedTools(runTool),
     projectTools(runTool),

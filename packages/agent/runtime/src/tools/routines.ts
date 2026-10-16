@@ -1,6 +1,6 @@
 import { defineTool } from '@flue/runtime'
-import { InvalidRequest, RoutineTrigger } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { RoutineTrigger } from '@vivid/contracts'
+import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
@@ -8,7 +8,7 @@ import * as views from './views.ts'
 
 /** This paragraph is also model-visible in create_routine's description, without an agent edit. */
 export const instructions =
-  'A reminder or anything to do once at a time is a one-off Routine. Use a Once trigger with a local date-time in the Person’s time zone; never supply epoch numbers or identifiers. When a Person describes a recurring reaction, offer “when this happens, I’ll do that”. Use find_events with the Integration’s account name to discover what can be watched, then create_routine with that account, the event description and its filter. Explain the actual delivery cadence and stop if the Integration cannot support the event. Background work follows the same approval rules as work asked for in a Thread.'
+  'A reminder or anything to do once at a time is a one-off Routine. Use a Once trigger with a local date-time in the Person’s time zone; never supply epoch numbers or identifiers. Work on a clock schedule is a Schedule trigger. Reacting when something happens in an Integration is never a Routine: watch it with find_events and watch. Background work follows the same approval rules as work asked for in a Thread.'
 
 const triggerInput = v.variant('kind', [
   v.object({
@@ -20,32 +20,10 @@ const triggerInput = v.variant('kind', [
     cron: text('The cron schedule.', 200),
     timezone: text('The IANA timezone.', 200),
   }),
-  v.object({
-    kind: v.literal('Integration'),
-    account: text('The account name the Person was shown, such as Gmail (Work).', 300),
-    event: text('The event name or plain description returned by find_events.', 1000),
-    filter: v.pipe(v.unknown(), v.description('JSON configuration following find_events.')),
-  }),
 ])
-const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
+// Integration events wake Vivid through Watches (`watches.ts`), not through Routines.
 
-/** The model supplies names and provider data; server authority resolves the private Connection. */
-const triggerOf = Effect.fn('RoutineTools.triggerOf')(function* (
-  input: Exclude<v.InferOutput<typeof triggerInput>, { kind: 'Once' }>,
-) {
-  if (input.kind === 'Schedule')
-    return RoutineTrigger.cases.Schedule.make({ cron: input.cron, timezone: input.timezone })
-  const filter = yield* decodeJson(input.filter).pipe(
-    Effect.mapError(() => new InvalidRequest({ message: 'The event filter must be JSON.' })),
-  )
-  return RoutineTrigger.cases.Integration.make({
-    account: input.account,
-    event: input.event,
-    filter,
-  })
-})
-
-/** Routines belong to the acting Person, whether a schedule or Integration starts them. */
+/** Routines belong to the acting Person: a reminder at a time, or work on a schedule. */
 export function routineTools(runTool: RunTool) {
   return [
     defineTool({
@@ -72,29 +50,14 @@ export function routineTools(runTool: RunTool) {
                 : yield* client.CreateRoutine({
                     name: data.name,
                     prompt: data.prompt,
-                    trigger: yield* triggerOf(data.trigger),
+                    trigger: RoutineTrigger.cases.Schedule.make({
+                      cron: data.trigger.cron,
+                      timezone: data.trigger.timezone,
+                    }),
                   })
             return { output: views.routine(response.routine, response.routine.name) }
           }),
           { signal, tool: 'create_routine' },
-        )
-      },
-    }),
-    defineTool({
-      name: 'find_events',
-      description: 'Find what can happen in an Integration to start a Routine, in words.',
-      input: v.object({
-        summary,
-        account: text('The exact account name the Person was shown.', 300),
-      }),
-      /** Discovery returns names and provider filter schemas without storage authority. */
-      run({ data, signal }) {
-        return runTool(
-          Effect.gen(function* () {
-            const { client } = yield* Scope
-            return { output: yield* client.FindEvents({ account: data.account }) }
-          }),
-          { signal, tool: 'find_events' },
         )
       },
     }),
