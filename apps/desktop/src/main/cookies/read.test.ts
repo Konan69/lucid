@@ -58,6 +58,34 @@ const fixture = Effect.fn('SignInTest.profile')(function* () {
 })
 
 describe('copying sign-ins from a browser cookie database', () => {
+  it.effect('refuses Windows app-bound encryption before asking to quit a locked browser', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const source = yield* fixture()
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(source.root, 'Local State'),
+            JSON.stringify({
+              profile: { info_cache: { Default: { name: 'Test' } } },
+              os_crypt: { app_bound_encrypted_key: 'fixture-app-bound-key' },
+            }),
+          ),
+        )
+        source.database.exec('BEGIN EXCLUSIVE')
+        const read = yield* readChromeSignIn({
+          request,
+          root: source.root,
+          platform: 'win32',
+        }).pipe(Effect.result)
+        expect(Result.isFailure(read)).toBe(true)
+        if (Result.isFailure(read)) {
+          expect(read.failure.outcome).toHaveProperty('_tag', 'UnsupportedEncryption')
+          expect(signInMessage(request, read.failure.outcome)).not.toContain('Quit Chrome,')
+        }
+      }),
+    ),
+  )
+
   it.effect(
     'reports an actual exclusive lock, tells the person to quit, and succeeds on a fresh retry after release',
     () =>

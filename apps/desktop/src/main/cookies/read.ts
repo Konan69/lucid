@@ -20,6 +20,9 @@ const decodeProfiles = Schema.decodeEffect(
       profile: Schema.Struct({
         info_cache: Schema.Record(Schema.String, Schema.Struct({ name: Schema.String })),
       }),
+      os_crypt: Schema.optionalKey(
+        Schema.Struct({ app_bound_encrypted_key: Schema.optionalKey(Schema.String) }),
+      ),
     }),
   ),
 )
@@ -156,6 +159,7 @@ const values = Effect.fn('DesktopSignIn.values')(function* (input: {
 const profilePath = Effect.fn('DesktopSignIn.profile')(function* (
   request: CopySignInRequest,
   root: string,
+  platform: NodeJS.Platform,
 ) {
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Filesystem exception ingress delegates to the one OS-error decoder.
   const failed = (failure: unknown) => sourceFailure(request.browser, failure)
@@ -183,6 +187,14 @@ const profilePath = Effect.fn('DesktopSignIn.profile')(function* (
     catch: failed,
   })
   if (NodePath.dirname(realProfile) !== realRoot) return yield* unreadable()
+  // Local State remains readable while Chrome holds its cookie file. Refuse unsupported
+  // app-bound profiles now, before a lock can prompt a quit that would not enable copying.
+  const appBound =
+    state.os_crypt !== undefined && state.os_crypt.app_bound_encrypted_key !== undefined
+  if (platform === 'win32' && appBound)
+    return yield* new CookieReadFailed({
+      outcome: CopySignInOutcome.cases.UnsupportedEncryption.make({ browser: request.browser }),
+    })
   const network = NodePath.join(realProfile, 'Network', 'Cookies')
   const newer = yield* Effect.tryPromise({ try: () => NodeFSP.stat(network), catch: failed }).pipe(
     Effect.as(true),
@@ -205,7 +217,7 @@ export const readChromeSignIn = Effect.fn('DesktopSignIn.read')(function* (input
   const { request } = input
   const stored = yield* readCookieDatabase(
     request.browser,
-    yield* profilePath(request, input.root),
+    yield* profilePath(request, input.root, input.platform),
     request.site,
   )
   const now = (yield* Clock.currentTimeMillis) / 1000
