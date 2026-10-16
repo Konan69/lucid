@@ -26,7 +26,7 @@ import { type ChainFixture, chainSession, completeRun, toolParts } from '../../r
  * browser keeps the way out it started with); and it leaves one Thread, "Egress proof".
  *
  * The page is opened by Vivid, in a real Run, because that is the only thing that opens a page
- * in the Computer's browser. The same page is opened twice: with egress on, and with it off,
+ * in the Computer's browser. The echo page is opened twice, each time at a new address: with egress on, and with it off,
  * when the Computer's proxy goes out from the Computer itself.
  *
  * What is compared is what the browser itself returned, never what Vivid said about it: each
@@ -75,10 +75,10 @@ const echoed = (state: FlueConversationState, page: URL) =>
 
 /**
  * Asks Vivid to open the echo page on its Computer, and answers the address in the receipt the
- * browser left for this attempt’s unique URL. Both readings reuse one tab: Cua 0.23.2 proves selection
- * from a unique native title, so two identically titled echo tabs are correctly ambiguous
- * (`cua-driver-core/src/browser/binding.rs`, `selected_tab_target_id`). A new query forces
- * each Run to navigate again instead of reading the previous address from the existing DOM.
+ * browser left for this attempt’s unique URL. Both readings reuse one tab: Cua 0.23.2 proves
+ * selection from a unique native title, so two identically titled echo tabs are ambiguous
+ * (`cua-driver-core/src/browser/binding.rs`, `selected_tab_target_id`). A new query means only
+ * a receipt from fresh navigation can match; reading the previous page fails the proof.
  */
 const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture) {
   const address = new URL(ECHO)

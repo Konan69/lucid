@@ -3,7 +3,9 @@ import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { allowing, deviceAnswers, deviceAsked, stopping } from './devices.js'
 
-const listening = DevicePresence.cases.Connected.make({ ability: { pages: true, apps: true } })
+const listening = DevicePresence.cases.Connected.make({
+  ability: { pages: true, apps: true, egress: true },
+})
 const offline = DevicePresence.cases.Offline.make({})
 const pending = DeviceAccess.cases.Pending.make({ since: 1 })
 const allowedAccess = DeviceAccess.cases.Allowed.make({ since: 1 })
