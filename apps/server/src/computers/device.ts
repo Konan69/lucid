@@ -1053,11 +1053,15 @@ export const deviceLayer = Layer.effect(
     // The first thing this service does is write to its ledger, so it is also the first thing
     // to meet a database whose migrations are behind. That is said by name before anything runs.
     yield* requireLedger(database)
-    // Once now, for what a previous process left behind and whose deadline has passed; once more
-    // when every deadline that process could have issued has passed too.
+    // Reconcile abandoned work now, after the ordinary budget and after the longer consent
+    // budget. Page/window recovery keeps its existing timing while sign-in work stays bounded.
     yield* ledger.reconcile()
-    yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS).pipe(
-      Effect.andThen(ledger.reconcile()),
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep(REQUEST_BUDGET_MILLIS)
+      yield* ledger.reconcile()
+      yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS - REQUEST_BUDGET_MILLIS)
+      yield* ledger.reconcile()
+    }).pipe(
       Effect.catch((failure) =>
         Effect.logError('Abandoned device requests could not be closed', failure._tag),
       ),
