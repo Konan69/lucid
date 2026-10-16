@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import type { FlueConversationState } from '@flue/sdk'
@@ -58,14 +59,14 @@ const decodeReceipt = Schema.decodeUnknownOption(Receipt)
  * first. A receipt for another page, a refused step, or an echo page with no address in it
  * (an error page, a blocked request) is not one.
  */
-const echoed = (state: FlueConversationState) =>
+const echoed = (state: FlueConversationState, page: URL) =>
   toolParts(state).flatMap((part) => {
     if (part.toolName !== 'browse' || part.state !== 'output-available') return []
     return Option.match(decodeReceipt(part.output), {
       onNone: () => [],
       onSome: ({ result }) => {
         if (!URL.canParse(result.address)) return []
-        if (new URL(result.address).origin !== ECHO) return []
+        if (new URL(result.address).href !== page.href) return []
         const found = ADDRESS.exec(result.outline)
         return found === null ? [] : [found[0]]
       },
@@ -74,22 +75,24 @@ const echoed = (state: FlueConversationState) =>
 
 /**
  * Asks Vivid to open the echo page on its Computer, and answers the address in the receipt the
- * browser left for it in this Run. `before` is how many such receipts earlier Runs left in the
- * Thread: this Run must add one. Both readings reuse one tab: Cua 0.23.2 proves selection
+ * browser left for this attempt’s unique URL. Both readings reuse one tab: Cua 0.23.2 proves selection
  * from a unique native title, so two identically titled echo tabs are correctly ambiguous
- * (`cua-driver-core/src/browser/binding.rs`, `selected_tab_target_id`).
+ * (`cua-driver-core/src/browser/binding.rs`, `selected_tab_target_id`). A new query forces
+ * each Run to navigate again instead of reading the previous address from the existing DOM.
  */
-const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture, before: number) {
+const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture) {
+  const address = new URL(ECHO)
+  address.searchParams.set('vivid-proof', NodeCrypto.randomUUID())
   const runId = yield* fixture.send(
-    `Open ${ECHO} in the current browser tab on Vivid’s Computer. Reuse the current tab. Reply with exactly the address the page shows, nothing else.`,
+    `Navigate the current browser tab on Vivid’s Computer to ${address.href}. This is a new address and needs a fresh navigation. Reply with exactly the IP address the page shows, nothing else.`,
   )
-  const seen = echoed(yield* completeRun(fixture, runId))
-  const address = Arr.last(seen)
-  if (seen.length <= before || Option.isNone(address))
+  const seen = echoed(yield* completeRun(fixture, runId), address)
+  const latest = Arr.last(seen)
+  if (Option.isNone(latest))
     return yield* Effect.sync(() =>
       expect.fail('The Computer’s browser left no receipt for the echo page in this Run'),
     )
-  return { address: address.value, seen: seen.length }
+  return latest.value
 })
 
 /** Waits until the Person's live egress status is the one named. */
@@ -130,21 +133,20 @@ describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => 
           yield* fixture.rpc.StartComputer()
           yield* computerIs(fixture, ComputerState.guards.Running)
           yield* egressIs(fixture, 'Routing')
-          const through = yield* asked(fixture, 0)
+          const through = yield* asked(fixture)
 
           yield* fixture.rpc.PatchSettings(new PatchSettingsRequest({ egress: false }))
           yield* egressIs(fixture, 'Off')
-          const direct = yield* asked(fixture, through.seen)
+          const direct = yield* asked(fixture)
 
-          expect(
-            through.address,
-            'With egress on the page must not see the Computer’s address',
-          ).not.toBe(direct.address)
+          expect(through, 'With egress on the page must not see the Computer’s address').not.toBe(
+            direct,
+          )
           // With the device's address known, the page must have seen exactly it, and the
           // Computer's own address must be another.
           if (Option.isSome(known)) {
-            expect(through.address).toBe(known.value)
-            expect(direct.address).not.toBe(known.value)
+            expect(through).toBe(known.value)
+            expect(direct).not.toBe(known.value)
           }
         }).pipe(Effect.scoped),
       { timeout: 900_000 },
