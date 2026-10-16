@@ -24,6 +24,7 @@
     "@effect/platform-node": "catalog:",
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
+    "@openuidev/lang-core": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
@@ -32,7 +33,8 @@
     "effect": "catalog:",
     "hono": "catalog:",
     "pg": "catalog:",
-    "valibot": "catalog:"
+    "valibot": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

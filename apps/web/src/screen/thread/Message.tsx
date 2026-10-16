@@ -2,7 +2,6 @@ import type { FlueConversationMessage } from '@flue/react'
 import {
   InputRequestId,
   InputRequestState,
-  ShowRequest,
   type Approval,
   type InputRequest,
   type PersonId,
@@ -15,11 +14,13 @@ import {
   Source,
   sourceOf,
   speakerOfTurn,
+  stretches,
   thisReader,
 } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { memo, useState } from 'react'
+import { Display } from '../../parts/Display'
 import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
@@ -29,7 +30,6 @@ import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
-import { Display } from './Shown'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
 const Metadata = Schema.Struct({
@@ -387,10 +387,38 @@ function Signal({
   })
 }
 
-const readShown = Schema.decodeUnknownOption(ShowRequest)
-
-/** A step that draws something is not a step to list: the thing drawn is the record of it. */
-const drawn = (tool: ToolPart) => tool.toolName === 'show'
+/**
+ * What Vivid said: its words, with each display it wrote drawn where it stands in them. A display
+ * is drawn from the first of its lines to arrive, so it fills in as the reply does. Each stretch is
+ * keyed by where it starts in the reply, which never moves, so a display is not remounted (and
+ * keeps what the Person picked in it) while the words after it are still coming.
+ */
+function Written({
+  text,
+  fresh,
+  live,
+  onSay,
+}: {
+  text: string
+  fresh: boolean
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
+  onSay: (words: string) => void
+}) {
+  return stretches(text).map((stretch) =>
+    stretch.kind === 'words' ? (
+      <Markdown key={stretch.from} content={stretch.text} fresh={fresh} />
+    ) : (
+      <Display
+        key={stretch.from}
+        text={stretch.text}
+        arriving={!stretch.whole}
+        live={live}
+        onSay={onSay}
+      />
+    ),
+  )
+}
 
 /** The cards a response's tool results ask for, in the order Vivid produced them. */
 function ToolCards({
@@ -406,13 +434,6 @@ function ToolCards({
   onContinue: (text: string) => void
 }) {
   return tools.map((tool) => {
-    if (drawn(tool)) {
-      // What Vivid asked to show is the tool's own input, complete once the call was made.
-      const shown = readShown(tool.input)
-      return Option.isNone(shown) ? null : (
-        <Display key={tool.toolCallId} shown={shown.value.show} live={live} onSay={onContinue} />
-      )
-    }
     if (tool.state !== 'output-available') return null
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
@@ -537,7 +558,6 @@ function FromVivid({
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
   // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
   const { drawn: drawnText, fresh } = useRevealed(text, streaming)
-  const steps = tools.filter((tool) => !drawn(tool))
   // Only the newest reply can still be in the making; an older one's steps are its record.
   const making = working && latest
   return (
@@ -549,10 +569,12 @@ function FromVivid({
             Answering {forWhom.value}
           </span>
         )}
-        {making && <Doing tools={steps} wordless={text.length === 0} />}
-        {text.length > 0 && <Markdown content={drawnText} fresh={fresh} />}
+        {making && <Doing tools={tools} wordless={text.length === 0} />}
+        {text.length > 0 && (
+          <Written text={drawnText} fresh={fresh} live={latest && !working} onSay={onContinue} />
+        )}
         {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
-        {!making && <Trail tools={steps} />}
+        {!making && <Trail tools={tools} />}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
             the layout. */}

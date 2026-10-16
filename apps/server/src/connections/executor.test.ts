@@ -12,11 +12,12 @@ import { ConfigurationError } from '../config.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
   ExecutorOwnerId,
-  ExecutorProfileId,
+  ExecutorBinding,
   ExecutorReferences,
   executorLayer,
 } from './executor.ts'
@@ -94,9 +95,9 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       new Map(replies).set(`GET ${hostedPrefix}/apps/app/tools`, {
         status: 200,
         body: {
-          profile: 'profile',
-          deployment: 'deployment',
-          profileRevision: 1,
+          version: 'version',
+          accounts: { app: {} },
+          routers: [],
           items: ['declared_write', 'undeclared'].map((name) => ({
             name,
             description: 'Retrieve the existing record',
@@ -108,11 +109,11 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       }),
     )
     const references = ExecutorReferences.cases.Public.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       service: hostedService,
       app: ExecutorAppId.make('app'),
-      profile: ExecutorProfileId.make('profile'),
+      binding: ExecutorBinding.cases.Public.make({}),
       owner: ExecutorOwnerId.make('owner'),
-      appOwnership: 'Shared',
     })
     const tools = yield* Effect.gen(function* () {
       // This recorder controls the two indistinguishable upstream write declarations.
@@ -176,11 +177,12 @@ it.effect('does not echo a token when credential submission fails', () =>
       }),
     )
     const references = ExecutorReferences.cases.EnteringKey.make({
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       service: hostedService,
       app: ExecutorAppId.make('app'),
-      profile: ExecutorProfileId.make('profile'),
+      binding: ExecutorBinding.cases.Public.make({}),
       owner: ExecutorOwnerId.make('owner'),
-      appOwnership: 'Shared',
+
       authorization: ExecutorAuthorizationId.make('authorization'),
       method: 'pat',
       label: 'Private',

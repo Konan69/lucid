@@ -1,4 +1,3 @@
-import { and, eq, isNull } from 'drizzle-orm'
 import {
   Cause,
   Clock,
@@ -49,6 +48,7 @@ import {
   ExecutorResourceMissing,
   ExecutorPublicAddressRequired,
   connectionSetupMessage,
+  executorMigrationMessage,
   resourceReason,
   ExecutorStatus,
   ExecutorStep,
@@ -72,6 +72,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { namedAccounts } from './names.ts'
+import { removeConnection } from './migration.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
@@ -113,7 +114,7 @@ const rowActor = Effect.fn('Connections.rowActor')(function* (actor: Actor, row:
 })
 
 /**
- * What Executor files a Connection's profile and account under in its own records: the service's
+ * What Executor files a Connection's account under in its own records: the service's
  * name, in the 40 characters its label takes. Vivid never reads it back.
  */
 const executorLabel = (serviceName: string) => serviceName.slice(0, 40)
@@ -308,6 +309,7 @@ const begin = Effect.fn('Connections.begin')(function* (
           personId: actor.person.id,
           companyId,
           references: yield* encodeReferences(step.references),
+          executorApp: step.references.app,
           status,
           returnsTo: request.from,
           reason: null,
@@ -753,6 +755,11 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
   const { executor, provide, get } = input
   const row = yield* get(actor, id)
   yield* mayManage(actor, row)
+  if (ExecutorReferences.guards.MigrationPending(row.references))
+    return yield* new ServiceUnavailable({
+      service: 'connections',
+      message: executorMigrationMessage,
+    })
   return yield* Match.value(row.status).pipe(
     Match.when('ready', () =>
       // No trip is opened for an account that is already ready, so nothing is written: this is
@@ -800,10 +807,13 @@ const makeManagement = (input: {
   ) => Effect.Effect<
     ConnectionRecord,
     | import('@vivid/contracts').NotFound
+    | Conflict
+    | InvalidRequest
+    | ServiceUnavailable
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {
-  const { executor, database, provide, get } = input
+  const { executor, provide, get } = input
   const withResume = serializeResumes()
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
@@ -852,19 +862,17 @@ const makeManagement = (input: {
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
-      yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
-      yield* database.run(
-        database
-          .delete(connections)
-          .where(
-            and(
-              eq(connections.id, row.id),
-              eq(connections.personId, row.personId),
-              row.companyId === null
-                ? isNull(connections.companyId)
-                : eq(connections.companyId, row.companyId),
-            ),
+      yield* provide(
+        removeConnection(row).pipe(
+          Effect.catchTag(
+            'ConnectionReclamationBlocked',
+            () =>
+              new ServiceUnavailable({
+                service: 'connections',
+                message: 'Vivid cannot remove this integration right now. Try again later.',
+              }),
           ),
+        ),
       )
       yield* provide(recordChanged(actor, row))
       yield* provide(

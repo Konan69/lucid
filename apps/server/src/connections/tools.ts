@@ -16,6 +16,7 @@ import {
   type OfferConnectionRequest,
   type Person,
   type Service,
+  type UseDisplayToolRequest,
   type UseToolRequest,
 } from '@vivid/contracts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
@@ -586,6 +587,49 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
       ),
     Allowed: () => runConnection(actor, row, target),
   })
+})
+
+/**
+ * A display's own call into one of the Person's Integrations (OpenUI's `Query` and `Mutation`,
+ * `apps/web/src/parts/Display.tsx`), run for the Person looking at it. The display names the tool
+ * `tool@account` as `find_tools` showed it; the server resolves that pair under the Person's own
+ * access, exactly as it does for Vivid.
+ *
+ * A `Query` runs whenever the display is drawn or what it reads changes, with no press, so it may
+ * only read: a tool that changes anything is refused. A `Mutation` runs only when the Person
+ * presses the button that names it, with the fields they see; that press is their decision about
+ * their own account, so it is not sent to the Gate for a second one.
+ */
+export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* (
+  actor: Actor,
+  request: UseDisplayToolRequest,
+) {
+  const at = request.name.indexOf('@')
+  if (at <= 0 || at === request.name.length - 1)
+    return yield* new NotFound({ message: 'Name the tool as tool@account.' })
+  const tool = yield* resolveTool(actor, {
+    tool: request.name.slice(0, at),
+    account: request.name.slice(at + 1),
+  })
+  if (request.kind === 'Query' && tool.effect !== 'read')
+    return ToolOutcome.cases.Rejected.make({
+      message:
+        'A Query only reads. This tool changes something: put it in a Mutation run by a button.',
+    })
+  const row = (yield* (yield* ConnectionStore).records(actor)).find(
+    (record) => record.id === tool.connectionId,
+  )
+  if (row === undefined) return yield* new NotFound({ message: 'Tool not found' })
+  return yield* runConnection(
+    actor,
+    row,
+    ActionTarget.cases.Connection.make({
+      connectionId: row.id,
+      account: tool.account,
+      tool: tool.name,
+      input: request.input,
+    }),
+  )
 })
 
 /** Approved execution carries the shared Tool decision as an action receipt without recording again. */

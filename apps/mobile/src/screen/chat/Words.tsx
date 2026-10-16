@@ -1,8 +1,11 @@
 import { Option, Result } from 'effect'
-import { useState } from 'react'
+import { stretches } from '@vivid/state'
+import { memo, useState } from 'react'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useLiveData } from '../../data/live'
 import { openWebLink, Prose } from '../../ui/Prose'
+import { useRevealed } from '../../ui/reveal'
+import { Display } from '../../parts/display'
 import { Label } from '../../ui/ui'
 
 /**
@@ -53,10 +56,50 @@ export function Words({ text }: { text: string }) {
 }
 
 /**
- * The words of a reply, which may still be arriving: as much of it as is drawn so far, and
- * whether more is on its way (`useRevealed`). The two are one reading of one reply, so they are
- * taken together.
+ * Words of a reply, formatted again only when their text or whether they are still arriving
+ * changes, so a stretch that is whole is left alone while the reply goes on.
  */
-export function Reply({ text, fresh }: { text: string; fresh: boolean }) {
-  return <Formatted text={text} fresh={fresh} />
+const Finished = memo(Formatted)
+
+/**
+ * A reply as the Person reads it: its words, with each display it wrote drawn where it stands in
+ * them (`stretches`). Each stretch is keyed by where it starts in the reply, which never moves,
+ * so a display is not remounted — and keeps what the Person picked in it — while the words after
+ * it are still coming.
+ *
+ * Words that are already whole are drawn once and left alone (`Finished`, above): the formatter rebuilds
+ * every element it draws when its text changes, so only what can still change is redrawn each
+ * step, and the cost of a step does not grow with the reply. A display that is still arriving
+ * fills itself in (`arriving`), as the web's does.
+ */
+export function Reply({
+  text,
+  streaming,
+  live,
+  onSay,
+}: {
+  text: string
+  streaming: boolean
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
+  onSay: (words: string) => void
+}) {
+  const { drawn, fresh } = useRevealed(text, streaming)
+  return (
+    <>
+      {stretches(drawn).map((stretch) =>
+        stretch.kind === 'words' ? (
+          <Finished key={stretch.from} text={stretch.text} fresh={fresh} />
+        ) : (
+          <Display
+            key={stretch.from}
+            text={stretch.text}
+            arriving={!stretch.whole}
+            live={live}
+            onSay={onSay}
+          />
+        ),
+      )}
+    </>
+  )
 }

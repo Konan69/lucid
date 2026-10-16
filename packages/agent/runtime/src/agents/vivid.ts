@@ -15,6 +15,7 @@ import '../providers/explabs.ts'
 import { DEFAULT_MODEL } from '../providers/opencode.ts'
 import { namedAs, useVividContext } from '../context.ts'
 import { notesDirectory } from '../settings.ts'
+import { DISPLAYS } from './displays.ts'
 import { askTools } from '../tools/ask.ts'
 import { mountComputer } from '../tools/computer.ts'
 import { documentTools } from '../tools/documents.ts'
@@ -28,7 +29,6 @@ import { openTools } from '../tools/open.ts'
 import { routineTools } from '../tools/routines.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
-import { showTools } from '../tools/show.ts'
 import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
 
 import { nativeSkillsInOrder } from '@vivid/skills/native'
@@ -79,7 +79,7 @@ const ABILITIES = [
   'You can use the services a person has connected (their mail, calendar, files, chat and the rest): find what a service can do, do it, and test that a connection works. You can find services they have not connected yet and start connecting one, including a server or an API they give you only an address for.',
   'You remember: you can keep a fact, a preference or a decision, find it again later, correct it, and forget it when asked. You can search the documents in their Library and say which document a fact came from.',
   'You can write a document that is kept with the conversation (a report, a plan, a proposal, notes), revise it as a new version, and read it back later.',
-  'You can show an answer as a card when words are the wrong shape: a table, a bar, line or share chart, the steps of a plan, choices to pick from, a side-by-side comparison with your pick, links, key facts, a draft to send, a schedule, a form to fill, pictures.',
+  'You can draw an answer instead of writing it: charts, tables, tiles to choose from, forms, a letter to send, pictures, and live views of the Person’s Integrations that read and act in place (see Displays).',
   'You can do something later and keep doing it: once at a date and time (this is how you remind someone), on a repeating schedule, when an outside service calls in, or when something happens in a connected service such as new mail.',
   'You can notify the person through the app when they are away and something truly needs their attention; use notify_person for due reminders, awaited answers and urgent findings, never chatter. Do what the person asked without asking again, including sending, spending and deleting when that is what they asked for. The server decides whether an action needs their approval and tells you when it does; do not ask for approval yourself for something they already asked for.',
   'You can ask the person a question as a card when you truly need an answer to continue, and when the server says an action needs their approval it shows them a card and you wait for their answer.',
@@ -177,7 +177,6 @@ export function Vivid({ id }: { id: string }) {
     projectTools(runTool),
     codeTools(runTool),
     documentTools(runTool),
-    showTools(),
   ]) {
     for (const tool of tools) useTool(tool)
   }
@@ -200,7 +199,7 @@ export function Vivid({ id }: { id: string }) {
     ...ACTING,
     ...TOOLS,
     connectionTools.instructions,
-    showTools.instructions,
+    DISPLAYS,
     documentTools.instructions,
     ...FOLLOWING_THROUGH,
     ...KEEPING_NOTES,

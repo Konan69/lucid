@@ -2,7 +2,13 @@ import { expect, it } from '@effect/vitest'
 import { Service, ServiceAuthorization, ServiceId } from '@vivid/contracts'
 import { Array as Arr, Effect, Order, Schema } from 'effect'
 import data from './curation.json' with { type: 'json' }
-import { coversCatalog, curatedSearch, CurationDocument } from './curation.ts'
+import {
+  coversCatalog,
+  curatedSearch,
+  CurationDocument,
+  refusedHost,
+  refusedService,
+} from './curation.ts'
 
 const decodeCuration = Schema.decodeUnknownEffect(CurationDocument)
 
@@ -150,23 +156,16 @@ it.effect(
     }),
 )
 
-/** Personal-key policy must survive stale OAuth/operator hints without a probe or UI special case. */
-it.effect(
-  'offers GitHub token entry and its instructions even when upstream OAuth needs setup',
-  () =>
-    Effect.gen(function* () {
-      const document = yield* decodeCuration(data)
-      const github = Service.make({
-        id: ServiceId.make('curated/github-com-mcp'),
-        name: 'GitHub',
-        description: '',
-        mark: null,
-        authorization: ServiceAuthorization.cases.SetupRequired.make({}),
-      })
-      const found = curatedSearch(document)([github], 'GitHub')
-      expect(found.services[0]).toMatchObject({
-        authorization: { fields: [{ name: 'token', label: 'Personal access token' }] },
-        curation: { auth: 'PersonKey', worksNow: true },
-      })
-    }),
-)
+/** GitHub Copilot is refused: its host and every subdomain, and no curated entry points there. */
+it('refuses GitHub Copilot by host and keeps it out of the catalogue', () => {
+  expect(refusedHost('api.githubcopilot.com')).toBe(true)
+  expect(refusedHost('API.GitHubCopilot.com.')).toBe(true)
+  expect(refusedHost('githubcopilot.com')).toBe(true)
+  expect(refusedHost('notgithubcopilot.com')).toBe(false)
+  expect(refusedHost('api.github.com')).toBe(false)
+  expect(refusedService('url:https://api.githubcopilot.com/mcp/')).toBe(true)
+  expect(refusedService('curated/github-com-mcp')).toBe(true)
+  expect(refusedService('url:https://mcp.deepwiki.com/mcp')).toBe(false)
+  expect(data.catalog.map((entry) => entry.id)).not.toContain('curated/github-com-mcp')
+  expect(Object.values(data.keyed)).toEqual([])
+})

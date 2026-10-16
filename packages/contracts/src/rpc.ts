@@ -94,6 +94,7 @@ import {
   RenameConnectionRequest,
   ServiceCatalog,
   ToolOutcome,
+  UseDisplayToolRequest,
   UseToolRequest,
 } from './connections.js'
 import {
@@ -715,6 +716,12 @@ const ResolveTool = Rpc.make('ResolveTool', {
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
 const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+/** A display's Query or Mutation, run for the Person who is looking at it. */
+const UseDisplayTool = Rpc.make('UseDisplayTool', {
+  ...call,
+  payload: UseDisplayToolRequest,
+  success: ToolOutcome,
+})
 /** Vivid offering a service in the Thread, with the acting Person's real state for it. */
 const OfferConnection = Rpc.make('OfferConnection', {
   ...call,
@@ -1003,6 +1010,7 @@ export const VividRpc = RpcGroup.make(
   FindTools,
   ResolveTool,
   UseTool,
+  UseDisplayTool,
   OfferConnection,
   ListMemory,
   WatchMemory,

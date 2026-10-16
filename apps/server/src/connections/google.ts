@@ -5,7 +5,7 @@ import { requiredSetting, settingSecret, settingText } from '../config.ts'
 
 /**
  * Google Integrations are part of every Vivid: Gmail, Calendar, Drive, Docs, Sheets and Tasks. The
- * server carries each one as the source of an Executor app and installs it itself the first time a
+ * server carries each one as the source of an Executor app and installs a dedicated copy whenever a
  * Person begins one (`Executor.begin`), so there is nothing to install by hand and no identifier to
  * configure. They were once a file of app identifiers an operator produced on one Executor and
  * named in a setting; a deploy could not carry it, so the hosted server never offered Google.
@@ -129,7 +129,7 @@ export function googleService(service: ServiceId) {
  * Executor repository): `liveOpenapiRouter` reads the definition inside the app, and the provider
  * signs in through Google's published metadata.
  *
- * - One account, not `provider.many()`: a Connection is one profile holding one account, so a tool
+ * - One account, not `provider.many()`: a Connection owns one app holding one account, so a tool
  *   takes Google's own input and no account identifier (as `keyed.ts` does).
  * - `hosts` keeps the token out of app code: it is a handle that Executor's network swaps for the
  *   real value only on a request to Google's API host.
@@ -190,14 +190,10 @@ export default defineApp({ accounts: { google: provider } }, async ({ accounts, 
 }
 
 /**
- * The name the app is installed and found under. It carries a hash of the source, so every server
- * running the same source shares one app, and a server whose source changed installs a new app
- * beside the old one: a Connection made earlier keeps the app it names, and nothing is edited in
- * place. Executor bounds a name at 120 characters; this is under 40.
- *
- * So a Google account connected before the source learned to ask who it is (6 October 2026) stays
- * on an app with no `health` and has no `identity` until it is connected again; a Person can
- * name it meanwhile.
+ * A source-revision name stem. `Executor.begin` appends the Connection id so separate accounts
+ * never share an app under Executor's app/user links. A retry of that Connection and source
+ * revision finds only its own app. The complete name stays below Executor's 120-character limit.
+ * Existing Connections keep their saved source and app identity when the authored source changes.
  */
 export function googleAppName(google: GoogleService) {
   const revision = NodeCrypto.createHash('sha256')

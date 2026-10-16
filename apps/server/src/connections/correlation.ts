@@ -35,11 +35,12 @@ export const correlateSignIn = Effect.fn('Connections.correlateSignIn')(function
   return ExecutorStep.cases.OpenSignIn.make({
     address: step.address,
     references: ExecutorReferences.cases.OAuthSigningIn.make({
+      appOwnership: references.appOwnership,
       service: references.service,
       app: references.app,
-      profile: references.profile,
+      binding: references.binding,
       owner: references.owner,
-      appOwnership: references.appOwnership,
+
       authorization: references.authorization,
       stateHash,
     }),

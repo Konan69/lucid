@@ -1,3 +1,4 @@
+import { activeReferences } from './testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Ref } from 'effect'
 import {
@@ -21,6 +22,7 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers, connectionRunner } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
+  ExecutorAppOwnership,
   Executor,
   ExecutorAccessDenied,
   ExecutorCallOutcome,
@@ -158,8 +160,12 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           expect((yield* store.list(ownerActor)).connections).toHaveLength(1)
           expect(yield* Ref.get(probe.begins)).toBe(begins)
           const after = yield* store.get(ownerActor, begun.connection.id)
-          expect(after.references.app).toBe(before.references.app)
-          expect(after.references.profile).toBe(before.references.profile)
+          expect(activeReferences(after.references).app).toBe(
+            activeReferences(before.references).app,
+          )
+          expect(activeReferences(after.references).app).toBe(
+            activeReferences(before.references).app,
+          )
           if (ConnectionStep.guards.OpenSignIn(resumed) && ConnectionStep.guards.OpenSignIn(begun))
             expect(resumed.address).not.toBe(begun.address)
           if (ConnectionStep.guards.EnterKey(resumed))
@@ -234,11 +240,12 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           })
           const row = yield* store.get(ownerActor, begun.connection.id)
           const pending = ExecutorReferences.cases.SigningIn.make({
+            appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
             service: row.service,
-            app: row.references.app,
-            profile: row.references.profile,
+            app: activeReferences(row.references).app,
+            binding: activeReferences(row.references).binding,
             owner: row.references.owner,
-            appOwnership: row.references.appOwnership,
+
             authorization: ExecutorAuthorizationId.make('retained-renewal'),
           })
           const executor = yield* Executor

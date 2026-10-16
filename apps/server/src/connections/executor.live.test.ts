@@ -2,6 +2,8 @@ import * as NodeProcess from 'node:process'
 import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
+import { ConnectionSource } from './address.ts'
+import { refusedService } from './curation.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
   Executor,
@@ -23,6 +25,8 @@ const liveLayer = executorLayer.pipe(
         GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: url,
         VIVID_EXECUTOR_KEY: key,
+        VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
+        VIVID_EXECUTOR_PUBLIC_ONLY: true,
       }),
     ),
   ),
@@ -38,7 +42,7 @@ describe.skipIf(
         const executor = yield* Executor
         const entries = yield* executor.catalog
         expect(entries.length).toBeGreaterThan(0)
-        expect(entries.some((entry) => entry.id === publicService)).toBe(true)
+        expect(entries.some((entry) => refusedService(entry.id))).toBe(false)
       }),
     )
   })
@@ -50,7 +54,11 @@ describe.skipIf(
         Effect.gen(function* () {
           const executor = yield* Executor
           yield* Effect.acquireUseRelease(
-            executor.begin({
+            executor.add({
+              source: ConnectionSource.cases.Mcp.make({
+                address: 'https://mcp.deepwiki.com/mcp',
+                authorization: 'auto',
+              }),
               connectionId: ConnectionId.make(crypto.randomUUID()),
               service: publicService,
               owner: ExecutorOwnerId.make(`vivid-executor-test-${crypto.randomUUID()}`),
@@ -63,9 +71,7 @@ describe.skipIf(
               const status = yield* executor.status(step.references)
               expect(status._tag).toBe('Ready')
               const tools = yield* executor.tools(step.references)
-              const tool = tools.find(
-                (candidate) => candidate.name === 'mutations.read_wiki_structure',
-              )
+              const tool = tools.find((candidate) => candidate.name === 'read_wiki_structure')
               expect(tool).toBeDefined()
               if (tool === undefined) {
                 expect.fail('The public service did not expose its documented tool')

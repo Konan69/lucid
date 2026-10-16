@@ -153,23 +153,147 @@ and the region.
 
 ### Executor's image
 
-Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
-choice to move to current upstream source, not a requirement: adding an Integration by a
-personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
-data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
-and going back to the tag is safe.
+The Executor service configuration pins the published image
+`ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
+`executor@2.0.0-beta.23` at commit `26d03a48953c948c794c5cd9d22eb3f6253c1482`.
+No fork build is needed. This configuration change does not deploy the service.
 
-### Executor's tracing is off
+Beta.23 replaces profiles with app and user account links. Vivid allocates one app per new
+Connection. Migrated references distinguish dedicated allocations, proven copies (with original
+app provenance), and unproven shared-original access. Every active app selection is unique;
+selection grants no deletion authority. A
+shared original is never deleted; copy reclamation checks provenance and other stored holders.
+A scoped background worker reconciles legacy rows using copy provenance and exact account links.
+Boot, `/health`, Integration reads and tool discovery never wait for this pass. Each pass probes
+`/inventory` once before touching rows. An old, malformed or unreachable inventory leaves every
+row untouched; the decoder presents legacy rows as `MigrationPending`. After a compatible probe,
+per-row transient failures retry with backoff from five seconds to one minute. Identical JSON is
+not rewritten; counter-only bookkeeping preserves `updatedAt`, so it cannot invalidate a concurrent
+removal. Meaningful outcome changes advance that revision. A missing, undeployed or unreachable
+per-row target has a persisted budget of
+1,440 compatible unsuccessful attempts, roughly 24 hours at the worker's one-minute backoff cap.
+Only compatible attempts advance that counter; an outage after migration has started consumes
+none of it, and recovery cannot expire rows merely because wall-clock time passed. Permanent refusals retain the exact credential and copy identities for removal.
+Executor migrates its own storage from 4.0.5 through 4.0.15; the old image cannot open that volume.
 
-Executor's image traces itself into a collector bundled in the same process, and has no setting
-to stop. Idle, it produced about 48,000 spans an hour; the collector's store filled its 1 GiB
-limit in 14 hours and the process grew about 80 MB an hour until Railway killed it at 8 GB. That
-memory was 84% of the project's Railway usage on 9 October 2026. Upstream issues 2194 and 2216
-describe both and were open, with no fix in `2.0.0-beta.12`. `infra/railway.ts` sets
-`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` on the Executor, which leaves the image with no tracer; the
-comment there names the source lines. To check it, read the service's memory in Railway's
-metrics: it should stay near its starting value for days, not climb.
+**Production cutover.** The supported order is server first, then image. Merging updates the server
+through Railway's repository trigger; infrastructure deployment requires clean current `main`.
+The new server against `src-304bf60` boots and serves health, but Integrations are unavailable and
+legacy rows remain pending without writes. The old server against beta.23 breaks Integration
+routes because profiles were removed. Neither mixed pairing can perform Integration work.
+
+1. Announce a maintenance window and let admitted Runs settle. Routines need no operator pause
+   or impersonation: Integration polling maps authorization loss to a durable pause and transient
+   reads to backoff (`routines/scheduler.ts`, `observeIntegrations`). Scheduled work may fail
+   while Runtime is unavailable; inspect Routines/Occurrences after both services return. Accept
+   those failures during the mixed-version interval;
+   some Integration-triggered Routines may need their Person to resume them after verification.
+   Use Railway's [deployment Remove action](https://docs.railway.com/deployments/deployment-actions#remove)
+   to stop Server and Runtime, then Executor, for the paired backups. Do not accept product writes
+   while taking the backups. These stops are temporary; the merge can deploy Server again.
+2. Create Railway **volume backups** of both the entire Executor volume (including encrypted
+   keys) and the Vivid PostgreSQL volume (all auth, product and runtime data). The GraphQL create
+   mutation is `volumeInstanceBackupCreate(volumeInstanceId, name)`; give the two backups one
+   cutover name and record both backup IDs, volume-instance IDs, server SHA, old image digest
+   and configuration. Wait for both backups to finish before continuing. Use each service's
+   Backups tab to verify the pair completed. Before the window, rehearse
+   `volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)` on a disposable backup
+   pair in its own environment; verify PostgreSQL recovery and the old image's access to its
+   restored encrypted store. Railway restores within the original environment; this rehearsal
+   proves the procedure, not the production backups. Never rehearse against production volumes.
+   Railway's [GraphQL schema](https://github.com/railwayapp/cli/blob/master/src/gql/schema.json),
+   [API cookbook](https://docs.railway.com/integrations/api/api-cookbook#volumes) and
+   [backup restore procedure](https://docs.railway.com/volumes/backups) describe these operations.
+3. Merge the reviewed upgrade to `main`. Railway deploys the new server against the **old**
+   Executor image. Always use Railway's Redeploy action on the recorded old Executor deployment
+   to restart `src-304bf60`; the merge does not restart this image-backed service. Confirm the
+   new server's `/health` succeeds. Its log should show `Integration migration waiting for compatible inventory` with
+   a failure tag. Legacy selections must stay pending; do not ask Persons to reconnect during
+   this interval. Avoid Integration actions and new scheduled work until verification. Existing
+   Routines fail closed as described in step 1; there is no global pause flag for the operator.
+4. Use the deploy checkout `~/agency/vivid-lanes/deploy`, which holds `.alchemy/` state. Back up
+   that state as described in [Running the stack's own deploy](#running-the-stacks-own-deploy),
+   fast-forward this checkout to current `main`, and confirm it is clean. Then run `pnpm infra:deploy --yes` (the authorized
+   `alchemy deploy --stage production --env-file .env.production` entry point). This changes the
+   Executor image to `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Wait for its health
+   check and storage migration. The server keeps retrying in its own scope; the next pass starts
+   within one minute after the current attempt finishes. No screen read is needed to trigger it.
+   Verify **both Server and Runtime** have active deployments from the merged main revision and
+   passing health checks. Do not assume Alchemy recreated deployments removed for backup. If one
+   is still removed, use Railway's Redeploy action for the recorded main deployment, then verify
+   its revision and health again. Runtime deliberately returns before step-5 verification;
+   Integration readiness and tool selection fail closed while legacy rows remain pending.
+   Scheduled work may fail during this interval. Verification checks Routine/Occurrence outcomes
+   after both services return; it does not assume admission can finish while Runtime is Removed.
+5. Check `Integration app reconciliation` log entries: each has `connectionId` and `result`
+   (`Authorized`, `Public`, a pending authorization variant, `MigrationPending`, or
+   `ReconnectRequired`). Check the read-only SQL below. Pending rows mean the upstream copy
+   plan or deployment has not finished; inspect exact `copiedFrom.reference`, account links and
+   active versions rather than assuming `/health` alone proves every copy ready. Confirm two
+   Persons keep distinct account/app identities, perform a safe authenticated read for each,
+   and add/remove a disposable keyed/public Connection. Verify removal preserves the other
+   Person's access. Check Routine/Occurrence outcomes from the window; let each Person resume
+   any automatically paused Integration-triggered Routine through its normal controls. Resume
+   ordinary use only after these checks pass.
+
+```sql
+-- Raw legacy JSON is projected as pending until its first successful compatible-protocol pass.
+SELECT CASE WHEN "references" ? 'profile' THEN 'LegacyPending'
+            ELSE "references"->>'_tag' END AS outcome,
+       "references"->>'reason' AS reason, count(*)
+FROM vivid_connections GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Must return zero rows: every active selection agrees with its unique app column.
+SELECT id, executor_app, "references"->>'_tag' AS outcome
+FROM vivid_connections
+WHERE executor_app IS DISTINCT FROM
+  CASE WHEN NOT ("references" ? 'profile')
+         AND "references"->>'_tag' NOT IN ('MigrationPending', 'ReconnectRequired')
+       THEN "references"->>'app' ELSE NULL END;
+```
+
+Allow 10–15 minutes for backups, build, image startup and verification; this is an operational
+allowance, not a measured production duration. Backup stops briefly affect all Vivid requests.
+Integrations are unavailable from the server cutover until the image is healthy and the worker
+finishes reconciling each selection. Provider outages or large copy plans extend that interval;
+server health stays independent. Rows with permanent ambiguity require the Person to reconnect.
+
+**Rollback.** Quiesce writes and remove the Server, Runtime and Executor deployments again.
+Do not push the server revert yet. Stage **both** recorded volume restorations with
+`volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)`. Before applying the
+Executor volume replacement, set its staged service image to the recorded old tag
+`ghcr.io/konan69/executor-selfhost:src-304bf60`; review the image and volume together in Railway's
+Details panel. Never restart beta.23 against the restored old store, since it would migrate it
+again. Apply the PostgreSQL and Executor restorations while Server and Runtime remain stopped;
+the previous volumes remain unmounted. Verify the old image opens its restored store.
+
+Only after both stores are restored, publish the reviewed revert of the server upgrade and
+infrastructure image pin to `main`. The old server's automatic deploy now sees the old protocol
+and original Connection JSON. The emergency image selection and the reverted Alchemy declaration
+must agree before any subsequent clean-main `infra:deploy`. Keep Runtime stopped until both
+services and the original Connection/profile behavior are verified, then resume Runtime. Each Person can resume any automatically paused Routine through its normal
+controls. A server-only, image-only or single-volume rollback is invalid. The old image
+cannot open the migrated volume; the old server cannot decode reconciled JSON. Writes since the
+backup pair are lost on restoration and must be accounted for before reopening service.
+
+A narrow duplicate-selection race remains during removal: two legacy Connections can reference
+one account, and a retirement clears its app claim before taking the reclamation lock. A migration
+pass starting in that gap can select the same copy before retirement deletes it. The resulting
+Connection has missing resources; its removal tolerates missing apps/accounts and finishes cleanup.
+This limitation does not permit selecting a different account. Avoid concurrent removal/reconciliation
+of duplicate legacy selections during cutover; inspect both rows if this occurs.
+
+### Executor's trace exporter is off
+
+`infra/railway.ts` supplies only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, without a trace or base
+endpoint. Beta.23's `apps/hosted/self-host/src/worker.ts:136-146` then skips the bundled telemetry
+fallback, and `packages/telemetry/src/layer.ts:40-60` installs no trace exporter. Idle scheduler
+spans still exist in upstream code.
+
+The setting does not stop the bundled collector. Beta.23's `apps/hosted/self-host/native/main.go:709-719`
+starts Motel as a separate supervised process on a private Unix socket. The configured TCP logs
+address does not reach it; console logs remain while OTLP log exports fail and retry. A real
+external logs destination can replace that address while retaining logs-only trace suppression.
 
 ### Telemetry volume
 

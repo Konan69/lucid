@@ -1,5 +1,4 @@
 import { ApprovalState, type Approval, type PersonId, type ThreadDetail } from '@vivid/contracts'
-import { drawn, readShown } from '@vivid/state'
 import { Option } from 'effect'
 import { View } from 'react-native'
 import type { Say } from '../../data/delivery'
@@ -8,7 +7,6 @@ import { Label } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { approvalOf, requestOf } from './asked'
 import { Asked } from './Question'
-import { Display } from './Shown'
 import { Words } from './Words'
 
 /**
@@ -36,12 +34,6 @@ export function Cards({
   onContinue: Say
 }) {
   return tools.map((tool) => {
-    if (drawn(tool)) {
-      const shown = readShown(tool.input)
-      return Option.isNone(shown) ? null : (
-        <Display key={tool.toolCallId} shown={shown.value.show} live={live} onSay={onContinue} />
-      )
-    }
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (

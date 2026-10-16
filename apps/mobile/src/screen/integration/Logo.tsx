@@ -4,9 +4,6 @@ import { Image, View } from 'react-native'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
 
-/** The one size asked of the icon service; see `Logo`. */
-const ICON_SIZE = 128
-
 /**
  * A service's artwork in a rounded square, for a row of the Integrations page.
  *
@@ -51,12 +48,8 @@ export function Logo({
       }}
     >
       {Option.isSome(drawn) ? (
-        // The icon service answers only at its own sizes and falls to the 16-pixel favicon for
-        // any other; 128 is the size it has that covers this row at three times its drawn size.
-        <Image
-          source={{ uri: `${drawn.value}&sz=${ICON_SIZE}` }}
-          style={{ width: size, height: size }}
-        />
+        // The server sends a whole address, sized where it is made (`connections/logo.ts`).
+        <Image source={{ uri: drawn.value }} style={{ width: size, height: size }} />
       ) : (
         <ServiceMark service={service} size={size} />
       )}

@@ -21,7 +21,6 @@ import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skil
 import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
 import { pictureTools } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
-import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
 import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
 import { notifyTools } from '../../../../../packages/agent/runtime/src/tools/notify.ts'
 import { openTools } from '../../../../../packages/agent/runtime/src/tools/open.ts'
@@ -47,7 +46,6 @@ const registered = new Set(
     ...pictureTools(runner),
     ...codeTools(runner),
     ...documentTools(runner),
-    ...showTools(),
     ...openTools(runner),
     ...notifyTools(runner),
   ].map((tool) => tool.name),

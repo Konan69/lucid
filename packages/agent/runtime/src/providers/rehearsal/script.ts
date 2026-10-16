@@ -5,7 +5,7 @@ import {
   fauxToolCall,
   type FauxContentBlock,
 } from '@earendil-works/pi-ai/providers/faux'
-import { CodeFailure, DesktopAction, Shown } from '@vivid/contracts'
+import { CodeFailure, DesktopAction } from '@vivid/contracts'
 import { Array, Option, Predicate, Schema } from 'effect'
 import { modelText } from '../../tools/views.ts'
 
@@ -20,7 +20,6 @@ const Receipt = Schema.fromJsonString(
     changed: Schema.optionalKey(Schema.Boolean),
     version: Schema.optionalKey(Schema.Finite),
     body: Schema.optionalKey(Schema.String),
-    shown: Schema.optionalKey(Schema.String),
     result: Schema.optionalKey(
       Schema.Union([Schema.Finite, Schema.Struct({ title: Schema.String })]),
     ),
@@ -58,17 +57,16 @@ function call(context: Context, name: string, input: ToolCall['arguments'], inde
   return fauxToolCall(name, input, { id: `rehearsal:${context.messages.length}:${index}` })
 }
 
-/** Display examples are explicitly rehearsal data, constructed through the shared wire contract. */
-function display(phrase: string, shown: Shown): Scene {
+/**
+ * Display examples are explicitly rehearsal data. A display is part of the reply itself: words,
+ * then the program in an `openui-lang` fence, as OpenUI's inline mode has the model write it.
+ */
+export const fenced = (program: string) => `\`\`\`openui-lang\n${program}\n\`\`\``
+
+function display(phrase: string, shown: string): Scene {
   return {
     phrase,
-    steps: [
-      (context) => [
-        fauxText('Here’s a rehearsal example.'),
-        call(context, 'show', { summary: 'Rehearsal example', show: shown }),
-      ],
-      completion,
-    ],
+    steps: [() => [fauxText(`Here’s a rehearsal example.\n\n${fenced(shown)}`)]],
   }
 }
 
@@ -128,8 +126,6 @@ function documentWords(value: typeof Receipt.Type) {
 
 /** Each receipt reader owns one tool's affirmative evidence, keeping failure handling shared. */
 const success = {
-  show: (value: typeof Receipt.Type) =>
-    value.shown === undefined ? 'The display result is missing.' : `The ${value.shown} is above.`,
   write_document: (value: typeof Receipt.Type) => documentWords(value),
   read_document: (value: typeof Receipt.Type) =>
     value.title === undefined || value.body === undefined || value.version === undefined
@@ -211,157 +207,59 @@ function toolScene(phrase: string, name: string, input: ToolCall['arguments']): 
 const examples = [
   display(
     'show a table',
-    Shown.cases.Table.make({
-      title: 'Rehearsal workload',
-      columns: ['Project', 'Hours', 'Owner'],
-      rows: [
-        ['Research', '4', 'Rae'],
-        ['Writing', '3', 'Rae'],
-        ['Review', '2', 'Sam'],
-      ],
-      note: 'Example values for this rehearsal.',
-    }),
+    'root = Col([Title("Rehearsal workload", "lg"), Table(["Project", "Hours", "Owner"], [["Research", "4", "Rae"], ["Writing", "3", "Rae"], ["Review", "2", "Sam"]]), Caption("Example values for this rehearsal.")], 3)',
   ),
-  ...(['bar', 'line', 'share'] as const).map((kind) =>
+  ...(
+    [
+      ['bar', 'show a chart'],
+      ['line', 'show a line chart'],
+      ['donut', 'show a share chart'],
+    ] as const
+  ).map(([kind, phrase]) =>
     display(
-      kind === 'bar' ? 'show a chart' : `show a ${kind} chart`,
-      Shown.cases.Chart.make({
-        title: 'Rehearsal hours',
-        kind,
-        labels: ['Research', 'Writing', 'Review'],
-        series: [{ name: 'Hours', values: [4, 3, 2] }],
-        unit: ' hrs',
-      }),
+      phrase,
+      `root = Col([Title("Rehearsal hours", "lg"), Chart("${kind}", rows, "task", ["hours"])], 3)\nrows = [{task: "Research", hours: 4}, {task: "Writing", hours: 3}, {task: "Review", hours: 2}]`,
     ),
   ),
   display(
     'show steps',
-    Shown.cases.Steps.make({
-      title: 'Rehearsal plan',
-      steps: [
-        { label: 'Prepare', state: 'done' },
-        { label: 'Review', state: 'doing' },
-        { label: 'Finish', state: 'to do' },
-        { label: 'Extra review', state: 'skipped' },
-      ],
-    }),
+    'root = Col([Title("Rehearsal plan", "lg"), List([ListItem("Research", "Done yesterday.", "✓"), ListItem("Writing", "Under way."), ListItem("Review")], "number", true)], 3)',
   ),
   display(
     'show options',
-    Shown.cases.Options.make({
-      question: 'Which rehearsal topic?',
-      options: [
-        { label: 'Research', detail: 'Review the sources.' },
-        { label: 'Writing', detail: 'Review the draft.' },
-      ],
-      many: false,
-    }),
+    'root = Col([Title("Which day suits the rehearsal?", "lg"), Grid([a, b], 2, null, 2), Row([Button("Not now", @ToAssistant("Not now"), "soft"), Button("Pick " + $day, @ToAssistant("Pick " + $day))], 2, null, "end")], 3)\n$day = "Monday"\na = Pressable([Text("Monday", "md", null, "semibold"), Caption("More time to prepare.")], @Set($day, "Monday"), $day == "Monday", 3, "canvas")\nb = Pressable([Text("Tuesday", "md", null, "semibold"), Caption("The whole team is in.")], @Set($day, "Tuesday"), $day == "Tuesday", 3, "canvas")',
   ),
   display(
     'show many options',
-    Shown.cases.Options.make({
-      question: 'Which rehearsal topics?',
-      options: [{ label: 'Research' }, { label: 'Writing' }, { label: 'Review' }],
-      many: true,
-    }),
+    'root = Col([Title("Which topics should the rehearsal cover?", "lg"), Form([Checkbox($research, "Research"), Checkbox($writing, "Writing"), Checkbox($review, "Review"), Button("Use these", @ToAssistant("Use these topics"))])], 3)\n$research = true\n$writing = false\n$review = false',
   ),
   display(
     'show a comparison',
-    Shown.cases.Comparison.make({
-      title: 'Rehearsal choices',
-      items: [
-        {
-          name: 'Morning',
-          summary: 'Start with a clear head.',
-          good: ['Quiet time'],
-          bad: ['Early start'],
-          facts: [{ label: 'Time', value: '09:00' }],
-        },
-        {
-          name: 'Afternoon',
-          summary: 'Finish after lunch.',
-          good: ['More preparation'],
-          bad: ['Busy calendar'],
-          facts: [{ label: 'Time', value: '14:00' }],
-        },
-      ],
-      pick: { name: 'Morning', why: 'More quiet time for this example.' },
-    }),
+    'root = Col([Title("Rehearsal plans", "lg"), Grid([a, b], 2, null, 2)], 3)\na = Card([Row([Text("Basic", "sm", null, "semibold"), Badge("Suggested", "info")], 2, "center", null, true), Text([Icon("check", "sm", "success"), " Cheap"], "xs"), Text([Icon("minus", "sm", "danger"), " Limited"], "xs"), Divider(), Row([Caption("Cost"), Spacer(), Text("10 NGN", "xs", null, "semibold")])], "soft", 3, 1.5)\nb = Card([Text("Pro", "sm", null, "semibold"), Text([Icon("check", "sm", "success"), " Everything"], "xs"), Text([Icon("minus", "sm", "danger"), " Costs more"], "xs"), Divider(), Row([Caption("Cost"), Spacer(), Text("30 NGN", "xs", null, "semibold")])], "soft", 3, 1.5)',
   ),
   display(
     'show links',
-    Shown.cases.Links.make({
-      title: 'Rehearsal sources',
-      links: [
-        { title: 'Example Domain', address: 'https://example.com', note: 'A public example page.' },
-        {
-          title: 'Wikipedia',
-          address: 'https://www.wikipedia.org',
-          note: 'A reference starting point.',
-        },
-      ],
-    }),
+    'root = Col([Title("Rehearsal sources", "lg"), List([ListItem("Example", "A page kept for examples.", null, [Link("example.com", "https://example.com")]), ListItem("Example organisation", "Its sister page.", null, [Link("example.org", "https://example.org")])])], 3)',
   ),
   display(
     'show facts',
-    Shown.cases.Facts.make({
-      title: 'Rehearsal facts',
-      facts: [
-        { label: 'Hours saved', value: '9', change: '+2 this week', tone: 'good' },
-        { label: 'Upcoming reviews', value: '3', change: '+1 this week', tone: 'bad' },
-        { label: 'Reviews', value: '2' },
-      ],
-    }),
+    'root = Col([Title("Rehearsal week", "lg"), Grid([Col([Caption("Hours"), Title("9", "xl"), Text("+2 on last week", "xs", "success", "semibold")], 0.5), Col([Caption("Open tasks"), Title("3", "xl"), Text("+1 on last week", "xs", "danger", "semibold")], 0.5)], 2, null, 3)], 3)',
   ),
   display(
     'show a draft',
-    Shown.cases.Draft.make({
-      kind: 'email',
-      to: ['sam@example.com'],
-      subject: 'Rehearsal review',
-      body: 'Hi Sam,\n\nPlease review these example results when you have a moment.\n\nRae',
-    }),
+    'root = Col([Card([Caption("To Rae"), Text("Rehearsal notes", "md", null, "semibold"), Text("Rae, the rehearsal notes are attached. Tell me what to change.", "sm")], "soft", 4, 1.5), Row([Button("Edit", @ToAssistant("Let me edit the note to Rae"), "soft"), Button("Send", @ToAssistant("Send the note to Rae"))], 2, null, "end")], 3)',
   ),
   display(
     'show a schedule',
-    Shown.cases.Schedule.make({
-      title: 'Rehearsal day',
-      day: 'Example day',
-      items: [
-        { at: '09:00', until: '09:30', title: 'Review results', where: 'Desk' },
-        { at: '11:00', title: 'Discuss next steps', note: 'Bring the example draft.' },
-      ],
-    }),
+    'root = Col([Title("Rehearsal day", "lg"), List([ListItem("Research", "Library, until 10:30", "09:00"), ListItem("Writing", "Desk", "11:00"), ListItem("Review", "Call with Sam", "15:00")], "none", true)], 3)',
   ),
   display(
     'show a form',
-    Shown.cases.Form.make({
-      title: 'Rehearsal details',
-      fields: [
-        { label: 'Name', kind: 'text', choices: [], example: 'Rae' },
-        { label: 'Notes', kind: 'long text', choices: [] },
-        { label: 'People', kind: 'number', choices: [] },
-        { label: 'Date', kind: 'date', choices: [] },
-        { label: 'Topic', kind: 'choice', choices: ['Research', 'Writing'] },
-      ],
-      submit: 'Send details',
-    }),
+    'root = Col([Title("Rehearsal details", "lg"), Form([Input($name, "Name", "text", "Rae"), TextArea($notes, "Notes"), Input($people, "People", "number"), Select($topic, ["Research", "Writing"], "Topic"), Button("Send details", @ToAssistant("Send details"))])], 3)\n$name = ""\n$notes = ""\n$people = 1\n$topic = "Research"',
   ),
   display(
     'show pictures',
-    Shown.cases.Pictures.make({
-      title: 'Rehearsal pictures',
-      pictures: [
-        {
-          address: 'https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg',
-          caption: 'Mountains and a lake.',
-        },
-        {
-          address: 'https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg',
-          caption: 'A public example picture.',
-        },
-      ],
-    }),
+    'root = Col([Carousel([Image("https://example.com/one.jpg", "First rehearsal picture"), Image("https://example.com/two.jpg", "Second rehearsal picture")]), Caption("Example pictures for this rehearsal.")], 3)',
   ),
   toolScene('write a document', 'write_document', {
     summary: 'Rehearsal plan',

@@ -197,7 +197,7 @@ const definitions = [
     about:
       'Runs the same lookup across a long list and returns one table, with what was and was not found.',
     starter: false,
-    needs: ['run_code', 'find_tools', 'use_tool', 'read_page', 'connect', 'show', 'ask_person'],
+    needs: ['run_code', 'find_tools', 'use_tool', 'read_page', 'connect', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {
@@ -214,7 +214,6 @@ const definitions = [
       'recall',
       'write_document',
       'read_document',
-      'show',
       'ask_person',
     ],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
@@ -225,16 +224,7 @@ const definitions = [
     about:
       'Finds well-priced products that match what you asked for and checks each one is really available.',
     starter: false,
-    needs: [
-      'find_tools',
-      'use_tool',
-      'connect',
-      'read_page',
-      'browse',
-      'recall',
-      'show',
-      'ask_person',
-    ],
+    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'browse', 'recall', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {
@@ -243,7 +233,7 @@ const definitions = [
     about:
       'Finds and compares restaurants, hotels, shops and other places, grounded in current sources.',
     starter: false,
-    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'show', 'ask_person'],
+    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {
@@ -260,7 +250,6 @@ const definitions = [
       'use_desktop',
       'recall',
       'remember',
-      'show',
       'ask_person',
     ],
     connections: [],
@@ -320,7 +309,7 @@ const definitions = [
     displayName: 'Find pictures',
     about: 'Finds public pictures that match your description and keeps the source of each one.',
     starter: false,
-    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'show', 'ask_person'],
+    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
 ] as const

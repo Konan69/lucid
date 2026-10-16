@@ -32,7 +32,6 @@ import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 import { Said, Voice } from './Said'
-import { useRevealed } from '../../ui/reveal'
 import { Reply } from './Words'
 
 /**
@@ -274,6 +273,11 @@ function Stamp({ moment }: { moment: number }) {
   )
 }
 
+/** What Vivid said, once it has said anything: its words and the displays among them. */
+function Spoken(props: { text: string; streaming: boolean; live: boolean; onSay: Say }) {
+  return props.text.length === 0 ? null : <Reply {...props} />
+}
+
 /** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
   message,
@@ -293,9 +297,6 @@ function FromVivid({
   onContinue: Say
 }) {
   const text = textOf(message)
-  // What is drawn of it: the words arrive in lumps and are let out evenly, and while they do the
-  // new ones fade in (`useRevealed`).
-  const words = useRevealed(text, isStreaming(message))
   const tools = toolsOf(message)
   const moment = momentOf(message)
   // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
@@ -315,7 +316,12 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && <Reply text={words.drawn} fresh={words.fresh} />}
+        <Spoken
+          text={text}
+          streaming={isStreaming(message)}
+          live={latest && !working}
+          onSay={onContinue}
+        />
         <Cards
           tools={tools}
           detail={detail}

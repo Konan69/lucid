@@ -1,3 +1,4 @@
+import { activeReferences } from '../connections/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { InvalidRequest, RoutineId, RoutineTrigger } from '@vivid/contracts'
@@ -5,6 +6,7 @@ import { Effect, Layer, Ref } from 'effect'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import {
+  ExecutorAppOwnership,
   ExecutorAccountId,
   ExecutorCallOutcome,
   ExecutorTool,
@@ -79,11 +81,11 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
         const row = yield* (yield* ConnectionStore).get(ownerActor, connected.connection.id)
         const account = ExecutorAccountId.make('PRIVATE-provider-account')
         const references = ExecutorReferences.cases.Authorized.make({
+          appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
           service: row.references.service,
-          app: row.references.app,
-          profile: row.references.profile,
+          app: activeReferences(row.references).app,
+          binding: activeReferences(row.references).binding,
           owner: row.references.owner,
-          appOwnership: row.references.appOwnership,
           account,
         })
         yield* (yield* Database).run(
