@@ -52,6 +52,32 @@ describe('where the Person was', () => {
     )
     expect(Option.isNone(decodePlaces('not json'))).toBe(true)
   })
+
+  it('drops a page this build no longer draws and keeps everything else that was kept', () => {
+    const folder = { shelf: 'Mine', id: 'folder-1', name: 'Receipts' }
+    const project = { id: '7a9d2c33-6b1e-4f52-8c44-21e5a0b9c7de' }
+    const text = JSON.stringify({
+      'https://vivid.example': {
+        personal: {
+          thread,
+          pages: [{ name: 'Routines' }, { name: 'Projects' }, { name: 'Project', params: project }],
+        },
+        'company-1': {
+          thread: null,
+          pages: [{ name: 'Library' }, { name: 'Folder', params: folder }],
+        },
+      },
+    })
+    const read = Option.getOrThrow(decodePlaces(text))
+    expect(placeAt(read, 'https://vivid.example', 'personal')).toEqual(inProject)
+    expect(placeAt(read, 'https://vivid.example', 'company-1')).toEqual({
+      thread: Option.none(),
+      pages: [
+        { name: 'Library' },
+        { name: 'Folder', params: { ...folder, id: LibraryFolderId.make('folder-1') } },
+      ],
+    })
+  })
 })
 
 describe('a page that can be drawn again', () => {
