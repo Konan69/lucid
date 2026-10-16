@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { allowing, deviceAnswers, deviceAsked, stopping } from './devices.js'
 
 const listening = DevicePresence.cases.Connected.make({
-  ability: { pages: true, apps: true, egress: true },
+  ability: { pages: true, apps: true, egress: true, signins: true },
 })
 const offline = DevicePresence.cases.Offline.make({})
 const pending = DeviceAccess.cases.Pending.make({ since: 1 })
