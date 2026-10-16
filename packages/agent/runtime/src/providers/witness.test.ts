@@ -29,7 +29,8 @@ const Line = Schema.fromJsonString(
         tools: Schema.Int,
         stream: Schema.Union([Schema.Boolean, Schema.Literal('unset')]),
       }),
-      Schema.TaggedStruct('Undecoded', { bytes: Schema.optionalKey(Schema.Int) }),
+      Schema.TaggedStruct('Undecoded', { bytes: Schema.Int }),
+      Schema.TaggedStruct('Unread', {}),
     ]),
   }),
 )
@@ -384,7 +385,7 @@ describe('provider refusal witnesses', () => {
     }),
   )
 
-  it.effect('scrubs every echoed bearer value before bounding the witness excerpt', () =>
+  it.effect('scrubs every echoed bearer value from the witness and from Pi’s error', () =>
     Effect.gen(function* () {
       const captured = capture()
       const key = 'sk-echo-private-123'
@@ -393,7 +394,8 @@ describe('provider refusal witnesses', () => {
       const result = provider.streamSimple(model, context, { apiKey: key, fetch }).result()
       const answer = yield* Effect.promise(() => result)
       expect(answer.stopReason).toBe('error')
-      expect(answer.errorMessage).toContain(key)
+      expect(answer.errorMessage).toContain('[redacted]')
+      expect(answer.errorMessage).not.toContain(key)
       expect(captured.lines[0]).toMatchObject({
         body: body.replaceAll(key, '[redacted]').slice(0, 2048),
       })
@@ -440,6 +442,20 @@ describe('provider refusal witnesses', () => {
     }),
   )
 
+  it.effect('returns the real refusal for a stream body given in init without replaying it', () =>
+    Effect.gen(function* () {
+      const captured = capture()
+      const body = new Blob(['{}']).stream()
+      const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })))
+      const answer = yield* Effect.promise(() =>
+        witness(fetch)(model.baseUrl, { method: 'POST', body, duplex: 'half' }),
+      )
+      expect(answer.status).toBe(400)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Unread'])
+    }),
+  )
+
   it.effect('honors an init that clears a Request’s inherited abort signal', () => {
     // The caller owns this aborted signal; it must not interrupt the test's Effect fiber.
     const controller = new AbortController()
@@ -466,14 +482,10 @@ describe('provider refusal witnesses', () => {
         yield* Effect.promise(() => input.text())
         const response = new Response('real refusal sk-unreadable-private', { status })
         const fetch = vi.fn(() => Promise.resolve(response))
-        expect(yield* Effect.promise(() => witness(fetch)(input))).toBe(response)
-        expect(yield* Effect.promise(() => response.text())).toBe(
-          'real refusal sk-unreadable-private',
-        )
-        expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Undecoded'])
-        expect(captured.lines.map(({ request }) => Object.hasOwn(request, 'bytes'))).toEqual([
-          false,
-        ])
+        const answer = yield* Effect.promise(() => witness(fetch)(input))
+        expect(answer.status).toBe(status)
+        expect(yield* Effect.promise(() => answer.text())).toBe('real refusal [redacted]')
+        expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Unread'])
         expect(fetch).toHaveBeenCalledTimes(1)
         expect(JSON.stringify(captured.log.mock.calls)).not.toContain('sk-unreadable-private')
       }),
@@ -492,8 +504,7 @@ describe('provider refusal witnesses', () => {
       const response = new Response('real refusal', { status: 400 })
       const fetch = vi.fn(() => Promise.resolve(response))
       expect(yield* Effect.promise(() => witness(fetch)(input))).toBe(response)
-      expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Undecoded'])
-      expect(captured.lines.map(({ request }) => Object.hasOwn(request, 'bytes'))).toEqual([false])
+      expect(captured.lines.map(({ request }) => request._tag)).toEqual(['Unread'])
     }),
   )
 

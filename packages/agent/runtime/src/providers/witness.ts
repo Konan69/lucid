@@ -1,5 +1,5 @@
 import type { FetchFunction } from '@earendil-works/pi-ai'
-import { Cause, Effect, Exit, Option, Result, Schema } from 'effect'
+import { Cause, Effect, Exit, Option, Predicate, Result, Schema } from 'effect'
 
 // Decode structural fields only. The request record selects counts from tool lists rather than
 // serializing the decoded payload; message content and tool arguments never enter that record.
@@ -25,10 +25,11 @@ const RequestRecord = Schema.TaggedUnion({
     tools: Schema.Int,
     stream: Schema.Union([Schema.Boolean, Schema.Literal('unset')]),
   },
-  Undecoded: { bytes: Schema.optionalKey(Schema.Int) },
+  Undecoded: { bytes: Schema.Int },
+  Unread: {},
 })
 const Body = Schema.TaggedUnion({
-  Read: { excerpt: Schema.String, empty: Schema.Boolean },
+  Read: { text: Schema.String, empty: Schema.Boolean, redacted: Schema.Boolean },
   Unreadable: {},
   Uninspected: {},
 })
@@ -68,7 +69,7 @@ function roleOf(message: typeof Message.Type) {
   return `${roles[message.role]}${calls}`
 }
 
-/** Count wire bytes and decode once; unreadable bodies retain honest absence of a byte count. */
+/** Count wire bytes and decode once; a body that could not be read has no byte count at all. */
 const describeRequest = Effect.fn('Provider.describeRequest')(
   function* (request: Request) {
     const bytes = yield* Effect.tryPromise({
@@ -95,7 +96,7 @@ const describeRequest = Effect.fn('Provider.describeRequest')(
   (effect) =>
     effect.pipe(
       Effect.catchTag('RequestUnreadable', () =>
-        Effect.succeed(RequestRecord.cases.Undecoded.make({})),
+        Effect.succeed(RequestRecord.cases.Unread.make({})),
       ),
     ),
 )
@@ -118,8 +119,8 @@ function headersOf(response: Response) {
   )
 }
 
-/** Scrub the request's own bearer value before truncation, including echoes crossing the limit. */
-function scrub(text: string, args: Parameters<FetchFunction>) {
+/** The request's own bearer value, which a refusal may echo back. */
+function bearerOf(args: Parameters<FetchFunction>): Option.Option<string> {
   const [input, init] = args
   const supplied = Option.flatMap(Option.fromUndefinedOr(init), (value) =>
     Option.fromUndefinedOr(value.headers),
@@ -128,31 +129,38 @@ function scrub(text: string, args: Parameters<FetchFunction>) {
     onNone: () => (input instanceof Request ? input.headers : new Headers()),
     onSome: (value) => new Headers(value),
   })
-  const authorization = Option.fromNullOr(headers.get('authorization'))
-  return Option.match(authorization, {
-    onNone: () => text,
-    onSome: (header) => {
-      if (!/^Bearer\s+\S/i.test(header)) return text
-      return text.replaceAll(header.replace(/^Bearer\s+/i, ''), '[redacted]')
-    },
-  })
+  return Option.fromNullOr(headers.get('authorization')).pipe(
+    Option.filter((header) => /^Bearer\s+\S/i.test(header)),
+    Option.map((header) => header.replace(/^Bearer\s+/i, '')),
+  )
 }
 
-/** A clone leaves Pi's response unread; failed inspection never means an empty body. */
+/**
+ * A refusal's text with the request's own bearer value replaced, before anything keeps it. Pi
+ * turns a refusal's body into the reply's `errorMessage`, which Flue persists in the conversation
+ * (`conversation-stream-store` stream events, the submission's settlement) and streams to every
+ * client: a provider that echoes the key would otherwise put it in a Person's Thread.
+ */
 const bodyOf = Effect.fn('Provider.body')(function* (
   response: Response,
   args: Parameters<FetchFunction>,
 ) {
+  const bearer = bearerOf(args)
   return yield* Effect.tryPromise({
     try: () => response.clone().text(),
     catch: () => new ResponseUnreadable(),
   }).pipe(
-    Effect.map((text) =>
-      Body.cases.Read.make({
-        excerpt: scrub(text, args).slice(0, 2048),
+    Effect.map((text) => {
+      const scrubbed = Option.match(bearer, {
+        onNone: () => text,
+        onSome: (key) => text.replaceAll(key, '[redacted]'),
+      })
+      return Body.cases.Read.make({
+        text: scrubbed,
         empty: text.trim().length === 0,
-      }),
-    ),
+        redacted: scrubbed !== text,
+      })
+    }),
     Effect.catchTag('ResponseUnreadable', () => Effect.succeed(Body.cases.Unreadable.make({}))),
   )
 })
@@ -172,7 +180,7 @@ const record = Effect.fn('Provider.witness')(function* (input: {
       status: input.response.status,
       headers: headersOf(input.response),
       body: Body.match(input.body, {
-        Read: ({ excerpt }) => excerpt,
+        Read: ({ text }) => text.slice(0, 2048),
         Unreadable: () => '[unreadable]',
         Uninspected: () => '[not-read]',
       }),
@@ -188,46 +196,103 @@ const fetchResponse = (transport: FetchFunction, args: Parameters<FetchFunction>
     catch: (cause) => new FetchFailed({ cause }),
   })
 
-/** A consumed Request needs the saved clone; SDK strings retain the original argument tuple. */
-function replayOf(
-  args: Parameters<FetchFunction>,
-  request: Option.Option<Request>,
-): Option.Option<Parameters<FetchFunction>> {
-  const [input, init] = args
-  if (!(input instanceof Request) || input.body === null) return Option.some(args)
-  const body = Option.flatMap(Option.fromUndefinedOr(init), (value) =>
+/** The body given in `init`, which replaces any the input carries. */
+function initBody(args: Parameters<FetchFunction>) {
+  return Option.flatMap(Option.fromUndefinedOr(args[1]), (value) =>
     Option.fromNullishOr(value.body),
   )
-  if (Option.isSome(body)) return Option.some(args)
-  return Option.map(request, (value) => [value])
+}
+
+/** The request as one Request, for reading its body; failure leaves the real fetch untouched. */
+function requestOf(args: Parameters<FetchFunction>) {
+  const [input, init] = args
+  return Result.getSuccess(
+    Result.try({
+      try: () => new Request(input instanceof Request ? input.clone() : input, init),
+      catch: () => new RequestUnreadable(),
+    }),
+  )
+}
+
+/**
+ * How a refused request is read and sent again.
+ *
+ * - No body, or a string one in `init` (what Pi's OpenAI SDK sends): the arguments are read only
+ *   once a refusal arrives, so an answered request costs nothing, and are sent again as they are.
+ * - A Request carrying its own body: the first send reads it once, so a clone is taken before it,
+ *   and it is read and sent again only from that clone.
+ * - Any other body in `init` (a stream, a form): nothing can copy it without taking it from the
+ *   first send, so it is neither read nor sent again, and a refusal is returned as it came.
+ */
+interface Retained {
+  readonly read: () => Option.Option<Request>
+  readonly replay: Option.Option<Parameters<FetchFunction>>
+}
+
+function retain(args: Parameters<FetchFunction>): Retained {
+  const [input] = args
+  return Option.match(initBody(args), {
+    onNone: () => {
+      if (!(input instanceof Request) || input.body === null)
+        return { read: () => requestOf(args), replay: Option.some(args) }
+      const copy = requestOf(args)
+      return { read: () => copy, replay: Option.map(copy, (request) => [request] as const) }
+    },
+    onSome: (body) =>
+      Predicate.isString(body)
+        ? { read: () => requestOf(args), replay: Option.some(args) }
+        : { read: () => Option.none(), replay: Option.none() },
+  })
+}
+
+/**
+ * The refusal handed to Pi. One whose text echoed the request's key is rebuilt from the scrubbed
+ * text (without the original length and encoding, which described the bytes it replaced).
+ */
+function delivered(response: Response, body: typeof Body.Type) {
+  if (!Body.guards.Read(body) || !body.redacted) return response
+  const headers = new Headers(response.headers)
+  headers.delete('content-length')
+  headers.delete('content-encoding')
+  return new Response(body.text, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 /** Only an empty 400 is replayed, once, before Pi can consume any assistant output. */
 const send = Effect.fn('Provider.send')(function* (
   transport: FetchFunction,
   args: Parameters<FetchFunction>,
-  request: Option.Option<Request>,
+  retained: Retained,
 ) {
   const response = yield* fetchResponse(transport, args)
   if (response.status < 400) return response
-  const metadata = yield* Option.match(request, {
-    onNone: () => Effect.succeed(RequestRecord.cases.Undecoded.make({})),
+  const metadata = yield* Option.match(retained.read(), {
+    onNone: () => Effect.succeed(RequestRecord.cases.Unread.make({})),
     onSome: describeRequest,
   })
   const body = yield* bodyOf(response, args)
   yield* record({ response, metadata, body, attempt: 1 })
-  if (response.status !== 400 || !Body.guards.Read(body) || !body.empty) return response
-  // The SDK sends a reusable string body, so both attempts receive the original (input, init).
-  // Request bodies are one-shot: keep the inspected clone for the second send. If no clone
-  // survived, return the actual refusal rather than replacing it with a consumed-body error.
-  const replay = replayOf(args, request)
-  if (Option.isNone(replay)) return response
+  if (response.status !== 400 || !Body.guards.Read(body) || !body.empty)
+    return delivered(response, body)
+  // Without a replayable request, return the actual refusal rather than a consumed-body error.
+  if (Option.isNone(retained.replay)) return response
   yield* Effect.sleep('300 millis')
-  const retried = yield* fetchResponse(transport, replay.value)
-  const nextBody =
-    retried.status >= 400 ? yield* bodyOf(retried, args) : Body.cases.Uninspected.make({})
+  const retried = yield* fetchResponse(transport, retained.replay.value)
+  if (retried.status < 400) {
+    yield* record({
+      response: retried,
+      metadata,
+      body: Body.cases.Uninspected.make({}),
+      attempt: 2,
+    })
+    return retried
+  }
+  const nextBody = yield* bodyOf(retried, args)
   yield* record({ response: retried, metadata, body: nextBody, attempt: 2 })
-  return retried
+  return delivered(retried, nextBody)
 })
 
 /**
@@ -239,26 +304,16 @@ const send = Effect.fn('Provider.send')(function* (
 export function witness(transport: FetchFunction): FetchFunction {
   return (...args) => {
     const [input, init] = args
-    // Snapshot before the transport consumes a Request. Failed inspection must never prevent
-    // the real fetch; Result keeps constructor failures inside this synchronous SDK boundary.
-    const request = Result.getSuccess(
-      Result.try({
-        try: () => new Request(input instanceof Request ? input.clone() : input, init),
-        catch: () => new RequestUnreadable(),
-      }),
-    )
+    const retained = retain(args)
+    // The effective abort signal: an init's own, including one that clears inheritance with
+    // null, or else the Request's.
     const inherited = input instanceof Request ? Option.fromNullishOr(input.signal) : Option.none()
-    const supplied = Option.match(Option.fromUndefinedOr(init), {
+    const signal = Option.match(Option.fromUndefinedOr(init), {
       onNone: () => inherited,
       onSome: (value) => (value.signal === undefined ? inherited : Option.fromNullOr(value.signal)),
     })
-    // Read the effective Request signal, including an init that explicitly clears inheritance.
-    // If the body prevented a snapshot, the original arguments still carry abort authority.
-    const signal = Option.flatMap(request, (value) => Option.fromNullishOr(value.signal)).pipe(
-      Option.orElse(() => supplied),
-    )
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- The single Pi transport boundary, classified exactly by the Effect boundary audit.
-    return Effect.runPromiseExit(send(transport, args, request), {
+    return Effect.runPromiseExit(send(transport, args, retained), {
       signal: Option.getOrUndefined(signal),
     }).then(
       Exit.match({
