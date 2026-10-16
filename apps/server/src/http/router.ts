@@ -45,7 +45,7 @@ const healthRoute = HttpRouter.add(
 /**
  * Everything the server answers. Product calls are `VividRpc` (`/api/live`, `/api/rpc`). The rest
  * is plain HTTP only where something other than our client is on the other end: Better Auth, the
- * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, an
+ * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, Executor delivering Watch events, a browser
  * moving Library bytes, the Computer's screen, a desktop app carrying the Computer's browsing
  * (`computers/egress/route.ts`), and a client reporting that it failed to draw (`faults.ts`). The
  * mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
