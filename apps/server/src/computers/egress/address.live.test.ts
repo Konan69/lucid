@@ -75,11 +75,13 @@ const echoed = (state: FlueConversationState) =>
 /**
  * Asks Vivid to open the echo page on its Computer, and answers the address in the receipt the
  * browser left for it in this Run. `before` is how many such receipts earlier Runs left in the
- * Thread: this Run must add one.
+ * Thread: this Run must add one. Both readings reuse one tab: Cua 0.23.2 proves selection
+ * from a unique native title, so two identically titled echo tabs are correctly ambiguous
+ * (`cua-driver-core/src/browser/binding.rs`, `selected_tab_target_id`).
  */
 const asked = Effect.fn('EgressProof.asked')(function* (fixture: ChainFixture, before: number) {
   const runId = yield* fixture.send(
-    `Open ${ECHO} in a new tab of the browser on your computer and reply with exactly the address the page shows, nothing else.`,
+    `Open ${ECHO} in the current browser tab on Vivid’s Computer. Reuse the current tab. Reply with exactly the address the page shows, nothing else.`,
   )
   const seen = echoed(yield* completeRun(fixture, runId))
   const address = Arr.last(seen)
