@@ -160,7 +160,7 @@ describe('who a message is from', () => {
 describe('what a message holds', () => {
   it('shows a shared Thread’s message and a wake, and hides the signals a card tells', () => {
     expect(isShown(said({ turn: '7', from: 'Dami Cole' }))).toBe(true)
-    expect(isShown(message({ role: 'system', signal: { tagName: 'schedule' } }))).toBe(true)
+    expect(isShown(message({ role: 'system', signal: { tagName: 'follow-up' } }))).toBe(true)
     expect(isShown(message({ role: 'system', signal: { tagName: 'approval' } }))).toBe(false)
     expect(isShown(message({ role: 'system', display: 'hidden' }))).toBe(false)
     expect(isShown(message({ role: 'assistant' }))).toBe(true)
