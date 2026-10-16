@@ -1,8 +1,16 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { FeedItem, WatchState, type FeedResponse } from '@vivid/contracts'
+import { FeedItem, ServiceId, WatchState } from '@vivid/contracts'
 import { eq, sql } from 'drizzle-orm'
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect'
+import {
+  ExecutorAppId,
+  ExecutorAppOwnership,
+  ExecutorBinding,
+  ExecutorOwnerId,
+  ExecutorReferences,
+} from '../connections/executor.ts'
+import { encodeReferences } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
@@ -25,19 +33,30 @@ import { watchArrivals } from './tables.ts'
 const Tools = Schema.Struct({ version: Schema.String })
 const decodeTools = Schema.decodeUnknownEffect(Schema.fromJsonString(Tools))
 
+/** One call of the proof app's `ping` mutation, in Executor's `tools/call` shape. */
+interface PingCall {
+  readonly version: string
+  readonly kind: 'mutation'
+  readonly tool: 'ping'
+  readonly input: { readonly channel: string; readonly text: string }
+}
+
 /** Executor's own management API, as the proof app's owner calls it; never the Person's path. */
-const executorCall = Effect.fn('WatchProof.executor')(function* (path: string, body?: unknown) {
+const executorRequest = Effect.fn('WatchProof.executor')(function* (
+  path: string,
+  call: Option.Option<PingCall>,
+) {
   const url = yield* Config.String('VIVID_EXECUTOR_URL')
   const organization = yield* Config.String('VIVID_EXECUTOR_ORGANIZATION')
   const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
   const response = yield* Effect.promise(() =>
     fetch(`${url}/api/organizations/${organization}${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: Option.isSome(call) ? 'POST' : 'GET',
       headers: {
         authorization: `Bearer ${Redacted.value(key)}`,
         'content-type': 'application/json',
       },
-      body: body === undefined ? null : JSON.stringify(body),
+      body: Option.isSome(call) ? JSON.stringify(call.value) : null,
     }),
   )
   const text = yield* Effect.promise(() => response.text())
@@ -47,20 +66,19 @@ const executorCall = Effect.fn('WatchProof.executor')(function* (path: string, b
 
 /** The proof app's `ping` mutation: it emits `ping.sent` on the given channel. */
 const ping = Effect.fn('WatchProof.ping')(function* (app: string, channel: string, text: string) {
-  const { version } = yield* decodeTools(yield* executorCall(`/apps/${app}/tools`))
-  yield* executorCall(`/apps/${app}/tools/call`, {
-    version,
-    kind: 'mutation',
-    tool: 'ping',
-    input: { channel, text },
-  })
+  const tools = yield* executorRequest(`/apps/${app}/tools`, Option.none())
+  const { version } = yield* decodeTools(tools)
+  yield* executorRequest(
+    `/apps/${app}/tools/call`,
+    Option.some({ version, kind: 'mutation', tool: 'ping', input: { channel, text } }),
+  )
 })
 
 const fromWatch = (item: FeedItem) => item.thread.startsWith('watch-')
 
 describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed live chain', () => {
-  layer(chainLayer, { excludeTestServices: true, timeout: 420_000 })((it) => {
-    it.effect(
+  layer(chainLayer, { excludeTestServices: true, timeout: 420_000 })((test) => {
+    test.effect(
       'an event Vivid was asked to watch wakes it in the background and reaches the Feed',
       () =>
         Effect.gen(function* () {
@@ -79,14 +97,15 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
               label: 'Watch Proof',
               personId: fixture.personId,
               companyId: null,
-              references: {
-                _tag: 'Public',
-                service: 'watch-proof',
-                app,
-                owner: 'owner_watch_proof',
-                binding: { _tag: 'Public' },
-                appOwnership: { _tag: 'Dedicated' },
-              },
+              references: yield* encodeReferences(
+                ExecutorReferences.cases.Public.make({
+                  service: ServiceId.make('watch-proof'),
+                  app: ExecutorAppId.make(app),
+                  owner: ExecutorOwnerId.make('owner_watch_proof'),
+                  binding: ExecutorBinding.cases.Public.make({}),
+                  appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+                }),
+              ),
               executorApp: app,
               status: 'ready',
               returnsTo: 'Web',
@@ -108,10 +127,13 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
           expect(live.map((watch) => [watch.account, watch.event])).toEqual([
             ['Watch Proof', 'ping.sent'],
           ])
-          expect(WatchState.guards.Active(live[0]!.state)).toBe(true)
+          const [watch] = live
+          if (watch === undefined)
+            return yield* Effect.sync(() => expect.fail('Vivid must have one live Watch'))
+          expect(WatchState.guards.Active(watch.state)).toBe(true)
           yield* Effect.addFinalizer(() =>
             fixture.rpc
-              .StopWatch({ name: live[0]!.name })
+              .StopWatch({ name: watch.name })
               .pipe(Effect.catch(() => Effect.sync(() => expect.fail('Watch proof stop failed')))),
           )
 
@@ -121,7 +143,7 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
 
           // The Feed changes live as the background work starts and ends; take it once settled
           // or waiting on the Person, never by polling.
-          const feed: FeedResponse = yield* fixture.rpc.WatchFeed().pipe(
+          const settled = yield* fixture.rpc.WatchFeed().pipe(
             Stream.filter((current) =>
               current.items.some(
                 (item) =>
@@ -131,13 +153,15 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
             ),
             Stream.runHead,
             Effect.timeout(Duration.minutes(4)),
-            Effect.map(Option.getOrThrow),
           )
-          const items = feed.items.filter(fromWatch)
+          if (Option.isNone(settled))
+            return yield* Effect.sync(() => expect.fail('The Feed stream ended'))
+          const items = settled.value.items.filter(fromWatch)
           expect(items).toHaveLength(1)
-          const item = items[0]!
-          expect(item.post, 'Vivid must post the ping to the Feed').not.toBeNull()
-          expect(item.post!.words).toMatch(/5\s?pm/i)
+          const [item] = items
+          if (item === undefined || item.post === null)
+            return yield* Effect.sync(() => expect.fail('Vivid must post the ping to the Feed'))
+          expect(item.post.words).toMatch(/5\s?pm/i)
 
           // Background work never enters the Person's Thread list.
           const listed = (yield* fixture.rpc.ListThreads()).threads.map((thread) => thread.id)
@@ -161,7 +185,7 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
             database
               .select({ thread: watchArrivals.threadId })
               .from(watchArrivals)
-              .where(eq(watchArrivals.watchId, live[0]!.id)),
+              .where(eq(watchArrivals.watchId, watch.id)),
           )
           expect(arrivals).toEqual([{ thread: item.thread }])
         }).pipe(Effect.scoped),
