@@ -35,6 +35,7 @@ import {
 import { changed, Changes, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
+import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
@@ -199,6 +200,8 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
   )
   const input = yield* returned(yield* view(rows), 'Input request')
   yield* changed(actor, Topic.thread(threadId))
+  // A question asked in a Background Thread is shown by the Feed, never as a notification.
+  if (!notifiesFrom(thread.place)) return input
   yield* (yield* Notifier).notify({
     personId: actor.person.id,
     companyId: thread.companyId,

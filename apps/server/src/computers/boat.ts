@@ -20,6 +20,7 @@ import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { machineLinks } from './boat/shell.ts'
 import { holding, wake } from './boat/holder.ts'
+import { browserProxy, startProxy } from './egress/guest.ts'
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
@@ -107,6 +108,7 @@ export const boatMachineLayer = Layer.effect(
       drivers.set(key, current)
       return current.native
     })
+    const shell = connections.operations(accepted)
     return Machine.of({
       /** The prepared payload opens the native launcher once per desktop session. This is
        * presentation setup only; expensive installation happened before template capture.
@@ -165,7 +167,7 @@ export const boatMachineLayer = Layer.effect(
         const identity = yield* accepted(input.key)
         yield* api.write(identity.id, input.path, input.content)
       }),
-      ...connections.operations(accepted),
+      ...shell,
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* accepted(input.key)
@@ -181,6 +183,8 @@ export const boatMachineLayer = Layer.effect(
             yield* nativeDriver(input.key),
             input.action,
             Option.fromUndefinedOr(tabs.get(input.key)),
+            // What a browser this step starts is given as its way out (`browserProxy`).
+            browserProxy(input.egress, startProxy(shell, input.key)),
           )
           tabs.set(input.key, result.tabs)
           return result

@@ -35,7 +35,8 @@ const fixture = Effect.fn('RoutineToolsTest.fixture')(function* () {
       folder: Option.none(),
     }),
   )
-  const [create, find] = routineTools(toolRunner(scope))
+  const tools = routineTools(toolRunner(scope))
+  const [create] = tools
   /** Typed protocol responses preserve the transport boundary rather than mocking a tool method. */
   const reply = Effect.fn('RoutineToolsTest.reply')(function* (
     tag: string,
@@ -59,94 +60,20 @@ const fixture = Effect.fn('RoutineToolsTest.fixture')(function* () {
       Effect.promise(() => Promise.resolve(create.run({ ...context, data }))).pipe(
         Effect.flatMap(decodeOutput),
       ),
-    find: (account: string) =>
-      Effect.promise(() =>
-        Promise.resolve(
-          find.run({ ...context, data: { summary: 'Available mail events', account } }),
-        ),
-      ).pipe(Effect.flatMap(decodeOutput)),
+    names: tools.map((tool) => tool.name),
     reply,
   }
 })
 
 /** The model sees only readable Routine metadata, never the Person/Thread/Connection/receipt authority. */
-describe('Integration Routine tools', () => {
-  it.effect('find_events exposes readable provider events for an account name', () =>
+describe('Routine tools', () => {
+  /** Event reactions are Watches; a Routine offering its own event discovery would contradict them. */
+  it.effect('offer no Integration events: find_events belongs to Watches alone', () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tools = yield* fixture()
-        const events = [
-          {
-            event: 'mail.received',
-            description: 'A new email arrives',
-            filter: { type: 'object' },
-          },
-        ]
-        const [result] = yield* Effect.all(
-          [
-            tools.find('Gmail (Work)'),
-            tools.reply('FindEvents', { account: 'Gmail (Work)' }, Exit.succeed({ events })),
-          ],
-          { concurrency: 2 },
-        )
-        expect(result.output).toEqual({ events })
-        expect(JSON.stringify(result)).not.toContain('PRIVATE-')
+        expect((yield* fixture()).names).toEqual(['create_routine', 'list_routines'])
       }),
     ),
-  )
-
-  it.effect(
-    'create_routine carries account/event/filter and projects a reference-free result',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tools = yield* fixture()
-          const trigger = RoutineTrigger.cases.Integration.make({
-            account: 'Gmail (Work)',
-            event: 'A new email arrives',
-            filter: { from: 'dami@example.test' },
-          })
-          const name = 'Summarize new mail'
-          const prompt = 'Summarize it for me.'
-          const routine = Routine.make({
-            id: RoutineId.make('PRIVATE-routine'),
-            name,
-            prompt,
-            trigger,
-            libraryFolderId: null,
-            enabled: true,
-            nextExpectedAt: 300_000,
-            lastMissedAt: null,
-            createdAt: 0,
-            updatedAt: 0,
-            nextRunAt: 300_000,
-            runs: [],
-          })
-          const [result] = yield* Effect.all(
-            [
-              tools.create({
-                summary: 'Future work',
-                name,
-                prompt,
-                trigger: {
-                  kind: 'Integration',
-                  account: trigger.account,
-                  event: trigger.event,
-                  filter: trigger.filter,
-                },
-              }),
-              tools.reply('CreateRoutine', { name, prompt, trigger }, Exit.succeed({ routine })),
-            ],
-            { concurrency: 2 },
-          )
-          expect(JSON.stringify(result)).not.toContain('PRIVATE-')
-          expect(result.output).toMatchObject({
-            name,
-            prompt,
-            schedule: 'when A new email arrives happens in Gmail (Work)',
-          })
-        }),
-      ),
   )
 
   it.effect('one-off creation sends local words to server timezone resolution', () =>

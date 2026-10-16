@@ -4,6 +4,7 @@ import {
   MachineExecutionUnknown,
   MachineFileRefused,
   MachineInputInvalid,
+  MachinePortClosed,
   MachineResponseInvalid,
   MachineUnreachable,
   type MachineFailure,
@@ -15,6 +16,7 @@ import {
   LinkFileRefused,
   LinkHostMismatch,
   LinkKeyRefused,
+  LinkPortClosed,
   LinkRunLost,
   connectionIdentity,
   LinkUnreachable,
@@ -121,8 +123,15 @@ export const machineLinks = (api: Transport) => {
   /** The machine boundary's `run`, `read` and `put`, over the machine's connection. */
   const operations = (
     accepted: (key: MachineKey) => Effect.Effect<{ readonly id: ProviderId }, MachineFailure>,
-  ): Pick<MachineOperations, 'run' | 'converse' | 'read' | 'put'> => {
+  ): Pick<MachineOperations, 'run' | 'converse' | 'tunnel' | 'read' | 'put'> => {
     const overLink = over(accepted)
+    /** The machine's connection, taken once for something that outlives the call that asked. */
+    const taken = (key: MachineKey) =>
+      connections
+        .get(key, accepted(key).pipe(Effect.flatMap((identity) => locate(identity.id))))
+        .pipe(
+          Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
+        )
     return {
       run: Effect.fn('Machine.boat.run')(function* (input) {
         if (
@@ -151,12 +160,7 @@ export const machineLinks = (api: Transport) => {
           input.command.length < 1
         )
           return yield* new MachineInputInvalid()
-        const located = accepted(input.key).pipe(Effect.flatMap((identity) => locate(identity.id)))
-        const link = yield* connections
-          .get(input.key, located)
-          .pipe(
-            Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
-          )
+        const link = yield* taken(input.key)
         const lost = <A>(effect: Effect.Effect<A, LinkRunLost>) =>
           effect.pipe(
             Effect.tapError(() => connections.discard(input.key, link)),
@@ -179,6 +183,24 @@ export const machineLinks = (api: Transport) => {
           say: (text) => lost(spoken.say(text)),
           ended: lost(spoken.ended),
         }
+      }),
+      /**
+       * The channel lives longer than this call, as a conversation does, so the connection is
+       * taken once. A connection that went while the channel was being opened is closed, as in
+       * `over`; a port nothing listens on leaves the connection as it is.
+       */
+      tunnel: Effect.fn('Machine.boat.tunnel')(function* (input) {
+        const link = yield* taken(input.key)
+        return yield* link.tunnel(input.port).pipe(
+          Effect.tapError((failure) =>
+            failure instanceof LinkUnreachable ? connections.discard(input.key, link) : Effect.void,
+          ),
+          Effect.mapError((failure) =>
+            failure instanceof LinkPortClosed
+              ? new MachinePortClosed({ port: input.port })
+              : linkFailure(failure),
+          ),
+        )
       }),
       read: Effect.fn('Machine.boat.read')((input) =>
         overLink(input.key, (link) => link.read(input.path)),

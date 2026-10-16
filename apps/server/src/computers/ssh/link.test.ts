@@ -1,11 +1,13 @@
 import * as NodeFS from 'node:fs'
 import * as NodeChildProcess from 'node:child_process'
+import * as NodeNet from 'node:net'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
-import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope, Stream } from 'effect'
 import {
   FILE_BYTES,
   LinkFileRefused,
+  LinkPortClosed,
   LinkRunLost,
   LinkUnreachable,
   KEY_TAG,
@@ -20,12 +22,57 @@ import { peer, peerAvailable } from './peer.ts'
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 const bytes = (value: string) => new TextEncoder().encode(value)
 
+/** Where a listening server is bound, as Node reports it for a TCP listener. */
+const decodeBound = Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))
+
+/** Listens on a free loopback port and answers which. */
+const bound = (server: NodeNet.Server) =>
+  Effect.callback<void>((resume) => {
+    server.listen(0, '127.0.0.1', () => resume(Effect.void))
+  }).pipe(
+    Effect.andThen(Effect.suspend(() => decodeBound(server.address()))),
+    Effect.map((address) => address.port),
+    Effect.orDie,
+  )
+
 /** One server and one connection for a test, as the adapter holds one per awake machine. */
 const connected = Effect.fn('LinkTest.connected')(function* () {
   const server = yield* peer()
   const link = yield* openLink(server)
   return { server, link }
 })
+
+it.live.skipIf(!peerAvailable)(
+  'opens a byte stream to a port on the machine’s own loopback, and says when nothing listens there',
+  () =>
+    Effect.gen(function* () {
+      const { link } = yield* connected()
+      // A service on the machine's loopback: it answers each piece it is sent, in capitals.
+      const service = NodeNet.createServer((socket) => {
+        socket.on('data', (piece: Buffer) => socket.write(piece.toString('utf8').toUpperCase()))
+        socket.on('error', () => undefined)
+      })
+      const port = yield* Effect.acquireRelease(bound(service), () =>
+        Effect.sync(() => service.close()),
+      )
+      const stream = yield* link.tunnel(port)
+      const answered = Effect.callback<string>((resume) => {
+        stream.once('data', (piece: Buffer) => resume(Effect.succeed(piece.toString('utf8'))))
+      })
+      stream.write('over the connection')
+      expect(yield* answered).toBe('OVER THE CONNECTION')
+      // The port is given back, and then nothing listens on it.
+      const probe = NodeNet.createServer()
+      const closed = yield* bound(probe)
+      yield* Effect.callback<void>((resume) => {
+        probe.close(() => resume(Effect.void))
+      })
+      expect(yield* Effect.flip(link.tunnel(closed))).toBeInstanceOf(LinkPortClosed)
+      // The connection itself is as it was.
+      expect(link.alive()).toBe(true)
+    }).pipe(Effect.scoped),
+  30_000,
+)
 
 it.live.skipIf(!peerAvailable)(
   'puts a file in directories that do not exist, reads it back, and a command sees it',

@@ -29,6 +29,7 @@ const input: LearningInput = {
     archived: false,
     audience: 'private',
     projectId: null,
+    place: 'Conversation',
   }),
   person: Person.make({
     id: PersonId.make('MARK-person'),
@@ -266,6 +267,7 @@ describe('settled exchange context', () => {
             archived: input.thread.archived,
             audience: 'company',
             projectId: input.thread.projectId,
+            place: input.thread.place,
           }),
         }
         const ada: FlueConversationMessage = {

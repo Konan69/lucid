@@ -27,6 +27,8 @@ import { noteTools } from '../tools/notes.ts'
 import { notifyTools } from '../tools/notify.ts'
 import { openTools } from '../tools/open.ts'
 import { routineTools } from '../tools/routines.ts'
+import { feedTools } from '../tools/feed.ts'
+import { watchTools } from '../tools/watches.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
 import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
@@ -112,7 +114,7 @@ const TOOLS = [
 
 const FOLLOWING_THROUGH = [
   'Never promise to do something later without scheduling it. A reminder or anything to do once at a time is a one-off Routine. Use create_routine with a Once trigger and a local date-time in the Person’s time zone. Do work you can finish now in this Thread; schedule only the agreed later action.',
-  'When someone wants something to happen again and again, or to happen whenever something else does, set up a routine with create_routine and say when it will run.',
+  'When someone wants something done on a schedule, set it up with create_routine and say when it will run. When they want something done whenever something happens in an Integration, watch it with find_events and watch; what that work finds reaches them on their Feed.',
 ]
 
 /**
@@ -174,6 +176,8 @@ export function Vivid({ id }: { id: string }) {
     openTools(runTool),
     skillTools(runTool),
     routineTools(runTool),
+    watchTools(runTool),
+    feedTools(runTool),
     projectTools(runTool),
     codeTools(runTool),
     documentTools(runTool),

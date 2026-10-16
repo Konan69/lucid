@@ -16,6 +16,7 @@ import {
   WriteDocumentRequest,
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
+import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
@@ -26,6 +27,14 @@ import {
   RegisterPushTargetRequest,
 } from './push.js'
 import type { AuthContext } from './auth.js'
+import {
+  CreateWatchRequest,
+  FindAppEventsRequest,
+  FindAppEventsResponse,
+  StopWatchRequest,
+  WatchListResponse,
+  WatchResponse,
+} from './watches.js'
 import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
 import {
   AcceptMembershipRequest,
@@ -168,6 +177,7 @@ import {
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { Appearance } from './appearance.js'
+import { EgressStatus } from './egress.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
   SkillReadOnly,
@@ -256,6 +266,13 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
   payload: NotifyPersonRequest,
   success: NotifyPersonOutcome,
 })
+
+// ── The Feed ───────────────────────────────────────────────────────────────
+/** A Person's own Feed; Post is runtime-only at the handler boundary, like NotifyPerson. */
+const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
+const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
+const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
+const Post = Rpc.make('Post', { ...call, payload: PostRequest, success: PostOutcome })
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -576,6 +593,26 @@ const IssueRoutineWebhook = Rpc.make('IssueRoutineWebhook', {
   success: RoutineWebhook,
 })
 
+// ── Watches ────────────────────────────────────────────────────────────────
+/** The events an Integration's app declares, named by the account the Person was shown. */
+const FindAppEvents = Rpc.make('FindAppEvents', {
+  ...call,
+  payload: FindAppEventsRequest,
+  success: FindAppEventsResponse,
+})
+/** Subscribe to one of those events for the acting Person; each occurrence wakes Vivid. */
+const CreateWatch = Rpc.make('CreateWatch', {
+  ...call,
+  payload: CreateWatchRequest,
+  success: WatchResponse,
+})
+const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
+const StopWatch = Rpc.make('StopWatch', {
+  ...call,
+  payload: StopWatchRequest,
+  success: WatchResponse,
+})
+
 // ── Projects ───────────────────────────────────────────────────────────────
 const ListProjects = Rpc.make('ListProjects', { ...call, success: ProjectListResponse })
 const WatchProjects = Rpc.make('WatchProjects', { ...live, success: ProjectListResponse })
@@ -781,6 +818,12 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
+/**
+ * What egress is doing for the caller right now (`egress.ts`). Whether it is on is the Person's
+ * own setting (`Settings.egress`); this is what came of it.
+ */
+const GetEgress = Rpc.make('GetEgress', { ...call, success: EgressStatus })
+const WatchEgress = Rpc.make('WatchEgress', { ...live, success: EgressStatus })
 const StartComputer = Rpc.make('StartComputer', { ...call, success: ComputerResponse })
 const StopComputer = Rpc.make('StopComputer', { ...call, success: ComputerResponse })
 /** A Person taking the keyboard and pointer, or handing them back. Vivid cannot act while held. */
@@ -972,6 +1015,10 @@ export const VividRpc = RpcGroup.make(
   RemovePushTarget,
   GetPushKey,
   NotifyPerson,
+  ListFeed,
+  WatchFeed,
+  MarkFeedCard,
+  Post,
   WatchNotifications,
   ReadNotifications,
   FindEvents,
@@ -983,6 +1030,10 @@ export const VividRpc = RpcGroup.make(
   DeleteRoutine,
   RunRoutine,
   IssueRoutineWebhook,
+  FindAppEvents,
+  CreateWatch,
+  ListWatches,
+  StopWatch,
   ListProjects,
   WatchProjects,
   CreateProject,
@@ -1027,6 +1078,8 @@ export const VividRpc = RpcGroup.make(
   PatchSkill,
   DeleteSkill,
   GetComputer,
+  GetEgress,
+  WatchEgress,
   GetComputerApps,
   WatchComputer,
   StartComputer,

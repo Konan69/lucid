@@ -51,7 +51,7 @@ const request = DeviceRequest.cases.Act.make({
   work: DeviceWork.cases.Page.make({ action: BrowserAction.cases.Read.make({}) }),
   expiresAt: 30_000,
 })
-const ability = { pages: true, apps: true }
+const ability = { pages: true, apps: true, egress: true }
 const failed = DeviceAnswer.cases.Failed.make({})
 
 /**

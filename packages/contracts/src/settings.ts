@@ -12,6 +12,12 @@ export class Settings extends Schema.Class<Settings>('Settings')(
     timezone: Schema.String,
     /** Whether Vivid tells this Person when it finishes or needs them in a Thread they left. */
     notify: Schema.Boolean,
+    /**
+     * Whether the Computer's browser sends its traffic out through this Person's own computer
+     * (`egress.ts`). Off until the Person turns it on. Temporary: issue 61 removes the choice,
+     * and with it this field.
+     */
+    egress: Schema.Boolean,
   },
   { title: 'Settings' },
 ) {}
@@ -23,6 +29,7 @@ export class PatchSettingsRequest extends Schema.Class<PatchSettingsRequest>(
     theme: Schema.optional(Theme),
     timezone: Schema.optional(Schema.String),
     notify: Schema.optional(Schema.Boolean),
+    egress: Schema.optional(Schema.Boolean),
   },
   { title: 'Patch Settings request' },
 ) {}

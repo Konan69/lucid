@@ -68,6 +68,7 @@ import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
+import { DeviceAsk } from './chat/Device'
 import {
   ApprovalHold,
   approvalHoldOf,
@@ -573,7 +574,13 @@ function Raised({
     Leaving: ({ request }) => Option.some({ request, leaving: true }),
   })
   if (Option.isNone(question)) {
-    return <RaisedApproval allowing={allowing} dock={dock.value} covered={covered} />
+    return (
+      <>
+        <RaisedApproval allowing={allowing} dock={dock.value} covered={covered} />
+        {/* A computer waiting to be allowed is asked about here too, once nothing else is up. */}
+        <DeviceAsk free={allowing.free} dock={dock.value} covered={covered} />
+      </>
+    )
   }
   const { request, leaving } = question.value
   return (

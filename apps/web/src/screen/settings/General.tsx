@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '../../ui/select'
 import { Customise } from '../vivid/Customise'
+import { Egress } from './Egress'
 import { Awaiting, Refusal, Row, Section } from './Parts'
 
 const THEMES = [
@@ -122,6 +123,7 @@ function VividSection({ me }: { me: MeResponse }) {
 }
 
 function Preferences({ settings }: { settings: Settings }) {
+  const egress = useLive(live.egress)
   const [unsaved, setUnsaved] = useState(false)
   /**
    * Saves the one setting that was changed and shows it at once. Only that field is sent: sending
@@ -144,6 +146,7 @@ function Preferences({ settings }: { settings: Settings }) {
                 theme: edit.theme === undefined ? current.theme : edit.theme,
                 timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
                 notify: edit.notify === undefined ? current.notify : edit.notify,
+                egress: edit.egress === undefined ? current.egress : edit.egress,
               }),
           ),
       )
@@ -208,6 +211,11 @@ function Preferences({ settings }: { settings: Settings }) {
             onChange={(next) => void act(save(new PatchSettingsRequest({ notify: next === 'on' })))}
           />
         </Row>
+        <Egress
+          enabled={settings.egress}
+          status={egress}
+          onChange={(egress) => void act(save(new PatchSettingsRequest({ egress })))}
+        />
       </Section>
     </>
   )

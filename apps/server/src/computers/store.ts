@@ -44,6 +44,7 @@ import {
   BrowserPicture,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
@@ -1025,9 +1026,11 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   machine: Machine['Service'],
   key: MachineKey,
   action: BrowserAction,
+  egress: boolean,
 ) {
-  if (!BrowserAction.guards.Screenshot(action)) return yield* machine.browse({ key, action })
-  const result = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+  if (!BrowserAction.guards.Screenshot(action))
+    return yield* machine.browse({ key, action, egress })
+  const result = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}), egress })
   const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
   const picture = yield* decodeBrowserPicture(view.picture).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'browser screenshot' })),
@@ -1078,6 +1081,7 @@ export const computerStoreLayer = Layer.effect(
   ComputerStore,
   Effect.gen(function* () {
     const state = yield* lifecycle()
+    const database = yield* Database
     const inactivity = state.rows.inactivity
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
@@ -1151,10 +1155,17 @@ export const computerStoreLayer = Layer.effect(
       },
       (effect, person) => state.lock(person).withPermit(effect),
     )
-    /** Both outline and image run under the same takeover permit. */
-    const browse = Effect.fn('ComputerStore.browse')((person: PersonId, action: BrowserAction) =>
-      execute(person, (key) => browserReceipt(state.machine, key, action)),
-    )
+    /**
+     * Both outline and image run under the same takeover permit. Whether the Person chose egress
+     * is read first and handed to the machine, which uses it only if this step starts the browser.
+     */
+    const browse = Effect.fn('ComputerStore.browse')(function* (
+      person: PersonId,
+      action: BrowserAction,
+    ) {
+      const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
+      return yield* execute(person, (key) => browserReceipt(state.machine, key, action, egress))
+    })
     const desktop = Effect.fn('ComputerStore.desktop')((person: PersonId, action: DesktopAction) =>
       execute(person, (key) => state.machine.desktop({ key, action })),
     )

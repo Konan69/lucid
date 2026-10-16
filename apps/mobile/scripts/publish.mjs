@@ -179,7 +179,7 @@ function findMaps(directory) {
  * raises `runtimeVersion`, which is the commit that adds, removes or changes a native module or
  * view the JavaScript calls: a binary without it would be handed code that crashes on it.
  *
- * It is empty since 0.3.10, which draws Markdown with a native view (`src/ui/Prose.tsx`,
+ * It is empty since 0.3.12, which draws Markdown with a native view (`src/ui/Prose.tsx`,
  * `react-native-enriched-markdown`). No binary before it has that view, so none of them is given
  * this JavaScript: 0.3.0 to 0.3.3, which shared one native side and were all listed here until
  * then, are answered "no update is published" and go on running the JavaScript they last took,

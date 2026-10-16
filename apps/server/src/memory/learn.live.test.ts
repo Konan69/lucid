@@ -99,6 +99,7 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
             companyId: null,
             audience: 'private',
             projectId: null,
+            place: 'Conversation',
           })
           const partition = MemoryPartition.make(`p-${person.id}`)
           const scopes = [MemoryScopeKey.make(`person:${person.id}`)]

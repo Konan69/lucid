@@ -103,13 +103,14 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'open-and-read',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
     }),
   )
   expect(page.address).toBe('https://example.com/')
   const read = yield* measured(
     'read-again',
-    machine.browse({ key, action: BrowserAction.cases.Read.make({}) }),
+    machine.browse({ key, egress: false, action: BrowserAction.cases.Read.make({}) }),
   )
   expect(read.title).toContain('Example')
   const links = Array.from(read.outline.matchAll(/- link "([^"\n]+)"/g), (match) => match[1])
@@ -120,12 +121,13 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'scroll-link-into-view',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Scroll.make({ direction: 'down', notches: 12 }),
     }),
   )
   const clicked = yield* measured(
     'click-link',
-    machine.browse({ key, action: BrowserAction.cases.Click.make({ target }) }),
+    machine.browse({ key, egress: false, action: BrowserAction.cases.Click.make({ target }) }),
   )
   expect(clicked.address).not.toBe(read.address)
   expect(clicked.address).toContain('iana.org')
@@ -134,6 +136,7 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'open-form',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Open.make({
         address: 'https://www.selenium.dev/selenium/web/web-form.html',
       }),
@@ -144,6 +147,7 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'type-and-read-back',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Type.make({
         target: 'Text input',
         text: 'Vivid browser input proof',
@@ -155,6 +159,7 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'replace-and-read-back',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Type.make({
         target: 'Text input',
         text: 'Vivid replacement proof',
@@ -167,6 +172,7 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
     'clear-and-read-back',
     machine.browse({
       key,
+      egress: false,
       action: BrowserAction.cases.Type.make({ target: 'Text input', text: '' }),
     }),
   )

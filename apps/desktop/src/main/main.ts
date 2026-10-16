@@ -24,7 +24,8 @@ import { locateComputer } from './computer.ts'
 import { createNotice } from './notice.ts'
 import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
-import { vividMayOpen } from './reach.ts'
+import { resolveHost, vividMayOpen } from './reach.ts'
+import { dialTarget, egressAddress, exitLink, isSessionCookie, type ExitSocket } from './egress.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -267,7 +268,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
           identity: known,
         }),
     }),
-    ability: () => ({ pages: true, apps: windows.apps }),
+    ability: () => ({ pages: true, apps: windows.apps, egress: true }),
     execute: (request) =>
       DeviceWork.match(request.work, {
         Page: ({ action }) => control.execute({ action, expiresAt: request.expiresAt }),
@@ -282,6 +283,33 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   // Signing in or out changes the app session's cookies. A different session ends a link opened
   // as the old one at once, action in progress included; anything else is a cue to look again.
   const changed = sessionChanges(new Map())
+  // The way out for the Computer's browser (`egress.ts`). It dials the same server as the same
+  // session, on a socket of its own, and only while a session cookie is in the app's jar: an
+  // app nobody is signed in to would otherwise ask a server that can only refuse it, for ever.
+  // The jar is read once here, and the changes below keep `sessions` current after that.
+  const sessions = new Set(
+    (yield* Effect.promise(() => input.session.cookies.get({})))
+      .map((cookie) => cookie.name)
+      .filter(isSessionCookie),
+  )
+  const exit = yield* exitLink({
+    socket: (): Option.Option<ExitSocket> => {
+      const server = input.server()
+      if (ServerSettings.guards.NoServer(server) || sessions.size === 0) return Option.none()
+      return Option.some(
+        new net.WebSocket(egressAddress(server.origin), {
+          session: input.session,
+          useSessionCookies: true,
+          origin: server.origin,
+        }),
+      )
+    },
+    resolve: resolveHost,
+    dial: dialTarget,
+    // Never from the app: a page on the Computer must not reach into this computer's network.
+    allowPrivateTargets: false,
+    onStatus: () => undefined,
+  })
   input.session.cookies.on('changed', (_event, cookie, cause, removed) => {
     const change = changed({
       name: cookie.name,
@@ -289,14 +317,22 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       removed,
       overwritten: cause === 'overwrite',
     })
-    if (change === 'Restart') computer.restart()
-    else computer.wake()
+    if (isSessionCookie(cookie.name)) {
+      if (removed && cause !== 'overwrite') sessions.delete(cookie.name)
+      else sessions.add(cookie.name)
+    }
+    if (change === 'Restart') {
+      computer.restart()
+      // A socket opened as the old session must not go on carrying for the new one.
+      exit.restart()
+    } else computer.wake()
   })
+  yield* Effect.forkDetach(exit.run.pipe(Effect.setContext(context)), { startImmediately: true })
   // The detached link outlives boot; settings and startup spans must not become its context.
   yield* Effect.forkDetach(computer.run.pipe(Effect.setContext(context)), {
     startImmediately: true,
   })
-  return { computer, control }
+  return { computer, control, exit }
 })
 
 /**
@@ -408,7 +444,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
 
-  const { computer, control } = yield* linkThisComputer({
+  const { computer, control, exit } = yield* linkThisComputer({
     session: desktopSession,
     server: () => serverSettings,
     browser: () => browser,
@@ -425,6 +461,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     serverSettings = value
     // A link belongs to one server: drop it and start over on the new one, or on none.
     computer.restart()
+    exit.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
       runNonFatal(

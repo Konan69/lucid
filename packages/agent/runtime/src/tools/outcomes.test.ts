@@ -24,7 +24,7 @@ describe('outcome mapping', () => {
     expect(browseOutcome(BrowseOutcome.cases.NotAllowed.make({})).output).toEqual({
       ok: false,
       message:
-        'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
+        'The Person has not allowed Vivid to use their computer. While its Vivid desktop app is open, they are asked over the message box: tell them to press Allow there, then try again.',
     })
     expect(browseOutcome(BrowseOutcome.cases.RunRequired.make({}))).toEqual({
       output: {

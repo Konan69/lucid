@@ -36,6 +36,9 @@ export const absentMachineLayer = Layer.succeed(
     converse: Effect.fn('Machine.absent.converse')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
+    tunnel: Effect.fn('Machine.absent.tunnel')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
     run: Effect.fn('Machine.absent.run')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),

@@ -3,8 +3,9 @@ import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { ThreadId } from '@vivid/contracts'
 import { randomUUID } from 'expo-crypto'
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
+import { useSharedValue } from 'react-native-reanimated'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
 import { again, begin, startedWith } from '../data/first'
@@ -17,6 +18,7 @@ import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
+import { DeviceAsk } from './chat/Device'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
 
@@ -133,8 +135,11 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
  * and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
  */
 function Writing({ me, mood, start, placeholder }: WritingProps) {
+  // The composer's dock, measured, which a banner over it stands on (`chat/Banner.tsx`).
+  const [dock, setDock] = useState<Option.Option<number>>(Option.none())
+  const covered = useSharedValue(0)
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -142,17 +147,26 @@ function Writing({ me, mood, start, placeholder }: WritingProps) {
       >
         <First me={me} mood={mood} />
       </ScrollView>
-      <Composer
-        value={start.draft}
-        autoFocus={false}
-        placeholder={placeholder}
-        working={false}
-        disabled={false}
-        onChange={start.setDraft}
-        onSend={start.send}
-        onStop={() => undefined}
-      />
-    </>
+      {/* A computer waiting to be allowed is asked about where the Person starts. */}
+      {Option.isSome(dock) && <DeviceAsk free dock={dock.value} covered={covered} />}
+      <View
+        onLayout={(event) => {
+          const height = event.nativeEvent.layout.height
+          setDock((now) => (Option.contains(now, height) ? now : Option.some(height)))
+        }}
+      >
+        <Composer
+          value={start.draft}
+          autoFocus={false}
+          placeholder={placeholder}
+          working={false}
+          disabled={false}
+          onChange={start.setDraft}
+          onSend={start.send}
+          onStop={() => undefined}
+        />
+      </View>
+    </View>
   )
 }
 

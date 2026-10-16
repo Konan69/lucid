@@ -1,4 +1,5 @@
 import * as NodeBuffer from 'node:buffer'
+import type * as NodeStream from 'node:stream'
 import * as NodeStringDecoder from 'node:string_decoder'
 import {
   Cause,
@@ -70,6 +71,14 @@ export class LinkRunLost extends Schema.TaggedError<LinkRunLost>()(
   { title: 'LinkRunLost' },
 ) {}
 
+/** Nothing on the machine is listening on the port a channel was asked for. The connection is
+ * fine; whatever should be listening has not been started, or has ended. */
+export class LinkPortClosed extends Schema.TaggedError<LinkPortClosed>()(
+  'LinkPortClosed',
+  {},
+  { title: 'LinkPortClosed' },
+) {}
+
 export type LinkFailure = LinkUnreachable | LinkHostMismatch | LinkKeyRefused
 
 /** How a command ended. `timedOut` is this side's deadline; the exit code is then absent. */
@@ -119,6 +128,14 @@ export interface Link {
     readonly directory: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<LinkConversation, LinkUnreachable, Scope.Scope>
+  /**
+   * A byte stream to a port on the machine's own loopback, as a channel on this connection, held
+   * for the scope: closing the scope closes the channel. Nothing on the machine has to listen
+   * on any address but its loopback for the server to reach it this way.
+   */
+  readonly tunnel: (
+    port: number,
+  ) => Effect.Effect<NodeStream.Duplex, LinkUnreachable | LinkPortClosed, Scope.Scope>
   /** False once the connection has closed; whoever holds the link opens another. */
   readonly alive: () => boolean
   readonly read: (path: string) => Effect.Effect<Uint8Array, LinkUnreachable | LinkFileRefused>
@@ -556,6 +573,47 @@ const conversation =
       return spoken
     })
 
+/**
+ * SSH's own reason code for a channel the far side could not connect (RFC 4254 section 5.1,
+ * `SSH_OPEN_CONNECT_FAILED`): the machine was reached and nothing took the connection.
+ */
+const CONNECT_FAILED = 2
+
+/**
+ * ssh2 puts the far side's reason code on the error it hands back for a channel that was not
+ * opened (`lib/client.js`, the channel-open failure); its declarations do not say so, so the
+ * error is read as what it is expected to be and anything else is a lost connection.
+ */
+const refusedFor = Schema.decodeUnknownOption(Schema.Struct({ reason: Schema.Int }))
+
+/**
+ * One channel to a port on the machine's loopback (`direct-tcpip`, ssh2 `forwardOut`). The
+ * channel is a Node stream with back-pressure of its own, which is why it is handed over as one:
+ * whoever pumps bytes through it must be able to wait for it to drain.
+ */
+const tunnelling =
+  (client: Client, calls: Waiting): Link['tunnel'] =>
+  (port) =>
+    Effect.acquireRelease(
+      calls.call<ClientChannel, LinkUnreachable | LinkPortClosed>(
+        new LinkUnreachable(),
+        (settle) => {
+          // The source address is only what the machine's listener is told; nothing reads it.
+          client.forwardOut('127.0.0.1', 0, '127.0.0.1', port, (error, opened) => {
+            if (error === undefined || error === null) return settle(Effect.succeed(opened))
+            return settle(
+              Effect.fail(
+                Option.exists(refusedFor(error), ({ reason }) => reason === CONNECT_FAILED)
+                  ? new LinkPortClosed()
+                  : new LinkUnreachable(),
+              ),
+            )
+          })
+        },
+      ),
+      (opened) => Effect.sync(() => opened.destroy()),
+    )
+
 /** The file subsystem is opened once per connection and shared by every read and put. */
 const subsystem = (client: Client, calls: Waiting) =>
   calls.call<SFTPWrapper, LinkUnreachable>(new LinkUnreachable(), (settle) => {
@@ -641,6 +699,7 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
   return {
     run: runner(client, calls),
     converse: conversation(client, calls),
+    tunnel: tunnelling(client, calls),
     alive: calls.alive,
     read,
     put,

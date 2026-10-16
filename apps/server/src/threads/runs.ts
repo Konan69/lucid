@@ -223,6 +223,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     Standing: () => false,
     Attention: () => false,
     Decision: () => true,
+    // A background wake for the Feed: the Person hears about it only when Vivid posts there.
+    Watch: () => false,
   })
 })
 const decodeState = decodeStored(
@@ -242,6 +244,7 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
     Attention: ({ routineName }): RunOrigin =>
       RunOrigin.cases.Routine.make({ person, routineName }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
+    Watch: ({ watchName }): RunOrigin => RunOrigin.cases.Watch.make({ person, watchName }),
   })
 
 const ENDED = {

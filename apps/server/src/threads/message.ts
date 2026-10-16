@@ -4,7 +4,11 @@ import { DeliveryMessage } from './conversation.ts'
 /** The only metadata Flue may render. Project per signal kind rather than forwarding producers' ids. */
 export const signalAttributes = (message: DeliveryMessage, speaker: string, turn: number) => {
   if (DeliveryMessage.guards.Signal(message)) {
-    if (message.type === 'schedule' && message.attributes.name !== undefined)
+    // A Routine and a Watch are both named to the model by the name their owner gave them.
+    if (
+      (message.type === 'schedule' || message.type === 'event') &&
+      message.attributes.name !== undefined
+    )
       return DeliveryMessage.cases.Signal.fields.attributes.make({
         from: speaker,
         turn: String(turn),

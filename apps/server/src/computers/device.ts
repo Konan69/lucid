@@ -25,6 +25,7 @@ import {
   RunState,
   DatabaseFailure,
   Device,
+  DEVICE_ASKING_MILLIS,
   DeviceAccess,
   DeviceAnswer,
   DeviceId,
@@ -121,6 +122,8 @@ export interface DeviceService {
   readonly list: (
     personId: PersonId,
   ) => Effect.Effect<ReadonlyArray<Device>, DatabaseInfrastructureError>
+  /** Which of these computers are waiting to be allowed with their desktop app open now. */
+  readonly asking: (list: ReadonlyArray<Device>) => Effect.Effect<ReadonlyArray<DeviceId>>
   /** Lets Vivid use this computer and, in the same write, no other computer of this Person. */
   readonly allow: (
     personId: PersonId,
@@ -257,7 +260,7 @@ const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
  * first one ends, so a connection that died without saying so cannot shadow the app that came
  * back, and a request never has two places it might go.
  */
-const makePresence = (links: Map<DeviceId, Subscription>) => {
+const makePresence = (links: Map<DeviceId, Subscription>, knocks: Map<DeviceId, number>) => {
   /** Ending a link is one signal. Its stream stops and every request waiting on it settles. */
   const close = (subscription: Subscription) => Deferred.succeed(subscription.closed, undefined)
 
@@ -302,7 +305,28 @@ const makePresence = (links: Map<DeviceId, Subscription>) => {
       : DevicePresence.cases.Connected.make({ ability: link.ability })
   }
 
-  return { open, release, end, presenceOf }
+  /** A waiting computer's desktop app enrolled just now: it is open and asking to be allowed. */
+  const knock = (device: DeviceId, at: number) => {
+    knocks.set(device, at)
+  }
+
+  /**
+   * Which of these computers are asking to be allowed at `now` (`DeviceListResponse.asking`):
+   * still waiting, and enrolled within `DEVICE_ASKING_MILLIS`. A knock that has run out is
+   * forgotten here, so the map holds only computers whose app was open in the last minute.
+   */
+  const askingOf = (list: ReadonlyArray<Device>, now: number): ReadonlyArray<DeviceId> =>
+    list.flatMap((device) => {
+      const at = knocks.get(device.id)
+      if (at === undefined) return []
+      if (now - at >= DEVICE_ASKING_MILLIS) {
+        knocks.delete(device.id)
+        return []
+      }
+      return DeviceAccess.guards.Pending(device.access) ? [device.id] : []
+    })
+
+  return { open, release, end, presenceOf, knock, askingOf }
 }
 
 type Presence = ReturnType<typeof makePresence>
@@ -366,7 +390,9 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
     )
     if (row === undefined)
       return yield* new DatabaseFailure({ message: 'Enrolled computer not found' })
-    return yield* toDevice(row)
+    const device = yield* toDevice(row)
+    if (DeviceAccess.guards.Pending(device.access)) presence.knock(device.id, now)
+    return device
   })
 
   const list = Effect.fn('Device.list')(function* (personId: PersonId) {
@@ -953,7 +979,7 @@ export const deviceLayer = Layer.effect(
     const database = yield* Database
     const links = new Map<DeviceId, Subscription>()
     const pending = new Map<DeviceRequestId, Pending>()
-    const presence = makePresence(links)
+    const presence = makePresence(links, new Map())
     const registry = makeRegistry(database, presence)
     const ledger = makeLedger(database, pending)
 
@@ -989,6 +1015,9 @@ export const deviceLayer = Layer.effect(
     return DeviceRegistry.of({
       enrol: registry.enrol,
       list: registry.list,
+      asking: Effect.fn('Device.asking')(function* (list) {
+        return presence.askingOf(list, yield* Clock.currentTimeMillis)
+      }),
       allow: registry.allow,
       revoke: registry.revoke,
       requireConnected,

@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "egress" boolean DEFAULT false NOT NULL;

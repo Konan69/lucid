@@ -12,6 +12,11 @@ export const settingsTable = pgTable('settings', {
   /** Whether this Person wants to be told when something needs them or finishes. */
   notify: boolean().notNull().default(true),
   /**
+   * Whether the Computer's browser sends its traffic out through this Person's own computer
+   * (`computers/egress/`). Off until the Person turns it on. Issue 61 removes the choice.
+   */
+  egress: boolean().notNull().default(false),
+  /**
    * What this Person calls Vivid in their personal space, and how its face is drawn there: an
    * `Appearance` (`packages/contracts/src/appearance.ts`). The defaults are Vivid as it ships, so
    * a row written before these columns existed reads as nobody having changed anything.

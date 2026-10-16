@@ -72,7 +72,7 @@ const snapshotOf = (holding: {
   readonly threads: Option.Option<ThreadListResponse>
   readonly drafts: Option.Option<DraftListResponse>
 }): Snapshot => ({
-  version: 2,
+  version: 3,
   origin: ORIGIN,
   expiresAt: holding.expiresAt,
   me: meOf(ada, personal),
@@ -105,7 +105,7 @@ describe('a snapshot in a device store', () => {
     expect(readSnapshot(Option.none(), ORIGIN, NOW)).toEqual(Option.none())
     expect(readSnapshot(Option.some(text.slice(0, 40)), ORIGIN, NOW)).toEqual(Option.none())
     expect(
-      readSnapshot(Option.some(text.replace('"version":2', '"version":3')), ORIGIN, NOW),
+      readSnapshot(Option.some(text.replace('"version":3', '"version":4')), ORIGIN, NOW),
     ).toEqual(Option.none())
     // A Thread list from a build whose Threads had no title is not a Thread list.
     expect(

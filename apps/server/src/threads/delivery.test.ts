@@ -792,6 +792,54 @@ layer(
           }),
         ),
     )
+    it.effect(
+      'a Background Thread is never quoted by a notification: follow-ups, failures and questions',
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const test = yield* inputHarness()
+            yield* Ref.set(test.watching, false)
+            const database = yield* Database
+            const place = (to: 'Conversation' | 'Background') =>
+              database.run(
+                database.update(threads).set({ place: to }).where(eq(threads.id, test.threadId)),
+              )
+            /** Settle a Run and wait for its observer, which owns any notification. */
+            const settled = Effect.fn('Delivery.test.settled')(function* (
+              id: RunId,
+              settlement: Settlement,
+            ) {
+              yield* test.settle(id, settlement)
+              expect(yield* Queue.take(test.ended)).toBe(id)
+              const observer = test.observers.get(id)
+              if (observer === undefined) expect.fail('Missing Run observer')
+              expect((yield* Fiber.await(observer))._tag).toBe('Success')
+            })
+            yield* place('Background')
+            // The Person answers from the Feed: a Message-origin Run that completes.
+            const followUp = yield* test.conversation.admit(said(test.threadId, test.ada))
+            yield* test.finish(followUp.runId)
+            const failing = yield* test.conversation.admit(said(test.threadId, test.ada))
+            yield* settled(
+              failing.runId,
+              Settlement.cases.Failed.make({ reason: 'ModelUnavailable', providerStatus: 520 }),
+            )
+            const unknown = yield* test.conversation.admit(said(test.threadId, test.ada))
+            yield* settled(unknown.runId, Settlement.cases.Unknown.make({}))
+            // A question raised there waits for the Person in the Feed, not in a notification.
+            const question = yield* askFor(test, test.ada, test.threadId)
+            expect(question.state._tag).toBe('Waiting')
+            expect(yield* Ref.get(test.notices)).toEqual([])
+            // The same Run in a Conversation is announced, so the silence above is the place's.
+            yield* place('Conversation')
+            const spoken = yield* test.conversation.admit(said(test.threadId, test.ada))
+            yield* test.finish(spoken.runId)
+            expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'finished',
+            ])
+          }),
+        ),
+    )
     // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
     const admissionFailures = [
       {
@@ -1668,7 +1716,7 @@ layer(
           sessionId,
           device: device.id,
           installation,
-          ability: { pages: true, apps: true },
+          ability: { pages: true, apps: true, egress: false },
         })
         yield* stream.pipe(
           Stream.runForEach((request) =>

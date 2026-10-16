@@ -4,10 +4,12 @@ import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { computerScreenRoutes } from '../computers/screen.ts'
+import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
 import { routineWebhookRoutes } from '../routines/webhook.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
+import { watchRoutes } from '../watches/receiver.ts'
 import { bytesRoutes } from './bytes.ts'
 import { faultRoutes } from './faults.ts'
 
@@ -45,8 +47,10 @@ const healthRoute = HttpRouter.add(
  * Everything the server answers. Product calls are `VividRpc` (`/api/live`, `/api/rpc`). The rest
  * is plain HTTP only where something other than our client is on the other end: Better Auth, the
  * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, an
- * outside service calling a Routine's webhook, a browser moving Library bytes, the Computer's
- * screen, and a client reporting that it failed to draw (`faults.ts`). The mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
+ * outside service calling a Routine's webhook, Executor delivering a Watch's events, a browser
+ * moving Library bytes, the Computer's screen, a desktop app carrying the Computer's browsing
+ * (`computers/egress/route.ts`), and a client reporting that it failed to draw (`faults.ts`). The
+ * mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
  * `main.ts`, because whether it exists depends on launch configuration.
  */
 export const routerLayer = Layer.mergeAll(
@@ -58,6 +62,8 @@ export const routerLayer = Layer.mergeAll(
   faultRoutes,
   connectionReturnRoutes,
   routineWebhookRoutes,
+  watchRoutes,
   computerScreenRoutes,
+  egressRoutes,
   healthRoute,
 ).pipe(Layer.provide(HttpRouter.layer))

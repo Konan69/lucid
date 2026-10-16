@@ -35,6 +35,7 @@ import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
+import { egressLayer } from './computers/egress/relay.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
@@ -78,6 +79,10 @@ import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
 import { threadStoreLayer } from './threads/store.ts'
 import { updateRoutes } from './updates/routes.ts'
+import { watchedAppsLayer } from './watches/apps.ts'
+import { executorEventsLayer } from './watches/events.ts'
+import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { watchStoreLayer } from './watches/store.ts'
 
 /**
  * Memory is part of every Vivid. `VIVID_HELIX_URL` and the model gateway key are required while
@@ -153,9 +158,12 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
-  const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
-    Layer.provideMerge(conversation),
-  )
+  const accounts = Layer.mergeAll(
+    connectionStoreLayer,
+    toolEffectsLayer,
+    computerStoreLayer,
+    egressLayer,
+  ).pipe(Layer.provideMerge(conversation))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
@@ -164,15 +172,21 @@ const serverProgram = Effect.gen(function* () {
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     routineStoreLayer,
+    watchStoreLayer,
+    executorEventsLayer,
+    watchedAppsLayer,
     codeCallsLayer,
     codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
   ).pipe(Layer.provideMerge(decisions))
-  const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
+  const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(
+    Layer.provideMerge(work),
+  )
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
     routineSchedulerLayer,
     migrationLayer,
     refusedLayer,
+    watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,

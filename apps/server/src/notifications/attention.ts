@@ -9,6 +9,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { requireThread } from '../threads/access.ts'
+import { notifiesFrom } from '../threads/place.ts'
 import { actingRun } from '../threads/runs.ts'
 import { recordNotice } from './notifier.ts'
 
@@ -19,6 +20,11 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
   readonly message: typeof NotifyPersonRequest.Type
 }) {
   const thread = yield* requireThread(input.threadId, input.personId)
+  // Vivid working in a Background Thread reaches the Person only by posting to the Feed.
+  if (!notifiesFrom(thread.place))
+    return yield* new Forbidden({
+      message: 'In the background, tell the Person with post instead; it puts this in their Feed.',
+    })
   const run = yield* actingRun(input.threadId, input.personId).pipe(
     Effect.catchTag('NoActingRun', () =>
       Effect.fail(new Forbidden({ message: 'This notification needs an acting Run.' })),

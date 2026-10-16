@@ -45,6 +45,7 @@ import {
   ThreadId,
   Workspace,
   type Device,
+  DEVICE_ASKING_MILLIS,
   DeviceListResponse,
   DeviceRequest,
 } from '@vivid/contracts'
@@ -272,7 +273,7 @@ const listenWith = Effect.fn('DeviceTest.listenWith')(function* (
 
 /** Existing page tests keep their page-only desktop capability. */
 const listen = (who: Somebody, device: Device, installation: InstallationId) =>
-  listenWith(who, device, installation, { pages: true, apps: false })
+  listenWith(who, device, installation, { pages: true, apps: false, egress: false })
 
 /** Use the runtime-only RPC with the same Person/Thread authority as Browse. */
 const useWindow = (who: Somebody, threadId: ThreadId, action: WindowAction) =>
@@ -292,7 +293,11 @@ const native = Effect.fn('DeviceTest.native')(function* () {
   const who = yield* somebody(farFuture)
   const { device, installation } = yield* enrolled(who, 'Windows computer')
   yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
-  const link = yield* listenWith(who, device, installation, { pages: true, apps: true })
+  const link = yield* listenWith(who, device, installation, {
+    pages: true,
+    apps: true,
+    egress: false,
+  })
   const run = yield* working(who.person, who.person)
   return { who, device, installation, link, ...run }
 })
@@ -448,7 +453,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation,
-              ability: { pages: true, apps: false },
+              ability: { pages: true, apps: false, egress: false },
             })
             .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
           yield* Queue.take((yield* Bus).watching)
@@ -469,7 +474,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false },
+            ability: { pages: true, apps: false, egress: false },
           })
           .pipe(Stream.runDrain, signedInCompany, Effect.flip)
         expect(failure._tag).toBe('Forbidden')
@@ -486,7 +491,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(ada)
         const previous = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+          presence: DevicePresence.cases.Connected.make({
+            ability: { pages: true, apps: false, egress: false },
+          }),
         })
         const successor = yield* listen(ada, device, installation)
         expect(Exit.isSuccess(yield* Fiber.await(previous.ended))).toBe(true)
@@ -509,7 +516,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(ada)
         expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(ada, 'Laptop')
-        expect((yield* nextValue(watch)).devices).toMatchObject([
+        const enrolledNotice = yield* nextValue(watch)
+        expect(enrolledNotice.devices).toMatchObject([
           {
             id: device.id,
             name: 'Laptop',
@@ -517,6 +525,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             presence: DevicePresence.cases.Offline.make({}),
           },
         ])
+        // Its app enrolled just now and it is waiting: it is asking to be allowed.
+        expect(enrolledNotice.asking).toEqual([device.id])
         // Each nextValue advances the debounce clock by 20 ms; access dates precede that advance.
         const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
         const allowedNotice = yield* nextValue(watch)
@@ -529,6 +539,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           },
         ])
         expect(allowedNotice.devices).toEqual([allowed.device])
+        expect(allowedNotice.asking).toEqual([])
         const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
         const live = yield* nextValue(watch)
         expect(live.devices).toMatchObject([
@@ -544,6 +555,26 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
+    it.effect('a waiting computer asks only while its app keeps enrolling', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        const asking = computerHandlers.ListDevices().pipe(
+          as(ada),
+          Effect.map((list) => list.asking),
+        )
+        expect(yield* asking).toEqual([device.id])
+        yield* TestClock.adjust(DEVICE_ASKING_MILLIS - 1)
+        expect(yield* asking).toEqual([device.id])
+        // The app was closed: a minute without enrolling and it is no longer asked about.
+        yield* TestClock.adjust(1)
+        expect(yield* asking).toEqual([])
+        // The same app enrolling again is asking again.
+        yield* computerHandlers.EnrolDevice({ installation, name: 'Laptop' }).pipe(as(ada))
+        expect(yield* asking).toEqual([device.id])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
     it.effect('WatchDevices emits desktop connection and scoped disconnection', () =>
       Effect.gen(function* () {
         const ada = yield* somebody(farFuture)
@@ -555,7 +586,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         })
         const link = yield* listen(ada, device, installation)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+          presence: DevicePresence.cases.Connected.make({
+            ability: { pages: true, apps: false, egress: false },
+          }),
         })
         yield* Fiber.interrupt(link.ended)
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
@@ -671,7 +704,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .WatchDeviceRequests({
               device: device.id,
               installation: presented,
-              ability: { pages: true, apps: false },
+              ability: { pages: true, apps: false, egress: false },
             })
             .pipe(
               Stream.runDrain,
@@ -730,7 +763,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .WatchDeviceRequests({
             device: device.id,
             installation,
-            ability: { pages: true, apps: false },
+            ability: { pages: true, apps: false, egress: false },
           })
           .pipe(Stream.runDrain, as(ada), Effect.flip)
         expect(again._tag).toBe('Forbidden')

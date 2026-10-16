@@ -340,6 +340,8 @@ const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
             theme: edit.theme === undefined ? current.theme : edit.theme,
             timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
             notify: edit.notify === undefined ? current.notify : edit.notify,
+            // Not a phone setting: carried through as the server has it.
+            egress: current.egress,
           }),
       ),
   )
