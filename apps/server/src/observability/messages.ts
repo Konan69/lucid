@@ -23,6 +23,8 @@ export const Message = {
   live: 'Live query counted',
   /** `live/tally.ts`: how many change notifications this process heard in the last minute. */
   moved: 'Changes counted',
+  /** `live/tally.ts`: how many times one call was made on the live socket in the last minute. */
+  called: 'Calls counted',
 } as const
 export type Message = (typeof Message)[keyof typeof Message]
 

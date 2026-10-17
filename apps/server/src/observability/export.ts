@@ -22,7 +22,7 @@ import * as OtlpSerialization from 'effect/observability/OtlpSerialization'
 import * as OtlpTracer from 'effect/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
-import { LiveAttribute, MovedAttribute, QUERY, watchedNames } from '../live/tally.ts'
+import { CallAttribute, LiveAttribute, MovedAttribute, QUERY, watchedNames } from '../live/tally.ts'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
 import {
@@ -202,8 +202,9 @@ const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TR
  *   (`typeName`).
  * - `rpc.system.name` and `rpc.method` are written by Effect 4.0.2 `RpcServer` on each call's span
  *   (`rpc/internal/tracing.ts` `spanAttributes`): the fixed `effect_rpc`, and the call's tag, which
- *   is only ever a tag found in the contract's group. `rpc.system` and `rpc.service` are written by
- *   nothing today; they are listed for a recorder that names the call from the contract.
+ *   is only ever a tag found in the contract's group. `live/tally.ts` writes `rpc.method` on its
+ *   call counts too, from the same group (`isCalled`). `rpc.system` and `rpc.service` are written
+ *   by nothing today; they are listed for a recorder that names the call from the contract.
  *
  * The rules are built once for each serialization layer, because two of them keep state: the
  * names and the database codes admitted so far (`admitting`).
@@ -225,7 +226,7 @@ const rulesOf = (): Rules => {
     [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],
     // `live/tally.ts`: the name is one of the contract's `Watch…` tags and every other value a count.
     [QUERY, oneOf(watchedNames)],
-    ...[...Object.values(LiveAttribute), ...Object.values(MovedAttribute)].map(
+    ...[...Object.values(LiveAttribute), ...Object.values(MovedAttribute), CallAttribute.calls].map(
       (key) => [key, integer(0, Number.MAX_SAFE_INTEGER)] as const,
     ),
     // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its

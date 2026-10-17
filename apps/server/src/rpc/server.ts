@@ -29,6 +29,7 @@ import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
+import { liveProtocolLayer } from './link.ts'
 
 /**
  * Every product call, implemented once. `VividRpc.toLayer` is total over the contract: a call
@@ -64,13 +65,13 @@ export const rpcHandlersLayer = VividRpc.toLayer({
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every
  * write. The browser sends its session cookie on the upgrade and a paired device its bearer token,
- * so each call on the socket is authenticated like any other.
+ * so each call on the socket is authenticated like any other. Its transport hears every client
+ * message on the way in (`rpc/link.ts`).
  */
-const liveLayer = RpcServer.layerHttp({
-  group: VividRpc,
-  path: '/api/live',
-  protocol: 'websocket',
-}).pipe(Layer.provide(RpcSerialization.layerJson))
+const liveLayer = RpcServer.layer(VividRpc).pipe(
+  Layer.provide(liveProtocolLayer('/api/live')),
+  Layer.provide(RpcSerialization.layerJson),
+)
 
 /**
  * The same calls over plain HTTP, for callers that want one answer and no socket: the runtime's
