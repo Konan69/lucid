@@ -1,10 +1,16 @@
 {
-  "extends": "expo/tsconfig.base",
+  "extends": ["../../tsconfig.base.json", "expo/tsconfig.base"],
   "compilerOptions": {
     "strict": true,
     "incremental": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    // The root's Effect rules and checks apply here; Expo's base comes after it for the module,
+    // JSX and resolution settings the bundler needs. These two root checks stay off: the
+    // vendored copies (`vendor/`, never edited) and the OpenUI port in `src/parts` were written
+    // without them, as the web's copies of the same sources are (`apps/web/vendor/openui`).
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
     "types": ["react", "node"]
   },
