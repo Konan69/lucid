@@ -243,7 +243,10 @@ export const ThreadDetail = Schema.Struct({
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
-/** A client saying it has a Thread open. Sent on a short interval; silence ends the presence. */
+/**
+ * A client saying it has a Thread open and in front, and whether something is typed in it. It is
+ * held open as `BePresent`, and a change of `typing` is a new hold in place of the old one.
+ */
 export const PresenceRequest = Schema.Struct({
   threadId: ThreadId,
   typing: Schema.Boolean,

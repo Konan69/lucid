@@ -1,8 +1,10 @@
 import { NodeHttpServer } from '@effect/platform-node'
 import { NodeWS } from '@effect/platform-node/NodeSocket'
 import { expect, layer } from '@effect/vitest'
+import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServer from 'effect/http/HttpServer'
@@ -10,7 +12,10 @@ import * as NetAddress from 'effect/net/NetAddress'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
 import { LiveTally, makeTally } from '../live/tally.ts'
-import { liveProtocolLayer } from './link.ts'
+import { type Link, LiveLink, liveProtocolLayer } from './link.ts'
+
+/** What the server was handed for one message: its kind, and the link it found beside it. */
+type Heard = readonly [string, Option.Option<Link>]
 
 /**
  * The live socket's transport on a real HTTP server, with what reaches the server kept in order
@@ -19,13 +24,17 @@ import { liveProtocolLayer } from './link.ts'
  */
 const serving = Effect.fn('LinkTest.serving')(function* () {
   const tally = makeTally()
-  const heard = yield* Queue.unbounded<string>()
+  const heard = yield* Queue.unbounded<Heard>()
   const gone = yield* Queue.unbounded<number>()
   const listening = Layer.effectDiscard(
     Effect.gen(function* () {
       const protocol = yield* RpcServer.Protocol
       yield* protocol
-        .run((_clientId, message) => Queue.offer(heard, message._tag))
+        .run((_clientId, message) =>
+          Effect.flatMap(Effect.serviceOption(LiveLink), (link) =>
+            Queue.offer(heard, [message._tag, link]),
+          ),
+        )
         .pipe(Effect.forkScoped)
       yield* Queue.take(protocol.disconnects).pipe(
         Effect.flatMap((clientId) => Queue.offer(gone, clientId)),
@@ -59,6 +68,32 @@ const request = (id: string, tag: string) =>
 /** The transport's own ping, as `RpcClient` puts it on the wire every five seconds. */
 const ping = '{"_tag":"Ping"}'
 
+layer(NodeHttpServer.layerTest)('the live socket', (it) => {
+  it.effect(
+    'hands each message its client’s link, keeps it live on any message, and closes it with the socket',
+    () =>
+      Effect.gen(function* () {
+        const { heard, gone, client } = yield* serving()
+        client.send(ping)
+        const [kind, first] = yield* Queue.take(heard)
+        expect(kind).toBe('Ping')
+        if (Option.isNone(first)) return expect.fail('A message on the live socket has its link')
+        expect(first.value.live(yield* Clock.currentTimeMillis)).toBe(true)
+
+        client.send(request('1', 'FindServices'))
+        const [, second] = yield* Queue.take(heard)
+        // The same client, the same link: a call and a ping both say the client is there.
+        if (Option.isNone(second)) return expect.fail('A call on the live socket has its link')
+        expect(second.value).toBe(first.value)
+
+        client.terminate()
+        yield* Queue.take(gone)
+        expect(first.value.live(yield* Clock.currentTimeMillis)).toBe(false)
+      }),
+  )
+})
+
+// One server per test: on a shared test server, a second app served did not get the connection.
 layer(NodeHttpServer.layerTest)('the live socket’s counts', (it) => {
   it.effect('counts each call of the contract by its tag and nothing else', () =>
     Effect.gen(function* () {

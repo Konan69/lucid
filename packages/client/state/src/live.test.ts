@@ -280,36 +280,46 @@ describe('live state', () => {
   })
 
   it.effect(
-    'beats on mount, every interval and at once when what it says changes, then stops',
+    'holds one call from mount, says nothing on a timer, holds anew when what it says changes, then closes',
     () => {
       const program = Effect.gen(function* () {
         // The atom runtime waits on real timers, so the test holds those, as the search test does.
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
         const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
-        const said = yield* Queue.unbounded<boolean>()
+        const opened = yield* Queue.unbounded<boolean>()
+        const closed = yield* Queue.unbounded<boolean>()
         const typing = Atom.make(false)
         const live = makeLive(yield* testClientLayer(plans))
-        const here = live.beat(typing, (_client, value) => Queue.offer(said, value), '5 seconds')
+        // The server's side of the call: open while the stream runs, closed when it is stopped.
+        const here = live.hold(typing, (_client, value) =>
+          Stream.unwrap(
+            Effect.as(
+              Effect.acquireRelease(Queue.offer(opened, value), () => Queue.offer(closed, value)),
+              Stream.never,
+            ),
+          ),
+        )
         // Mounted the way a screen mounts it: read at once, kept while the screen is open.
         const unmount = live.registry.mount(here)
 
-        expect(yield* Queue.take(said)).toBe(false)
-        yield* TestClock.adjust(0)
-        vi.advanceTimersByTime(4999)
-        yield* TestClock.adjust(0)
-        expect(yield* Queue.size(said)).toBe(0)
-        vi.advanceTimersByTime(1)
-        expect(yield* Queue.take(said)).toBe(false)
-
-        live.registry.set(typing, true)
-        expect(yield* Queue.take(said)).toBe(true)
-
-        unmount()
-        yield* TestClock.adjust(0)
+        expect(yield* Queue.take(opened)).toBe(false)
+        yield* TestClock.adjust('30 seconds')
         vi.advanceTimersByTime(30_000)
         yield* TestClock.adjust(0)
-        expect(yield* Queue.size(said)).toBe(0)
-      }).pipe(Effect.withSpan('LiveTest.beat'))
+        expect(yield* Queue.size(opened)).toBe(0)
+        expect(yield* Queue.size(closed)).toBe(0)
+
+        live.registry.set(typing, true)
+        expect(yield* Queue.take(closed)).toBe(false)
+        expect(yield* Queue.take(opened)).toBe(true)
+
+        unmount()
+        expect(yield* Queue.take(closed)).toBe(true)
+        yield* TestClock.adjust('30 seconds')
+        vi.advanceTimersByTime(30_000)
+        yield* TestClock.adjust(0)
+        expect(yield* Queue.size(opened)).toBe(0)
+      }).pipe(Effect.withSpan('LiveTest.hold'))
       return program.pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())))
     },
   )

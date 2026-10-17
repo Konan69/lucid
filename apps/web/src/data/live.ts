@@ -8,7 +8,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option, Result, Schedule } from 'effect'
+import { Effect, Option, Result, Schedule, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -239,20 +239,19 @@ const looking = Atom.make((get) => {
 export const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
 
 /**
- * "I am here" for one Thread, said for as long as its screen is open and this window is in front.
+ * "I am here" for one Thread, held for as long as its screen is open and this window is in front.
  *
- * The server keeps a Person present for fifteen seconds after they last said so, and decides from
- * that who is shown at the top of a shared Thread and who needs a notification instead. It used
- * to be said only when the Thread moved, so someone reading a quiet Thread, or writing a long
- * message, dropped out of it after fifteen seconds. A window in the background says nothing, so
- * its Person is told about what they are not looking at.
+ * The server shows who holds it at the top of a shared Thread, and does not notify someone about
+ * what they are looking at. It is one call kept open, not something said on a timer: the server
+ * hears this window leave when the call closes, when the socket closes, or when the socket goes
+ * quiet (`apps/server/src/rpc/link.ts`). A window in the background holds nothing, so its Person
+ * is told about what they are not looking at.
  */
 export const presentIn = Atom.family((id: ThreadId) =>
-  engine.beat(
+  engine.hold(
     Atom.make((get) => ({ typing: get(typingIn(id)), looking: get(looking) })),
     (client, now) =>
-      now.looking ? client.ReportPresence({ threadId: id, typing: now.typing }) : Effect.void,
-    '5 seconds',
+      now.looking ? client.BePresent({ threadId: id, typing: now.typing }) : Stream.never,
   ),
 )
 

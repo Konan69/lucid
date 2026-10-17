@@ -20,6 +20,7 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { recordNotice } from '../notifications/notifier.ts'
 import { notifications } from '../notifications/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { Link } from '../rpc/link.ts'
 import { Presence } from '../threads/presence.ts'
 import { automaticallyNotifies, RunStore, TurnReservation } from '../threads/runs.ts'
 import { threads } from '../threads/tables.ts'
@@ -387,10 +388,10 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     },
   )
   layer(pushTestFoundation)(
-    'Clock for suppresses push while present in any Thread, then uses the controlled presence expiry',
+    'Clock for suppresses push while present in any Thread, then not once its link goes quiet',
     (it) => {
       it.effect(
-        'suppresses push while present in any Thread, then uses the controlled presence expiry',
+        'suppresses push while present in any Thread, then not once its link goes quiet',
         () =>
           withPush(
             Effect.gen(function* () {
@@ -410,11 +411,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                   updatedAt: 0,
                 }),
               )
+              // Held on a link heard now and never again: it is present until the link goes quiet.
               const presence = yield* Presence
-              yield* presence.report(
+              yield* presence.hold(
                 elsewhere,
                 { id: owner.person.id, name: owner.person.name, image: null },
                 false,
+                new Link(yield* Clock.currentTimeMillis),
               )
               const input = notice(owner)
               expect(pushOf(yield* recordNotice(input))).toEqual(PushOutcome.cases.Present.make({}))

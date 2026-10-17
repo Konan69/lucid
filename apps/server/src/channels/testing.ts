@@ -179,7 +179,7 @@ const links = Layer.mergeAll(
   channelStoreLayer,
   channelLedgerLayer,
   Layer.succeed(Presence, {
-    report: () => Effect.succeed(false),
+    hold: () => Effect.void,
     here: () => Effect.succeed([]),
     watching: () => Effect.succeed(true),
     present: () => Effect.succeed(false),

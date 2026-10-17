@@ -381,7 +381,11 @@ const DeleteThread = Rpc.make('DeleteThread', { ...call, payload: { id: ThreadId
 const MarkThreadRead = Rpc.make('MarkThreadRead', { ...call, payload: { id: ThreadId } })
 /** Stops the Run in progress. Work already done is not undone. */
 const StopThread = Rpc.make('StopThread', { ...call, payload: { id: ThreadId } })
-const ReportPresence = Rpc.make('ReportPresence', { ...call, payload: PresenceRequest })
+/**
+ * Holds the Person present in a Thread for as long as the call stays open on the live socket. It
+ * answers nothing; closing it is how a client says the Person left.
+ */
+const BePresent = Rpc.make('BePresent', { ...live, payload: PresenceRequest })
 /**
  * The runtime asking who a delivery is for, by the turn the conversation names. Only the runtime
  * may ask, and it asks only when it no longer holds the scope it was handed with the delivery (it
@@ -937,7 +941,7 @@ export const VividRpc = RpcGroup.make(
   DeleteThread,
   MarkThreadRead,
   StopThread,
-  ReportPresence,
+  BePresent,
   GetDeliveryScope,
   ListArtifacts,
   WatchArtifacts,

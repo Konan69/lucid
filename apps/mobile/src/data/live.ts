@@ -402,22 +402,22 @@ function makeLiveData(session: SignedIn) {
   const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
 
   /**
-   * "I am here" for one Thread, said for as long as something holds this atom and the app is in
+   * "I am here" for one Thread, held for as long as something holds this atom and the app is in
    * front. The Thread's screen holds it only while it is the screen on top (`Present` in
    * `screen/Chat.tsx`): a screen left mounted under another is not someone looking.
    *
-   * The server keeps a Person present for fifteen seconds after they last said so, and decides
-   * from that who is shown at the top of a shared Thread and who gets a notification instead. It
-   * used to be said only when the Thread moved, so someone reading a quiet Thread, or writing a
-   * long message, dropped out of it. An app in the background says nothing, so its Person is
+   * The server shows who holds it at the top of a shared Thread, and does not notify someone
+   * about what they are looking at. It is one call kept open, not something said on a timer: the
+   * server hears the phone leave when the call closes, when the socket closes, or when the socket
+   * goes quiet because the app was suspended or lost its network
+   * (`apps/server/src/rpc/link.ts`). An app in the background holds nothing, so its Person is
    * told about what they are not looking at.
    */
   const presentIn = Atom.family((id: ThreadId) =>
-    engine.beat(
+    engine.hold(
       Atom.make((get) => ({ typing: get(typingIn(id)), looking: get(inFront) })),
       (client, now) =>
-        now.looking ? client.ReportPresence({ threadId: id, typing: now.typing }) : Effect.void,
-      '5 seconds',
+        now.looking ? client.BePresent({ threadId: id, typing: now.typing }) : Stream.never,
     ),
   )
 
