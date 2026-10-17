@@ -1,6 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
 import {
-  ServiceCatalog,
   Workspace,
   type LibraryShelf,
   type MeResponse,
@@ -8,7 +7,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option, Result, Schedule, Stream } from 'effect'
+import { Effect, Option, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -70,26 +69,13 @@ export const live = {
 export const serviceSearch = Atom.make('')
 
 /**
- * One reading of the catalog for one question. The catalog is thousands of services nobody owns,
- * so it is searched on the server and never held here; see `ServiceCatalog` for why it can be
- * `Unavailable` while every Connection still lists.
+ * The part of the catalog that matches what is typed in Settings. The catalog is thousands of
+ * services nobody owns, so it is searched on the server and never held here; see `ServiceCatalog`
+ * for why it can be `Unavailable` while every Connection still lists. It is asked once for each
+ * question: the server answers when its copy of the catalog is ready, waiting for its first
+ * download after a start (`connections/catalog.ts` `retainCatalog`).
  */
-const catalogFor = (query: Atom.Atom<string>) =>
-  engine.ask(query, (client, asked) =>
-    // The catalog is read in the background by the server and is out of reach for a few seconds
-    // after it starts. That is not an answer to show for good, so it is asked again for a short
-    // while; only if it is still out of reach after that does the screen say so.
-    client.FindServices({ query: asked }).pipe(
-      Effect.repeat({
-        until: ServiceCatalog.guards.Ready,
-        schedule: Schedule.spaced('2 seconds'),
-        times: 6,
-      }),
-    ),
-  )
-
-/** The part of the catalog that matches what is typed in Settings. */
-export const services = catalogFor(serviceSearch)
+export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
 
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')

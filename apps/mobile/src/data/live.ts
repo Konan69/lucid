@@ -1,7 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
-  ServiceCatalog,
   type Appearance,
   type LibraryFolderId,
   type LibraryShelf,
@@ -25,7 +24,7 @@ import {
   type ProductFailure,
   type Settle,
 } from '@vivid/state'
-import { Data, Effect, Equal, Layer, Option, Predicate, Result, Schedule, Stream } from 'effect'
+import { Data, Effect, Equal, Layer, Option, Predicate, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
@@ -239,19 +238,12 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
   /**
    * The part of the catalog that matches what is typed. The catalog is thousands of services
    * nobody owns, so it is searched on the server and never held here; see `ServiceCatalog` for
-   * why it can be `Unavailable` while every Connection still lists.
+   * why it can be `Unavailable` while every Connection still lists. It is asked once for each
+   * question: the server answers when its copy of the catalog is ready, waiting for its first
+   * download after a start (`apps/server/src/connections/catalog.ts` `retainCatalog`).
    */
   const services = engine.ask(serviceSearch, (client, asked) =>
-    // The catalog is read in the background by the server and is out of reach for a few seconds
-    // after it starts. That is not an answer to show for good, so it is asked again for a short
-    // while; only if it is still out of reach after that does the sheet say so.
-    client.FindServices({ query: asked }).pipe(
-      Effect.repeat({
-        until: ServiceCatalog.guards.Ready,
-        schedule: Schedule.spaced('2 seconds'),
-        times: 6,
-      }),
-    ),
+    client.FindServices({ query: asked }),
   )
 
   return { serviceSearch, services }
