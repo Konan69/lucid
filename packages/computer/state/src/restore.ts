@@ -1,10 +1,8 @@
 import * as Effect from 'effect/Effect'
-import * as FileSystem from 'effect/FileSystem'
 import * as Option from 'effect/Option'
-import * as Path from 'effect/Path'
 import * as Schema from 'effect/Schema'
 import { ComputerArchive } from './archive.ts'
-import { HomeAccessFailed, describeHome, digestOf } from './home.ts'
+import { HomeAccessFailed, HomeFiles, describeHome, digestOf, failedAt } from './home.ts'
 import {
   ComputerId,
   Digest,
@@ -52,16 +50,13 @@ const encodeMarker = Schema.encodeEffect(RestoreMarkerJson)
 const decodeMarker = Schema.decodeUnknownEffect(RestoreMarkerJson)
 const markerPath = '.vivid/restored.json'
 
-const failedAt = (operation: string, path: string) => () =>
-  new HomeAccessFailed({ operation, path })
-
 const localManifest = (manifest: Manifest, entries: Manifest['entries']): Manifest => ({
   ...manifest,
   entries,
 })
 
 /**
- * Makes `home` equal to the archived state of the Computer and proves it.
+ * Makes the machine's home directory equal to the archived state of the Computer and proves it.
  *
  * It moves only the difference between what is on disk and the manifest, so restoring a warm
  * machine is cheap and restoring an empty one is a full download. Every file is checked against
@@ -71,31 +66,22 @@ const localManifest = (manifest: Manifest, entries: Manifest['entries']): Manife
  */
 export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
   readonly computerId: ComputerId
-  readonly home: string
 }) {
   const archive = yield* ComputerArchive
-  const fs = yield* FileSystem.FileSystem
-  const path = yield* Path.Path
+  const files = yield* HomeFiles
   const manifest = yield* Effect.fromOption(
     yield* archive.readManifest(input.computerId),
     () => new NothingToRestore({ computerId: input.computerId }),
   )
 
   const onDisk = Effect.fn('Computer.restore.onDisk')(function* () {
-    const found = yield* describeHome(input.home)
+    const found = yield* describeHome()
     return localManifest(manifest, Object.fromEntries(found.map((item) => [item.path, item.entry])))
   })
 
   const place = Effect.fn('Computer.restore.place')(function* (relative: HomePath, entry: Entry) {
-    const absolute = path.join(input.home, relative)
-    yield* fs
-      .makeDirectory(path.dirname(absolute), { recursive: true })
-      .pipe(Effect.mapError(failedAt('makeDirectory', relative)))
-    yield* fs
-      .remove(absolute, { recursive: true, force: true })
-      .pipe(Effect.mapError(failedAt('replace', relative)))
     if (Entry.guards.Link(entry)) {
-      yield* fs.symlink(entry.target, absolute).pipe(Effect.mapError(failedAt('link', relative)))
+      yield* files.link(entry.target, relative)
       return undefined
     }
     const bytes = yield* archive.readObject(input.computerId, entry.digest)
@@ -106,25 +92,12 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
         path: relative,
       })
     }
-    const staged = `${absolute}.${crypto.randomUUID()}.tmp`
-    yield* fs.writeFile(staged, bytes).pipe(Effect.mapError(failedAt('write', relative)))
-    yield* fs.chmod(staged, entry.mode).pipe(Effect.mapError(failedAt('chmod', relative)))
-    yield* fs.rename(staged, absolute).pipe(Effect.mapError(failedAt('rename', relative)))
+    yield* files.write(relative, bytes, entry.mode)
     return undefined
   })
 
-  yield* fs
-    .makeDirectory(input.home, { recursive: true })
-    .pipe(Effect.mapError(failedAt('makeDirectory', '')))
   const change = changeBetween(yield* onDisk(), manifest)
-  yield* Effect.forEach(
-    change.remove,
-    (relative) =>
-      fs
-        .remove(path.join(input.home, relative), { recursive: true, force: true })
-        .pipe(Effect.mapError(failedAt('remove', relative))),
-    { discard: true },
-  )
+  yield* Effect.forEach(change.remove, (relative) => files.remove(relative), { discard: true })
   yield* Effect.forEach(change.write, ([relative, entry]) => place(relative, entry), {
     concurrency: 4,
     discard: true,
@@ -140,15 +113,7 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
     computerId: input.computerId,
     revision: manifest.revision,
   }).pipe(Effect.mapError(failedAt('encodeMarker', markerPath)))
-  const markerFile = path.join(input.home, markerPath)
-  yield* fs
-    .makeDirectory(path.dirname(markerFile), { recursive: true })
-    .pipe(Effect.mapError(failedAt('makeDirectory', markerPath)))
-  const stagedMarker = `${markerFile}.${crypto.randomUUID()}.tmp`
-  yield* fs
-    .writeFileString(stagedMarker, marker)
-    .pipe(Effect.mapError(failedAt('write', markerPath)))
-  yield* fs.rename(stagedMarker, markerFile).pipe(Effect.mapError(failedAt('rename', markerPath)))
+  yield* files.write(markerPath, new TextEncoder().encode(marker))
   return {
     revision: manifest.revision,
     written: change.write.length,
@@ -162,11 +127,9 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
  */
 export const restoredRevision = Effect.fn('Computer.restoredRevision')(function* (input: {
   readonly computerId: ComputerId
-  readonly home: string
 }) {
-  const fs = yield* FileSystem.FileSystem
-  const path = yield* Path.Path
-  const text = yield* fs.readFileString(path.join(input.home, markerPath)).pipe(Effect.option)
+  const files = yield* HomeFiles
+  const text = yield* files.readTextOption(markerPath)
   if (Option.isNone(text)) return Option.none<number>()
   const marker = yield* decodeMarker(text.value).pipe(Effect.option)
   return Option.flatMap(marker, (value) =>

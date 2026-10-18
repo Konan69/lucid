@@ -8,13 +8,21 @@ import * as Option from 'effect/Option'
 import * as Path from 'effect/Path'
 import { ComputerArchive, ManifestConflict, directoryArchive } from './archive.ts'
 import { CaptureResult, captureComputer } from './capture.ts'
+import { localHome } from './home.ts'
 import { ComputerId } from './manifest.ts'
 import { restoreComputer, restoredRevision } from './restore.ts'
 
 const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)
 const computerId = ComputerId.make('computer_test')
 
-/** One archive directory and two machines' home directories, all removed with the test scope. */
+/**
+ * One archive and two machines' home directories, all removed with the test scope.
+ *
+ * Both home roots exist before a case runs, because on a real machine the home directory is always
+ * there: a capture walks it and a restore hydrates into it. What the test owns is the archive and
+ * each machine's `HomeFiles` layer, so every case drives capture and restore through the same seam
+ * the SFTP adapter implements later.
+ */
 const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
@@ -22,75 +30,128 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const first = path.join(root, 'first')
   const second = path.join(root, 'second')
   yield* fs.makeDirectory(first)
-  // Each case owns its archive and directory until its test scope closes.
+  yield* fs.makeDirectory(second)
+  // Each case owns its archive and directories until its test scope closes.
   const archive = yield* Layer.build(directoryArchive(path.join(root, 'archive')))
+  const firstHome = yield* Layer.build(localHome(first))
+  const secondHome = yield* Layer.build(localHome(second))
   const write = (home: string, relative: string, text: string) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(path.join(home, relative)), { recursive: true })
       yield* fs.writeFileString(path.join(home, relative), text)
     })
   const read = (home: string, relative: string) => fs.readFileString(path.join(home, relative))
-  return { fs, path, first, second, archive, write, read }
+  return { fs, path, first, second, archive, firstHome, secondHome, write, read }
 })
 
 layer(platform)('Computer state', (it) => {
   it.effect('a second machine becomes the Computer from the archive alone', () =>
     Effect.gen(function* () {
-      const { fs, path, first, second, archive, write, read } = yield* makeWorld()
+      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
+        yield* makeWorld()
       yield* write(first, 'notes/plan.md', 'ship it')
       yield* write(first, 'bin/run.sh', '#!/bin/sh\n')
       yield* fs.chmod(path.join(first, 'bin/run.sh'), 0o755)
       yield* fs.symlink('notes/plan.md', path.join(first, 'current'))
 
-      yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
-      const restored = yield* restoreComputer({ computerId, home: second }).pipe(
+      yield* captureComputer({ computerId }).pipe(
         Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      const restored = yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
       )
 
       expect(restored.revision).toBe(1)
       expect(yield* read(second, 'notes/plan.md')).toBe('ship it')
       expect((yield* fs.stat(path.join(second, 'bin/run.sh'))).mode & 0o777).toBe(0o755)
       expect(yield* fs.readLink(path.join(second, 'current'))).toBe('notes/plan.md')
-      expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.some(1))
+      expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
+        Option.some(1),
+      )
     }),
   )
 
-  it.effect('regenerable state and the restore marker never reach the archive', () =>
+  it.effect('regenerable state, browser locks and caches, and the restore marker never reach the archive', () =>
     Effect.gen(function* () {
-      const { fs, path, first, second, archive, write } = yield* makeWorld()
+      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
+        yield* makeWorld()
       yield* write(first, 'app/index.ts', 'export {}')
       yield* write(first, 'app/node_modules/pkg/index.js', 'junk')
       yield* write(first, '.cache/big', 'junk')
       yield* write(first, '.vivid/restored.json', '{"computerId":"other","revision":9}')
+      // Chrome's running-instance files and rebuildable caches are the machine's, not the Person's.
+      yield* write(first, '.config/google-chrome/SingletonLock', 'invalid-host:0')
+      yield* write(first, '.config/google-chrome/Default/Cache/big', 'junk')
+      yield* write(first, '.config/google-chrome/Default/Service Worker/CacheStorage/x', 'junk')
+      yield* write(first, '.config/google-chrome/Default/GPUCache/big', 'junk')
+      yield* write(first, '.config/google-chrome/Crashpad/metrics', 'junk')
+      // The Person's identity inside the profile is kept...
+      yield* write(first, '.config/google-chrome/Default/Preferences', '{"seconds_missed":0}')
+      // ...and a project directory coincidentally named `Cache` is never touched (scoping proof).
+      yield* write(first, 'projects/app/Cache/keep', 'mine')
 
-      yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
-      yield* restoreComputer({ computerId, home: second }).pipe(Effect.provide(archive))
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
 
       expect(yield* fs.exists(path.join(second, 'app/index.ts'))).toBe(true)
       expect(yield* fs.exists(path.join(second, 'app/node_modules'))).toBe(false)
       expect(yield* fs.exists(path.join(second, '.cache'))).toBe(false)
-      expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.some(1))
+      expect(yield* fs.exists(path.join(second, '.config/google-chrome/SingletonLock'))).toBe(false)
+      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Cache'))).toBe(false)
+      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Service Worker'))).toBe(
+        false,
+      )
+      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Crashpad'))).toBe(false)
+      expect(yield* read(second, '.config/google-chrome/Default/Preferences')).toBe(
+        '{"seconds_missed":0}',
+      )
+      expect(yield* read(second, 'projects/app/Cache/keep')).toBe('mine')
+      expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
+        Option.some(1),
+      )
     }),
   )
 
   it.effect('a later capture sends only what changed and restore removes what was deleted', () =>
     Effect.gen(function* () {
-      const { fs, path, first, second, archive, write, read } = yield* makeWorld()
+      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
+        yield* makeWorld()
       yield* write(first, 'keep.txt', 'same')
       yield* write(first, 'edit.txt', 'before')
       yield* write(first, 'gone.txt', 'bye')
-      yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
-      yield* restoreComputer({ computerId, home: second }).pipe(Effect.provide(archive))
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
 
       yield* write(first, 'edit.txt', 'after')
       yield* fs.remove(path.join(first, 'gone.txt'))
-      const second_capture = yield* captureComputer({ computerId, home: first }).pipe(
+      const secondCapture = yield* captureComputer({ computerId }).pipe(
         Effect.provide(archive),
+        Effect.provide(firstHome),
       )
-      const idle = yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
-      yield* restoreComputer({ computerId, home: second }).pipe(Effect.provide(archive))
+      const idle = yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
 
-      expect(second_capture).toEqual(
+      expect(secondCapture).toEqual(
         CaptureResult.cases.Captured.make({ revision: 2, uploaded: 1, written: 1, removed: 1 }),
       )
       expect(idle).toEqual(CaptureResult.cases.Unchanged.make({ revision: 2 }))
@@ -102,32 +163,47 @@ layer(platform)('Computer state', (it) => {
 
   it.effect('a corrupt object fails the restore and the machine is not marked restored', () =>
     Effect.gen(function* () {
-      const { fs, path, first, second, archive, write } = yield* makeWorld()
+      const { fs, path, first, second, archive, firstHome, secondHome, write } = yield* makeWorld()
       yield* write(first, 'secret.txt', 'original')
-      yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
       const objects = path.join(path.dirname(first), 'archive', computerId, 'objects')
       const [digest] = yield* fs.readDirectory(objects)
       yield* fs.writeFileString(path.join(objects, String(digest)), 'tampered')
 
-      const failure = yield* restoreComputer({ computerId, home: second }).pipe(
+      const failure = yield* restoreComputer({ computerId }).pipe(
         Effect.provide(archive),
+        Effect.provide(secondHome),
         Effect.flip,
       )
 
       expect(failure._tag).toBe('ObjectCorrupt')
       expect(yield* fs.exists(path.join(second, 'secret.txt'))).toBe(false)
-      expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.none())
+      expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
+        Option.none(),
+      )
     }),
   )
 
   it.effect('a machine with a stale view cannot overwrite a newer capture', () =>
     Effect.gen(function* () {
-      const { first, second, archive, write } = yield* makeWorld()
+      const { first, second, archive, firstHome, secondHome, write } = yield* makeWorld()
       yield* write(first, 'a.txt', 'one')
-      yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
-      yield* restoreComputer({ computerId, home: second }).pipe(Effect.provide(archive))
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
       yield* write(second, 'b.txt', 'from the second machine')
-      yield* captureComputer({ computerId, home: second }).pipe(Effect.provide(archive))
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
 
       // The first machine never restored revision 2, but offers its own revision 2.
       const stale = yield* Effect.gen(function* () {
@@ -147,9 +223,10 @@ layer(platform)('Computer state', (it) => {
 
   it.effect('a Computer that was never captured has nothing to restore', () =>
     Effect.gen(function* () {
-      const { second, archive } = yield* makeWorld()
-      const failure = yield* restoreComputer({ computerId, home: second }).pipe(
+      const { secondHome, archive } = yield* makeWorld()
+      const failure = yield* restoreComputer({ computerId }).pipe(
         Effect.provide(archive),
+        Effect.provide(secondHome),
         Effect.flip,
       )
       expect(failure._tag).toBe('NothingToRestore')

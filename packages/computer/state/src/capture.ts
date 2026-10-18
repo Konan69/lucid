@@ -47,13 +47,12 @@ const manifestOf = (
  */
 export const captureComputer = Effect.fn('Computer.capture')(function* (input: {
   readonly computerId: ComputerId
-  readonly home: string
 }) {
   const archive = yield* ComputerArchive
   const held = Option.getOrElse(yield* archive.readManifest(input.computerId), () =>
     emptyManifest(input.computerId),
   )
-  const found = yield* describeHome(input.home)
+  const found = yield* describeHome()
   const capturedAt = yield* Clock.currentTimeMillis
   const next = manifestOf(input.computerId, held.revision + 1, capturedAt, found)
   const change = changeBetween(held, next)
