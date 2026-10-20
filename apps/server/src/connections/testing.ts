@@ -501,6 +501,46 @@ const hostedAppName = Effect.fn('Executor.HostedTest.appName')(function* (reques
   return Option.none<string>()
 })
 
+/** A removed app takes its account selections with it; an unlinked account leaves its app's
+ * selection without it. Anything else is not a removal. */
+const hostedRemoval = Effect.fn('Executor.HostedTest.removal')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  const removedApp = request.path.match(/^DELETE \/apps\/([^/]+)$/u)
+  if (removedApp !== null) {
+    const id = removedApp[1]
+    yield* Ref.update(state.apps, (apps) => apps.filter((app) => app.id !== id))
+    yield* Ref.update(state.selections, (selections) => {
+      const retained = new Map(selections)
+      if (id !== undefined) retained.delete(id)
+      return retained
+    })
+    return Option.some(hostedRemoved)
+  }
+  const unlinked = request.path.match(
+    /^DELETE \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/([^/]+)$/u,
+  )
+  if (unlinked !== null) {
+    const [, app, requirement, account] = unlinked
+    if (app === undefined || requirement === undefined || account === undefined)
+      return yield* Effect.die('Malformed fixture unlink target')
+    const selection = (yield* Ref.get(state.selections)).get(app)
+    if (selection === undefined) return Option.some(hostedRemoved)
+    const decoded = yield* decodeHostedSelections(selection)
+    const accounts = decoded[requirement]
+    if (accounts === undefined) return Option.some(hostedRemoved)
+    yield* Ref.update(state.selections, (selections) =>
+      new Map(selections).set(app, {
+        ...decoded,
+        [requirement]: accounts.filter((selected) => selected !== account),
+      }),
+    )
+    return Option.some(hostedRemoved)
+  }
+  return Option.none<typeof hostedRemoved>()
+})
+
 /** Simulate create-only app installation plus ConnectionId app deduplication on the remote
  * side. Tests observe the real Executor Layer's requests rather than a fake Executor service.
  */
@@ -519,37 +559,8 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
     })
     return yield* hostedApp(state, app)
   }
-  const removedApp = request.path.match(/^DELETE \/apps\/([^/]+)$/u)
-  if (removedApp !== null) {
-    const id = removedApp[1]
-    yield* Ref.update(state.apps, (apps) => apps.filter((app) => app.id !== id))
-    yield* Ref.update(state.selections, (selections) => {
-      const retained = new Map(selections)
-      if (id !== undefined) retained.delete(id)
-      return retained
-    })
-    return hostedRemoved
-  }
-  const unlinked = request.path.match(
-    /^DELETE \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/([^/]+)$/u,
-  )
-  if (unlinked !== null) {
-    const [, app, requirement, account] = unlinked
-    if (app === undefined || requirement === undefined || account === undefined)
-      return yield* Effect.die('Malformed fixture unlink target')
-    const selection = (yield* Ref.get(state.selections)).get(app)
-    if (selection === undefined) return hostedRemoved
-    const decoded = yield* decodeHostedSelections(selection)
-    const accounts = decoded[requirement]
-    if (accounts === undefined) return hostedRemoved
-    yield* Ref.update(state.selections, (selections) =>
-      new Map(selections).set(app, {
-        ...decoded,
-        [requirement]: accounts.filter((selected) => selected !== account),
-      }),
-    )
-    return hostedRemoved
-  }
+  const removal = yield* hostedRemoval(state, request)
+  if (Option.isSome(removal)) return removal.value
   const connectionPath = request.path.match(
     /^POST \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/connections$/u,
   )

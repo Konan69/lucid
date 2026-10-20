@@ -10,7 +10,15 @@ const definitions = [
     about:
       'Sets up reminders, morning check-ins and other things that happen on their own, and tells you on your Feed.',
     starter: false,
-    needs: ['make_integration', 'find_events', 'watch', 'find_tools', 'use_tool', 'ask_person'],
+    needs: [
+      'make_integration',
+      'find_events',
+      'watch',
+      'find_tools',
+      'use_tool',
+      'post',
+      'ask_person',
+    ],
     connections: [],
   },
   {

@@ -130,7 +130,7 @@ describe('make_integration', () => {
           ),
         ).pipe(Effect.forkScoped)
         const request = yield* Queue.take(requests)
-        if (!Predicate.isTagged(request, 'Request')) return expect.fail('Expected RPC request')
+        if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected RPC request')
         expect(request.tag).toBe('MakeIntegration')
         expect(request.payload).toEqual({ name: 'Morning', files })
         yield* rpc.write({
