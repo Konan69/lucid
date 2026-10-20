@@ -97,6 +97,13 @@ export function Feed() {
     }
   })
 
+  // A card counts as looked at once all of it is on screen, or, for a card taller than the
+  // screen, once it fills most of it. FlatList takes the pairs once, so they are made once.
+  const [looked] = useState(() => [
+    { viewabilityConfig: { itemVisiblePercentThreshold: 99 }, onViewableItemsChanged: seen },
+    { viewabilityConfig: { viewAreaCoveragePercentThreshold: 80 }, onViewableItemsChanged: seen },
+  ])
+
   const head = (
     <View style={{ paddingTop: 24, paddingBottom: 16 }}>
       <Label size="label" tone="ink-3">
@@ -122,14 +129,14 @@ export function Feed() {
       <FlatList
         data={rows}
         keyExtractor={Row.$match({
-          Waiting: ({ item }) => item.card,
+          // A new post is a new row: the display's own choices start again with it.
+          Waiting: ({ item }) => `${item.card}:${feed.revisionOf(item)}`,
           Working: ({ item }) => item.card,
           Handled: () => 'handled',
         })}
         ListHeaderComponent={head}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 12 }}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 99 }}
-        onViewableItemsChanged={seen}
+        viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
           Row.$match(row, {
             Handled: ({ items: settled }) => (
@@ -168,9 +175,11 @@ export function Feed() {
           disabled={false}
           onChange={start.setDraft}
           onSend={() => {
-            // The new Thread opens on Home, where every Thread is read and written.
+            // The new Thread opens on Home, where every Thread is read and written. Back to the
+            // Home already under this page, as opening a Thread does (`useOpenThread`): a second
+            // Home pushed over the Feed would bring the Feed back on Back and on the next launch.
             start.send()
-            go.navigate('Home')
+            go.popTo('Home')
           }}
           onStop={() => undefined}
         />

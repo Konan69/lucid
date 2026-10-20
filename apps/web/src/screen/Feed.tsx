@@ -95,7 +95,13 @@ export function FeedView({
 
         <div className="mt-6 flex min-w-0 flex-col lg:col-span-3">
           {view.waiting.map((item) => (
-            <Waiting key={item.card} item={item} now={now} onOpen={() => onOpen(item.thread)} />
+            <Waiting
+              // A new post is a new card: the display's own choices start again with it.
+              key={`${item.card}:${feed.revisionOf(item)}`}
+              item={item}
+              now={now}
+              onOpen={() => onOpen(item.thread)}
+            />
           ))}
         </div>
 
