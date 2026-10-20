@@ -277,6 +277,10 @@ export function runCloud(root, options, environment) {
   if (options.only !== undefined) forwarded.push('--only', options.only)
   if (options.base !== undefined) forwarded.push('--base', options.base)
   if (options.ceilingsBase !== undefined) forwarded.push('--ceilings-base', options.ceilingsBase)
+  if (options.proof !== undefined) {
+    forwarded.push('--proof-branch', options.proof.branch)
+    if (options.proof.enabled) forwarded.push('--proof-base', options.proof.base)
+  }
   const start = ssh(options.host, remoteScript, [sha, run, label, ...forwarded], 'pipe')
   if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)
   const exit = follow(options.host, run)

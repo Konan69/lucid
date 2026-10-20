@@ -297,6 +297,12 @@ async function runStages(root, selection, environment, { runId, directory }) {
   // The gate also builds uncommitted snapshots. No task or prerequisite may upload their maps.
   delete env.SENTRY_AUTH_TOKEN
   delete env.VIVID_TEST_DATABASE_URL
+  // Remote trees are detached; the local caller resolved the branch and its comparison commit.
+  if (selection.proof !== undefined) {
+    env.VIVID_PROOF_BRANCH = selection.proof.branch
+    env.VIVID_PROOF_ENABLED = selection.proof.enabled ? '1' : '0'
+    if (selection.proof.enabled) env.VIVID_PROOF_BASE = selection.proof.base
+  }
   if (database !== undefined) {
     env.VIVID_TEST_DATABASE_URL = database.url
     // The address differs on every run, so it stays out of the task hash; this marker is what
