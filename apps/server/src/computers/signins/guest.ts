@@ -6,7 +6,7 @@ export const signInGuest = String.raw`
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),childProcess=require('node:child_process');
 const session='Vivid-signin-'+require('node:crypto').randomUUID(),nativeCalls=new Set();
 let failureStage=10,nativeUsed=false,finishing=false,consentAttempt;
-const deadline=setTimeout(()=>finish(2),25000);
+const deadline=setTimeout(()=>finish(2),20000);
 // Native preparation can enable Chrome's consent server without a launch flag. Its
 // DevToolsActivePort file supplies the exact route; /json/version deliberately returns 404.
 // As in cua-driver platform-linux/browser_platform.rs, attest its loopback socket to this PID.
@@ -142,17 +142,18 @@ async function main(){
  }finally{cdp.socket.close();}
 }
 // Chrome can retain a failed connection's prompt after its socket closes. Cancel only this
-// attempt's unique trusted alert. Three one-second cleanup calls fit below SSH's 30s deadline,
-// and cleanup cannot replace a successful copy's receipt or the original failure stage.
+// attempt's unique trusted alert. Three 2.5-second calls after the 20-second work deadline
+// leave time below SSH's 30-second limit, including a loaded accessibility tree walk.
+// Cleanup cannot replace a successful copy's receipt or the original failure stage.
 async function finish(code){
  if(finishing)return;finishing=true;clearTimeout(deadline);
  for(const child of nativeCalls)child.kill('SIGTERM');
  const attempt=consentAttempt;consentAttempt=undefined;
  if(attempt){
   attempt.socket.close();
-  try{await consentAction(attempt.window,'Cancel',1000);}catch{}
+  try{await consentAction(attempt.window,'Cancel',2500);}catch{}
  }
- if(nativeUsed){try{await native('end_session',{},1000);}catch{}}
+ if(nativeUsed){try{await native('end_session',{},2500);}catch{}}
  process.exit(code);
 }
 main().then(()=>finish(0),()=>finish(failureStage));
