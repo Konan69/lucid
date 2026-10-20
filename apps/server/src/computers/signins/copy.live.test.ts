@@ -4,7 +4,7 @@ import { CopySignInOutcome } from '@vivid/contracts'
 import { Config, Effect, Option, Schema } from 'effect'
 import { chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
 
-const SITE = 'httpbin.org'
+const SITE = 'httpbingo.org'
 const VALUE = 'synthetic-copy-proof'
 const copied = Schema.decodeUnknownOption(
   Schema.Struct({
@@ -23,7 +23,7 @@ const page = Schema.decodeUnknownOption(
 /** Full desktop consent → device link → Computer proof. The operator supplies a real desktop
  * app signed into this server and an isolated Chrome Default profile containing exactly one
  * SYNTHETIC cookie: __Host-vivid-signin-proof-<VIVID_LIVE_SIGNIN_MARKER>, value above, host
- * httpbin.org, path /, Secure and HttpOnly. Never use an installed personal browser profile.
+ * httpbingo.org, path /, Secure and HttpOnly. Never use an installed personal browser profile.
  * Approve the real native dialog on the Cloudbox virtual display while this test waits.
  * VIVID_LIVE_SIGNIN_COOKIE authenticates the existing Person; it is never printed.
  * The marker is twelve public hex characters, not an account credential. The echo page can
