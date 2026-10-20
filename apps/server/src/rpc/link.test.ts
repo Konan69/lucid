@@ -2,6 +2,7 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { NodeWS } from '@effect/platform-node/NodeSocket'
 import { expect, layer } from '@effect/vitest'
 import * as Clock from 'effect/Clock'
+import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -11,6 +12,7 @@ import * as HttpServer from 'effect/http/HttpServer'
 import * as NetAddress from 'effect/net/NetAddress'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
+import * as TestClock from 'effect/testing/TestClock'
 import { LiveTally, makeTally } from '../live/tally.ts'
 import { type Link, LiveLink, liveProtocolLayer } from './link.ts'
 
@@ -109,6 +111,31 @@ layer(NodeHttpServer.layerTest)('the live socket’s counts', (it) => {
         ['FindServices', 2],
       ])
       expect(tally.drain().calls).toEqual([])
+    }),
+  )
+})
+
+layer(NodeHttpServer.layerTest)('the live socket’s timeout', (it) => {
+  it.effect('closes a connection quiet for two minutes, and not one heard within them', () =>
+    Effect.gen(function* () {
+      const { heard, gone, client } = yield* serving()
+      const closed = yield* Deferred.make<number>()
+      client.once('close', (code) => Effect.runFork(Deferred.succeed(closed, code)))
+      client.send(ping)
+      const [, link] = yield* Queue.take(heard)
+      if (Option.isNone(link)) return expect.fail('A message on the live socket has its link')
+
+      yield* TestClock.adjust('100 seconds')
+      client.send(ping)
+      yield* Queue.take(heard)
+      yield* TestClock.adjust('100 seconds')
+      expect(client.readyState).toBe(NodeWS.WebSocket.OPEN)
+
+      // Two minutes since the last ping, and nothing in between: the server ends the connection.
+      yield* TestClock.adjust('20 seconds')
+      yield* Queue.take(gone)
+      expect(link.value.live(yield* Clock.currentTimeMillis)).toBe(false)
+      expect(yield* Deferred.await(closed)).toBeGreaterThan(0)
     }),
   )
 })
