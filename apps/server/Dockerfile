@@ -26,7 +26,8 @@ COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
 RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter @vivid/web...
-COPY tsconfig.base.json ./
+# Shared phone packages extend the root Hermes profile; Vite and tsx resolve it too.
+COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
 COPY apps/server apps/server
 COPY apps/web apps/web
@@ -59,7 +60,7 @@ ENV VIVID_MOBILE_UPDATES=/app/apps/mobile/updates
 COPY --from=build --chown=node:node /opt/corepack /opt/corepack
 # Retain pnpm's virtual store and package-local symlinks, including tsx and contract sources.
 COPY --from=build --chmod=0644 /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
-COPY --from=build --chmod=0644 /app/tsconfig.base.json ./
+COPY --from=build --chmod=0644 /app/tsconfig.base.json /app/tsconfig.hermes.json /app/hermes.d.ts ./
 COPY --from=build --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/packages packages
 COPY --from=build --chown=node:node /app/apps/server apps/server

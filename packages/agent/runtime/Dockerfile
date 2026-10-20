@@ -25,7 +25,8 @@ COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
 COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
 RUN pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/agent-runtime...
-COPY tsconfig.base.json ./
+# Vite follows shared packages' root Hermes profile while bundling their source.
+COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
 # @flue/vite/dist/index.mjs:flue uses getUserExternals from
 # dist/markdown-import-plugin-D-fQ3auE.mjs to externalize direct workspace dependencies.
