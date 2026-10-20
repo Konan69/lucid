@@ -12,7 +12,7 @@ const decodeSessionOwner = decodeStored(Schema.Struct({ personId: PersonId }), '
 /**
  * Companies authorizes the movement before calling. Auth owns the session write and restricts
  * it to the named Person. The supplied transaction keeps membership checks and notices atomic.
- * A vanished session has no owner to notify and is a successful no-op, as before.
+ * A vanished session has no owner to notify and is a successful no-op.
  */
 export const moveSession = Effect.fn('Auth.moveSession')(function* (
   tx: Transaction,

@@ -881,7 +881,7 @@ const makeWindows = ({
   const ended = Effect.fn('Device.runEnded')(function* (runId: RunId) {
     yield* Effect.forEach(
       links.values(),
-      Effect.fn('Device.endTurn')(function* (link) {
+      Effect.fn('Device.endTurn')(function* (link: Subscription) {
         if (link.windowRuns.delete(runId) && !(yield* Deferred.isDone(link.closed)))
           yield* Queue.offer(link.requests, DeviceRequest.cases.RunEnded.make({ runId }))
       }),

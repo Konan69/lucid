@@ -39,10 +39,44 @@ import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
-import { replaySignals } from '../approvals/replay.ts'
+import { replaySignals, type SignalWriter } from '../approvals/replay.ts'
 import { answerKey } from './answers.ts'
 import { inputRequests } from './tables.ts'
 import { answerText } from './validation.ts'
+
+/** Replay supplies the selection and fences; this domain owns both complete signal writes. */
+const signalWriter: SignalWriter = {
+  /** Claim and return the same bounded row set in one statement under the replay lease. */
+  claim: Effect.fn('Inputs.claimSignals')(function* (
+    database: Database['Service'],
+    update: Parameters<SignalWriter['claim']>[1],
+  ) {
+    return yield* database.run(
+      database
+        .update(inputRequests)
+        .set({ signalDueAt: update.leaseUntil, signalClaim: update.token })
+        .where(update.where)
+        .returning({
+          id: inputRequests.id,
+          threadId: inputRequests.threadId,
+          personId: inputRequests.personId,
+          signal: inputRequests.signal,
+        }),
+    )
+  }),
+  /** The row id and lease token prevent an expired claimant from acknowledging. */
+  settle: Effect.fn('Inputs.settleSignal')(function* (
+    database: Database['Service'],
+    update: Parameters<SignalWriter['settle']>[1],
+  ) {
+    yield* database.run(
+      database
+        .update(inputRequests)
+        .set({ signal: update.signal, signalDueAt: update.dueAt, signalClaim: null })
+        .where(and(eq(inputRequests.id, update.id), eq(inputRequests.signalClaim, update.token))),
+    )
+  }),
+}
 
 const fields = createSelectSchema(inputRequests, {
   id: InputRequestId,
@@ -258,7 +292,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
     return yield* new Conflict({ message: 'Input request already answered' })
   const input = yield* returned(yield* view(updated), 'Input request')
   yield* changed(actor, Topic.thread(row.threadId))
-  yield* replaySignals(inputRequests, Option.some([request.id])).pipe(
+  yield* replaySignals(inputRequests, Option.some([request.id]), signalWriter).pipe(
     Effect.catch(() => Effect.logError('Input answer replay failed', { requestId: request.id })),
   )
   return input
@@ -338,7 +372,7 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: run(replaySignals(inputRequests, Option.none())),
+      replay: run(replaySignals(inputRequests, Option.none(), signalWriter)),
     })
   }),
 )
