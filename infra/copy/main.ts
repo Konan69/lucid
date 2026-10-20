@@ -4,11 +4,13 @@ import { PlatformServices } from 'alchemy/Util/PlatformServices'
 import * as Arr from 'effect/Array'
 import * as Console from 'effect/Console'
 import * as Effect from 'effect/Effect'
+import * as Equal from 'effect/Equal'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
-import { openStore } from '../state.ts'
+import { openStore, readStage } from '../state.ts'
 import { parseDeployTarget } from '../targets.ts'
 
 /**
@@ -38,39 +40,32 @@ export class StateCopyMismatch extends Schema.TaggedError<StateCopyMismatch>()(
   { title: 'State copy mismatch' },
 ) {}
 
-/**
- * A listed record that reads back as nothing. The Cloudflare store answers a value it cannot
- * decrypt that way (`alchemy/src/Cloudflare/StateStore/Store.ts`, `decryptEntry`), so it is a
- * failure here and never an absent record.
- */
-export class StateRecordUnreadable extends Schema.TaggedError<StateRecordUnreadable>()(
-  'StateRecordUnreadable',
-  { fqn: Schema.String, message: Schema.String },
-  { title: 'State record unreadable' },
-) {}
-
 /** The JSON a store persists for a record, secrets marked as Alchemy marks them, to compare by. */
 const persisted = (value: PersistedState): string => JSON.stringify(encodeState(value))
 
-/** The stage's persisted form: every record and the stack output. */
+/**
+ * The stage's persisted form: every record, and the stack output when the stage has one. Alchemy
+ * types an output as `unknown` and a stage that never finished a deploy has none.
+ */
 const snapshot = Effect.fn('snapshot')(function* (
   store: StateService,
   stack: string,
   stage: string,
 ) {
-  const fqns = Arr.sort(yield* store.list({ stack, stage }), Order.String)
-  const records = yield* Effect.forEach(fqns, (fqn) =>
-    Effect.flatMap(store.get({ stack, stage, fqn }), (value) =>
-      value === undefined
-        ? Effect.fail(
-            new StateRecordUnreadable({ fqn, message: `${fqn} is listed but reads empty` }),
-          )
-        : Effect.succeed([fqn, persisted(value)] as const),
+  const records = yield* readStage(store, stack, stage)
+  const output = yield* store.getOutput({ stack, stage })
+  return {
+    records: new Map(
+      Arr.sort(
+        records.map(({ fqn, value }) => [fqn, persisted(value)] as const),
+        Order.mapInput(Order.String, ([fqn]: readonly [string, string]) => fqn),
+      ),
     ),
-  )
-  /** Alchemy types a stack output as `unknown`; it is compared as the JSON the store keeps. */
-  const output: string = JSON.stringify(encodeState(yield* store.getOutput({ stack, stage })))
-  return { records: new Map(records), output }
+    output:
+      output === undefined
+        ? Option.none<string>()
+        : Option.some(JSON.stringify(encodeState(output))),
+  }
 })
 
 type Snapshot = Effect.Success<ReturnType<typeof snapshot>>
@@ -80,7 +75,7 @@ const firstDifference = (left: Snapshot, right: Snapshot) => {
   const fqns = new Set([...left.records.keys(), ...right.records.keys()])
   const fqn = [...fqns].find((key) => left.records.get(key) !== right.records.get(key))
   if (fqn !== undefined) return fqn
-  return left.output === right.output ? undefined : 'output'
+  return Equal.equals(left.output, right.output) ? undefined : 'output'
 }
 
 const copyState = Effect.fn('copyState')(function* () {
@@ -112,7 +107,8 @@ const copyState = Effect.fn('copyState')(function* () {
       value === undefined ? Effect.void : destination.set({ stack, stage, fqn, value }),
     ),
   )
-  yield* destination.setOutput({ stack, stage, value: yield* source.getOutput({ stack, stage }) })
+  const output = yield* source.getOutput({ stack, stage })
+  if (output !== undefined) yield* destination.setOutput({ stack, stage, value: output })
 
   const copied = yield* snapshot(destination, stack, stage)
   const mismatch = firstDifference(original, copied)

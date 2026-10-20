@@ -1,5 +1,5 @@
 import * as Alchemy from 'alchemy'
-import { State, makeHttpStateStore } from 'alchemy/State'
+import { State, makeHttpStateStore, type StateService } from 'alchemy/State'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -17,6 +17,34 @@ export class StackStateMissing extends Schema.TaggedError<StackStateMissing>()(
   { stack: Schema.String, stage: Schema.String, message: Schema.String },
   { title: 'Stack state is missing' },
 ) {}
+
+/**
+ * A listed record that reads back as nothing. The Cloudflare store answers a value it cannot
+ * decrypt that way (`alchemy/src/Cloudflare/StateStore/Store.ts`, `decryptEntry`), and Alchemy's
+ * planner takes an absent record for a resource to create, so it is a failure and never absence.
+ */
+export class StateRecordUnreadable extends Schema.TaggedError<StateRecordUnreadable>()(
+  'StateRecordUnreadable',
+  { fqn: Schema.String, message: Schema.String },
+  { title: 'State record unreadable' },
+) {}
+
+/** Every record of a stage, each one read back; a listed record that reads empty fails the read. */
+export const readStage = Effect.fn('readStage')(function* (
+  store: StateService,
+  stack: string,
+  stage: string,
+) {
+  return yield* Effect.forEach(yield* store.list({ stack, stage }), (fqn) =>
+    Effect.flatMap(store.get({ stack, stage, fqn }), (value) =>
+      value === undefined
+        ? Effect.fail(
+            new StateRecordUnreadable({ fqn, message: `${fqn} is listed but reads empty` }),
+          )
+        : Effect.succeed({ fqn, value }),
+    ),
+  )
+})
 
 /**
  * The hosted state store, opened from its address and bearer token. `alchemy provider cloudflare
@@ -55,8 +83,8 @@ export const openStore = Effect.fn('openStore')(function* () {
  * instead. The cost: it never upgrades the Worker, so after an Alchemy upgrade the bootstrap runs
  * once more. The store holds no lock; one session deploys at a time, as before.
  *
- * Alchemy takes a state Layer that cannot fail, so a missing setting, an unreachable store and an
- * empty stage all stop the command here, before any plan.
+ * Alchemy takes a state Layer that cannot fail, so a missing setting, an unreachable store, an
+ * empty stage and a record that cannot be read all stop the command here, before any plan.
  */
 export const hostedState = (stack: string) =>
   Layer.effect(
@@ -64,8 +92,8 @@ export const hostedState = (stack: string) =>
     Effect.gen(function* () {
       const store = yield* openStore()
       const stage = yield* Alchemy.Stage
-      const resources = yield* store.list({ stack, stage })
-      if (resources.length === 0) {
+      const records = yield* readStage(store, stack, stage)
+      if (records.length === 0) {
         return yield* new StackStateMissing({
           stack,
           stage,
