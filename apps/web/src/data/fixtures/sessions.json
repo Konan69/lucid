@@ -1,0 +1,12 @@
+[
+  {
+    "id": "fixture-session",
+    "token": "fixture-credential-not-valid-anywhere",
+    "userId": "fixture-person",
+    "userAgent": null,
+    "ipAddress": null,
+    "createdAt": "2026-10-01T00:00:00.000Z",
+    "updatedAt": "2026-10-02T00:00:00.000Z",
+    "expiresAt": "2026-11-01T00:00:00.000Z"
+  }
+]
