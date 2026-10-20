@@ -53,11 +53,9 @@ const sending = (data: LiveData) =>
       confirm()
       data.registry.set(pleasing, undefined)
       const sent = yield* feed.Settling.$match(pressed.how, {
+        // `say` is an Effect that answers with how the delivery went, never failing itself.
         Said: ({ words, key }) =>
-          Effect.map(
-            Effect.promise(() => say(data, { id: thread, body: words, key })),
-            Result.isSuccess,
-          ),
+          Effect.map(say(data, { id: thread, body: words, key }), Result.isSuccess),
         Done: () =>
           Effect.map(
             Effect.promise(() =>
@@ -66,7 +64,7 @@ const sending = (data: LiveData) =>
             Result.isSuccess,
           ),
       })
-      if (!sent) yield* new feed.SendRefused({ card })
+      if (!sent) return yield* new feed.SendRefused({ card })
     }),
   })
 
