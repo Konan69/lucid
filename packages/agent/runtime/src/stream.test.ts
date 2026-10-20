@@ -127,7 +127,7 @@ function toolSequence(): AssistantMessageEvent[] {
 }
 
 /** Real storage and runtime; only the provider's three ordered streams are test controlled. */
-const fixture = Effect.gen(function* () {
+const fixture = Effect.fn('FlueStream.fixture')(function* () {
   const { storage } = yield* disposableStorage
   const history = createAssistantMessageEventStream()
   const tool = createAssistantMessageEventStream()
@@ -136,7 +136,7 @@ const fixture = Effect.gen(function* () {
   const faux = fauxProvider({ provider: 'fixture', models: [{ id: 'text' }] })
   const stream = () => {
     const next = pending.shift()
-    if (next === undefined) return expect.fail('The provider received an unexpected fourth call')
+    if (next === undefined) expect.fail('The provider received an unexpected fourth call')
     return next
   }
   yield* Effect.acquireRelease(
@@ -175,8 +175,10 @@ function replacements(chunks: readonly ConversationStreamChunk[], live: FlueConv
   const appended = messages.filter((chunk) => chunk.message.role === 'assistant')
   expect(appended).toHaveLength(2)
   expect(appended.map((chunk) => chunk.message.id)).toEqual([live.id, live.id])
-  expect(appended.every((chunk) => chunk.message.role === 'assistant')).toBe(true)
-  expect(appended[0]?.message.parts).toEqual([
+  const [first, second] = appended
+  if (first === undefined || second === undefined)
+    expect.fail('Both completed steps must replace the response')
+  expect(first.message.parts).toEqual([
     {
       type: 'dynamic-tool',
       toolCallId: 'lookup-1',
@@ -185,20 +187,21 @@ function replacements(chunks: readonly ConversationStreamChunk[], live: FlueConv
       state: 'input-available',
     },
   ])
-  expect(appended[1]?.message).toEqual(live)
+  expect(second.message).toEqual(live)
   const started = chunks.filter((chunk) => chunk.type === 'message-started')
   expect(started.map((chunk) => chunk.messageId)).toEqual([live.id, live.id])
   const completed = chunks.filter((chunk) => chunk.type === 'message-completed')
   expect(completed).toHaveLength(2)
   for (const completion of completed) {
     const before = chunks[chunks.indexOf(completion) - 1]
-    expect(before?.type).toBe('message-appended')
-    expect(before?.position.batch).toBe(completion.position.batch)
+    if (before === undefined || before.type !== 'message-appended')
+      expect.fail('Each completion must immediately follow its replacement')
+    expect(before.position.batch).toBe(completion.position.batch)
   }
   const settlement = chunks.findIndex((chunk) => chunk.type === 'submission-settled')
-  expect(settlement).toBeGreaterThan(
-    chunks.findLastIndex((chunk) => chunk.type === 'message-completed'),
-  )
+  const lastCompletion = completed.at(-1)
+  if (lastCompletion === undefined) expect.fail('The Run must complete a model step')
+  expect(settlement).toBeGreaterThan(chunks.indexOf(lastCompletion))
   expect(live.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({
     state: 'output-available',
     output: { answer: 'found' },
@@ -213,7 +216,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
         : 'reconciles text, thinking, and text from the same block to one text part via %s',
       (transport) =>
         Effect.gen(function* () {
-          const { client, tool, answer } = yield* fixture
+          const { client, tool, answer } = yield* fixture()
           const receipt = yield* Effect.tryPromise(() =>
             client.send({ message: { kind: 'user', body: 'reply' } }),
           )
@@ -231,8 +234,8 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
           )
           changed()
           const ready = yield* observed(states, (state) => state.phase === 'live')
-          if (ready.offset === undefined)
-            return expect.fail('The live observer must have an offset')
+          const offset = ready.offset
+          if (offset === undefined) expect.fail('The live observer must have an offset')
           for (const event of toolSequence()) tool.push(event)
           const streaming = yield* observed(
             states,
@@ -246,11 +249,14 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
                   ),
               ),
           )
-          const response = streaming.conversation?.messages.find(
+          const streamingConversation = streaming.conversation
+          if (streamingConversation === undefined)
+            expect.fail('The first step must have an observed conversation')
+          const response = streamingConversation.messages.find(
             (message) =>
               message.role === 'assistant' && message.submissionId === receipt.submissionId,
           )
-          if (response === undefined) return expect.fail('The first step must have a response id')
+          if (response === undefined) expect.fail('The first step must have a response id')
           for (const event of sequence(distinct)) answer.push(event)
           const completed = yield* observed(
             states,
@@ -261,12 +267,12 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
               ),
           )
           const conversation = completed.conversation
-          if (conversation === undefined) return expect.fail('The observed conversation must exist')
+          if (conversation === undefined) expect.fail('The observed conversation must exist')
           const live = conversation.messages.find((message) => message.id === response.id)
           const stored = yield* Effect.tryPromise(() => client.history())
           const canonical = stored.messages.find((message) => message.id === response.id)
           if (live === undefined || canonical === undefined)
-            return expect.fail(
+            expect.fail(
               'The completed reply must retain its first-step id in observation and history',
             )
           expect(live.parts).toEqual(canonical.parts)
@@ -277,7 +283,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
           const chunks: ConversationStreamChunk[] = []
           yield* Effect.tryPromise(() =>
             client.wait(
-              { ...receipt, offset: ready.offset },
+              { ...receipt, offset },
               {
                 onEvent: (chunk) => {
                   chunks.push(chunk)
