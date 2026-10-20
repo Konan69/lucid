@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { createFlueClient } from '@flue/sdk'
-import type { FeedCardId } from '@vivid/contracts'
+import { FeedItem, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { Atom, AtomRegistry, AsyncResult } from 'effect/reactivity'
@@ -148,21 +148,26 @@ export function close(item: feed.Waiting, title: string) {
   press(item, feed.Settling.Done())
 }
 
-/** Cards this page has said were looked at, so a card is reported once. */
-const reported = new Set<FeedCardId>()
+/** Each post on a reused card gets its own seen report for this page. */
+const reported = feed.seenReports()
 
 /**
- * Tells the server a card has been looked at, once. A report that does not get through is tried
- * again the next time the card is in view.
+ * Reports the current post on a card once. A report that does not get through is tried again
+ * the next time the card is in view.
  */
 const reportSeen = (card: FeedCardId) => {
-  if (reported.has(card)) return
-  reported.add(card)
+  const current = engine.registry.get(live.feed.atom)
+  if (!AsyncResult.isSuccess(current)) return
+  const item = current.value.items.find(
+    (candidate): candidate is feed.Waiting =>
+      FeedItem.guards.Waiting(candidate) && candidate.card === card,
+  )
+  if (item === undefined || item.seen || !reported.claim(item)) return
   void change(
     (client) => client.MarkFeedCard({ card, state: 'seen' }),
     () => live.feed.expect(feed.seenIn(card)),
   ).then((done) => {
-    if (Result.isFailure(done)) reported.delete(card)
+    if (Result.isFailure(done)) reported.forget(item)
   })
 }
 
@@ -174,8 +179,8 @@ const whole = (entry: IntersectionObserverEntry) =>
   entry.intersectionRatio >= 0.99 ||
   (entry.rootBounds !== null && entry.intersectionRect.height >= entry.rootBounds.height - 1)
 
-/** Which card each watched element is. */
-const cardOf = new WeakMap<Element, FeedCardId>()
+/** Mounted cards remain enumerable after a report so later posts can be observed again. */
+const cardOf = new Map<Element, FeedCardId>()
 
 /**
  * The one watcher of every new card on the page. A card counts as looked at the first time all of
@@ -199,6 +204,17 @@ const watcherOf = (): IntersectionObserver =>
       },
       { threshold: Array.from({ length: 21 }, (_, step) => step / 20) },
     )
+    // Hidden-tab entries are discarded above. Returning to the tab must request a fresh
+    // intersection, as must a new post that reuses a mounted card and its stable ref.
+    const reconsider = () => {
+      if (document.visibilityState !== 'visible') return
+      for (const element of cardOf.keys()) {
+        made.unobserve(element)
+        made.observe(element)
+      }
+    }
+    document.addEventListener('visibilitychange', reconsider)
+    engine.registry.subscribe(live.feed.atom, reconsider)
     watcher = Option.some(made)
     return made
   })
@@ -220,6 +236,7 @@ export const seenWhenShown = (card: FeedCardId) => {
     watcherOf().observe(element)
     return () => {
       watcherOf().unobserve(element)
+      cardOf.delete(element)
     }
   }
   refs.set(card, ref)

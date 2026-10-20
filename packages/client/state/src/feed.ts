@@ -136,7 +136,7 @@ export type Settling = typeof SettlingSchema.Type
 export const Settling = Data.taggedEnum<Settling>()
 
 /** One press, including the post it answered, survives every state of its delivery. */
-export const Pressed = Schema.Struct({ at: Schema.Finite, how: SettlingSchema })
+export const Pressed = Schema.Struct({ revision: Schema.String, how: SettlingSchema })
 export interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
 
 /**
@@ -144,8 +144,8 @@ export interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
  * the card takes no press; `Sent` keeps it folded until the Feed moves on (Vivid works, posts
  * again, or settles it); `Unsent` puts it back, saying so, to be pressed again.
  *
- * A press is about one post: when Vivid posts again (`at` moves), that is a new question and the
- * card is shown again, whatever became of the press.
+ * A press is about one post. When Vivid posts again, its revision changes and the card is shown
+ * again, whatever became of the press.
  */
 export type Press = Data.TaggedEnum<{
   Sending: Pressed
@@ -156,11 +156,11 @@ export const Press = Data.taggedEnum<Press>()
 
 /** Whether a press is about this post and has not failed: then its card is folded away. */
 export const folds = (item: Waiting, press: Option.Option<Press>): boolean =>
-  Option.exists(press, (held) => !Press.$is('Unsent')(held) && held.at === item.at)
+  Option.exists(press, (held) => !Press.$is('Unsent')(held) && held.revision === revisionOf(item))
 
 /** Whether a press about this post failed: its card is back, and says so. */
 export const failed = (item: Waiting, press: Option.Option<Press>): boolean =>
-  Option.exists(press, (held) => Press.$is('Unsent')(held) && held.at === item.at)
+  Option.exists(press, (held) => Press.$is('Unsent')(held) && held.revision === revisionOf(item))
 
 /**
  * The delivery key for a press: the failed press's own key when the same words are pressed again
@@ -183,6 +183,27 @@ export const pressKey = (
     ),
     fresh,
   )
+
+/**
+ * Seen delivery belongs to a post on a card. Both surfaces reserve the same identity before
+ * sending, and release only a refused report so another viewability event can retry it.
+ */
+export const seenReports = () => {
+  const reported = new Set<string>()
+  const keyOf = (item: Waiting) => `${item.card}:${revisionOf(item)}`
+  return {
+    /** Reserve before delivery so concurrent visibility events cannot send twice. */
+    claim: (item: Waiting): boolean => {
+      const key = keyOf(item)
+      if (reported.has(key)) return false
+      reported.add(key)
+      return true
+    },
+    forget: (item: Waiting): void => {
+      reported.delete(keyOf(item))
+    },
+  }
+}
 
 /** The Feed with one card marked as looked at, as the server will say once it has heard. */
 export const seenIn =
@@ -257,7 +278,7 @@ const deliveryOf = (
   card: event.item.card,
   thread: event.item.thread,
   pressed: Pressed.make({
-    at: event.item.at,
+    revision: revisionOf(event.item),
     how: Settling.$match(event.how, {
       Said: ({ words, key }) =>
         Settling.Said({ words, key: pressKey(event.item, standing, words, () => key) }),
@@ -303,7 +324,8 @@ export const PressMachine = Machine.make({
           declinable: true,
           reenter: true,
           resolve: (context) => {
-            if (context.state.pressed.at === context.event.item.at) return context.decline()
+            if (context.state.pressed.revision === revisionOf(context.event.item))
+              return context.decline()
             return context.select.sending({ data: deliveryOf(context.event, Option.none()) })
           },
         },
@@ -315,7 +337,8 @@ export const PressMachine = Machine.make({
           branches: 'pressed',
           declinable: true,
           resolve: (context) => {
-            if (context.state.pressed.at === context.event.item.at) return context.decline()
+            if (context.state.pressed.revision === revisionOf(context.event.item))
+              return context.decline()
             return context.select.sending({ data: deliveryOf(context.event, Option.none()) })
           },
         },

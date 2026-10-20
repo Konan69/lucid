@@ -30,6 +30,9 @@ import {
   Sending,
   SendRefused,
   pressOf,
+  revisionOf,
+  seenReports,
+  type Waiting,
   type Delivery,
 } from './feed.js'
 
@@ -47,6 +50,17 @@ const waiting = FeedItem.cases.Waiting.make({
   },
   seen: false,
   asking: [],
+})
+const seen = FeedItem.cases.Waiting.make({ ...waiting, at: 11, seen: true })
+const newPost = FeedItem.cases.Waiting.make({
+  ...waiting,
+  // A replacement can arrive with the same timestamp. Its post owns its identity.
+  post: {
+    title: 'Which flight?',
+    words: 'There is another flight now.',
+    display: null,
+    actions: ['Not now', 'Book $flight'],
+  },
 })
 const working = FeedItem.cases.Working.make({
   card: FeedCardId.make('card-2'),
@@ -113,19 +127,56 @@ describe('the Feed as it is drawn', () => {
 })
 
 describe('a press on a card', () => {
-  const said = (key: string) => ({ at: 10, how: Settling.Said({ words: 'Book Arik', key }) })
+  const said = (key: string) => ({
+    revision: revisionOf(waiting),
+    how: Settling.Said({ words: 'Book Arik', key }),
+  })
 
   it('folds the card it answered until Vivid posts again', () => {
     expect(folds(waiting, Option.some(Press.Sending(said('a'))))).toBe(true)
     expect(folds(waiting, Option.some(Press.Unsent(said('a'))))).toBe(false)
-    expect(folds({ ...waiting, at: 11 }, Option.some(Press.Sent(said('a'))))).toBe(false)
+    expect(folds(seen, Option.some(Press.Sent(said('a'))))).toBe(true)
+    expect(folds(newPost, Option.some(Press.Sent(said('a'))))).toBe(false)
+    expect(failed(seen, Option.some(Press.Unsent(said('a'))))).toBe(true)
+    expect(failed(newPost, Option.some(Press.Unsent(said('a'))))).toBe(false)
   })
 
   it('keeps the failed delivery key for the same words, and a new one otherwise', () => {
     const lost = Option.some(Press.Unsent(said('kept')))
     expect(pressKey(waiting, lost, 'Book Arik', () => 'new')).toBe('kept')
+    expect(pressKey(seen, lost, 'Book Arik', () => 'new')).toBe('kept')
+    expect(pressKey(newPost, lost, 'Book Arik', () => 'new')).toBe('new')
     expect(pressKey(waiting, lost, 'Not now', () => 'new')).toBe('new')
     expect(pressKey(waiting, Option.none(), 'Book Arik', () => 'new')).toBe('new')
+  })
+})
+
+describe('seen reports', () => {
+  it('deduplicates a post across seen updates and reports a new post on the same card', () => {
+    const reports = seenReports()
+    expect(reports.claim(waiting)).toBe(true)
+    expect(reports.claim(waiting)).toBe(false)
+    expect(reports.claim(seen)).toBe(false)
+    expect(reports.claim(newPost)).toBe(true)
+    expect(reports.claim(newPost)).toBe(false)
+    expect(reports.claim({ ...waiting, card: FeedCardId.make('other') })).toBe(true)
+  })
+
+  it('retries a failed revision without forgetting a later report', () => {
+    const reports = seenReports()
+    expect(reports.claim(waiting)).toBe(true)
+    expect(reports.claim(newPost)).toBe(true)
+    reports.forget(seen)
+    expect(reports.claim(waiting)).toBe(true)
+    expect(reports.claim(newPost)).toBe(false)
+  })
+
+  it('reports changed questions on cards without a post', () => {
+    const reports = seenReports()
+    const question = FeedItem.cases.Waiting.make({ ...waiting, post: null, asking: ['question'] })
+    expect(reports.claim(question)).toBe(true)
+    expect(reports.claim({ ...question, at: 11, seen: true })).toBe(false)
+    expect(reports.claim({ ...question, asking: ['approval'] })).toBe(true)
   })
 })
 
@@ -135,7 +186,7 @@ const started = Effect.fn('Feed.test.started')(function* () {
     readonly delivery: Delivery
     readonly answer: Deferred.Deferred<Result.Result<void, SendRefused>>
   }>()
-  const interrupted = yield* Queue.unbounded<number>()
+  const interrupted = yield* Queue.unbounded<string>()
   const sent: Array<Delivery> = []
   const service = Layer.succeed(Sending, {
     send: (delivery) =>
@@ -144,7 +195,7 @@ const started = Effect.fn('Feed.test.started')(function* () {
         sent.push(delivery)
         yield* Queue.offer(calls, { delivery, answer })
         return yield* Deferred.await(answer).pipe(Effect.flatMap(Effect.fromResult))
-      }).pipe(Effect.onInterrupt(() => Queue.offer(interrupted, delivery.pressed.at))),
+      }).pipe(Effect.onInterrupt(() => Queue.offer(interrupted, delivery.pressed.revision))),
   })
   const ref = yield* Machine.start(PressMachine).pipe(
     // @effect-diagnostics-next-line strictEffectProvide:off -- This case owns the service and its hand-answered calls.
@@ -157,9 +208,9 @@ const started = Effect.fn('Feed.test.started')(function* () {
 })
 
 /** The caller supplies a fresh candidate key; the machine decides whether to reuse a lost one. */
-const pressing = (words: string, key: string, at = waiting.at) =>
+const pressing = (words: string, key: string, item: Waiting = waiting) =>
   PressEvents.Press({
-    item: FeedItem.cases.Waiting.make({ ...waiting, at }),
+    item,
     how: Settling.Said({ words, key }),
   })
 
@@ -188,7 +239,6 @@ describe('a card press machine', () => {
       const made = yield* started()
       yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
       const first = yield* Queue.take(made.calls)
-      const seen = FeedItem.cases.Waiting.make({ ...waiting, at: 11, seen: true })
       const duplicate = PressEvents.Press({
         item: seen,
         how: Settling.Said({ words: 'Not now', key: 'duplicate' }),
@@ -223,7 +273,8 @@ describe('a card press machine', () => {
       yield* Deferred.succeed(retry.answer, Result.succeed(undefined))
       const sent = pressOf((yield* made.at('Sent')).state)
       expect(folds(waiting, sent)).toBe(true)
-      expect(folds({ ...waiting, at: 11 }, sent)).toBe(false)
+      expect(folds(seen, sent)).toBe(true)
+      expect(folds(newPost, sent)).toBe(false)
     }),
   )
 
@@ -236,7 +287,7 @@ describe('a card press machine', () => {
       expect(first.delivery).toEqual({
         card: waiting.card,
         thread: waiting.thread,
-        pressed: { at: waiting.at, how: Settling.Done() },
+        pressed: { revision: revisionOf(waiting), how: Settling.Done() },
       })
       yield* Deferred.succeed(first.answer, Result.fail(new SendRefused({ card: waiting.card })))
       yield* made.at('Unsent')
@@ -254,17 +305,17 @@ describe('a card press machine', () => {
       const made = yield* started()
       yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
       const old = yield* Queue.take(made.calls)
-      yield* made.probe.sendAndAwait(pressing('Not now', 'next', 11))
-      expect(yield* Queue.take(made.interrupted)).toBe(10)
+      yield* made.probe.sendAndAwait(pressing('Not now', 'next', newPost))
+      expect(yield* Queue.take(made.interrupted)).toBe(revisionOf(waiting))
       const current = yield* Queue.take(made.calls)
       yield* Deferred.succeed(old.answer, Result.succeed(undefined))
       // Acknowledgement observes all preceding work without a sleep or a polling loop.
-      const duplicate = yield* made.probe.sendAndAwait(pressing('Book Arik', 'duplicate', 11))
+      const duplicate = yield* made.probe.sendAndAwait(pressing('Book Arik', 'duplicate', newPost))
       expect(duplicate.handled).toBe(false)
       expect(pressOf(duplicate.after)).toEqual(Option.some(Press.Sending(current.delivery.pressed)))
       yield* Deferred.succeed(current.answer, Result.fail(new SendRefused({ card: waiting.card })))
       const unsent = pressOf((yield* made.at('Unsent')).state)
-      expect(failed({ ...waiting, at: 11 }, unsent)).toBe(true)
+      expect(failed(newPost, unsent)).toBe(true)
       expect(failed(waiting, unsent)).toBe(false)
     }),
   )
@@ -275,7 +326,7 @@ describe('a card press machine', () => {
       yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
       const call = yield* Queue.take(made.calls)
       yield* made.ref.stop
-      expect(yield* Queue.take(made.interrupted)).toBe(waiting.at)
+      expect(yield* Queue.take(made.interrupted)).toBe(revisionOf(waiting))
       yield* Deferred.succeed(call.answer, Result.succeed(undefined))
       expect((yield* made.ref.snapshot).status).toBe('stopped')
     }),
@@ -318,8 +369,9 @@ describe('a card press machine', () => {
         yield* made.at('Sent')
         yield* refuse(after, 'Sent')
         expect(made.sent).toHaveLength(1)
-        yield* made.probe.sendAndAwait(pressing('Book Arik', 'new-post', 11))
+        yield* made.probe.sendAndAwait(pressing('Book Arik', 'new-post', newPost))
         const next = yield* Queue.take(made.calls)
+        expect(folds(newPost, pressOf((yield* made.at('Sending')).state))).toBe(true)
         expect(next.delivery.pressed.how).toEqual(
           Settling.Said({ words: 'Book Arik', key: 'new-post' }),
         )
@@ -338,7 +390,7 @@ describe('a card press machine', () => {
         yield* Deferred.succeed(first.answer, Result.fail(new SendRefused({ card: waiting.card })))
         yield* made.at('Unsent')
         const words = sameWords ? 'Book Arik' : 'Not now'
-        yield* made.probe.sendAndAwait(pressing(words, 'fresh', samePost ? 10 : 11))
+        yield* made.probe.sendAndAwait(pressing(words, 'fresh', samePost ? seen : newPost))
         const retry = yield* Queue.take(made.calls)
         expect(retry.delivery.pressed.how).toEqual(
           Settling.Said({ words, key: sameWords && samePost ? 'lost' : 'fresh' }),
