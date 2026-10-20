@@ -5,18 +5,33 @@ import {
   type AssistantMessageEvent,
 } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
-import { init, useModel } from '@flue/runtime'
+import { defineTool, init, useModel, useTool } from '@flue/runtime'
 import { start } from '@flue/runtime/node'
 import { createAgentRouter } from '@flue/runtime/routing'
-import { createFlueClient, type AgentConversationObservationSnapshot } from '@flue/sdk'
+import {
+  createFlueClient,
+  type AgentConversationObservationSnapshot,
+  type ConversationStreamChunk,
+  type FlueConversationMessage,
+} from '@flue/sdk'
 import { textOf } from '@vivid/contracts'
-import { Deferred, Effect, Option, Queue, Stream } from 'effect'
+import { Effect, Option, Queue, Stream } from 'effect'
+import * as v from 'valibot'
 import { testDatabaseConfigured } from '../../../../apps/server/src/database/testdb.ts'
 import { disposableStorage } from '../tests/schema.ts'
 
 /** The public runtime owns projection; the test controls only the provider's content events. */
 function Reply() {
   useModel('fixture/text')
+  useTool(
+    defineTool({
+      name: 'lookup',
+      description: 'Return a fixture tool result.',
+      input: v.object({}),
+      /** The public tool executor persists this output between the two model steps. */
+      run: () => ({ output: { answer: 'found' } }),
+    }),
+  )
   return 'Reply with the supplied content.'
 }
 Reply.agentName = 'reply'
@@ -98,6 +113,98 @@ function sequence(distinct: boolean) {
   return events
 }
 
+/** A completed tool step forces the next model step to reuse the response's original message id. */
+function toolSequence(): AssistantMessageEvent[] {
+  const call = { type: 'toolCall', id: 'lookup-1', name: 'lookup', arguments: {} } as const
+  const message = fauxAssistantMessage([call], { stopReason: 'toolUse' })
+  return [
+    { type: 'start', partial: message },
+    { type: 'toolcall_start', contentIndex: 0, partial: message },
+    { type: 'toolcall_delta', contentIndex: 0, delta: '{}', partial: message },
+    { type: 'toolcall_end', contentIndex: 0, toolCall: call, partial: message },
+    { type: 'done', reason: 'toolUse', message },
+  ]
+}
+
+/** Real storage and runtime; only the provider's three ordered streams are test controlled. */
+const fixture = Effect.gen(function* () {
+  const { storage } = yield* disposableStorage
+  const history = createAssistantMessageEventStream()
+  const tool = createAssistantMessageEventStream()
+  const answer = createAssistantMessageEventStream()
+  const pending = [history, tool, answer]
+  const faux = fauxProvider({ provider: 'fixture', models: [{ id: 'text' }] })
+  const stream = () => {
+    const next = pending.shift()
+    if (next === undefined) return expect.fail('The provider received an unexpected fourth call')
+    return next
+  }
+  yield* Effect.acquireRelease(
+    Effect.tryPromise(() =>
+      start({
+        agents: [Reply],
+        db: storage,
+        providers: [{ ...faux.provider, stream, streamSimple: stream }],
+      }),
+    ),
+    (runtime) => Effect.promise(() => runtime.stop()),
+  )
+  // Failed assertions must release every pending provider before stop drains active work.
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const source of [history, tool, answer]) source.end(fauxAssistantMessage('stopped'))
+    }),
+  )
+  for (const event of sequence(false)) history.push(event)
+  const id = NodeCrypto.randomUUID()
+  const instance = init(Reply, { id })
+  const earlier = yield* Effect.tryPromise(() => instance.dispatch('An older reply'))
+  yield* Effect.tryPromise(() => instance.read(earlier.submissionId))
+  const client = createFlueClient({
+    url: `http://runtime.test/${id}`,
+    fetch: fetchRuntime(createAgentRouter(Reply)),
+  })
+  return { client, tool, answer }
+})
+
+/** Wire consumers receive only the current response, before its completion and settlement markers. */
+function replacements(chunks: readonly ConversationStreamChunk[], live: FlueConversationMessage) {
+  expect(chunks.filter((chunk) => chunk.type === 'conversation-reset')).toEqual([])
+  const messages = chunks.filter((chunk) => chunk.type === 'message-appended')
+  expect(messages.every((chunk) => chunk.message.submissionId === live.submissionId)).toBe(true)
+  const appended = messages.filter((chunk) => chunk.message.role === 'assistant')
+  expect(appended).toHaveLength(2)
+  expect(appended.map((chunk) => chunk.message.id)).toEqual([live.id, live.id])
+  expect(appended.every((chunk) => chunk.message.role === 'assistant')).toBe(true)
+  expect(appended[0]?.message.parts).toEqual([
+    {
+      type: 'dynamic-tool',
+      toolCallId: 'lookup-1',
+      toolName: 'lookup',
+      input: {},
+      state: 'input-available',
+    },
+  ])
+  expect(appended[1]?.message).toEqual(live)
+  const started = chunks.filter((chunk) => chunk.type === 'message-started')
+  expect(started.map((chunk) => chunk.messageId)).toEqual([live.id, live.id])
+  const completed = chunks.filter((chunk) => chunk.type === 'message-completed')
+  expect(completed).toHaveLength(2)
+  for (const completion of completed) {
+    const before = chunks[chunks.indexOf(completion) - 1]
+    expect(before?.type).toBe('message-appended')
+    expect(before?.position.batch).toBe(completion.position.batch)
+  }
+  const settlement = chunks.findIndex((chunk) => chunk.type === 'submission-settled')
+  expect(settlement).toBeGreaterThan(
+    chunks.findLastIndex((chunk) => chunk.type === 'message-completed'),
+  )
+  expect(live.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({
+    state: 'output-available',
+    output: { answer: 'found' },
+  })
+}
+
 describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () => {
   for (const distinct of [false, true]) {
     it.live.each(['sse', 'long-poll'] as const)(
@@ -106,37 +213,10 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
         : 'reconciles text, thinking, and text from the same block to one text part via %s',
       (transport) =>
         Effect.gen(function* () {
-          const { storage } = yield* disposableStorage
-          const entered = Deferred.makeUnsafe<void>()
-          const source = createAssistantMessageEventStream()
-          const faux = fauxProvider({ provider: 'fixture', models: [{ id: 'text' }] })
-          // Provider registration is public. Flue, its wire encoder, and SDK reducer stay real.
-          const stream = () => {
-            Deferred.doneUnsafe(entered, Effect.void)
-            return source
-          }
-          yield* Effect.acquireRelease(
-            Effect.tryPromise(() =>
-              start({
-                agents: [Reply],
-                db: storage,
-                providers: [{ ...faux.provider, stream, streamSimple: stream }],
-              }),
-            ),
-            (runtime) => Effect.promise(() => runtime.stop()),
+          const { client, tool, answer } = yield* fixture
+          const receipt = yield* Effect.tryPromise(() =>
+            client.send({ message: { kind: 'user', body: 'reply' } }),
           )
-          // Even a failed assertion must let Flue drain before its stop finalizer runs.
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => source.end(fauxAssistantMessage('stopped'))),
-          )
-          const id = NodeCrypto.randomUUID()
-          const router = createAgentRouter(Reply)
-          const client = createFlueClient({
-            url: `http://runtime.test/${id}`,
-            fetch: fetchRuntime(router),
-          })
-          const receipt = yield* Effect.tryPromise(() => init(Reply, { id }).dispatch('reply'))
-          yield* Deferred.await(entered)
           const states = yield* Queue.unbounded<AgentConversationObservationSnapshot>()
           const observation = yield* Effect.acquireRelease(
             Effect.sync(() => client.observe({ live: transport, limit: 1 })),
@@ -150,8 +230,28 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
             (unsubscribe) => Effect.sync(unsubscribe),
           )
           changed()
-          yield* observed(states, (state) => state.phase === 'live')
-          for (const event of sequence(distinct)) source.push(event)
+          const ready = yield* observed(states, (state) => state.phase === 'live')
+          if (ready.offset === undefined)
+            return expect.fail('The live observer must have an offset')
+          for (const event of toolSequence()) tool.push(event)
+          const streaming = yield* observed(
+            states,
+            (state) =>
+              state.conversation !== undefined &&
+              state.conversation.messages.some(
+                (message) =>
+                  message.submissionId === receipt.submissionId &&
+                  message.parts.some(
+                    (part) => part.type === 'dynamic-tool' && part.state === 'output-available',
+                  ),
+              ),
+          )
+          const response = streaming.conversation?.messages.find(
+            (message) =>
+              message.role === 'assistant' && message.submissionId === receipt.submissionId,
+          )
+          if (response === undefined) return expect.fail('The first step must have a response id')
+          for (const event of sequence(distinct)) answer.push(event)
           const completed = yield* observed(
             states,
             (state) =>
@@ -162,16 +262,30 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
           )
           const conversation = completed.conversation
           if (conversation === undefined) return expect.fail('The observed conversation must exist')
-          const live = conversation.messages.find((message) => message.role === 'assistant')
+          const live = conversation.messages.find((message) => message.id === response.id)
           const stored = yield* Effect.tryPromise(() => client.history())
-          const canonical = stored.messages.find((message) => message.role === 'assistant')
+          const canonical = stored.messages.find((message) => message.id === response.id)
           if (live === undefined || canonical === undefined)
-            return expect.fail('The completed reply must exist in observation and history')
+            return expect.fail(
+              'The completed reply must retain its first-step id in observation and history',
+            )
           expect(live.parts).toEqual(canonical.parts)
           expect(live.parts.filter((part) => part.type === 'text')).toHaveLength(distinct ? 2 : 1)
           expect(textOf(live)).toBe(
             distinct ? 'First is done.\n\nNext topic begins.' : '**Why Rivers Meander**',
           )
+          const chunks: ConversationStreamChunk[] = []
+          yield* Effect.tryPromise(() =>
+            client.wait(
+              { ...receipt, offset: ready.offset },
+              {
+                onEvent: (chunk) => {
+                  chunks.push(chunk)
+                },
+              },
+            ),
+          )
+          replacements(chunks, live)
         }).pipe(Effect.scoped),
     )
   }
