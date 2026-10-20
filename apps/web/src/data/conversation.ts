@@ -36,6 +36,8 @@ interface Held<Client> {
   readonly snapshot: () => AgentConversationObservationSnapshot
   /** Ends the real observation. Called once, when this conversation is let go. */
   readonly end: () => void
+  /** Opens the real observation's stream again, from the history it has missed. */
+  readonly catchUp: () => void
   /** How many screens are reading it now. One being read is never let go. */
   readers: number
 }
@@ -77,6 +79,7 @@ export const makeConversations = <Client extends Observable>(
         stop()
         observation.close()
       },
+      catchUp: () => observation.refresh(),
       client: {
         ...real,
         observe: (): AgentConversationObservation => {
@@ -167,6 +170,15 @@ export const makeConversations = <Client extends Observable>(
     warm: (id: ThreadId): void => {
       touch(id)
     },
+    /**
+     * Has every open conversation catch up: its stream is opened again and what was said while it
+     * was cut arrives as history. Called when the page's socket opens again after a loss
+     * (`link.reopened`), which a deploy or a changed network causes as surely as it cuts these
+     * streams; left alone, a cut stream waits out Flue's ninety-second timer first.
+     */
+    catchUp: (): void => {
+      for (const held of open.values()) held.catchUp()
+    },
     /** Ends every conversation and lets it go. */
     forget: (): void => {
       for (const held of open.values()) held.end()
@@ -197,6 +209,7 @@ const conversations = makeConversations(multiplexed() ? 3 : 0, (id) =>
 )
 
 export const conversationOf = conversations.of
+export const catchUpConversations = conversations.catchUp
 export const warmConversation = conversations.warm
 export const heardIn = conversations.heard
 

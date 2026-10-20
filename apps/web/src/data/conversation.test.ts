@@ -164,4 +164,15 @@ describe('the conversations a page holds open', () => {
     expect(real.of(a).closed).toBe(1)
     expect(real.of(b).closed).toBe(1)
   })
+
+  it('catches up every conversation it holds open, read or not', () => {
+    const real = flue()
+    const conversations = makeConversations(3, real.connect)
+    conversations.of(a).observe()
+    conversations.warm(b)
+    conversations.catchUp()
+    expect(real.of(a).refreshed).toBe(1)
+    expect(real.of(b).refreshed).toBe(1)
+    expect(real.of(c).refreshed).toBe(0)
+  })
 })

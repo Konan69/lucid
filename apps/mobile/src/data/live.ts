@@ -297,22 +297,12 @@ function followLook(
 function makeLiveData(session: SignedIn) {
   // A new session starts from Vivid as it ships; its own appearance arrives with the socket.
   forgetAppearance()
-  // Whether the phone can reach the server; Home says so when it cannot.
+  // Whether the phone can reach the server; Home says so when it cannot. Each time the socket
+  // opens again after a loss, every open conversation catches up (`reconnected`).
   const link = makeLink()
-  // Whether the socket has been lost since it last opened. Its first opening is not a return:
-  // nothing was following a conversation before it.
-  let wasLost = false
-  /** Tells the link, and on a reopening after a loss has every open conversation catch up. */
-  const heardLink = (open: boolean) => {
-    link.heard(open)
-    if (!open) wasLost = true
-    else if (wasLost) {
-      wasLost = false
-      reconnected()
-    }
-  }
+  link.reopened(reconnected)
   const engine = makeLive(
-    VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: heardLink }).pipe(
+    VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: link.heard }).pipe(
       Layer.provide(bearerSocket(session.token)),
     ),
   )

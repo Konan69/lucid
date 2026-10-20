@@ -23,4 +23,24 @@ describe('the link to the server', () => {
     link.heard(false)
     expect(registry.get(link.atom)).toBe('lost')
   })
+
+  it('says the socket came back only when it opens again after being lost', () => {
+    const link = makeLink()
+    let returns = 0
+    const stop = link.reopened(() => {
+      returns += 1
+    })
+    link.heard(true)
+    expect(returns).toBe(0)
+    link.heard(false)
+    link.heard(false)
+    expect(returns).toBe(0)
+    link.heard(true)
+    link.heard(true)
+    expect(returns).toBe(1)
+    stop()
+    link.heard(false)
+    link.heard(true)
+    expect(returns).toBe(1)
+  })
 })
