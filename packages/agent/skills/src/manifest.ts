@@ -209,6 +209,7 @@ const definitions = [
     starter: false,
     needs: [
       'list_watches',
+      'stop_watching',
       'recall',
       'read_note',
       'write_note',
