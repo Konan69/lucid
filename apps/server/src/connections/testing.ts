@@ -456,6 +456,10 @@ interface HostedReply {
 interface HostedState {
   readonly target: Ref.Ref<Schema.Json>
   readonly intercept: Ref.Ref<(request: HostedRequest) => Effect.Effect<void>>
+  /** Drop or hold an answer after the fixture has committed the write. */
+  readonly afterWrite: Ref.Ref<
+    (request: HostedRequest) => Effect.Effect<void, never, HttpServerRequest.HttpServerRequest>
+  >
   readonly requests: Ref.Ref<readonly HostedRequest[]>
   readonly replies: Ref.Ref<ReadonlyMap<string, HostedReply>>
   readonly apps: Ref.Ref<readonly { readonly id: string; readonly name: string }[]>
@@ -683,6 +687,9 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
   const state: HostedState = {
     target: yield* Ref.make<Schema.Json>({ app: 'app', requirement: 'slot' }),
     intercept: yield* Ref.make<(request: HostedRequest) => Effect.Effect<void>>(() => Effect.void),
+    afterWrite: yield* Ref.make<
+      (request: HostedRequest) => Effect.Effect<void, never, HttpServerRequest.HttpServerRequest>
+    >(() => Effect.void),
     requests: yield* Ref.make<readonly HostedRequest[]>([]),
     replies: yield* Ref.make<ReadonlyMap<string, HostedReply>>(new Map()),
     apps: yield* Ref.make<readonly { readonly id: string; readonly name: string }[]>([]),
@@ -748,6 +755,7 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
       return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
     const result =
       request.method === 'GET' ? yield* hostedRead(state, local) : yield* hostedWrite(state, local)
+    if (request.method !== 'GET') yield* (yield* Ref.get(state.afterWrite))(received)
     return HttpServerResponse.jsonUnsafe(result)
   })
   yield* server.serve(handler())

@@ -29,6 +29,7 @@ import {
 } from './executor.ts'
 import { connectionLogo, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
+import { MADE } from './made.ts'
 import { connections } from './tables.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
@@ -195,7 +196,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
     name: row.name,
     identity: row.identity,
     account,
-    origin: row.service.startsWith(IMPORTED) ? 'Address' : 'Catalogue',
+    origin: connectionOrigin(row.service),
     ownership:
       row.companyId === null
         ? ConnectionOwnership.cases.Personal.make({ owner: summaryOf(actor.person) })
@@ -204,6 +205,13 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
     createdAt: row.createdAt,
   })
 })
+
+/** Only catalogue services support allocating another account from Settings. */
+function connectionOrigin(service: ServiceId): Connection['origin'] {
+  if (service.startsWith(MADE)) return 'Made'
+  if (service.startsWith(IMPORTED)) return 'Address'
+  return 'Catalogue'
+}
 
 /**
  * One Connection for an answer that carries only it (a step, a rename). Its name is decided among

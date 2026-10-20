@@ -69,14 +69,24 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
         ),
     })
   }
-  const result = yield* store
-    .make(actor, request)
-    .pipe(
-      Effect.catchTag('ExecutorBuildFailed', ({ message }) =>
+  const result = yield* store.make(actor, request).pipe(
+    Effect.catchTags({
+      ExecutorBuildFailed: ({ message }) =>
         Effect.succeed(MakeIntegrationOutcome.cases.BuildFailed.make({ message })),
-      ),
-    )
-  if (MakeIntegrationOutcome.guards.BuildFailed(result)) return result
+      // The store preserves safe setup/declaration diagnostics through InvalidRequest, as
+      // add's registration path does. Infrastructure failures remain retryable outcomes.
+      InvalidRequest: ({ message }) =>
+        Effect.succeed(MakeIntegrationOutcome.cases.NotAnIntegration.make({ reason: message })),
+      ServiceUnavailable: () =>
+        Effect.succeed(
+          MakeIntegrationOutcome.cases.Unreachable.make({
+            reason: 'Integrations are unavailable. Try making it again later.',
+          }),
+        ),
+    }),
+  )
+  if (MakeIntegrationOutcome.isAnyOf(['BuildFailed', 'NotAnIntegration', 'Unreachable'])(result))
+    return result
   const selected = namedAccounts(yield* store.records(actor)).find(
     ({ row }) => row.id === result.connection.id,
   )

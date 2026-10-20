@@ -146,6 +146,8 @@ export function made(outcome: MakeIntegrationOutcome): Schema.Json {
       ok: false,
       message: `The build failed: ${modelText(message)}`,
     }),
+    NotAnIntegration: ({ reason }) => ({ ok: false, message: modelText(reason) }),
+    Unreachable: ({ reason }) => ({ ok: false, message: modelText(reason) }),
     // A made Integration's source cannot be replaced in place: say so, so new files are not lost.
     AlreadyConnected: ({ account, name }) => ({
       ok: false,

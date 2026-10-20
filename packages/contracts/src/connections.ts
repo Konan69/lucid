@@ -85,10 +85,10 @@ export const Connection = Schema.Struct({
   account: Schema.String,
   /**
    * Where the service came from. One from the `Catalogue` can be connected again for one more
-   * account. A server someone added by its `Address` cannot yet: adding it a second time is not
-   * something the Connection layer has been shown to do, so no screen offers it.
+   * account. An `Address` import or a `Made` app owns one dedicated connection, so screens
+   * cannot offer another account for it.
    */
-  origin: Schema.Literals(['Catalogue', 'Address']),
+  origin: Schema.Literals(['Catalogue', 'Address', 'Made']),
   ownership: ConnectionOwnership,
   state: ConnectionState,
   createdAt: Schema.Finite,
@@ -258,6 +258,8 @@ export const MakeIntegrationOutcome = Schema.TaggedUnion({
   Made: { account: Schema.String },
   PendingAuthorization: { account: Schema.String, step: ConnectionStep },
   BuildFailed: { message: Schema.String },
+  NotAnIntegration: { reason: Schema.String },
+  Unreachable: { reason: Schema.String },
   AlreadyConnected: { account: Schema.String, name: Schema.String },
   Failed: { account: Schema.String, name: Schema.String },
 })

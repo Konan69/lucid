@@ -54,7 +54,7 @@ describe('make_integration', () => {
     name: null,
     identity: null,
     account: 'Morning',
-    origin: 'Catalogue',
+    origin: 'Made',
     ownership: ConnectionOwnership.cases.Personal.make({
       owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
     }),
@@ -73,6 +73,20 @@ describe('make_integration', () => {
       MakeIntegrationOutcome.cases.BuildFailed.make({ message: 'index.ts: invalid source' }),
       {
         output: { ok: false, message: 'The build failed: index.ts: invalid source' },
+        terminate: false,
+      },
+    ],
+    [
+      MakeIntegrationOutcome.cases.NotAnIntegration.make({ reason: 'The app could not load.' }),
+      {
+        output: { ok: false, message: 'The app could not load.' },
+        terminate: false,
+      },
+    ],
+    [
+      MakeIntegrationOutcome.cases.Unreachable.make({ reason: 'Integrations are unavailable.' }),
+      {
+        output: { ok: false, message: 'Integrations are unavailable.' },
         terminate: false,
       },
     ],

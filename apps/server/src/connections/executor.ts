@@ -929,7 +929,13 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
 /** Each decoder is compiled once per response shape at layer acquisition. No automatic retry is
  * installed: an accepted write or resume may have committed before the response was lost.
  */
-function responseReader(client: HttpClient.HttpClient) {
+function responseReader<E>(
+  client: HttpClient.HttpClient,
+  beforeFailure: (response: {
+    readonly status: number
+    readonly body: unknown
+  }) => Effect.Effect<void, E>,
+) {
   // The request Scope below releases each response, including the unread 401 body.
   const scoped = HttpClient.withScope(client)
   return <A, I>(schema: Schema.Codec<A, I>) => {
@@ -961,6 +967,7 @@ function responseReader(client: HttpClient.HttpClient) {
             Effect.mapError(() => ExecutorResponseInvalid.make(context)),
           )
         }
+        yield* beforeFailure({ status: response.status, body })
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
         if (isOAuthSetupFailure(failure)) {
           const detail = yield* decodeOAuthSetupFailure(body).pipe(Effect.mapError(invalid))
@@ -1084,7 +1091,6 @@ function referenceIdentity(references: ExecutorActiveReferences) {
   }
 }
 
-const decodeDeployedApp = Schema.decodeUnknownEffect(WireApp)
 const decodeBuildFailure = Schema.decodeUnknownOption(
   Schema.TaggedStruct('VersionBuildFailed', {
     message: Schema.String,
@@ -1094,54 +1100,21 @@ const decodeBuildFailure = Schema.decodeUnknownOption(
 /** A rejected first build has no retained app (Executor VersionBuildFailed at 26d03a48).
  * Read diagnostics only here so existing keyed, Google and imported apps keep their failures. */
 function deployReader(client: HttpClient.HttpClient) {
-  const scoped = HttpClient.withScope(client)
-  return Effect.fn('Executor.deploy')(
-    function* (
-      request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>,
-    ) {
-      const context = { service: 'connections' as const, tool: null }
-      const prepared = yield* request.pipe(
-        Effect.mapError(() => ExecutorResponseInvalid.make(context)),
+  const read = responseReader(client, ({ status, body }) => {
+    const build = decodeBuildFailure(body)
+    if (status === 422 && Option.isSome(build))
+      return Effect.fail(
+        ExecutorBuildFailed.make({ message: build.value.message.trim().slice(0, 4000) }),
       )
-      const response = yield* scoped
-        .execute(prepared)
-        .pipe(Effect.mapError(() => ExecutorTransportFailure.make(context)))
-      if (response.status === 401) return yield* ExecutorAccessDenied.make(context)
-      const invalid = () =>
-        response.status >= 500
-          ? ExecutorExecutionUncertain.make(context)
-          : ExecutorResponseInvalid.make(context)
-      const body = yield* response.json.pipe(Effect.mapError(invalid))
-      if (response.status >= 200 && response.status < 300)
-        return yield* decodeDeployedApp(body).pipe(Effect.mapError(invalid))
-      const build = decodeBuildFailure(body)
-      if (response.status === 422 && Option.isSome(build))
-        return yield* new ExecutorBuildFailed({
-          message: build.value.message.trim().slice(0, 4000),
-        })
-      const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
-      if (isKnownFailureTag(failure._tag)) return yield* translateFailure(failure._tag, null)
-      if (response.status >= 500) return yield* ExecutorExecutionUncertain.make(context)
-      return yield* ExecutorRejected.make({
-        ...context,
-        message: 'The Integration management request was refused.',
-      })
-    },
-    (effect) =>
-      effect.pipe(
-        Effect.scoped,
-        Effect.timeoutOrElse({
-          duration: '90 seconds',
-          orElse: () =>
-            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
-        }),
-      ),
-  )
+    return Effect.void
+  })(WireApp)
+  return (request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>) =>
+    read(request, null)
 }
 
 /** Compile the narrow foreign response schemas once for this authenticated client. */
 function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
-  const read = responseReader(client)
+  const read = responseReader(client, () => Effect.void)
   const readApp = read(WireApp)
   const readInventory = read(ExecutorInventory)
   const readLinks = read(
@@ -2094,22 +2067,54 @@ function makeBegin(
   }
 }
 
+/** A lost deploy answer may follow a committed app. Reclaim only this Connection's exact
+ * inventory name, without evaluating the app again. Preserve the original failure if cleanup
+ * itself is unavailable, matching compensateApp's logging and failure policy. */
+function makeReclaimAuthored(http: ExecutorHttp) {
+  const remove = makeRemoval(http)
+  return Effect.fn('Executor.reclaimAuthored')(
+    function* (name: string) {
+      const inventory = yield* http.readInventory(
+        Effect.succeed(HttpClientRequest.get('/inventory')),
+        null,
+      )
+      const app = inventory.apps.find((candidate) => candidate.name === name)
+      if (app !== undefined) yield* remove(`/apps/${query(app.id)}`, 'App')
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.tapError((failure) =>
+          Effect.logError('Integration deploy compensation failed', failure._tag),
+        ),
+        Effect.ignore,
+      ),
+  )
+}
+
 /** Authored sources own one app, including its schedules; failed configuration reclaims it. */
 function makeAuthored(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
   configure: ReturnType<typeof makeConfigure>,
 ) {
+  const reclaim = makeReclaimAuthored(http)
   return Effect.fn('Executor.makeAuthored')(function* (
     input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
   ) {
+    const name = connectionAppName(input.connectionId)
     const app = yield* Effect.acquireRelease(
-      http.readDeploy(
-        post('/apps/deploy', {
-          name: connectionAppName(input.connectionId),
-          files: input.files,
-        }),
-      ),
+      http
+        .readDeploy(
+          post('/apps/deploy', {
+            name,
+            files: input.files,
+          }),
+        )
+        .pipe(
+          Effect.tapErrorTag(['ExecutorTransportFailure', 'ExecutorExecutionUncertain'], () =>
+            reclaim(name),
+          ),
+        ),
       compensateApp(http),
     )
     const schedules = yield* http.readSchedules(
@@ -2132,6 +2137,8 @@ function makeAuthored(
       Object.keys(app.requirements.accounts).length === 0
         ? ServiceAuthorization.cases.None.make({})
         : yield* availability.inspectApp(input, app)
+    if (ServiceAuthorization.guards.SetupRequired(authorization))
+      return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
     return yield* configure(
       input,
       app,

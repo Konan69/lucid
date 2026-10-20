@@ -1,21 +1,51 @@
+import { NodeHttpServerRequest } from '@effect/platform-node'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as TestClock from 'effect/testing/TestClock'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import {
   Forbidden,
+  InvalidRequest,
+  ConnectionId,
+  ServiceId,
   MakeIntegrationOutcome,
   MakeIntegrationRequest,
   CompleteConnectionRequest,
   SessionId,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Ref, Result, Schema, Redacted } from 'effect'
+import {
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Queue,
+  Ref,
+  Result,
+  Schema,
+  Redacted,
+} from 'effect'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers } from './handlers.ts'
-import { ExecutorAppOwnership, ExecutorReferences } from './executor.ts'
+import {
+  Executor,
+  ExecutorAppOwnership,
+  ExecutorOwnerId,
+  ExecutorReferences,
+  ExecutorSetupRequired,
+  connectionSetupMessage,
+} from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connections } from './tables.ts'
-import { connectionTestLayer, fixture, hostedExecutorFixture, hostedPrefix } from './testing.ts'
+import {
+  connectionTestLayer,
+  fixture,
+  hostedExecutorFixture,
+  hostedPrefix,
+  hostedService,
+} from './testing.ts'
 
 const request = MakeIntegrationRequest.make({
   name: 'Morning check',
@@ -65,6 +95,7 @@ const madeFixture = Effect.fn('MadeTest.fixture')(function* () {
   return {
     ...actors,
     hosted,
+    executor: Context.get(executor, Executor),
     store: Context.get(context, ConnectionStore),
     complete: (input: CompleteConnectionRequest) =>
       connectionHandlers.CompleteConnection(input).pipe(
@@ -158,6 +189,13 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
           const row = rows[0]
           if (row === undefined) return expect.fail('Expected made Connection')
           expect(row.status).toBe('ready')
+          const listed = yield* made.store.list(made.ownerActor)
+          expect(listed.connections).toHaveLength(1)
+          expect(listed.connections[0]).toHaveProperty('origin', 'Made')
+          // Both Settings clients offer another account only for Catalogue origins.
+          expect(listed.connections.some((connection) => connection.origin === 'Catalogue')).toBe(
+            false,
+          )
           expect(ExecutorReferences.guards.Public(row.references)).toBe(true)
           if (!ExecutorReferences.guards.Public(row.references))
             return expect.fail('Expected public references')
@@ -243,9 +281,160 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
             body: {},
           }),
         )
-        expect(Result.isFailure(yield* made.make(request).pipe(Effect.result))).toBe(true)
+        expect(yield* made.make(request)).toEqual(
+          MakeIntegrationOutcome.cases.Unreachable.make({
+            reason: 'Integrations are unavailable. Try making it again later.',
+          }),
+        )
         expect(yield* made.store.records(made.ownerActor)).toEqual([])
         expect(yield* Ref.get(made.hosted.apps)).toEqual([])
+      }),
+    )
+
+    for (const answer of ['disconnect', 'timeout', 'uncertain'] as const) {
+      test.effect(`reclaims a committed app after a lost deploy answer (${answer})`, () =>
+        Effect.gen(function* () {
+          const made = yield* madeFixture()
+          const saved = yield* Queue.unbounded<void>()
+          const release = yield* Deferred.make<void>()
+          // A timed-out request can still be running remotely. Release its work before the
+          // fixture listener closes, including when an assertion fails.
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
+          yield* Ref.set(made.hosted.apps, [{ id: 'unrelated', name: 'Another Connection' }])
+          yield* Ref.set(made.hosted.afterWrite, (sent) =>
+            Effect.gen(function* () {
+              if (sent.path !== `POST ${hostedPrefix}/apps/deploy`) return
+              yield* Queue.offer(saved, undefined)
+              if (answer === 'timeout') return yield* Deferred.await(release)
+              const incoming = yield* HttpServerRequest.HttpServerRequest
+              if (answer === 'disconnect') {
+                yield* Effect.sync(() =>
+                  NodeHttpServerRequest.toIncomingMessage(incoming).socket.destroy(),
+                )
+                return
+              }
+              // A lost response can also arrive as an undecodable 5xx from an upstream proxy.
+              const response = NodeHttpServerRequest.toServerResponse(incoming)
+              yield* Effect.sync(() => {
+                response.writeHead(503, { 'content-type': 'application/json' })
+                response.end('{}')
+              })
+            }),
+          )
+          const attempt = yield* made.make(request).pipe(Effect.forkChild)
+          yield* Queue.take(saved)
+          if (answer === 'timeout') yield* TestClock.adjust('90 seconds')
+          expect(yield* Fiber.join(attempt)).toEqual(
+            MakeIntegrationOutcome.cases.Unreachable.make({
+              reason: 'Integrations are unavailable. Try making it again later.',
+            }),
+          )
+          yield* Deferred.succeed(release, undefined)
+          expect(yield* made.store.records(made.ownerActor)).toEqual([])
+          expect(yield* Ref.get(made.hosted.apps)).toEqual([
+            { id: 'unrelated', name: 'Another Connection' },
+          ])
+          expect((yield* Ref.get(made.hosted.requests)).map((sent) => sent.path)).toContain(
+            `DELETE ${hostedPrefix}/apps/app-2`,
+          )
+        }),
+      )
+    }
+
+    test.effect(
+      'rejects setup-required authorization and removes the app before any account starts',
+      () =>
+        Effect.gen(function* () {
+          const made = yield* madeFixture()
+          yield* Ref.set(made.hosted.accounts, {
+            slot: {
+              provider: 'provider',
+              definition: { auth: { oauth: { type: 'oauth2' } } },
+            },
+          })
+          yield* Ref.update(made.hosted.replies, (replies) =>
+            new Map(replies).set(`GET ${hostedPrefix}/providers/provider/oauth/oauth/setup`, {
+              status: 200,
+              body: { clients: [], mode: 'client-required' },
+            }),
+          )
+          const failure = yield* made.executor
+            .make({
+              connectionId: ConnectionId.make('setup-required'),
+              service: ServiceId.make('made:setup-required'),
+              owner: ExecutorOwnerId.make('p-test'),
+              subject: made.ownerActor.person.id,
+              label: request.name,
+              returnAddress: 'https://vivid.example/api/connections/return',
+              files: request.files,
+            })
+            .pipe(Effect.flip)
+          expect(failure).toBeInstanceOf(ExecutorSetupRequired)
+          expect(yield* Ref.get(made.hosted.apps)).toEqual([])
+          expect(yield* made.make(request)).toEqual(
+            MakeIntegrationOutcome.cases.NotAnIntegration.make({ reason: connectionSetupMessage }),
+          )
+          expect(yield* made.store.records(made.ownerActor)).toEqual([])
+          expect(yield* Ref.get(made.hosted.apps)).toEqual([])
+          expect(
+            (yield* Ref.get(made.hosted.requests)).some(
+              (sent) => sent.path.endsWith('/connections') && sent.path.startsWith('POST '),
+            ),
+          ).toBe(false)
+        }),
+    )
+
+    for (const [tag, reason] of [
+      [
+        'AppEvaluationFailed',
+        'The integration could not load its tools. Check its deployment and authorization.',
+      ],
+      ['BuildMemoryExceeded', 'This Integration could not be built within the available memory.'],
+      ['SkillDefinitionInvalid', 'The imported service declaration is invalid.'],
+    ]) {
+      test.effect(`returns a repairable outcome for post-build ${tag}`, () =>
+        Effect.gen(function* () {
+          const made = yield* madeFixture()
+          yield* Ref.update(made.hosted.replies, (replies) =>
+            new Map(replies).set(`GET ${hostedPrefix}/apps/app/schedules/definitions`, {
+              status: 422,
+              body: { _tag: tag },
+            }),
+          )
+          expect(yield* made.make(request)).toEqual(
+            MakeIntegrationOutcome.cases.NotAnIntegration.make({ reason }),
+          )
+          expect(yield* made.store.records(made.ownerActor)).toEqual([])
+          expect(yield* Ref.get(made.hosted.apps)).toEqual([])
+        }),
+      )
+    }
+
+    test.effect('keeps VersionBuildFailed on the ordinary add path as InvalidRequest', () =>
+      Effect.gen(function* () {
+        const made = yield* madeFixture()
+        yield* Ref.update(made.hosted.replies, (replies) =>
+          new Map(replies).set(`POST ${hostedPrefix}/apps/install`, {
+            status: 422,
+            body: BuildFailure.make({
+              owner: 'host-owner',
+              name: 'host-app',
+              reason: 'compile',
+              message: 'compiler detail',
+            }),
+          }),
+        )
+        const failure = yield* made.store
+          .begin(made.ownerActor, {
+            service: hostedService,
+            name: null,
+            shared: false,
+            from: 'Web',
+          })
+          .pipe(Effect.flip)
+        expect(failure).toBeInstanceOf(InvalidRequest)
+        expect(failure).toHaveProperty('message', 'The imported service could not be built.')
+        expect(yield* made.store.records(made.ownerActor)).toEqual([])
       }),
     )
 
