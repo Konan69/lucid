@@ -86,7 +86,10 @@ const remember = (visited, owner) => {
   return owner
 }
 
-/** What to do instead, by what kind of package was reached. */
+/**
+ * An app's manifest exports nothing, so code it holds can only be shared by moving it into a
+ * package; a package can export the file instead. The message says which, so the fix is named.
+ */
 const fixFor = Owner.match({
   App: ({ name }) =>
     `${name} exports nothing. Import it through a package both depend on (packages/client/state for client behaviour, packages/contracts for wire shapes): move the shared code there and import it by name.`,
@@ -97,7 +100,10 @@ const fixFor = Owner.match({
 /** A specifier as a path on disk: a bundler query (`?raw`) or fragment names the same file. */
 const specifierPath = (specifier) => specifier.replace(/[?#].*$/u, '')
 
-/** Reports `source` when it is a relative specifier whose target is in another package. */
+/**
+ * Only a relative specifier can cross a package without its manifest knowing: an import by name
+ * already passes through the target's `exports` and the importer's declared dependencies.
+ */
 const check = (context, report, source) => {
   if (source === null || source === undefined || source.type !== 'Literal') return
   if (!Predicate.isString(source.value) || !source.value.startsWith('.')) return
@@ -109,7 +115,7 @@ const check = (context, report, source) => {
   report(source, { from: from.value.name, to: to.value.name, fix: fixFor(to.value) })
 }
 
-/** True for `require('...')` with one literal argument, the CommonJS form of an import. */
+/** A relative `require` crosses a package as easily as an `import`, so CommonJS is checked too. */
 const isRequire = (node) =>
   node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1
 

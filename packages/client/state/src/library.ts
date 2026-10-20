@@ -64,8 +64,6 @@ export const formatBytes = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-// ── Reads that answer once ─────────────────────────────────────────────────
-
 /** Searches what Vivid has read, inside one folder or across everything the Person can read. */
 export const search = Effect.fn('Library.search')(function* (
   query: string,
@@ -89,8 +87,6 @@ export const shelfFolders = Effect.fn('Library.shelfFolders')(function* (shelf: 
   const response = yield* client.ListLibraryFolders()
   return response.folders.filter((folder) => folder.shelf === shelf)
 })
-
-// ── Upload: bytes travel over plain HTTP, sent by each surface ─────────────
 
 /** Why a file did not get into the Library, in a sentence the upload row can show. */
 export class UploadRefused extends Schema.TaggedError<UploadRefused>()(
@@ -139,8 +135,6 @@ export interface UploadDestination {
   readonly shelf: LibraryShelf
   readonly folderId: LibraryFolderId | null
 }
-
-// ── Expectations: the result the server is expected to send next ───────────
 
 /**
  * A copy of an item with some fields replaced. An item is a plain decoded record, so copying its

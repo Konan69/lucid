@@ -42,7 +42,8 @@ const workspace = {
     exports: { './native': './src/native.ts' },
   }),
   'packages/tokens/src/native.ts': 'export const nativeThemes = 1\n',
-  // c652f3ed: the phone's Library reached into the web app's data module.
+  // The mistake this rule exists for (c652f3ed): the phone's Library reached into the web app's
+  // data module, and the regex rule it replaces, which knew only two packages, let it through.
   'apps/mobile/src/screen/library.ts':
     "import * as library from '../../../web/src/data/library'\nexport const shelves = library\n",
   'apps/mobile/src/screen/tokens.test.ts':
@@ -63,7 +64,11 @@ const workspace = {
   ].join('\n'),
 }
 
-/** Lints the fixture workspace with only this rule and returns its findings by file. */
+/**
+ * Runs the real oxlint binary over the fixture, loading the rule as a JS plugin the way
+ * `.oxlintrc.json` does, so the test fails if the plugin stops loading as well as if the rule
+ * misses. Only this rule is on, so no other rule's finding can stand in for it.
+ */
 function lintWorkspace() {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-boundary-'))
   try {

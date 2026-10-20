@@ -86,7 +86,6 @@ describe('inFolder', () => {
   })
 
   it('shows a folder its own items and the folders directly inside it', () => {
-    // Not the top's, not a sibling folder's, and not what is filed one level further down.
     const inside = inFolder(shelf, contracts)
     expect(inside.documents.map((each) => each.id)).toEqual(['filed'])
     expect(inside.folders.map((each) => each.id)).toEqual(['2026'])
