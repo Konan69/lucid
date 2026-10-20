@@ -173,7 +173,11 @@ export const Composer = memo(function Composer({
                   )}
                   <Interrupt shown={working && asked !== undefined} onStop={onStop} />
                   <Previous asked={Option.fromUndefinedOr(asked)} />
-                  <SendOrStop does={doing(working, empty, moving)} onStop={onStop} onSend={press} />
+                  <SendOrStop
+                    does={doing(working && asked === undefined, empty, moving)}
+                    onStop={onStop}
+                    onSend={press}
+                  />
                 </div>
               </div>
             </BorderBeam>

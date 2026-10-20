@@ -79,7 +79,7 @@ function composing(place: string, words: string, asked: Option.Option<Onward> = 
     if (found === undefined) throw new Error(`The composer drew no button named ${name}.`)
     return found
   }
-  return { field, sent, stops, button }
+  return { container, field, sent, stops, button }
 }
 
 /** Enter going down in the field, as the browser tells it: once, or again while it is held. */
@@ -216,6 +216,39 @@ describe('the composer while a question is up', () => {
     expect(sent).toEqual([])
     act(() => button('Send').click())
     expect(sent).toEqual(['Skip that, just send it'])
+  })
+
+  it('keeps one Stop and holds Send while a drafted attachment uploads under a question', async () => {
+    const { asked } = question({})
+    const { container, field, sent, stops, button } = composing('asked-upload', 'Read this', asked)
+    // Hold only the browser's network boundary: the real attachment flow stays uploading.
+    const started = new Promise<XMLHttpRequest>((resolve) => {
+      vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (this: XMLHttpRequest) {
+        resolve(this)
+      })
+    })
+    onTestFinished(() => vi.restoreAllMocks())
+    const picker = container.querySelector('input[type="file"]')
+    if (!(picker instanceof HTMLInputElement)) throw new Error('The composer drew no file picker.')
+    const transfer = new DataTransfer()
+    transfer.items.add(new File(['Trip notes'], 'trip.txt', { type: 'text/plain' }))
+    await act(async () => {
+      picker.files = transfer.files
+      picker.dispatchEvent(new Event('change', { bubbles: true }))
+      await started
+    })
+    expect(container.querySelectorAll('button[aria-label="Stop"]')).toHaveLength(1)
+    expect(button('Send').disabled).toBe(true)
+    act(() => button('Stop').click())
+    expect(stops).toEqual(['stop'])
+    expect(sent).toEqual([])
+    expect(field.value).toBe('Read this')
+    // A network refusal finishes the held request without creating a document fixture.
+    await act(async () => {
+      const uploading = await started
+      uploading.dispatchEvent(new Event('error'))
+    })
+    expect(button('Send').disabled).toBe(false)
   })
 
   it('goes back to the question before from its quiet button, from the second question on', () => {
