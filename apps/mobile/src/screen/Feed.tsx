@@ -38,11 +38,13 @@ const LOOK = {
 } as const
 
 /**
- * What the Person chose in each waiting card's display, by card and post. The list draws only the
- * rows near the screen, so a card scrolled away is unmounted; kept here, its choices are back when
- * it is drawn again, and a failed send is pressed again with the words the Person picked.
+ * What the Person chose in a waiting card's display, kept per card for the post it was chosen in.
+ * The list draws only the rows near the screen, so a card scrolled away is unmounted; kept here,
+ * its choices are back when it is drawn again, and a failed send is pressed again with the words
+ * the Person picked. One entry per card: a new post replaces the old one, so the map holds no
+ * more than the cards the Person has opened this session, each with its latest post's choices.
  */
-const remembered = new Map<string, feed.Chosen>()
+const remembered = new Map<string, { readonly post: string; readonly chosen: feed.Chosen }>()
 
 /** A card's way out and answer: 40 points tall, 12 corners, concentric with the card's 24. */
 const ANSWER = { height: 40, radius: 12 } as const
@@ -254,7 +256,7 @@ function Waiting({
           />
         ))}
         now={now}
-        remember={Option.some(`${item.card}:${feed.revisionOf(item)}`)}
+        remember={Option.some({ card: item.card, post: feed.revisionOf(item) })}
         onOpen={onOpen}
       />
     </Animated.View>
@@ -284,7 +286,7 @@ function Card({
   bar: Option.Option<(chosen: feed.Chosen) => ReactNode>
   now: number
   /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
-  remember: Option.Option<string>
+  remember: Option.Option<{ readonly card: string; readonly post: string }>
   onOpen: () => void
 }) {
   const { colors: c } = useTheme()
@@ -292,13 +294,18 @@ function Card({
   // once, so the renderer starts from it and is not handed a new start on every change.
   const [start] = useState<feed.Chosen>(() =>
     Option.getOrElse(
-      Option.flatMap(remember, (key) => Option.fromUndefinedOr(remembered.get(key))),
+      Option.flatMap(remember, ({ card, post }) =>
+        Option.map(
+          Option.filter(Option.fromUndefinedOr(remembered.get(card)), (kept) => kept.post === post),
+          (kept) => kept.chosen,
+        ),
+      ),
       () => ({}),
     ),
   )
   const [chosen, setChosen] = useState<feed.Chosen>(start)
   const choose = (next: feed.Chosen) => {
-    Option.map(remember, (key) => remembered.set(key, next))
+    Option.map(remember, ({ card, post }) => remembered.set(card, { post, chosen: next }))
     setChosen(next)
   }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
