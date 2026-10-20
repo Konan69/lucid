@@ -40,6 +40,9 @@ export const CookieRow = Schema.Struct({
 })
 export type CookieRow = typeof CookieRow.Type
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow))
+const decodeColumns = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ name: Schema.String })),
+)
 const decodeVersion = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ value: Schema.FiniteFromString })]),
 )
@@ -115,11 +118,31 @@ export const readCookieDatabase = Effect.fn('DesktopSignIn.readDatabase')(functi
     }),
     (opened) => Effect.sync(() => opened.close()),
   )
+  // Chromium's raw microsecond timestamps exceed JavaScript's safe integer range. Selecting
+  // them, even as unused extra columns, makes node:sqlite throw before row decoding. Project
+  // only the row contract, converting expiry to REAL seconds inside SQLite. Older Chromium
+  // schemas lack the partition column, so inspect its presence before selecting it.
+  const storedColumns = yield* Effect.try({
+    try: () => database.prepare('PRAGMA table_info(cookies)').all(),
+    catch: failed,
+  })
+  const columns = yield* decodeColumns(storedColumns).pipe(
+    Effect.mapError(
+      () => new CookieReadFailed({ outcome: CopySignInOutcome.cases.Unreadable.make({ browser }) }),
+    ),
+  )
+  const partitioned = columns.some((column) => column.name === 'top_frame_site_key')
+  const projection = Object.keys(CookieRow.fields)
+    .filter((column) => column !== 'top_frame_site_key' || partitioned)
+    .map((column) =>
+      column === 'expires_seconds' ? 'expires_utc / 1000000.0 AS expires_seconds' : `"${column}"`,
+    )
+    .join(', ')
   const rows = yield* Effect.try({
     try: () =>
       database
         .prepare(
-          'SELECT *, expires_utc / 1000000.0 AS expires_seconds FROM cookies WHERE host_key=? OR host_key=? OR host_key LIKE ?',
+          `SELECT ${projection} FROM cookies WHERE host_key=? OR host_key=? OR host_key LIKE ?`,
         )
         .all(site, `.${site}`, `%.${site}`),
     catch: failed,

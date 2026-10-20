@@ -126,6 +126,25 @@ describe('copying sign-ins from a browser cookie database', () => {
       ),
   )
 
+  it.effect('copies persistent cookies when Chromium stores timestamps beyond safe integers', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const source = yield* fixture()
+        source.database.exec('ALTER TABLE cookies ADD COLUMN creation_utc INTEGER')
+        source.database
+          .prepare('UPDATE cookies SET creation_utc=?, expires_utc=?, is_persistent=1')
+          .run(13_436_989_080_485_109n, 13_644_473_600_000_000n)
+        const read = yield* readChromeSignIn({ request, root: source.root, platform: 'linux' })
+        expect(SignInRead.guards.Collected(read)).toBe(true)
+        if (!SignInRead.guards.Collected(read)) return
+        expect(read.cookies.map((cookie) => cookie.expiry)).toEqual([
+          { _tag: 'Persistent', seconds: 2_000_000_000 },
+          { _tag: 'Persistent', seconds: 2_000_000_000 },
+        ])
+      }),
+    ),
+  )
+
   it.effect(
     'reads safely while the source database stays open without declaring a browser lock',
     () =>
