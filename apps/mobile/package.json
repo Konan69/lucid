@@ -69,7 +69,8 @@
     "@types/react": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@types/react-dom": "catalog:"
   },
   "enriched-markdown": {
     "enableMath": false,

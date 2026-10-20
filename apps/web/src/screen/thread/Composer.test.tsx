@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { Option } from 'effect'
+import { it as effectIt } from '@effect/vitest'
+import { Deferred, Effect, Option } from 'effect'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -218,40 +219,53 @@ describe('the composer while a question is up', () => {
     expect(sent).toEqual(['Skip that, just send it'])
   })
 
-  it('keeps one Stop and holds Send while a drafted attachment uploads under a question', async () => {
-    const { asked } = question({})
-    const { container, field, sent, stops, button } = composing('asked-upload', 'Read this', asked)
-    // Hold only the browser's network boundary: the real attachment flow stays uploading.
-    const started = new Promise<XMLHttpRequest>((resolve) => {
-      vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (
-        this: XMLHttpRequest,
-      ) {
-        resolve(this)
-      })
-    })
-    onTestFinished(() => vi.restoreAllMocks())
-    const picker = container.querySelector('input[type="file"]')
-    if (!(picker instanceof HTMLInputElement)) throw new Error('The composer drew no file picker.')
-    const transfer = new DataTransfer()
-    transfer.items.add(new File(['Trip notes'], 'trip.txt', { type: 'text/plain' }))
-    await act(async () => {
-      picker.files = transfer.files
-      picker.dispatchEvent(new Event('change', { bubbles: true }))
-      await started
-    })
-    expect(container.querySelectorAll('button[aria-label="Stop"]')).toHaveLength(1)
-    expect(button('Send').disabled).toBe(true)
-    act(() => button('Stop').click())
-    expect(stops).toEqual(['stop'])
-    expect(sent).toEqual([])
-    expect(field.value).toBe('Read this')
-    // A network refusal finishes the held request without creating a document fixture.
-    await act(async () => {
-      const uploading = await started
-      uploading.dispatchEvent(new Event('error'))
-    })
-    expect(button('Send').disabled).toBe(false)
-  })
+  effectIt.effect(
+    'keeps one Stop and holds Send while a drafted attachment uploads under a question',
+    () =>
+      Effect.gen(function* () {
+        const { asked } = question({})
+        const { container, field, sent, stops, button } = composing(
+          'asked-upload',
+          'Read this',
+          asked,
+        )
+        // Hold only the browser's network boundary: the real attachment flow stays uploading.
+        const started = yield* Deferred.make<XMLHttpRequest>()
+        vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (
+          this: XMLHttpRequest,
+        ) {
+          Deferred.doneUnsafe(started, Effect.succeed(this))
+        })
+        onTestFinished(() => {
+          vi.restoreAllMocks()
+        })
+        const picker = container.querySelector('input[type="file"]')
+        if (!(picker instanceof HTMLInputElement))
+          throw new Error('The composer drew no file picker.')
+        const transfer = new DataTransfer()
+        transfer.items.add(new File(['Trip notes'], 'trip.txt', { type: 'text/plain' }))
+        act(() => {
+          picker.files = transfer.files
+          picker.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        const uploading = yield* Deferred.await(started)
+        expect(container.querySelectorAll('button[aria-label="Stop"]')).toHaveLength(1)
+        expect(button('Send').disabled).toBe(true)
+        act(() => button('Stop').click())
+        expect(stops).toEqual(['stop'])
+        expect(sent).toEqual([])
+        expect(field.value).toBe('Read this')
+        // React's async act receipt flushes the real flow after the network refusal completes it.
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            act(() => {
+              uploading.dispatchEvent(new Event('error'))
+            }),
+          ),
+        )
+        expect(button('Send').disabled).toBe(false)
+      }),
+  )
 
   it('goes back to the question before from its quiet button, from the second question on', () => {
     const { moves, asked } = question({})
