@@ -4,6 +4,7 @@ import type { Effect } from 'effect'
 import { Layer } from 'effect'
 import * as RpcClientError from 'effect/rpc/RpcClientError'
 import * as Socket from 'effect/socket/Socket'
+import { catchUpConversations } from './conversation'
 
 export type { ProductFailure }
 
@@ -24,8 +25,12 @@ export function clientFailure(message: string, cause: unknown): RpcClientError.R
  */
 const liveAddress = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`
 
-/** Whether the page can reach its server; the shell says so when it cannot. */
+/**
+ * Whether the page can reach its server; the shell says so when it cannot. When the socket opens
+ * again after a loss, every conversation the page holds open catches up.
+ */
 export const link = makeLink()
+link.reopened(catchUpConversations)
 
 /**
  * The web app's client and its Atom registry. One socket for the whole app: every call and every

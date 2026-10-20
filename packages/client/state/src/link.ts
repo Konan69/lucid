@@ -20,6 +20,7 @@ export type Link = 'connecting' | 'open' | 'lost'
 export function makeLink() {
   let now: Link = 'connecting'
   const hearing = new Set<(link: Link) => void>()
+  const returning = new Set<() => void>()
   return {
     atom: Atom.make<Link>((get) => {
       const hear = (link: Link) => get.setSelf(link)
@@ -31,8 +32,26 @@ export function makeLink() {
     heard: (open: boolean) => {
       const next: Link = open ? 'open' : 'lost'
       if (next === now) return
+      const back = now === 'lost'
       now = next
       for (const hear of hearing) hear(next)
+      if (back) for (const wake of returning) wake()
+    },
+    /**
+     * Runs `wake` each time the socket opens again after it was lost, and returns how to stop.
+     * The first opening is not a return: nothing was following anything before it.
+     *
+     * Whatever cut the socket (a deploy replacing the server, a network that changed, a device
+     * that slept) cut every conversation stream with it. A stream left alone notices only after
+     * ninety silent seconds (`@flue/sdk` 2.2.2 `STALE_STREAM_TIMEOUT_MS`); the socket notices
+     * within fifteen (`@vivid/rpc` `layerLive`). So each client has its open conversations catch
+     * up from here, on web, phone and desktop alike.
+     */
+    reopened: (wake: () => void) => {
+      returning.add(wake)
+      return () => {
+        returning.delete(wake)
+      }
     },
   }
 }
