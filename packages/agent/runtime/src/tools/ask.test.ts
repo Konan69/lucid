@@ -107,7 +107,7 @@ describe('ask_person', () => {
             },
           })
           // Asking does not end the turn: Vivid keeps working and the answer arrives as a delivery.
-          expect(result).not.toHaveProperty('terminate')
+          expect(result.terminate).toBe(false)
           expect(JSON.stringify(result)).not.toMatch(/ask-person|ask-thread/u)
         }
       }),

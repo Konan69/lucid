@@ -77,8 +77,12 @@ layer(testDatabaseLayer)((cases) => {
                 const deliveries = yield* Ref.get(observed.deliveries)
                 expect(deliveries).toHaveLength(2)
                 expect(deliveries.map((delivery) => delivery.message)).toMatchObject([
-                  { body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning' },
-                  { body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning' },
+                  {
+                    body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                  },
+                  {
+                    body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                  },
                 ])
                 expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
                   `answer-${request.id}`,

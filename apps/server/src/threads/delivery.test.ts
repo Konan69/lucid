@@ -539,7 +539,7 @@ layer(
               message: {
                 kind: 'signal',
                 type: 'answer',
-                body: 'Monday',
+                body: 'Question: Which day works?\nAnswer: Monday',
                 attributes: { from: 'Ben' },
               },
             },

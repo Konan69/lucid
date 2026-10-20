@@ -50,10 +50,11 @@ describe.skipIf(!testDatabaseConfigured)('Thread attention', () => {
     it.effect('a Thread with a question open reads Working while a Run works, then NeedsYou', () =>
       Effect.gen(function* () {
         const { database, person, actor, id } = yield* fixture()
-        const attention = Effect.map(
-          (yield* ThreadStore).list(actor),
-          (listed) => listed.find((thread) => thread.id === id)?.attention,
-        )
+        const attention = Effect.map((yield* ThreadStore).list(actor), (listed) => {
+          const thread = listed.find((candidate) => candidate.id === id)
+          if (thread === undefined) return expect.fail('Thread missing from list')
+          return thread.attention
+        })
         const runId = RunId.make(crypto.randomUUID())
         yield* database.run(
           database.insert(runs).values({
