@@ -1,7 +1,6 @@
 import * as NodeHttp from 'node:http'
 import { expect } from '@effect/vitest'
-import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import * as FetchHttpClient from 'effect/http/FetchHttpClient'
+import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as NetAddress from 'effect/net/NetAddress'
@@ -711,8 +710,10 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
   yield* server.serve(handler())
   if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('Expected TCP fixture')
   const url = yield* Effect.fromResult(NetAddress.toUrl(server.address))
+  // Match production's scoped dispatcher: destroy this fixture's keep-alive connections before
+  // its listener closes, rather than waiting for a global fetch pool's real-time idle expiry.
   const configured = executorLayer.pipe(
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(NodeHttpClient.layerUndici),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
