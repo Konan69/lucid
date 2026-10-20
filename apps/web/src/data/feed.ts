@@ -1,11 +1,14 @@
+import { useAtomValue } from '@effect/atom-react'
 import { createFlueClient } from '@flue/sdk'
 import type { FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
-import { Effect, Option, Result } from 'effect'
+import { Effect, Layer, Option, Result } from 'effect'
+import { Atom, AtomRegistry, AsyncResult } from 'effect/reactivity'
 import { create } from 'zustand'
 import { act, change } from './app'
 import { changing, live } from './live'
 import { say } from './said'
+import { engine } from './runtime'
 
 /**
  * What the Person does to the Feed from this page, between doing it and the Feed's next answer.
@@ -16,23 +19,93 @@ import { say } from './said'
  * not at once. Until it does, the card is folded away where it stood, so the press is answered on
  * the frame it happened in (`feed.Press`, `@vivid/state`).
  *
- * Each press is held here, in a Zustand store as `data/threads.ts` holds a new Thread's first
- * words: set at the press and moved from inside the flow that sends it, never from React state
- * after a wait.
+ * Each card owns a shared press machine. This adapter supplies only Flue and RPC delivery;
+ * the machine owns the in-flight work, refusals, retries, and replacement by a newer post.
  */
 
 type Presses = { readonly presses: ReadonlyMap<FeedCardId, feed.Press> }
 
-export const usePresses = create<Presses>()(() => ({ presses: new Map() }))
+/** Titles are notification context, not delivery state; the machine owns whether a send failed. */
+const closing = new Map<FeedCardId, string>()
 
-const put = (card: FeedCardId, press: feed.Press) =>
-  usePresses.setState((was) => ({ presses: new Map(was.presses).set(card, press) }))
+/** Flue owns message delivery and its idempotency receipt; RPC owns marking a card done. */
+const sending = Layer.succeed(feed.Sending, {
+  send: Effect.fn('Feed.send')(function* ({ card, thread, pressed }: feed.Delivery) {
+    yield* feed.Settling.$match(pressed.how, {
+      Said: ({ words, key }) =>
+        Effect.tryPromise({
+          try: (signal) =>
+            createFlueClient({ url: `/api/vivid/${encodeURIComponent(thread)}` }).send({
+              message: { kind: 'user', body: words },
+              idempotencyKey: key,
+              signal,
+            }),
+          catch: () => new feed.SendRefused({ card }),
+        }).pipe(Effect.asVoid),
+      Done: () =>
+        Effect.gen(function* () {
+          const title = Option.fromUndefinedOr(closing.get(card))
+          closing.delete(card)
+          const closed = yield* changing((client) => client.MarkFeedCard({ card, state: 'done' }))
+          if (Result.isFailure(closed)) {
+            Option.map(title, (words) => say(`“${words}” could not be closed just now.`))
+            return yield* new feed.SendRefused({ card })
+          }
+          return undefined
+        }),
+    })
+  }),
+})
+
+/** The registry holds machine references; every delivery state is read from those machines. */
+const cards = Atom.keepAlive(Atom.make<ReadonlyMap<FeedCardId, feed.PressAtoms>>(new Map()))
+
+/** Projects the machine atoms without copying their lifecycle into another store. */
+const presses = Atom.make((get): Presses => {
+  const held = new Map<FeedCardId, feed.Press>()
+  for (const [card, machine] of get(cards)) {
+    const result = get(machine.result)
+    if (!AsyncResult.isSuccess(result)) continue
+    Option.map(feed.pressOf(result.value), (press) => held.set(card, press))
+  }
+  return { presses: held }
+})
+
+/** Keeps the existing selector API while rerendering only when the atoms publish a change. */
+export const usePresses = <Value>(select: (state: Presses) => Value): Value =>
+  select(useAtomValue(presses))
 
 /** The press on one card, when there is one. */
 export const pressOn =
   (card: FeedCardId) =>
   (state: Presses): Option.Option<feed.Press> =>
     Option.fromUndefinedOr(state.presses.get(card))
+
+/** A card's machine outlives a folded card or a route change, just as the live Feed does. */
+const machineFor = (card: FeedCardId): feed.PressAtoms => {
+  const known = engine.registry.get(cards)
+  const existing = known.get(card)
+  if (existing !== undefined) return existing
+  const machine = feed.makePress(sending)
+  engine.registry.set(cards, new Map(known).set(card, machine))
+  engine.registry.mount(machine.snapshot)
+  return machine
+}
+
+/**
+ * Waits for machine startup before queuing a press. Duplicate presses are refused by the machine,
+ * including two clicks queued before the first Sending snapshot reaches a component.
+ */
+const press = (item: feed.Waiting, how: feed.Settling) => {
+  const machine = machineFor(item.card)
+  void act(
+    AtomRegistry.getResult(engine.registry, machine.ref).pipe(
+      Effect.flatMap((ref) => ref.send(feed.PressEvents.Press({ item, how }))),
+      // Startup failure leaves no press to draw. Expected delivery refusals stay in Unsent.
+      Effect.ignore,
+    ),
+  )
+}
 
 /**
  * Vivid's face is pleased for a moment after a card is settled: the look `done` opens with
@@ -65,43 +138,15 @@ const please = () => {
  * is not said twice.
  */
 export function answer(item: feed.Waiting, words: string) {
-  const standing = pressOn(item.card)(usePresses.getState())
-  if (feed.folds(item, standing)) return
-  const key = feed.pressKey(item, standing, words, () => crypto.randomUUID())
-  const held: feed.Pressed = { at: item.at, how: feed.Settling.Said({ words, key }) }
-  put(item.card, feed.Press.Sending(held))
+  press(item, feed.Settling.Said({ words, key: crypto.randomUUID() }))
   please()
-  void act(
-    Effect.gen(function* () {
-      // Flue's client answers with a Promise; both endings become a value, so this cannot fail.
-      const sent = yield* Effect.promise(() =>
-        createFlueClient({ url: `/api/vivid/${encodeURIComponent(item.thread)}` })
-          .send({ message: { kind: 'user', body: words }, idempotencyKey: key })
-          .then(
-            () => true,
-            () => false,
-          ),
-      )
-      put(item.card, sent ? feed.Press.Sent(held) : feed.Press.Unsent(held))
-    }),
-  )
 }
 
 /** Closes a card that asks nothing of the Person (it has no buttons): "Done". */
 export function close(item: feed.Waiting, title: string) {
-  if (feed.folds(item, pressOn(item.card)(usePresses.getState()))) return
-  const held: feed.Pressed = { at: item.at, how: feed.Settling.Done() }
-  put(item.card, feed.Press.Sending(held))
+  closing.set(item.card, title)
+  press(item, feed.Settling.Done())
   please()
-  void act(
-    Effect.gen(function* () {
-      const closed = yield* changing((client) =>
-        client.MarkFeedCard({ card: item.card, state: 'done' }),
-      )
-      put(item.card, Result.isSuccess(closed) ? feed.Press.Sent(held) : feed.Press.Unsent(held))
-      if (Result.isFailure(closed)) say(`“${title}” could not be closed just now.`)
-    }),
-  )
 }
 
 /** Cards this page has said were looked at, so a card is reported once. */

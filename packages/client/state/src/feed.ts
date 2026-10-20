@@ -1,5 +1,14 @@
-import { FeedItem, type FeedCardId, type FeedResponse } from '@vivid/contracts'
-import { Data, Option, Schema } from 'effect'
+import { Machine } from '@typeonce/effect-machine'
+import { AtomMachine } from '@typeonce/effect-machine/reactivity'
+import {
+  FeedCardId,
+  FeedItem,
+  ThreadId,
+  FeedResponse as FeedResponseSchema,
+} from '@vivid/contracts'
+import { Context, Data, Effect, type Layer, Option, Predicate, Schema } from 'effect'
+import { Atom } from 'effect/reactivity'
+import type { FormState } from './display.js'
 
 /**
  * The Feed as every surface draws it: Vivid's own work in background Threads, one item per
@@ -11,6 +20,8 @@ import { Data, Option, Schema } from 'effect'
  * buttons: "yh buttons are better"): a card says where it is from, what Vivid says, draws the
  * thing itself with the same renderer a reply uses, and ends in the card's own buttons.
  */
+
+type FeedResponse = typeof FeedResponseSchema.Type
 
 export type Waiting = typeof FeedItem.cases.Waiting.Type
 export type Working = typeof FeedItem.cases.Working.Type
@@ -34,7 +45,7 @@ export const feedView = (items: FeedResponse['items']): FeedView => ({
  * The line under the greeting: how many things wait on the Person, bold, then the rest in the
  * page's quiet ink. The design's own words ("4 things need you. The rest is handled.").
  */
-export const standingOf = (waiting: number): { readonly lead: string; readonly rest: string } => {
+export const standingOf = (waiting: number) => {
   if (waiting === 0) return { lead: 'Nothing needs you.', rest: '' }
   return {
     lead: waiting === 1 ? '1 thing needs you.' : `${waiting} things need you.`,
@@ -67,7 +78,7 @@ export const feedFace = (
  * changed (`onStateUpdate`), whose values the renderer may hold bare or as a field (`{ value }`,
  * `unwrapFieldValue` in `@openuidev/react-lang` 1.0.0).
  */
-export type Chosen = Readonly<Record<string, unknown>>
+export type Chosen = FormState
 
 /** One value a choice can hold: a word, a number, a tick, or several picked from a list. */
 const Plain = Schema.Union([
@@ -82,8 +93,8 @@ const readHeld = Schema.decodeUnknownOption(Held)
 
 /** A choice's value as words. A tick is "yes" or "no"; several picks are listed. */
 const wordsOf = (value: typeof Plain.Type): string => {
-  if (typeof value === 'boolean') return value ? 'yes' : 'no'
-  if (typeof value === 'string' || typeof value === 'number') return String(value).trim()
+  if (Predicate.isBoolean(value)) return value ? 'yes' : 'no'
+  if (Predicate.isString(value) || Predicate.isNumber(value)) return String(value).trim()
   return value.map(String).join(', ')
 }
 
@@ -91,7 +102,7 @@ const wordsOf = (value: typeof Plain.Type): string => {
 export const chosenWords = (chosen: Chosen, name: string): Option.Option<string> =>
   Option.filter(
     Option.map(readHeld(chosen[name]), (held) =>
-      wordsOf(typeof held === 'object' && 'value' in held ? held.value : held),
+      wordsOf(Predicate.isObject(held) && 'value' in held ? held.value : held),
     ),
     (words) => words.length > 0,
   )
@@ -107,18 +118,17 @@ export const fill = (action: string, chosen: Chosen): string =>
   action.replace(NAMED, (name) => Option.getOrElse(chosenWords(chosen, name), () => name))
 
 /** How a press settles a card: by saying its words in the card's Thread, or by closing it. */
-export type Settling = Data.TaggedEnum<{
-  /** `key` names this one delivery, so sending the same words again is not a second message. */
-  Said: { readonly words: string; readonly key: string }
-  Done: {}
-}>
+const SettlingSchema = Schema.TaggedUnion({
+  /** `key` names this delivery, so retrying the same words does not add another message. */
+  Said: { words: Schema.String, key: Schema.String },
+  Done: {},
+})
+export type Settling = typeof SettlingSchema.Type
 export const Settling = Data.taggedEnum<Settling>()
 
-/** One press, as it was made: the post it answered (`Waiting.at`) and how it settles the card. */
-export interface Pressed {
-  readonly at: number
-  readonly how: Settling
-}
+/** One press, including the post it answered, survives every state of its delivery. */
+export const Pressed = Schema.Struct({ at: Schema.Finite, how: SettlingSchema })
+export interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
 
 /**
  * Where a press on a card stands, between the press and the Feed's next answer. While `Sending`
@@ -184,3 +194,136 @@ export const askedWords = (item: Waiting): string =>
   item.asking.includes('approval')
     ? 'Vivid wants to do something and needs your yes. Open it to decide.'
     : 'Vivid has a question for you. Open it to answer.'
+
+/** The delivery authority a surface supplies; card identity stays explicit in every call. */
+const Delivery = Schema.Struct({ card: FeedCardId, thread: ThreadId, pressed: Pressed })
+export interface Delivery extends Schema.Schema.Type<typeof Delivery> {}
+
+/** A send was refused or its receipt was lost. Retrying keeps its delivery identity. */
+export class SendRefused extends Schema.TaggedError<SendRefused>()(
+  'FeedSendRefused',
+  { card: FeedCardId },
+  { title: 'FeedSendRefused' },
+) {}
+
+/** A surface owns how words are delivered and how a card is marked done. */
+export interface SendingService {
+  readonly send: (delivery: Delivery) => Effect.Effect<void, SendRefused>
+}
+
+/** Sends words through Flue or marks a card done using the current surface's transport. */
+export class Sending extends Context.Service<Sending, SendingService>()(
+  '@vivid/state/feed/Sending',
+) {}
+
+/** Each card owns its delivery, independent of every other card and screen mount. */
+export const PressStates = Machine.state({
+  states: {
+    Idle: {},
+    Sending: { fields: Delivery.fields },
+    Sent: { fields: Delivery.fields },
+    Unsent: { fields: Delivery.fields },
+  },
+})
+export type PressState = Parameters<typeof PressStates.matches>[0]
+
+/** A press names the exact post and carries a fresh candidate key for a new delivery. */
+export const PressEvents = Machine.events({
+  Press: { item: FeedItem.cases.Waiting, how: SettlingSchema },
+})
+
+/** The screen-facing value is absent only before the card has been pressed. */
+export const pressOf = (state: PressState): Option.Option<Press> =>
+  Option.firstSomeOf([
+    Option.map(PressStates.get(state, 'Sending'), ({ pressed }) => Press.Sending(pressed)),
+    Option.map(PressStates.get(state, 'Sent'), ({ pressed }) => Press.Sent(pressed)),
+    Option.map(PressStates.get(state, 'Unsent'), ({ pressed }) => Press.Unsent(pressed)),
+  ])
+
+/** Builds a delivery, preserving the key only for the same words retrying the same failed post. */
+const deliveryOf = (
+  event: { readonly item: Waiting; readonly how: Settling },
+  standing: Option.Option<Press>,
+): Delivery => ({
+  card: event.item.card,
+  thread: event.item.thread,
+  pressed: Pressed.make({
+    at: event.item.at,
+    how: Settling.$match(event.how, {
+      Said: ({ words, key }) =>
+        Settling.Said({ words, key: pressKey(event.item, standing, words, () => key) }),
+      Done: () => Settling.Done(),
+    }),
+  }),
+})
+
+/** The invoked effect owns completion and failure; handlers never write a result after a wait. */
+export const PressMachine = Machine.make({
+  id: 'FeedPress',
+  root: PressStates,
+  events: PressEvents,
+  branches: { pressed: { sending: { target: 'Sending' } } },
+  effects: {
+    send: (delivery: Delivery) => Sending.use((service) => service.send(delivery)),
+  },
+}).handle({
+  initial: { target: 'Idle' },
+  states: {
+    Idle: {
+      on: {
+        Press: { target: 'Sending', data: ({ event }) => deliveryOf(event, Option.none()) },
+      },
+    },
+    Sending: {
+      invoke: {
+        src: 'send',
+        input: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
+        onDone: {
+          target: 'Sent',
+          data: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
+        },
+        onFailure: {
+          target: 'Unsent',
+          data: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
+        },
+      },
+      // A newer post replaces this invocation. A receipt for the old post then has nowhere to land.
+      on: {
+        Press: {
+          branches: 'pressed',
+          declinable: true,
+          reenter: true,
+          resolve: (context) => {
+            if (context.state.pressed.at === context.event.item.at) return context.decline()
+            return context.select.sending({ data: deliveryOf(context.event, Option.none()) })
+          },
+        },
+      },
+    },
+    Sent: {
+      on: {
+        Press: {
+          branches: 'pressed',
+          declinable: true,
+          resolve: (context) => {
+            if (context.state.pressed.at === context.event.item.at) return context.decline()
+            return context.select.sending({ data: deliveryOf(context.event, Option.none()) })
+          },
+        },
+      },
+    },
+    Unsent: {
+      on: {
+        Press: {
+          target: 'Sending',
+          data: ({ state, event }) => deliveryOf(event, Option.some(Press.Unsent(state.pressed))),
+        },
+      },
+    },
+  },
+})
+
+/** Creates one card's atoms in the app registry with the surface's delivery service. */
+export const makePress = (services: Layer.Layer<Sending>) =>
+  AtomMachine.bind(Atom.runtime(services)).make(PressMachine)
+export type PressAtoms = ReturnType<typeof makePress>
