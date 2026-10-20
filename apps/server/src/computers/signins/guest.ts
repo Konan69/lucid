@@ -80,19 +80,16 @@ function consentControl(state,label){
  const children=state.elements.filter(inside),text=children.map(node=>typeof node.label==='string'?node.label.toLowerCase():'').join(' ');
  if(!text.includes('external app wants full control')||!text.includes('saved data, cookies and site data')||!text.includes('navigate to any url'))throw Error();
  const buttons=children.filter(node=>['push button','button'].includes(node.role)&&node.label===label&&node.enabled===true);
- const roots=state.elements.filter(node=>node.role==='frame'&&node.depth===0);
- if(buttons.length!==1||roots.length!==1)throw Error();
- const frame=buttons[0].frame,root=roots[0].frame;
- const valid=f=>f&&[f.x,f.y,f.w,f.h].every(Number.isFinite)&&f.w>0&&f.h>0;
- if(!valid(frame)||!valid(root)||!Number.isFinite(state.screenshot_width)||!Number.isFinite(state.screenshot_height)||state.screenshot_width<=0||state.screenshot_height<=0)throw Error();
- const x=frame.x-root.x+frame.w/2,y=frame.y-root.y+frame.h/2;
- if(x<0||y<0||x>=root.w||y>=root.h)throw Error();
- return {x:x*state.screenshot_width/root.w,y:y*state.screenshot_height/root.h};
+ // The installed driver's describe-click contract binds an accessibility index to its
+ // exact snapshot. This invokes Chrome's native action; synthetic foreground pixels leave
+ // this security dialog open even when the public click receipt says unverifiable.
+ if(buttons.length!==1||!Number.isSafeInteger(buttons[0].element_index)||buttons[0].element_index<0||typeof state.snapshot_id!=='string'||!/^s[0-9a-f]{8}$/.test(state.snapshot_id))throw Error();
+ return {element_index:buttons[0].element_index,snapshot_id:state.snapshot_id};
 }
 async function consentAction(window,label,timeout){
- const state=await native('get_window_state',window,timeout);
+ const state=await native('get_window_state',{...window,include_screenshot:false},timeout);
  if(state.pid!==window.pid||state.window_id!==window.window_id)throw Error();
- await native('click',{...window,...consentControl(state,label),delivery_mode:'foreground'},timeout);
+ await native('click',{...window,...consentControl(state,label),delivery_mode:'background'},timeout);
 }
 async function connect(target,window){
  if(target.consent){
@@ -152,8 +149,8 @@ async function finish(code){
  for(const child of nativeCalls)child.kill('SIGTERM');
  const attempt=consentAttempt;consentAttempt=undefined;
  if(attempt){
-  try{await consentAction(attempt.window,'Cancel',1000);}catch{}
   attempt.socket.close();
+  try{await consentAction(attempt.window,'Cancel',1000);}catch{}
  }
  if(nativeUsed){try{await native('end_session',{},1000);}catch{}}
  process.exit(code);
