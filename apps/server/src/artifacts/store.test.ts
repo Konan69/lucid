@@ -212,7 +212,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
     )
 
     it.effect(
-      'refuses ended, wrong-Person and ambiguous working Runs without saving anything',
+      'refuses ended and other-Person Runs, and gives a joined delivery\'s write to its host Run',
       () =>
         Effect.gen(function* () {
           const { database, person, member, threadId, runId } = yield* fixture()
@@ -239,11 +239,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               .set({ state: 'working', finishedAt: null })
               .where(eq(runs.id, runId)),
           )
+          // Another Person's working Run in the Thread leaves the write with no honest author.
+          const theirs = RunId.make(NodeCrypto.randomUUID())
           yield* database.run(
             database.insert(runs).values({
-              id: RunId.make(NodeCrypto.randomUUID()),
+              id: theirs,
               threadId,
-              personId: person.id,
+              personId: member.id,
               turn: 2,
               state: 'working',
               origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
@@ -251,10 +253,30 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             }),
           )
           expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
-            'Conflict',
+            'NotFound',
           )
           expect(yield* store.list(person.id, threadId)).toEqual([])
           expect(yield* Ref.get(yield* Published)).not.toContain(Topic.thread(threadId))
+          // The same Person's delivery joining the response (an answer to a question Vivid asked)
+          // is a second working Run; the write belongs to the response's host, the earlier Run.
+          yield* database.run(database.delete(runs).where(eq(runs.id, theirs)))
+          yield* database.run(
+            database.insert(runs).values({
+              id: RunId.make(NodeCrypto.randomUUID()),
+              threadId,
+              personId: person.id,
+              turn: 3,
+              state: 'working',
+              origin: encodeOrigin(StoredRunOrigin.cases.Decision.make({})),
+              startedAt: 3,
+            }),
+          )
+          expect(yield* store.write(person.id, threadId, request)).toMatchObject({ created: true })
+          const [written] = yield* store.list(person.id, threadId)
+          if (written === undefined) return yield* Effect.sync(() => expect.fail('Not written'))
+          expect((yield* store.get(person.id, { id: written.id })).shown.madeBy).toEqual(
+            ArtifactAuthor.cases.Vivid.make({ runId }),
+          )
         }),
     )
 

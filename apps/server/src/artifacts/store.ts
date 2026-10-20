@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import {
   Artifact,
@@ -13,7 +13,6 @@ import {
   ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
-  Conflict,
   Forbidden,
   NotFound,
   ReadDocumentOutcome,
@@ -83,7 +82,7 @@ export interface ArtifactStoreService {
     personId: PersonId,
     threadId: ThreadId,
     request: WriteDocumentRequest,
-  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | Conflict>
+  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure>
   readonly read: (
     personId: PersonId,
     threadId: ThreadId,
@@ -190,7 +189,14 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/** Working attribution comes from the Thread alone; joining deliveries must never make us guess a Run. */
+/**
+ * The Run a document is written by, read from the Thread alone: its oldest working Run, when every
+ * working Run in it acts for this Person. A delivery for the same Person (their message, or the
+ * answer to a question Vivid asked and kept working after) joins the response in progress, so two
+ * Runs are working while one response writes; the response's host is the earlier submission
+ * (Flue 2.2.2 `readSubmissionReply`, `runtime/settlement.ts` `hostOf`), the rule
+ * `RunStore.actingRun` follows. A working Run for anyone else means the write has no honest author.
+ */
 const workingRun = Effect.fn('Artifacts.workingRun')(function* (
   tx: Transaction,
   threadId: ThreadId,
@@ -200,12 +206,10 @@ const workingRun = Effect.fn('Artifacts.workingRun')(function* (
     .select({ id: runs.id, personId: runs.personId })
     .from(runs)
     .where(and(eq(runs.threadId, threadId), eq(runs.state, 'working')))
-    .limit(2)
+    .orderBy(asc(runs.turn))
     .for('update')
-  if (working.length > 1)
-    return yield* new Conflict({ message: 'The Thread has more than one working Run' })
   const [run] = working
-  if (run === undefined || run.personId !== personId)
+  if (run === undefined || working.some((candidate) => candidate.personId !== personId))
     return yield* new NotFound({ message: 'Working Run not found' })
   return (yield* decodeRun(run)).id
 })
