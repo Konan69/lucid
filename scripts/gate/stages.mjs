@@ -19,6 +19,7 @@ export const stages = [
     commands: [
       ['node', 'scripts/package-manager.mjs'],
       ['node', 'scripts/versions.mjs'],
+      ['node', 'scripts/instructions.mjs'],
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
