@@ -24,7 +24,7 @@
     "check:package-manager": "node scripts/package-manager.mjs",
     "check:versions": "node scripts/versions.mjs",
     "test:lint-rules": "node --test scripts/oxlint-plugin-vivid.test.mjs",
-    "test:tooling": "node --test scripts/package-manager.test.mjs scripts/versions.test.mjs scripts/instructions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs scripts/lint.test.mjs scripts/cache.test.mjs scripts/types.test.mjs scripts/gate.test.mjs scripts/release.test.mjs scripts/ceilings.test.mjs scripts/owners.test.mjs scripts/hermes.test.mjs scripts/build.test.mjs scripts/boundary.test.mjs",
+    "test:tooling": "node --test scripts/package-manager.test.mjs scripts/versions.test.mjs scripts/instructions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs scripts/lint.test.mjs scripts/cache.test.mjs scripts/types.test.mjs scripts/gate.test.mjs scripts/release.test.mjs scripts/ceilings.test.mjs scripts/owners.test.mjs scripts/hermes.test.mjs scripts/build.test.mjs scripts/boundary.test.mjs scripts/references.test.mjs",
     "quality": "pnpm infra:verify && node scripts/gate.mjs full",
     "db:migrate": "node scripts/migrate.mjs",
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",

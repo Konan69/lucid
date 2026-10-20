@@ -20,6 +20,7 @@ export const stages = [
       ['node', 'scripts/package-manager.mjs'],
       ['node', 'scripts/versions.mjs'],
       ['node', 'scripts/instructions.mjs'],
+      ['node', 'scripts/references.mjs'],
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
       ['node', 'scripts/owners.mjs'],

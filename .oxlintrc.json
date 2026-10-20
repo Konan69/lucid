@@ -247,7 +247,7 @@
       }
     },
     {
-      "files": ["apps/server/src/auth.ts"],
+      "files": ["apps/server/src/auth/provider.ts"],
       "rules": {
         "vivid/better-auth-secure-options": "error"
       }

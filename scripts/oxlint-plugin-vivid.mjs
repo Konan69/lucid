@@ -901,9 +901,8 @@ const noConfigProviderFromEnvInLibrary = memberCallRule({
 const betterAuthSecureOptions = rule(
   'Keep Better Auth schema ownership and secrets explicit.',
   'Better Auth must disable implicit migrations and must not embed a literal secret.',
-  (report, context) => ({
+  (report) => ({
     Property(node) {
-      if (!/(?:^|[/\\])auth\.[cm]?[jt]s$/u.test(context.filename)) return
       const name = node.key?.type === 'Identifier' ? node.key.name : node.key?.value
       if (name === 'migrate' && node.value?.value !== false) report(node)
       if (name === 'secret' && isStringLiteral(node.value)) report(node)

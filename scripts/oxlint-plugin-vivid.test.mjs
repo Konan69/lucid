@@ -157,7 +157,7 @@ const cases = [
     'better-auth-secure-options',
     'const options = { migrate: true }',
     'const options = { migrate: false }',
-    'auth.ts',
+    'apps/server/src/auth/provider.ts',
   ],
   [
     'require-drizzle-config-paths',
@@ -202,6 +202,7 @@ function lint(ruleName, source, filename = 'module.ts') {
   try {
     const sourcePath = path.join(directory, filename)
     const configPath = path.join(directory, 'oxlint.json')
+    NodeFS.mkdirSync(path.dirname(sourcePath), { recursive: true })
     writeFileSync(sourcePath, source)
     writeFileSync(
       configPath,

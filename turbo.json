@@ -221,7 +221,6 @@
         "packages/**/tsconfig*.json",
         "apps/*/drizzle/**",
         "apps/*/product-drizzle/**",
-        "packages/**/drizzle/**",
         "!**/node_modules/**",
         "!*.md"
       ],
@@ -253,7 +252,6 @@
         "scripts/infra-verify.mjs",
         "scripts/infra-verify.test.mjs",
         ".github/workflows/**",
-        "apps/web/wrangler.jsonc",
         "apps/server/src/**",
         "packages/agent/runtime/src/**",
         ".agents/skills/infra/**",
