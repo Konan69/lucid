@@ -5,6 +5,7 @@ import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
@@ -81,7 +82,10 @@ const localStack = () =>
           DATABASE_URL: databaseUrl,
           PORT: '5173',
           OPENCODE_API_KEY: environment.openCodeKey,
-          OPENROUTER_API_KEY: environment.openRouterKey,
+          ...Option.match(environment.openRouterKey, {
+            onNone: () => ({}),
+            onSome: (key) => ({ OPENROUTER_API_KEY: key }),
+          }),
           EXPLABS_API_KEY: environment.modelGatewayKey,
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
           VIVID_SERVER_URL: target.serverUrl,

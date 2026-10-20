@@ -30,7 +30,8 @@ const glm = (id: string, name: string) => ({
   reasoning: true,
   input: ['text' as const, 'image' as const],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 1_310_720,
+  // OpenRouter serves this model with a smaller window than the other gateways (its catalogue).
+  contextWindow: 1_048_576,
   maxTokens: 131_072,
   headers: { 'HTTP-Referer': 'https://vivid.app', 'X-Title': 'Vivid' },
 })
