@@ -53,7 +53,7 @@ export function Card({
   const words = Option.match(post, { onNone: () => ask.words, onSome: (made) => made.words })
   const display = Option.flatMap(post, (made) => Option.fromNullOr(made.display))
   return (
-    <article ref={seen} className="overflow-hidden rounded-composer bg-surface-1 p-4 edge">
+    <article ref={seen} className="overflow-hidden rounded-composer bg-surface-3 p-4 edge">
       <div className="flex min-h-5.5 items-center gap-2 text-label text-ink-2">
         <span className="min-w-0 truncate">{from}</span>
         <time className="ms-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>

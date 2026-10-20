@@ -1,4 +1,4 @@
-import type { MeResponse, ThreadId } from '@vivid/contracts'
+import type { FeedResponse, MeResponse, ThreadId } from '@vivid/contracts'
 import { draftPlace, feed, greetingAt, makeWhen, thisReader, workspaceKey } from '@vivid/state'
 import { Check } from 'lucide-react'
 import { Option } from 'effect'
@@ -37,6 +37,19 @@ const today = new Intl.DateTimeFormat(thisReader().locale, {
 export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId) => void }) {
   const state = useLive(live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
+  return <FeedView me={me} items={items} onOpen={onOpen} />
+}
+
+/** The Feed drawn from its items: everything above, with no query of its own. */
+export function FeedView({
+  me,
+  items,
+  onOpen,
+}: {
+  me: MeResponse
+  items: FeedResponse['items']
+  onOpen: (thread: ThreadId) => void
+}) {
   const view = feed.feedView(items)
   const pleased = usePleased((now) => now.pleased)
   const { name } = useAppearance()
@@ -46,14 +59,19 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
   const [now] = useState(() => Date.now())
   const date = today.format(now)
   const first = me.person.name.trim().split(/\s+/u)[0]
-  const standing = feed.standingOf(view.waiting.length)
+  // A card a press has folded no longer waits on the Person, so it leaves the count with it.
+  const presses = usePresses((now) => now.presses)
+  const standing = feed.standingOf(
+    view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
+      .length,
+  )
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
   })
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-surface-0">
-      <div className="mx-auto grid w-full max-w-270 grow grid-cols-1 content-start gap-x-12 px-4 pt-12 pb-6 sm:px-8 lg:grid-cols-5">
+      <div className="mx-auto grid w-full max-w-270 grid-cols-1 content-start gap-x-12 px-4 pt-12 sm:px-8 lg:grid-cols-5">
         <header className="flex motion-enter items-end justify-between gap-4 lg:col-span-3">
           <div className="min-w-0">
             <p className="text-label text-ink-3">{date}</p>
@@ -96,8 +114,11 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
           ))}
           <Handled settled={view.settled} now={now} onOpen={onOpen} />
         </aside>
-
-        <div className="sticky bottom-0 mt-auto pt-4 lg:col-span-3">
+      </div>
+      {/* The composer rests at the foot of the column the cards are in, and what scrolls under it
+          fades into the page rather than being cut by its edge. */}
+      <div className="sticky bottom-0 mx-auto mt-auto w-full max-w-270 bg-linear-to-t from-surface-0 from-60% to-transparent px-4 pt-8 pb-6 sm:px-8">
+        <div className="lg:w-3/5 lg:pe-7">
           <Composer
             place={place}
             placeholder={`Message ${name}`}

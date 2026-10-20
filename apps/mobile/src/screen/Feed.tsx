@@ -75,12 +75,13 @@ export function Feed() {
   const [now] = useState(() => Date.now())
   const date = today.format(now)
   const first = me.person.name.trim().split(/\s+/u, 1).join('')
-  const standing = feed.standingOf(view.waiting.length)
 
   // A card that a press has folded leaves the list until Vivid posts again.
   const shown = view.waiting.filter(
     (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
   )
+  // A card a press has folded no longer waits on the Person, so it leaves the count with it.
+  const standing = feed.standingOf(shown.length)
   const rows: ReadonlyArray<Row> = [
     ...shown.map((item) => Row.Waiting({ item })),
     ...view.working.map((item) => Row.Working({ item })),
