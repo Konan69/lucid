@@ -10,7 +10,7 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Array as Arr, Effect, Exit, Layer, Option, Predicate, Queue } from 'effect'
+import { Array as Arr, Effect, Exit, Layer, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'

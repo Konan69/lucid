@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ReadDocumentOutcome, NotFound, PersonId, ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Effect, Exit, Fiber, Layer, Option, Predicate, Queue } from 'effect'
+import { Effect, Exit, Fiber, Layer, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'

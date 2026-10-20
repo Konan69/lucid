@@ -5,7 +5,6 @@ import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import {
   InvalidRequest,
-  LibraryFolderId,
   LibraryItemId,
   PersonId,
   ThreadId,
@@ -128,13 +127,10 @@ describe('scoped tool execution', () => {
     }),
   )
 
-  it.effect('injects the scoped folder automatically without returning Library references', () =>
+  it.effect('searches the Library without returning Library references', () =>
     Effect.scoped(
       Effect.gen(function* () {
-        for (const folder of [
-          Option.none<LibraryFolderId>(),
-          Option.some(LibraryFolderId.make(reference)),
-        ]) {
+        {
           const requests =
             yield* Queue.unbounded<RpcMessage.FromClient<RpcGroup.Rpcs<typeof VividRpc>>>()
           const rpc = yield* RpcClient.makeNoSerialization(VividRpc, {
@@ -149,7 +145,6 @@ describe('scoped tool execution', () => {
                 threadId: ThreadId.make('MARK-thread'),
               },
               client: rpc.client,
-              folder,
             }),
           )
           const [search] = libraryTools(toolRunner(layer))
@@ -169,11 +164,7 @@ describe('scoped tool execution', () => {
             if (!Predicate.isTagged(request, 'Request'))
               return yield* new InvalidRequest({ message: 'Expected an RPC request.' })
             expect(request.tag).toBe('SearchLibrary')
-            const expected = Option.match(folder, {
-              onNone: () => ({ query: 'Agreement', limit: 6 }),
-              onSome: (folderId) => ({ query: 'Agreement', limit: 6, folderId }),
-            })
-            expect(request.payload).toEqual(expected)
+            expect(request.payload).toEqual({ query: 'Agreement', limit: 6 })
             // RpcMessage.ResponseExit has no constructor in rc.116; this is the SDK wire envelope.
             return yield* rpc.write({
               // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.

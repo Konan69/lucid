@@ -212,7 +212,6 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
             ToolScope.of({
               acting: { personId: actor.person.id, threadId: ThreadId.make('shell-thread') },
               client: rpc.client,
-              folder: Option.none(),
             }),
           )
           // The stand-in's home is its own fresh directory; on a Computer it is the user's home.
