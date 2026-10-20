@@ -320,6 +320,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       PORT: String(ports.runtime),
       /** The runtime answers with OpenCode Go; the old gateway's key keeps its models selectable. */
       OPENCODE_API_KEY: environment.openCodeKey,
+      OPENROUTER_API_KEY: environment.openRouterKey,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),

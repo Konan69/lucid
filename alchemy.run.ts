@@ -81,6 +81,7 @@ const localStack = () =>
           DATABASE_URL: databaseUrl,
           PORT: '5173',
           OPENCODE_API_KEY: environment.openCodeKey,
+          OPENROUTER_API_KEY: environment.openRouterKey,
           EXPLABS_API_KEY: environment.modelGatewayKey,
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
           VIVID_SERVER_URL: target.serverUrl,

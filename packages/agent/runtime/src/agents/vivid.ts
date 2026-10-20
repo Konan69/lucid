@@ -12,6 +12,7 @@ import {
 import * as Option from 'effect/Option'
 import { actingFor, threadOriginOf } from '../client.ts'
 import '../providers/explabs.ts'
+import '../providers/openrouter.ts'
 import { DEFAULT_MODEL } from '../providers/opencode.ts'
 import { namedAs, useVividContext } from '../context.ts'
 import { notesDirectory } from '../settings.ts'
