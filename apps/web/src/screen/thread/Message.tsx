@@ -15,6 +15,7 @@ import {
   sourceOf,
   speakerOfTurn,
   stretches,
+  textOf,
   thisReader,
 } from '@vivid/state'
 import { Option, Schema } from 'effect'
@@ -113,13 +114,6 @@ export function spokenOf(message: FlueConversationMessage): asking.Spoken {
   spoken.set(message, read)
   return read
 }
-
-/** A message's words, without what Vivid did or asked beside them. */
-export const textOf = (message: FlueConversationMessage) =>
-  message.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n\n')
 
 /**
  * A Vivid message with nothing a Person can read in it: no words, no step, no card. The runtime

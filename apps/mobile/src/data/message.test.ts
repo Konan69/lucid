@@ -12,7 +12,7 @@ import {
   ThreadId,
   type Run,
 } from '@vivid/contracts'
-import { Awaited } from '@vivid/state'
+import { Awaited, textOf } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
@@ -26,7 +26,6 @@ import {
   speakerOf,
   stepsOf,
   stepsSummary,
-  textOf,
   toolsOf,
   type Around,
   type ToolPart,

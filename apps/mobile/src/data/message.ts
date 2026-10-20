@@ -17,6 +17,7 @@ import {
   sourceOf,
   speakerOfTurn,
   summarizeSteps,
+  textOf,
   type Awaited,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
@@ -102,10 +103,6 @@ export function speakerOf(message: FlueConversationMessage, around: Around): Spe
 
 /** Whether a message belongs in the Thread at all, by the rule every surface shares. */
 export const isShown: (message: FlueConversationMessage) => boolean = inThread
-
-/** A message's words, each text part its own paragraph. */
-export const textOf = (message: FlueConversationMessage): string =>
-  message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')
 
 /**
  * The SDK supplies hosted URLs for durable images and data URLs for local previews. Unresolved

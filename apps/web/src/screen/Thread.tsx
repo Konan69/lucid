@@ -9,6 +9,7 @@ import {
   QUIET_MS,
   readingOf,
   streamSaid,
+  textOf,
   titleFromMessage,
   workspaceKey,
 } from '@vivid/state'
@@ -34,15 +35,7 @@ import { DeviceAsk } from './thread/Device'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
-import {
-  isBlank,
-  Message,
-  Replied,
-  Said,
-  spokenOf,
-  textOf,
-  type ThreadContext,
-} from './thread/Message'
+import { isBlank, Message, Replied, Said, spokenOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
