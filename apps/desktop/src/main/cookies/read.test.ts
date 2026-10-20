@@ -4,7 +4,13 @@ import * as NodePath from 'node:path'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeSqlite from 'node:sqlite'
 import { describe, expect, it } from '@effect/vitest'
-import { CopySignInRequest, SignInProfile, SignInRead, SignInSite } from '@vivid/contracts'
+import {
+  CopySignInRequest,
+  SignInCookie,
+  SignInProfile,
+  SignInRead,
+  SignInSite,
+} from '@vivid/contracts'
 import { Effect, Redacted, Result } from 'effect'
 import { readChromeSignIn } from './read.ts'
 import { cookieKeyFailure, cookieReadFailure } from './failure.ts'
@@ -137,10 +143,8 @@ describe('copying sign-ins from a browser cookie database', () => {
         const read = yield* readChromeSignIn({ request, root: source.root, platform: 'linux' })
         expect(SignInRead.guards.Collected(read)).toBe(true)
         if (!SignInRead.guards.Collected(read)) return
-        expect(read.cookies.map((cookie) => cookie.expiry)).toEqual([
-          { _tag: 'Persistent', seconds: 2_000_000_000 },
-          { _tag: 'Persistent', seconds: 2_000_000_000 },
-        ])
+        const expiry = SignInCookie.fields.expiry.cases.Persistent.make({ seconds: 2_000_000_000 })
+        expect(read.cookies.map((cookie) => cookie.expiry)).toEqual([expiry, expiry])
       }),
     ),
   )
