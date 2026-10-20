@@ -211,7 +211,14 @@ export function countFindings(lintOutput, ratchet) {
 export function checkRatchets(lintOutput) {
   return ratchets.map((ratchet) => {
     const count = countFindings(lintOutput, ratchet)
-    return { label: ratchet.label, ceiling: ratchet.ceiling, count, held: count <= ratchet.ceiling }
+    return {
+      label: ratchet.label,
+      plugin: ratchet.plugin,
+      rule: ratchet.rule,
+      ceiling: ratchet.ceiling,
+      count,
+      held: count <= ratchet.ceiling,
+    }
   })
 }
 

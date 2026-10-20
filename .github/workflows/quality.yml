@@ -51,6 +51,9 @@ jobs:
     if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # A push to main must compare with its previous tip, even when origin/main is already HEAD.
+      CEILINGS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +67,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Checkout has depth 1. Fetch the comparison object explicitly so lint needs no merge history.
+      - name: Fetch the ceiling comparison commit
+        if: matrix.stages == 'lint'
+        run: |
+          case "$CEILINGS_BASE" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::error::ceilings: this event has no comparison commit. A new branch needs an existing base for --ceilings-base."
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$CEILINGS_BASE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -89,7 +104,7 @@ jobs:
             turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the gate stages
-        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }}
+        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
 
   test:
     name: Test

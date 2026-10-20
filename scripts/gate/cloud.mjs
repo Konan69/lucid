@@ -271,9 +271,12 @@ export function runCloud(root, options, environment) {
   // An explicit base need not be an ancestor of the commit; the warm tree must have it to compare.
   if (options.base !== undefined)
     push(root, options.host, `${options.base}:refs/gate/${name}-base`, environment)
+  if (options.ceilingsBase !== undefined && options.ceilingsBase !== options.base)
+    push(root, options.host, `${options.ceilingsBase}:refs/gate/${name}-ceilings-base`, environment)
   const forwarded = [options.mode, ...(options.files === undefined ? [] : options.files)]
   if (options.only !== undefined) forwarded.push('--only', options.only)
   if (options.base !== undefined) forwarded.push('--base', options.base)
+  if (options.ceilingsBase !== undefined) forwarded.push('--ceilings-base', options.ceilingsBase)
   const start = ssh(options.host, remoteScript, [sha, run, label, ...forwarded], 'pipe')
   if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)
   const exit = follow(options.host, run)

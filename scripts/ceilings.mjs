@@ -30,9 +30,18 @@ function git(root, args, environment = process.env) {
   return result.stdout.trim()
 }
 
-/** Resolve locally before transport; a warm gate tree has no origin/main tracking ref. */
+/** Shallow CI and ref-less warm trees need the caller to fetch and pass a comparison commit. */
 export function ceilingBase(root, environment) {
-  return git(root, ['merge-base', 'HEAD', 'origin/main'], environment)
+  const base = NodeChildProcess.spawnSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+    cwd: root,
+    env: environment,
+    encoding: 'utf8',
+  })
+  if (base.status !== 0)
+    throw new Error(
+      `ceilings: cannot resolve the merge base with origin/main; fetch a comparison commit and pass --ceilings-base <commit> to the gate: ${base.stderr.trim()}`,
+    )
+  return base.stdout.trim()
 }
 
 /** Decode source literals once, and reject duplicate identities rather than hiding a raise. */
@@ -127,7 +136,7 @@ export function raisedCeilings(before, after) {
   return failures
 }
 
-/** Local gates must inspect uncommitted edits as well as the imported ceiling table. */
+/** Read the table from disk so a local gate catches uncommitted ceiling edits. */
 export function workingCeilings(root) {
   return tableCeilings(NodeFS.readFileSync(NodePath.join(root, tablePath), 'utf8'))
 }
@@ -175,11 +184,12 @@ export function runCeilings(root, argv) {
       ? checkRaises(root, base)
       : raisedCeilings(readCeilings(root, base), readCeilings(root, head))
   if (values.lint !== undefined) {
-    if (head !== undefined)
-      throw new Error('--lint checks the current table, not a historical head')
     failures.push(
       ...checkTightCeilings(
-        measureCeilings(NodeFS.readFileSync(values.lint, 'utf8'), workingCeilings(root)),
+        measureCeilings(
+          NodeFS.readFileSync(values.lint, 'utf8'),
+          head === undefined ? workingCeilings(root) : readCeilings(root, head),
+        ),
       ),
     )
   }
