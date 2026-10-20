@@ -6,8 +6,9 @@ import { Schema } from 'effect'
  * the app").
  *
  * A build is named by the commit it was built from. Railway names it to the build that a push to
- * `main` starts (`RAILWAY_GIT_COMMIT_SHA`, which `apps/server/Dockerfile` hands on as
- * `VIVID_COMMIT`), so the name comes from the build and never from a value written into the code.
+ * `main` starts (`RAILWAY_GIT_COMMIT_SHA`, which `apps/server/Dockerfile` hands to the web build
+ * as `VIVID_COMMIT` and to the server as `VIVID_BUILD_COMMIT`), so the name comes from the build
+ * and never from a value written into the code.
  */
 
 /**

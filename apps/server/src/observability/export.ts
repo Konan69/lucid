@@ -142,7 +142,7 @@ const sqlState = (admit: (candidate: string) => boolean) =>
 
 /**
  * A git commit as the host names it, by the one rule for a commit (`@vivid/contracts` `Commit`).
- * Anything else in `VIVID_COMMIT` is not a commit and is not sent.
+ * Anything else given as the server's commit (`VIVID_BUILD_COMMIT`) is not one and is not sent.
  */
 const commitHash = text(Schema.is(Commit))
 
@@ -445,7 +445,7 @@ const allowLogs =
 
 /**
  * The resource every post names: the service, and the commit and environment when the host
- * supplies them, each through the allowlist like any other attribute, so a `VIVID_COMMIT` that
+ * supplies them, each through the allowlist like any other attribute, so a commit setting that
  * is not a commit is left off.
  *
  * It is built here and put in place of the exporter's own at serialization, because the

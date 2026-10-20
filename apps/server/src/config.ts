@@ -183,11 +183,9 @@ const parseHeaders = (text: string): Option.Option<Readonly<Record<string, strin
 }
 
 /**
- * A name the host fills from one of its own variables. `infra/railway.ts` fills `VIVID_ENVIRONMENT`
- * and `VIVID_COMMIT` from Railway's, and the server image carries `VIVID_COMMIT` from its build
- * (`apps/server/Dockerfile`). Railway names a commit only for a deployment built from one, and a
- * reference to a variable it did not set arrives as an empty string, so empty means the host did
- * not say, exactly as an unset name does.
+ * A name filled from one of the host's own variables, where an empty value means the host did not
+ * say, exactly as an unset name does: a reference to a variable Railway did not set arrives as an
+ * empty string. `infra/railway.ts` fills `VIVID_ENVIRONMENT` that way.
  */
 const named = (value: Option.Option<string>) => Option.filter(value, (text) => text.length > 0)
 
@@ -251,7 +249,11 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     ),
     () => 8787,
   )
-  const commit = named(yield* optionalSetting('VIVID_COMMIT', Schema.String))
+  // The commit the server image was built from, which its build wrote in (`apps/server/Dockerfile`).
+  // It is not `VIVID_COMMIT`: `infra/railway.ts` sets that at run time to a reference Railway
+  // resolves empty, and a variable the host sets replaces the image's own, so production read as
+  // a build with no commit (20 October 2026). Telemetry names the same commit.
+  const commit = named(yield* optionalSetting('VIVID_BUILD_COMMIT', Schema.String))
   const publicUrl = Option.getOrElse(
     yield* optionalSetting('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
     () => new URL('http://localhost:3000'),

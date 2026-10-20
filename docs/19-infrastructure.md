@@ -435,9 +435,11 @@ before the failure and during that minute never reaches the backend and is not s
 is accepted, because the product must not depend on the backend. The server's stdout log on the
 host keeps every line, and each gap is marked there by a `Telemetry batches dropped` line that
 names the signal (`vivid.export.signal`) and the pause (`vivid.export.paused_seconds=60`). The
-resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_COMMIT` when they
-are set; on Railway they are filled from `RAILWAY_ENVIRONMENT_NAME` and `RAILWAY_GIT_COMMIT_SHA`,
-and an empty value counts as unset. The code is
+resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_BUILD_COMMIT` when they
+are set, and an empty value counts as unset. On Railway the environment is filled from
+`RAILWAY_ENVIRONMENT_NAME` at run time, and the commit is written into the server image by its
+build from `RAILWAY_GIT_COMMIT_SHA` (`apps/server/Dockerfile`); the run-time `VIVID_COMMIT` that
+`infra/railway.ts` still sets resolves empty and is no longer read. The code is
 `apps/server/src/observability/`.
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,

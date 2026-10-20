@@ -80,7 +80,7 @@ it.effect('reads telemetry export as one atomic pair and keeps its credential re
       VIVID_OTLP_HEADERS: 'x-sentry-auth=sentry sentry_key=abc123, x-extra=1',
       VIVID_ENVIRONMENT: 'production',
       // What a Railway reference to a variable it did not set resolves to.
-      VIVID_COMMIT: '',
+      VIVID_BUILD_COMMIT: '',
     })).OBSERVABILITY
     // Only the first `=` splits a pair: the credential's own `=` belongs to the value.
     expect(
@@ -125,12 +125,14 @@ it.effect('reads telemetry export as one atomic pair and keeps its credential re
 it.effect('names its build by the commit its host gave it', () =>
   Effect.gen(function* () {
     const full = 'c9607b33aa0e7c2d6a1d9f8e0b3c4d5e6f708192'
-    expect((yield* load({ VIVID_COMMIT: full })).BUILD).toEqual(
+    expect((yield* load({ VIVID_BUILD_COMMIT: full })).BUILD).toEqual(
       ServerBuild.cases.Named.make({ commit: Commit.make(full) }),
     )
     expect((yield* load({})).BUILD).toEqual(ServerBuild.cases.Unnamed.make({}))
+    // What Railway's run-time `VIVID_COMMIT` holds is not the image's commit and is not read.
+    expect((yield* load({ VIVID_COMMIT: full })).BUILD).toEqual(ServerBuild.cases.Unnamed.make({}))
     for (const commit of ['', 'ghp_notacommit']) {
-      expect((yield* load({ VIVID_COMMIT: commit })).BUILD).toEqual(
+      expect((yield* load({ VIVID_BUILD_COMMIT: commit })).BUILD).toEqual(
         ServerBuild.cases.Unnamed.make({}),
       )
     }
