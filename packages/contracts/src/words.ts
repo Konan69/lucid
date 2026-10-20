@@ -23,6 +23,9 @@ export interface Worded {
  * thinking never separates text: text on either side of it is one stretch, as the stored reply
  * says. A tool call or any other part does end one, and the next text is a new paragraph, which is
  * how the stored reply keeps them too.
+ *
+ * It lives here because the server reads a reply the same way: a finished notice and a channel
+ * reply quote the Run's answer (`apps/server/src/runtime/settlement.ts`), from the same live state.
  */
 export const textOf = (message: Worded): string => {
   const stretches: Array<string> = []

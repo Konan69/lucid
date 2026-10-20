@@ -4,6 +4,7 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   InputRequestId,
+  textOf,
   type PersonId,
   type Run,
 } from '@vivid/contracts'
@@ -17,7 +18,6 @@ import {
   sourceOf,
   speakerOfTurn,
   summarizeSteps,
-  textOf,
   type Awaited,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'

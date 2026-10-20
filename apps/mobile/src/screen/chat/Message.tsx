@@ -1,6 +1,5 @@
 import type { FlueConversationMessage } from '@flue/sdk'
-import type { ThreadDetail } from '@vivid/contracts'
-import { textOf } from '@vivid/state'
+import { textOf, type ThreadDetail } from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'

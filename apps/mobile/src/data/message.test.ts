@@ -9,10 +9,11 @@ import {
   RunOrigin,
   RunState,
   ServiceId,
+  textOf,
   ThreadId,
   type Run,
 } from '@vivid/contracts'
-import { Awaited, textOf } from '@vivid/state'
+import { Awaited } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {

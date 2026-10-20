@@ -147,6 +147,33 @@ describe('Run settlement observation', () => {
     }),
   )
 
+  it.effect('a reply the model broke off to think is one sentence, as a notice quotes it', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      // The parts Flue's client built from production's stream of 13 October 2026.
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [
+          assistant([
+            { type: 'text', text: 'Rivers bend', state: 'done' },
+            { type: 'reasoning', text: 'hm', state: 'done' },
+            { type: 'text', text: ' for reasons that begin simply.', state: 'done' },
+          ]),
+        ],
+        settlements: [{ submissionId: runId, outcome: 'completed' }],
+      })
+      const result = yield* Fiber.join(run)
+      expect(result).toEqual(
+        Settlement.cases.Completed.make({
+          reply: 'Rivers bend for reasons that begin simply.',
+          responseId: runId,
+        }),
+      )
+    }),
+  )
+
   it.effect('a producing Run with no answer times out without aborting conversation work', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()

@@ -2,6 +2,7 @@ import type { FlueConversationMessage } from '@flue/react'
 import {
   InputRequestId,
   InputRequestState,
+  textOf,
   type Approval,
   type InputRequest,
   type PersonId,
@@ -15,7 +16,6 @@ import {
   sourceOf,
   speakerOfTurn,
   stretches,
-  textOf,
   thisReader,
 } from '@vivid/state'
 import { Option, Schema } from 'effect'

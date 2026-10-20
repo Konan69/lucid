@@ -1,11 +1,10 @@
 import {
-  readSubmissionReply,
   type FlueClient,
   type AgentConversationObservationSnapshot,
   type FlueConversationMessage,
   type FlueConversationState,
 } from '@flue/sdk'
-import { RunFailure, RunId } from '@vivid/contracts'
+import { RunFailure, RunId, textOf } from '@vivid/contracts'
 import { Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
 import {
   classifyFailure,
@@ -30,9 +29,14 @@ const meaningful = (message: FlueConversationMessage): boolean =>
   )
 
 /**
- * Flue 2.2.2 readSubmissionReply returns the host answer for joined submissions. Preserve its
- * response identity so outbound transports claim that answer once, even when several Runs end.
- * An empty final text remains legal after real tool work.
+ * The reply is the host's last answer, the message Flue 2.2.2 `readSubmissionReply` picks for a
+ * joined submission too. Preserve its response identity so outbound transports claim that answer
+ * once, even when several Runs end. An empty final text remains legal after real tool work.
+ *
+ * Its words are read with `textOf`, the rule every client draws a reply by, not with
+ * `readSubmissionReply(...).text`, which joins every text part as a paragraph. This state is
+ * built from the live stream, where Flue opens a new text part each time the model stops to think,
+ * so on 13 October 2026 a finished notice read "Rivers bend\n\n for reasons…" mid-sentence.
  */
 const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Settlement> => {
   const settled = state.settlements.find((candidate) => candidate.submissionId === runId)
@@ -52,11 +56,12 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
   const answer = state.messages.filter(
     (message) => message.role === 'assistant' && message.submissionId === host,
   )
-  const hasAnswer = answer.some(meaningful)
-  if (!hasAnswer) return Option.some(Settlement.cases.Failed.make({ reason: 'NoAnswer' }))
+  const reply = answer.at(-1)
+  if (reply === undefined || !answer.some(meaningful))
+    return Option.some(Settlement.cases.Failed.make({ reason: 'NoAnswer' }))
   return Option.some(
     Settlement.cases.Completed.make({
-      reply: readSubmissionReply(state, runId).text,
+      reply: textOf(reply),
       responseId: RunId.make(host),
     }),
   )

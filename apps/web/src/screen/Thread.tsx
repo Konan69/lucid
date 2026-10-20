@@ -1,6 +1,6 @@
 import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
-import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import { textOf, ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import {
   asking,
   draftPlace,
@@ -9,7 +9,6 @@ import {
   QUIET_MS,
   readingOf,
   streamSaid,
-  textOf,
   titleFromMessage,
   workspaceKey,
 } from '@vivid/state'
