@@ -4,9 +4,11 @@ import {
   Renderer,
   type ActionEvent,
   type McpClientLike,
+  type ParseResult,
 } from '@openuidev/react-lang'
 import { Option } from 'effect'
-import { callDisplayTool, displayToolAnswer, said, writtenTools } from '@vivid/state'
+import { callDisplayTool, displayToolAnswer, feed, said, writtenTools } from '@vivid/state'
+import { useRef } from 'react'
 import { run } from '../data/app'
 import { library } from './library'
 
@@ -52,7 +54,18 @@ export function Display({
   /** Whether this is the newest thing Vivid said and it is waiting for the Person. */
   live: boolean
   onSay: (words: string) => void
+  onState?: (chosen: feed.Chosen) => void
 }) {
+  // The program's declared defaults, from its latest reading. A ref: they are only read when the
+  // renderer reports a change, and nothing is drawn from them.
+  const declared = useRef<feed.Chosen>({})
+  const read = (result: ParseResult | null) => {
+    declared.current = result === null ? {} : result.stateDeclarations
+    if (onState !== undefined) onState(declared.current)
+  }
+  const changed = (state: feed.Chosen) => {
+    if (onState !== undefined) onState({ ...declared.current, ...state })
+  }
   const answer = (event: ActionEvent) => {
     if (!live || event.type !== BuiltinActionType.ContinueConversation) return
     onSay(said(event.humanFriendlyMessage, event.formState === undefined ? {} : event.formState))
@@ -64,6 +77,8 @@ export function Display({
         library={library}
         isStreaming={arriving}
         onAction={answer}
+        onParseResult={read}
+        onStateUpdate={changed}
         toolProvider={integrations(writtenTools(parser.parse(text)))}
       />
     </section>
