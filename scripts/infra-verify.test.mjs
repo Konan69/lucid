@@ -54,7 +54,7 @@ void test('an image sets what its last stage and the stages it descends from set
     'ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA',
     'RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm build',
   ].join('\n')
-  assert.deepEqual([...imageSettings(dockerfile)].sort(), ['COREPACK_HOME', 'VIVID_BUILD_COMMIT'])
+  assert.deepEqual(imageSettings(dockerfile), new Set(['COREPACK_HOME', 'VIVID_BUILD_COMMIT']))
 })
 
 void test('the server image wires only what the server alone reads', () => {
