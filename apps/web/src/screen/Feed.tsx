@@ -47,7 +47,7 @@ export function FeedView({
   onOpen,
 }: {
   me: MeResponse
-  items: FeedResponse['items']
+  items: (typeof FeedResponse.Type)['items']
   onOpen: (thread: ThreadId) => void
 }) {
   const view = feed.feedView(items)
