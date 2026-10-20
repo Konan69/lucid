@@ -394,7 +394,7 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
       ],
       ['BuildMemoryExceeded', 'This Integration could not be built within the available memory.'],
       ['SkillDefinitionInvalid', 'The imported service declaration is invalid.'],
-    ]) {
+    ] as const) {
       test.effect(`returns a repairable outcome for post-build ${tag}`, () =>
         Effect.gen(function* () {
           const made = yield* madeFixture()

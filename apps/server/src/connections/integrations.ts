@@ -85,7 +85,11 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
         ),
     }),
   )
-  if (MakeIntegrationOutcome.isAnyOf(['BuildFailed', 'NotAnIntegration', 'Unreachable'])(result))
+  if (
+    MakeIntegrationOutcome.guards.BuildFailed(result) ||
+    MakeIntegrationOutcome.guards.NotAnIntegration(result) ||
+    MakeIntegrationOutcome.guards.Unreachable(result)
+  )
     return result
   const selected = namedAccounts(yield* store.records(actor)).find(
     ({ row }) => row.id === result.connection.id,
