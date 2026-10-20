@@ -14,6 +14,7 @@ export class CookieReadFailed extends Schema.TaggedError<CookieReadFailed>()(
     outcome: Schema.Union([
       CopySignInOutcome.cases.BrowserLocked,
       CopySignInOutcome.cases.PermissionDenied,
+      CopySignInOutcome.cases.KeyUnavailable,
       CopySignInOutcome.cases.SourceMissing,
       CopySignInOutcome.cases.Unreadable,
       CopySignInOutcome.cases.UnsupportedEncryption,
