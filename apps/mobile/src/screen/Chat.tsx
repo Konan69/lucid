@@ -30,7 +30,7 @@ import {
 } from '@vivid/state'
 import { type Array as Arr, Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import Animated, {
@@ -39,12 +39,14 @@ import Animated, {
   useAnimatedReaction,
   useAnimatedRef,
   useSharedValue,
+  type AnimatedRef,
   type SharedValue,
 } from 'react-native-reanimated'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
+import { readingPlace, type Anchor } from '../data/reading'
 import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
@@ -52,7 +54,7 @@ import { inFront, onCatchUp } from '../data/foreground'
 import type { Whose } from '../data/heard'
 import { heardIn, heardThrough } from '../data/hearing'
 import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
-import { isShown, lastWordsOf, type Around } from '../data/message'
+import { isShown, lastWordsOf, Speaker, speakerOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
@@ -78,7 +80,17 @@ import {
   refusedAfter,
   wasRefused,
 } from './chat/asked'
-import { isAway, newestWords } from './chat/away'
+import {
+  anchorAt,
+  arrivedSince,
+  isAway,
+  newestOf,
+  newestWords,
+  offsetFor,
+  scrolledOf,
+  type Laid,
+  type Scrolled,
+} from './chat/away'
 import { Choices } from './chat/Choices'
 import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
@@ -727,11 +739,7 @@ function Conversation({
   const [dock, onDock] = useDock()
   const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
-  const around: Around = {
-    me: me.person.id,
-    shared,
-    runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
-  }
+  const around = aroundOf(me.person.id, shared, detail)
   const { said, ready } = drawn(agent, heardIn(whose, id))
   const whole = agent.historyReady
   const shown = withFirst(standInOf(id, first), { messages: said.filter(isShown), ready: whole })
@@ -789,6 +797,7 @@ function Conversation({
       <View style={{ flex: 1 }}>
         <View ref={wake} style={{ flex: 1 }}>
           <Messages
+            id={id}
             messages={shown}
             page={page}
             working={working}
@@ -832,6 +841,17 @@ function Conversation({
     </AboveKeyboardBelowBar>
   )
 }
+
+/** The rows need the Person and sharing context beside the Runs from the Thread's live detail. */
+const aroundOf = (
+  me: Around['me'],
+  shared: boolean,
+  detail: Option.Option<ThreadDetail>,
+): Around => ({
+  me,
+  shared,
+  runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
+})
 
 /**
  * The foot of a Thread: the composer, and over it what could not be done from it (an answer or
@@ -1100,6 +1120,8 @@ interface MessagesProps {
    * words, which are already in the list the first time it is laid out and still rise into it.
    */
   readonly rising: Option.Option<{ readonly id: string; readonly at: number }>
+  /** The Thread whose conversation this is, for where the Person was reading in it (`reading`). */
+  readonly id: ThreadId
   /** The list has been laid out. */
   readonly onListed: () => void
   readonly ended: Option.Option<Ended>
@@ -1230,8 +1252,9 @@ function Messages(props: MessagesProps) {
  * (`Floating`, `ui/Floating.tsx`). Words that arrive meanwhile put a dot on it; how many is said
  * only to a screen reader. Until 10 October 2026 that was a "Latest messages" button with the
  * count on it, stacked over the bubble and shown only once something had arrived. Whether they
- * are away is kept as the message count at the moment they left; it changes only when they cross
- * the threshold.
+ * are away is kept as the newest message at the moment they left, and what arrived is what came
+ * after it (`arrivedSince`): a history that loads in above, as a Thread opened from what the phone
+ * kept does, adds nothing new. It changes only when they cross the threshold.
  *
  * While a question's choices are up over the foot of the conversation, that much more is kept
  * clear under the newest words, and the floating row rides up by the same. Both follow the card
@@ -1250,55 +1273,54 @@ function Messages(props: MessagesProps) {
  * said, never by the room: while the card moves, nothing is asked of JavaScript at all. It used
  * to be asked on every frame of the glide, and under load the newest words trailed the card.
  *
+ * A Thread the Person scrolled up in and left opens again where they were reading
+ * (`data/reading.ts`), on the row they were reading, with the button back to the newest words
+ * already out: neither the history loading in above nor a reply that arrived meanwhile moves it
+ * (`useReadingPlace`). Until 20 October 2026 every opening went to the newest words.
+ *
  * The card is laid over the conversation on both platforms (`chat/Choices.tsx`), so this is the
  * same on both.
  */
 function Transcript(props: MessagesProps) {
-  const { messages, working, thinking, rising } = props
-  const { list, room, body, port, following } = useEndRoom(props.covered)
-  // Whether the scroller has been put on its newest words once, which is when it is shown.
+  const { id, messages, working, thinking, rising } = props
+  // Where the Person was reading when they last left this Thread, when it was not its newest
+  // words and its row is among those the Thread opens with. A row that is not (it was further back
+  // than what the phone kept, or it was a message sent from here that the conversation now names
+  // otherwise) cannot be waited for: the Thread opens on its newest words, as it always did.
+  const [opened] = useState(() =>
+    Option.filter(readingPlace.of(id), (anchor) => drawsRow(messages, props.around, anchor.key)),
+  )
+  const { list, room, body, port, following } = useEndRoom(props.covered, Option.isNone(opened))
+  const place = useReadingPlace(id, opened, list, (key) => drawsRow(messages, props.around, key))
+  // Whether the scroller has been put in its place once, which is when it is shown.
   const [placed, setPlaced] = useState(false)
   // The Person asked to be taken back to the newest words and is on the way there. Until they
   // arrive, passing through older words is not having scrolled away.
   const returning = useRef(false)
-  const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
+  // A Thread opened where the Person was reading is one they are away from its newest words in.
+  const [awayAt, setAwayAt] = useState(() => Option.flatMap(opened, () => newestOf(messages)))
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
-    onSome: (seen) => messages.length - seen,
+    onSome: (newest) => arrivedSince(messages, newest),
   })
-  // The messages that are not new here. Those the list was first drawn with are not, except a
-  // Thread's first words when they were sent a moment ago; the clock is read once, when the list
-  // is made, and never while rendering.
-  const [known, setKnown] = useState<ReadonlySet<string>>(() => {
-    const now = Date.now()
-    const risen = (key: string) =>
-      Option.exists(rising, (first) => first.id === key && now - first.at < FRESH)
-    return new Set(messages.map((message) => message.id).filter((key) => !risen(key)))
-  })
+  const { known, moved } = useKnown(messages, rising)
 
   function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
     // Before it is first put on its newest words it is at its oldest, which is not the Person
     // having scrolled away.
     if (!placed) return
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
-    const near = !isAway({
-      offset: contentOffset.y,
-      content: contentSize.height,
-      viewport: layoutMeasurement.height,
-    })
-    // A row is only ever drawn a second time after the list has moved, so moving it is when
-    // everything in it stops being new: a message scrolled back to does not arrive again.
-    setKnown((current) =>
-      messages.every((message) => current.has(message.id))
-        ? current
-        : new Set(messages.map((message) => message.id)),
-    )
+    const scrolled = scrolledOf(event.nativeEvent)
+    const near = !isAway(scrolled)
+    moved()
     if (near) returning.current = false
+    // The way back to the newest words passes through older ones: none of them is where the
+    // Person was reading.
     if (returning.current) return
+    place.seen(scrolled)
     following.set(near)
     setAwayAt((current) => {
       if (near) return Option.isNone(current) ? current : Option.none()
-      return Option.isSome(current) ? current : Option.some(messages.length)
+      return Option.isSome(current) ? current : newestOf(messages)
     })
   }
 
@@ -1308,22 +1330,24 @@ function Transcript(props: MessagesProps) {
    * stream in do not chase a moving target.
    */
   function settle() {
-    if (Option.isSome(awayAt) || list.current === null) return
-    list.current.scrollToEnd({ animated: false })
+    if (list.current === null) return
+    const at = place.hold()
+    if (at === 'Unmeasured') return
+    if (at === 'Free' && Option.isNone(awayAt)) {
+      list.current.scrollToEnd({ animated: false })
+    }
     if (!placed) setPlaced(true)
   }
 
   function latest() {
+    place.release()
     returning.current = true
     following.set(true)
     setAwayAt(Option.none())
     if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
 
-  // Vivid has been asked and has not begun: the newest thing in the Thread is not its reply.
-  const newest = messages[messages.length - 1]
-  const awaited =
-    thinking && Option.isNone(props.trouble) && newest !== undefined && newest.role !== 'assistant'
+  const awaited = awaitsReply(props)
 
   return (
     // The scroller's box is written first and drawn second: see the note above.
@@ -1335,6 +1359,10 @@ function Transcript(props: MessagesProps) {
           keyboardDismissMode="interactive"
           onLayout={(event) => {
             port.set(event.nativeEvent.layout.height)
+            // Settled again once the viewport it is settled against is current: the box around
+            // it settles first, a frame before this height is known, and a place the Person was
+            // reading at is worked out from it (`useReadingPlace`).
+            settle()
             props.onListed()
           }}
           onScroll={follow}
@@ -1347,9 +1375,11 @@ function Transcript(props: MessagesProps) {
           // banner. The content's own size changing is the one event that always follows the
           // last growth, so the scroller is put back on its end from it as well.
           onContentSizeChange={settle}
-          // A finger on the conversation takes over from a return that was under way.
+          // A finger on the conversation takes over from a return that was under way, and from
+          // the place the Thread was opened at.
           onScrollBeginDrag={() => {
             returning.current = false
+            place.release()
           }}
           scrollEventThrottle={32}
           style={{ opacity: placed ? 1 : 0 }}
@@ -1361,6 +1391,7 @@ function Transcript(props: MessagesProps) {
           <View
             onLayout={(event) => {
               body.set(event.nativeEvent.layout.height)
+              place.body(event.nativeEvent.layout.y)
               settle()
             }}
             style={[
@@ -1390,6 +1421,9 @@ function Transcript(props: MessagesProps) {
               working={working}
               unsent={props.unsent}
               onContinue={props.onContinue}
+              onRow={(key, laid) => {
+                if (place.row(key, laid)) settle()
+              }}
             />
             <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
           </View>
@@ -1411,6 +1445,121 @@ function Transcript(props: MessagesProps) {
   )
 }
 
+/** Vivid has been asked and has not begun: the newest thing in the Thread is not its reply. */
+const awaitsReply = ({
+  messages,
+  thinking,
+  trouble,
+}: Pick<MessagesProps, 'messages' | 'thinking' | 'trouble'>) => {
+  const newest = messages[messages.length - 1]
+  return thinking && Option.isNone(trouble) && newest !== undefined && newest.role !== 'assistant'
+}
+
+/** Whether the list draws a row for the message `key` (`Rows` draws none for a silent one). */
+const drawsRow = (
+  messages: ReadonlyArray<FlueConversationMessage>,
+  around: Around,
+  key: string,
+): boolean => messages.some((message) => message.id === key && !silent(message, around))
+
+/** A message that is not drawn, as an answer or an Approval's outcome, told by its card. */
+const silent = (message: FlueConversationMessage, around: Around): boolean =>
+  Speaker.$is('Silent')(speakerOf(message, around))
+
+/**
+ * The messages of a conversation that are not new here (`Transcript`). Those the list was first
+ * drawn with are not, except a Thread's first words when they were sent a moment ago; the clock is
+ * read once, when the list is made, and never while rendering. A row is only ever drawn a second
+ * time after the list has moved, so moving it (`moved`) is when everything in it stops being new:
+ * a message scrolled back to does not arrive again.
+ */
+function useKnown(
+  messages: ReadonlyArray<FlueConversationMessage>,
+  rising: MessagesProps['rising'],
+) {
+  const [known, setKnown] = useState<ReadonlySet<string>>(() => {
+    const now = Date.now()
+    const risen = (key: string) =>
+      Option.exists(rising, (first) => first.id === key && now - first.at < FRESH)
+    return new Set(messages.flatMap((message) => (risen(message.id) ? [] : [message.id])))
+  })
+  const moved = () =>
+    setKnown((current) =>
+      messages.every((message) => current.has(message.id))
+        ? current
+        : new Set(messages.map((message) => message.id)),
+    )
+  return { known, moved }
+}
+
+/**
+ * Where the Person was reading in a Thread (`data/reading.ts`), kept as they scroll and given back
+ * when the Thread opens again.
+ *
+ * The place is the row at the top of the viewport and how far into it the viewport starts. Each
+ * time the list is settled, and each time a row is laid out while a place is held, the list is put
+ * back on that row: the history loading in above moves the row and the list follows it, and words
+ * arriving below move neither, so what the Person is reading stays still. A drag or asking for the
+ * newest words lets go (`release`). `hold` answers `Free` when nothing is held, `Unmeasured` while
+ * the row, which is drawn, is not laid out yet, and `Held` once the list is on the row.
+ */
+function useReadingPlace(
+  id: ThreadId,
+  opened: Option.Option<Anchor>,
+  list: AnimatedRef<Animated.ScrollView>,
+  draws: (key: string) => boolean,
+) {
+  const pinned = useRef(opened)
+  // Where each message row is laid out within everything said, and where everything said starts
+  // within the scroller (below its top only while the conversation is shorter than the viewport).
+  // Kept in refs: nothing is drawn from them, they are read when the list is settled.
+  const rows = useRef(new Map<string, Laid>())
+  const top = useRef(0)
+  return {
+    hold: (): 'Free' | 'Unmeasured' | 'Held' =>
+      Option.match(pinned.current, {
+        onNone: () => 'Free',
+        onSome: (anchor) => {
+          // The row is gone from the list (a message renamed by the conversation): the place
+          // can no longer be kept, and the list stays where it is.
+          if (!draws(anchor.key)) {
+            pinned.current = Option.none()
+            return 'Free'
+          }
+          return Option.match(offsetFor(anchor, rows.current), {
+            onNone: () => 'Unmeasured',
+            onSome: (y) => {
+              if (list.current === null) return 'Unmeasured'
+              list.current.scrollTo({ y: Math.max(0, top.current + y), animated: false })
+              return 'Held'
+            },
+          })
+        },
+      }),
+    /** A row was laid out. Answers whether the list is held at a place, to be settled again. */
+    row: (key: string, laid: Laid): boolean => {
+      rows.current.set(key, { y: laid.y, height: laid.height })
+      return Option.isSome(pinned.current)
+    },
+    body: (y: number) => {
+      top.current = y
+    },
+    release: () => {
+      pinned.current = Option.none()
+    },
+    /** Keeps where the Person is reading, or that they are at the newest words. */
+    seen: (scrolled: Scrolled) => {
+      const at = isAway(scrolled)
+        ? anchorAt(rows.current, scrolled.offset - top.current)
+        : Option.none<Anchor>()
+      Option.match(at, {
+        onNone: () => readingPlace.drop(id),
+        onSome: (anchor) => readingPlace.keep(id, anchor),
+      })
+    },
+  }
+}
+
 /**
  * The room at the end of a conversation's scroller that follows a question's choices, and the
  * scroller kept on its newest words as that room changes, both on the UI thread (`Transcript`
@@ -1422,11 +1571,11 @@ function Transcript(props: MessagesProps) {
  * worked out from them, not read from its content size: the room is changing in this very frame,
  * and what the scroller would report is a frame old.
  */
-function useEndRoom(covered: SharedValue<number>) {
+function useEndRoom(covered: SharedValue<number>, atEnd: boolean) {
   const list = useAnimatedRef<Animated.ScrollView>()
   const body = useSharedValue(0)
   const port = useSharedValue(0)
-  const following = useSharedValue(true)
+  const following = useSharedValue(atEnd)
   const room = useAnimatedStyle(() => ({ height: covered.get() }))
   useAnimatedReaction(
     () => covered.get(),
@@ -1457,6 +1606,7 @@ function Rows({
   working,
   unsent,
   onContinue,
+  onRow,
 }: {
   messages: ReadonlyArray<FlueConversationMessage>
   lines: ReadonlyArray<model.Line>
@@ -1467,9 +1617,20 @@ function Rows({
   working: boolean
   unsent: ReadonlySet<string>
   onContinue: Say
+  /** Where each row is laid out, for where the Person is reading (`useReadingPlace`). */
+  onRow: (key: string, laid: Laid) => void
 }) {
   const newest = messages[messages.length - 1]
   const byKey = new Map(messages.map((message) => [message.id, message]))
+  // Each message row sits in a plain view that only reports where it is laid out. It carries the
+  // row's key, so a row is never drawn again for it, and no style, so the column's gap and
+  // alignment fall on it as they fell on the row. Places are kept by message (`data/reading.ts`);
+  // an answer's row above or below one moves it like any other row.
+  const placed = (key: string, row: ReactNode) => (
+    <View key={key} onLayout={(event) => onRow(key, event.nativeEvent.layout)}>
+      {row}
+    </View>
+  )
   return lines.map((line) =>
     model.Line.$match(line, {
       Answer: ({ request }) => (
@@ -1477,19 +1638,22 @@ function Rows({
       ),
       Said: ({ key }) => {
         const message = byKey.get(key)
-        return message === undefined ? null : (
-          <Message
-            key={key}
-            message={message}
-            around={around}
-            detail={detail}
-            working={working}
-            fresh={!known.has(key)}
-            latest={message === newest}
-            unsent={unsent}
-            onContinue={onContinue}
-          />
-        )
+        // A message that is not drawn takes no row, so it takes no place in the column's gap.
+        return message === undefined || silent(message, around)
+          ? null
+          : placed(
+              key,
+              <Message
+                message={message}
+                around={around}
+                detail={detail}
+                working={working}
+                fresh={!known.has(key)}
+                latest={message === newest}
+                unsent={unsent}
+                onContinue={onContinue}
+              />,
+            )
       },
     }),
   )
