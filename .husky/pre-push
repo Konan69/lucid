@@ -5,4 +5,6 @@ set -eu
 # warning ratchets in scripts/gate/ratchets.mjs; this hook, the Cloudbox run and GitHub all call
 # it. `--committed` gates the commit being pushed, without uncommitted work. With VIVID_GATE_HOST
 # set, the run happens in a warm tree on that machine instead of this one.
+# origin/main is available here; the Cloudbox receives only the refs its gate needs.
+node scripts/release.mjs
 exec node scripts/gate.mjs full --committed
