@@ -22,6 +22,7 @@ export const stages = [
       ['node', 'scripts/instructions.mjs'],
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
+      ['node', 'scripts/owners.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['pnpm', 'exec', 'konsistent'],
     ],
