@@ -16,8 +16,10 @@ import { MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore, libraryStoreLayer } from '../library/store.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { bytesRoutes } from './bytes.ts'
+import { authLayer } from '../auth/provider.ts'
 
 const testLayer = Layer.mergeAll(
+  authLayer.pipe(Layer.provide(testConfigLayer)),
   libraryStoreLayer.pipe(Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer)))),
   testConfigLayer,
   silentChangesLayer,

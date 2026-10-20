@@ -15,7 +15,6 @@
     "db:migrate:product": "drizzle-kit migrate --config product-drizzle.config.ts"
   },
   "dependencies": {
-    "@alchemy.run/better-auth": "catalog:",
     "@earendil-works/pi-codemode": "1.0.0",
     "@effect/ai-openrouter": "catalog:",
     "@effect/ai-typesafe": "catalog:",

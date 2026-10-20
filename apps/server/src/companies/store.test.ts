@@ -3,8 +3,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { CompanyId, InvitationId, PersonId } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import { Effect, Layer, Result } from 'effect'
-import * as HttpServerRequest from 'effect/http/HttpServerRequest'
-import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
+import { Auth, authLayer } from '../auth/provider.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -12,7 +11,7 @@ import { changesLayer } from '../live/changes.ts'
 import { CompanyStore, companyStoreLayer } from './store.ts'
 import { companyTable, invitationTable, membershipTable } from './tables.ts'
 
-const testLayer = Layer.mergeAll(companyStoreLayer, changesLayer, localAuthRuntimeLayer).pipe(
+const testLayer = Layer.mergeAll(companyStoreLayer, changesLayer, authLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
   Layer.provideMerge(testConfigLayer),
 )
@@ -67,17 +66,14 @@ type Invited = Effect.Success<ReturnType<typeof invited>>
  * someone holding the link would, and returns the Person the adapter stored.
  */
 const signedUp = Effect.fn('CompanyTest.signedUp')(function* (email: string) {
-  const auth = yield* authEffect
-  const response = yield* auth.fetch.pipe(
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(
-        new Request('http://127.0.0.1:8787/api/auth/sign-up/email', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' },
-          body: JSON.stringify({ email, name: 'Link holder', password: 'test-Company-0123456789' }),
-        }),
-      ),
+  const auth = yield* Auth
+  const response = yield* Effect.promise(() =>
+    auth.handler(
+      new Request('http://127.0.0.1:8787/api/auth/sign-up/email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' },
+        body: JSON.stringify({ email, name: 'Link holder', password: 'test-Company-0123456789' }),
+      }),
     ),
   )
   expect(response.status).toBe(200)

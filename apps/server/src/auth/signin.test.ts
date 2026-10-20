@@ -19,6 +19,7 @@ import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { authRoute } from '../http/router.ts'
+import { authLayer } from './provider.ts'
 import { changesLayer } from '../live/changes.ts'
 import { personTable, verificationTable } from './tables.ts'
 
@@ -98,7 +99,9 @@ interface Server {
 const served = Effect.fn('SignInTest.served')(function* (origin: string) {
   const config = yield* ServerConfig
   const server = yield* Layer.build(NodeHttpServer.layerTest)
-  yield* Layer.build(HttpRouter.serve(authRoute, { disableLogger: true })).pipe(
+  yield* Layer.build(
+    HttpRouter.serve(authRoute, { disableLogger: true }).pipe(Layer.provide(authLayer)),
+  ).pipe(
     Effect.provide(server),
     Effect.provideService(ServerConfig, {
       ...config,

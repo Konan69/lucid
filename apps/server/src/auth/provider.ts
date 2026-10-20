@@ -1,12 +1,13 @@
-import { BetterAuth } from '@alchemy.run/better-auth'
+import { betterAuth } from 'better-auth'
 import { bearer, organization } from 'better-auth/plugins'
-import { RuntimeContext } from 'alchemy'
+import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
-import { DatabaseFailure } from '@vivid/contracts'
+import * as Schema from 'effect/Schema'
 import { ServerConfig } from '../config.ts'
 import { appSignIn } from './signin.ts'
-import { authDatabaseLayer } from './dialect.ts'
+import { authDatabase } from './dialect.ts'
 
 /** Two weeks. See `session` in the options below for why it is not Better Auth's seven days. */
 const SESSION_LASTS_SECONDS = 14 * 24 * 60 * 60
@@ -19,11 +20,9 @@ const SESSION_LASTS_SECONDS = 14 * 24 * 60 * 60
  */
 const makeOptions = (config: ServerConfig['Service']) => {
   const options = {
-    id: 'VividAuth',
-    migrate: false,
     basePath: '/api/auth',
     baseURL: config.PUBLIC_URL.href,
-    secret: config.AUTH_SECRET,
+    secret: Redacted.value(config.AUTH_SECRET),
     trustedOrigins: [config.PUBLIC_URL.origin],
     /**
      * Whose request it is, for Better Auth's request limiter (three sign-ins every ten seconds
@@ -110,29 +109,46 @@ const makeOptions = (config: ServerConfig['Service']) => {
   }
 }
 
-/** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */
-export const localAuthRuntimeLayer = RuntimeContext.phantom
-
 /**
- * The Better Auth instance over Vivid's PostgreSQL.
+ * The Better Auth instance over Vivid's PostgreSQL, built once for the life of the server.
+ *
+ * It used to be built per request: Alchemy's `BetterAuth` makes the instance and its pool per
+ * "execution" (`makeExecutionMemo`, alchemy `Runtime/ExecutionMemo.ts`), meaning the ambient Effect
+ * scope, which is the right shape for a Worker or a Lambda and the wrong one for this long-lived
+ * server. Every request that named a session opened its own pool and a new connection to
+ * PostgreSQL, and ended it when the request's scope closed. A request whose client hung up was
+ * interrupted while Better Auth's own promise was still between queries; the pool ended under it
+ * and Better Auth logged "Cannot use a pool after calling end on the pool" (272 times on
+ * production on 13 October 2026, in bursts as phones reconnected). Here the pool belongs to this
+ * Layer's scope, so a request that ends early leaves Better Auth's work finishing on a pool that is
+ * still open.
  *
  * Every way a session ends by being removed (signing out, signing another device out, signing
- * out everywhere else) is a delete on the session table. The database Layer announces the Person in
+ * out everywhere else) is a delete on the session table. The database announces the Person in
  * that delete's own commit (`auth/dialect.ts`), which is what makes every open subscription of
  * theirs ask again whether its session is still one. Nothing here publishes, so this needs no
- * change bus.
+ * change bus. The only failure is that the delete's receipt cannot be formed; auth is then
+ * unavailable rather than removing sessions unannounced.
  *
- * The only failure is that Layer refusing to build because it could not form the removal's
- * receipt; auth is then unavailable rather than removing sessions unannounced.
+ * Better Auth's background work (refreshing a session's expiry) runs on its default: started and
+ * not awaited, with nothing kept (`runInBackground` in `context/create-context.mjs`).
  */
-export const authEffect = Effect.gen(function* () {
+const makeAuth = Effect.fn('Auth.make')(function* () {
   const config = yield* ServerConfig
-  return yield* BetterAuth(makeOptions(config)).pipe(
-    // @effect-diagnostics-next-line strictEffectProvide:off -- This Layer only builds the deferred `Database` description Better Auth captures; the pool it describes is opened later on the caller's own scope (Alchemy `ExecutionMemo`), so providing it here ends no lifetime early.
-    Effect.provide(authDatabaseLayer(config.DATABASE_URL)),
-  )
-}).pipe(
-  Effect.mapError(() => new DatabaseFailure({ message: 'Session removal cannot be announced' })),
-)
+  const database = yield* authDatabase(config.DATABASE_URL)
+  return betterAuth({ ...makeOptions(config), database })
+})
 
-export type AuthInstance = Effect.Success<typeof authEffect>
+export type AuthInstance = Effect.Success<ReturnType<typeof makeAuth>>
+
+/** Vivid's one Better Auth instance. */
+export class Auth extends Context.Service<Auth, AuthInstance>()('Auth') {}
+
+export const authLayer = Layer.effect(Auth, makeAuth())
+
+/** Better Auth's own handler failed in a way it did not turn into a response. */
+export class AuthUnavailable extends Schema.TaggedError<AuthUnavailable>()(
+  'AuthUnavailable',
+  {},
+  { title: 'Sign-in is unavailable' },
+) {}

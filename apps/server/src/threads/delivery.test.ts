@@ -75,6 +75,7 @@ import {
   type Delivery,
   type SignalDelivery,
 } from './conversation.ts'
+import { authLayer } from '../auth/provider.ts'
 import { conversationLayer } from './delivery.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { Presence } from './presence.ts'
@@ -433,7 +434,11 @@ const signals = [
 ] as const
 
 layer(
-  databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMerge(testConfigLayer)),
+  databaseLayer.pipe(
+    Layer.provideMerge(silentChangesLayer),
+    Layer.provideMerge(authLayer),
+    Layer.provideMerge(testConfigLayer),
+  ),
 )((it) => {
   describe.skipIf(!testDatabaseConfigured)('Input requests moved on by chat', () => {
     it.effect(

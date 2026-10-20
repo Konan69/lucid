@@ -19,7 +19,7 @@ import {
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import {
   BrowserAction,
   BrowseOutcome,
@@ -51,7 +51,7 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { refusalLogs } from '../observability/testlogger.ts'
-import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
+import { Auth, authLayer } from '../auth/provider.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
@@ -116,6 +116,9 @@ const testLayer = deviceLayer.pipe(
   Layer.provideMerge(Layer.effect(Database, Database)),
   Layer.provideMerge(testConfigLayer),
 )
+
+/** The case layer with the server's own Better Auth, for a case that signs in and out for real. */
+const authenticatedLayer = Layer.mergeAll(testLayer, authLayer.pipe(Layer.provide(testConfigLayer)))
 
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 const encodeReceipt = Schema.encodeSync(DeviceReceipt)
@@ -1076,17 +1079,11 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             Effect.catch(() => Effect.sync(() => expect.fail('Device fixture cleanup failed'))),
           ),
         )
-        const auth = yield* authEffect
+        const auth = yield* Auth
         const call = (path: string, init: RequestInit) =>
-          auth.fetch.pipe(
-            Effect.provideService(
-              HttpServerRequest.HttpServerRequest,
-              HttpServerRequest.fromWeb(
-                new Request(`http://127.0.0.1:8787/api/auth/${path}`, init),
-              ),
-            ),
-            (program) => scopedCase(localAuthRuntimeLayer, program, 'inherited'),
-          )
+          Effect.promise(() =>
+            auth.handler(new Request(`http://127.0.0.1:8787/api/auth/${path}`, init)),
+          ).pipe(Effect.map(HttpServerResponse.fromWeb))
         const json = { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' }
         const signedUp = yield* call('sign-up/email', {
           method: 'POST',
@@ -1133,7 +1130,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         )
         expect(kept).toEqual({ access: 'Allowed' })
         return undefined
-      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+      }).pipe(Effect.scoped, (program) => scopedCase(authenticatedLayer, program, 'inherited')),
     )
   })
 })
