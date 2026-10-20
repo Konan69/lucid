@@ -102,21 +102,21 @@ export function close(data: LiveData, item: feed.Waiting): void {
   press(data, item, feed.Settling.Done())
 }
 
-/** Seen reports belong to a session, so signing in again can report each card afresh. */
-const reports = new WeakMap<LiveData, Set<FeedCardId>>()
+/** Seen reports belong to a session, so signing in again can report each post afresh. */
+const reports = new WeakMap<LiveData, ReturnType<typeof feed.seenReports>>()
 
 /**
- * Reports a card from the list's viewability event, once per session. A failed report is
+ * Reports a card from the list's viewability event, once per post and session. A failed report is
  * forgotten so the next time it is fully in view can try again.
  */
-export function markSeen(data: LiveData, card: FeedCardId): void {
+export function markSeen(data: LiveData, item: feed.Waiting): void {
   let reported = reports.get(data)
   if (reported === undefined) {
-    reported = new Set()
+    reported = feed.seenReports()
     reports.set(data, reported)
   }
-  if (reported.has(card)) return
-  reported.add(card)
+  if (item.seen || !reported.claim(item)) return
+  const card = item.card
   const held = reported
   void data
     .change(
@@ -124,6 +124,6 @@ export function markSeen(data: LiveData, card: FeedCardId): void {
       () => data.live.feed.expect(feed.seenIn(card)),
     )
     .then((done) => {
-      if (Result.isFailure(done)) held.delete(card)
+      if (Result.isFailure(done)) held.forget(item)
     })
 }
