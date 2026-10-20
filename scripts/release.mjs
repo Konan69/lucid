@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeCrypto from 'node:crypto'
+import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import * as Effect from 'effect/Effect'
 import * as Result from 'effect/Result'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
 import * as YAML from 'yaml'
 
@@ -22,6 +24,12 @@ class ArchiveFailure extends Schema.TaggedError()(
     dependency: Schema.String,
   },
   { title: 'Archive failure' },
+) {}
+
+class ArchiveAvailabilityFailure extends Schema.TaggedError()(
+  'ArchiveAvailabilityFailure',
+  { dependency: Schema.String },
+  { title: 'Archive availability failure' },
 ) {}
 
 const isString = Schema.is(Schema.String)
@@ -63,38 +71,60 @@ const Expo = Schema.Struct({
   ),
 })
 
+const decodeStoreIdentity = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ key: Schema.String })),
+)
+const decodeStoreListing = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      files: Schema.Record(Schema.String, Schema.Json),
+    }),
+  ),
+)
+
 /** Untrusted config is decoded once; diagnostics name the file, never rejected contents. */
 function decode(schema, value, location) {
-  const result = Schema.decodeUnknownResult(schema)(value)
-  if (Result.isFailure(result)) throw new ReleaseInputFailure({ location })
-  return result.success
+  return Schema.decodeUnknownEffect(schema)(value).pipe(
+    Effect.mapError(() => new ReleaseInputFailure({ location })),
+  )
 }
 
 /** Git reads committed objects even when a hook runs with a dirty working tree. */
-function git(root, args, encoding = 'utf8') {
+const git = Effect.fn('release.git')(function* (root, args, encoding = 'utf8') {
   const result = NodeChildProcess.spawnSync('git', args, {
     cwd: root,
     encoding,
     maxBuffer: 1 << 28,
   })
-  if (result.status !== 0) throw new ReleaseInputFailure({ location: 'git revision or file' })
+  if (result.status !== 0)
+    return yield* Effect.fail(new ReleaseInputFailure({ location: `git ${args.join(' ')}` }))
   return result.stdout
-}
+})
 
 /** pnpm 12 prepends a separate tool lock document; the phone lives in the workspace document. */
-function lockfile(root, revision) {
-  const documents = YAML.parseAllDocuments(git(root, ['show', `${revision}:pnpm-lock.yaml`]))
+const lockfile = Effect.fn('release.lockfile')(function* (root, revision) {
+  const contents = yield* git(root, ['show', `${revision}:pnpm-lock.yaml`])
+  const documents = YAML.parseAllDocuments(contents)
   for (const document of documents) {
     if (document.errors.length > 0)
-      throw new ReleaseInputFailure({ location: 'pnpm-lock.yaml syntax' })
+      return yield* Effect.fail(
+        new ReleaseInputFailure({ location: `${revision}:pnpm-lock.yaml syntax` }),
+      )
   }
   const workspace = documents.find((document) => document.hasIn(['importers', 'apps/mobile']))
   if (workspace === undefined)
-    throw new ReleaseInputFailure({ location: 'pnpm-lock.yaml phone importer' })
-  return decode(Lockfile, workspace.toJS(), 'pnpm-lock.yaml workspace graph')
-}
+    return yield* Effect.fail(
+      new ReleaseInputFailure({ location: `${revision}:pnpm-lock.yaml phone importer` }),
+    )
+  const value = yield* Effect.try({
+    try: () => workspace.toJS(),
+    catch: () =>
+      new ReleaseInputFailure({ location: `${revision}:pnpm-lock.yaml workspace graph` }),
+  })
+  return yield* decode(Lockfile, value, `${revision}:pnpm-lock.yaml workspace graph`)
+})
 
-/** Only production edges ship; absent optional edges differ from an unresolved required snapshot. */
+/** Both production edge kinds ship; an unresolved locked edge fails closed, including optional ones. */
 function edges(record) {
   return Object.entries({ ...record.dependencies, ...record.optionalDependencies })
 }
@@ -105,7 +135,7 @@ function archiveKey(key) {
 }
 
 /** A graph per revision sees removed dependencies and ignores unrelated server patches and upgrades. */
-function phoneGraph(lock) {
+const phoneGraph = Effect.fn('release.phoneGraph')(function* (lock) {
   const workspaces = new Set()
   const packages = new Map()
   const visited = new Set()
@@ -118,24 +148,27 @@ function phoneGraph(lock) {
     const record =
       current.kind === 'workspace' ? lock.importers[current.key] : lock.snapshots[current.key]
     if (record === undefined)
-      throw new ReleaseInputFailure({ location: `lock snapshot ${current.key}` })
+      return yield* Effect.fail(
+        new ReleaseInputFailure({ location: `lock snapshot ${current.key}` }),
+      )
     if (current.kind === 'workspace') workspaces.add(current.key)
     else {
       const key = archiveKey(current.key)
       const metadata = lock.packages[key]
-      if (metadata === undefined) throw new ReleaseInputFailure({ location: `lock package ${key}` })
+      if (metadata === undefined)
+        return yield* Effect.fail(new ReleaseInputFailure({ location: `lock package ${key}` }))
       packages.set(key, metadata.resolution)
     }
     for (const [name, edge] of edges(record)) {
       const version = current.kind === 'workspace' ? edge.version : edge
-      queue.push(resolveEdge(lock, current, name, version))
+      queue.push(yield* resolveEdge(lock, current, name, version))
     }
   }
   return { workspaces, packages }
-}
+})
 
 /** Workspace links are relative to their importer; registry aliases name their own snapshot. */
-function resolveEdge(lock, current, name, version) {
+const resolveEdge = Effect.fn('release.resolveEdge')(function* (lock, current, name, version) {
   if (version.startsWith('link:')) {
     return {
       kind: 'workspace',
@@ -145,48 +178,118 @@ function resolveEdge(lock, current, name, version) {
   const named = `${name}@${version}`
   if (lock.snapshots[named] !== undefined) return { kind: 'package', key: named }
   if (lock.snapshots[version] !== undefined) return { kind: 'package', key: version }
-  throw new ReleaseInputFailure({ location: `unresolved phone dependency ${name}` })
-}
+  return yield* Effect.fail(
+    new ReleaseInputFailure({ location: `unresolved phone dependency ${name}` }),
+  )
+})
 
 /** Tar is read without extraction; version-pinned archives determine native capability, never node_modules. */
-function nativeArchive(bytes, key) {
+const nativeArchive = Effect.fn('release.nativeArchive')(function* (bytes, key) {
   const result = NodeChildProcess.spawnSync('tar', ['-tzf', '-'], {
     input: bytes,
     encoding: 'utf8',
     maxBuffer: 1 << 26,
   })
-  if (result.status !== 0) throw new ArchiveFailure({ dependency: key })
-  return result.stdout
-    .split('\n')
-    .some(
-      (file) =>
-        /(?:^|\/)(?:ios|android)\//u.test(file) ||
-        /(?:^|\/)(?:app\.plugin\.[cm]?js|expo-module\.config\.json|[^/]+\.podspec)$/u.test(file),
-    )
+  if (result.status !== 0) return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
+  return result.stdout.split('\n').some(nativeEntry)
+})
+
+/** The same path predicate applies to tar listings and pnpm's unpacked archive index. */
+function nativeEntry(file) {
+  return (
+    /(?:^|\/)(?:ios|android)\//u.test(file) ||
+    /(?:^|\/)(?:app\.plugin\.[cm]?js|expo-module\.config\.json|[^/]+\.podspec)$/u.test(file)
+  )
 }
 
 /** Integrity binds fetched bytes to this revision's lock. A registry response alone is not proof. */
-function verifyArchive(bytes, resolution, key) {
-  if (resolution.integrity === undefined) throw new ArchiveFailure({ dependency: key })
+const verifyArchive = Effect.fn('release.verifyArchive')(function* (bytes, resolution, key) {
+  if (resolution.integrity === undefined)
+    return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
   const [algorithm, digest] = resolution.integrity.split('-')
   if (!['sha512', 'sha256', 'sha1'].includes(algorithm))
-    throw new ArchiveFailure({ dependency: key })
+    return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
   const actual = NodeCrypto.createHash(algorithm).update(bytes).digest('base64')
-  if (actual !== digest) throw new ArchiveFailure({ dependency: key })
-  return nativeArchive(bytes, key)
-}
+  if (actual !== digest) return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
+  return yield* nativeArchive(bytes, key)
+})
+
+/** pnpm 12.4.2 stores unpacked archives in v11/index.db; its public offline command decodes them.
+ * Bind the listing to the lock's integrity by requiring exactly one row for this package identity,
+ * before and after cat-index. Ambiguous identities require the original archive instead.
+ * cat-index omits integrity in its JSON, so accepting its output without this binding is unsafe.
+ */
+const storedArchive = Effect.fn('release.storedArchive')(function* (root, resolution, key) {
+  if (resolution.integrity === undefined) return undefined
+  const store = NodeChildProcess.spawnSync('pnpm', ['store', 'path'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  if (store.status !== 0) return undefined
+  const path = NodePath.join(store.stdout.trim(), 'index.db')
+  if (!NodeFS.existsSync(path)) return undefined
+  const sqlite = yield* Effect.tryPromise({
+    try: () => import('node:sqlite'),
+    catch: () => new ArchiveFailure({ dependency: key }),
+  })
+  return yield* Effect.acquireUseRelease(
+    Effect.try({
+      try: () => new sqlite.DatabaseSync(path, { readOnly: true }),
+      catch: () => new ArchiveFailure({ dependency: key }),
+    }),
+    (database) => indexedArchive(database, root, key, resolution.integrity),
+    (database) => Effect.sync(() => database.close()),
+  )
+})
+
+/** Only a unique immutable archive identity can make pnpm's package selector unambiguous. */
+const storeIdentity = Effect.fn('release.storeIdentity')(function* (database, key) {
+  const rows = yield* Effect.try({
+    try: () =>
+      database
+        .prepare('SELECT key FROM package_index WHERE substr(key, instr(key, char(9)) + 1) = ?')
+        .all(key),
+    catch: () => new ArchiveFailure({ dependency: key }),
+  })
+  return yield* decodeStoreIdentity(rows).pipe(
+    Effect.mapError(() => new ArchiveFailure({ dependency: key })),
+  )
+})
+
+/** No registry resolution or current node_modules may replace this revision's locked archive. */
+const indexedArchive = Effect.fn('release.indexedArchive')(
+  function* (database, root, key, integrity) {
+    const identity = `${integrity}\t${key}`
+    const before = yield* storeIdentity(database, key)
+    if (before.length !== 1 || before[0].key !== identity) return undefined
+    const index = NodeChildProcess.spawnSync('pnpm', ['cat-index', key, '--offline'], {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 1 << 26,
+    })
+    if (index.status !== 0) return undefined
+    const after = yield* storeIdentity(database, key)
+    if (after.length !== 1 || after[0].key !== identity) return undefined
+    const listing = yield* decodeStoreListing(index.stdout).pipe(
+      Effect.mapError(() => new ArchiveFailure({ dependency: key })),
+    )
+    return Object.keys(listing.files).some(nativeEntry)
+  },
+)
 
 /** Local vendored archives come from Git; remote archives use the exact locked version and integrity. */
 const inspectArchive = Effect.fn('release.inspectArchive')(
   function* (root, revision, key, resolution) {
     const tarball = resolution.tarball
     if (tarball !== undefined && tarball.startsWith('file:')) {
-      return verifyArchive(
-        git(root, ['show', `${revision}:${tarball.slice(5)}`], null),
+      return yield* verifyArchive(
+        yield* git(root, ['show', `${revision}:${tarball.slice(5)}`], null),
         resolution,
         key,
       )
     }
+    const cached = yield* storedArchive(root, resolution, key)
+    if (cached !== undefined) return cached
     const separator = key.lastIndexOf('@')
     const name = key.slice(0, separator)
     const version = key.slice(separator + 1)
@@ -196,14 +299,20 @@ const inspectArchive = Effect.fn('release.inspectArchive')(
         : tarball
     const response = yield* Effect.tryPromise({
       try: () => fetch(url, { signal: AbortSignal.timeout(60_000) }),
-      catch: () => new ArchiveFailure({ dependency: key }),
+      catch: () => new ArchiveAvailabilityFailure({ dependency: key }),
     })
-    if (!response.ok) return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
+    if (!response.ok) {
+      const failure =
+        response.status === 408 || response.status === 429 || response.status >= 500
+          ? new ArchiveAvailabilityFailure({ dependency: key })
+          : new ArchiveFailure({ dependency: key })
+      return yield* Effect.fail(failure)
+    }
     const bytes = yield* Effect.tryPromise({
       try: () => response.arrayBuffer(),
-      catch: () => new ArchiveFailure({ dependency: key }),
+      catch: () => new ArchiveAvailabilityFailure({ dependency: key }),
     })
-    return verifyArchive(Buffer.from(bytes), resolution, key)
+    return yield* verifyArchive(Buffer.from(bytes), resolution, key)
   },
 )
 
@@ -272,13 +381,24 @@ function nativeFile(file) {
 }
 
 /** Parse only the publisher's literal compatibility list. Never execute a historical publisher. */
-function olderRuntimes(root, revision) {
-  const publisher = git(root, ['show', `${revision}:apps/mobile/scripts/publish.mjs`])
+const olderRuntimes = Effect.fn('release.olderRuntimes')(function* (root, revision) {
+  const publisher = yield* git(root, ['show', `${revision}:apps/mobile/scripts/publish.mjs`])
   const match = /^const ALSO_RUNS_ON = (\[[\s\S]*?\])/mu.exec(publisher)
   if (match === null)
-    throw new ReleaseInputFailure({ location: 'publish.mjs ALSO_RUNS_ON literal' })
-  return decode(Schema.Array(Schema.String), YAML.parse(match[1]), 'publish.mjs ALSO_RUNS_ON')
-}
+    return yield* Effect.fail(
+      new ReleaseInputFailure({ location: `${revision}:publish.mjs ALSO_RUNS_ON literal` }),
+    )
+  const runtimes = yield* Effect.try({
+    try: () => YAML.parse(match[1]),
+    catch: () =>
+      new ReleaseInputFailure({ location: `${revision}:publish.mjs ALSO_RUNS_ON literal` }),
+  })
+  return yield* decode(
+    Schema.Array(Schema.String),
+    runtimes,
+    `${revision}:publish.mjs ALSO_RUNS_ON`,
+  )
+})
 
 /** Both old and new graphs matter when a native dependency or its patch disappears. */
 const nativeChanges = Effect.fn('release.nativeChanges')(function* (root, snapshots, changed) {
@@ -289,7 +409,7 @@ const nativeChanges = Effect.fn('release.nativeChanges')(function* (root, snapsh
   if (!NodeUtil.isDeepStrictEqual(nativeManifest(before.manifest), nativeManifest(after.manifest)))
     native.push('apps/mobile/package.json native options')
   const dependencies = new Set(differentPackages(before.graph.packages, after.graph.packages))
-  for (const key of changedPatches(root, snapshots)) dependencies.add(key)
+  for (const key of yield* changedPatches(root, snapshots)) dependencies.add(key)
   for (const snapshot of snapshots) {
     for (const [key, resolution] of snapshot.graph.packages) {
       if (resolution.tarball !== undefined && changed.includes(resolution.tarball.slice(5)))
@@ -312,7 +432,7 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
     if (resolution === undefined) continue
     if (
       yield* inspectArchive(root, snapshot.revision, key, resolution).pipe(
-        Effect.retry({ times: 2 }),
+        Effect.retry({ times: 2, while: Predicate.isTagged('ArchiveAvailabilityFailure') }),
       )
     )
       return { key, native: true }
@@ -321,7 +441,7 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
 })
 
 /** Compare only patches applied to a phone dependency, including removal and changed patch bytes. */
-function changedPatches(root, snapshots) {
+const changedPatches = Effect.fn('release.changedPatches')(function* (root, snapshots) {
   const [before, after] = snapshots
   const changed = new Set()
   for (const snapshot of snapshots) {
@@ -331,78 +451,103 @@ function changedPatches(root, snapshots) {
       if (other.patches[selector] !== path || !other.graph.packages.has(selector))
         changed.add(selector)
       else if (
-        git(root, ['show', `${snapshot.revision}:${path}`]) !==
-        git(root, ['show', `${other.revision}:${path}`])
+        (yield* git(root, ['show', `${snapshot.revision}:${path}`])) !==
+        (yield* git(root, ['show', `${other.revision}:${path}`]))
       )
         changed.add(selector)
     }
   }
   return changed
-}
+})
 
 /** A snapshot holds the config and dependency closure of one committed revision. */
-function readSnapshot(root, revision) {
-  const expo = decode(
+const readSnapshot = Effect.fn('release.readSnapshot')(function* (root, revision) {
+  const expo = (yield* decode(
     Schema.fromJsonString(Expo),
-    git(root, ['show', `${revision}:apps/mobile/app.json`]),
-    'apps/mobile/app.json',
-  ).expo
-  const graph = phoneGraph(lockfile(root, revision))
-  const workspace = YAML.parse(git(root, ['show', `${revision}:pnpm-workspace.yaml`]))
-  const patches = decode(
+    yield* git(root, ['show', `${revision}:apps/mobile/app.json`]),
+    `${revision}:apps/mobile/app.json`,
+  )).expo
+  const graph = yield* phoneGraph(yield* lockfile(root, revision))
+  const contents = yield* git(root, ['show', `${revision}:pnpm-workspace.yaml`])
+  const workspace = yield* Effect.try({
+    try: () => YAML.parse(contents),
+    catch: () => new ReleaseInputFailure({ location: `${revision}:pnpm-workspace.yaml syntax` }),
+  })
+  const patches = yield* decode(
     Schema.Struct({ patchedDependencies: Schema.optionalKey(Strings) }),
     workspace,
-    'pnpm-workspace.yaml patches',
+    `${revision}:pnpm-workspace.yaml patches`,
   )
+  const selectors = patches.patchedDependencies === undefined ? {} : patches.patchedDependencies
+  for (const selector of Object.keys(selectors)) {
+    if (
+      !/^(?:@[^/]+\/)?[^@]+@(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|file:.+)$/u.test(
+        selector,
+      )
+    )
+      return yield* Effect.fail(
+        new ReleaseInputFailure({
+          location: `${revision}:pnpm-workspace.yaml patchedDependencies selector ${selector}; use an exact name@version`,
+        }),
+      )
+  }
   return {
     revision,
     expo,
-    manifest: decode(
+    manifest: yield* decode(
       Schema.fromJsonString(Manifest),
-      git(root, ['show', `${revision}:apps/mobile/package.json`]),
-      'apps/mobile/package.json',
+      yield* git(root, ['show', `${revision}:apps/mobile/package.json`]),
+      `${revision}:apps/mobile/package.json`,
     ),
     graph,
-    patches: patches.patchedDependencies === undefined ? {} : patches.patchedDependencies,
+    patches: selectors,
   }
-}
+})
 
-/** Compare the whole push with the published release, allowing a later commit to supply the bump. */
+/** Branch changes start at the merge base; release numbers must exceed the published main. */
 const checkRelease = Effect.fn('release.checkRelease')(function* (root, base, head) {
-  const before = readSnapshot(root, base)
-  const after = readSnapshot(root, head)
+  const ancestor = (yield* git(root, ['merge-base', base, head])).trim()
+  const before = yield* readSnapshot(root, ancestor)
+  const after = yield* readSnapshot(root, head)
+  const published = yield* decode(
+    Schema.fromJsonString(Expo),
+    yield* git(root, ['show', `${base}:apps/mobile/app.json`]),
+    `${base}:apps/mobile/app.json`,
+  )
   const errors = []
   if (!isString(after.expo.runtimeVersion)) {
     return [
       'apps/mobile/app.json runtimeVersion must be a literal string; appVersion policy strands installed phones when version rises.',
     ]
   }
-  const changed = git(root, ['diff', '--no-renames', '--name-only', '-z', base, head])
-    .split('\0')
-    .filter(Boolean)
+  const diff = yield* git(root, ['diff', '--no-renames', '--name-only', '-z', ancestor, head])
+  const changed = diff.split('\0').filter(Boolean)
   const workspaces = new Set([...before.graph.workspaces, ...after.graph.workspaces])
   const shipped = changed.filter((file) => shippedFile(file, workspaces))
   const dependencies = [
     ...differentPackages(before.graph.packages, after.graph.packages),
-    ...changedPatches(root, [before, after]),
+    ...(yield* changedPatches(root, [before, after])),
   ]
   const native = yield* nativeChanges(root, [before, after], changed)
   if (
     (shipped.length > 0 || dependencies.length > 0) &&
-    !rises(before.expo.version, after.expo.version)
+    !rises(published.expo.version, after.expo.version)
   ) {
     errors.push(
       'Phone inputs changed; raise version in apps/mobile/app.json above the published version.',
     )
   }
   if (native.length > 0) {
-    if (!rises(before.expo.runtimeVersion, after.expo.runtimeVersion))
+    if (!rises(published.expo.runtimeVersion, after.expo.runtimeVersion))
       errors.push(
         `Native inputs changed (${native.slice(0, 3).join(', ')}); raise runtimeVersion in apps/mobile/app.json.`,
       )
-    if (olderRuntimes(root, head).length > 0)
+    if ((yield* olderRuntimes(root, head)).length > 0)
       errors.push('Native inputs changed; empty ALSO_RUNS_ON in apps/mobile/scripts/publish.mjs.')
-  } else if (after.expo.runtimeVersion !== before.expo.runtimeVersion) {
+  } else if (
+    (shipped.length > 0 || dependencies.length > 0) &&
+    after.expo.runtimeVersion !== published.expo.runtimeVersion
+  ) {
     errors.push(
       'JavaScript-only release; keep runtimeVersion unchanged in apps/mobile/app.json so installed phones keep receiving updates.',
     )
@@ -419,9 +564,13 @@ if (isMain) {
   // oxlint-disable-next-line vivid/no-runpromise-in-library -- This file is the pre-push executable and owns its CLI runtime.
   const result = await Effect.runPromise(Effect.result(checkRelease(root, base, head)))
   if (Result.isFailure(result)) {
-    process.stderr.write(
-      `phone release check could not inspect ${result.failure.dependency} (${result.failure._tag}); its locked archive must be available.\n`,
-    )
+    const failure = result.failure
+    if (Predicate.isTagged(failure, 'ReleaseInputFailure'))
+      process.stderr.write(`phone release check could not read ${failure.location}.\n`)
+    else
+      process.stderr.write(
+        `phone release check could not inspect ${failure.dependency}; its locked archive must be available and match its integrity.\n`,
+      )
     process.exitCode = 1
   } else {
     for (const error of result.success) process.stderr.write(`${error}\n`)

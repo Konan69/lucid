@@ -89,6 +89,11 @@ function dependency(fixture, name, generation, native) {
   const directory = `.archive/${name}-${generation}`
   const file = native ? 'package/ios/View.swift' : 'package/index.js'
   write(fixture.root, `${directory}/${file}`, 'fixture\n')
+  write(
+    fixture.root,
+    `${directory}/package/package.json`,
+    JSON.stringify({ name, version: `${generation}.0.0` }),
+  )
   const result = NodeChildProcess.spawnSync(
     'tar',
     ['-czf', NodePath.join(fixture.root, relative), '-C', directory, 'package'],
@@ -185,7 +190,7 @@ void test('lockfile-only transitive native upgrade requires a newer runtime and 
   }
   fixture.lock.snapshots['bridge@1.0.0'] = { dependencies: { view: first.reference } }
   direct(fixture, 'bridge', { reference: '1.0.0' })
-  write(fixture.root, 'apps/mobile/scripts/publish.mjs', 'const ALSO_RUNS_ON = ["0.3.0"]\n')
+  write(fixture.root, 'apps/mobile/scripts/publish.mjs', "const ALSO_RUNS_ON = ['0.3.0']\n")
   const base = commit(
     fixture.root,
     ['apps', 'deps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'],
@@ -291,7 +296,7 @@ void test('phone closure follows workspace links while tests and docs remain out
   assert.match(check(fixture.root, [base]).output, /raise version/u)
 })
 
-void test('replay of appVersion policy rejects the stranding bump and the c619b77c parent policy', (t) => {
+void test('appVersion policy guard rejects historical configs independently of release diffs', (t) => {
   const { root } = repository(t)
   version(root, { version: '0.3.2', runtimeVersion: { policy: 'appVersion' } })
   const base = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'before 1f0e5a34')
@@ -327,10 +332,14 @@ void test('unavailable archive integrity fails closed instead of approving an un
   commit(fixture.root, ['apps/mobile/app.json', 'pnpm-lock.yaml'], 'invalid lock integrity')
   const result = check(fixture.root, [base])
   assert.equal(result.status, 1, result.output)
-  assert.match(result.output, /ArchiveFailure/u)
+  assert.equal(
+    result.output,
+    `phone release check could not inspect ${entry.key}; its locked archive must be available and match its integrity.\n`,
+  )
 })
 
-void test('locked registry archives use real HTTP and retry a transient availability failure', async (t) => {
+/** A controlled registry proves retry decisions through request counts, not internal error tags. */
+async function registryCheck(t, mode) {
   const fixture = repository(t)
   NodeFS.mkdirSync(NodePath.join(fixture.root, 'deps'))
   const entry = dependency(fixture, 'zod', 1, false)
@@ -343,8 +352,13 @@ void test('locked registry archives use real HTTP and retry a transient availabi
   let requests = 0
   const server = NodeHttp.createServer((_request, response) => {
     requests++
-    response.statusCode = requests === 1 ? 502 : 200
-    response.end(requests === 1 ? 'temporarily unavailable' : bytes)
+    if (mode === 'unavailable') {
+      response.statusCode = 404
+      response.end('unavailable')
+      return
+    }
+    response.statusCode = mode === 'transient' && requests === 1 ? 502 : 200
+    response.end(response.statusCode === 502 ? 'temporarily unavailable' : bytes)
   })
   t.after(() => server.close())
   server.listen(0, '127.0.0.1')
@@ -352,13 +366,30 @@ void test('locked registry archives use real HTTP and retry a transient availabi
   const address = decodeAddress(server.address())
   fixture.lock.packages[entry.key].resolution.tarball =
     `http://127.0.0.1:${address.port}/locked.tgz`
+  if (mode === 'integrity') fixture.lock.packages[entry.key].resolution.integrity = 'sha512-invalid'
   direct(fixture, 'zod', entry)
   version(fixture.root, { version: '0.3.10' })
   commit(fixture.root, ['apps/mobile/app.json', 'pnpm-lock.yaml'], 'registry JS dependency')
-  const child = NodeChildProcess.spawn(process.execPath, [script, base], {
-    cwd: fixture.root,
-    env: environment,
-  })
+  const result = await runChild(process.execPath, [script, base], fixture.root)
+  if (mode === 'transient') {
+    assert.equal(result.status, 0, result.output)
+    assert.equal(requests, 2)
+  } else {
+    assert.equal(result.status, 1, result.output)
+    assert.equal(requests, 1, result.output)
+    assert.ok(
+      result.output.endsWith(
+        `phone release check could not inspect ${entry.key}; its locked archive must be available and match its integrity.\n`,
+      ),
+      result.output,
+    )
+    assert.doesNotMatch(result.output, /at Generator|at file:|ArchiveFailure\n/u)
+  }
+}
+
+/** Async collection keeps the actual registry responsive while the CLI or pnpm runs. */
+async function runChild(command, args, root) {
+  const child = NodeChildProcess.spawn(command, args, { cwd: root, env: environment })
   let output = ''
   child.stdout.on('data', (chunk) => {
     output += chunk
@@ -367,6 +398,199 @@ void test('locked registry archives use real HTTP and retry a transient availabi
     output += chunk
   })
   const [status] = await NodeEvents.once(child, 'close')
-  assert.equal(status, 0, output)
-  assert.equal(requests, 2)
+  return { status, output }
+}
+
+for (const mode of ['transient', 'integrity', 'unavailable']) {
+  void test(`locked registry archive ${mode} handles only availability as retryable`, async (t) => {
+    await registryCheck(t, mode)
+  })
+}
+
+void test('the locked native archive is read from the real pnpm store while the registry is offline', async (t) => {
+  const fixture = repository(t)
+  NodeFS.mkdirSync(NodePath.join(fixture.root, 'deps'))
+  const entry = dependency(fixture, 'view', 1, true)
+  const base = commit(
+    fixture.root,
+    ['apps', 'deps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'],
+    'published',
+  )
+  const bytes = NodeFS.readFileSync(NodePath.join(fixture.root, entry.relative))
+  const integrity = fixture.lock.packages[entry.key].resolution.integrity
+  const server = NodeHttp.createServer((request, response) => {
+    if (request.url === '/view.tgz') {
+      response.end(bytes)
+      return
+    }
+    const address = decodeAddress(server.address())
+    response.setHeader('content-type', 'application/json')
+    response.end(
+      JSON.stringify({
+        name: 'view',
+        'dist-tags': { latest: '1.0.0' },
+        versions: {
+          '1.0.0': {
+            name: 'view',
+            version: '1.0.0',
+            dist: { integrity, tarball: `http://127.0.0.1:${address.port}/view.tgz` },
+          },
+        },
+      }),
+    )
+  })
+  t.after(() => server.close())
+  server.listen(0, '127.0.0.1')
+  await NodeEvents.once(server, 'listening')
+  const address = decodeAddress(server.address())
+  // pnpm 12 reads non-auth settings from the workspace config, not .npmrc.
+  write(
+    fixture.root,
+    'pnpm-workspace.yaml',
+    YAML.stringify({
+      packages: ['apps/mobile'],
+      storeDir: NodePath.join(fixture.root, '.store'),
+      cacheDir: NodePath.join(fixture.root, '.cache'),
+      stateDir: NodePath.join(fixture.root, '.state'),
+      registry: `http://127.0.0.1:${address.port}/`,
+    }),
+  )
+  const storeResult = await runChild('pnpm', ['store', 'path'], fixture.root)
+  assert.equal(storeResult.status, 0, storeResult.output)
+  assert.equal(storeResult.output.trim(), NodePath.join(fixture.root, '.store/v11'))
+  const added = await runChild('pnpm', ['store', 'add', 'view@1.0.0'], fixture.root)
+  assert.equal(added.status, 0, added.output)
+  const closed = NodeEvents.once(server, 'close')
+  server.close()
+  await closed
+  fixture.lock.packages['view@1.0.0'] = {
+    resolution: { integrity, tarball: `http://127.0.0.1:${address.port}/view.tgz` },
+  }
+  fixture.lock.snapshots['view@1.0.0'] = {}
+  direct(fixture, 'view', { reference: '1.0.0' })
+  version(fixture.root, { version: '0.3.10' })
+  commit(fixture.root, ['apps', 'pnpm-lock.yaml'], 'locked native dependency with registry offline')
+  const result = check(fixture.root, [base])
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /Native inputs changed \(view@1.0.0\); raise runtimeVersion/u)
+  assert.doesNotMatch(result.output, /could not inspect/u)
+  fixture.lock.packages['view@1.0.0'].resolution.integrity = 'sha512-invalid'
+  saveLock(fixture.root, fixture.lock)
+  commit(fixture.root, ['pnpm-lock.yaml'], 'a different integrity must not reuse the cache')
+  const mismatch = check(fixture.root, [base])
+  assert.equal(mismatch.status, 1, mismatch.output)
+  assert.match(
+    mismatch.output,
+    /could not inspect view@1.0.0; its locked archive must be available and match its integrity/u,
+  )
 })
+
+void test('a branch behind published main has no phone changes of its own', (t) => {
+  const { root } = repository(t)
+  const ancestor = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'ancestor')
+  version(root, { version: '0.3.16', runtimeVersion: '0.3.4', plugins: ['new-native-plugin'] })
+  write(root, 'apps/mobile/src/main.ts', 'published phone change\n')
+  const published = commit(root, ['apps'], 'published phone release')
+  git(root, ['update-ref', 'refs/remotes/origin/main', published])
+  git(root, ['checkout', '--quiet', '-b', 'other', ancestor])
+  write(root, 'server.txt', 'branch backend change\n')
+  commit(root, ['server.txt'], 'backend change only')
+  const result = check(root)
+  assert.equal(result.status, 0, result.output)
+})
+
+void test('a rebased phone change must rise above the higher published version', (t) => {
+  const { root } = repository(t)
+  commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'ancestor')
+  version(root, { version: '0.3.16' })
+  const published = commit(root, ['apps'], 'published phone release')
+  git(root, ['update-ref', 'refs/remotes/origin/main', published])
+  write(root, 'apps/mobile/src/main.ts', 'rebased phone change\n')
+  commit(root, ['apps'], 'phone change with version equal to main')
+  const result = check(root)
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /Phone inputs changed; raise version/u)
+})
+
+void test('invalid revisions name the failed revision without a defect stack', (t) => {
+  const { root } = repository(t)
+  commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+  const result = check(root, ['nosuchref', 'HEAD'])
+  assert.equal(result.status, 1)
+  assert.equal(result.output, 'phone release check could not read git merge-base nosuchref HEAD.\n')
+})
+
+for (const selector of ['view', 'view@^1.0.0', '@scope/view@~1.0.0']) {
+  void test(`patch selector ${selector} fails closed with its exact selector`, (t) => {
+    const { root } = repository(t)
+    const base = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+    write(
+      root,
+      'pnpm-workspace.yaml',
+      YAML.stringify({ patchedDependencies: { [selector]: 'patches/view.patch' } }),
+    )
+    commit(root, ['pnpm-workspace.yaml'], 'unsupported patch selector')
+    const result = check(root, [base])
+    assert.equal(result.status, 1, result.output)
+    assert.equal(
+      result.output,
+      `phone release check could not read HEAD:pnpm-workspace.yaml patchedDependencies selector ${selector}; use an exact name@version.\n`,
+    )
+  })
+}
+
+void test('literal 1f0e5a34 replay strands a fixed 0.3.2 runtime when both numbers rise', (t) => {
+  const { root } = repository(t)
+  const source = NodePath.dirname(NodePath.dirname(script))
+  const paths = [
+    'apps/mobile/app.json',
+    'apps/mobile/package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    ...git(source, ['ls-tree', '-r', '--name-only', '1f0e5a34^', '--', 'patches']).split('\n'),
+  ]
+  for (const path of paths) write(root, path, git(source, ['show', `1f0e5a34^:${path}`]))
+  version(root, { runtimeVersion: '0.3.2' })
+  const base = commit(
+    root,
+    ['apps', 'patches', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'],
+    'literal 1f0e5a34 parent with fixed runtime',
+  )
+  write(root, 'apps/mobile/app.json', git(source, ['show', '1f0e5a34:apps/mobile/app.json']))
+  version(root, { runtimeVersion: '0.3.3' })
+  commit(root, ['apps/mobile/app.json'], 'literal 1f0e5a34 with both numbers raised')
+  const stranded = check(root, [base])
+  assert.equal(stranded.status, 1, stranded.output)
+  assert.equal(
+    stranded.output,
+    'JavaScript-only release; keep runtimeVersion unchanged in apps/mobile/app.json so installed phones keep receiving updates.\n',
+  )
+  version(root, { runtimeVersion: '0.3.2' })
+  commit(root, ['apps/mobile/app.json'], 'only version rises')
+  const corrected = check(root, [base])
+  assert.equal(corrected.status, 0, corrected.output)
+})
+
+for (const native of [false, true]) {
+  void test(`a diverged ${native ? 'native' : 'JS'} phone release compares runtime against published main`, (t) => {
+    const { root } = repository(t)
+    const ancestor = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'ancestor')
+    version(root, { version: '0.3.16', runtimeVersion: '0.3.4', plugins: ['main-plugin'] })
+    const published = commit(root, ['apps'], 'published native release')
+    git(root, ['update-ref', 'refs/remotes/origin/main', published])
+    git(root, ['checkout', '--quiet', '-b', 'other', ancestor])
+    write(root, 'apps/mobile/src/change.ts', 'branch phone change\n')
+    version(root, { version: '0.3.17' })
+    if (native) version(root, { runtimeVersion: '0.3.4', plugins: ['branch-plugin'] })
+    commit(root, ['apps'], 'branch phone release')
+    const result = check(root)
+    assert.equal(result.status, 1, result.output)
+    assert.match(
+      result.output,
+      native
+        ? /Native inputs changed.*raise runtimeVersion/u
+        : /JavaScript-only release; keep runtimeVersion unchanged/u,
+    )
+    assert.doesNotMatch(result.output, /raise version in/u)
+  })
+}
