@@ -203,6 +203,21 @@ describe('the composer while a question is up', () => {
     expect(sent).toEqual([])
   })
 
+  it('keeps Stop beside Send when words are typed under an open question', () => {
+    const { moves, asked } = question({})
+    const { field, sent, stops, button } = composing('asked-working-words', '', asked)
+
+    act(() => draft.keep('asked-working-words', 'Skip that, just send it'))
+    act(() => button('Stop').click())
+
+    expect(stops).toEqual(['stop'])
+    expect(field.value).toBe('Skip that, just send it')
+    expect(moves).toEqual([])
+    expect(sent).toEqual([])
+    act(() => button('Send').click())
+    expect(sent).toEqual(['Skip that, just send it'])
+  })
+
   it('goes back to the question before from its quiet button, from the second question on', () => {
     const { moves, asked } = question({})
     const { button } = composing('asked-back', '', asked)

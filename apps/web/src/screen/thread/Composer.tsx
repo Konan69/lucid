@@ -171,7 +171,7 @@ export const Composer = memo(function Composer({
                       <Mic className="size-4" />
                     </IconButton>
                   )}
-                  <Interrupt shown={working && Option.isSome(moving)} onStop={onStop} />
+                  <Interrupt shown={working && asked !== undefined} onStop={onStop} />
                   <Previous asked={Option.fromUndefinedOr(asked)} />
                   <SendOrStop does={doing(working, empty, moving)} onStop={onStop} onSend={press} />
                 </div>
@@ -240,7 +240,7 @@ function Field({
  * then moves on from the question, so stopping gets a small round of its own before the
  * question's controls, as T3 Code puts it beside a pending question while its turn runs
  * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch: `renderStopGenerationButton(true)`
- * before Previous). Nothing when Vivid is not working or no question is being moved on from.
+ * before Previous). Nothing when Vivid is not working or no question is open.
  */
 function Interrupt({ shown, onStop }: { shown: boolean; onStop: () => void }) {
   if (!shown) return null

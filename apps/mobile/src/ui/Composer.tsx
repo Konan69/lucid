@@ -261,7 +261,7 @@ export function Composer({
               empty={empty}
               sends={sends}
               onSend={act}
-              onStop={working ? Option.some(onStop) : Option.none()}
+              onStop={working && asked !== undefined ? Option.some(onStop) : Option.none()}
             >
               <Act working={working} stops={stops} idle={idle} onPress={act} />
             </Trailing>
@@ -323,6 +323,8 @@ function Measure({ value, onHeight }: { value: string; onHeight: (height: number
  * The composer's trailing end. Ordinarily it is the one button (`children`). While a question
  * is being moved on from (`moving`) it is the pill: with nothing written it moves on with what
  * was picked, and with words under a question answered by writing it sends them as its answer.
+ * Stop belongs to the open question, independently of that selection: typing switches to Send
+ * under an options question, but must not take away the way to stop the running response.
  */
 function Trailing({
   moving,
@@ -340,17 +342,21 @@ function Trailing({
   onStop: Option.Option<() => void>
   children: ReactNode
 }) {
-  return Option.match(moving, {
-    onNone: () => children,
-    onSome: (asked) => (
-      <Moving
-        asked={asked}
-        onStop={onStop}
-        ready={empty ? asked.ready : sends}
-        onPress={empty ? asked.onNext : onSend}
-      />
-    ),
-  })
+  return (
+    <>
+      {Option.match(onStop, { onNone: () => null, onSome: (stop) => <Halt onStop={stop} /> })}
+      {Option.match(moving, {
+        onNone: () => children,
+        onSome: (asked) => (
+          <Moving
+            asked={asked}
+            ready={empty ? asked.ready : sends}
+            onPress={empty ? asked.onNext : onSend}
+          />
+        ),
+      })}
+    </>
+  )
 }
 
 /**
@@ -441,22 +447,11 @@ function Halt({ onStop }: { onStop: () => void }) {
  * Until the question has an answer the pill is a quiet shape with muted words, not a faded
  * accent: a neutral one reads as "pick something first". It is 34 points tall and pressed 44.
  */
-function Moving({
-  asked,
-  onStop,
-  ready,
-  onPress,
-}: {
-  asked: Onward
-  onStop: Option.Option<() => void>
-  ready: boolean
-  onPress: () => void
-}) {
+function Moving({ asked, ready, onPress }: { asked: Onward; ready: boolean; onPress: () => void }) {
   const { colors: c } = useTheme()
   const label = asked.last ? 'Submit' : 'Next'
   return (
     <>
-      {Option.match(onStop, { onNone: () => null, onSome: (stop) => <Halt onStop={stop} /> })}
       <Back asked={asked} />
       <View
         style={{
