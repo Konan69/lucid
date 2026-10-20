@@ -15,8 +15,11 @@ describe('a step, in words', () => {
   })
 
   it('says what each Watch and Feed step did, with the account, Watch or card it was about', () => {
-    const step = (tool: string, asked: object, answered: object) =>
-      describeToolCall(tool, readAsked(asked), readAnswered(answered), 'done')
+    const step = (
+      tool: string,
+      asked: Parameters<typeof readAsked>[0],
+      answered: Parameters<typeof readAnswered>[0],
+    ) => describeToolCall(tool, readAsked(asked), readAnswered(answered), 'done')
     expect(step('find_events', { account: 'Gmail (Work)' }, { events: [] })).toMatchObject({
       label: 'Looked at what can be watched',
       detail: 'Gmail (Work)',
