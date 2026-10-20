@@ -168,7 +168,10 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
     boundary.get('@vivid/contracts#types').hash,
     runner.get('@vivid/contracts#types').hash,
   )
-  assert.notEqual(boundary.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
+  assert.notEqual(
+    boundary.get('@vivid/web#typecheck').hash,
+    runner.get('@vivid/web#typecheck').hash,
+  )
   assert.equal(boundary.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
 })
 
