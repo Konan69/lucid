@@ -58,12 +58,8 @@ async function native(tool,args){
  });
 }
 function prompt(nodes){
- const matches=nodes.filter(node=>node.in_web_content!==true&&node.role==='alert'&&node.label==='Allow remote debugging?'&&nodes.some(parent=>parent.element_index===node.parent_index&&parent.role==='frame'&&parent.depth===0));
- if(matches.length===0)return undefined;
- // AT-SPI can repeat the same physical alert in several branches. Different bounds stay ambiguous.
- const first=matches[0],frame=first.frame;
- if(!frame||![frame.x,frame.y,frame.w,frame.h].every(Number.isFinite)||frame.w<=0||frame.h<=0||!matches.every(node=>node.frame&&['x','y','w','h'].every(key=>node.frame[key]===frame[key])))throw Error();
- return first;
+ const matches=nodes.filter(node=>node.in_web_content!==true&&node.role==='alert'&&node.label==='Allow remote debugging?');
+ if(matches.length>1)throw Error();return matches[0];
 }
 // Web content cannot authorize debugging. Require Chrome's exact native alert, its security
 // explanation and one enabled child button, as cua-driver's browser_consent_ui.rs does.
