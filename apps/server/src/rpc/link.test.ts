@@ -120,7 +120,7 @@ layer(NodeHttpServer.layerTest)('the live socket’s timeout', (it) => {
     Effect.gen(function* () {
       const { heard, gone, client } = yield* serving()
       const closed = yield* Deferred.make<number>()
-      client.once('close', (code) => Effect.runFork(Deferred.succeed(closed, code)))
+      client.once('close', (code) => Deferred.doneUnsafe(closed, Effect.succeed(code)))
       client.send(ping)
       const [, link] = yield* Queue.take(heard)
       if (Option.isNone(link)) return expect.fail('A message on the live socket has its link')

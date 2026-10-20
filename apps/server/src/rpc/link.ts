@@ -105,7 +105,7 @@ export const liveProtocolLayer = (path: HttpRouter.PathInput) =>
       })
 
       /** One connection: open until its socket closes or it goes quiet, then its link is closed. */
-      const connection = Effect.gen(function* () {
+      const connection = Effect.fn('LiveLink.connection')(function* () {
         const link = new Link(clock.currentTimeMillisUnsafe())
         return yield* httpEffect.pipe(
           Effect.provideService(LiveLink, link),
@@ -113,7 +113,7 @@ export const liveProtocolLayer = (path: HttpRouter.PathInput) =>
           Effect.ensuring(Effect.sync(() => link.close())),
         )
       })
-      yield* router.add('GET', path, connection)
+      yield* router.add('GET', path, connection())
 
       /** Refreshes the delivering connection's link and counts a call of the contract. */
       const hear = (message: FromClientEncoded, link: Option.Option<Link>) => {
