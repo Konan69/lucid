@@ -539,6 +539,75 @@ for (const selector of ['view', 'view@^1.0.0', '@scope/view@~1.0.0']) {
   })
 }
 
+/** Git invokes the actual hook; only the unrelated heavy gate is replaced in this disposable repo. */
+function installHook(root) {
+  const source = NodePath.dirname(script)
+  for (const path of ['release.mjs']) {
+    write(root, `scripts/${path}`, NodeFS.readFileSync(NodePath.join(source, path)))
+  }
+  write(root, '.husky/pre-push', NodeFS.readFileSync(NodePath.join(source, '../.husky/pre-push')))
+  NodeFS.chmodSync(NodePath.join(root, '.husky/pre-push'), 0o755)
+  write(root, 'scripts/gate.mjs', 'process.stdout.write("fixture gate passed\\n")\n')
+  NodeFS.symlinkSync(
+    NodePath.join(source, '../node_modules'),
+    NodePath.join(root, 'node_modules'),
+    'dir',
+  )
+  git(root, ['config', 'core.hooksPath', '.husky'])
+  const remote = NodePath.join(root, '.remote')
+  NodeFS.mkdirSync(remote)
+  git(remote, ['init', '--bare', '--quiet', '--initial-branch=main'])
+  git(root, ['remote', 'add', 'origin', remote])
+}
+
+/** Real push ref tuples must reach the hook even while HEAD names a different branch. */
+function push(root, ref) {
+  const result = NodeChildProcess.spawnSync('git', ['push', 'origin', ref], {
+    cwd: root,
+    env: environment,
+    encoding: 'utf8',
+  })
+  return { status: result.status, output: result.stdout + result.stderr }
+}
+
+void test('pre-push skips a branch deletion and a tag push', (t) => {
+  const { root } = repository(t)
+  const base = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+  installHook(root)
+  git(root, ['update-ref', 'refs/remotes/origin/main', base])
+  assert.equal(push(root, 'HEAD:refs/heads/main').status, 0)
+  // No origin/main exists after removing this tracking ref; skipped refs cannot read it.
+  git(root, ['update-ref', '-d', 'refs/remotes/origin/main'])
+  git(root, ['tag', 'release-fixture', base])
+  const tag = push(root, 'refs/tags/release-fixture')
+  assert.equal(tag.status, 0, tag.output)
+  const deletion = push(root, ':refs/heads/main')
+  // A bare repository protects its current branch by default, independently of the hook.
+  assert.doesNotMatch(deletion.output, /phone release check/u)
+  git(NodePath.join(root, '.remote'), ['config', 'receive.denyDeleteCurrent', 'ignore'])
+  const allowed = push(root, ':refs/heads/main')
+  assert.equal(allowed.status, 0, allowed.output)
+})
+
+void test('git push origin other:other checks the pushed SHA instead of checkout HEAD', (t) => {
+  const { root } = repository(t)
+  const base = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+  installHook(root)
+  git(root, ['update-ref', 'refs/remotes/origin/main', base])
+  git(root, ['checkout', '--quiet', '-b', 'other'])
+  write(root, 'apps/mobile/src/change.ts', 'phone change\n')
+  const other = commit(root, ['apps'], 'phone change without bump')
+  git(root, ['checkout', '--quiet', 'main'])
+  const result = push(root, 'other:other')
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /Phone inputs changed; raise version/u)
+  version(root, { version: '0.3.10' })
+  commit(root, ['apps'], 'checkout phone version')
+  git(root, ['update-ref', 'refs/heads/other', base, other])
+  const cleanOther = push(root, 'other:other')
+  assert.equal(cleanOther.status, 0, cleanOther.output)
+})
+
 void test('literal 1f0e5a34 replay strands a fixed 0.3.2 runtime when both numbers rise', (t) => {
   const { root } = repository(t)
   const source = NodePath.dirname(NodePath.dirname(script))
@@ -569,6 +638,24 @@ void test('literal 1f0e5a34 replay strands a fixed 0.3.2 runtime when both numbe
   commit(root, ['apps/mobile/app.json'], 'only version rises')
   const corrected = check(root, [base])
   assert.equal(corrected.status, 0, corrected.output)
+})
+
+void test('pre-push checks every pushed branch in a multi-ref push', (t) => {
+  const { root } = repository(t)
+  const base = commit(root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+  installHook(root)
+  git(root, ['update-ref', 'refs/remotes/origin/main', base])
+  git(root, ['checkout', '--quiet', '-b', 'other'])
+  write(root, 'apps/mobile/src/change.ts', 'phone change\n')
+  commit(root, ['apps'], 'phone change without bump')
+  git(root, ['checkout', '--quiet', 'main'])
+  const result = NodeChildProcess.spawnSync('git', ['push', 'origin', 'main:main', 'other:other'], {
+    cwd: root,
+    env: environment,
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stdout + result.stderr, /Phone inputs changed; raise version/u)
 })
 
 for (const native of [false, true]) {
