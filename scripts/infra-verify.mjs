@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import { verifyImage } from './images.mjs'
 
 const assert = NodeAssert
 const scriptDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))
@@ -360,10 +361,10 @@ const watches = (pattern, path) => {
  * inputs without production ever being rebuilt. The Dockerfile and `.dockerignore` are inputs
  * too, though no `COPY` names them.
  */
-export const unwatchedPaths = (dockerfile, dockerfilePath, patterns) =>
-  [...copiedPaths(dockerfile), dockerfilePath, '.dockerignore'].filter(
-    (path) => !patterns.some((pattern) => watches(pattern, path)),
-  )
+export const unwatchedPaths = (dockerfile, dockerfilePath, patterns, configInputs) =>
+  [
+    ...new Set([...copiedPaths(dockerfile), ...configInputs, dockerfilePath, '.dockerignore']),
+  ].filter((path) => !patterns.some((pattern) => watches(pattern, path)))
 
 /**
  * Railway startCommand overrides image CMD. Verify their parity so the offline image proof
@@ -377,9 +378,13 @@ const assertContainerPolicy = (root) => {
   assert.notEqual(trigger, null, 'the repository source must be declared once')
   assert.ok(trigger[1].includes("branch: 'main'"), 'production is built from main')
   assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
-  for (const [name, dockerfilePath] of [
-    ['Runtime', 'packages/agent/runtime/Dockerfile'],
-    ['Server', 'apps/server/Dockerfile'],
+  for (const [name, dockerfilePath, stages] of [
+    ['Runtime', 'packages/agent/runtime/Dockerfile', { build: ['@vivid/agent-runtime'] }],
+    [
+      'Server',
+      'apps/server/Dockerfile',
+      { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
+    ],
   ]) {
     const declaration = railwaySource.match(
       new RegExp(`Railway\\.Service\\('${name}', \\{([\\s\\S]*?)^  \\}\\)`, 'm'),
@@ -393,8 +398,9 @@ const assertContainerPolicy = (root) => {
     const listed = railwaySource.match(new RegExp(`^const ${named[1]} = \\[([\\s\\S]*?)^\\]`, 'm'))
     assert.notEqual(listed, null, `${name} must list its watched paths in infra/railway.ts`)
     const patterns = [...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1])
+    const configInputs = verifyImage({ root, dockerfile: source(root, dockerfilePath), stages })
     assert.deepEqual(
-      unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns),
+      unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns, configInputs),
       [],
       `${name} copies paths that would not rebuild it`,
     )
