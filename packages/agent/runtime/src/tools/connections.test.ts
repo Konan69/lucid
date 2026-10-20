@@ -77,6 +77,18 @@ describe('make_integration', () => {
       },
     ],
     [
+      MakeIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Morning', name: 'Morning' }),
+      {
+        output: {
+          ok: false,
+          account: 'Morning',
+          message:
+            'An Integration called Morning already exists and was not changed. To do something different, make a new one under a new name.',
+        },
+        terminate: false,
+      },
+    ],
+    [
       MakeIntegrationOutcome.cases.PendingAuthorization.make({
         account: 'Morning',
         step: ConnectionStep.cases.EnterKey.make({

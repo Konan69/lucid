@@ -9,7 +9,7 @@ metadata:
 
 You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work.
 
-Agree the outcome first: what, when, in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already does it, and add to that instead of making a second.
+Agree the outcome first: what, when, in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remind sets any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
 
 ## The source
 
@@ -79,7 +79,7 @@ const remind = mutation(
   async (ctx: MutationContext<typeof requirements>, input) => {
     const at = Date.parse(input.at)
     if (Number.isNaN(at)) throw new Error('at must be an ISO date-time with its offset')
-    const key = `reminder-${at}-${input.text.slice(0, 40)}`
+    const key = `reminder-${crypto.randomUUID()}`
     await ctx.workflows.start({ workflow: 'wait', input: { text: input.text, at, key }, key })
     return { at: new Date(at).toISOString() }
   },
@@ -115,7 +115,7 @@ const tick = mutation(
   { input: object({}) },
   async (ctx: MutationContext<typeof requirements, 'app'>) => {
     const day = new Date().toISOString().slice(0, 10)
-    ctx.events.emit('morning.started', { day }, { filters: {}, id: `morning-${day}` })
+    ctx.events.emit('morning.started', { day }, { id: `morning-${day}` })
     return null
   },
 )
@@ -128,7 +128,7 @@ export default defineApp(requirements, {
 })
 ```
 
-Use `appCron` (five-field cron, with an IANA time zone) or `appInterval` (`{ minutes: 30 }`, at least a minute). Its mutation's context is `MutationContext<typeof requirements, "app">` and it declares no approval: nobody is there to ask. Vivid turns app schedules on when it makes the app. Then `watch` the event with the work as its instruction ("Brief the Person on today's mail and meetings"); the work itself runs in your background Run with all your tools, so keep the app to the clock. To check a public page on a schedule, the mutation can fetch it and emit what it read; your watch instruction then compares it with what you remembered last time and posts only a real change.
+Use `appCron` (five-field cron, with an IANA time zone) or `appInterval` (`{ minutes: 30 }`, at least a minute); never `userCron` or `userInterval`, which would run as Vivid's own Executor user and stay paused. An event with no filters is emitted with only its id. Its mutation's context is `MutationContext<typeof requirements, "app">` and it declares no approval: nobody is there to ask. Vivid turns app schedules on when it makes the app. Then `watch` the event with the work as its instruction ("Brief the Person on today's mail and meetings"); the work itself runs in your background Run with all your tools, so keep the app to the clock. To check a public page on a schedule, the mutation can fetch it and emit what it read; your watch instruction then compares it with what you remembered last time and posts only a real change.
 
 ## Make, fix, check
 

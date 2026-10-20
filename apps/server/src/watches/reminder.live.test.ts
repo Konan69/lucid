@@ -1,0 +1,66 @@
+import { describe, expect, layer } from '@effect/vitest'
+import { FeedItem } from '@vivid/contracts'
+import { Duration, Effect, Option, Stream } from 'effect'
+import { chainFixture, chainLayer, completeRun, replyText, toolParts } from '../runtime/chains.ts'
+
+/**
+ * A reminder asked for in plain words, on the real stack: Vivid makes an Integration of its own
+ * (`make_integration`, an Executor app that waits for the time and emits an event), watches that
+ * event, sets the reminder, and when the time comes the reminder reaches the Person's Feed from a
+ * background Thread. Nothing here is scripted: the model decides every step from its skill.
+ *
+ * Needs the running stack (`runtime/chains.ts`) on a public HTTPS `PUBLIC_URL` and an Executor at
+ * 2.0.0-beta.23 named by the `VIVID_EXECUTOR_*` settings.
+ */
+
+const toolNames = (state: Parameters<typeof toolParts>[0]) =>
+  toolParts(state).map((part) => `${part.toolName}:${part.state}`)
+
+describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain', () => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 600_000 })((test) => {
+    test.effect(
+      'a reminder Vivid sets for itself reaches the Feed at its time',
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* chainFixture('Reminder proof')
+          const asked = yield* fixture.send(
+            'Remind me in two minutes to stretch my legs. My time zone is Africa/Lagos.',
+          )
+          const state = yield* completeRun(fixture, asked)
+          const steps = toolNames(state)
+          // The trail is the evidence of what Vivid chose to do; it is printed on failure.
+          expect(steps, replyText(state)).toContain('make_integration:output-available')
+          expect(steps, replyText(state)).toContain('watch:output-available')
+          expect(steps, replyText(state)).toContain('use_tool:output-available')
+          const watches = (yield* fixture.rpc.ListWatches()).watches
+          expect(watches.length).toBeGreaterThan(0)
+          yield* Effect.addFinalizer(() =>
+            Effect.forEach(watches, (watch) => fixture.rpc.StopWatch({ name: watch.name })).pipe(
+              Effect.catch(() => Effect.sync(() => expect.fail('Reminder watch stop failed'))),
+            ),
+          )
+
+          // The reminder arrives on its own about two minutes later; the Feed is read live.
+          const arrived = yield* fixture.rpc.WatchFeed().pipe(
+            Stream.filter((feed) =>
+              feed.items.some(
+                (item) =>
+                  item.thread.startsWith('watch-') &&
+                  item.post !== null &&
+                  (FeedItem.guards.Waiting(item) || FeedItem.guards.Settled(item)),
+              ),
+            ),
+            Stream.runHead,
+            Effect.timeout(Duration.minutes(6)),
+          )
+          if (Option.isNone(arrived))
+            return yield* Effect.sync(() => expect.fail('The Feed stream ended'))
+          const [card] = arrived.value.items.filter((item) => item.thread.startsWith('watch-'))
+          if (card === undefined || card.post === null)
+            return yield* Effect.sync(() => expect.fail('The reminder must reach the Feed'))
+          expect(`${card.post.title} ${card.post.words}`).toMatch(/stretch/i)
+        }).pipe(Effect.scoped),
+      { timeout: 600_000 },
+    )
+  })
+})

@@ -13,4 +13,4 @@ Discover the connected mail or work tools with `find_tools`. If the integration 
 
 Inspect fresh evidence and report what changed, what is blocked and the next decision. To check again later, set it up with the make-an-integration skill (a reminder at the agreed time, watched with this check as its instruction) rather than promising to remember. External follow-up messages need exact recipients and content and the normal permission and Approval.
 
-Call the commitment complete only after the agreed success condition is met. Report the evidence in the Thread. If the deadline slips or the result remains uncertain, state that plainly and ask for a revised plan without promising a future check.
+Call the commitment complete only after the agreed success condition is met. Report the evidence in the Thread. If the deadline slips or the result remains uncertain, state that plainly and ask for a revised plan; if a later check is agreed, set it up as above rather than promising it.

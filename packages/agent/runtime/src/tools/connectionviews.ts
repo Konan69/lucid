@@ -142,8 +142,16 @@ export function made(outcome: MakeIntegrationOutcome): Schema.Json {
     }),
     PendingAuthorization: (value) =>
       added(AddIntegrationOutcome.cases.PendingAuthorization.make(value)),
-    BuildFailed: ({ message }) => ({ ok: false, message: `The build failed: ${message}` }),
-    AlreadyConnected: (value) => added(AddIntegrationOutcome.cases.AlreadyConnected.make(value)),
+    BuildFailed: ({ message }) => ({
+      ok: false,
+      message: `The build failed: ${modelText(message)}`,
+    }),
+    // A made Integration's source cannot be replaced in place: say so, so new files are not lost.
+    AlreadyConnected: ({ account, name }) => ({
+      ok: false,
+      account: modelText(account),
+      message: `An Integration called ${modelText(name)} already exists and was not changed. To do something different, make a new one under a new name.`,
+    }),
     Failed: (value) => added(AddIntegrationOutcome.cases.Failed.make(value)),
   })
 }

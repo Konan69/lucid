@@ -232,6 +232,7 @@ export const MadeFile = Schema.Struct({
     Schema.makeFilter(
       (path) =>
         !path.includes('\\') &&
+        !path.includes('\0') &&
         path !== 'package.json' &&
         path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..'),
     ),
@@ -246,6 +247,8 @@ export const MakeIntegrationRequest = Schema.Struct({
   files: Schema.Array(MadeFile).check(
     Schema.isBetweenLength(1, 30),
     Schema.makeFilter((files) => new Set(files.map((file) => file.path)).size === files.length),
+    // Executor builds an app from its root `index.ts` default export.
+    Schema.makeFilter((files) => files.some((file) => file.path === 'index.ts')),
   ),
 })
 export interface MakeIntegrationRequest extends Schema.Schema.Type<typeof MakeIntegrationRequest> {}

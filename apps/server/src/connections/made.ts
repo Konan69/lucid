@@ -5,7 +5,8 @@ export const madeAppsVersion = '0.0.1-beta.92'
 
 /** Like IMPORTED's address identity, the name identifies a service; Person scope belongs to its row. */
 export function madeService(name: string) {
-  return ServiceId.make(`made:${name}`)
+  // "Reminders" and "reminders " are one Integration, not two apps.
+  return ServiceId.make(`made:${name.trim().toLowerCase()}`)
 }
 
 /** A private package needs no registry identity; a fixed slug also supports non-Latin app names. */
