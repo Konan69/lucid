@@ -6,7 +6,8 @@
     "declaration": false,
     "emitDeclarationOnly": false,
     "rootDir": ".",
-    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
+    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
   "exclude": [],
@@ -14,5 +15,6 @@
     {
       "path": "./tsconfig.types.json"
     }
-  ]
+  ],
+  "files": []
 }

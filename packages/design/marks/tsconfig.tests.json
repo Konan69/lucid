@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
+  },
+  "files": [],
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": []
+}

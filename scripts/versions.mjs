@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import { hermesConfigErrors } from './hermes.mjs'
 
 export const versions = Object.freeze({
   '@earendil-works/pi-ai': '0.87.1',
@@ -453,6 +454,7 @@ export function validateVersions(root) {
     ...overrideErrors(overrides, catalog),
     ...rootManifestErrors(rootManifest, catalog),
     ...typeScriptConfigErrors(root),
+    ...hermesConfigErrors(root, paths.slice(1)),
   ]
 }
 

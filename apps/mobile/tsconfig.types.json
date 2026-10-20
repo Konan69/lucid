@@ -1,0 +1,38 @@
+{
+  "extends": ["../../tsconfig.base.json", "expo/tsconfig.base", "../../tsconfig.hermes.json"],
+  "compilerOptions": {
+    "strict": true,
+    // Vendored sources and the OpenUI port share the web's unchecked-index and unused-local exceptions.
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "incremental": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
+    "types": ["react", "node"]
+  },
+  "include": ["index.ts", "src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../../packages/client/state/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/client/rpc/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.types.json"
+    }
+  ],
+  "exclude": [
+    "node_modules",
+    "android",
+    "ios",
+    ".cache",
+    ".turbo",
+    "dist",
+    "build",
+    "coverage",
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ]
+}
