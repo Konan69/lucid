@@ -351,3 +351,24 @@ database.update(missing)`,
   assert.equal(findings.length, 1)
   assert.match(findings[0].message, /target is unresolved/u)
 })
+
+test('an SDK-inferred collection receiver explains how an explicit annotation resolves it', () => {
+  const source = `import * as Effect from 'effect/Effect'
+interface Subscription { readonly windowRuns: Set<string> }
+const links = new Map<string, Subscription>()
+Effect.forEach(links.values(), (link) => link.windowRuns.delete('run'))`
+  const findings = checkOwners(sources({ 'computers/device.ts': source }))
+  assert.equal(findings.length, 1)
+  assert.equal(
+    findings[0].message,
+    'delete target is unresolved; for a non-Drizzle receiver whose type cannot be resolved without SDK types, add an explicit type annotation on the receiver',
+  )
+  assert.deepEqual(
+    checkOwners(
+      sources({
+        'computers/device.ts': source.replace('(link)', '(link: Subscription)'),
+      }),
+    ),
+    [],
+  )
+})

@@ -15,6 +15,7 @@ import type { approvals } from './tables.ts'
 type SignalTable = typeof approvals | typeof inputRequests
 /** Owners execute each complete query on the current database; builders never leave the domain. */
 export interface SignalWriter {
+  readonly table: SignalTable
   readonly claim: (
     database: Database['Service'],
     update: { readonly where: SQL; readonly leaseUntil: number; readonly token: string },
@@ -43,16 +44,16 @@ const decodeClaimed = decodeStored(Claimed, 'owed signal')
 /**
  * Claim at most 16 rows under SKIP LOCKED, then admit outside the transaction. All claims run
  * concurrently: admission has 30 seconds and each complete attempt has 60, inside a two-minute
- * lease. The token fences stale writes. Each domain executes its own complete queries;
- * selection and acknowledgement use the same database and statement order.
+ * lease. The token fences stale writes. Each domain executes its own complete queries.
+ * Claim and acknowledgement run on the replay's own Database, never a caller's transaction.
  * A dead process leaves an owed row, reclaimable after its lease. Runtime keys cover the crash
  * after admission but before acknowledgement, including a late response from an expired owner.
  */
 export const replaySignals = Effect.fn('Signals.replay')(function* (
-  table: SignalTable,
-  ids: Option.Option<ReadonlyArray<string>>,
   write: SignalWriter,
+  ids: Option.Option<ReadonlyArray<string>>,
 ) {
+  const { table } = write
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
   const token = NodeCrypto.randomUUID()

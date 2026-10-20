@@ -46,6 +46,7 @@ import { answerText } from './validation.ts'
 
 /** Replay supplies the selection and fences; this domain owns both complete signal writes. */
 const signalWriter: SignalWriter = {
+  table: inputRequests,
   /** Claim and return the same bounded row set in one statement under the replay lease. */
   claim: Effect.fn('Inputs.claimSignals')(function* (
     database: Database['Service'],
@@ -292,7 +293,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
     return yield* new Conflict({ message: 'Input request already answered' })
   const input = yield* returned(yield* view(updated), 'Input request')
   yield* changed(actor, Topic.thread(row.threadId))
-  yield* replaySignals(inputRequests, Option.some([request.id]), signalWriter).pipe(
+  yield* replaySignals(signalWriter, Option.some([request.id])).pipe(
     Effect.catch(() => Effect.logError('Input answer replay failed', { requestId: request.id })),
   )
   return input
@@ -372,7 +373,7 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: run(replaySignals(inputRequests, Option.none(), signalWriter)),
+      replay: run(replaySignals(signalWriter, Option.none())),
     })
   }),
 )

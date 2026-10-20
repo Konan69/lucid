@@ -386,7 +386,7 @@ function writeFindings(checker, node, tables, domain) {
     if (table === undefined)
       return [
         {
-          message: `${operation} target is unresolved; use an owned table in a Drizzle builder write`,
+          message: `${operation} target is unresolved; for a non-Drizzle receiver whose type cannot be resolved without SDK types, add an explicit type annotation on the receiver`,
         },
       ]
     return table.domain === domain ? [] : [{ operation, table: table.name, owner: table.domain }]

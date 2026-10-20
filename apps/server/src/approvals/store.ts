@@ -59,6 +59,7 @@ import { replaySignals, type SignalWriter } from './replay.ts'
 
 /** Replay supplies the selection and fences; this domain owns both complete signal writes. */
 const signalWriter: SignalWriter = {
+  table: approvals,
   /** Claim and return the same bounded row set in one statement under the replay lease. */
   claim: Effect.fn('Approvals.claimSignals')(function* (
     database: Database['Service'],
@@ -393,7 +394,7 @@ const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, decide
 
 /** Request delivery is only an optimization; all failures leave the SQL debt for the sweeper. */
 const deliver = Effect.fn('Approvals.deliver')(function* (id: ApprovalId) {
-  yield* replaySignals(approvals, Option.some([id]), signalWriter).pipe(
+  yield* replaySignals(signalWriter, Option.some([id])).pipe(
     Effect.catch(() => Effect.logError('Approval outcome replay failed', { approvalId: id })),
   )
 })
@@ -715,7 +716,7 @@ export const approvalStoreLayer = Layer.effect(
         return row.threadId
       }),
       expire: run(expire()),
-      replay: run(replaySignals(approvals, Option.none(), signalWriter)),
+      replay: run(replaySignals(signalWriter, Option.none())),
     })
   }),
 )
