@@ -89,17 +89,6 @@
         "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
       }
     ],
-    "eslint/no-restricted-imports": [
-      "error",
-      {
-        "patterns": [
-          {
-            "regex": "^\\.\\.?/(?:.*?/)*(?:packages/)?(?:client-runtime|contracts)(?:/|$)",
-            "message": "Import from @vivid/client-runtime or @vivid/contracts instead of crossing a package boundary with a relative path."
-          }
-        ]
-      }
-    ],
     "eslint/no-await-in-loop": "off",
     "eslint/no-underscore-dangle": "off",
     "react/capitalized-calls": "off",
@@ -145,6 +134,7 @@
     "vivid/effect-require-effect-fn": "warn",
     "vivid/no-async-callback-api": "warn",
     "vivid/no-config-provider-from-env-in-library": "error",
+    "vivid/no-cross-package-import": "error",
     "vivid/no-direct-process-env": "warn",
     "vivid/no-direct-schema-safeparse": "error",
     "vivid/no-effect-catch-raw-error": "error",

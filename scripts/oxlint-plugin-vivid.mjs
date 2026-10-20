@@ -1,4 +1,5 @@
 import * as NodeEvents from 'node:events'
+import { noCrossPackageImport } from './boundary.mjs'
 
 // Each runner has a `With` form that takes a Context first (`Effect.runPromiseWith(context)(program)`).
 // It starts an Effect exactly as the plain form does, so every rule about runners covers both.
@@ -1236,6 +1237,7 @@ export default {
     'effect-require-effect-fn': effectRequireEffectFn,
     'no-async-callback-api': noAsyncCallbackApi,
     'no-config-provider-from-env-in-library': noConfigProviderFromEnvInLibrary,
+    'no-cross-package-import': noCrossPackageImport,
     'no-direct-process-env': noDirectProcessEnv,
     'no-direct-schema-safeparse': noDirectSchemaSafeParse,
     'no-effect-catch-raw-error': noEffectCatchRawError,

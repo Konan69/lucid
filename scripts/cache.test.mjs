@@ -241,8 +241,13 @@ void test('shared tests do not invalidate production declarations or ordinary co
   }
 })
 
-/** Relative integration imports are real dependencies despite absent manifest edges. */
-void test('integration source invalidates importing checks without cycling production tasks', (t) => {
+/**
+ * A package's source invalidates the checks of the packages that declare it and no others. Since
+ * `vivid/no-cross-package-import` no package reaches another by path, so the manifest edges are the
+ * whole graph: the server takes the runtime as a devDependency, and the skills package, which the
+ * runtime depends on, does not depend on the runtime.
+ */
+void test('runtime source invalidates its dependents and no other package', (t) => {
   const root = fixture(t)
   const initial = hashes(root)
   NodeFS.appendFileSync(
@@ -251,16 +256,16 @@ void test('integration source invalidates importing checks without cycling produ
   )
   const changed = hashes(root)
   for (const task of ['lint', 'typecheck']) {
-    for (const consumer of ['server', 'skills']) {
-      assert.notEqual(
-        initial.get(`@vivid/${consumer}#${task}`).hash,
-        changed.get(`@vivid/${consumer}#${task}`).hash,
+    assert.notEqual(
+      initial.get(`@vivid/server#${task}`).hash,
+      changed.get(`@vivid/server#${task}`).hash,
+    )
+    for (const unrelated of ['skills', 'computer']) {
+      assert.equal(
+        initial.get(`@vivid/${unrelated}#${task}`).hash,
+        changed.get(`@vivid/${unrelated}#${task}`).hash,
       )
     }
-    assert.equal(
-      initial.get(`@vivid/computer#${task}`).hash,
-      changed.get(`@vivid/computer#${task}`).hash,
-    )
   }
 })
 

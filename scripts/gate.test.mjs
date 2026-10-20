@@ -134,7 +134,8 @@ void test('a package-specific Turbo task keeps the generic task hash inputs and 
   const overrides = Object.keys(tasks).filter((key) =>
     /^@vivid\/[\w-]+#(lint|typecheck|test)$/u.test(key),
   )
-  assert.ok(overrides.length >= 12)
+  // Only the desktop test still needs an edge its manifest lacks (it reads the tokens' files).
+  assert.ok(overrides.length >= 1)
   for (const key of overrides) {
     const generic = tasks[key.slice(key.indexOf('#') + 1)]
     for (const field of ['inputs', 'outputs', 'passThroughEnv'])
@@ -155,7 +156,7 @@ void test('test tasks hash every test setting except the database address', () =
     NodeFS.readFileSync(NodePath.join(repositoryRoot, 'turbo.json'), 'utf8'),
   )
   const tests = Object.entries(tasks).filter(([key]) => /(^|#)test$/u.test(key))
-  assert.ok(tests.length >= 6)
+  assert.ok(tests.length >= 2)
   for (const [key, task] of tests) {
     assert.deepEqual(
       task.env,
