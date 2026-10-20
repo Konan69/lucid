@@ -108,12 +108,41 @@ const extractEnvironmentNames = (text) =>
   new Set([...text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((match) => match[1]))
 
 /**
- * The settings an image sets for itself with `ENV NAME=value`, one per line. A setting only the
- * image can know, such as the commit it was built from (`VIVID_BUILD_COMMIT`), is wired by the
- * image and not by the deploy graph: a host variable of the same name would replace it.
+ * The settings an image sets for itself with `ENV NAME=value`, one per line, in the stage the
+ * image is (its last) and the stages that one is built `FROM`. A setting only the image can know,
+ * such as the commit it was built from (`VIVID_BUILD_COMMIT`), is wired by the image and not by
+ * the deploy graph: a host variable of the same name would replace it. A stage the last one does
+ * not descend from (a build stage it only copies files out of) sets nothing in the image.
  */
-export const imageSettings = (dockerfile) =>
-  new Set([...dockerfile.matchAll(/^ENV\s+([A-Z][A-Z0-9_]*)=/gm)].map((match) => match[1]))
+export const imageSettings = (dockerfile) => {
+  const stages = []
+  for (const line of dockerfile.split('\n')) {
+    const from = /^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i.exec(line)
+    if (from !== null) stages.push({ base: from[1], name: from[2], settings: [] })
+    const set = /^ENV\s+([A-Z][A-Z0-9_]*)=/.exec(line)
+    if (set !== null && stages.length > 0) stages[stages.length - 1].settings.push(set[1])
+  }
+  const settings = new Set()
+  // Each stage can only name one before it, so the walk back ends.
+  for (let index = stages.length - 1; index >= 0;) {
+    const stage = stages[index]
+    for (const name of stage.settings) settings.add(name)
+    index = stages.slice(0, index).findLastIndex((earlier) => earlier.name === stage.base)
+  }
+  return settings
+}
+
+/**
+ * The names an app reads that nothing sets. The local process graph and the Railway graph wire a
+ * name when either sets it. The server image wires a name only the server reads: the runtime is
+ * another image, so a name it reads too must still be sent to it by a graph.
+ */
+export const unwiredNames = ({ serverNames, runtimeNames, wiringSource, serverImage }) =>
+  [...new Set([...serverNames, ...runtimeNames])].filter(
+    (name) =>
+      !(serverImage.has(name) && !runtimeNames.has(name)) &&
+      !new RegExp(`\\b${name}\\s*:`).test(wiringSource),
+  )
 
 const assertEnvironmentWiring = (root, stackSource) => {
   const serverConfig = source(root, 'apps/server/src/config.ts')
@@ -146,18 +175,14 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
-  // A name is wired when either graph sets it: the local process graph or the Railway graph.
   // `VIVID_WEB_DIST` exists only where the server serves the built web app, which is hosted only.
-  const wiringSource = `${stackSource}\n${source(root, 'infra/railway.ts')}`
-  const serverImage = imageSettings(source(root, 'apps/server/Dockerfile'))
-  for (const name of new Set([...serverNames, ...runtimeNames])) {
-    if (serverNames.has(name) && serverImage.has(name)) continue
-    assert.match(
-      wiringSource,
-      new RegExp(`\\b${name}\\s*:`),
-      `${name} is read by an app but not wired by Alchemy`,
-    )
-  }
+  const unwired = unwiredNames({
+    serverNames,
+    runtimeNames,
+    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}`,
+    serverImage: imageSettings(source(root, 'apps/server/Dockerfile')),
+  })
+  for (const name of unwired) assert.fail(`${name} is read by an app but not wired by Alchemy`)
 }
 
 const assertPackagePolicy = (packageDocument) => {

@@ -4,6 +4,7 @@ import {
   imageSettings,
   readTargetDocument,
   unwatchedPaths,
+  unwiredNames,
   validateTargets,
 } from './infra-verify.mjs'
 
@@ -40,13 +41,43 @@ void test('a path an image is built from must be one its service watches', () =>
   ])
 })
 
-void test('the settings an image sets for itself are read from its ENV lines', () => {
+void test('an image sets what its last stage and the stages it descends from set', () => {
   const dockerfile = [
-    'FROM node AS production',
+    'FROM node:24 AS base',
+    'ENV COREPACK_HOME=/opt/corepack',
+    'FROM base AS build',
+    'ENV BUILD_ONLY=1',
+    'FROM build AS updates',
+    'ENV CI=1',
+    'FROM base AS production',
     'ARG RAILWAY_GIT_COMMIT_SHA=""',
     'ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA',
-    'ENV PORT=8787',
     'RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm build',
   ].join('\n')
-  assert.deepEqual([...imageSettings(dockerfile)], ['VIVID_BUILD_COMMIT', 'PORT'])
+  assert.deepEqual([...imageSettings(dockerfile)].sort(), ['COREPACK_HOME', 'VIVID_BUILD_COMMIT'])
+})
+
+void test('the server image wires only what the server alone reads', () => {
+  const wired = (names) =>
+    unwiredNames({
+      wiringSource: 'VIVID_WEB_DIST: dist,',
+      serverImage: new Set(['VIVID_BUILD_COMMIT', 'VIVID_RUNTIME_TOKEN']),
+      ...names,
+    })
+  assert.deepEqual(
+    wired({
+      serverNames: new Set(['VIVID_BUILD_COMMIT', 'VIVID_WEB_DIST']),
+      runtimeNames: new Set(),
+    }),
+    [],
+  )
+  // The runtime is another image: the server's ENV does not reach it.
+  assert.deepEqual(
+    wired({
+      serverNames: new Set(['VIVID_RUNTIME_TOKEN']),
+      runtimeNames: new Set(['VIVID_RUNTIME_TOKEN']),
+    }),
+    ['VIVID_RUNTIME_TOKEN'],
+  )
+  assert.deepEqual(wired({ serverNames: new Set(['CI']), runtimeNames: new Set() }), ['CI'])
 })
