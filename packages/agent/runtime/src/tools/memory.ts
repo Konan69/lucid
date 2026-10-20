@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { MemoryKind } from '@vivid/contracts'
+import { Tool, MemoryKind } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, forCompany, text } from './inputs.ts'
@@ -16,7 +16,7 @@ import * as views from './views.ts'
 export function memoryTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'recall',
+      name: Tool.recall,
       description:
         'Look up relevant memories. Confirm current facts through a Connection before acting.',
       input: v.object({ summary, query: text('The person, preference or fact to recall.', 400) }),
@@ -33,7 +33,7 @@ export function memoryTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'remember',
+      name: Tool.remember,
       description:
         'Save a fact or preference when asked. Share with the Company only when the person explicitly asks.',
       input: v.object({

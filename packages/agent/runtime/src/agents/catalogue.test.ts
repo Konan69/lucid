@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Array as Arr, Effect } from 'effect'
+import { Array as Arr, Effect, Order } from 'effect'
 import { vi } from 'vitest'
 import { init } from '@flue/runtime'
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai'
@@ -11,6 +11,7 @@ import {
   type FauxResponseFactory,
 } from '@earendil-works/pi-ai/providers/faux'
 import { manifest } from '@vivid/skills'
+import { ToolName } from '@vivid/contracts'
 import { Vivid } from './vivid.ts'
 
 /** Check the actual model boundary after Vivid's hooks render, including every tool prerequisite. */
@@ -23,7 +24,11 @@ const observeCatalogue: FauxResponseFactory = (context) => {
   expect(prompt).not.toContain('builtin:')
   expect(prompt).not.toContain('metadata.provenance')
   expect(JSON.stringify(context.messages)).not.toContain('is no longer available')
-  const registered = new Set(tools.map((tool) => tool.name))
+  const names = tools.map((tool) => tool.name)
+  expect(Arr.sort(names, Order.String), `Mounted tools: ${JSON.stringify(names)}`).toEqual(
+    Arr.sort(ToolName.literals, Order.String),
+  )
+  const registered = new Set(names)
   for (const entry of manifest) {
     for (const needed of entry.needs)
       expect(registered.has(needed), `${entry.runtimeName}: ${needed}`).toBe(true)

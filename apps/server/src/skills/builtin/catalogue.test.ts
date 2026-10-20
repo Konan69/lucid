@@ -11,53 +11,16 @@ import {
   SkillId,
   SkillOrigin,
   SkillScope,
+  ToolName,
 } from '@vivid/contracts'
-import {
-  askTools,
-  codeTools,
-  connectionTools,
-  documentTools,
-  libraryTools,
-  memoryTools,
-  noteTools,
-  notifyTools,
-  pictureTools,
-  SavedProcedures,
-  skillTools,
-  views,
-  watchTools,
-  feedTools,
-} from '@vivid/agent-runtime'
-import type { RunTool } from '@vivid/agent-runtime/scope'
+import { SavedProcedures, views } from '@vivid/agent-runtime'
+import { Schema } from 'effect'
 import { procedureSuggestions } from '../../search/suggestions.ts'
 import { manifest } from '@vivid/skills'
 import { builtins, catalogue, procedures, summary } from './index.ts'
 
-/** Registration factories are the same ones used by Vivid, without running a tool or model. */
-const runner: RunTool = () => Promise.resolve({ output: {}, terminate: false })
-const registered = new Set(
-  [
-    ...libraryTools(runner),
-    ...connectionTools(runner),
-    ...askTools(runner),
-    ...memoryTools(runner),
-    // The directory is never opened here: only the tools' names are read.
-    ...noteTools(runner, 'unused'),
-    ...skillTools(runner),
-    ...pictureTools(runner),
-    ...codeTools(runner),
-    ...documentTools(runner),
-    ...notifyTools(runner),
-    ...watchTools(runner),
-    ...feedTools(runner),
-  ].map((tool) => tool.name),
-)
-
-/** Flue injects this native tool for mounts; the package's real-runtime test verifies it and every needs entry. */
-registered.add('activate_skill')
-
-/** Flue's own shell tool, mounted by the Computer's sandbox; the same real-runtime test verifies it. */
-registered.add('bash')
+/** The runtime catalogue test proves the mounts; skill text uses that same closed vocabulary. */
+const isToolName = Schema.is(ToolName)
 
 /** Ready and pending accounts demonstrate that a service name alone cannot make an offer runnable. */
 const connection = (serviceName: string, state: ConnectionState) =>
@@ -79,11 +42,11 @@ describe('shipped procedure catalogue', () => {
   it('uses registered tools and projects no record handles', () => {
     for (const procedure of procedures) {
       for (const tool of procedure.needs)
-        expect(registered.has(tool), `${procedure.name}: ${tool}`).toBe(true)
+        expect(isToolName(tool), `${procedure.name}: ${tool}`).toBe(true)
       // Executable instructions must use available tools and declare their readiness needs.
       for (const [, tool] of procedure.instructions.matchAll(/`([a-z_]+)`/g)) {
         if (tool === undefined) expect.fail('Expected a captured tool name')
-        expect(registered.has(tool), `${procedure.name}: ${tool}`).toBe(true)
+        expect(isToolName(tool), `${procedure.name}: ${tool}`).toBe(true)
         expect(procedure.needs, `${procedure.name}: ${tool}`).toContain(tool)
       }
     }

@@ -1,10 +1,11 @@
 import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
-import { Context, Layer, Logger } from 'effect'
+import { Array as Arr, Context, Layer, Logger, Order } from 'effect'
 import { describe, expect, it as standalone } from '@effect/vitest'
 import {
   ApprovalId,
   CodeCall,
+  CodeCallKind,
   CodeFailure,
   CodeOutcome,
   PersonId,
@@ -64,6 +65,17 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         summary: call.kind,
         end: 'completed',
       }),
+    ),
+  )
+
+  standalone.effect('exposes exactly the server-authorized tool kinds in the real guest', () =>
+    scopedCase(
+      supervised,
+      Effect.gen(function* () {
+        const outcome = yield* run('return Object.keys(tools).sort()', reply)
+        check(outcome, 'Completed', { result: Arr.sort(CodeCallKind.literals, Order.String) })
+      }),
+      'inherited',
     ),
   )
 

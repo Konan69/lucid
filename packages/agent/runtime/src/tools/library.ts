@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { LibrarySearchRequest } from '@vivid/contracts'
+import { Tool, LibrarySearchRequest } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -10,7 +10,7 @@ import * as views from './views.ts'
 export function libraryTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'search_library',
+      name: Tool.search_library,
       description: 'Search the Library before answering from documents and cite returned passages.',
       input: v.object({
         summary,

@@ -1,5 +1,6 @@
 import { defineTool } from '@flue/runtime'
 import {
+  Tool,
   DocumentToolCallId,
   ReadDocumentOutcome,
   WriteDocumentRequest,
@@ -54,7 +55,7 @@ export function read(outcome: ReadDocumentOutcome) {
 export function documentTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'write_document',
+      name: Tool.write_document,
       description:
         'Write a Markdown document the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Do not use it for an answer read once. Writing the same title again revises that document; send the whole revised body.',
       input: v.strictObject({
@@ -83,7 +84,7 @@ export function documentTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'read_document',
+      name: Tool.read_document,
       description:
         'Read a Markdown document of this Thread by title to work on it in a later turn. A missing title returns the titles available here.',
       input: v.strictObject({ summary, title: text('The title of the document to read.', 120) }),

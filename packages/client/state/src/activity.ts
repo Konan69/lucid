@@ -1,3 +1,4 @@
+import { ToolName } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 
 /**
@@ -31,9 +32,6 @@ const Asked = Schema.Struct({
   title: text,
   question: text,
   site: text,
-  /** `forget` says what to forget; `correct` says what is true now. */
-  what: text,
-  now: text,
 })
 type Asked = typeof Asked.Type
 
@@ -92,7 +90,26 @@ const counted = (items: Option.Option<ReadonlyArray<unknown>>, one: string, many
 
 const nothing = (): ReadonlyArray<Option.Option<string>> => []
 
+/** Tools without authored step wording share the historical unknown-step behavior. A purpose
+ * becomes the running/done label, while failure keeps the existing plain failure line. */
+const UNKNOWN: Step = {
+  said: { running: 'Working', done: 'Did something', failed: 'Something did not work' },
+  named: (asked) =>
+    Option.map(said(asked.summary), (words) => ({
+      ...UNKNOWN.said,
+      running: words,
+      done: words,
+    })),
+  detail: nothing,
+}
+
 const STEPS = {
+  // These tools already render as unknown steps. Total coverage must preserve those words.
+  read_note: UNKNOWN,
+  write_note: UNKNOWN,
+  delete_note: UNKNOWN,
+  make_integration: UNKNOWN,
+  task: UNKNOWN,
   search_library: {
     said: {
       running: 'Searching the Library',
@@ -156,22 +173,6 @@ const STEPS = {
       failed: 'Could not remember that',
     },
     detail: (asked) => [said(asked.content)],
-  },
-  forget: {
-    said: {
-      running: 'Forgetting',
-      done: 'Forgot something',
-      failed: 'Could not forget that',
-    },
-    detail: (asked) => [said(asked.what)],
-  },
-  correct: {
-    said: {
-      running: 'Correcting what it knows',
-      done: 'Corrected what it knows',
-      failed: 'Could not correct that',
-    },
-    detail: (asked) => [said(asked.now)],
   },
   read_skill: {
     said: {
@@ -402,34 +403,10 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
-  show: {
-    said: {
-      running: 'Putting it on screen',
-      done: 'Put it on screen',
-      failed: 'Could not show it',
-    },
-    detail: nothing,
-  },
-} satisfies Record<string, Step>
+} satisfies Record<ToolName, Step>
 
-/** A tool this client has not heard of: still a true line, with nothing made up about it. */
-const UNKNOWN: Step = {
-  said: { running: 'Working', done: 'Did something', failed: 'Something did not work' },
-  detail: nothing,
-}
-
-/**
- * The line for a tool this client has no words for. When Vivid said what the step is for, that is
- * the line while it runs and once it is done; "Did something" above a sentence saying what was
- * done would be noise.
- */
-const unheardOf = (purpose: Option.Option<string>): Step =>
-  Option.match(purpose, {
-    onNone: () => UNKNOWN,
-    onSome: (words) => ({ ...UNKNOWN, said: { ...UNKNOWN.said, running: words, done: words } }),
-  })
-
-const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
+/** Old histories and newer runtimes can name tools this client no longer describes. */
+const readToolName = Schema.decodeUnknownOption(ToolName)
 
 const NOTHING_ASKED: Asked = {
   query: Option.none(),
@@ -446,8 +423,6 @@ const NOTHING_ASKED: Asked = {
   title: Option.none(),
   question: Option.none(),
   site: Option.none(),
-  what: Option.none(),
-  now: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {
@@ -522,8 +497,9 @@ export function describeToolCall(
   // input in the runtime). Those are the words that tell this call from any other, so they lead
   // the detail of every step; before, only the Computer's steps showed them.
   const purpose = said(read.summary)
-  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () =>
-    unheardOf(purpose),
+  const known: Step = Option.getOrElse(
+    Option.map(readToolName(toolName), (name) => STEPS[name]),
+    () => UNKNOWN,
   )
   // A call that names its subject is said with it; the detail function is the step's own.
   const step: Step =

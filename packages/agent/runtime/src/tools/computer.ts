@@ -1,6 +1,7 @@
 import { useSandbox, type SandboxFactory } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
+  Tool,
   BrowserAction,
   BrowseTarget,
   BrowseRequest,
@@ -180,7 +181,7 @@ const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
 /** Browse uses the same Flue native image path as use_desktop; screenshots never enter bounded JSON. */
 export function browseModelTool(runTool: RunTool) {
   return {
-    name: 'browse',
+    name: Tool.browse,
     label: 'Browse',
     description: browseDescription,
     parameters: browserParameters,
@@ -215,7 +216,7 @@ export function browseModelTool(runTool: RunTool) {
  * Flue 2.1 docs reference/sandbox-api; conversation-stream-store persistToolResultContent. */
 export function desktopModelTool(runTool: RunTool) {
   return {
-    name: 'use_desktop',
+    name: Tool.use_desktop,
     label: 'Use the Computer desktop',
     description:
       'Look at the Computer or use its pointer and keyboard. Every completed action returns a picture. If approval is requested, stop and wait.',

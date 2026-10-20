@@ -1,6 +1,9 @@
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
+import { ToolName } from '@vivid/contracts'
 import { describe, expect, it } from 'vitest'
 import { describeToolCall, readAnswered, readAsked, summarizeSteps } from './activity.js'
+
+const readToolName = Schema.decodeUnknownOption(ToolName)
 
 describe('a step, in words', () => {
   it('shows the quit-and-retry instruction and refuses to label a locked copy as copied', () => {
@@ -112,6 +115,54 @@ describe('a step, in words', () => {
     expect(
       describeToolCall('future_tool', Option.none(), readAnswered('not an object'), 'done'),
     ).toMatchObject({ label: 'Did something' })
+  })
+
+  // Making coverage total must keep the note tools' existing lines on every client.
+  it.each(['read_note', 'write_note', 'delete_note'])(
+    'keeps %s on its existing unknown-step wording',
+    (toolName) => {
+      for (const state of ['running', 'done', 'failed'] as const) {
+        const label = {
+          running: 'Working',
+          done: 'Did something',
+          failed: 'Something did not work',
+        }[state]
+        expect(describeToolCall(toolName, readAsked({}), Option.none(), state)).toEqual({
+          state,
+          label,
+        })
+        const described = describeToolCall(
+          toolName,
+          readAsked({ summary: 'Keep the preference', path: 'preferences.md' }),
+          Option.none(),
+          state,
+        )
+        expect(described).toEqual(
+          state === 'failed'
+            ? { state, label, detail: 'Keep the preference' }
+            : { state, label: 'Keep the preference' },
+        )
+      }
+    },
+  )
+
+  it('reads a stored call to a removed tool through the unknown-step path', () => {
+    // Flue retains the original name and JSON after a tool leaves the mounted catalogue.
+    const part = {
+      type: 'dynamic-tool',
+      toolCallId: 'historical-forget',
+      toolName: 'forget',
+      state: 'output-available',
+      input: { what: 'My old preference', summary: 'Forget my old preference' },
+      output: { ok: true },
+    }
+    expect(readToolName(part.toolName)).toEqual(Option.none())
+    expect(
+      describeToolCall(part.toolName, readAsked(part.input), readAnswered(part.output), 'done'),
+    ).toEqual({ state: 'done', label: 'Forget my old preference' })
+    expect(
+      describeToolCall('forget', readAsked({ what: 'My old preference' }), Option.none(), 'done'),
+    ).toEqual({ state: 'done', label: 'Did something' })
   })
 
   it('says a built-in way of working like a saved one, and never by its runtime name', () => {

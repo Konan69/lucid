@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { NotifyPersonOutcome, PushOutcome } from '@vivid/contracts'
+import { Tool, NotifyPersonOutcome, PushOutcome } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
@@ -51,7 +51,7 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
 export function notifyTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'notify_person',
+      name: Tool.notify_person,
       description:
         'Tell the Person something worth their attention when they are away: a reminder that came due, an answer they are waiting for, something urgent you noticed; one or two short lines; not for chatter.',
       input: v.object({

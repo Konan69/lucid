@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { Watch, WatchState } from '@vivid/contracts'
+import { Tool, Watch, WatchState } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -41,7 +41,7 @@ const watchName = text(
 export function watchTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'find_events',
+      name: Tool.find_events,
       description: `Find the events an Integration account can send, with the filters each one takes. ${instructions}`,
       input: v.object({ summary, account }),
       /** Declared events in words: the event's name, what it means and its filter names and types. */
@@ -65,7 +65,7 @@ export function watchTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'watch',
+      name: Tool.watch,
       description: `Watch an Integration event and act on it each time it happens. ${instructions}`,
       input: v.object({
         summary,
@@ -96,7 +96,7 @@ export function watchTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'list_watches',
+      name: Tool.list_watches,
       description: 'List what Vivid is watching for the Person, by name.',
       input: v.object({ summary }),
       run({ signal }) {
@@ -111,7 +111,7 @@ export function watchTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'stop_watching',
+      name: Tool.stop_watching,
       description: 'Stop a Watch by its name.',
       input: v.object({ summary, name: watchName }),
       run({ data, signal }) {

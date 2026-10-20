@@ -1,6 +1,9 @@
 import * as Schema from 'effect/Schema'
 import { ACCOUNT_HANDLE_MAX } from './connections.js'
 import { ApprovalId } from './identity.js'
+import { CodeCallKind } from './tools.js'
+
+export { CodeCallKind } from './tools.js'
 
 /**
  * One timing contract keeps the server deadline, the waits that follow it and the client timeout
@@ -46,15 +49,6 @@ export const RunCodeRequest = Schema.Struct({
   summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
 export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest> {}
-
-/** The tools a program can call. A closed list: a program cannot reach anything else. */
-export const CodeCallKind = Schema.Literals([
-  'find_tools',
-  'use_tool',
-  'browse',
-  'read_page',
-] as const)
-export type CodeCallKind = typeof CodeCallKind.Type
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
 export const CodeCallEnd = Schema.Literals([

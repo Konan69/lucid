@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import type { PersonId } from '@vivid/contracts'
-import { CodeFailure, CodeTiming } from '@vivid/contracts/code'
+import { CodeCallKind, CodeFailure, CodeTiming } from '@vivid/contracts/code'
 import { Context, Deferred, Effect, Layer, Option, Queue, Schema, Stream, type Scope } from 'effect'
 import { ComputerStore, type ComputerAttachment } from '../computers/store.ts'
 import { boundedNesting, budgets, bytes } from './budgets.ts'
@@ -112,8 +112,8 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
   runner: Runner,
   missing: Effect.Effect<void>,
 ) {
-  // Every word is the server's own: a path from a hash and four numbers.
-  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' ${budgets.result} ${budgets.logs} ${budgets.calls} ${budgets.frame}`
+  // Only authored kinds enter the shell, as one comma-separated word; no program input is interpolated.
+  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' ${budgets.result} ${budgets.logs} ${budgets.calls} ${budgets.frame} ${CodeCallKind.literals.join(',')}`
   const spoken = yield* attachment
     .converse({ command, timeoutSeconds: CodeTiming.seconds + 15 })
     .pipe(Effect.mapError((failure) => new CodeComputerUnavailable({ reason: failure._tag })))

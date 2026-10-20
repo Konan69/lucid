@@ -1,5 +1,5 @@
 import { Array as Arr } from 'effect'
-import { SkillId } from '@vivid/contracts'
+import { SkillId, type ToolName } from '@vivid/contracts'
 
 /** Display names and suggestion dependencies are shared by the server and runtime. Descriptions
  * and procedure bodies live only in SKILL.md; adding a name also extends the mount-map key type. */
@@ -278,7 +278,14 @@ const definitions = [
     needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
-] as const
+] as const satisfies ReadonlyArray<{
+  readonly runtimeName: string
+  readonly displayName: string
+  readonly about: string
+  readonly starter: boolean
+  readonly needs: ReadonlyArray<ToolName>
+  readonly connections: ReadonlyArray<ReadonlyArray<string>>
+}>
 
 export type BuiltinRuntimeName = (typeof definitions)[number]['runtimeName']
 

@@ -1,3 +1,4 @@
+import { Tool } from '@vivid/contracts'
 import { defineTool } from '@flue/runtime'
 import { Effect, Option, Schema } from 'effect'
 import { builtinNamed, manifest } from '@vivid/skills'
@@ -41,7 +42,7 @@ const refusal = <Encoded>(error: Option.Option<Encoded>, message: string) =>
 export function skillTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'read_skill',
+      name: Tool.read_skill,
       description:
         'Read a saved procedure by its exact name from context before following its steps. Built-ins use activate_skill.',
       input: v.object({ summary, name: text('The procedure name shown in context.', 100) }),
@@ -78,7 +79,7 @@ export function skillTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'save_skill',
+      name: Tool.save_skill,
       description:
         'Save a verified reusable procedure for yourself whenever it will help future work. Do not ask a person to create or manage a skill. Include decisions and approval needs; saving does not arrange future work.',
       input: v.object({

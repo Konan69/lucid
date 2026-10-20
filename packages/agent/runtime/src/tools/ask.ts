@@ -1,7 +1,7 @@
 import { defineTool } from '@flue/runtime'
 import * as Arr from 'effect/Array'
 import * as Effect from 'effect/Effect'
-import { INPUT_QUESTIONS_MOST } from '@vivid/contracts'
+import { Tool, INPUT_QUESTIONS_MOST } from '@vivid/contracts'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
@@ -55,7 +55,7 @@ const question = v.object({
 export function askTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'ask_person',
+      name: Tool.ask_person,
       description:
         'Ask the person everything you need to decide safely in ONE call: one to four questions, answered together. Gather all missing details instead of asking one question per turn. Set several true only when more than one option can truly apply. This returns at once without ending your turn or waiting for a reply; the answer arrives later as a new message, while you are still working or as a new turn. Keep doing the work that does not depend on the answer. Do not do the work that does until it arrives: time passing is not an answer. When nothing is left that can go on without it, end your turn in one short line, without asking the question again. If the person writes to you instead of answering, the question is closed and their message is their reply.',
       // No `summary`, unlike the other tools: the question is already the sentence the Person

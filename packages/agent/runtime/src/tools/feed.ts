@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { PostOutcome } from '@vivid/contracts'
+import { Tool, PostOutcome } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
@@ -22,7 +22,7 @@ const resultOf = (outcome: PostOutcome) =>
 export function feedTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'post',
+      name: Tool.post,
       description: `Post a card to the Person’s Feed. ${instructions}`,
       input: v.object({
         summary,

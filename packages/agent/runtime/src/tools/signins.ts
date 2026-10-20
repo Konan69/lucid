@@ -1,5 +1,5 @@
 import { Type } from '@earendil-works/pi-ai'
-import { CopySignInOutcome, CopySignInRequest, UseWindowRequest } from '@vivid/contracts'
+import { Tool, CopySignInOutcome, CopySignInRequest, UseWindowRequest } from '@vivid/contracts'
 import { Effect, Option, Result, Schema } from 'effect'
 import { Scope, type RunTool } from './scope.ts'
 import { pictureResult } from './picture.ts'
@@ -77,7 +77,7 @@ const program = Effect.fn('ComputerTool.copySignIn')(function* (request: CopySig
  * and cancellation reaches the attributed RPC runner. It has no browser-closing capability. */
 export function signInModelTool(runTool: RunTool) {
   return {
-    name: 'copy_signin',
+    name: Tool.copy_signin,
     label: 'Copy a sign-in',
     description:
       'Copy the person’s sign-in for one site to Vivid’s Computer when they ask. Choose Chrome or Helium and the profile name shown in that browser, or Default. Never copy in the background or switch sources silently. BrowserLocked means ask them to quit that browser, end this turn, and wait for their request to retry. Never close their browser yourself. Copied is a cookie transfer receipt; read the site afterward to verify login.',

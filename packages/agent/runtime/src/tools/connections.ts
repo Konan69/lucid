@@ -1,5 +1,6 @@
 import { defineTool } from '@flue/runtime'
 import {
+  Tool,
   ConnectionStep,
   AddIntegrationOutcome,
   MakeIntegrationOutcome,
@@ -38,7 +39,7 @@ const decodeMadeRequest = Schema.decodeEffect(MakeIntegrationRequest)
 export function connectionTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'find_tools',
+      name: Tool.find_tools,
       description:
         'Find Integration tools for a concrete request. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help. The call expression works inside run_code; here, pass the same account and tool to use_tool. withheld counts matching tools on an account whose name cannot be shown; tell the person to rename that Integration if they need it.',
       input: v.object({ summary, query: text('What you need to do or find.', 200) }),
@@ -57,7 +58,7 @@ export function connectionTools(runTool: RunTool) {
     }),
     useTool(runTool),
     defineTool({
-      name: 'connect',
+      name: Tool.connect,
       description:
         'Offer an integration as a secure connect card for the person. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
       input: v.object({
@@ -131,7 +132,7 @@ export function connectionTools(runTool: RunTool) {
 /** Source is decoded at model ingress with the same bounds and path rules as the RPC. */
 function makeIntegrationTool(runTool: RunTool) {
   return defineTool({
-    name: 'make_integration',
+    name: Tool.make_integration,
     description:
       "Make an Integration of your own: an app whose source you write, for something no connected Integration does, such as a reminder at a time, a check on a schedule, or a page to poll. Read the make-an-integration skill before writing it. Send only the source files; Vivid adds package.json. A failed build returns the compiler's message: fix the source and call again with the same name. Once made, watch its events with find_events and watch, and call its tools with find_tools and use_tool.",
     input: v.object({
@@ -178,7 +179,7 @@ function makeIntegrationTool(runTool: RunTool) {
 /** Both account and tool must resolve exactly; model input never carries Connection authority. */
 function useTool(runTool: RunTool) {
   return defineTool({
-    name: 'use_tool',
+    name: Tool.use_tool,
     description:
       'Call one Integration tool that find_tools returned, with JSON input matching its signature. If approval is requested, stop and wait.',
     input: v.object({
@@ -226,7 +227,7 @@ function useTool(runTool: RunTool) {
 function integrationTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'find_integrations',
+      name: Tool.find_integrations,
       description:
         'List up to 24 accessible integration accounts: query matches first, then newest first within each group. omittedAccounts counts accessible accounts left out; narrow the query to surface them. Then list up to 24 catalogue matches, with connected status and whether this Vivid is set up to connect them.',
       input: v.object({ summary, query: v.pipe(v.string(), v.maxLength(200)) }),
@@ -245,7 +246,7 @@ function integrationTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'add_integration',
+      name: Tool.add_integration,
       description:
         'Add an integration from a public MCP server URL, API documentation URL, or OpenAPI specification URL. Sign-in or key entry uses a secure card; stop and wait when needed. Documentation must publish a specification link.',
       input: v.object({
@@ -279,7 +280,7 @@ function integrationTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'test_integration',
+      name: Tool.test_integration,
       description:
         'List an integration’s tools and test one read-only call when its input can be safely determined. Report the result in a sentence; stop when approval is needed.',
       input: v.object({

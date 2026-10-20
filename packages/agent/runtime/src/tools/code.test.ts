@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   ApprovalId,
   CodeCall,
+  CodeCallKind,
   CodeFailure,
   CodeOutcome,
   PersonId,
@@ -9,7 +10,7 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Effect, Exit, Fiber, Layer, Predicate, Queue } from 'effect'
+import { Array as Arr, Effect, Exit, Fiber, Layer, Order, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
@@ -20,6 +21,21 @@ const reference = '37e21f26-63ed-4075-aad1-0118929da0ac'
 
 /** Projection keeps provider ids usable and exposes one Approval reference solely for the existing card. */
 describe('Program model tools', () => {
+  // The prompt and guest ship separately; a stale declaration would advertise an unavailable call.
+  it('declares exactly the calls available to a program', () => {
+    const [program] = codeTools(() => expect.fail('Reading the prompt must not run a tool'))
+    const declaration = program.description.split('declare const tools: {')[1]
+    if (declaration === undefined) expect.fail('Missing program tool declaration')
+    const end = declaration.indexOf('\n};')
+    if (end < 0) expect.fail('Unclosed program tool declaration')
+    const names = [...declaration.slice(0, end).matchAll(/^([a-z_]+)\(input:/gm)].map((match) => {
+      const name = match[1]
+      if (name === undefined) expect.fail('Missing declared method name')
+      return name
+    })
+    expect(Arr.sort(names, Order.String)).toEqual(Arr.sort(CodeCallKind.literals, Order.String))
+  })
+
   it('projects receipts and errors, preserves provider identifiers and terminates Approval/unknown/rule outcomes', () => {
     const calls = [
       CodeCall.make({ kind: 'use_tool', summary: `Read ${reference}`, end: 'completed' }),
