@@ -98,12 +98,13 @@ const documentRunWith = Effect.fn('Runtime.test.documentRunWith')(function* (
       )
     }),
   )
-  const result = yield* documentRun(ThreadId.make('MARK-thread'), documentCall).pipe(
-    Effect.provide(
-      runtimeLayer.pipe(
-        Layer.provide(Layer.merge(runtimeConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
-      ),
+  const context = yield* Layer.build(
+    runtimeLayer.pipe(
+      Layer.provide(Layer.merge(runtimeConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
     ),
+  )
+  const result = yield* documentRun(ThreadId.make('MARK-thread'), documentCall).pipe(
+    Effect.provideContext(context),
     Effect.result,
   )
   expect(yield* Deferred.isDone(released)).toBe(true)

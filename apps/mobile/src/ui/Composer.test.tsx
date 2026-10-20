@@ -4,7 +4,11 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Composer, type Onward } from './Composer'
 
-/** Native views are host adapters here; the Composer and its control selection remain real. */
+/**
+ * Native host modules need a device. These DOM adapters retain press callbacks and draft props;
+ * the real Composer owns all control selection. This checks interaction wiring, not native layout.
+ */
+/* oxlint-disable anti-slop/no-module-mocking -- Native host adapters cannot run in happy-dom; no Composer or interaction decision is replaced. */
 vi.mock('react-native', () => ({
   Platform: { OS: 'android' },
   View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
@@ -50,6 +54,7 @@ vi.mock('./ui', () => ({
     </button>
   ),
 }))
+/* oxlint-enable anti-slop/no-module-mocking */
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 
 /** A controlled draft changes on the same mounted Composer, as typing changes the screen's value. */
