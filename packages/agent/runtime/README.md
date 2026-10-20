@@ -51,24 +51,27 @@ and remaining limits.
 
 ## Live reply reconciliation
 
-The runtime patch in `patches/@flue__runtime@2.2.2.patch` makes an assistant completion
-use Flue's existing `conversation-reset` projection for its whole durable batch. Flue 2.2.2
-keeps provider content indexes in canonical records but omits block identity from UI deltas.
+The runtime patch in `patches/@flue__runtime@2.2.2.patch` reconciles each completed
+assistant response through Flue's existing `message-appended` upsert. Flue 2.2.2 keeps
+provider content indexes in canonical records but omits block identity from UI deltas.
 Its SDK splits a part whenever text and reasoning alternate. A single provider text block can
 therefore appear as several live parts, while distinct blocks must remain distinct.
 
-Completion now replaces live state with the same projection as history before a settlement
-can reach the server or any client. The reset also preserves accumulated model steps, tool
-results, metadata, and data parts through Flue's own projector and history-window handling.
-During streaming, delta parts still follow Flue's original kind boundaries. Reconciliation
-happens once per completed model step and sends the conversation snapshot for that batch.
+Completion projects only the current response with history's own projector, retaining its
+first-step message ID, earlier model steps, tool outputs, anchored data, and metadata.
+It stops at the response's first entry rather than projecting older replies. The wire carries
+one canonical message per completed model step, followed by Flue's unchanged completion marker.
+The durable batch retains its original event order, so settlement reaches the server and clients
+only after replacement. Completion never requests a conversation reset or resends older replies.
+During streaming, delta parts still follow Flue's original kind boundaries.
 
 Remove this completion change when Flue carries block identity through live projection or
 reconciles completion upstream. No SDK patch is required. `@flue/react` uses the SDK observer,
-so web, phone, desktop, and server observation all consume the same reset. The shared
+so web, phone, desktop, and server observation all consume the same message upsert. The shared
 `textOf` in contracts then joins canonical text blocks as paragraphs without guessing from
-reasoning. `src/stream.test.ts` proves both same-block and distinct-block sequences through
-real storage, the HTTP router, and SDK observation.
+reasoning. `src/stream.test.ts` proves both block sequences across two model steps with a real
+tool call through storage, the HTTP router, and SDK observation. It also checks the public wire
+for stable message IDs, one-message replacements, no reset, and replacement before settlement.
 
 ## Models and rehearsal
 

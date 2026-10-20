@@ -1,19 +1,80 @@
 diff --git a/dist/dispatch-BlxCz6iq.mjs b/dist/dispatch-BlxCz6iq.mjs
-index 94d0dc4e069259c5f321b429e5a086ed724c5158..f29554c59b3f7d9cd7f1e2e74472226a934304a2 100644
+index 94d0dc4e069259c5f321b429e5a086ed724c5158..f493151e8a6eda4143c918e0eb881c7faac05a10 100644
 --- a/dist/dispatch-BlxCz6iq.mjs
 +++ b/dist/dispatch-BlxCz6iq.mjs
-@@ -2761,6 +2761,11 @@ function withPositions(bodies, batch) {
- 	}));
+@@ -2409,8 +2409,7 @@ function classifyConversationSubmission(conversation, inputEntryId, options) {
+ * replacement step. Once replaced, keep the first step's response shell (its
+ * id is the stable live-stream target) but omit the superseded model content.
+ */
+-function supersededAssistantErrorEntryIds(conversation) {
+-	const path = getActiveConversationPath(conversation);
++function supersededAssistantErrorEntryIds(conversation, path = getActiveConversationPath(conversation)) {
+ 	const laterSubmissions = new Set([...conversation.inProgressMessages.values()].flatMap((message) => message.submissionId ? [message.submissionId] : []));
+ 	const superseded = /* @__PURE__ */ new Set();
+ 	for (let index = path.length - 1; index >= 0; index--) {
+@@ -2421,12 +2420,12 @@ function supersededAssistantErrorEntryIds(conversation) {
+ 	}
+ 	return superseded;
  }
- function requiresSnapshotReset(record, state) {
-+	// Vivid workaround for Flue 2.2.2: UI deltas omit canonical block identity.
-+	// Reconcile the whole completion batch before publishing settlement, using
-+	// the same projection as history, including multi-step replies and tool data.
-+	// Remove when upstream preserves block identity or reconciles completion.
-+	if (record.type === "assistant_message_completed") return true;
- 	if (record.type === "conversation_created" || record.type === "compaction") return true;
- 	if (record.type !== "assistant_message_started" || !record.submissionId) return false;
- 	const conversation = state.conversations.get(record.conversationId);
+-function projectConversationUi(conversation, streamOffset) {
++function projectConversationUi(conversation, streamOffset, path = getActiveConversationPath(conversation)) {
+ 	const messages = [];
+ 	const byId = /* @__PURE__ */ new Map();
+-	const supersededErrors = supersededAssistantErrorEntryIds(conversation);
++	const supersededErrors = supersededAssistantErrorEntryIds(conversation, path);
+ 	const responseBySubmission = /* @__PURE__ */ new Map();
+-	for (const entry of getActiveConversationPath(conversation)) {
++	for (const entry of path) {
+ 		if (entry.type !== "message") continue;
+ 		const projected = projectCompletedMessage(entry, supersededErrors.has(entry.id));
+ 		if (projected) {
+@@ -2768,6 +2767,33 @@ function requiresSnapshotReset(record, state) {
+ 	const superseded = supersededAssistantErrorEntryIds(conversation);
+ 	return getActiveConversationPath(conversation).some((entry) => entry.type === "message" && entry.message.role === "assistant" && entry.submissionId === record.submissionId && superseded.has(entry.id));
+ }
++/**
++* Vivid workaround for Flue 2.2.2: deltas omit canonical block identity.
++* Project only this response, from its first step through the active leaf,
++* using history's projector for tool outputs, anchored data and metadata.
++* Older responses are neither projected nor sent. Remove when upstream
++* preserves block identity or reconciles completed messages itself.
++*/
++function projectCompletedResponse(conversation, messageId, submissionId, streamOffset) {
++	const path = [];
++	let entry = conversation.entries.get(conversation.activeLeafId);
++	while (entry) {
++		if (entry.type === "message" && (entry.id === messageId || submissionId && entry.submissionId === submissionId)) path.push(entry);
++		if (entry.id === messageId) break;
++		entry = conversation.entries.get(entry.parentId);
++	}
++	const scoped = {
++		...conversation,
++		inProgressMessages: new Map([...conversation.inProgressMessages].filter(([id, message]) => id === messageId || submissionId && message.submissionId === submissionId))
++	};
++	const message = projectConversationUi(scoped, streamOffset, path.reverse()).messages.find((message) => message.id === messageId);
++	if (!message) throw new ConversationRecordInvariantError({
++		recordId: messageId,
++		recordType: "assistant_message_completed",
++		reason: "Completed response is absent from the active conversation path."
++	});
++	return message;
++}
+ function encodeRecord(record, conversationId, state, responseIds) {
+ 	const uiMessageId = (messageId) => (record.submissionId ? responseIds.get(record.submissionId) : void 0) ?? messageId;
+ 	switch (record.type) {
+@@ -2874,6 +2900,12 @@ function encodeRecord(record, conversationId, state, responseIds) {
+ 			...record.timestamp ? { timestamp: record.timestamp } : {}
+ 		}];
+ 		case "assistant_message_completed": return [{
++			// The SDK's existing message-appended upsert replaces by the stable
++			// first-step id before completion and settlement in this same batch.
++			type: "message-appended",
++			conversationId,
++			message: projectCompletedResponse(state.conversations.get(record.conversationId), uiMessageId(record.messageId), record.submissionId, state.recordsThroughOffset)
++		}, {
+ 			type: "message-completed",
+ 			conversationId,
+ 			messageId: uiMessageId(record.messageId),
 diff --git a/dist/sql-agent-execution-store-C0vwyWZB.mjs b/dist/sql-agent-execution-store-C0vwyWZB.mjs
 index 8d022fce823a6e9f9a2bf8a222b309b5fccbcff1..09672d75cbbcced4924974f8a2ecbb56a64425ea 100644
 --- a/dist/sql-agent-execution-store-C0vwyWZB.mjs
