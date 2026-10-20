@@ -24,6 +24,7 @@ import {
   readingOf,
   streamSaid,
   titleFromMessage,
+  withFirst,
   workspaceKey,
   type ApprovalUp,
 } from '@vivid/state'
@@ -43,7 +44,7 @@ import Animated, {
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
-import { again, First, firstKey, isOnItsWay, isSettled, withFirst } from '../data/first'
+import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
@@ -733,7 +734,7 @@ function Conversation({
   }
   const { said, ready } = drawn(agent, heardIn(whose, id))
   const whole = agent.historyReady
-  const shown = withFirst(id, first, { messages: said.filter(isShown), ready: whole })
+  const shown = withFirst(standInOf(id, first), { messages: said.filter(isShown), ready: whole })
   // First words count as on their way from the send until the Thread's own two sources have both
   // spoken: after that, whether Vivid is working is theirs to say. Without the second half the
   // thinking would stop for the moment between the server taking the words and the Thread's

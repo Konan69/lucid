@@ -1,7 +1,7 @@
-import { createFlueClient } from '@flue/sdk'
+import { createFlueClient, type FlueConversationMessage } from '@flue/sdk'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Result } from 'effect'
+import { saysWords, titleFromMessage, withFirst } from '@vivid/state'
+import { Data, Effect, Option, Result } from 'effect'
 import { create } from 'zustand'
 import { act } from './app'
 import { changing, live } from './live'
@@ -20,6 +20,12 @@ import { scope } from './scope'
  * the conversation afresh. If they do not land they stay here, unsent, to be sent again; they are
  * never dropped.
  *
+ * Once they have landed they are still held (`Said`), and drawn until the conversation shows them
+ * itself (`withFirst`, `@vivid/state`), under the one key (`standInOf`). Until 16 October 2026
+ * they were let go at landing: the screen observed afresh, had no history yet, and for that round
+ * trip drew "Opening the thread…" where the Person's words had just been (0.2 to 0.9 s on
+ * production). The phone has held them this way since 7 October (`apps/mobile/src/data/first.ts`).
+ *
  * `key` names the one delivery these words are, to the server. It is made once, when the Person
  * sends them (`startThread`), and stays with them until they have landed. The server admits a
  * message under its key and makes a key of its own for a message that has none, so first words
@@ -27,9 +33,12 @@ import { scope } from './scope'
  * only been lost on the way back. They used to be sent with none.
  */
 export type FirstWords = Data.TaggedEnum<{
+  /** Nothing is held: the Thread was not started on this page. */
   Settled: {}
   Sending: Waiting
   Unsent: Waiting
+  /** The words are with Vivid. Held for as long as the page is open, so they keep their row. */
+  Said: { readonly words: string }
 }>
 /** First words that have not landed: what they are, where they are filed, and their delivery. */
 interface Waiting {
@@ -47,17 +56,15 @@ const SETTLED = FirstWords.Settled()
 const made = new Set<ThreadId>()
 
 interface Held {
-  /** Where each Thread's first words stand, for the Threads that have some travelling or unsent. */
+  /** Where each Thread's first words stand, for the Threads started on this page. */
   readonly held: ReadonlyMap<ThreadId, FirstWords>
-  /** Threads whose first words have landed since the page loaded. */
-  readonly landed: ReadonlySet<ThreadId>
 }
 
 /**
  * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
  * The map and the set are replaced, never changed in place, so a selector sees each move.
  */
-export const useFirstWords = create<Held>()(() => ({ held: new Map(), landed: new Set() }))
+export const useFirstWords = create<Held>()(() => ({ held: new Map() }))
 
 /** Where a Thread's first words stand. The same object until they move. */
 export const wordsFor =
@@ -67,19 +74,61 @@ export const wordsFor =
     return standing === undefined ? SETTLED : standing
   }
 
-/** Whether first words have landed since the page loaded, so the conversation is read again. */
-export const landedFor = (id: ThreadId) => (state: Held) => state.landed.has(id)
-
 const stand = (id: ThreadId, standing: FirstWords) =>
   useFirstWords.setState((was) => ({ held: new Map(was.held).set(id, standing) }))
 
-/** The words landed: nothing is held for the Thread any more, and its screen is told to read again. */
-const land = (id: ThreadId) =>
-  useFirstWords.setState((was) => {
-    const held = new Map(was.held)
-    held.delete(id)
-    return { held, landed: new Set(was.landed).add(id) }
+/**
+ * The first words as the conversation draws a Person's own message, while they travel and after
+ * they are with Vivid, under the key the conversation's own message takes when it arrives
+ * (`withFirst`, `@vivid/state`). None when there are none, or they did not arrive: words that did
+ * not are drawn as not sent instead (`Thread.tsx`).
+ */
+export const standInOf = (
+  id: ThreadId,
+  first: FirstWords,
+): Option.Option<FlueConversationMessage> =>
+  FirstWords.$match(first, {
+    Settled: () => Option.none(),
+    Unsent: () => Option.none(),
+    Sending: ({ words }) => Option.some(spoken(id, words)),
+    Said: ({ words }) => Option.some(spoken(id, words)),
   })
+
+/**
+ * A Thread's conversation as it is drawn: with its first words in it from the moment they were
+ * sent, keeping their row when the conversation's own copy of them arrives (`withFirst`). The
+ * observation the screen opens once they have landed has no history for a round trip, and they
+ * are not taken away for it.
+ *
+ * Its history counts as read only once they have landed (`historyReady` and `Said`) and it holds a
+ * Person's message saying those first words. Before, the conversation does not exist, and Flue
+ * calls an absent conversation's history ready and empty (`local_observation`, `@flue/react`
+ * 2.2.2); Flue also admits a message before it is in the conversation, so a history read just
+ * after landing can still be without it; and a follow-up sent meanwhile is a Person's message too,
+ * which must keep its own row and not take the first words'.
+ */
+export const saidWith = (
+  id: ThreadId,
+  first: FirstWords,
+  messages: ReadonlyArray<FlueConversationMessage>,
+  historyReady: boolean,
+): ReadonlyArray<FlueConversationMessage> =>
+  withFirst(standInOf(id, first), {
+    messages,
+    ready:
+      historyReady &&
+      FirstWords.$is('Said')(first) &&
+      messages.some((message) => saysWords(message, first.words)),
+  })
+
+/** A Person's message saying `words`, under the key a Thread's first words keep. */
+const spoken = (id: ThreadId, words: string): FlueConversationMessage => ({
+  id: `first:${id}`,
+  role: 'user',
+  purpose: 'user',
+  display: 'visible',
+  parts: [{ type: 'text', text: words, state: 'done' }],
+})
 
 /**
  * Makes the Thread if this page has not yet, then sends its first words, recording where they
@@ -113,7 +162,9 @@ const deliver = (id: ThreadId, waiting: Waiting) =>
         ),
     )
     if (sent) {
-      land(id)
+      // The screen observes the conversation afresh once it sees the words are with Vivid: the
+      // observer that opened with it was told there was no conversation yet (`Thread.tsx`).
+      stand(id, FirstWords.Said({ words }))
     } else {
       stand(id, FirstWords.Unsent(waiting))
     }

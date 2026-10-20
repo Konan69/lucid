@@ -20,7 +20,7 @@ import { Data, Effect, Option } from 'effect'
  *   nothing asks the server about it until its first words are with Vivid (`First.Said`): a query
  *   for a Thread that is not there ends for good (`data/live.ts`).
  * - The conversation names a Person's message itself, so the echo has another id. The first words
- *   keep the key they were drawn under (`withFirst`), which is what Flue's own hook does for the
+ *   keep the key they were drawn under (`withFirst`, `@vivid/state`), which is what Flue's own hook does for the
  *   messages it sends (`converge`, `@flue/react`).
  */
 
@@ -178,53 +178,18 @@ export const isOnItsWay = (first: Option.Option<First>, spoken: boolean): boolea
     }),
   )
 
-/** The first words as the conversation draws a Person's own message, before it has its own. */
-const standIn = (id: ThreadId, start: Start): FlueConversationMessage => ({
-  id: firstKey(id),
-  role: 'user',
-  purpose: 'user',
-  display: 'visible',
-  parts: [{ type: 'text', text: start.words, state: 'done' }],
-})
-
-/** A message's words as they were typed: its text parts, a paragraph each. */
-const wordsOf = (message: FlueConversationMessage): string =>
-  message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')
-
 /**
- * A Thread's conversation with its first words in it from the start.
- *
- * The words come back from the server as a Person's message that says the same thing, and that
- * message takes the key they were drawn under: the list then keeps the row it already drew, so
- * the words neither blink nor rise twice. Until it is there and the conversation's history has
- * not been read (`ready`), the words stand at the head of whatever the conversation holds. That
- * matters when the Person says something more before the history arrives: their second message
- * is then in the conversation alone, and it must not be taken for the first.
- *
- * Once the history has been read and nothing in it says the same words, the Person's first
- * message is taken to be them, so the words are never drawn twice. A conversation that then has
- * no message from a Person is returned as it is.
+ * The first words as the conversation draws a Person's own message, before it has its own, under
+ * the key they keep once it has (`withFirst`, `@vivid/state`). None for a Thread not started here.
  */
-export const withFirst = (
+export const standInOf = (
   id: ThreadId,
   first: Option.Option<First>,
-  conversation: {
-    readonly messages: ReadonlyArray<FlueConversationMessage>
-    readonly ready: boolean
-  },
-): ReadonlyArray<FlueConversationMessage> =>
-  Option.match(first, {
-    onNone: () => conversation.messages,
-    onSome: ({ start }) => {
-      const { messages, ready } = conversation
-      const mine = (message: FlueConversationMessage) => message.role === 'user'
-      const same = messages.findIndex(
-        (message) => mine(message) && wordsOf(message).trim() === start.words,
-      )
-      if (same === -1 && !ready) return [standIn(id, start), ...messages]
-      const echo = same === -1 ? messages.findIndex(mine) : same
-      return messages.map((message, index) =>
-        index === echo ? { ...message, id: firstKey(id) } : message,
-      )
-    },
-  })
+): Option.Option<FlueConversationMessage> =>
+  Option.map(first, ({ start }) => ({
+    id: firstKey(id),
+    role: 'user',
+    purpose: 'user',
+    display: 'visible',
+    parts: [{ type: 'text', text: start.words, state: 'done' }],
+  }))

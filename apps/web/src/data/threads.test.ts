@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@effect/vitest'
-import { CreateThreadRequest, PersonId, ThreadAudience, ThreadResponse } from '@vivid/contracts'
+import {
+  CreateThreadRequest,
+  PersonId,
+  ThreadAudience,
+  ThreadId,
+  ThreadResponse,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { open, wire } from '../test/browser'
 
@@ -34,10 +40,11 @@ browser.server.answers('CreateThread', (payload) => {
   })
 })
 
-const { FirstWords, firstWords, startThread, useFirstWords, wordsFor } = await import('./threads')
+const { FirstWords, firstWords, saidWith, startThread, useFirstWords, wordsFor } =
+  await import('./threads')
 
 /** Waits until a Thread's first words stand as `tag`, on the store's own signal and no clock. */
-const stands = (id: ReturnType<typeof startThread>, tag: 'Unsent' | 'Settled') =>
+const stands = (id: ReturnType<typeof startThread>, tag: 'Unsent' | 'Said') =>
   Effect.callback<void>((resume) => {
     const there = () => FirstWords.$is(tag)(wordsFor(id)(useFirstWords.getState()))
     if (there()) {
@@ -64,7 +71,7 @@ describe('a new Thread’s first words', () => {
       const from = browser.network.posts().length
       browser.network.arrives = true
 
-      yield* stands(startThread('Draft the invoice for Dami'), 'Settled')
+      yield* stands(startThread('Draft the invoice for Dami'), 'Said')
 
       expect(postedSince(from)).toEqual([
         {
@@ -85,7 +92,7 @@ describe('a new Thread’s first words', () => {
 
       browser.network.arrives = true
       firstWords.again(id)
-      yield* stands(id, 'Settled')
+      yield* stands(id, 'Said')
 
       const [first, second] = postedSince(from)
       expect(first).toEqual({
@@ -104,8 +111,8 @@ describe('a new Thread’s first words', () => {
       const from = browser.network.posts().length
       browser.network.arrives = true
 
-      yield* stands(startThread('Good morning'), 'Settled')
-      yield* stands(startThread('Good morning'), 'Settled')
+      yield* stands(startThread('Good morning'), 'Said')
+      yield* stands(startThread('Good morning'), 'Said')
 
       const [one, other] = postedSince(from)
       expect(one).toEqual({
@@ -132,7 +139,7 @@ describe('a new Thread’s first words', () => {
       browser.network.arrives = true
       firstWords.again(id)
       firstWords.again(id)
-      yield* stands(id, 'Settled')
+      yield* stands(id, 'Said')
 
       // The post whose answer was lost, and one more.
       expect(postedSince(from)).toHaveLength(2)
@@ -148,11 +155,52 @@ describe('a new Thread’s first words', () => {
 
       browser.network.arrives = true
       firstWords.again(id)
-      yield* stands(id, 'Settled')
+      yield* stands(id, 'Said')
 
       expect(browser.server.asked('CreateThread').slice(from)).toEqual([
         { id, title: 'Draft the invoice for Dami', projectId: null },
       ])
     }),
   )
+})
+
+describe('a new Thread’s conversation as it is drawn', () => {
+  const id = ThreadId.make('6f0d3c7e-2a55-4d0b-9c61-0d6f3a1b2c4e')
+  const said = FirstWords.Said({ words: 'Book the flight' })
+  const message = (key: string, role: 'user' | 'assistant', text: string) => ({
+    id: key,
+    role,
+    purpose: role,
+    display: 'visible' as const,
+    parts: [{ type: 'text' as const, text, state: 'done' as const }],
+  })
+  const ids = (messages: ReadonlyArray<{ readonly id: string }>) => messages.map((m) => m.id)
+
+  it('keeps the words when a read after landing does not have them yet', () => {
+    expect(ids(saidWith(id, said, [], true))).toEqual([`first:${id}`])
+    expect(ids(saidWith(id, said, [message('s-1', 'assistant', 'On it')], true))).toEqual([
+      `first:${id}`,
+      's-1',
+    ])
+  })
+
+  it('a follow-up sent before the history has the first words does not take their row', () => {
+    const followUp = message('local-follow-up', 'user', 'And a hotel')
+    expect(ids(saidWith(id, said, [followUp], true))).toEqual([`first:${id}`, followUp.id])
+  })
+
+  it('gives the conversation’s own copy of the words their row when it arrives', () => {
+    const read = [message('s-1', 'user', 'Book the flight'), message('s-2', 'assistant', 'On it')]
+    expect(ids(saidWith(id, said, read, true))).toEqual([`first:${id}`, 's-2'])
+  })
+
+  it('draws the words while they travel, even when Flue calls the history ready', () => {
+    const sending = FirstWords.Sending({ words: 'Book the flight', projectId: null, key: 'k' })
+    expect(ids(saidWith(id, sending, [], true))).toEqual([`first:${id}`])
+  })
+
+  it('leaves a Thread not started here as it is', () => {
+    const read = [message('s-1', 'user', 'Hello')]
+    expect(saidWith(id, FirstWords.Settled(), read, true)).toBe(read)
+  })
 })

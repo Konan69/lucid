@@ -1,6 +1,7 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import { ThreadId } from '@vivid/contracts'
 import { describe, expect, it } from '@effect/vitest'
+import { withFirst } from '@vivid/state'
 import { Effect, Option } from 'effect'
 import {
   again,
@@ -11,7 +12,7 @@ import {
   isSettled,
   startedWith,
   makeFirsts,
-  withFirst,
+  standInOf,
   type Start,
   type Way,
 } from './first.ts'
@@ -146,11 +147,11 @@ describe('a conversation with its first words', () => {
 
   it('is left alone when it was not started here', () => {
     const messages = [said('a', 'user', 'Hello')]
-    expect(withFirst(id, Option.none(), read(messages))).toBe(messages)
+    expect(withFirst(standInOf(id, Option.none()), read(messages))).toBe(messages)
   })
 
   it('shows the words before the conversation has any of its own', () => {
-    const shown = withFirst(id, Option.some(First.Sending({ start })), unread([]))
+    const shown = withFirst(standInOf(id, Option.some(First.Sending({ start }))), unread([]))
     expect(shown.map((message) => [message.id, message.role])).toEqual([[firstKey(id), 'user']])
     expect(shown.map((message) => message.parts)).toEqual([
       [{ type: 'text', text: 'Book the flight', state: 'done' }],
@@ -159,8 +160,7 @@ describe('a conversation with its first words', () => {
 
   it('keeps the words under the key they were drawn with when they come back, and adds none', () => {
     const shown = withFirst(
-      id,
-      Option.some(First.Said({ start })),
+      standInOf(id, Option.some(First.Said({ start }))),
       read([
         said('server-1', 'user', 'Book the flight'),
         said('server-2', 'assistant', 'On it'),
@@ -172,8 +172,7 @@ describe('a conversation with its first words', () => {
 
   it('keeps the words first when more is said before the history has been read', () => {
     const shown = withFirst(
-      id,
-      Option.some(First.Said({ start })),
+      standInOf(id, Option.some(First.Said({ start }))),
       unread([said('local-1', 'user', 'And a hotel')]),
     )
     expect(shown.map((message) => message.id)).toEqual([firstKey(id), 'local-1'])
@@ -181,8 +180,7 @@ describe('a conversation with its first words', () => {
 
   it('takes the first message of a read history for the words when none says the same', () => {
     const shown = withFirst(
-      id,
-      Option.some(First.Said({ start })),
+      standInOf(id, Option.some(First.Said({ start }))),
       read([said('server-1', 'user', 'Book the flight.'), said('server-2', 'assistant', 'On it')]),
     )
     expect(shown.map((message) => message.id)).toEqual([firstKey(id), 'server-2'])
@@ -190,8 +188,7 @@ describe('a conversation with its first words', () => {
 
   it('does not draw the words twice when the conversation opens with something else', () => {
     const shown = withFirst(
-      id,
-      Option.some(First.Said({ start })),
+      standInOf(id, Option.some(First.Said({ start }))),
       read([said('server-1', 'assistant', 'On it')]),
     )
     expect(shown.map((message) => message.id)).toEqual(['server-1'])
