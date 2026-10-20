@@ -46,6 +46,7 @@ export function Display({
   arriving,
   live,
   onSay,
+  onState,
 }: {
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
