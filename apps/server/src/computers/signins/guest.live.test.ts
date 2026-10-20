@@ -115,7 +115,12 @@ describe.skipIf(!enabled)('cookie injection into a real isolated Chrome', () => 
             Effect.promise(() =>
               NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-signin-chrome-')),
             ),
-            (owned) => Effect.promise(() => NodeFSP.rm(owned, { recursive: true, force: true })),
+            // Chrome helpers can finish profile writes just after the browser exits. Node's
+            // bounded filesystem retry handles that ENOTEMPTY without a test readiness sleep.
+            (owned) =>
+              Effect.promise(() =>
+                NodeFSP.rm(owned, { recursive: true, force: true, maxRetries: 5 }),
+              ),
           )
           expect(yield* inject(yield* chrome(directory))).toBe('{"cookies":2}')
         }),
