@@ -1,3 +1,4 @@
+import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
@@ -585,20 +586,6 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
   yield* Deferred.await(publishedRunning)
   yield* Ref.set(evidence.onPublish, Effect.void)
 })
-
-/** Keep provider evidence, change subscriptions and lifecycle workers within one case, with a fresh clock installed before their Layer is acquired. The suite shares only its PostgreSQL authority. */
-function scopedCase<Services, LayerError, Dependencies, A, E, R>(
-  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
-  program: Effect.Effect<A, E, R>,
-  clock: 'fresh' | 'inherited',
-) {
-  const acquired = Layer.build(caseLayer).pipe(
-    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-    Effect.scoped,
-  )
-  if (clock === 'inherited') return acquired
-  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
-}
 
 describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {

@@ -1,3 +1,4 @@
+import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
 import { PgClient } from '@effect/sql-pg/PgClient'
@@ -424,20 +425,6 @@ const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>
     onNone: () => 'defect or interruption',
     onSome: (failure) => failure._tag,
   })
-}
-
-/** Acquire each Device registry and notice queue in its case scope so links and presence workers cannot survive into another case. Install a fresh clock first, except for production sign-out, which needs real time. */
-function scopedCase<Services, LayerError, Dependencies, A, E, R>(
-  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
-  program: Effect.Effect<A, E, R>,
-  clock: 'fresh' | 'inherited',
-) {
-  const acquired = Layer.build(caseLayer).pipe(
-    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-    Effect.scoped,
-  )
-  if (clock === 'inherited') return acquired
-  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
 }
 
 /** Real PostgreSQL holds the Devices, Runs and ledger; the desktop app is the handlers' caller. */

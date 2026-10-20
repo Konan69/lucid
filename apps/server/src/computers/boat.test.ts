@@ -1,3 +1,4 @@
+import { scopedCase } from '../../tests/case.ts'
 import { peer, peerAvailable } from './ssh/peer.ts'
 import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
@@ -19,7 +20,6 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { eq, inArray } from 'drizzle-orm'
 import {
   ConfigProvider,
-  Clock,
   Context,
   Deferred,
   Effect,
@@ -1068,20 +1068,6 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
   )
   return key
 })
-
-/** Build a separate provider recorder and HTTP server for each case; install its clock before acquisition so provider timers and assertions use the same zero-based time. Real SSH cases retain the live clock. */
-function scopedCase<Services, LayerError, Dependencies, A, E, R>(
-  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
-  program: Effect.Effect<A, E, R>,
-  clock: 'fresh' | 'inherited',
-) {
-  const acquired = Layer.build(caseLayer).pipe(
-    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-    Effect.scoped,
-  )
-  if (clock === 'inherited') return acquired
-  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
-}
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {

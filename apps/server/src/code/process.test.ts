@@ -1,6 +1,7 @@
+import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
 import { Context, Layer, Logger } from 'effect'
-import { describe, expect, it as standalone, layer } from '@effect/vitest'
+import { describe, expect, it as standalone } from '@effect/vitest'
 import {
   ApprovalId,
   CodeCall,
@@ -20,7 +21,8 @@ import { CodeComputer, CodeComputerUnavailable } from './computer.ts'
 import { MachineOperationFailed } from '../computers/machine.ts'
 import { localCodeComputer, localCodeComputerLayer } from './testing.ts'
 
-/** The supervisor with a Computer that is this machine; see `testing.ts` for what that leaves out. */
+/** Each standalone case acquires this real local Computer and supervisor in its own scope.
+ * `it.effect` supplies its fresh clock before either Layer starts; see `testing.ts` for coverage. */
 const supervised = codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer))
 const person = PersonId.make('person-test')
 
@@ -33,7 +35,7 @@ function check(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.Js
 interface RunningLoopsService {
   readonly fibers: readonly Fiber.Fiber<CodeOutcome>[]
 }
-/** Suite fixture owns two already-admitted real guests; the test owns the parent deadline and recovery. */
+/** The case fixture owns two already-admitted real guests; the test owns the parent deadline and recovery. */
 class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
   'Test/RunningLoops',
 ) {}
@@ -65,39 +67,45 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     ),
   )
 
-  layer(supervised)((it) => {
-    it.effect('dispatches callable accounts once and awaits proxies without thenable calls', () =>
-      Effect.gen(function* () {
-        const frames = yield* Ref.make<Schema.Json[]>([])
-        const dispatch: Dispatch = Effect.fn('Test.accountCall')(function* (call) {
-          expect(call.kind).toBe('use_tool')
-          yield* Ref.update(frames, (items) => items.concat([call.input]))
-          return CallOutcome.cases.Returned.make({
-            value: { ok: true, output: 'sent' },
-            summary: 'Send mail',
-            end: 'completed',
+  standalone.effect(
+    'dispatches callable accounts once and awaits proxies without thenable calls',
+    () =>
+      scopedCase(
+        supervised,
+        Effect.gen(function* () {
+          const frames = yield* Ref.make<Schema.Json[]>([])
+          const dispatch: Dispatch = Effect.fn('Test.accountCall')(function* (call) {
+            expect(call.kind).toBe('use_tool')
+            yield* Ref.update(frames, (items) => items.concat([call.input]))
+            return CallOutcome.cases.Returned.make({
+              value: { ok: true, output: 'sent' },
+              summary: 'Send mail',
+              end: 'completed',
+            })
           })
-        })
-        const outcome = yield* run(
-          'await accounts; await accounts["x"]; if(accounts[Symbol.iterator]!==undefined || accounts["x"][Symbol.iterator]!==undefined) throw new Error("symbol exposed"); return await accounts["Work Gmail"].send_email({to:"Ada"},{summary:"Send mail",rationale:"Reply"});',
-          dispatch,
-        )
-        check(outcome, 'Completed', { result: { ok: true, output: 'sent' } })
-        expect(yield* Ref.get(frames)).toEqual([
-          {
-            account: 'Work Gmail',
-            tool: 'send_email',
-            input: { to: 'Ada' },
-            summary: 'Send mail',
-            rationale: 'Reply',
-          },
-        ])
-      }),
-    )
-
-    it.effect(
-      'round-trips production discovery expressions through the real guest',
-      () =>
+          const outcome = yield* run(
+            'await accounts; await accounts["x"]; if(accounts[Symbol.iterator]!==undefined || accounts["x"][Symbol.iterator]!==undefined) throw new Error("symbol exposed"); return await accounts["Work Gmail"].send_email({to:"Ada"},{summary:"Send mail",rationale:"Reply"});',
+            dispatch,
+          )
+          check(outcome, 'Completed', { result: { ok: true, output: 'sent' } })
+          expect(yield* Ref.get(frames)).toEqual([
+            {
+              account: 'Work Gmail',
+              tool: 'send_email',
+              input: { to: 'Ada' },
+              summary: 'Send mail',
+              rationale: 'Reply',
+            },
+          ])
+        }),
+        'inherited',
+      ),
+  )
+  standalone.effect(
+    'round-trips production discovery expressions through the real guest',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const names = [
             'quote"',
@@ -152,10 +160,13 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             expect(yield* Ref.get(frames)).toEqual(expected.slice(offset, offset + 40))
           }
         }),
-      { timeout: 20_000 },
-    )
-
-    it.effect('names summary and rationale when account metadata is omitted', () =>
+        'inherited',
+      ),
+    { timeout: 20_000 },
+  )
+  standalone.effect('names summary and rationale when account metadata is omitted', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run('return await accounts.Mail.read({});', reply)
         expect(outcome).toHaveProperty(
@@ -164,9 +175,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
         expect(outcome.calls).toHaveLength(0)
       }),
-    )
-
-    it.effect('keeps the line numbers of the source the model wrote', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('keeps the line numbers of the source the model wrote', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run(
           'const label="model";\ntry {throw new Error(label);} catch(error) {return error.stack;}',
@@ -175,9 +189,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
         expect(outcome).toHaveProperty('result', expect.stringContaining('program.js:2'))
       }),
-    )
-
-    it.effect('keeps ordered printed lines beside success and thrown failures', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('keeps ordered printed lines beside success and thrown failures', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const completed = yield* run(
           'console.log("first", 1); text("second"); return {answer:42};',
@@ -192,11 +209,14 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         check(failed, 'Failed', { logs: ['before throw'], logsTruncated: false })
         expect(failed).toHaveProperty('failure.message', 'failed')
       }),
-    )
-
-    it.effect(
-      'bounds printed UTF-8 without splitting characters and counts logs in the final aggregate',
-      () =>
+      'inherited',
+    ),
+  )
+  standalone.effect(
+    'bounds printed UTF-8 without splitting characters and counts logs in the final aggregate',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const printed = yield* run('text("😀".repeat(3000)); return 1;', reply)
           expect(CodeOutcome.guards.Completed(printed)).toBe(true)
@@ -212,11 +232,14 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(aggregate).toHaveProperty('logsTruncated', true)
           expect(Buffer.byteLength(JSON.stringify(aggregate))).toBeLessThanOrEqual(budgets.result)
         }),
-    )
-
-    it.effect(
-      'composes dependent and Promise.all reads, filters intermediate records and combines a Computer receipt',
-      () =>
+        'inherited',
+      ),
+  )
+  standalone.effect(
+    'composes dependent and Promise.all reads, filters intermediate records and combines a Computer receipt',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const seen = yield* Ref.make<string[]>([])
           const dispatch: Dispatch = Effect.fn('Test.composedCall')(function* (call) {
@@ -247,32 +270,43 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             'completed',
           ])
         }),
-    )
-
-    it.effect('gives the program the Computer it runs on: its files and its Node modules', () =>
-      Effect.gen(function* () {
-        const outcome = yield* run(
-          `const files = await import("node:fs/promises");
+        'inherited',
+      ),
+  )
+  standalone.effect(
+    'gives the program the Computer it runs on: its files and its Node modules',
+    () =>
+      scopedCase(
+        supervised,
+        Effect.gen(function* () {
+          const outcome = yield* run(
+            `const files = await import("node:fs/promises");
         await files.writeFile("note.txt", "kept");
         return {note: await files.readFile("note.txt", "utf8"), node: typeof process.versions.node};`,
-          reply,
-        )
-        check(outcome, 'Completed', { result: { note: 'kept', node: 'string' } })
-        expect(outcome.calls).toHaveLength(0)
-      }),
-    )
-
-    it.effect('ends a program that waits on something nothing can settle', () =>
+            reply,
+          )
+          check(outcome, 'Completed', { result: { note: 'kept', node: 'string' } })
+          expect(outcome.calls).toHaveLength(0)
+        }),
+        'inherited',
+      ),
+  )
+  standalone.effect('ends a program that waits on something nothing can settle', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run('console.log("waiting"); await new Promise(() => {});', reply)
         check(outcome, 'Failed', { logs: ['waiting'] })
         expect(outcome).toHaveProperty('failure.message', expect.stringContaining('never settles'))
       }),
-    )
-
-    it.effect(
-      'latches approval before catch/finally or queued Promise.allSettled calls can dispatch',
-      () =>
+      'inherited',
+    ),
+  )
+  standalone.effect(
+    'latches approval before catch/finally or queued Promise.allSettled calls can dispatch',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const count = yield* Ref.make(0)
           const dispatch: Dispatch = Effect.fn('Test.ask')(function* () {
@@ -298,52 +332,68 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             expect(yield* Ref.get(count)).toBe(1)
           }
         }),
-    )
-
-    it.effect('preserves earlier receipts on a later throw', () =>
+        'inherited',
+      ),
+  )
+  standalone.effect('preserves earlier receipts on a later throw', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         check(
           yield* run('await tools.use_tool({}); throw new Error("stopped");', reply),
           'Failed',
-          { calls: [{ end: 'completed' }] },
+          {
+            calls: [{ end: 'completed' }],
+          },
         )
       }),
-    )
-
-    it.effect('preserves earlier receipts on an unknown consequential outcome without replay', () =>
-      Effect.gen(function* () {
-        const unknown: Dispatch = Effect.fn('Test.unknown')((call) =>
-          Effect.succeed(
-            call.id === 1
-              ? CallOutcome.cases.Returned.make({
-                  value: { changed: true },
-                  summary: 'First action',
-                  end: 'completed',
-                })
-              : CallOutcome.cases.Unknown.make({ summary: 'Second action' }),
-          ),
-        )
-        check(
-          yield* run(
-            'await tools.use_tool({}); await tools.use_tool({}); await tools.use_tool({});',
-            unknown,
-          ),
-          'OutcomeUnknown',
-          { calls: [{ end: 'completed' }, { end: 'unknown' }] },
-        )
-      }),
-    )
-
-    it.effect('enforces the UTF-8 source budget before startup', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect(
+    'preserves earlier receipts on an unknown consequential outcome without replay',
+    () =>
+      scopedCase(
+        supervised,
+        Effect.gen(function* () {
+          const unknown: Dispatch = Effect.fn('Test.unknown')((call) =>
+            Effect.succeed(
+              call.id === 1
+                ? CallOutcome.cases.Returned.make({
+                    value: { changed: true },
+                    summary: 'First action',
+                    end: 'completed',
+                  })
+                : CallOutcome.cases.Unknown.make({ summary: 'Second action' }),
+            ),
+          )
+          check(
+            yield* run(
+              'await tools.use_tool({}); await tools.use_tool({}); await tools.use_tool({});',
+              unknown,
+            ),
+            'OutcomeUnknown',
+            { calls: [{ end: 'completed' }, { end: 'unknown' }] },
+          )
+        }),
+        'inherited',
+      ),
+  )
+  standalone.effect('enforces the UTF-8 source budget before startup', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         check(yield* run(`return "${'é'.repeat(8192)}";`, reply), 'Failed', {
           failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
           calls: [],
         })
       }),
-    )
-
-    it.effect('enforces the call budget', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('enforces the call budget', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         check(
           yield* run('for(let i=0;i<101;i++) await tools.find_tools({query:"x"});', reply),
@@ -351,17 +401,23 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) },
         )
       }),
-    )
-
-    it.effect('enforces the final-result budget', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('enforces the final-result budget', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         check(yield* run('return "x".repeat(32768);', reply), 'Failed', {
           failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
         })
       }),
-    )
-
-    it.effect('accepts exactly 16 KiB source and 100 calls', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('accepts exactly 16 KiB source and 100 calls', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const code = 'for(let i=0;i<100;i++) await tools.find_tools({}); return 1;'
         const unicode: Dispatch = Effect.fn('Test.unicodeReceipt')(() =>
@@ -377,9 +433,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome).toHaveProperty('result', 1)
         expect(outcome.calls).toHaveLength(budgets.calls)
       }),
-    )
-
-    it.effect('keeps a completed value beside 100 receipts and clips only logs', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('keeps a completed value beside 100 receipts and clips only logs', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const unicode: Dispatch = Effect.fn('Test.unicodeLogReceipt')(() =>
           Effect.succeed(
@@ -400,9 +459,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome).toHaveProperty('logsTruncated', true)
         expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
-    )
-
-    it.effect('accepts an exact 256 KiB argument and result without altering either', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('accepts an exact 256 KiB argument and result without altering either', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const size = 262_142 // The JSON string's two quotes are part of its byte budget.
         const outcome = yield* run(
@@ -415,11 +477,14 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
         expect(outcome.calls).toHaveLength(1)
       }),
-    )
-
-    it.effect(
-      'bounds the exact final aggregate including its receipts',
-      () =>
+      'inherited',
+    ),
+  )
+  standalone.effect(
+    'bounds the exact final aggregate including its receipts',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const empty = CodeOutcome.cases.Completed.make({
             result: '',
@@ -435,10 +500,13 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           const refused = yield* run(`return "x".repeat(${size + 1});`, reply)
           expect(refused).toHaveProperty('failure.limit', 'result')
         }),
-      { timeout: 10_000 },
-    )
-
-    it.effect('runs the calls of one Promise.all at the same time', () =>
+        'inherited',
+      ),
+    { timeout: 10_000 },
+  )
+  standalone.effect('runs the calls of one Promise.all at the same time', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const entered = yield* Ref.make(0)
         const both = yield* Deferred.make<void>()
@@ -463,9 +531,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           calls: [{ end: 'completed' }, { end: 'completed' }],
         })
       }),
-    )
-
-    it.effect('refuses a second active program in one Thread and a fifth globally', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('refuses a second active program in one Thread and a fifth globally', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const release = yield* Deferred.make<void>()
         const process = yield* CodeProcess
@@ -520,9 +591,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         for (const fiber of fibers)
           expect(CodeOutcome.guards.Completed(yield* Fiber.join(fiber))).toBe(true)
       }),
-    )
-
-    it.effect('charges failed calls against the quota', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('charges failed calls against the quota', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const refused: Dispatch = Effect.fn('Test.refuse')(() =>
           Effect.succeed(
@@ -537,9 +611,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(exhausted).toHaveProperty('failure.limit', 'calls')
         expect(exhausted.calls).toHaveLength(100)
       }),
-    )
-
-    it.effect('rejects oversized bridge input despite a guest catch', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('rejects oversized bridge input despite a guest catch', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const oversized = yield* run(
           'try {await tools.use_tool({input:"x".repeat(262144)});} catch(e){} return "caught";',
@@ -548,9 +625,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(oversized).toHaveProperty('failure.limit', 'data')
         expect(oversized.calls).toHaveLength(0)
       }),
-    )
-
-    it.effect('bounds cumulative provider data independently of the per-call limit', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('bounds cumulative provider data independently of the per-call limit', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const large: Dispatch = Effect.fn('Test.largeData')(() =>
           Effect.succeed(
@@ -568,11 +648,14 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(aggregate).toHaveProperty('failure.limit', 'data')
         expect(aggregate.calls).toHaveLength(17)
       }),
-    )
-
-    it.effect(
-      'cuts flooded printed output to its allowance and still finishes the program',
-      () =>
+      'inherited',
+    ),
+  )
+  standalone.effect(
+    'cuts flooded printed output to its allowance and still finishes the program',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const outcome = yield* run(
             'const value="x".repeat(1048576); for(let i=0;i<200;i++) text(value); return "done";',
@@ -582,28 +665,40 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
           expect(yield* run('return 1;', reply)).toHaveProperty('result', 1)
         }),
-      { timeout: 15_000 },
-    )
-
-    it.effect('a process that dies after dispatch leaves the call it was waiting for unknown', () =>
-      Effect.gen(function* () {
-        const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
-          if (call.id === 2) return yield* Effect.never
-          return yield* reply(call)
-        })
-        const outcome = yield* run(
-          // The whole runner is killed, so no final message is printed: the server learns of the
-          // end only from the process having ended. The third call is answered only after the
-          // second was dispatched, so the kill cannot come before the call it must leave unknown.
-          'await tools.find_tools({}); tools.use_tool({}); await tools.find_tools({}); process.kill(process.pid, "SIGKILL");',
-          dispatch,
-        )
-        expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-        expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown', 'completed'])
-      }),
-    )
-
-    it.effect('cuts a flood of empty printed lines like any other output', () =>
+        'inherited',
+      ),
+    { timeout: 15_000 },
+  )
+  standalone.effect(
+    'a process that dies after dispatch leaves the call it was waiting for unknown',
+    () =>
+      scopedCase(
+        supervised,
+        Effect.gen(function* () {
+          const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
+            if (call.id === 2) return yield* Effect.never
+            return yield* reply(call)
+          })
+          const outcome = yield* run(
+            // The whole runner is killed, so no final message is printed: the server learns of the
+            // end only from the process having ended. The third call is answered only after the
+            // second was dispatched, so the kill cannot come before the call it must leave unknown.
+            'await tools.find_tools({}); tools.use_tool({}); await tools.find_tools({}); process.kill(process.pid, "SIGKILL");',
+            dispatch,
+          )
+          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+          expect(outcome.calls.map((call) => call.end)).toEqual([
+            'completed',
+            'unknown',
+            'completed',
+          ])
+        }),
+        'inherited',
+      ),
+  )
+  standalone.effect('cuts a flood of empty printed lines like any other output', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run(
           'for (let i = 0; i < 90000; i++) console.log(); return 1;',
@@ -612,9 +707,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         check(outcome, 'Completed', { result: 1, logsTruncated: true })
         expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
-    )
-
-    it.effect('finishes a program that waits for its own write to standard output', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('finishes a program that waits for its own write to standard output', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run(
           'await new Promise((written) => process.stdout.write("straight out\\n", written)); return 1;',
@@ -622,9 +720,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
         check(outcome, 'Completed', { result: 1, logs: ['straight out'] })
       }),
-    )
-
-    it.effect('ends the processes a program started when the program ends', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('ends the processes a program started when the program ends', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         // The first program leaves a child behind and says which. The second reads that process's
         // record: gone, or ended and waiting to be collected (state Z), is ended.
@@ -646,9 +747,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
         check(after, 'Completed', { result: 'ended' })
       }),
-    )
-
-    it.effect('stops a program that starts calls without waiting, at the call limit', () =>
+      'inherited',
+    ),
+  )
+  standalone.effect('stops a program that starts calls without waiting, at the call limit', () =>
+    scopedCase(
+      supervised,
       Effect.gen(function* () {
         const outcome = yield* run(
           'for (let i = 0; i < 100000; i++) tools.find_tools({}); await new Promise(() => {});',
@@ -657,39 +761,40 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         check(outcome, 'Failed', { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) })
         expect(outcome.calls.length).toBeLessThanOrEqual(budgets.calls)
       }),
-    )
-  })
-
-  layer(supervised)(
-    'Clock for keeps logs when the 300-second parent deadline cancels a waiting guest',
-    (it) => {
-      it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
-        Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>()
-          const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
-            yield* Deferred.succeed(entered, undefined)
-            return yield* Effect.never
-          })
-          const running = yield* Effect.forkChild(
-            run('console.log("before timeout"); await tools.find_tools({});', dispatch),
-          )
-          yield* Deferred.await(entered)
-          yield* TestClock.adjust('300 seconds')
-          const outcome = yield* Fiber.join(running)
-          check(outcome, 'Failed', {
-            failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
-            logs: ['before timeout'],
-            logsTruncated: false,
-          })
-        }),
-      )
-    },
+      'inherited',
+    ),
   )
 
-  layer(supervised)(
-    'Clock for lets a call that was already running finish before an Approval is reported',
-    (it) => {
-      it.effect('lets a call that was already running finish before an Approval is reported', () =>
+  standalone.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
+    scopedCase(
+      supervised,
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
+          yield* Deferred.succeed(entered, undefined)
+          return yield* Effect.never
+        })
+        const running = yield* Effect.forkChild(
+          run('console.log("before timeout"); await tools.find_tools({});', dispatch),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust('300 seconds')
+        const outcome = yield* Fiber.join(running)
+        check(outcome, 'Failed', {
+          failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+          logs: ['before timeout'],
+          logsTruncated: false,
+        })
+      }),
+      'inherited',
+    ),
+  )
+
+  standalone.effect(
+    'lets a call that was already running finish before an Approval is reported',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const order = yield* Ref.make(0)
           const secondRunning = yield* Deferred.make<void>()
@@ -727,53 +832,53 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             calls: [{ end: 'needs approval' }, { end: 'completed' }],
           })
         }),
-      )
-    },
+        'inherited',
+      ),
   )
 
-  layer(supervised)(
-    'Clock for reports an Approval when the last running call is interrupted',
-    (it) => {
-      it.effect('reports an Approval when the last running call is interrupted', () =>
-        Effect.gen(function* () {
-          const order = yield* Ref.make(0)
-          const secondRunning = yield* Deferred.make<void>()
-          const asked = yield* Deferred.make<void>()
-          const release = yield* Deferred.make<void>()
-          const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
-            const position = yield* Ref.updateAndGet(order, (value) => value + 1)
-            if (position === 1) {
-              yield* Deferred.await(secondRunning)
-              yield* Deferred.succeed(asked, undefined)
-              return CallOutcome.cases.ApprovalRequired.make({
-                approvalId: ApprovalId.make('approval-test'),
-                summary: 'Send the message',
-              })
-            }
-            yield* Deferred.succeed(secondRunning, undefined)
-            yield* Deferred.await(release)
-            return yield* Effect.interrupt
-          })
-          const running = yield* Effect.forkChild(
-            run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
-          )
-          yield* Deferred.await(asked)
-          yield* Deferred.succeed(release, undefined)
-          // The lost call keeps its honest unknown receipt, and the decision still arrives at once
-          // instead of waiting for the deadline.
-          check(yield* Fiber.join(running), 'ApprovalRequired', {
-            approvalId: 'approval-test',
-            calls: [{ end: 'needs approval' }, { end: 'unknown' }],
-          })
-        }),
-      )
-    },
+  standalone.effect('reports an Approval when the last running call is interrupted', () =>
+    scopedCase(
+      supervised,
+      Effect.gen(function* () {
+        const order = yield* Ref.make(0)
+        const secondRunning = yield* Deferred.make<void>()
+        const asked = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
+          const position = yield* Ref.updateAndGet(order, (value) => value + 1)
+          if (position === 1) {
+            yield* Deferred.await(secondRunning)
+            yield* Deferred.succeed(asked, undefined)
+            return CallOutcome.cases.ApprovalRequired.make({
+              approvalId: ApprovalId.make('approval-test'),
+              summary: 'Send the message',
+            })
+          }
+          yield* Deferred.succeed(secondRunning, undefined)
+          yield* Deferred.await(release)
+          return yield* Effect.interrupt
+        })
+        const running = yield* Effect.forkChild(
+          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
+        )
+        yield* Deferred.await(asked)
+        yield* Deferred.succeed(release, undefined)
+        // The lost call keeps its honest unknown receipt, and the decision still arrives at once
+        // instead of waiting for the deadline.
+        check(yield* Fiber.join(running), 'ApprovalRequired', {
+          approvalId: 'approval-test',
+          calls: [{ end: 'needs approval' }, { end: 'unknown' }],
+        })
+      }),
+      'inherited',
+    ),
   )
 
-  layer(supervised)(
-    'Clock for a deadline leaves every running call unknown and admits nothing after it',
-    (it) => {
-      it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
+  standalone.effect(
+    'a deadline leaves every running call unknown and admits nothing after it',
+    () =>
+      scopedCase(
+        supervised,
         Effect.gen(function* () {
           const entered = yield* Deferred.make<void>()
           const release = yield* Deferred.make<void>()
@@ -800,8 +905,8 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(yield* Ref.get(count)).toBe(2)
           expect(outcome.calls.map((call) => call.end)).toEqual(['unknown', 'unknown'])
         }),
-      )
-    },
+        'inherited',
+      ),
   )
 
   const loopsLayer = Layer.effect(
@@ -815,7 +920,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         return yield* reply(call)
       })
       // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
-      // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
+      // admitted guests. Keep both real processes alive in the case scope until the test advances time.
       const fibers = yield* Effect.forEach(
         ['while(true) {}', 'while(true) await Promise.resolve();'],
         (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
@@ -832,62 +937,62 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     }),
   )
 
-  layer(supervised)(
-    'Clock for stops synchronous and microtask loops and releases both interpreter slots',
-    (it) => {
-      it.layer(loopsLayer)('Parent deadline', (deadline) => {
-        deadline.effect(
-          'stops synchronous and microtask loops and releases both interpreter slots',
-          () =>
-            Effect.gen(function* () {
-              const running = yield* RunningLoops
-              yield* TestClock.adjust('301 seconds')
-              for (const fiber of running.fibers) {
-                const outcome = yield* Fiber.join(fiber)
-                expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
-                expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
-                expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
-              }
-              const recovered = yield* Effect.forEach(
-                [42, 43],
-                (value) => run(`return ${value};`, reply),
-                { concurrency: 'unbounded' },
-              )
-              expect(
-                recovered.map((outcome) =>
-                  CodeOutcome.guards.Completed(outcome) ? outcome.result : outcome,
-                ),
-              ).toEqual([42, 43])
-            }),
-        )
-      })
-    },
+  standalone.effect(
+    'stops synchronous and microtask loops and releases both interpreter slots',
+    () =>
+      scopedCase(
+        supervised,
+        scopedCase(
+          loopsLayer,
+          Effect.gen(function* () {
+            const running = yield* RunningLoops
+            yield* TestClock.adjust('301 seconds')
+            for (const fiber of running.fibers) {
+              const outcome = yield* Fiber.join(fiber)
+              expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
+              expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
+              expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
+            }
+            const recovered = yield* Effect.forEach(
+              [42, 43],
+              (value) => run(`return ${value};`, reply),
+              { concurrency: 'unbounded' },
+            )
+            expect(
+              recovered.map((outcome) =>
+                CodeOutcome.guards.Completed(outcome) ? outcome.result : outcome,
+              ),
+            ).toEqual([42, 43])
+          }),
+          'inherited',
+        ),
+        'inherited',
+      ),
   )
 
-  layer(supervised)(
-    'Clock for marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
-    (it) => {
-      it.effect(
-        'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
-        () =>
-          Effect.gen(function* () {
-            const entered = yield* Deferred.make<void>()
-            const dispatch: Dispatch = Effect.fn('Test.pendingEffect')(function* (call) {
-              if (call.id === 1) return yield* reply(call)
-              yield* Deferred.succeed(entered, undefined)
-              return yield* Effect.never
-            })
-            const running = yield* Effect.forkChild(
-              run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
-            )
-            yield* Deferred.await(entered)
-            yield* TestClock.adjust('301 seconds')
-            const outcome = yield* Fiber.join(running)
-            expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-            expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
-          }),
-      )
-    },
+  standalone.effect(
+    'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
+    () =>
+      scopedCase(
+        supervised,
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.pendingEffect')(function* (call) {
+            if (call.id === 1) return yield* reply(call)
+            yield* Deferred.succeed(entered, undefined)
+            return yield* Effect.never
+          })
+          const running = yield* Effect.forkChild(
+            run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
+          )
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust('301 seconds')
+          const outcome = yield* Fiber.join(running)
+          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+          expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
+        }),
+        'inherited',
+      ),
   )
 })
 
