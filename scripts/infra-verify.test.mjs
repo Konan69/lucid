@@ -1,6 +1,11 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeTest from 'node:test'
-import { readTargetDocument, unwatchedPaths, validateTargets } from './infra-verify.mjs'
+import {
+  imageSettings,
+  readTargetDocument,
+  unwatchedPaths,
+  validateTargets,
+} from './infra-verify.mjs'
 
 const assert = NodeAssert
 const test = NodeTest.default
@@ -33,4 +38,15 @@ void test('a path an image is built from must be one its service watches', () =>
     'scripts/migrate.mjs',
     '.dockerignore',
   ])
+})
+
+void test('the settings an image sets for itself are read from its ENV lines', () => {
+  const dockerfile = [
+    'FROM node AS production',
+    'ARG RAILWAY_GIT_COMMIT_SHA=""',
+    'ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA',
+    'ENV PORT=8787',
+    'RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm build',
+  ].join('\n')
+  assert.deepEqual([...imageSettings(dockerfile)], ['VIVID_BUILD_COMMIT', 'PORT'])
 })

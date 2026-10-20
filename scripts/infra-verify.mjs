@@ -107,6 +107,14 @@ const walkTypeScript = (directory) =>
 const extractEnvironmentNames = (text) =>
   new Set([...text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((match) => match[1]))
 
+/**
+ * The settings an image sets for itself with `ENV NAME=value`, one per line. A setting only the
+ * image can know, such as the commit it was built from (`VIVID_BUILD_COMMIT`), is wired by the
+ * image and not by the deploy graph: a host variable of the same name would replace it.
+ */
+export const imageSettings = (dockerfile) =>
+  new Set([...dockerfile.matchAll(/^ENV\s+([A-Z][A-Z0-9_]*)=/gm)].map((match) => match[1]))
+
 const assertEnvironmentWiring = (root, stackSource) => {
   const serverConfig = source(root, 'apps/server/src/config.ts')
   const serverNames = new Set(
@@ -141,7 +149,9 @@ const assertEnvironmentWiring = (root, stackSource) => {
   // A name is wired when either graph sets it: the local process graph or the Railway graph.
   // `VIVID_WEB_DIST` exists only where the server serves the built web app, which is hosted only.
   const wiringSource = `${stackSource}\n${source(root, 'infra/railway.ts')}`
+  const serverImage = imageSettings(source(root, 'apps/server/Dockerfile'))
   for (const name of new Set([...serverNames, ...runtimeNames])) {
+    if (serverNames.has(name) && serverImage.has(name)) continue
     assert.match(
       wiringSource,
       new RegExp(`\\b${name}\\s*:`),
