@@ -179,6 +179,21 @@ describe('what a message holds', () => {
     expect(toolsOf(reply).map((part) => part.toolName)).toEqual(['search_library'])
   })
 
+  it('keeps distinct text blocks as paragraphs even when thinking separates them', () => {
+    expect(
+      textOf(
+        message({
+          role: 'assistant',
+          parts: [
+            { type: 'text', text: 'First is done.', state: 'done' },
+            { type: 'reasoning', text: '.', state: 'done' },
+            { type: 'text', text: 'Next topic begins.', state: 'done' },
+          ],
+        }),
+      ),
+    ).toBe('First is done.\n\nNext topic begins.')
+  })
+
   it('takes its time from when it finished, else when it started, else has none', () => {
     expect(
       momentOf(message({ role: 'assistant', metadata: { startedAt: 1, finishedAt: 2 } })),

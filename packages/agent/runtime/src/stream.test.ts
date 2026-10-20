@@ -81,11 +81,11 @@ function sequence(distinct: boolean) {
 
 describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () => {
   for (const distinct of [false, true]) {
-    it.live(
+    it.live.each(['sse', 'long-poll'] as const)(
       distinct
-        ? 'keeps distinct text blocks separated by thinking as two paragraphs'
-        : 'reconciles text, thinking, and text from the same block to one text part',
-      () =>
+        ? 'keeps distinct text blocks separated by thinking as two paragraphs via %s'
+        : 'reconciles text, thinking, and text from the same block to one text part via %s',
+      (transport) =>
         Effect.gen(function* () {
           const { storage } = yield* disposableStorage
           const entered = Deferred.makeUnsafe<void>()
@@ -120,7 +120,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
           yield* Deferred.await(entered)
           const states = yield* Queue.unbounded<AgentConversationObservationSnapshot>()
           const observation = yield* Effect.acquireRelease(
-            Effect.sync(() => client.observe({ live: 'sse' })),
+            Effect.sync(() => client.observe({ live: transport, limit: 1 })),
             (value) => Effect.sync(() => value.close()),
           )
           const changed = () => {
@@ -141,16 +141,15 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
                 (settled) => settled.submissionId === receipt.submissionId,
               ),
           )
-          const live = completed.conversation?.messages.find(
-            (message) => message.role === 'assistant',
-          )
+          const conversation = completed.conversation
+          if (conversation === undefined) return expect.fail('The observed conversation must exist')
+          const live = conversation.messages.find((message) => message.role === 'assistant')
           const stored = yield* Effect.tryPromise(() => client.history())
           const canonical = stored.messages.find((message) => message.role === 'assistant')
-          expect(live).toBeDefined()
-          expect(canonical).toBeDefined()
-          expect(live?.parts).toEqual(canonical?.parts)
-          expect(live?.parts.filter((part) => part.type === 'text')).toHaveLength(distinct ? 2 : 1)
-          if (live === undefined) return expect.fail('The completed reply must exist')
+          if (live === undefined || canonical === undefined)
+            return expect.fail('The completed reply must exist in observation and history')
+          expect(live.parts).toEqual(canonical.parts)
+          expect(live.parts.filter((part) => part.type === 'text')).toHaveLength(distinct ? 2 : 1)
           expect(textOf(live)).toBe(
             distinct ? 'First is done.\n\nNext topic begins.' : '**Why Rivers Meander**',
           )

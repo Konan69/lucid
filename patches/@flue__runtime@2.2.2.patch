@@ -1,3 +1,19 @@
+diff --git a/dist/dispatch-BlxCz6iq.mjs b/dist/dispatch-BlxCz6iq.mjs
+index 94d0dc4e069259c5f321b429e5a086ed724c5158..f29554c59b3f7d9cd7f1e2e74472226a934304a2 100644
+--- a/dist/dispatch-BlxCz6iq.mjs
++++ b/dist/dispatch-BlxCz6iq.mjs
+@@ -2761,6 +2761,11 @@ function withPositions(bodies, batch) {
+ 	}));
+ }
+ function requiresSnapshotReset(record, state) {
++	// Vivid workaround for Flue 2.2.2: UI deltas omit canonical block identity.
++	// Reconcile the whole completion batch before publishing settlement, using
++	// the same projection as history, including multi-step replies and tool data.
++	// Remove when upstream preserves block identity or reconciles completion.
++	if (record.type === "assistant_message_completed") return true;
+ 	if (record.type === "conversation_created" || record.type === "compaction") return true;
+ 	if (record.type !== "assistant_message_started" || !record.submissionId) return false;
+ 	const conversation = state.conversations.get(record.conversationId);
 diff --git a/dist/sql-agent-execution-store-C0vwyWZB.mjs b/dist/sql-agent-execution-store-C0vwyWZB.mjs
 index 8d022fce823a6e9f9a2bf8a222b309b5fccbcff1..09672d75cbbcced4924974f8a2ecbb56a64425ea 100644
 --- a/dist/sql-agent-execution-store-C0vwyWZB.mjs

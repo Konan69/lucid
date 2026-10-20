@@ -147,19 +147,18 @@ describe('Run settlement observation', () => {
     }),
   )
 
-  it.effect('a reply the model broke off to think is one sentence, as a notice quotes it', () =>
+  it.effect('quotes the reconciled canonical text block in a finished notice', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()
       const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
       yield* Queue.take(evidence.ready)
-      // The parts Flue's client built from production's stream of 13 October 2026.
+      // Flue reconciles completion before it publishes the settlement.
       evidence.publish({
         conversationId: 'conversation',
         messages: [
           assistant([
-            { type: 'text', text: 'Rivers bend', state: 'done' },
+            { type: 'text', text: 'Rivers bend for reasons that begin simply.', state: 'done' },
             { type: 'reasoning', text: 'hm', state: 'done' },
-            { type: 'text', text: ' for reasons that begin simply.', state: 'done' },
           ]),
         ],
         settlements: [{ submissionId: runId, outcome: 'completed' }],
@@ -168,6 +167,31 @@ describe('Run settlement observation', () => {
       expect(result).toEqual(
         Settlement.cases.Completed.make({
           reply: 'Rivers bend for reasons that begin simply.',
+          responseId: runId,
+        }),
+      )
+    }),
+  )
+
+  it.effect('quotes distinct canonical text blocks as separate paragraphs', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [
+          assistant([
+            { type: 'text', text: 'First is done.', state: 'done' },
+            { type: 'reasoning', text: '.', state: 'done' },
+            { type: 'text', text: 'Next topic begins.', state: 'done' },
+          ]),
+        ],
+        settlements: [{ submissionId: runId, outcome: 'completed' }],
+      })
+      expect(yield* Fiber.join(run)).toEqual(
+        Settlement.cases.Completed.make({
+          reply: 'First is done.\n\nNext topic begins.',
           responseId: runId,
         }),
       )

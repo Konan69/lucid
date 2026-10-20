@@ -33,10 +33,8 @@ const meaningful = (message: FlueConversationMessage): boolean =>
  * joined submission too. Preserve its response identity so outbound transports claim that answer
  * once, even when several Runs end. An empty final text remains legal after real tool work.
  *
- * Its words are read with `textOf`, the rule every client draws a reply by, not with
- * `readSubmissionReply(...).text`, which joins every text part as a paragraph. This state is
- * built from the live stream, where Flue opens a new text part each time the model stops to think,
- * so on 13 October 2026 a finished notice read "Rivers bend\n\n for reasons…" mid-sentence.
+ * `textOf` joins canonical text blocks as paragraphs for screens and outbound replies alike.
+ * The runtime reconciles the live completion batch with history before settlement is observed.
  */
 const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Settlement> => {
   const settled = state.settlements.find((candidate) => candidate.submissionId === runId)

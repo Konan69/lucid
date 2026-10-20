@@ -383,7 +383,7 @@ overrides:
   effect: 4.0.2
 
 patchedDependencies:
-  '@flue/runtime@2.2.2': 5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d
+  '@flue/runtime@2.2.2': 7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613
   '@react-native-menu/menu@2.0.0': 043796b1b24bb2fafd3f55d2ee23a1da6aaf0a17f0238000b6703878eaac0ea9
   '@react-navigation/native-stack@7.19.2': 72752c03667a50c70b75ee84fe193072ba9fedaebfd81e8fbef4c20e5db5ae73
   react-native-gesture-handler@2.32.0: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
@@ -948,7 +948,7 @@ importers:
         version: 2.2.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@flue/runtime':
         specifier: 'catalog:'
-        version: 2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
+        version: 2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@openuidev/lang-core':
         specifier: 'catalog:'
         version: 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(zod@4.5.4)
@@ -1018,7 +1018,7 @@ importers:
     dependencies:
       '@flue/runtime':
         specifier: 'catalog:'
-        version: 2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
+        version: 2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../contracts
@@ -12312,7 +12312,7 @@ snapshots:
 
   '@flue/cli@2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20261009.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.6)(esbuild@0.28.2)(hono@4.13.8)(jiti@2.7.0)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(terser@5.51.2)(tsx@4.23.13)(typescript@6.0.3)(ws@8.21.3)(yaml@2.9.0)(zod@4.5.4)':
     dependencies:
-      '@flue/runtime': 2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
+      '@flue/runtime': 2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@flue/vite': 2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20261009.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
       '@vercel/detect-agent': 1.2.5
       cac: 7.0.0
@@ -12362,7 +12362,7 @@ snapshots:
 
   '@flue/postgres@2.2.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
-      '@flue/runtime': 2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
+      '@flue/runtime': 2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - bufferutil
@@ -12378,7 +12378,7 @@ snapshots:
       '@flue/sdk': 2.2.2
       react: 19.2.3
 
-  '@flue/runtime@2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)':
+  '@flue/runtime@2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.87.1(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(ws@8.21.3)(zod@4.5.4)
       '@earendil-works/pi-ai': 0.87.1(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(ws@8.21.3)(zod@4.5.4)
@@ -12405,7 +12405,7 @@ snapshots:
 
   '@flue/vite@2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20261009.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)':
     dependencies:
-      '@flue/runtime': 2.2.2(patch_hash=5f06d2853498232d64151568ffc86113521c0ee7c95707154e0c47d35410c09d)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
+      '@flue/runtime': 2.2.2(patch_hash=7710d16639258e683534c22b10ee7e1ebde6533427a7e495b15ed3bfbb281613)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@hono/node-server': 2.1.1(hono@4.13.8)
       agents: 0.20.1(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20261009.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.3.0)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(zod@4.5.4)
       magic-string: 1.2.3

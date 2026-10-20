@@ -1,41 +1,42 @@
 import { describe, expect, it } from 'vitest'
 import { textOf } from './words'
+import type { FlueConversationPart } from '@flue/sdk'
 
-const text = (words: string) => ({ type: 'text' as const, text: words })
-const reasoning = (words: string) => ({ type: 'reasoning' as const, text: words })
-const tool = { type: 'dynamic-tool' }
+const text = (words: string): FlueConversationPart => ({ type: 'text', text: words, state: 'done' })
+const reasoning = (words: string): FlueConversationPart => ({
+  type: 'reasoning',
+  text: words,
+  state: 'done',
+})
+const tool: FlueConversationPart = {
+  type: 'dynamic-tool',
+  toolName: 'search',
+  toolCallId: 'call',
+  state: 'input-available',
+  input: {},
+}
 
 describe("a message's words", () => {
-  it('reads text the model broke off to think as one stretch, as the stored reply has it', () => {
-    // The parts Flue's client built from production's stream of 16 October 2026.
-    const live = {
-      parts: [
-        reasoning('Just answer: ~500 words, three short headings.'),
-        text('**'),
-        reasoning('.'),
-        text('Why Rivers Meander**\n\nRivers almost never run in straight lines.'),
-      ],
-    }
-    const stored = {
-      parts: [
-        reasoning('Just answer: ~500 words, three short headings..'),
-        text('**Why Rivers Meander**\n\nRivers almost never run in straight lines.'),
-      ],
-    }
-    expect(textOf(live)).toBe(textOf(stored))
-    expect(textOf(live)).toBe(
-      '**Why Rivers Meander**\n\nRivers almost never run in straight lines.',
+  it('keeps a canonical text block whole alongside reasoning', () => {
+    expect(textOf({ parts: [text('**Why Rivers Meander**'), reasoning('.')] })).toBe(
+      '**Why Rivers Meander**',
     )
   })
 
-  it('starts a new paragraph after a tool', () => {
-    const message = { parts: [text('Looking.'), tool, text('Found it.')] }
-    expect(textOf(message)).toBe('Looking.\n\nFound it.')
+  it('keeps distinct text blocks as paragraphs when reasoning stands between them', () => {
+    expect(
+      textOf({ parts: [text('First is done.'), reasoning('.'), text('Next topic begins.')] }),
+    ).toBe('First is done.\n\nNext topic begins.')
   })
 
-  it('keeps a paragraph break across a tool even when thinking follows it', () => {
-    const message = { parts: [text('Looking.'), tool, reasoning('hm'), text('Found it.')] }
-    expect(textOf(message)).toBe('Looking.\n\nFound it.')
+  it('keeps adjacent text blocks as paragraphs', () => {
+    expect(textOf({ parts: [text('First.'), text('Second.')] })).toBe('First.\n\nSecond.')
+  })
+
+  it('starts a new paragraph after a tool', () => {
+    expect(textOf({ parts: [text('Looking.'), tool, text('Found it.')] })).toBe(
+      'Looking.\n\nFound it.',
+    )
   })
 
   it('has no words when a message has no text', () => {

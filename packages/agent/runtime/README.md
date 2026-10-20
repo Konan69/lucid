@@ -49,6 +49,27 @@ against real Boat on 3 October 2026. See the domain READMEs and
 [current feature status](../../../docs/14-product-feature-set-and-grok-bot-parity.md) for evidence
 and remaining limits.
 
+## Live reply reconciliation
+
+The runtime patch in `patches/@flue__runtime@2.2.2.patch` makes an assistant completion
+use Flue's existing `conversation-reset` projection for its whole durable batch. Flue 2.2.2
+keeps provider content indexes in canonical records but omits block identity from UI deltas.
+Its SDK splits a part whenever text and reasoning alternate. A single provider text block can
+therefore appear as several live parts, while distinct blocks must remain distinct.
+
+Completion now replaces live state with the same projection as history before a settlement
+can reach the server or any client. The reset also preserves accumulated model steps, tool
+results, metadata, and data parts through Flue's own projector and history-window handling.
+During streaming, delta parts still follow Flue's original kind boundaries. Reconciliation
+happens once per completed model step and sends the conversation snapshot for that batch.
+
+Remove this completion change when Flue carries block identity through live projection or
+reconciles completion upstream. No SDK patch is required. `@flue/react` uses the SDK observer,
+so web, phone, desktop, and server observation all consume the same reset. The shared
+`textOf` in contracts then joins canonical text blocks as paragraphs without guessing from
+reasoning. `src/stream.test.ts` proves both same-block and distinct-block sequences through
+real storage, the HTTP router, and SDK observation.
+
 ## Models and rehearsal
 
 `src/providers/opencode.ts` registers OpenCode Go and `src/providers/explabs.ts` the Experiential
