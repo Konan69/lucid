@@ -27,6 +27,15 @@ export type Waiting = typeof FeedItem.cases.Waiting.Type
 export type Working = typeof FeedItem.cases.Working.Type
 export type Settled = typeof FeedItem.cases.Settled.Type
 
+/**
+ * Which post a card shows, as a value that only changes when Vivid posts again: the post itself,
+ * or what the work is asking for when there is no post. The server's `at` is not it: marking a
+ * card seen moves `at` too (`FeedStore.mark` writes `updatedAt`), so a press compared by `at`
+ * could be taken as answering a new post the moment the card was marked seen.
+ */
+export const revisionOf = (item: Waiting): string =>
+  JSON.stringify([item.post, item.post === null ? item.asking : []])
+
 /** The three stages, each newest first, and how many things wait on the Person. */
 export interface FeedView {
   readonly waiting: ReadonlyArray<Waiting>
