@@ -279,6 +279,17 @@ void test('zod and other JS-only dependencies keep the existing runtime', (t) =>
   )
 })
 
+/** An app's `exports` map only fences imports by name; Metro bundles the app from `main`. */
+void test('a package exports map on the phone app is a JavaScript-only change', (t) => {
+  const fixture = repository(t)
+  const base = commit(fixture.root, ['apps', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], 'published')
+  write(fixture.root, 'apps/mobile/package.json', '{ "exports": {} }\n')
+  version(fixture.root, { version: '0.3.10' })
+  commit(fixture.root, ['apps/mobile/app.json', 'apps/mobile/package.json'], 'fence the app')
+  const result = check(fixture.root, [base])
+  assert.equal(result.status, 0, result.output)
+})
+
 void test('phone closure follows workspace links while tests and docs remain outside shipped files', (t) => {
   const fixture = repository(t)
   fixture.lock.importers['apps/mobile'].dependencies = {

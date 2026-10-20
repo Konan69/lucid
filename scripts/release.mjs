@@ -350,6 +350,7 @@ function nativeManifest(manifest) {
     name: _name,
     version: _version,
     main: _main,
+    exports: _exports,
     type: _type,
     private: _private,
     ...config
