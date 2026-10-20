@@ -92,8 +92,7 @@ export function Feed() {
   // session's data does not change while this screen is up, so the first one serves.
   const [seen] = useState(() => (info: { viewableItems: ReadonlyArray<ViewToken<Row>> }) => {
     for (const token of info.viewableItems) {
-      if (Row.$is('Waiting')(token.item) && !token.item.item.seen)
-        markSeen(data, token.item.item.card)
+      if (Row.$is('Waiting')(token.item) && !token.item.item.seen) markSeen(data, token.item.item)
     }
   })
 
