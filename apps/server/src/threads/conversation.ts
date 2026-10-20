@@ -5,7 +5,6 @@ import {
   MessageAttachment,
   SignalType,
   type Conflict,
-  type LibraryFolderId,
   type NotFound,
   PersonId,
   type Run,
@@ -63,8 +62,6 @@ export interface Delivery {
   /** The Person Vivid acts for in the Run this starts. They must be able to see the Thread. */
   readonly personId: PersonId
   readonly speaker: DeliverySpeaker
-  /** Optional Library confinement supplied by the server. */
-  readonly libraryFolder?: LibraryFolderId | null
   readonly message: DeliveryMessage
   readonly origin: StoredRunOrigin
   /** Repeating a delivery with the same key starts nothing new and returns the same Run. */

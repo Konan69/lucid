@@ -254,7 +254,7 @@ const makeReads = (database: Database['Service']) => {
   return { list, named, find, due }
 }
 
-/** Arrivals: one row per event event, the dedupe key for Executor's redeliveries. */
+/** Arrivals: one row per event, the dedupe key for Executor's redeliveries. */
 const makeArrivals = (database: Database['Service']) => {
   /**
    * Record that an event arrived, in the Thread it wakes Vivid in, and answer the Run it

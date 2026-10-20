@@ -40,7 +40,6 @@ import {
 import { threadParticipants, threadReads, threads } from './tables.ts'
 import { toWire } from './wire.ts'
 import type { TitleSource } from './title.ts'
-import type { ThreadPlace } from './place.ts'
 import { claimFirstThread, releaseFirstThread } from './first.ts'
 
 type DatabaseService = Database['Service']
@@ -83,13 +82,8 @@ export interface ThreadStoreService {
     personId: PersonId,
   ) => Effect.Effect<Thread, ThreadStoreError>
   /**
-   * The private Thread with this id, owned by this Person in this workspace, created if it does not
-   * exist. Callers state provenance: only placeholders and Person-message excerpts are Seed.
-   */
-  readonly ensure: (input: Ensured) => Effect.Effect<StoredThread, ThreadStoreError>
-  /**
-   * The same, for a Thread Vivid works in on its own (`place.ts`): it is never listed, and an
-   * existing Thread with this id must be a Background one of the same owner.
+   * A private Background Thread Vivid works in on its own (`place.ts`), created if absent.
+   * It is never listed; an existing id must belong to the same Person and workspace.
    */
   readonly ensureBackground: (input: Ensured) => Effect.Effect<StoredThread, ThreadStoreError>
   readonly create: (
@@ -171,8 +165,8 @@ const makeView = (database: DatabaseService) =>
  * admission cannot leave an unannounced Thread; an existing ownership receipt writes nothing.
  * A Watch id is predictable, so its presence never proves which Person may receive the work.
  */
-const makeEnsure = (database: DatabaseService, place: ThreadPlace) =>
-  Effect.fn('ThreadStore.ensure')(function* (input: Ensured) {
+const makeEnsureBackground = (database: DatabaseService) =>
+  Effect.fn('ThreadStore.ensureBackground')(function* (input: Ensured) {
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
@@ -185,7 +179,7 @@ const makeEnsure = (database: DatabaseService, place: ThreadPlace) =>
             updatedAt: now,
             personId: input.personId,
             companyId: input.companyId,
-            place,
+            place: 'Background',
           })
           .onConflictDoNothing({ target: threads.id })
           .returning()
@@ -200,12 +194,11 @@ const makeEnsure = (database: DatabaseService, place: ThreadPlace) =>
         )
         const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
         // A predictable Watch id proves no ownership; sharing changes reach, never ownership.
-        // A predictable id also proves nothing about its place: a Conversation is never reused as
-        // a Background Thread, nor the other way round.
+        // A Conversation is never reused as a Background Thread.
         const theirs =
           stored.personId === input.personId &&
           stored.companyId === input.companyId &&
-          stored.place === place
+          stored.place === 'Background'
         return theirs
           ? stored
           : yield* new DatabaseConstraintViolation({ message: 'Database constraint was violated' })
@@ -586,8 +579,7 @@ export const threadStoreLayer = Layer.effect(
         releaseFirstThread(personId, threadId).pipe(Effect.provideService(Database, database)),
       list: makeList(database),
       view: makeView(database),
-      ensure: makeEnsure(database, 'Conversation'),
-      ensureBackground: makeEnsure(database, 'Background'),
+      ensureBackground: makeEnsureBackground(database),
       create: makeCreate(database),
       patch: makePatch(database),
       share: makeShare(database),

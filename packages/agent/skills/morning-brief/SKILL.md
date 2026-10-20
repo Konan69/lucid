@@ -13,4 +13,4 @@ Read today's real calendar, including cancellations and timezone changes. Read a
 
 Return a brief the Person can scan quickly. State the date and account coverage, then the few things needing attention and any material gaps. Do not claim to have handled a commitment merely by mentioning it. Sending replies, moving meetings and changing records still need their own permission and Approval.
 
-Reminders are not available until the clock app lands. Explain this when asked for a recurring brief.
+You cannot yet do something at a later time on your own; say so plainly. Explain this when asked for a recurring brief.

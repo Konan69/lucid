@@ -1,12 +1,12 @@
 import { defineTool } from '@flue/runtime'
 import { LibrarySearchRequest } from '@vivid/contracts'
-import { Effect, Option } from 'effect'
+import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
-/** Search is read-only; folder authority comes exclusively from the server delivery. */
+/** Search is read-only and uses the acting Person’s Library access. */
 export function libraryTools(runTool: RunTool) {
   return [
     defineTool({
@@ -26,12 +26,11 @@ export function libraryTools(runTool: RunTool) {
           6,
         ),
       }),
-      /** Folder absence means ordinary Library search, never a model-selected folder. */
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
             const scope = yield* Scope
-            const request = searchRequest(data, scope.folder)
+            const request = LibrarySearchRequest.make({ query: data.query, limit: data.limit })
             const response = yield* scope.client.SearchLibrary(request)
             return { output: { results: views.passages(response.results) } }
           }),
@@ -40,16 +39,4 @@ export function libraryTools(runTool: RunTool) {
       },
     }),
   ] as const
-}
-
-/** Both request variants preserve genuine absence and are constructed against the wire contract. */
-export function searchRequest(
-  data: { query: string; limit: number },
-  folder: Scope['Service']['folder'],
-) {
-  return Option.match(folder, {
-    onNone: () => LibrarySearchRequest.make({ query: data.query, limit: data.limit }),
-    onSome: (folderId) =>
-      LibrarySearchRequest.make({ query: data.query, limit: data.limit, folderId }),
-  })
 }

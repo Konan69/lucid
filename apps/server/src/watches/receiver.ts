@@ -75,14 +75,14 @@ const Verification = Schema.Struct({
   type: Schema.Literal('verification'),
   challenge: Schema.String,
 })
-const Event = Schema.Struct({
+const WatchEvent = Schema.Struct({
   eventId: Schema.NonEmptyString,
   name: Schema.String,
   timestamp: Schema.String,
   data: Schema.Json,
 })
-type Event = typeof Event.Type
-const Body = Schema.Union([Verification, Event])
+type WatchEvent = typeof WatchEvent.Type
+const Body = Schema.Union([Verification, WatchEvent])
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Body))
 const isVerification = Schema.is(Verification)
 const decodeId = Schema.decodeUnknownEffect(WatchId.check(Schema.isNonEmpty()))
@@ -122,7 +122,7 @@ export const threadOf = (watch: WatchId, eventId: string) =>
   )
 
 /** What Vivid reads when woken: the background rule, the Person's instruction, then the event. */
-export const bodyOf = (record: WatchRecord, event: Event) =>
+export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
   [
     BACKGROUND_INSTRUCTION,
     `Watch: ${record.watch.name} (${record.watch.event} in ${record.watch.account})`,
@@ -136,7 +136,7 @@ export const bodyOf = (record: WatchRecord, event: Event) =>
  * attempt failed before admission) is delivered again under the same idempotency key, which
  * Conversation turns into the same Run rather than a second one.
  */
-const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event: Event) {
+const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event: WatchEvent) {
   const watch = record.watch
   const thread = yield* (yield* ThreadStore).ensureBackground({
     id: threadOf(watch.id, event.eventId),
@@ -158,7 +158,6 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: record.personId,
-    libraryFolder: null,
     message: DeliveryMessage.cases.Signal.make({
       type: 'event',
       body: bodyOf(record, event),

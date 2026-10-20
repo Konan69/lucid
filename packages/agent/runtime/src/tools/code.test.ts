@@ -99,7 +99,6 @@ describe('Program model tools', () => {
                 threadId: ThreadId.make('MARK-thread'),
               },
               client: rpc.client,
-              folder: Option.none(),
             }),
           )
           const [program, page] = codeTools(toolRunner(scope))

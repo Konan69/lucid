@@ -72,7 +72,6 @@ const fixture = Effect.fn('SkillToolsTest.fixture')(function* () {
     Scope.of({
       acting: { personId: PersonId.make('MARK-person'), threadId: ThreadId.make('MARK-thread') },
       client: rpc.client,
-      folder: Option.none(),
     }),
   )
   const [read, save] = skillTools(toolRunner(layer))

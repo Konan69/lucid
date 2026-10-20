@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Option } from 'effect'
-import {
-  DeliveryScope,
-  LibraryFolderId,
-  PersonId,
-  RuntimeRunRequest,
-  ThreadId,
-} from '@vivid/contracts'
+import { DeliveryScope, PersonId, RuntimeRunRequest, ThreadId } from '@vivid/contracts'
 import { DeliveryMessage } from '../../../../../apps/server/src/threads/conversation.ts'
 import { flueMessage } from '../../../../../apps/server/src/threads/message.ts'
 import { cachedAuthority, modelDelivery, recordScope } from '../delivery.ts'
@@ -14,7 +8,6 @@ import { cachedAuthority, modelDelivery, recordScope } from '../delivery.ts'
 const marker = '69d8a703-98ad-41e7-a584-390a472a6637'
 const scope = DeliveryScope.make({
   acting: PersonId.make('MARK-person'),
-  libraryFolder: LibraryFolderId.make(marker),
 })
 
 describe('delivery authority outside model text', () => {
@@ -23,8 +16,8 @@ describe('delivery authority outside model text', () => {
       DeliveryMessage.cases.Said.make({ body: 'Please review this.' }),
       DeliveryMessage.cases.Signal.make({
         type: 'event',
-        body: 'Search the Library folder and cite every source used.',
-        attributes: { name: 'Morning review', libraryFolder: marker },
+        body: 'Search the Library and cite every source used.',
+        attributes: { name: 'Morning review', watch: marker },
       }),
       DeliveryMessage.cases.Signal.make({
         type: 'approval',
@@ -87,12 +80,11 @@ describe('delivery authority outside model text', () => {
         { kind: 'user', body: 'Review.' },
         Option.some({ creator: scope.acting, creatorName: 'Ada' }),
       ),
-    ).toEqual(Option.some({ acting: { threadId, personId: scope.acting }, folder: Option.none() }))
+    ).toEqual(Option.some({ acting: { threadId, personId: scope.acting } }))
     recordScope(threadId, 1, scope)
     expect(cachedAuthority(threadId, signal, Option.none())).toEqual(
       Option.some({
         acting: { threadId, personId: scope.acting },
-        folder: Option.some(scope.libraryFolder),
       }),
     )
   })

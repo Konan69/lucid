@@ -18,7 +18,6 @@ export const openFirstThread = Effect.fn('Threads.openFirst')(function* (actor: 
         threadId: result.thread,
         personId: actor.person.id,
         speaker: DeliverySpeaker.cases.Vivid.make({}),
-        libraryFolder: null,
         message: DeliveryMessage.cases.FirstConversation.make({}),
         origin: StoredRunOrigin.cases.FirstConversation.make({}),
         idempotencyKey: 'first-conversation',

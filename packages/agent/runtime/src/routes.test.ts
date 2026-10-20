@@ -116,7 +116,7 @@ const delivery = (threadId: ThreadId, turn: number, body: string) => {
     body,
     attributes: { speaker: 'Fixture Person' },
     turn,
-    scope: { acting: personId, libraryFolder: null },
+    scope: { acting: personId },
   })
   const initialData = ThreadOrigin.make({ creator: personId, creatorName: 'Fixture Person' })
   return Admission.make({ ...request, initialData })

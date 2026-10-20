@@ -37,7 +37,6 @@ const fixture = Effect.fn('ConnectionToolsTest.fixture')(function* () {
         personId: PersonId.make('MARK-person'),
       },
       client: rpc.client,
-      folder: Option.none(),
     }),
   )
   return { requests, rpc, tools: connectionTools(toolRunner(scope)) }

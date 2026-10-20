@@ -208,6 +208,7 @@ const definitions = [
     about: 'Removes something you no longer want remembered and stops it from coming back.',
     starter: false,
     needs: [
+      'list_watches',
       'recall',
       'read_note',
       'write_note',

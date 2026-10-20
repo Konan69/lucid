@@ -27,7 +27,6 @@ it.effect(
             threadId: ThreadId.make('fixture-thread'),
           },
           client: rpc.client,
-          folder: Option.none(),
         }),
       )
       const [, , , tool] = connectionTools(toolRunner(scope))

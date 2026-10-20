@@ -37,7 +37,6 @@ describe('scoped tool execution', () => {
             threadId: ThreadId.make('sandbox-thread'),
           },
           client: rpc.client,
-          folder: Option.none(),
         }),
       )
       const sandbox = computerSandbox(scopedRunner(scope), '/home/user')

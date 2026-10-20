@@ -32,7 +32,6 @@ const fixture = Effect.fn('ProjectToolsTest.fixture')(function* () {
         threadId: ThreadId.make('PRIVATE-thread'),
       },
       client: rpc.client,
-      folder: Option.none(),
     }),
   )
   const [create] = projectTools(toolRunner(scope))

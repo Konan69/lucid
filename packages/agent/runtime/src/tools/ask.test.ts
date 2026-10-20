@@ -47,7 +47,6 @@ describe('ask_person', () => {
           Scope.of({
             acting: { personId: person.id, threadId },
             client: rpc.client,
-            folder: Option.none(),
           }),
         )
         const tool = askTools(toolRunner(scope))[0]

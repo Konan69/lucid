@@ -292,7 +292,6 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         threadId: thread.id,
         personId: speaker.id,
         origin: delivery.origin,
-        libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
       })
       const said = previewOf(delivery.message)
       // Replay completes inside the reservation match; only a new reserved turn reaches Flue.

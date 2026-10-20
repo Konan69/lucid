@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
-import { LibraryFolderId, PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
+import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
@@ -265,8 +265,7 @@ export const SignalType = Schema.Literals([
 export type SignalType = typeof SignalType.Type
 
 /**
- * Who a delivery is for and what it may reach: the Person Vivid acts for, and the Library folder
- * the work is confined to when there is one (a scoped folder).
+ * Who a delivery is for: the Person Vivid acts for.
  *
  * This is never written into the conversation. Flue shows a delivery's attributes to the model as
  * text, so anything put there is something the model can read, repeat to the people in a shared
@@ -275,7 +274,6 @@ export type SignalType = typeof SignalType.Type
  */
 export const DeliveryScope = Schema.Struct({
   acting: PersonId,
-  libraryFolder: Schema.NullOr(LibraryFolderId),
 }).annotate({ identifier: 'DeliveryScope', title: 'Delivery scope' })
 export interface DeliveryScope extends Schema.Schema.Type<typeof DeliveryScope> {}
 

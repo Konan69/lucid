@@ -11,7 +11,6 @@ import {
   DeliveryScope,
   NotFound,
   type DeliveryScopeRequest,
-  type LibraryFolderId,
   Run,
   RunFailure,
   RunOrigin,
@@ -172,7 +171,6 @@ export interface RunStoreService {
     readonly threadId: ThreadId
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
-    readonly libraryFolder: LibraryFolderId | null
   }) => Effect.Effect<TurnReservation, Conflict | DatabaseInfrastructureError>
   /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
   readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
@@ -309,7 +307,6 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
 const makeStart = (database: DatabaseService): RunStoreService['start'] =>
   Effect.fn('RunStore.start')(function* (input) {
     const now = yield* Clock.currentTimeMillis
-    const folder = input.libraryFolder
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         yield* tx
@@ -347,7 +344,6 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
             id: input.id,
             threadId: input.threadId,
             personId: input.personId,
-            libraryFolder: folder,
             turn: sql`(select coalesce(max("turn"), 0) + 1 from "vivid_runs" where "thread_id" = ${input.threadId})`,
             origin: yield* encodeOrigin(input.origin),
             state: 'working',
@@ -363,7 +359,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
     )
   })
 
-/** The actor and optional confinement survive runtime restarts without entering Flue history. */
+/** The acting Person survives runtime restarts without entering Flue history. */
 const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
   Effect.fn('RunStore.scope')(function* ({ threadId, turn }) {
     const [row] = yield* database.run(
@@ -373,7 +369,7 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
         .where(and(eq(runs.threadId, threadId), eq(runs.turn, turn))),
     )
     if (row === undefined) return yield* new NotFound({ message: 'Delivery not found' })
-    return DeliveryScope.make({ acting: row.personId, libraryFolder: row.libraryFolder })
+    return DeliveryScope.make({ acting: row.personId })
   })
 
 /** A failed admission is replayable with its original turn; acceptance starts its observation. */

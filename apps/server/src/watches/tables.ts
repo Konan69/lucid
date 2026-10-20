@@ -52,7 +52,7 @@ export const watches = pgTable(
 )
 
 /**
- * One row per event event a Watch received. Executor delivers at least once and keeps an
+ * One row per event a Watch received. Executor delivers at least once and keeps an
  * event's `eventId` across retries, so `(watch_id, event_id)` is the dedupe key. The row
  * names the background Thread the event woke Vivid in and, once admitted, its Run: a row
  * without a Run is an event whose delivery has not been admitted yet, and a retry finishes it.

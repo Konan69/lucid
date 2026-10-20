@@ -43,7 +43,6 @@ const fixture = Effect.fn('WatchToolsTest.fixture')(function* () {
         threadId: ThreadId.make('PRIVATE-thread'),
       },
       client: rpc.client,
-      folder: Option.none(),
     }),
   )
   const [find, create, list, stop] = watchTools(toolRunner(scope))

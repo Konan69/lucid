@@ -33,7 +33,6 @@ const fixture = Effect.fn('Documents.test.fixture')(function* () {
         threadId: ThreadId.make('document-thread'),
       },
       client: rpc.client,
-      folder: Option.none(),
     }),
   )
   return { requests, rpc, runTool: toolRunner(scope) }

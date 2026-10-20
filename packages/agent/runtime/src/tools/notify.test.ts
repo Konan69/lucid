@@ -39,7 +39,6 @@ it.effect(
               threadId: ThreadId.make('MARK-thread'),
             },
             client: rpc.client,
-            folder: Option.none(),
           }),
         )
         const [tool] = notifyTools(toolRunner(layer))

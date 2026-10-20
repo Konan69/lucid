@@ -260,7 +260,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               threadId: owner.threadId,
               personId: owner.person.id,
               origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
-              libraryFolder: null,
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
@@ -309,7 +308,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             threadId: owner.threadId,
             personId: owner.person.id,
             origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
-            libraryFolder: null,
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')

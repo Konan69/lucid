@@ -5,14 +5,7 @@ import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import {
-  LibraryFolderId,
-  PersonId,
-  RunId,
-  RuntimeAdmissionBody,
-  ServerBuild,
-  ThreadId,
-} from '@vivid/contracts'
+import { PersonId, RunId, RuntimeAdmissionBody, ServerBuild, ThreadId } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { ServerConfig } from '../config.ts'
 
@@ -52,7 +45,6 @@ const admissionInput: Parameters<Runtime['Service']['admit']>[0] = {
   origin: { creator: PersonId.make('MARK-person'), creatorName: 'Ada' },
   scope: {
     acting: PersonId.make('MARK-person'),
-    libraryFolder: LibraryFolderId.make('926eaf36-3b29-41a8-8021-90fe0f694c52'),
   },
   message: { kind: 'user', body: 'Review.' },
 }
@@ -470,14 +462,13 @@ const transport = (receiptId: string, message: RuntimeMessage) =>
           attachments: message.kind === 'user' ? message.attachments : [],
           attributes: message.kind === 'user' ? {} : message.attributes,
           turn: 3,
-          scope: { acting: 'MARK-person', libraryFolder: '926eaf36-3b29-41a8-8021-90fe0f694c52' },
+          scope: { acting: 'MARK-person' },
           initialData: { creator: 'MARK-person', creatorName: 'Ada' },
         })
         expect(delivery.attributes).toEqual(message.kind === 'user' ? {} : message.attributes)
         expect(delivery.attachments).toEqual(message.kind === 'user' ? message.attachments : [])
         expect(delivery.scope).toEqual({
           acting: 'MARK-person',
-          libraryFolder: '926eaf36-3b29-41a8-8021-90fe0f694c52',
         })
         expect(delivery.turn).toBe(3)
         expect(delivery.initialData).toEqual({ creator: 'MARK-person', creatorName: 'Ada' })
@@ -568,7 +559,6 @@ describe('Runtime delivery wire boundary', () => {
                 origin: { creator: PersonId.make('MARK-person'), creatorName: 'Ada' },
                 scope: {
                   acting: PersonId.make('MARK-person'),
-                  libraryFolder: LibraryFolderId.make('926eaf36-3b29-41a8-8021-90fe0f694c52'),
                 },
                 message,
               })

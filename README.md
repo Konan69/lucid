@@ -2,8 +2,7 @@
 
 One person, one Vivid—simple alone and organizational by design.
 
-Reminders and anything to do once at a time are one-off Routines. Vivid resolves the Person's
-local date-time, fires once and retains its Thread and Occurrence.
+Vivid watches Integration events and posts useful updates to the Feed.
 
 Vivid is an AI teammate for everyday work, reached through a Thread. This repository holds the
 whole product: web, mobile, desktop, application server, Flue runtime, shared contracts, tests,
