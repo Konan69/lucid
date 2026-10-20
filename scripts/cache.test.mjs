@@ -90,6 +90,7 @@ function fixture(t) {
     'scripts/lint.mjs',
     'scripts/types.mjs',
     'scripts/oxlint-plugin-vivid.mjs',
+    'scripts/boundary.mjs',
     'tools/oxlint/probe.ts',
     'apps/web/src/styles/probe.css',
   ]) {
@@ -156,14 +157,19 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
   const plugin = hashes(root)
   assert.notEqual(compiler.get('@vivid/web#lint').hash, plugin.get('@vivid/web#lint').hash)
   assert.equal(compiler.get('@vivid/web#typecheck').hash, plugin.get('@vivid/web#typecheck').hash)
+  // The plugin imports its cross-package rule from boundary.mjs, so that module is a lint input too.
+  NodeFS.appendFileSync(NodePath.join(root, 'scripts/boundary.mjs'), '// boundary change\n')
+  const boundary = hashes(root)
+  assert.notEqual(plugin.get('@vivid/web#lint').hash, boundary.get('@vivid/web#lint').hash)
+  assert.equal(plugin.get('@vivid/web#typecheck').hash, boundary.get('@vivid/web#typecheck').hash)
   NodeFS.appendFileSync(NodePath.join(root, 'scripts/types.mjs'), '// compiler runner change\n')
   const runner = hashes(root)
   assert.notEqual(
-    plugin.get('@vivid/contracts#types').hash,
+    boundary.get('@vivid/contracts#types').hash,
     runner.get('@vivid/contracts#types').hash,
   )
-  assert.notEqual(plugin.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
-  assert.equal(plugin.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
+  assert.notEqual(boundary.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
+  assert.equal(boundary.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
 })
 
 /** tsgolint reopens referenced source, so declaration emission must not delay lint. */
