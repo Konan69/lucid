@@ -61,8 +61,9 @@ Completion projects only the current response with history's own projector, reta
 first-step message ID, earlier model steps, tool outputs, anchored data, and metadata.
 It stops at the response's first entry rather than projecting older replies. The wire carries
 one canonical message per completed model step, followed by Flue's unchanged completion marker.
-The durable batch retains its original event order, so settlement reaches the server and clients
-only after replacement. Completion never requests a conversation reset or resends older replies.
+Durable stream order places replacement before completion and the later settlement, so the
+server and clients settle only after replacement. Completion never requests a conversation reset
+or resends older replies.
 During streaming, delta parts still follow Flue's original kind boundaries.
 
 Remove this completion change when Flue carries block identity through live projection or

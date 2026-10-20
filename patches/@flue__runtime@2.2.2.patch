@@ -67,7 +67,7 @@ index 94d0dc4e069259c5f321b429e5a086ed724c5158..f493151e8a6eda4143c918e0eb881c7f
  		}];
  		case "assistant_message_completed": return [{
 +			// The SDK's existing message-appended upsert replaces by the stable
-+			// first-step id before completion and settlement in this same batch.
++			// first-step id before completion. Settlement follows in stream order.
 +			type: "message-appended",
 +			conversationId,
 +			message: projectCompletedResponse(state.conversations.get(record.conversationId), uiMessageId(record.messageId), record.submissionId, state.recordsThroughOffset)

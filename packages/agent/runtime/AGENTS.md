@@ -39,19 +39,23 @@ schema-derived `VividRpcClient`.
 
 ## Patched Flue
 
-`patches/@flue__runtime@2.2.2.patch` changes one constant in Flue's conversation writer
-(`src/conversation-writer.ts`, shipped as `dist/sql-agent-execution-store-*.mjs`):
-`CANONICAL_FLUSH_DELAY_MS` from 1,000 to 100.
+`patches/@flue__runtime@2.2.2.patch` holds two independent fixes. When upgrading Flue or
+removing either fix, read [Live reply reconciliation](README.md#live-reply-reconciliation).
 
-- **Why.** Every word a client sees is first appended to Flue's durable stream, and the writer
-  holds streamed text for that long before each append. At one second a reply reached the screen
-  in lumps a second apart (measured on production, 11 October 2026: 158 text updates delivered in
-  four lumps). Flue 2.2.2 has no setting for it.
-- **Cost.** About ten appends a second for each reply being written, where there was one, and so
-  ten times the batches in a conversation's stream.
-- **Removing it.** When Flue makes the delay a setting, set it there and delete the patch and its
-  `patchedDependencies` line. The file name carries a build hash, so a Flue upgrade fails the
-  install until the patch is made again or dropped.
+- **Flush cadence.** The conversation writer's `CANONICAL_FLUSH_DELAY_MS` changes from 1,000
+  to 100. Production measured 158 text updates arriving in four lumps on 11 October 2026.
+  The lower delay costs about ten durable append batches per second of streaming, instead of one.
+  When Flue exposes the delay as a setting, configure it and remove only the writer hunk.
+- **Completed replies.** The dispatch projector replaces the completed response through the SDK's
+  `message-appended` upsert before its completion marker. This repairs text parts split by
+  interleaved thinking while preserving distinct canonical blocks. Each completed model step
+  projects and resends its response, including earlier tool outputs. Remove these dispatch hunks
+  only when Flue preserves live block identity or reconciles completion itself, and the runtime
+  transport tests still pass.
+
+The dist filenames carry build hashes, so an upgrade fails installation until the patch is
+updated. Delete the patch file and its `patchedDependencies` entry only after both fixes have
+upstream replacements.
 
 ## Runtime contract
 

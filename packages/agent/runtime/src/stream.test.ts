@@ -17,8 +17,7 @@ import {
 import { textOf } from '@vivid/contracts'
 import { Effect, Option, Queue, Stream } from 'effect'
 import * as v from 'valibot'
-import { testDatabaseConfigured } from '../../../../apps/server/src/database/testdb.ts'
-import { disposableStorage } from '../tests/schema.ts'
+import { disposableStorage, testDatabaseConfigured } from '../tests/schema.ts'
 
 /** The public runtime owns projection; the test controls only the provider's content events. */
 function Reply() {
@@ -275,7 +274,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
             expect.fail(
               'The completed reply must retain its first-step id in observation and history',
             )
-          expect(live.parts).toEqual(canonical.parts)
+          expect(live).toEqual(canonical)
           expect(live.parts.filter((part) => part.type === 'text')).toHaveLength(distinct ? 2 : 1)
           expect(textOf(live)).toBe(
             distinct ? 'First is done.\n\nNext topic begins.' : '**Why Rivers Meander**',

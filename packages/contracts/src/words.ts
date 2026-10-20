@@ -6,9 +6,10 @@ export interface Worded {
 }
 
 /**
- * Each text block is a paragraph. Flue's completion projection reconciles live parts with
- * canonical history, so reasoning is neither a paragraph nor evidence that text blocks join.
- * Notices, channel replies, and conversation screens share this rule.
+ * Each supplied text part is a paragraph. Completed replies have canonical blocks after runtime
+ * reconciliation; streaming parts can still split where text and reasoning alternate. Reasoning
+ * is neither a paragraph nor evidence that text blocks join. Conversation screens and outbound
+ * replies share this extraction rule.
  */
 export const textOf = (message: Worded): string =>
   message.parts
