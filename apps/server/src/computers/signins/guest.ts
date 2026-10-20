@@ -4,8 +4,8 @@
  * Storage.setCookies and Storage.getCookies are the public browser-endpoint CDP methods. */
 export const signInGuest = String.raw`
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),childProcess=require('node:child_process');
-const session='Vivid-signin-'+require('node:crypto').randomUUID();
-let failureStage=10,nativeUsed=false;
+const session='Vivid-signin-'+require('node:crypto').randomUUID(),nativeCalls=new Set();
+let failureStage=10,nativeUsed=false,finishing=false,consentAttempt;
 const deadline=setTimeout(()=>finish(2),25000);
 // Native preparation can enable Chrome's consent server without a launch flag. Its
 // DevToolsActivePort file supplies the exact route; /json/version deliberately returns 404.
@@ -45,15 +45,17 @@ async function endpoint(pid){
 }
 // The existing driver's public CLI scopes native snapshot tokens to this operation.
 // Cookies never enter these calls; its binary/socket are the product bootstrap's fixed paths.
-async function native(tool,args){
+async function native(tool,args,timeout){
  nativeUsed=true;
  const binary=path.join(os.homedir(),'.local/share/vivid/computer/driver');
  const socket='/run/user/'+process.getuid()+'/vivid-driver.sock';
  return new Promise((resolve,reject)=>{
-  const child=childProcess.execFile(binary,['call',tool,'--socket',socket],{timeout:10000,maxBuffer:4194304},(failure,stdout)=>{
+  const child=childProcess.execFile(binary,['call',tool,'--socket',socket],{timeout,maxBuffer:4194304},(failure,stdout)=>{
+   nativeCalls.delete(child);
    if(failure)return reject(Error());
    try{const result=JSON.parse(stdout);if(result.isError===true||result.status==='refused'||result.effect==='refused'||typeof result.code==='string')return reject(Error());resolve(result);}catch{reject(Error());}
   });
+  nativeCalls.add(child);
   child.stdin.end(JSON.stringify({...args,session}));
  });
 }
@@ -87,25 +89,26 @@ function consentControl(state,label){
  if(x<0||y<0||x>=root.w||y>=root.h)throw Error();
  return {x:x*state.screenshot_width/root.w,y:y*state.screenshot_height/root.h};
 }
-async function consentAction(window,label){
- const state=await native('get_window_state',window);
+async function consentAction(window,label,timeout){
+ const state=await native('get_window_state',window,timeout);
  if(state.pid!==window.pid||state.window_id!==window.window_id)throw Error();
- await native('click',{...window,...consentControl(state,label),delivery_mode:'foreground'});
+ await native('click',{...window,...consentControl(state,label),delivery_mode:'foreground'},timeout);
 }
 async function connect(target,window){
  if(target.consent){
   if(!window||!Number.isSafeInteger(window.window_id)||window.window_id<1)throw Error();
-  const before=await native('get_window_state',{...window,include_screenshot:false});
+  const before=await native('get_window_state',{...window,include_screenshot:false},10000);
   if(before.pid!==window.pid||before.window_id!==window.window_id||prompt(before.elements))throw Error();
  }
  const socket=new WebSocket(target.address),pending=new Map();let next=0;
- const opened=new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
+ if(target.consent)consentAttempt={window,socket};
+ const opened=new Promise((resolve,reject)=>{socket.addEventListener('open',()=>{consentAttempt=undefined;resolve();},{once:true});socket.addEventListener('error',reject,{once:true});});
  try{
   if(target.consent){
    const approval=(async()=>{
-    const receipt=await native('verify_state',{...window,expect:[{element:{selector:{role:'heading',label_contains:'Allow remote debugging?'},exists:true}}],stable_samples:1,timeout_ms:4000});
+    const receipt=await native('verify_state',{...window,expect:[{element:{selector:{role:'heading',label_contains:'Allow remote debugging?'},exists:true}}],stable_samples:1,timeout_ms:4000},10000);
     if(receipt.status!=='satisfied'||socket.readyState!==WebSocket.CONNECTING)throw Error();
-    await consentAction(window,'Allow');
+    await consentAction(window,'Allow',10000);
    })();
    await Promise.all([opened,approval]);
   }else await opened;
@@ -141,10 +144,18 @@ async function main(){
   process.stdout.write(JSON.stringify({cookies:input.cookies.length}));
  }finally{cdp.socket.close();}
 }
-// End the private native session on success and refusal, including a failed handshake.
+// Chrome can retain a failed connection's prompt after its socket closes. Cancel only this
+// attempt's unique trusted alert. Three one-second cleanup calls fit below SSH's 30s deadline,
+// and cleanup cannot replace a successful copy's receipt or the original failure stage.
 async function finish(code){
- clearTimeout(deadline);
- if(nativeUsed)await native('end_session',{});
+ if(finishing)return;finishing=true;clearTimeout(deadline);
+ for(const child of nativeCalls)child.kill('SIGTERM');
+ const attempt=consentAttempt;consentAttempt=undefined;
+ if(attempt){
+  try{await consentAction(attempt.window,'Cancel',1000);}catch{}
+  attempt.socket.close();
+ }
+ if(nativeUsed){try{await native('end_session',{},1000);}catch{}}
  process.exit(code);
 }
 main().then(()=>finish(0),()=>finish(failureStage));
