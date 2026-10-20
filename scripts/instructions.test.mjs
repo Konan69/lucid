@@ -25,16 +25,22 @@ function check(files) {
 /** The shape the repository keeps: rules in AGENTS.md, an import beside each. */
 void test('a CLAUDE.md that only imports its AGENTS.md passes', () => {
   assert.deepEqual(
-    check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': importLine, 'apps/server/AGENTS.md': '# server\n', 'apps/server/CLAUDE.md': importLine }),
+    check({
+      'AGENTS.md': '# rules\n',
+      'CLAUDE.md': importLine,
+      'apps/server/AGENTS.md': '# server\n',
+      'apps/server/CLAUDE.md': importLine,
+    }),
     [],
   )
 })
 
 /** The drift this check exists for: the root CLAUDE.md as it stood before the merge. */
 void test('a CLAUDE.md with its own rules fails and names the file to move them to', () => {
-  assert.deepEqual(check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': '# Vivid agent instructions\n\nown prose\n' }), [
-    'CLAUDE.md must be exactly @AGENTS.md: move its rules into AGENTS.md',
-  ])
+  assert.deepEqual(
+    check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': '# Vivid agent instructions\n\nown prose\n' }),
+    ['CLAUDE.md must be exactly @AGENTS.md: move its rules into AGENTS.md'],
+  )
 })
 
 /** Without a CLAUDE.md, Claude Code never reads the directory's AGENTS.md. */

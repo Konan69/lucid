@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import * as NodeChild from 'node:child_process'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
@@ -20,7 +20,7 @@ export const importLine = '@AGENTS.md\n'
  * (`refs/`) and dependencies carry their own `AGENTS.md` and `CLAUDE.md`, which are not ours.
  */
 function trackedInstructionFiles(root) {
-  const listed = NodeChild.execFileSync(
+  const listed = NodeChildProcess.execFileSync(
     'git',
     ['ls-files', '-z', '--', '*AGENTS.md', '*CLAUDE.md', 'AGENTS.md', 'CLAUDE.md'],
     { cwd: root, encoding: 'utf8' },
@@ -46,7 +46,9 @@ export function validateInstructions(root, files = trackedInstructionFiles(root)
       continue
     }
     if (!present.has(sibling('AGENTS.md'))) {
-      errors.push(`${file} has no ${sibling('AGENTS.md')}: move its rules there and keep only @AGENTS.md`)
+      errors.push(
+        `${file} has no ${sibling('AGENTS.md')}: move its rules there and keep only @AGENTS.md`,
+      )
       continue
     }
     const body = NodeFS.readFileSync(NodePath.join(root, file), 'utf8')
@@ -69,7 +71,9 @@ if (isMain) {
       : NodePath.resolve(process.argv[2])
   const errors = validateInstructions(root)
   if (errors.length > 0) {
-    process.stderr.write(`instruction files failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`)
+    process.stderr.write(
+      `instruction files failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`,
+    )
     process.exitCode = 1
   } else {
     process.stdout.write('instruction files passed\n')
