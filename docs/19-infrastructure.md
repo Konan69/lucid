@@ -31,6 +31,38 @@ that graph; local development keeps the Command/Docker graph above. Railway Post
 Helix were reported healthy on 3 October 2026; application deployment still needs the container
 fixes and remote verification described below.
 
+### Optional server settings and required capabilities
+
+Inventory for U14, read from `apps/server/src` at the unit's base `302b9427`.
+This records decisions only. It does not change configuration or deployment behavior.
+Recheck with `rg -n 'optionalSetting|Config\.option|Config\.withDefault' apps/server/src`.
+Test and live-proof settings are excluded from product capability requirements.
+
+| Setting                                               | Owner                                  | Decision and reason                                                                                                                                                                                                           |
+| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                                          | `config.ts`                            | Make required. Auth callbacks and update asset addresses require the real public origin. A loopback default conceals a missing deployment value.                                                                              |
+| `VIVID_WEB_DIST`                                      | `config.ts`, `http/static.ts`          | Genuinely optional for a server behind Vite, which serves the web app. Require it in the production composition that owns the web files. Absence currently installs no static routes.                                         |
+| `VIVID_MOBILE_UPDATES`                                | `config.ts`, `updates/routes.ts`       | Make required in a production composition that serves the phone. Absence currently removes update routes and silently strands installed binaries. A development server with no published export can genuinely omit it.        |
+| `EXPLABS_API_KEY` in decisions                        | `decisions/model.ts`                   | Make required when `VIVID_DECISIONS=on`. An enabled capability must not compose as `Unconfigured`. Memory already requires this key independently. Keep the explicit off state.                                               |
+| `VIVID_OTLP_URL`, `VIVID_OTLP_HEADERS`                | `config.ts`, `observability/export.ts` | Genuinely optional as one pair. Product operations run without remote telemetry. A partial pair is already a startup error.                                                                                                   |
+| `VIVID_ENVIRONMENT`                                   | `config.ts`                            | Genuinely optional. Labels telemetry without enabling a capability.                                                                                                                                                           |
+| `VIVID_BUILD_COMMIT`                                  | `config.ts`                            | Genuinely optional. Settings can honestly show an unnamed build. The Docker image supplies a commit for releases.                                                                                                             |
+| `PORT`, `HOST`                                        | `config.ts`                            | Genuinely optional overrides. The local listener still exists at the defined default address and port. Deployment must supply its reachable listener.                                                                         |
+| `VIVID_BOAT_ORG`                                      | `computers/boat/transport.ts`          | Genuinely optional. Personal Boat accounts use their own wallet. Organization billing supplies the organization explicitly.                                                                                                   |
+| `VIVID_BOAT_SIZE`                                     | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects Boat's default size and preserves Computer creation.                                                                                                                               |
+| `VIVID_BOAT_LIFETIME_SECONDS`                         | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects the defined 3600-second lifetime. Zero explicitly requests no expiry.                                                                                                              |
+| `VIVID_BOAT_MACHINE`                                  | `computers/boat/transport.ts`          | Genuinely optional adoption. Absence creates a Computer from the required template. Presence binds an existing machine for the single-owner installation.                                                                     |
+| `VIVID_EMBEDDING_DIMENSIONS`, `VIVID_EMBEDDING_MODEL` | `memory/embeddings.ts`                 | Genuinely optional overrides for a defined embedding recipe. They do not guard availability. `main.ts` currently composes `parkedEmbeddingsLayer`, so vector memory is deliberately unavailable regardless of these settings. |
+| `VIVID_MEMORY_MODEL`                                  | `memory/model.ts`                      | Genuinely optional model override. The required gateway key and default model preserve background completion.                                                                                                                 |
+
+The other defaulted controls are `VIVID_DECISIONS`, `VIVID_DECISION_MODEL`,
+`VIVID_EXECUTOR_PUBLIC_ONLY`, and `VIVID_RUN_FIRST_TOKEN_TIMEOUT_MS`.
+They do not retain an `Option` in the composed service. The decisions flag deliberately
+switches an experimental capability off. The remaining controls select a model, restrict
+an Integration catalogue, or tune a deadline. Their absence preserves their defined behavior.
+`computers/tests/proof.ts` also accepts optional live machine and organization selectors.
+Those select a proof target and do not configure a running product.
+
 ### Deploying to production
 
 Keep the server at one Railway replica until desktop presence is shared and browse requests route to the replica holding the socket.
