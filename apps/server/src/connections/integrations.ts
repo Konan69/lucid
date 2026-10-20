@@ -28,7 +28,7 @@ import { madeService } from './made.ts'
 
 /** A made service is stable by name inside the Person's ownership scope. Ready and failed
  * accounts are reused just like imports; only pending authorization may start another trip. */
-export const makeIntegration = Effect.fn('Connections.makeIntegration')(function* (
+export const authorIntegration = Effect.fn('Connections.authorIntegration')(function* (
   actor: Actor,
   request: MakeIntegrationRequest,
 ) {

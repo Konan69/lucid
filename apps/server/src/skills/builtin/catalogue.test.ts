@@ -26,6 +26,7 @@ import {
   skillTools,
   views,
   watchTools,
+  feedTools,
 } from '@vivid/agent-runtime'
 import type { RunTool } from '@vivid/agent-runtime/scope'
 import { procedureSuggestions } from '../../search/suggestions.ts'
@@ -48,6 +49,7 @@ const registered = new Set(
     ...documentTools(runner),
     ...notifyTools(runner),
     ...watchTools(runner),
+    ...feedTools(runner),
   ].map((tool) => tool.name),
 )
 

@@ -21,7 +21,7 @@ import { ConnectionStore } from './store.ts'
 import {
   addIntegration,
   findIntegrations,
-  makeIntegration,
+  authorIntegration,
   testIntegration,
 } from './integrations.ts'
 import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
@@ -46,7 +46,7 @@ export const connectionHandlers = {
   /** Source deployment has the same attributed Run authority as importing an address. */
   MakeIntegration: Effect.fn('Rpc.MakeIntegration')(function* (request: MakeIntegrationRequest) {
     yield* requireVivid()
-    return yield* makeIntegration(yield* requireActor(), request)
+    return yield* authorIntegration(yield* requireActor(), request)
   }),
   /** A read test is still an external account action and requires the ordinary Gate. */
   TestIntegration: Effect.fn('Rpc.TestIntegration')(function* (request: TestIntegrationRequest) {
