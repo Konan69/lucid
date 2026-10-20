@@ -25,7 +25,6 @@ function check(files) {
   }
 }
 
-/** The shape the repository keeps: rules in AGENTS.md, an import beside each. */
 void test('a CLAUDE.md that only imports its AGENTS.md passes', () => {
   assert.deepEqual(
     check({
@@ -38,7 +37,6 @@ void test('a CLAUDE.md that only imports its AGENTS.md passes', () => {
   )
 })
 
-/** A CLAUDE.md with rules of its own is the drift this check exists for. */
 void test('a CLAUDE.md with its own rules fails and names the file to move them to', () => {
   assert.deepEqual(
     check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': '# Vivid agent instructions\n\nown prose\n' }),
