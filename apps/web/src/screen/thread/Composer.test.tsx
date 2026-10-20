@@ -223,7 +223,9 @@ describe('the composer while a question is up', () => {
     const { container, field, sent, stops, button } = composing('asked-upload', 'Read this', asked)
     // Hold only the browser's network boundary: the real attachment flow stays uploading.
     const started = new Promise<XMLHttpRequest>((resolve) => {
-      vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (this: XMLHttpRequest) {
+      vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (
+        this: XMLHttpRequest,
+      ) {
         resolve(this)
       })
     })
