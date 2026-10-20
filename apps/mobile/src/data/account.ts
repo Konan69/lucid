@@ -132,23 +132,18 @@ const decodeEnding = Schema.decodeUnknownOption(Ending)
  * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
  */
 export const sessionExpiry = (session: SignedIn): Effect.Effect<Option.Option<number>> =>
-  Effect.gen(function* () {
-    const response = yield* Effect.tryPromise({
-      try: (signal) =>
-        request(accountAddress(session.server, 'get-session'), {
-          method: 'GET',
-          headers: bearer(session.token),
-          signal,
-        }),
-      catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-    })
-    if (!response.ok) return Option.none<string>()
-    return Option.some(
-      yield* Effect.tryPromise({
-        try: () => response.text(),
-        catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-      }),
-    )
+  Effect.tryPromise({
+    // The body is read inside the same attempt as the request, so the one abort signal covers
+    // both: an interrupted call stops a body still arriving, not only the headers.
+    try: (signal) =>
+      request(accountAddress(session.server, 'get-session'), {
+        method: 'GET',
+        headers: bearer(session.token),
+        signal,
+      }).then((response) =>
+        response.ok ? response.text().then(Option.some) : Option.none<string>(),
+      ),
+    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
   }).pipe(
     Effect.map((body) =>
       body.pipe(

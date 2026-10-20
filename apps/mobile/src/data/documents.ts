@@ -148,8 +148,9 @@ export const uploadDocument = Effect.fn('Documents.upload')(function* (
   chosen: Chosen,
   destination: { readonly shelf: LibraryShelf; readonly folderId: LibraryFolderId | null },
 ) {
-  const response = yield* Effect.tryPromise({
-    // Building the form is inside the attempt: a file that cannot be read is a file not sent.
+  const answer = yield* Effect.tryPromise({
+    // Building the form is inside the attempt: a file that cannot be read is a file not sent. The
+    // body is read inside it too, so the one abort signal covers the whole upload and its answer.
     try: (signal) => {
       const form = new FormData()
       // `expo-file-system`'s File is a Blob read from disk, which is what Expo's fetch sends.
@@ -161,15 +162,11 @@ export const uploadDocument = Effect.fn('Documents.upload')(function* (
         headers: bearer(session.token),
         body: form,
         signal,
-      })
+      }).then((response) => response.text().then((body) => ({ status: response.status, body })))
     },
     catch: () => new DocumentUnavailable({ message: UNSENT }),
   })
-  const body = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: () => new DocumentUnavailable({ message: UNSENT }),
-  })
-  return yield* Effect.fromResult(uploadOutcome(response.status, body))
+  return yield* Effect.fromResult(uploadOutcome(answer.status, answer.body))
 })
 
 /**
