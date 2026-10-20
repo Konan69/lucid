@@ -72,7 +72,7 @@ const c = ThreadId.make('c')
 describe('the conversations a page holds open', () => {
   it('hands a Thread the same client on every ask, over one observation', () => {
     const real = flue()
-    const conversations = makeConversations(0, real.connect)
+    const conversations = makeConversations(0, 'streaming', real.connect)
     const first = conversations.of(a)
     // A screen asks for its client on every render; a new one each time would rebuild its session
     // on every render, which is the loop this guards against.
@@ -84,7 +84,7 @@ describe('the conversations a page holds open', () => {
 
   it('keeps the conversation used last open even when none are kept', () => {
     const real = flue()
-    const conversations = makeConversations(0, real.connect)
+    const conversations = makeConversations(0, 'streaming', real.connect)
     conversations.of(a)
     expect(real.of(a).closed).toBe(0)
     conversations.of(b)
@@ -94,7 +94,7 @@ describe('the conversations a page holds open', () => {
 
   it('never lets go of one a screen is reading', () => {
     const real = flue()
-    const conversations = makeConversations(0, real.connect)
+    const conversations = makeConversations(0, 'streaming', real.connect)
     const reading = conversations.of(a).observe()
     conversations.warm(b)
     conversations.warm(c)
@@ -106,7 +106,7 @@ describe('the conversations a page holds open', () => {
 
   it('keeps as many idle conversations as it is told, letting the oldest go first', () => {
     const real = flue()
-    const conversations = makeConversations(1, real.connect)
+    const conversations = makeConversations(1, 'streaming', real.connect)
     conversations.warm(a)
     conversations.warm(b)
     conversations.warm(c)
@@ -117,7 +117,7 @@ describe('the conversations a page holds open', () => {
 
   it('asks again when a screen opens a conversation the server did not have yet', () => {
     const real = flue()
-    const conversations = makeConversations(3, real.connect)
+    const conversations = makeConversations(3, 'streaming', real.connect)
     conversations.warm(a)
     const seen = real.of(a)
     seen.phase = 'absent'
@@ -135,7 +135,7 @@ describe('the conversations a page holds open', () => {
 
   it('tries again when a screen opens a conversation that had given up with an error', () => {
     const real = flue()
-    const conversations = makeConversations(3, real.connect)
+    const conversations = makeConversations(3, 'streaming', real.connect)
     conversations.warm(a)
     real.of(a).phase = 'error'
     const reader = conversations.of(a).observe()
@@ -145,7 +145,7 @@ describe('the conversations a page holds open', () => {
 
   it('says what is already known of a conversation, once it has been read', () => {
     const real = flue()
-    const conversations = makeConversations(3, real.connect)
+    const conversations = makeConversations(3, 'streaming', real.connect)
     // Not open here: nothing is known, and asking opens nothing.
     expect(Option.isNone(conversations.heard(a))).toBe(true)
     expect(real.of(a).begun).toBe(0)
@@ -155,9 +155,46 @@ describe('the conversations a page holds open', () => {
     expect(conversations.heard(a)).toEqual(Option.some([]))
   })
 
+  it('parks what it keeps where streams are costly: the stream ends, the words stay', () => {
+    const real = flue()
+    const conversations = makeConversations(1, 'parked', real.connect)
+    conversations.warm(a)
+    real.of(a).read = true
+    conversations.warm(b)
+    // Only the conversation used last keeps its stream.
+    expect(real.of(a).closed).toBe(1)
+    expect(real.of(b).closed).toBe(0)
+    expect(conversations.heard(a)).toEqual(Option.some([]))
+    // Coming back opens it again, and its words are drawn until the new reading has them.
+    conversations.of(a)
+    expect(real.of(a).begun).toBe(2)
+    expect(conversations.heard(a)).toEqual(Option.some([]))
+  })
+
+  it('forgets the oldest parked words beyond what it keeps', () => {
+    const real = flue()
+    const conversations = makeConversations(1, 'parked', real.connect)
+    for (const id of [a, b]) {
+      conversations.warm(id)
+      real.of(id).read = true
+    }
+    conversations.warm(c)
+    expect(Option.isSome(conversations.heard(b))).toBe(true)
+    expect(Option.isNone(conversations.heard(a))).toBe(true)
+  })
+
+  it('parks nothing of a conversation that was never read', () => {
+    const real = flue()
+    const conversations = makeConversations(1, 'parked', real.connect)
+    conversations.warm(a)
+    conversations.warm(b)
+    expect(real.of(a).closed).toBe(1)
+    expect(Option.isNone(conversations.heard(a))).toBe(true)
+  })
+
   it('ends everything when the session ends', () => {
     const real = flue()
-    const conversations = makeConversations(3, real.connect)
+    const conversations = makeConversations(3, 'streaming', real.connect)
     conversations.of(a).observe()
     conversations.warm(b)
     conversations.forget()
@@ -167,12 +204,22 @@ describe('the conversations a page holds open', () => {
 
   it('catches up every conversation it holds open, read or not', () => {
     const real = flue()
-    const conversations = makeConversations(3, real.connect)
+    const conversations = makeConversations(3, 'streaming', real.connect)
     conversations.of(a).observe()
     conversations.warm(b)
     conversations.catchUp()
     expect(real.of(a).refreshed).toBe(1)
     expect(real.of(b).refreshed).toBe(1)
     expect(real.of(c).refreshed).toBe(0)
+  })
+
+  it('forgets parked words when the session ends', () => {
+    const real = flue()
+    const conversations = makeConversations(1, 'parked', real.connect)
+    conversations.warm(a)
+    real.of(a).read = true
+    conversations.warm(b)
+    conversations.forget()
+    expect(Option.isNone(conversations.heard(a))).toBe(true)
   })
 })
