@@ -24,6 +24,7 @@ import {
   ChevronsUpDown,
   Plus,
   Library as LibraryIcon,
+  Newspaper,
   Search,
   Settings as SettingsIcon,
   SquarePen,
@@ -61,6 +62,7 @@ export type Place = {
  * procedures, so there is no Skills screen on any surface.
  */
 const PLACES = [
+  { route: 'Feed', label: 'Feed', icon: Newspaper },
   { route: 'Library', label: 'Library', icon: LibraryIcon },
 ] as const satisfies ReadonlyArray<{ route: Place; label: string; icon: LucideIcon }>
 

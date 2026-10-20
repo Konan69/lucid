@@ -26,6 +26,7 @@ import type { KeyRoute } from './data/connecting'
  * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
  * - `Library`: the place beside Threads, in the drawer. `Projects` is reached from
  *   the quiet group under the Threads.
+ * - `Feed`: Vivid's background work and the cards that need the Person, in the drawer.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
  *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
  *   carries its name because only the listing it was opened from knows it.
@@ -54,6 +55,7 @@ export type Routes = {
   Home: undefined
   Computer: undefined
   Library: undefined
+  Feed: undefined
   Folder: { shelf: LibraryShelf; id: LibraryFolderId; name: string }
   Projects: undefined
   Project: { id: ProjectId }
