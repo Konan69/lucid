@@ -45,6 +45,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@flue/cli": "catalog:",
+    "@flue/sdk": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",

@@ -17,6 +17,7 @@
     "types": "node ../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@flue/sdk": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
