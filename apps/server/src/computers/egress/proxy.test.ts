@@ -622,12 +622,48 @@ describe('the Computer’s egress proxy', () => {
       const open = yield* tunnel.frame
       const other = yield* browser(proxy.ports.proxy, connect('site.example:443'))
       const second = yield* tunnel.frame
-      yield* tunnel.send(open.stream, Buffer.alloc(EGRESS_STREAM_BUDGET + (4 << 20)))
-      expect(yield* tunnel.next('Close', open.stream)).toEqual(
-        EgressFrame.cases.Close.make({ stream: open.stream }),
-      )
-      yield* tunnel.send(second.stream, Buffer.from('unharmed'))
-      expect(yield* other.until('unharmed')).toContain('unharmed')
+      yield* other.until(ESTABLISHED)
+      const chunk = Buffer.alloc(EGRESS_GRANT)
+      const marker = Buffer.from('unharmed')
+      let sent = 0
+      let granted = 0
+      let closed = false
+      // Pausing the browser still leaves room in TCP's buffers. Count real grants instead of
+      // assuming a fixed burst fills them. Each healthy-stream round trip acknowledges that
+      // the proxy processed this chunk and all grants or the close it produced before it.
+      while (!closed) {
+        yield* tunnel.send(open.stream, chunk)
+        sent += chunk.length
+        yield* tunnel.send(second.stream, marker)
+        expect(yield* other.until('unharmed')).toContain('unharmed')
+        other.socket.write(marker)
+        for (;;) {
+          const frame = yield* tunnel.frame
+          if (frame.stream === open.stream && EgressFrame.guards.Grant(frame)) {
+            granted += frame.bytes
+            continue
+          }
+          if (frame.stream === open.stream && EgressFrame.guards.Close(frame)) {
+            closed = true
+            continue
+          }
+          expect(frame).toEqual(
+            EgressFrame.cases.Data.make({
+              stream: second.stream,
+              payload: Uint8Array.from(marker),
+            }),
+          )
+          break
+        }
+        // Less than one grant can have been taken without being granted yet. A live stream
+        // therefore cannot retain a budget plus a grant unacknowledged. The closing chunk
+        // adds at most one more grant, including bytes sent after that stream was closed.
+        expect(sent - granted).toBeLessThan(EGRESS_STREAM_BUDGET + 2 * EGRESS_GRANT)
+        if (!closed) expect(sent - granted).toBeLessThan(EGRESS_STREAM_BUDGET + EGRESS_GRANT)
+      }
+      // A chunk already handed to the readable buffer is still counted toward the budget.
+      // Closing substantially before the budget is reached is a failure too.
+      expect(sent - granted).toBeGreaterThan(EGRESS_STREAM_BUDGET - chunk.length)
     }),
   )
 
