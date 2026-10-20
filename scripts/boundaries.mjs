@@ -1,7 +1,9 @@
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeCrypto from 'node:crypto'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
+import { shellWord, snapshot } from './gate/cloud.mjs'
 
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const cases = {
@@ -72,10 +74,70 @@ function git(directory, args) {
 }
 
 /**
- * A private clone below this checkout's ignored cache keeps historical product code out of the
- * writer's tree. Include current uncommitted test files, then let the gate snapshot that clone
- * and provision its own disposable database on the selected devbox. Cleanup owns only this clone.
+ * Hold the same slot lock as the gate while borrowing its installed workspace dependencies.
+ * The replay owns only a private scratch tree. Exact lockfile equality prevents borrowing a
+ * different dependency graph; no install writes into a warm virtual store or a shared store.
  */
+const remoteReplay = String.raw`
+set -euo pipefail
+home="$HOME/vivid-gate/fast"
+sha="$1"; lockfile="$2"; test="$3"; fix="$4"; label="$5"
+tree=""
+for candidate in "$home"/trees/slot-*; do
+  [ -d "$candidate/node_modules" ] || continue
+  if [ "$(sha256sum "$candidate/pnpm-lock.yaml" | cut -d' ' -f1)" != "$lockfile" ]; then
+    echo "Skipping $candidate with a different lockfile" >&2; continue
+  fi
+  exec 9>"$candidate.lock"
+  if flock -n 9; then tree="$candidate"; break; fi
+  echo "Skipping busy $candidate" >&2
+done
+[ -n "$tree" ] || { echo "No free warm gate tree with the replay lockfile" >&2; exit 92; }
+scratch=$(mktemp -d "$tree/.cache/boundaries-$fix-XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+git clone --shared --no-checkout --quiet "$home/repo.git" "$scratch"
+git -C "$scratch" checkout --quiet --detach "$sha"
+printf '%s\n' 'node_modules/' '.cache/' '.turbo/' > "$scratch/.boxignore"
+cmp "$scratch/pnpm-lock.yaml" "$tree/pnpm-lock.yaml"
+stamp=$(git -C "$tree" ls-tree -r HEAD | grep -E '(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|[[:space:]]patches/' | sha256sum | cut -c1-32)
+[ "$(cat "$tree/.cache/gate/installed")" = "$stamp" ] || {
+  echo "Warm gate tree has no successful install for its current manifests" >&2; exit 92;
+}
+# Workspace packages each need their own dependency links, not just the root virtual store.
+while IFS= read -r manifest; do
+  directory=$(dirname "$manifest")
+  [ -d "$tree/$directory/node_modules" ] || continue
+  ln -s "$tree/$directory/node_modules" "$scratch/$directory/node_modules"
+done < <(git -C "$tree" ls-files 'package.json' '**/package.json')
+cd "$scratch"
+echo "Reusing $tree dependencies for $label, replay $fix snapshot=$sha"
+node scripts/gate.mjs focused "$test" --here --sha "$sha-replay-$fix"
+`
+
+/**
+ * Use the gate's private git transport so the host receives only changed objects. Cloning on
+ * the host avoids retransmitting the whole repository for every one-line historical replay.
+ */
+function runRemote(scratch, fix, test, host) {
+  const { sha } = snapshot(scratch, process.env, false)
+  const remote = `ssh://${host}/~/vivid-gate/fast/repo.git`
+  git(scratch, ['push', '--quiet', '--no-verify', remote, `${sha}:refs/gate/u14-${fix}-${sha}`])
+  const lockfile = NodeFS.readFileSync(NodePath.join(scratch, 'pnpm-lock.yaml'))
+  const digest = NodeCrypto.createHash('sha256').update(lockfile).digest('hex')
+  const label = git(root, ['rev-parse', '--short=12', 'HEAD']).trim()
+  const command = ['bash', '-c', remoteReplay, 'boundaries', sha, digest, test, fix, label]
+    .map(shellWord)
+    .join(' ')
+  const result = NodeChildProcess.spawnSync(
+    'ssh',
+    ['-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=15', host, command],
+    { stdio: 'inherit' },
+  )
+  if (result.error !== undefined) throw result.error
+  return result.status === null ? 1 : result.status
+}
+
+/** Restore only the historical decision in an owned clone, retaining current tests and imports. */
 function prove(fix, host) {
   if (!Object.hasOwn(cases, fix)) throw new Error('Choose a named historical boundary fix')
   if (!['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3'].includes(host)) {
@@ -98,7 +160,6 @@ function prove(fix, host) {
         NodeFS.copyFileSync(from, to)
       }
     }
-    NodeFS.symlinkSync(NodePath.join(root, 'node_modules'), NodePath.join(scratch, 'node_modules'))
     const [file, test] = cases[fix]
     const target = NodePath.join(scratch, file)
     const source = NodeFS.readFileSync(target, 'utf8')
@@ -107,16 +168,7 @@ function prove(fix, host) {
     if (restored === source) throw new Error('Replay did not change the consumer')
     NodeFS.writeFileSync(target, restored)
     console.log(`Restored ${fix} parent boundary in a scratch copy of ${file}`)
-    const result = NodeChildProcess.spawnSync(
-      'pnpm',
-      ['gate', 'focused', test, '--host', host, '--name', `u14-${fix}`],
-      {
-        cwd: scratch,
-        stdio: 'inherit',
-      },
-    )
-    if (result.error !== undefined) throw result.error
-    return result.status === null ? 1 : result.status
+    return runRemote(scratch, fix, test, host)
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true })
   }
