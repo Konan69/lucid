@@ -183,6 +183,25 @@ const duplicates = MachineTest.runtimeCommands(PressMachine, {
 const generated = { arbitrary: { runs: 40, seed: 20261020 } }
 
 describe('a card press machine', () => {
+  it.effect('a seen-only timestamp change stays folded and refuses another press', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
+      const first = yield* Queue.take(made.calls)
+      const seen = FeedItem.cases.Waiting.make({ ...waiting, at: 11, seen: true })
+      const duplicate = PressEvents.Press({
+        item: seen,
+        how: Settling.Said({ words: 'Not now', key: 'duplicate' }),
+      })
+      expect(folds(seen, pressOf((yield* made.at('Sending')).state))).toBe(true)
+      expect((yield* made.probe.sendAndAwait(duplicate)).handled).toBe(false)
+      yield* Deferred.succeed(first.answer, Result.succeed(undefined))
+      expect(folds(seen, pressOf((yield* made.at('Sent')).state))).toBe(true)
+      expect((yield* made.probe.sendAndAwait(duplicate)).handled).toBe(false)
+      expect(made.sent).toHaveLength(1)
+    }),
+  )
+
   it.effect('walks Idle, Sending, Unsent, Sending and Sent with a hand-answered delivery', () =>
     Effect.gen(function* () {
       const made = yield* started()
