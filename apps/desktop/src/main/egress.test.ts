@@ -616,11 +616,17 @@ describe('egress through the Person’s computer', () => {
     )
     socket.on('error', () => undefined)
     socket.on('close', () => Deferred.doneUnsafe(cut, Effect.void))
-    // The proxy's own reply is 39 bytes and comes alone, before anything of the stream's.
-    socket.once('data', () => {
-      socket.pause()
+    // TCP can coalesce the CONNECT reply with body bytes. Read exactly the reply in paused
+    // mode, leaving every body byte buffered for the test's deliberately slow reader.
+    const response = Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n')
+    const readHeader = () => {
+      const header: unknown = socket.read(response.length)
+      if (header === null) return
+      expect(header).toEqual(response)
+      socket.off('readable', readHeader)
       Deferred.doneUnsafe(established, Effect.void)
-    })
+    }
+    socket.on('readable', readHeader)
     yield* Deferred.await(established)
     return { socket, cut: Deferred.await(cut) }
   })

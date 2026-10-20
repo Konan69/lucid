@@ -156,11 +156,17 @@ describe.skipIf(!testDatabaseConfigured)(
                 'use_tool',
                 'use_tool',
               ])
-              expect(yield* Ref.get(inputs)).toEqual([
-                {},
-                { cursor: 'next-page', page: 1 },
-                { cursor: 'next-page', page: 2 },
-              ])
+              // The two next-page calls run in parallel; both inputs must arrive exactly once,
+              // but the transport does not promise which concurrent request arrives first.
+              const submitted = yield* Ref.get(inputs)
+              expect(submitted).toHaveLength(3)
+              expect(submitted).toEqual(
+                expect.arrayContaining([
+                  {},
+                  { cursor: 'next-page', page: 1 },
+                  { cursor: 'next-page', page: 2 },
+                ]),
+              )
             }),
             testLayer,
           ),
