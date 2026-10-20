@@ -375,12 +375,12 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
 })
 
 /** Cookie transfer targets the same uniquely identified Chrome window as browsing. The native
- * adapter prepares its existing profile and returns its actual PID, never a guessed CDP port. */
+ * adapter prepares its existing profile and retains the native window for Chrome consent. */
 export const signInTarget = Effect.fn('Machine.boat.browser.signInTarget')(function* (
   native: Driver,
   proxy: Effect.Effect<Option.Option<string>>,
 ) {
   const window = yield* chrome(native, true, proxy)
   yield* prepare(native, window)
-  return window.pid
+  return window
 })

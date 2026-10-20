@@ -33,12 +33,13 @@ const makeCookieCopy = (input: {
 }) =>
   Effect.fn('Machine.boat.copySignIn')(
     function* (request: Parameters<MachineOperations['copySignIn']>[0]) {
-      const pid = yield* signInTarget(
+      const window = yield* signInTarget(
         yield* input.native(request.key),
         browserProxy(request.egress, startProxy(input.operations, request.key)),
       )
       return yield* injectSignInCookies({
-        pid,
+        pid: window.pid,
+        windowId: window.window_id,
         cookies: request.cookies,
         converse: (command) =>
           input.operations.converse({

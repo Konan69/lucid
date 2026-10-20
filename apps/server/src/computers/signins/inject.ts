@@ -44,6 +44,7 @@ const decodeReceipt = Schema.decodeEffect(Schema.fromJsonString(Receipt))
  * count-only receipt after the process exits successfully; never persist or log private output. */
 export const injectSignInCookies = Effect.fn('Computer.signIn.inject')(function* (input: {
   readonly pid: number
+  readonly windowId: number
   readonly cookies: ReadonlyArray<SignInCookie>
   readonly converse: (
     command: string,
@@ -59,7 +60,7 @@ export const injectSignInCookies = Effect.fn('Computer.signIn.inject')(function*
         Effect.forkScoped,
       )
       yield* conversation.say(
-        `${JSON.stringify({ pid: input.pid, cookies: input.cookies.map(cdpCookie) })}\n`,
+        `${JSON.stringify({ pid: input.pid, window_id: input.windowId, cookies: input.cookies.map(cdpCookie) })}\n`,
       )
       const ended = yield* conversation.ended
       if (ended.exitCode !== 0 || ended.timedOut)
