@@ -28,7 +28,7 @@ const four = [one, { ...one, several: false }, one, one] as const
 /** Exercise the actual Flue callback and generated RPC client, controlling only the server receipt. */
 describe('ask_person', () => {
   it.effect(
-    'asks one or four questions in one RPC, maps selection, and returns all card text',
+    'asks one or four questions in one RPC, maps selection, returns all card text and goes on',
     () =>
       Effect.gen(function* () {
         const requests =
@@ -105,8 +105,9 @@ describe('ask_person', () => {
               requestId: input.id,
               questions: questions.map((question) => question.question),
             },
-            terminate: true,
           })
+          // Asking does not end the turn: Vivid keeps working and the answer arrives as a delivery.
+          expect(result).not.toHaveProperty('terminate')
           expect(JSON.stringify(result)).not.toMatch(/ask-person|ask-thread/u)
         }
       }),

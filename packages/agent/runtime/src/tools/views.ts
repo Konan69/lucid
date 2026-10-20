@@ -142,7 +142,8 @@ export function inputRequest(item: InputRequest) {
     kind: 'input-request',
     requestId: item.id,
     questions: Arr.map(item.questions, (question) => modelText(question.question)),
-    message: 'End the turn now; the person has been asked and their answer will return here.',
+    message:
+      'Asked. Their answer will arrive as a new message; keep working on what does not depend on it.',
   }
 }
 

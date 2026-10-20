@@ -34,13 +34,30 @@ const question = v.object({
   ),
 })
 
-/** One durable request asks everything needed together and ends this turn; the server returns the answer as a new delivery. */
+/**
+ * Asking does not stop Vivid. One durable Input request carries everything Vivid needs together;
+ * the tool returns as soon as the server has recorded it, and the turn goes on with whatever does
+ * not depend on the answer. The answer comes back later as a new delivery (`inputs/store.ts`
+ * `answer`): Flue joins it into the response still being written, at the next turn boundary
+ * (2.2.2 `applyQueuedJoins`), or starts a new Run in the Thread when nothing is running.
+ *
+ * Ported from Codex's async question, which shipped with the GPT-6 family (GPT-6 Astra first):
+ * `codex-rs/core/src/tools/handlers/request_user_input_async.rs` `RequestUserInputAsyncHandler`
+ * records the questions as a turn item and returns `{"accepted":true}` without ending the turn,
+ * and the reply arrives through `CodexThread::start_or_steer_turn`, steering a running turn or
+ * starting one (openai/codex b5115cdd). The description follows Codex's
+ * `REQUEST_USER_INPUT_ASYNC_DESCRIPTION` and GPT-6 Astra's "Working with the user" instructions
+ * (`models-manager/models.json`). Codex leaves the answer's arrival to its clients; Vivid's server
+ * owns it, so a question outlives the Run that asked it, as T3 Code keeps Codex's
+ * (`docs/internals/providers.md`, "Protocol traps"). It is the shape of React Suspense: the work
+ * that reads the answer waits for it while everything else goes on, and resumes when it arrives.
+ */
 export function askTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'ask_person',
       description:
-        'Ask the person everything you need to decide safely in ONE call: one to four questions, answered together. Gather all missing details that block this work instead of asking one question per turn. Set several true only when more than one option can truly apply. End your turn immediately; work resumes after every question has an answer.',
+        'Ask the person everything you need to decide safely in ONE call: one to four questions, answered together. Gather all missing details instead of asking one question per turn. Set several true only when more than one option can truly apply. This returns at once without ending your turn or waiting for a reply; the answer arrives later as a new message, while you are still working or as a new turn. Keep doing the work that does not depend on the answer. Do not do the work that does until it arrives: time passing is not an answer. When nothing is left that can go on without it, end your turn in one short line, without asking the question again. If the person writes to you instead of answering, the question is closed and their message is their reply.',
       // No `summary`, unlike the other tools: the question is already the sentence the Person
       // reads for this step, and asking for it twice cost a turn. With it required, five of six
       // first Threads on 5 October 2026 had this call refused for the missing field and made
@@ -67,7 +84,7 @@ export function askTools(runTool: RunTool) {
                 allowsOwnAnswer: item.allowsOwnAnswer,
               })),
             })
-            return { output: views.inputRequest(request), terminate: true }
+            return { output: views.inputRequest(request) }
           }),
           { signal, tool: 'ask_person' },
         )

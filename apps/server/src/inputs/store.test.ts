@@ -183,7 +183,9 @@ layer(testDatabaseLayer)((it) => {
           const [firstAnswer] = answers
           if (firstAnswer === undefined) expect.fail('Expected both answer receipts')
           const winnerWords = Result.isSuccess(firstAnswer) ? 'Monday' : 'Tuesday'
-          expect(deliveries[0]).toMatchObject({ message: { body: winnerWords } })
+          expect(deliveries[0]).toMatchObject({
+            message: { body: `Question: Which day works?\nAnswer: ${winnerWords}` },
+          })
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )

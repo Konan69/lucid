@@ -55,9 +55,13 @@ const written = Effect.fn('Inputs.validateWritten')(function* (
 })
 
 /**
- * Count first, then validate every ordered pair before the store may write. A single answer keeps
- * its historical delivery text; several prefix each answer with its question, without ids or
- * positions. The complete text is persisted in the owed signal, so replay cannot change it.
+ * Count first, then validate every ordered pair before the store may write. Each answer carries
+ * the question it answers, without ids or positions: an answer can reach Vivid in the middle of
+ * other work, or after other questions, so it must say what it answers. Codex does the same with
+ * `AnsweredQuestion` (`codex-rs/context-fragments/src/answered_question.rs`, openai/codex
+ * b5115cdd), whose plain form quotes the question with `> `; Flue escapes `>` inside a signal
+ * (it reached the model as `&gt;`), so each pair is two labelled lines instead, the question kept
+ * to one line. The complete text is persisted in the owed signal, so replay cannot change it.
  */
 export const answerText = Effect.fn('Inputs.answerText')(function* (
   questions: readonly [InputQuestion, ...InputQuestion[]],
@@ -77,8 +81,10 @@ export const answerText = Effect.fn('Inputs.answerText')(function* (
         Chosen: ({ labels }) => chosen(question, labels, { id: request.id, questionIndex }),
         Written: ({ words }) => written(question, words, { id: request.id, questionIndex }),
       }).pipe(
-        Effect.map((text) => (questions.length === 1 ? text : `${question.question} ${text}`)),
+        Effect.map(
+          (text) => `Question: ${question.question.replace(/[\r\n]+/gu, ' ')}\nAnswer: ${text}`,
+        ),
       ),
   )
-  return lines.join('\n')
+  return lines.join('\n\n')
 })

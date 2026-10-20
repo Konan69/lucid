@@ -86,8 +86,8 @@ export type ThreadAudience = typeof ThreadAudience.Type
 /**
  * What a Thread needs from the Person looking at it, computed from its Runs and never set by hand.
  *
- * - `NeedsYou`: a question or an Approval addressed to this Person is waiting.
- * - `Working`: a Run is in progress.
+ * - `Working`: a Run is in progress, even with a question open: Vivid keeps working after it asks.
+ * - `NeedsYou`: nothing is running and a question or an Approval addressed to this Person waits.
  * - `Unread`: something happened since this Person last opened it.
  * - `Quiet`: nothing to do.
  */
