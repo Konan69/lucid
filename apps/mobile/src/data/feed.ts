@@ -66,7 +66,7 @@ const sending = (data: LiveData) =>
             Result.isSuccess,
           ),
       })
-      if (!sent) return yield* new feed.SendRefused({ card })
+      if (!sent) yield* new feed.SendRefused({ card })
     }),
   })
 
