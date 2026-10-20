@@ -46,6 +46,7 @@ export function Display({
   live,
   onSay,
   onState,
+  initial,
 }: {
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
@@ -60,13 +61,15 @@ export function Display({
    * The web's `Display` does the same, and says why.
    */
   onState?: (chosen: feed.Chosen) => void
+  /** Choices to start from, for a card drawn again after being scrolled away. */
+  initial?: feed.Chosen
 }) {
   const data = useLiveData()
   // The program's declared defaults, from its latest reading; only read when a change arrives.
   const declared = useRef<feed.Chosen>({})
   const read = (result: ParseResult | null) => {
     declared.current = result === null ? {} : result.stateDeclarations
-    if (onState !== undefined) onState(declared.current)
+    if (onState !== undefined) onState({ ...declared.current, ...initial })
   }
   const changed = (state: feed.Chosen) => {
     if (onState !== undefined) onState({ ...declared.current, ...state })
@@ -91,6 +94,7 @@ export function Display({
         isStreaming={arriving}
         onAction={answer}
         onParseResult={read}
+        initialState={initial}
         onStateUpdate={changed}
         toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
       />

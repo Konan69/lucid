@@ -172,14 +172,18 @@ const reportSeen = (card: FeedCardId) => {
 }
 
 /**
- * Whether an entry shows the whole card: all of it is in view, or it is taller than the view and
- * fills it.
+ * Whether an entry shows the whole card. A card that fits in the view counts once all of it is
+ * in view. A card taller than the view can never be all in view, so it counts once it fills most
+ * of the view: the observer speaks only at its thresholds (every hundredth of the card), and the
+ * last one a tall card crosses can sit up to a hundredth of its height short of the edge, so the
+ * bar is set at 85% of the view, which holds for a card up to fifteen views tall.
  */
-const whole = (entry: IntersectionObserverEntry) =>
-  entry.intersectionRatio >= 0.99 ||
-  // A card taller than the view is reported at the step before it fills it: the observer only
-  // speaks at its thresholds, and the last one a tall card crosses can sit just short of full.
-  (entry.rootBounds !== null && entry.intersectionRect.height >= entry.rootBounds.height * 0.9)
+const whole = (entry: IntersectionObserverEntry) => {
+  if (entry.rootBounds === null) return entry.intersectionRatio >= 0.99
+  if (entry.boundingClientRect.height <= entry.rootBounds.height)
+    return entry.intersectionRatio >= 0.99
+  return entry.intersectionRect.height >= entry.rootBounds.height * 0.85
+}
 
 /** Mounted cards remain enumerable after a report so later posts can be observed again. */
 const cardOf = new Map<Element, FeedCardId>()
@@ -187,7 +191,7 @@ const cardOf = new Map<Element, FeedCardId>()
 /**
  * The one watcher of every new card on the page. A card counts as looked at the first time all of
  * it has been in view while the page is in front; opening the Feed with a card below the fold
- * does not. Steps of a twentieth, so a card taller than the view still reports as it fills it.
+ * does not. Steps of a hundredth, so a card taller than the view still reports as it fills it.
  * Made on first use: a module that builds an observer when it loads would need a browser to load.
  */
 let watcher: Option.Option<IntersectionObserver> = Option.none()
@@ -204,7 +208,7 @@ const watcherOf = (): IntersectionObserver =>
           reportSeen(card)
         }
       },
-      { threshold: Array.from({ length: 21 }, (_, step) => step / 20) },
+      { threshold: Array.from({ length: 101 }, (_, step) => step / 100) },
     )
     // Hidden-tab entries are discarded above. Returning to the tab must request a fresh
     // intersection, as must a new post that reuses a mounted card and its stable ref.

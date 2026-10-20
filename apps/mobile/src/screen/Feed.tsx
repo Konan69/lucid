@@ -37,6 +37,13 @@ const LOOK = {
   idle: 'neutral',
 } as const
 
+/**
+ * What the Person chose in each waiting card's display, by card and post. The list draws only the
+ * rows near the screen, so a card scrolled away is unmounted; kept here, its choices are back when
+ * it is drawn again, and a failed send is pressed again with the words the Person picked.
+ */
+const remembered = new Map<string, feed.Chosen>()
+
 /** A card's way out and answer: 40 points tall, 12 corners, concentric with the card's 24. */
 const ANSWER = { height: 40, radius: 12 } as const
 
@@ -151,6 +158,7 @@ export function Feed() {
                 ask={{ title: item.from, words: 'Vivid is working on this now.' }}
                 bar={Option.none()}
                 now={now}
+                remember={Option.none()}
                 onOpen={() => openThread(item.thread)}
               />
             ),
@@ -246,6 +254,7 @@ function Waiting({
           />
         ))}
         now={now}
+        remember={Option.some(`${item.card}:${feed.revisionOf(item)}`)}
         onOpen={onOpen}
       />
     </Animated.View>
@@ -265,6 +274,7 @@ function Card({
   ask,
   bar,
   now,
+  remember,
   onOpen,
 }: {
   from: string
@@ -273,10 +283,24 @@ function Card({
   ask: { readonly title: string; readonly words: string }
   bar: Option.Option<(chosen: feed.Chosen) => ReactNode>
   now: number
+  /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
+  remember: Option.Option<string>
   onOpen: () => void
 }) {
   const { colors: c } = useTheme()
-  const [chosen, setChosen] = useState<feed.Chosen>({})
+  // What this card was drawn with: the choices kept from before it was scrolled away, if any. Read
+  // once, so the renderer starts from it and is not handed a new start on every change.
+  const [start] = useState<feed.Chosen>(() =>
+    Option.getOrElse(
+      Option.flatMap(remember, (key) => Option.fromUndefinedOr(remembered.get(key))),
+      () => ({}),
+    ),
+  )
+  const [chosen, setChosen] = useState<feed.Chosen>(start)
+  const choose = (next: feed.Chosen) => {
+    Option.map(remember, (key) => remembered.set(key, next))
+    setChosen(next)
+  }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
   const words = Option.match(post, { onNone: () => ask.words, onSome: (made) => made.words })
   const display = Option.flatMap(post, (made) => Option.fromNullOr(made.display))
@@ -329,7 +353,8 @@ function Card({
             arriving={false}
             live={false}
             onSay={() => undefined}
-            onState={setChosen}
+            onState={choose}
+            initial={start}
           />
         </View>
       )}
