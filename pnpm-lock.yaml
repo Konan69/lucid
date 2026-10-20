@@ -487,6 +487,9 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
+      '@vivid/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent/runtime
       electron:
         specifier: 'catalog:'
         version: 44.4.3(supports-color@8.1.1)

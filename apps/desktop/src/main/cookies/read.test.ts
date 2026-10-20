@@ -14,7 +14,7 @@ import {
 import { Effect, Redacted, Result } from 'effect'
 import { readChromeSignIn } from './read.ts'
 import { cookieKeyFailure, cookieReadFailure } from './failure.ts'
-import { signInMessage } from '../../../../../packages/agent/runtime/src/tools/signins.ts'
+import { signInMessage } from '@vivid/agent-runtime/signins'
 
 const request = CopySignInRequest.make({
   site: SignInSite.make('github.com'),

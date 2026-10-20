@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./sandbox": "./src/tools/sandbox.ts",
-    "./scope": "./src/tools/scope.ts"
+    "./scope": "./src/tools/scope.ts",
+    "./signins": "./src/tools/signins.ts"
   },
   "engines": {
     "node": ">=22.19.0"
