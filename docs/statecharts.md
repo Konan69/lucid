@@ -65,11 +65,11 @@ independent of state-machine choice.
 
 Local evidence:
 
-- [Web Connection request card](../apps/web/src/ui/connector/Card.tsx) and
-  [mobile Connection request card](../apps/mobile/src/ui/connector/Card.tsx).
-- [Mobile resource store](../apps/mobile/src/data/resource/store.ts): subscription lifetime,
-  foreground refresh, and stale-response handling already have an owned implementation.
-- [Library ingestion](../packages/agent/runtime/src/library-ingest.ts).
+- [Web Connection adapter](../apps/web/src/data/connecting.ts) and
+  [mobile Connection adapter](../apps/mobile/src/data/connecting.ts).
+- [Shared live query state](../packages/client/state/src/live.ts): subscription lifetime,
+  reconnection, and cached values already have an owned implementation.
+- [Library ingestion](../apps/server/src/library/ingest.ts).
 
 ## Future application fit
 
@@ -84,8 +84,8 @@ These are evaluation candidates, not claims that the complete features are imple
 
 Computer availability, control ownership, and archive synchronization are separate concerns. Model
 their relationships explicitly rather than enumerating every combination in one giant machine.
-Existing [restore verification](../packages/computer/src/restore.ts) and
-[capture conflict handling](../packages/computer/src/capture.ts) remain authoritative guarantees.
+Existing [restore verification](../packages/computer/state/src/restore.ts) and
+[capture conflict handling](../packages/computer/state/src/capture.ts) remain authoritative guarantees.
 
 Related product direction: [Computer](04-computer.md),
 [platform architecture](09-platform-architecture.md).

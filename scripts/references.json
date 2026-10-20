@@ -1,0 +1,321 @@
+{
+  "generated": [
+    {
+      "path": "packages/agent/runtime/.state",
+      "reason": "Flue's ignored durable local state, never source."
+    },
+    {
+      "path": ".alchemy",
+      "reason": "Alchemy owns ignored deployment state."
+    },
+    {
+      "path": "docs/prds",
+      "reason": "Private product requirement documents are deliberately ignored."
+    },
+    {
+      "path": "**/node_modules/**",
+      "reason": "pnpm installs ignored dependencies for each workspace."
+    },
+    {
+      "path": "**/dist/**",
+      "reason": "Build commands own generated distribution output."
+    },
+    {
+      "path": "**/build/**",
+      "reason": "Native and web build tools own generated build output."
+    },
+    {
+      "path": "**/.cache/**",
+      "reason": "The gate and compilers own ignored rebuildable cache output."
+    },
+    {
+      "path": "**/.output/**",
+      "reason": "Bundlers own generated output directories."
+    },
+    {
+      "path": "**/.turbo/**",
+      "reason": "Turbo owns ignored task caches."
+    },
+    {
+      "path": ".claude/**",
+      "reason": "Claude owns ignored local session metadata."
+    },
+    {
+      "path": ".pi/**",
+      "reason": "Pi owns ignored local session metadata."
+    },
+    {
+      "path": "apps/mobile/android/**",
+      "reason": "Expo generates the ignored Android native project."
+    },
+    {
+      "path": "apps/mobile/ios/**",
+      "reason": "Expo generates the ignored iOS native project."
+    },
+    {
+      "path": "refs/**",
+      "reason": "Private third-party reference checkouts are ignored research inputs, not Vivid source."
+    },
+    {
+      "path": "artifacts/**",
+      "reason": "Private generated research and proof artifacts are deliberately ignored."
+    },
+    {
+      "path": "expo/tsconfig.base",
+      "reason": "Expo ships this config in the pinned dependency; the phone manifest declares Expo."
+    }
+  ],
+  "empty": [
+    {
+      "owner": ".oxlintrc.json",
+      "path": "**/*.spec.{ts,tsx}",
+      "reason": "Future spec suites must receive the same test exemptions as existing test suites."
+    },
+    {
+      "owner": "packages/agent/runtime/tsconfig.tests.json",
+      "path": "src/**/*.test.tsx",
+      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
+    },
+    {
+      "owner": "packages/agent/skills/tsconfig.tests.json",
+      "path": "src/**/*.test.tsx",
+      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
+    },
+    {
+      "owner": "packages/client/state/tsconfig.tests.json",
+      "path": "src/**/*.test.tsx",
+      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
+    },
+    {
+      "owner": "packages/contracts/tsconfig.tests.json",
+      "path": "src/**/*.test.tsx",
+      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
+    },
+    {
+      "owner": "packages/design/marks/tsconfig.tests.json",
+      "path": "src/**/*.test.tsx",
+      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
+    },
+    {
+      "owner": "tsconfig.json",
+      "path": "packages/*/drizzle.config.ts",
+      "reason": "Future workspace migration owners must be included in the root TypeScript graph."
+    },
+    {
+      "owner": "tsconfig.json",
+      "path": "packages/*/*/drizzle.config.ts",
+      "reason": "Future workspace migration owners must be included in the root TypeScript graph."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".agent/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".codex/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".continue/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".cursor/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".gemini/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".opencode/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".roo/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    },
+    {
+      "owner": ".oxlintrc.json",
+      "path": ".windsurf/**",
+      "reason": "Future local tool metadata must stay outside product lint scopes."
+    }
+  ],
+  "examples": [
+    {
+      "owner": ".agents/skills/better-auth-best-practices/SKILL.md",
+      "paths": ["./lib", "./utils", "./src"],
+      "reason": "Generic Better Auth CLI search locations, not paths in Vivid."
+    },
+    {
+      "owner": ".agents/skills/helix-query-json-dynamic/UPSTREAM.md",
+      "paths": ["docs/error-handling.md"],
+      "reason": "Records the upstream file name before it was imported as the bundled ERROR-HANDLING.md."
+    },
+    {
+      "owner": ".agents/skills/interface-review/scope-resolution.md",
+      "paths": ["packages/a/dist/"],
+      "reason": "Invented package used to explain Git pathspec matching."
+    },
+    {
+      "owner": ".agents/skills/product-description/SKILL.md",
+      "paths": ["docs/product/"],
+      "reason": "Default output directory created only when this skill is invoked."
+    },
+    {
+      "owner": ".agents/skills/turborepo/SKILL.md",
+      "paths": ["apps/docs/content/docs/"],
+      "reason": "Path within upstream Turborepo documentation, not this workspace."
+    },
+    {
+      "owner": ".agents/skills/turborepo/command/turborepo.md",
+      "paths": ["packages/ui/package.json"],
+      "reason": "Invented UI package illustrating Turbo task selection."
+    },
+    {
+      "owner": ".agents/skills/vitest-evals/SOURCES.md",
+      "paths": [
+        "docs/architecture.md",
+        "docs/development-guide.md",
+        "docs/testing.md",
+        "packages/vitest-evals/README.md",
+        "packages/vitest-evals/src/index.ts",
+        "packages/vitest-evals/src/harness.ts",
+        "packages/vitest-evals/src/judges/*",
+        "packages/vitest-evals/src/replay.ts",
+        "packages/harness-ai-sdk/README.md",
+        "packages/harness-ai-sdk/src/index.test.ts",
+        "packages/harness-pi-ai/README.md",
+        "packages/harness-pi-ai/src/index.test.ts",
+        "apps/demo-ai-sdk/evals/*",
+        "apps/demo-ai-sdk/evals/shared.ts",
+        "apps/demo-pi/evals/*",
+        "apps/demo-pi/src/refundAgent.ts"
+      ],
+      "reason": "Source inventory in the upstream vitest-evals repository used to author this vendored skill."
+    },
+    {
+      "owner": ".agents/skills/vitest-evals/SPEC.md",
+      "paths": [
+        "packages/vitest-evals",
+        "packages/harness-ai-sdk",
+        "packages/harness-pi-ai",
+        "apps/demo-ai-sdk",
+        "apps/demo-pi"
+      ],
+      "reason": "Package layout of upstream vitest-evals, not Vivid packages."
+    },
+    {
+      "owner": "docs/02-references.md",
+      "paths": ["packages/core/opensession-server/src/frontend"],
+      "reason": "Path in the Open Session reference checkout described in this section."
+    },
+    {
+      "owner": "docs/04-computer.md",
+      "paths": ["packages/local-exec/computer-use"],
+      "reason": "Path within the reconstructed third-party Computer reference."
+    },
+    {
+      "owner": "docs/09-platform-architecture.md",
+      "paths": ["packages/domain"],
+      "reason": "Superseded package sketch retained in the explicitly historical September architecture."
+    },
+    {
+      "owner": "docs/19-infrastructure.md",
+      "paths": [
+        "apps/hosted/self-host/src/worker.ts:136-146",
+        "packages/telemetry/src/layer.ts:40-60",
+        "apps/hosted/self-host/native/main.go:709-719"
+      ],
+      "reason": "Line citations into upstream Executor, not Vivid source."
+    },
+    {
+      "owner": "docs/20-openmuse-reference.md",
+      "paths": [
+        "apps/server/src/actions.ts",
+        "apps/server/src/db.ts:77-94",
+        "packages/domain/src/index.ts:117-156",
+        "packages/integrations/src/google.ts:19-27,551-606",
+        "apps/server/src/db.ts:90-94",
+        "apps/server/src/engine/worker.ts",
+        "apps/server/src/engine/service.ts:306-330,844-864",
+        "apps/server/src/engine/model.ts:24-95",
+        "apps/server/src/engine/service.ts:73-116,578-588,749-807",
+        "apps/worker/src/network.ts",
+        "apps/worker/src/browser.ts:215-235",
+        "apps/worker/src/browser.ts",
+        "apps/server/src/browser-console.ts",
+        "apps/server/src/computer.ts:441-750",
+        "apps/computer/Dockerfile",
+        "apps/server/src/auth.ts:42-55",
+        "apps/server/src/files.ts:50-52",
+        "packages/integrations/src/vault.ts",
+        "packages/integrations/src/google.ts:523-548,787-816",
+        "apps/server/src/connections/google",
+        "packages/integrations/src/pdf.ts:93-153",
+        "apps/server/src/files.ts",
+        "apps/server/src/engine/service.ts:808-899",
+        "apps/server/src/engine/service.ts:359-440,900-997",
+        "apps/mobile/src/conversation-queue.ts",
+        "apps/mobile/src/thread-artifacts.tsx",
+        "apps/server/src/engine/service.ts:441-577",
+        "packages/domain/src/index.ts:142-150",
+        "packages/domain/src/agent.ts:3-12",
+        "apps/worker/src/network.ts:46-96",
+        "apps/worker/src/proxy.ts",
+        "apps/worker/src/downloads.ts",
+        "apps/server/src/computer.ts:465-500",
+        "packages/integrations/src/pdf.ts:73-99",
+        "apps/mobile/src/chat.tsx:307-316",
+        "apps/server/src/db.ts:130-132",
+        "apps/server/src/engine/finance.ts",
+        "packages/backends/src/openbot.ts"
+      ],
+      "reason": "Line citations into the explicitly historical OpenMuse checkout, or unimplemented mappings in that historical plan."
+    },
+    {
+      "owner": "docs/21-reference-mining.md",
+      "paths": ["docs/internals/openbot.md"],
+      "reason": "File within the ignored OpenBot reference checkout, as the surrounding sentence states."
+    },
+    {
+      "owner": "docs/22-one-product.md",
+      "paths": ["packages/sdk/src/implementation/oauth.ts"],
+      "reason": "Source citation within the Executor reference implementation."
+    },
+    {
+      "owner": "docs/24-executor-scale.md",
+      "paths": [
+        "apps/hosted/self-host",
+        "apps/hosted/server",
+        "apps/hosted/cloud",
+        "packages/sdk",
+        "packages/app-data",
+        "packages/reactivity",
+        "apps/hosted"
+      ],
+      "reason": "Paths relative to upstream Executor revision 2732ab3, explicitly declared by this document."
+    },
+    {
+      "owner": "docs/25-memory.md",
+      "paths": ["file.md"],
+      "reason": "Illustrative Markdown link syntax for note indexes, not a repository link."
+    },
+    {
+      "owner": "docs/26-memory-cells.md",
+      "paths": ["apps/memory"],
+      "reason": "Proposed app in an explicitly unimplemented memory design."
+    },
+    {
+      "owner": "docs/checks.md",
+      "paths": ["apps/web/TYPECHECK.md"],
+      "reason": "VCOS reference architecture citation, not a Vivid source file."
+    }
+  ]
+}

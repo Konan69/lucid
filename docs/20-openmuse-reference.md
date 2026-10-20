@@ -66,7 +66,7 @@ both execute. Every transition writes an activity entry (`actions.ts:192-201`).
 States (`packages/domain/src/index.ts:142-150`): `awaiting_review → executing → succeeded | failed |
 outcome_unknown`, or `awaiting_review → denied | cancelled | expired`.
 
-**Vivid mapping.** `docs/10`/`CLAUDE.md` define Approval as "authorization for one consequential
+**Vivid mapping.** `docs/10-product-decisions.md`/`CLAUDE.md` define Approval as "authorization for one consequential
 action, preserving action, risk, rationale, scope, and decision". OpenMuse has action + decision but
 no risk, rationale, or scope, and no decider identity.
 
@@ -293,7 +293,7 @@ Vivid currently reacts to Executor app events through Watches. Scheduled public-
 `apps/mobile/src/conversation-queue.ts` is an external store (`subscribe`/`getSnapshot`, suitable
 for `useSyncExternalStore`) holding messages typed while a response streams. It sends them one at a
 time; on failure it pauses and **never resends** the failed message (`conversation-queue.ts:38-41`).
-Vivid's Flue runtime already admits messages mid-response (`docs/14`), so take only the
+Vivid's Flue runtime already admits messages mid-response (`docs/14-product-feature-set-and-grok-bot-parity.md`), so take only the
 "visible pending list + pause on failure, no implicit resend" behavior into `packages/client`.
 The composer keeps the draft on stop (`apps/mobile/src/chat.tsx:307-316`).
 
@@ -303,7 +303,7 @@ Tool results render as cards in the Thread and link to the saved record rather t
 re-described in prose: `FileThreadCard` and `TaskThreadCard` (`apps/mobile/src/thread-artifacts.tsx`),
 the browser card with its live/running state (`browser-tool-card.tsx`), and mail results
 (`mail-tool-card.tsx`). Borrow the pattern — every Run output is an Artifact with a card that opens
-it — not the components; Vivid's UI is built to its own design language (`docs/08`).
+it — not the components; Vivid's UI is built to its own design language (`docs/08-design-language.md`).
 
 ## 18. Suggestions with evidence
 

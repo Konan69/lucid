@@ -80,15 +80,15 @@ One haptic per user action, on the causal frame, never as the only feedback.
 | [Sequencing](references/sequencing.md) | Keyframes; Stagger; Orchestration |
 | [Transforms](references/transforms.md) | Translate; Scale; Transform origin; Origin-aware animation |
 | [State transitions](references/state-transitions-shared-element.md) | Crossfade; Continuity transition; Morph; Shared element transition; Accordion / Collapse; Direction-aware transition |
-| [Scroll](references/scroll.md) | Scroll reveal; Scroll-driven animation; Page transition; View transition |
-| [Feedback & press](references/feedback-press.md) | Hover effect; Press / Tap feedback; Hold to confirm; Shake / Wiggle |
-| [Easing & springs](references/easing-springs.md) | Easing; Ease-out; Ease-in-out; Spring; Interruptible animation |
-| [Looping & ambient](references/looping-ambient.md) | Loop; Pulse; Idle animation |
-| [Gestures & sheets](references/gestures-sheets.md) | Drag; Swipe to dismiss; Rubber-banding; Momentum |
-| [Streaming text & lists](references/streaming-text-and-lists.md) | Typewriter; Text morph; Enter / Exit; Layout animation |
-| [Loading](references/loading-skeleton-progress.md) | Skeleton / Shimmer; Linear; Pulse; Crossfade |
+| Scroll (recipe not yet catalogued) | Scroll reveal; Scroll-driven animation; Page transition; View transition |
+| Feedback & press (recipe not yet catalogued) | Hover effect; Press / Tap feedback; Hold to confirm; Shake / Wiggle |
+| Easing & springs (recipe not yet catalogued) | Easing; Ease-out; Ease-in-out; Spring; Interruptible animation |
+| Looping & ambient (recipe not yet catalogued) | Loop; Pulse; Idle animation |
+| Gestures & sheets (recipe not yet catalogued) | Drag; Swipe to dismiss; Rubber-banding; Momentum |
+| Streaming text & lists (recipe not yet catalogued) | Typewriter; Text morph; Enter / Exit; Layout animation |
+| Loading (recipe not yet catalogued) | Skeleton / Shimmer; Linear; Pulse; Crossfade |
 
-**Total: 47 vetted entries.** Repeated vocabulary names in Loading are purpose-specific recipes, not new names.
+Linked families have bundled recipes. Other families list vocabulary only; use the animate skill before implementing them.
 
 ## Source policy
 
