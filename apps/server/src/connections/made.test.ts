@@ -305,7 +305,10 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
             Effect.gen(function* () {
               if (sent.path !== `POST ${hostedPrefix}/apps/deploy`) return
               yield* Queue.offer(saved, undefined)
-              if (answer === 'timeout') return yield* Deferred.await(release)
+              if (answer === 'timeout') {
+                yield* Deferred.await(release)
+                return
+              }
               const incoming = yield* HttpServerRequest.HttpServerRequest
               if (answer === 'disconnect') {
                 yield* Effect.sync(() =>
