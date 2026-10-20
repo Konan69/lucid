@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import {
   Artifact,
@@ -28,6 +28,7 @@ import {
   type WriteDocumentRequest,
 } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Option, Schema } from 'effect'
+import type { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { isAdmin, summaryOf } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import {
@@ -37,6 +38,7 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
+import { documentRun, Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
@@ -82,7 +84,7 @@ export interface ArtifactStoreService {
     personId: PersonId,
     threadId: ThreadId,
     request: WriteDocumentRequest,
-  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure>
+  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | RuntimeUnavailable>
   readonly read: (
     personId: PersonId,
     threadId: ThreadId,
@@ -189,29 +191,25 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/**
- * The Run a document is written by, read from the Thread alone: its oldest admitted working Run, when every
- * admitted working Run in it acts for this Person. A delivery for the same Person (their message, or the
- * answer to a question Vivid asked and kept working after) joins the response in progress, so two
- * Runs are working while one response writes; the response's host is the earlier submission
- * (Flue 2.2.2 `readSubmissionReply`, `runtime/settlement.ts` `hostOf`), the rule
- * `RunStore.actingRun` follows. Reservations not accepted by the runtime cannot author a document.
- * An admitted working Run for anyone else means the write has no honest author.
- */
+/** Lock the exact Flue response's admitted Run; unrelated working rows cannot change authorship. */
 const workingRun = Effect.fn('Artifacts.workingRun')(function* (
   tx: Transaction,
-  threadId: ThreadId,
-  personId: PersonId,
+  author: { readonly threadId: ThreadId; readonly personId: PersonId; readonly runId: RunId },
 ) {
-  const working = yield* tx
-    .select({ id: runs.id, personId: runs.personId })
+  const [run] = yield* tx
+    .select({ id: runs.id })
     .from(runs)
-    .where(and(eq(runs.threadId, threadId), eq(runs.state, 'working'), isNotNull(runs.admittedAt)))
-    .orderBy(asc(runs.turn))
+    .where(
+      and(
+        eq(runs.id, author.runId),
+        eq(runs.threadId, author.threadId),
+        eq(runs.personId, author.personId),
+        eq(runs.state, 'working'),
+        isNotNull(runs.admittedAt),
+      ),
+    )
     .for('update')
-  const [run] = working
-  if (run === undefined || working.some((candidate) => candidate.personId !== personId))
-    return yield* new NotFound({ message: 'Working Run not found' })
+  if (run === undefined) return yield* new NotFound({ message: 'Working Run not found' })
   return (yield* decodeRun(run)).id
 })
 
@@ -223,11 +221,15 @@ const write = Effect.fn('Artifacts.write')(function* (
 ) {
   const database = yield* Database
   const changes = yield* Changes
+  // Check access before reading runtime history; repeat it under the lock before any write.
+  yield* requireThread(threadId, personId)
+  // Network lookup precedes the transaction and must still cancel if the tool leaves its response.
+  const runId = yield* documentRun(threadId, request.toolCallId).pipe(Effect.interruptible)
   const result = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* lock(tx, threadId, personId)
       const author = ArtifactAuthor.cases.Vivid.make({
-        runId: yield* workingRun(tx, threadId, personId),
+        runId: yield* workingRun(tx, { threadId, personId, runId }),
       })
       const [row] = yield* tx.select().from(artifacts).where(named(threadId, request.title))
       if (row === undefined) {
@@ -375,8 +377,8 @@ export const artifactStoreLayer = Layer.effect(
   ArtifactStore,
   Effect.gen(function* () {
     const database = yield* Database
-    const context = yield* Effect.context<Database | Changes>()
-    const provide = <A, E>(program: Effect.Effect<A, E, Database | Changes>) =>
+    const context = yield* Effect.context<Database | Changes | Runtime>()
+    const provide = <A, E>(program: Effect.Effect<A, E, Database | Changes | Runtime>) =>
       Effect.provide(program, context)
     const list = Effect.fn('ArtifactStore.list')(function* (
       personId: PersonId,

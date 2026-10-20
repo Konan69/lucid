@@ -25,6 +25,12 @@ export const ArtifactBody = Schema.String.check(Schema.isNonEmpty(), Schema.isMa
 /** What changed in a version, in a sentence, for the version list. */
 export const ArtifactNote = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200))
 
+/** Flue's opaque call identity, supplied by ToolContext rather than model arguments. */
+export const DocumentToolCallId = Schema.String.check(Schema.isNonEmpty()).pipe(
+  Schema.brand('DocumentToolCallId'),
+)
+export type DocumentToolCallId = typeof DocumentToolCallId.Type
+
 /** Who made a version: Vivid, in the Run that did it, or a Person revising by hand. */
 export const ArtifactAuthor = Schema.TaggedUnion({
   Vivid: { runId: RunId },
@@ -99,12 +105,14 @@ export class ArtifactChanged extends Schema.TaggedError<ArtifactChanged>()(
 ) {}
 
 /**
- * What Vivid's `write_document` tool sends. The Thread, the Person and the Run come from the
- * delivery the tool call belongs to, never from the model. A title the Thread already has adds a
- * version to that document; a new title makes a new one. One tool for both, because "write" and
+ * What Vivid's `write_document` tool sends. ToolContext supplies the call identity; the server
+ * resolves its actual Flue response and checks the Run, Thread and Person, never the model.
+ * A title the Thread already has adds a version to that document; a new title makes a new one.
+ * One tool for both, because "write" and
  * "revise" are the same act to the one writing.
  */
 export const WriteDocumentRequest = Schema.Struct({
+  toolCallId: DocumentToolCallId,
   title: ArtifactTitle,
   body: ArtifactBody,
   note: Schema.optionalKey(ArtifactNote),

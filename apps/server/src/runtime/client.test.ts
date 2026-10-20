@@ -5,13 +5,21 @@ import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { PersonId, RunId, RuntimeAdmissionBody, ServerBuild, ThreadId } from '@vivid/contracts'
+import {
+  DocumentToolCallId,
+  PersonId,
+  RunId,
+  RuntimeAdmissionBody,
+  ServerBuild,
+  ThreadId,
+} from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { ServerConfig } from '../config.ts'
 
 import {
   AdmissionRefused,
   AdmissionUncertain,
+  documentRun,
   Runtime,
   runtimeLayer,
   type RuntimeMessage,
@@ -68,6 +76,107 @@ const admitInputWith = Effect.fn('Runtime.test.admitInputWith')(function* (
   return yield* runtime.admit(input).pipe(Effect.result)
 })
 const admitWith = (http: HttpClient.HttpClient) => admitInputWith(http, admissionInput)
+
+const documentCall = DocumentToolCallId.make('document-call')
+/** Exercise the actual Runtime HTTP adapter and finite read scope, varying only Flue's wire reply. */
+const documentRunWith = Effect.fn('Runtime.test.documentRunWith')(function* (
+  body: string,
+  status: number,
+) {
+  const released = yield* Deferred.make<void>()
+  const http = HttpClient.make((request, url, signal) =>
+    Effect.sync(() => {
+      expect(url.pathname).toBe('/agents/vivid/MARK-thread')
+      expect(url.search).toBe('?view=history')
+      expect(request.headers.authorization).toBe('Bearer test-runtime-token')
+      signal.addEventListener('abort', () => Deferred.doneUnsafe(released, Exit.void), {
+        once: true,
+      })
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(body, { status, headers: { 'content-type': 'application/json' } }),
+      )
+    }),
+  )
+  const result = yield* documentRun(ThreadId.make('MARK-thread'), documentCall).pipe(
+    Effect.provide(
+      runtimeLayer.pipe(
+        Layer.provide(Layer.merge(runtimeConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
+      ),
+    ),
+    Effect.result,
+  )
+  expect(yield* Deferred.isDone(released)).toBe(true)
+  return result
+})
+
+describe('Runtime document response identity', () => {
+  const call = {
+    type: 'dynamic-tool',
+    toolName: 'write_document',
+    toolCallId: documentCall,
+    state: 'input-available',
+    input: { title: 'Plan', body: '# Plan' },
+  }
+  const earlier = RunId.make('earlier-response')
+  const later = RunId.make('late-answer-response')
+  for (const host of [earlier, later]) {
+    it.effect(`resolves the exact response ${host} without inferring from delivery order`, () =>
+      Effect.gen(function* () {
+        const result = yield* documentRunWith(
+          JSON.stringify({
+            messages: [
+              {
+                role: 'assistant',
+                submissionId: earlier,
+                parts: [{ ...call, toolCallId: 'earlier-call' }],
+              },
+              { role: 'user', submissionId: later, parts: [{ type: 'text', text: 'Answer' }] },
+              { role: 'assistant', submissionId: host, parts: [call] },
+            ],
+            // A joined delivery has no host link until settlement. A late answer instead starts
+            // its own response after A settles. The call's containing message identifies both.
+            settlements: host === later ? [{ submissionId: earlier, outcome: 'completed' }] : [],
+          }),
+          200,
+        )
+        expect(Result.isSuccess(result) && result.success).toBe(host)
+      }),
+    )
+  }
+
+  for (const messages of [
+    [],
+    [{ role: 'assistant', submissionId: earlier, parts: [{ ...call, toolCallId: 'other-call' }] }],
+    [{ role: 'user', submissionId: earlier, parts: [call] }],
+    [{ role: 'assistant', submissionId: earlier, parts: [{ ...call, toolName: 'read_document' }] }],
+    [{ role: 'assistant', parts: [call] }],
+    [
+      { role: 'assistant', submissionId: earlier, parts: [call] },
+      { role: 'assistant', submissionId: later, parts: [call] },
+    ],
+  ]) {
+    it.effect(`refuses missing or ambiguous document response ${JSON.stringify(messages)}`, () =>
+      Effect.gen(function* () {
+        const result = yield* documentRunWith(JSON.stringify({ messages }), 200)
+        expect(Result.isFailure(result) && result.failure._tag).toBe('NotFound')
+      }),
+    )
+  }
+
+  for (const { body, status } of [
+    { body: '{', status: 200 },
+    { body: JSON.stringify({ messages: 'invalid' }), status: 200 },
+    { body: JSON.stringify({ messages: [] }), status: 503 },
+  ]) {
+    it.effect(`reports unreadable document history ${status} ${body}`, () =>
+      Effect.gen(function* () {
+        const result = yield* documentRunWith(body, status)
+        expect(Result.isFailure(result) && result.failure._tag).toBe('RuntimeUnavailable')
+      }),
+    )
+  }
+})
 
 /** Classification is observed through the real Runtime Layer; only the remote HTTP transport varies. */
 /** Each case builds its own log capture and transport so recorded refusals cannot leak. */

@@ -58,6 +58,7 @@ describe('document tools', () => {
       { ...valid, turn: 1 },
       { ...valid, threadId: reference },
       { ...valid, runId: reference },
+      { ...valid, toolCallId: 'forged-call' },
     ])
       expect(v.safeParse(write.input, input).success).toBe(false)
     expect(v.safeParse(reading.input, { summary: 'Launch plan', title: 'Plan' }).success).toBe(true)
@@ -117,7 +118,7 @@ describe('document tools', () => {
     })
   })
 
-  it.effect('sends only document fields for WriteDocument and only title for ReadDocument', () =>
+  it.effect('sends Flue call identity outside model fields and only title for ReadDocument', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { requests, rpc, runTool } = yield* fixture()
@@ -140,6 +141,7 @@ describe('document tools', () => {
           return yield* Effect.die('Expected RPC request')
         expect(request.tag).toBe('WriteDocument')
         expect(request.payload).toEqual({
+          toolCallId: context.toolCallId,
           title: 'Plan',
           body: '# Plan',
           note: 'Changed scope',
@@ -206,6 +208,28 @@ describe('document tools', () => {
           output: { ok: false, message: 'It does not exist or the person cannot see it.' },
         })
         return yield* Effect.void
+      }),
+    ),
+  )
+
+  it.effect('rejects an empty runtime call identity before issuing a product write', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { requests, runTool } = yield* fixture()
+        const [write] = documentTools(runTool)
+        const result = yield* Effect.promise(() =>
+          Promise.resolve(
+            write.run({
+              ...context,
+              toolCallId: '',
+              data: { summary: 'Plan', title: 'Plan', body: '# Plan' },
+            }),
+          ),
+        )
+        expect(result).toMatchObject({
+          output: { ok: false, message: 'The request is invalid; check the supplied details.' },
+        })
+        expect(yield* Queue.size(requests)).toBe(0)
       }),
     ),
   )

@@ -12,6 +12,8 @@ import type * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
+  DocumentToolCallId,
+  NotFound,
   RunId,
   RuntimeAdmissionBody,
   ThreadId,
@@ -243,6 +245,61 @@ export interface RuntimeService {
  * The Flue client is Promise-based; each call is wrapped once, here, and nowhere else.
  */
 export class Runtime extends Context.Service<Runtime, RuntimeService>()('vivid/Runtime') {}
+
+/** Only the public history fields needed for attribution are decoded; other parts remain JSON. */
+const DocumentHistory = Schema.Struct({
+  messages: Schema.Array(
+    Schema.Struct({
+      role: Schema.Literals(['assistant', 'user', 'system']),
+      submissionId: Schema.optionalKey(RunId),
+      parts: Schema.Array(Schema.Json),
+    }),
+  ),
+})
+const isDocumentCall = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal('dynamic-tool'),
+    toolName: Schema.Literal('write_document'),
+    toolCallId: DocumentToolCallId,
+  }),
+)
+const decodeDocumentHistory = HttpClientResponse.schemaBodyJson(DocumentHistory)
+
+/**
+ * Flue 2.2.2 awaits its pi-agent-core event subscribers before executing a tool. Its
+ * conversation-stream-store subscriber awaits the canonical assistant_tool_call append, and
+ * ConversationWriter.append resolves after the durable store append and fold adoption. Thus
+ * public `?view=history` already contains this call when the tool calls the product. The public
+ * history handler reads getStateAtHead, so a cached fold cannot hide the committed call.
+ * The message's submissionId is the response host, including joined deliveries. Product Run
+ * settlement can lag behind Flue, so neither turn order nor working-row count identifies it.
+ */
+export const documentRun = Effect.fn('Runtime.documentRun')(function* (
+  threadId: ThreadId,
+  toolCallId: DocumentToolCallId,
+) {
+  const runtime = yield* Runtime
+  const response = yield* runtime.read({
+    threadId,
+    suffix: '',
+    search: '?view=history',
+    accept: 'application/json',
+  })
+  if (response.status !== 200)
+    return yield* new RuntimeUnavailable({ message: 'Document response could not be read' })
+  const history = yield* decodeDocumentHistory(response).pipe(
+    Effect.mapError(() => new RuntimeUnavailable({ message: 'Document response is invalid' })),
+  )
+  const matches = history.messages.filter(
+    (message) =>
+      message.role === 'assistant' &&
+      message.parts.some((part) => isDocumentCall(part) && part.toolCallId === toolCallId),
+  )
+  const [message] = matches
+  if (matches.length !== 1 || message === undefined || message.submissionId === undefined)
+    return yield* new NotFound({ message: 'Document response not found' })
+  return message.submissionId
+}, Effect.scoped)
 
 const unavailable = (message: string) => () => new RuntimeUnavailable({ message })
 
