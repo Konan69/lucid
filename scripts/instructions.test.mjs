@@ -8,7 +8,10 @@ import { importLine, validateInstructions } from './instructions.mjs'
 const assert = NodeAssert
 const test = NodeTest.default
 
-/** Write the given files into a fresh directory and check them as if they were tracked. */
+/**
+ * The file list is passed in instead of read from git, so a fixture needs no repository of its
+ * own; the directory is fresh so one case's files never satisfy another's.
+ */
 function check(files) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-instructions-'))
   try {
