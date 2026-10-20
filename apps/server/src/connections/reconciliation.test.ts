@@ -156,10 +156,15 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
             const second = yield* seed(yield* encodeLegacy(pending))
             const remote = yield* hostedExecutorFixture()
             yield* Ref.set(remote.replies, new Map([[`GET ${hostedPrefix}/inventory`, reply]]))
-            const context = yield* Layer.build(remote.configured)
+            // Each pass owns its Executor. Its unrelated catalog writer must be released before
+            // the migration clock jumps, rather than replaying 48 hours of real HTTP refreshes.
+            const reconcile = Effect.fn('Reconciliation.Test.pass')(function* () {
+              const context = yield* Layer.build(remote.configured)
+              return yield* migrateConnections().pipe(Effect.provide(context))
+            }, Effect.scoped)
             const before = [yield* first.read, yield* second.read]
             yield* Ref.set(remote.requests, [])
-            expect(yield* migrateConnections().pipe(Effect.provide(context))).toBe(true)
+            expect(yield* reconcile()).toBe(true)
             expect([yield* first.read, yield* second.read]).toEqual(before)
             expect(
               Option.getOrThrow(Option.fromUndefinedOr((yield* listRecords(first.ownerActor))[0]))
@@ -171,7 +176,7 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
                 .filter((path) => path !== `GET ${hostedPrefix}/catalog`),
             ).toEqual([`GET ${hostedPrefix}/inventory`])
             yield* TestClock.adjust('48 hours')
-            expect(yield* migrateConnections().pipe(Effect.provide(context))).toBe(true)
+            expect(yield* reconcile()).toBe(true)
             expect([yield* first.read, yield* second.read]).toEqual(before)
             expect(
               (yield* Ref.get(remote.requests))
