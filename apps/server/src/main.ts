@@ -41,6 +41,7 @@ import { executorLayer } from './connections/executor.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
+import { authLayer } from './auth/provider.ts'
 import { databaseLayer } from './database/client.ts'
 import { routerLayer } from './http/router.ts'
 import { staticRoutes } from './http/static.ts'
@@ -117,7 +118,9 @@ const serverProgram = Effect.gen(function* () {
     observabilityLayer(config.OBSERVABILITY).pipe(Layer.provide(NodeHttpClient.layerUndici)),
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
-  const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
+  const durable = Layer.mergeAll(workLayer, decisionModelLayer, authLayer).pipe(
+    Layer.provideMerge(data),
+  )
   const foundation = Layer.mergeAll(
     changesLayer,
     tallyLayer,

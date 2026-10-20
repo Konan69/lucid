@@ -1,8 +1,9 @@
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
+import { Auth, AuthUnavailable } from '../auth/provider.ts'
 import { computerScreenRoutes } from '../computers/screen.ts'
 import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
@@ -31,9 +32,14 @@ export const authRoute = HttpRouter.add(
   '*',
   '/api/auth/*',
   Effect.gen(function* () {
-    const auth = yield* authEffect
-    // @effect-diagnostics-next-line strictEffectProvide:off -- The Layer is Alchemy's type-only `RuntimeContext.phantom` (`Layer.empty`): it acquires nothing and owns no scope, so there is no lifetime for an entry point to hold.
-    return yield* auth.fetch.pipe(Effect.provide(localAuthRuntimeLayer))
+    const auth = yield* Auth
+    const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest)
+    // Better Auth answers its own refusals as responses; a rejection is a fault inside it.
+    const response = yield* Effect.tryPromise({
+      try: () => auth.handler(request),
+      catch: () => new AuthUnavailable({}),
+    })
+    return HttpServerResponse.fromWeb(response)
   }),
 )
 

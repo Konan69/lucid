@@ -33,7 +33,6 @@ pmOnFail: error
 # Every repeated stack pin has one owner. Manifests reference these entries with
 # catalog: so Effect/Drizzle/Flue/native TypeScript cannot drift by package.
 catalog:
-  '@alchemy.run/better-auth': 2.0.0-beta.81
   '@alchemy.run/frontend-frameworks': 2.0.0-beta.81
   '@earendil-works/pi-ai': 0.87.1
   '@effect/ai-openrouter': 4.0.2

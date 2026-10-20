@@ -30,6 +30,16 @@
     "symbols": ["opened", "attempt", "noteIndex"]
   },
   {
+    "file": "apps/server/src/auth/session.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["authenticate"]
+  },
+  {
+    "file": "apps/server/src/http/router.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["authRoute"]
+  },
+  {
     "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
     "symbols": ["attempt", "settle", "owned"]

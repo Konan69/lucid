@@ -5,7 +5,6 @@ import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 
 export const versions = Object.freeze({
-  '@alchemy.run/better-auth': '2.0.0-beta.81',
   '@earendil-works/pi-ai': '0.87.1',
   '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
@@ -129,7 +128,6 @@ const requiredByManifest = Object.freeze({
     'react-native-worklets',
   ],
   'apps/server/package.json': [
-    '@alchemy.run/better-auth',
     '@effect/platform-node',
     '@effect/sql-pg',
     '@types/node',

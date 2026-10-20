@@ -17,6 +17,7 @@ import { Runtime } from '../runtime/client.ts'
 import { Conversation } from './conversation.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { threads } from './tables.ts'
+import { authLayer } from '../auth/provider.ts'
 
 /**
  * The change bus in memory. `watching` hears every subscription, so a test that must act after
@@ -195,7 +196,12 @@ const listening = Effect.fn('GatewayTest.listening')(function* () {
   yield* Queue.take(bus.watching)
 })
 
-const foundation = Layer.mergeAll(testDatabaseLayer, testConfigLayer, silentChangesLayer)
+const foundation = Layer.mergeAll(
+  testDatabaseLayer,
+  testConfigLayer,
+  silentChangesLayer,
+  authLayer.pipe(Layer.provide(testConfigLayer)),
+)
 const audible = busLayer
 
 /** The database is shared; each read owns a fresh bus so subscriptions cannot leak between cases. */
