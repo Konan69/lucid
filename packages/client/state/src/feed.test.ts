@@ -1,7 +1,37 @@
+import { describe, expect, it } from '@effect/vitest'
+import { Machine } from '@typeonce/effect-machine'
+import { MachineTest } from '@typeonce/effect-machine/testing'
 import { FeedCardId, FeedItem, ThreadId } from '@vivid/contracts'
-import { Option } from 'effect'
-import { describe, expect, it } from 'vitest'
-import { Press, Settling, feedFace, feedView, fill, folds, pressKey, standingOf } from './feed.js'
+import {
+  Arbitrary,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Queue,
+  Result,
+  Schema,
+} from 'effect'
+import { TestClock } from 'effect/testing'
+import {
+  Press,
+  Settling,
+  feedFace,
+  feedView,
+  fill,
+  folds,
+  failed,
+  pressKey,
+  standingOf,
+  PressMachine,
+  PressStates,
+  PressEvents,
+  Sending,
+  SendRefused,
+  pressOf,
+  type Delivery,
+} from './feed.js'
 
 const thread = ThreadId.make('00000000-0000-4000-8000-000000000001')
 const waiting = FeedItem.cases.Waiting.make({
@@ -41,6 +71,18 @@ describe("a card button's words", () => {
     expect(
       fill('Send $count to $who, cc $cc', { $count: 3, $who: ['Ada', 'Tobi'], $cc: false }),
     ).toBe('Send 3 to Ada, Tobi, cc no')
+  })
+
+  it('replaces repeated and numbered names without interpreting dollar signs in chosen words', () => {
+    expect(fill('$ticket_2 then $ticket_2', { $ticket_2: '$5 & $flight' })).toBe(
+      '$5 & $flight then $5 & $flight',
+    )
+  })
+
+  it('keeps names for unsupported or absent renderer values', () => {
+    for (const value of [null, undefined, {}, [], Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(fill('Book $flight', { $flight: value })).toBe('Book $flight')
+    }
   })
 
   it('leave a name nothing was chosen under as Vivid wrote it', () => {
@@ -85,4 +127,204 @@ describe('a press on a card', () => {
     expect(pressKey(waiting, lost, 'Not now', () => 'new')).toBe('new')
     expect(pressKey(waiting, Option.none(), 'Book Arik', () => 'new')).toBe('new')
   })
+})
+
+/** Every invocation gets its own answer, so an interrupted call can finish late in a test. */
+const started = Effect.fn('Feed.test.started')(function* () {
+  const calls = yield* Queue.unbounded<{
+    readonly delivery: Delivery
+    readonly answer: Deferred.Deferred<Result.Result<void, SendRefused>>
+  }>()
+  const interrupted = yield* Queue.unbounded<number>()
+  const sent: Array<Delivery> = []
+  const service = Layer.succeed(Sending, {
+    send: (delivery) =>
+      Effect.gen(function* () {
+        const answer = yield* Deferred.make<Result.Result<void, SendRefused>>()
+        sent.push(delivery)
+        yield* Queue.offer(calls, { delivery, answer })
+        return yield* Deferred.await(answer).pipe(Effect.flatMap(Effect.fromResult))
+      }).pipe(Effect.onInterrupt(() => Queue.offer(interrupted, delivery.pressed.at))),
+  })
+  const ref = yield* Machine.start(PressMachine).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- This case owns the service and its hand-answered calls.
+    Effect.provide(service),
+  )
+  const probe = yield* MachineTest.probe(PressMachine, ref)
+  const at = (path: Parameters<typeof PressStates.matches>[1]) =>
+    Machine.waitFor(ref, (snapshot) => PressStates.matches(snapshot.state, path))
+  return { ref, probe, at, calls, interrupted, sent }
+})
+
+/** The caller supplies a fresh candidate key; the machine decides whether to reuse a lost one. */
+const pressing = (words: string, key: string, at = waiting.at) =>
+  PressEvents.Press({
+    item: FeedItem.cases.Waiting.make({ ...waiting, at }),
+    how: Settling.Said({ words, key }),
+  })
+
+/** Runtime generation needs decoded events rather than the constructors' opaque values. */
+type Said = Machine.Machine.InputEvent<typeof PressMachine>
+const repeated = Arbitrary.schema(Schema.Literals(['Book Arik', 'Not now'])).pipe(
+  Arbitrary.map((words): Said => ({
+    // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- runtimeCommands takes decoded events, not opaque event constructors.
+    _tag: 'Press',
+    item: waiting,
+    how: Settling.Said({ words, key: 'duplicate' }),
+  })),
+)
+const duplicates = MachineTest.runtimeCommands(PressMachine, {
+  eventArbitrary: repeated,
+  includeAdvance: false,
+  includeStop: false,
+  includeCheckpoint: false,
+  maxCommands: 8,
+}).arbitrary
+const generated = { arbitrary: { runs: 40, seed: 20261020 } }
+
+describe('a card press machine', () => {
+  it.effect('walks Idle, Sending, Unsent, Sending and Sent with a hand-answered delivery', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      expect(pressOf((yield* made.at('Idle')).state)).toEqual(Option.none())
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
+      const first = yield* Queue.take(made.calls)
+      expect(pressOf((yield* made.at('Sending')).state)).toEqual(
+        Option.some(Press.Sending(first.delivery.pressed)),
+      )
+      yield* Deferred.succeed(first.answer, Result.fail(new SendRefused({ card: waiting.card })))
+      const unsent = pressOf((yield* made.at('Unsent')).state)
+      expect(failed(waiting, unsent)).toBe(true)
+      expect(folds(waiting, unsent)).toBe(false)
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'second'))
+      const retry = yield* Queue.take(made.calls)
+      expect(retry.delivery.pressed.how).toEqual(
+        Settling.Said({ words: 'Book Arik', key: 'first' }),
+      )
+      yield* Deferred.succeed(retry.answer, Result.succeed(undefined))
+      const sent = pressOf((yield* made.at('Sent')).state)
+      expect(folds(waiting, sent)).toBe(true)
+      expect(folds({ ...waiting, at: 11 }, sent)).toBe(false)
+    }),
+  )
+
+  it.effect('closes through the invoked service and can retry a refused close', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      const event = PressEvents.Press({ item: waiting, how: Settling.Done() })
+      yield* made.probe.sendAndAwait(event)
+      const first = yield* Queue.take(made.calls)
+      expect(first.delivery).toEqual({
+        card: waiting.card,
+        thread: waiting.thread,
+        pressed: { at: waiting.at, how: Settling.Done() },
+      })
+      yield* Deferred.succeed(first.answer, Result.fail(new SendRefused({ card: waiting.card })))
+      yield* made.at('Unsent')
+      yield* made.probe.sendAndAwait(event)
+      const retry = yield* Queue.take(made.calls)
+      yield* Deferred.succeed(retry.answer, Result.succeed(undefined))
+      expect(pressOf((yield* made.at('Sent')).state)).toEqual(
+        Option.some(Press.Sent(retry.delivery.pressed)),
+      )
+    }),
+  )
+
+  it.effect('a newer post interrupts an older send and ignores its late receipt', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
+      const old = yield* Queue.take(made.calls)
+      yield* made.probe.sendAndAwait(pressing('Not now', 'next', 11))
+      expect(yield* Queue.take(made.interrupted)).toBe(10)
+      const current = yield* Queue.take(made.calls)
+      yield* Deferred.succeed(old.answer, Result.succeed(undefined))
+      // Acknowledgement observes all preceding work without a sleep or a polling loop.
+      const duplicate = yield* made.probe.sendAndAwait(pressing('Book Arik', 'duplicate', 11))
+      expect(duplicate.handled).toBe(false)
+      expect(pressOf(duplicate.after)).toEqual(Option.some(Press.Sending(current.delivery.pressed)))
+      yield* Deferred.succeed(current.answer, Result.fail(new SendRefused({ card: waiting.card })))
+      const unsent = pressOf((yield* made.at('Unsent')).state)
+      expect(failed({ ...waiting, at: 11 }, unsent)).toBe(true)
+      expect(failed(waiting, unsent)).toBe(false)
+    }),
+  )
+
+  it.effect('stopping the card interrupts its delivery', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
+      const call = yield* Queue.take(made.calls)
+      yield* made.ref.stop
+      expect(yield* Queue.take(made.interrupted)).toBe(waiting.at)
+      yield* Deferred.succeed(call.answer, Result.succeed(undefined))
+      expect((yield* made.ref.snapshot).status).toBe('stopped')
+    }),
+  )
+
+  it.effect('elapsed time does not resend or finish an unacknowledged delivery', () =>
+    Effect.gen(function* () {
+      const made = yield* started()
+      yield* made.probe.sendAndAwait(pressing('Book Arik', 'first'))
+      yield* Queue.take(made.calls)
+      yield* TestClock.adjust('1 hour')
+      expect(PressStates.matches((yield* made.ref.snapshot).state, 'Sending')).toBe(true)
+      expect(made.sent).toHaveLength(1)
+    }),
+  )
+
+  it.effect.prop(
+    'refuses queued duplicate presses both before and after the receipt',
+    { before: duplicates, after: duplicates },
+    ({ before, after }) =>
+      Effect.gen(function* () {
+        const made = yield* started()
+        yield* made.ref.send(pressing('Book Arik', 'first'))
+        const call = yield* Queue.take(made.calls)
+        /** Acknowledged probes prove ignored events were processed, not merely queued. */
+        const refuse = (commands: typeof before, path: 'Sending' | 'Sent') =>
+          MachineTest.runCausalCommands(made.probe, commands, {
+            initialModel: path,
+            transition: (model) => Effect.succeed({ model, expected: model }),
+            assert: ({ expected, result }) =>
+              Predicate.isTagged(result, 'SendProcessed')
+                ? Effect.sync(() => {
+                    expect(result.step.handled).toBe(false)
+                    expect(PressStates.matches(result.step.after, expected)).toBe(true)
+                  })
+                : Effect.fail(result._tag),
+          })
+        yield* refuse(before, 'Sending')
+        yield* Deferred.succeed(call.answer, Result.succeed(undefined))
+        yield* made.at('Sent')
+        yield* refuse(after, 'Sent')
+        expect(made.sent).toHaveLength(1)
+        yield* made.probe.sendAndAwait(pressing('Book Arik', 'new-post', 11))
+        const next = yield* Queue.take(made.calls)
+        expect(next.delivery.pressed.how).toEqual(
+          Settling.Said({ words: 'Book Arik', key: 'new-post' }),
+        )
+      }),
+    generated,
+  )
+
+  it.effect.prop(
+    'reuses a lost receipt key only for the same words on the same post',
+    { sameWords: Schema.Boolean, samePost: Schema.Boolean },
+    ({ sameWords, samePost }) =>
+      Effect.gen(function* () {
+        const made = yield* started()
+        yield* made.probe.sendAndAwait(pressing('Book Arik', 'lost'))
+        const first = yield* Queue.take(made.calls)
+        yield* Deferred.succeed(first.answer, Result.fail(new SendRefused({ card: waiting.card })))
+        yield* made.at('Unsent')
+        const words = sameWords ? 'Book Arik' : 'Not now'
+        yield* made.probe.sendAndAwait(pressing(words, 'fresh', samePost ? 10 : 11))
+        const retry = yield* Queue.take(made.calls)
+        expect(retry.delivery.pressed.how).toEqual(
+          Settling.Said({ words, key: sameWords && samePost ? 'lost' : 'fresh' }),
+        )
+      }),
+    generated,
+  )
 })
