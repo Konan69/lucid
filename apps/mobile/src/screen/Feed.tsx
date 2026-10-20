@@ -4,7 +4,7 @@ import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
-import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { LiveState, useLive, useLiveData } from '../data/live'
@@ -82,8 +82,10 @@ export function Feed() {
   )
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
   const standing = feed.standingOf(shown.length)
+  // Every waiting card stays in the list, a folded one drawn as nothing (`Waiting`), so what the
+  // Person chose in its display is still there if the send fails and the card comes back.
   const rows: ReadonlyArray<Row> = [
-    ...shown.map((item) => Row.Waiting({ item })),
+    ...view.waiting.map((item) => Row.Waiting({ item })),
     ...view.working.map((item) => Row.Working({ item })),
     ...(view.settled.length > 0 ? [Row.Handled({ items: view.settled })] : []),
   ]
@@ -208,10 +210,16 @@ function Waiting({
   onOpen: () => void
 }) {
   const post = Option.fromNullOr(item.post)
+  // Folded by a press on this post: it takes no room and no touch, but stays mounted, so its
+  // display keeps what the Person chose for when a failed send brings it back.
+  const folded = feed.folds(item, press)
   return (
     <Animated.View
-      exiting={FadeOut.duration(200).reduceMotion(ReduceMotion.System)}
+      pointerEvents={folded ? 'none' : 'auto'}
+      accessibilityElementsHidden={folded}
+      importantForAccessibility={folded ? 'no-hide-descendants' : 'auto'}
       layout={LinearTransition.duration(360).reduceMotion(ReduceMotion.System)}
+      style={folded ? { height: 0, overflow: 'hidden', opacity: 0 } : undefined}
     >
       {feed.failed(item, press) && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
@@ -227,7 +235,12 @@ function Waiting({
           <Answers
             actions={made.actions}
             chosen={chosen}
-            held={Option.exists(press, feed.Press.$is('Sending'))}
+            // Only a send for this very post holds its buttons: an older post's send still on its
+            // way does not stop the Person answering the one now shown.
+            held={Option.exists(
+              press,
+              (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
+            )}
             onSay={onAnswer}
             onDone={onDone}
           />
