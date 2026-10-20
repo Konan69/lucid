@@ -92,8 +92,13 @@ const copyState = Effect.fn('copyState')(function* () {
     })
   }
 
+  /**
+   * Empty means no records and no output. A destroy deletes records before the output
+   * (`alchemy/src/Apply.ts`), so an output alone is a stage someone touched, not a free one.
+   */
   const existing = yield* snapshot(destination, stack, stage)
-  if (existing.records.size > 0 && firstDifference(original, existing) !== undefined) {
+  const empty = existing.records.size === 0 && Option.isNone(existing.output)
+  if (!empty && firstDifference(original, existing) !== undefined) {
     return yield* new StateCopyRefused({
       stack,
       stage,
