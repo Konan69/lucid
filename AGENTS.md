@@ -164,7 +164,7 @@ Every run gets its own empty database on a disposable server and drops it at the
 
 A Turbo task for one package (`@vivid/server#lint`) replaces the generic task; Turbo does not merge them. Repeat the generic task's `inputs`, `outputs` and environment in every such task; `scripts/gate.test.mjs` fails when one drifts.
 
-Typecheck runs `tsc-rs` (pingdotgg/ts-rust, a Rust port of the native TypeScript compiler with the Effect language service rules built in) through `scripts/types.mjs`; no typecheck script calls a compiler directly. It checks the whole graph cold in 11 s against 28 s for native `tsc` 7.0.2, at the same 2 GB peak, with the same diagnostics (`docs/checks.md`, "The type checker is ts-rust"). `@typescript/native` 7.0.2 stays installed for typed lint and editors, and `prepare` patches it with `effect-tsgo`, so an editor shows the same Effect findings. Keep `.cache/typescript` build info enabled. The web build (`apps/web` `build`) is `vite build` and nothing else: it used to run native `tsc -b` first, which checked the same code a second time with a different checker. When Effect 4.0.2 began warning at every use of `effect/reactivity` and `effect/rpc` (`unstableApiUsage`, 275 warnings, no errors), that step failed every production build while the gate was green, and the rule cannot be turned off for one checker without the other rejecting its name. The gate is the one place types are checked. Effect findings are printed and counted on the gate's typecheck line and do not fail it until the existing ones are fixed (branch `fix/effect-findings`); then Effect errors and warnings fail typecheck again.
+Typecheck runs `tsc-rs` (pingdotgg/ts-rust, a Rust port of the native TypeScript compiler with the Effect language service rules built in) through `scripts/types.mjs`; no typecheck script calls a compiler directly. It checks the whole graph cold in 11 s against 28 s for native `tsc` 7.0.2, at the same 2 GB peak, with the same diagnostics (`docs/checks.md`, "The type checker is ts-rust"). `@typescript/native` 7.0.2 stays installed for typed lint and editors, and `prepare` patches it with `effect-tsgo`, so an editor shows the same Effect findings. Keep `.cache/typescript` build info enabled. The web build (`apps/web` `build`) is `vite build` and nothing else: it used to run native `tsc -b` first, which checked the same code a second time with a different checker. When Effect 4.0.2 began warning at every use of `effect/reactivity` and `effect/rpc` (`unstableApiUsage`, 275 warnings, no errors), that step failed every production build while the gate was green, and the rule cannot be turned off for one checker without the other rejecting its name. The gate is the one place types are checked. Effect errors and warnings fail typecheck: `tsconfig.base.json` sets every `ignoreEffect…InTscExitCode` to `false`, and the findings that once only counted were fixed on `fix/effect-findings`.
 
 `tsc-rs` 0.1.0 follows TypeScript 7.1's nightlies and so reports TS7031 for a destructured parameter element missing from a `= {}` default even where an annotation or the contextual type gives it a type. Our fix for that is open upstream (microsoft/TypeScript pull request 64671, pingdotgg/ts-rust pull request 17). Until a release has it, annotate such a parameter, as `packages/agent/runtime/src/tools/sandbox.ts` does, and remove the annotation with the upgrade.
 
@@ -199,13 +199,21 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
 - **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
-- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. Code, contracts, and tests use `Connection`; every string a Person reads uses **Integration**.
+- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. People see it as an **Integration**: that is the word in every string a Person or the model reads, while code, contracts and tests keep `Connection`.
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 
 **Borrowed code takes Vivid's names.** Any function, type, module, file, table, environment variable, event, or concept adapted from another project — a reference implementation, an SDK example, or one of our own earlier products — is renamed to this document's vocabulary and file conventions before it lands. The source's names never survive: no `box`, `sand`, `agent`, `bot`, `pod`, or another product's prefixes in identifiers, paths, logs, comments, or copy. Name the thing for what it is in Vivid (`Computer`, `Person`, `Thread`, `Run`, `Artifact`), and record where the design came from in the JSDoc, not in the identifier.
 
-**Vendor reference binaries; never reimplement them.** When a reference implementation exists on disk as a working binary (for example the Computer supervisor), vendor the binary, rename the integration to Vivid's names, and use it directly. Do not hand-roll, re-derive, or reconstruct the same functionality from notes or decompilations — that path failed once already. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
+**A reference implementation is a guide to follow, not inspiration.** When the reference exists on disk as a working binary (for example the Computer supervisor), vendor the binary, rename the integration to Vivid's names, and use it directly; do not reconstruct it from notes or decompilations, which failed once already. When it is source on disk or a decompiled binary you cannot vendor, port it, or adapt it where Vivid differs: keep its mechanism, platform APIs, process layout, protocol methods and message shapes, ordering, limits, timeouts, and failure behavior. Do not redesign it from scratch, simplify it away, or substitute a mechanism recalled from memory. Before claiming the reference lacks something, search it; absence must be checked, not assumed. Cite the reference file and symbol or address in the JSDoc. Where Vivid's architecture, domain model, or the naming rule above requires a change, adapt and state the change and its reason beside the code. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
+
+## Rules a check enforces
+
+Each rule here fails a check whose message names the fix, so an agent learns it from the failure rather than from this page. A unit that adds a check adds its row.
+
+| Rule | Enforced by | The message names |
+|---|---|---|
+| One instruction file per directory; `CLAUDE.md` is only the line `@AGENTS.md` | `scripts/instructions.mjs` (policy stage) | the file to reduce or create |
 
 ## Agent skills
 
@@ -234,6 +242,13 @@ A first pass is never the final pass: the reviewer sends back specific faults (h
 Dropped on purpose, do not reintroduce: `impeccable`, `taste-skill`, `soft-skill`, `redesign-skill` (landing-page aesthetics that fight product UI: banned fonts, 700–800ms scroll reveals, `transition-all`), `make-interfaces-feel-better` and `baseline-ui` (duplicated by `better-ui`), `fixing-accessibility` (superseded by `better-accessibility`), `12-principles-of-animation` and `to-spring-or-not-to-spring` (they require `ease-in` exits, which the motion bar forbids), and the third-party `motion` reference (its examples break the motion rules; use `animate` and motion.dev).
 
 Vivid specifics: `animation-gallery` holds the named motion patterns for React web and Expo and is the first stop once an effect is named; `animate-expo` replaces `animate` for React Native, and `mobile-native` covers the web app on a phone. The product docs under `docs/` and the existing components stay the source of truth for what Vivid looks like; these skills raise the craft inside that system. Vivid still tracks a `motion` skill from before this stack; treat it as an API lookup only, since its examples break the motion rules above.
+
+Inside T3 Code a session can show an HTML page in the thread: `html_preview` renders it off-screen and returns the picture, and `html_render` publishes it above the reply. Both are `t3-code` tools; when they are listed as deferred, load them with ToolSearch. Use the page in two places:
+
+- **Mockup before building.** When a design is being decided, draw the proposed screen, or two or three variants side by side, in the project's own tokens at the surface's width, beside a capture of the screen as it is now. The developer chooses from the page and the build follows the choice. The page says that it is a mockup.
+- **Board of what was checked.** After the pass on a device or in a browser, publish the captures as one page, each with a line saying what it shows and where it was taken.
+
+A mockup settles direction; the built screen still gets its pass on a device.
 
 ### Coding standards
 

@@ -1,0 +1,52 @@
+import * as NodeAssert from 'node:assert/strict'
+import * as NodeFS from 'node:fs'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
+import * as NodeTest from 'node:test'
+import { importLine, validateInstructions } from './instructions.mjs'
+
+const assert = NodeAssert
+const test = NodeTest.default
+
+/** Write the given files into a fresh directory and check them as if they were tracked. */
+function check(files) {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-instructions-'))
+  try {
+    for (const [path, body] of Object.entries(files)) {
+      NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, path)), { recursive: true })
+      NodeFS.writeFileSync(NodePath.join(root, path), body)
+    }
+    return validateInstructions(root, Object.keys(files))
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true })
+  }
+}
+
+/** The shape the repository keeps: rules in AGENTS.md, an import beside each. */
+void test('a CLAUDE.md that only imports its AGENTS.md passes', () => {
+  assert.deepEqual(
+    check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': importLine, 'apps/server/AGENTS.md': '# server\n', 'apps/server/CLAUDE.md': importLine }),
+    [],
+  )
+})
+
+/** The drift this check exists for: the root CLAUDE.md as it stood before the merge. */
+void test('a CLAUDE.md with its own rules fails and names the file to move them to', () => {
+  assert.deepEqual(check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': '# Vivid agent instructions\n\nown prose\n' }), [
+    'CLAUDE.md must be exactly @AGENTS.md: move its rules into AGENTS.md',
+  ])
+})
+
+/** Without a CLAUDE.md, Claude Code never reads the directory's AGENTS.md. */
+void test('an AGENTS.md without a CLAUDE.md fails', () => {
+  assert.deepEqual(check({ 'packages/agent/runtime/AGENTS.md': '# runtime\n' }), [
+    'packages/agent/runtime/CLAUDE.md is missing: create it with the single line @AGENTS.md',
+  ])
+})
+
+/** An import with nothing to import is a stale file. */
+void test('a CLAUDE.md without an AGENTS.md fails', () => {
+  assert.deepEqual(check({ 'docs/CLAUDE.md': importLine }), [
+    'docs/CLAUDE.md has no docs/AGENTS.md: move its rules there and keep only @AGENTS.md',
+  ])
+})

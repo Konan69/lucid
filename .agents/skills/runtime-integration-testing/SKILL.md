@@ -13,7 +13,7 @@ Keep pure state-machine and domain tests fast. A test of an Effect combinator, a
 
 **Use the seams that exist.** Everything below names a file on disk. Before adding a harness, factory, or `make…Target` helper, read those files; a second database bootstrap or server factory is almost always a duplicate. Where a capability is missing, this skill says so under "Missing capabilities" — do not paper over it with a sketch.
 
-Re-verify against installed source when a pin moves. Verified here: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.0-rc.116`; Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
+Re-verify against installed source when a pin moves. Pinned now: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.2`; the Effect seams below were verified on `4.0.0-rc.116` and are not yet re-read on `4.0.2`. Verified here: Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
 
 ## Database boundary (non-negotiable)
 
