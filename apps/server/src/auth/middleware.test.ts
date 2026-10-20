@@ -21,7 +21,7 @@ import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { rpcAuthMiddlewareLayer } from './middleware.ts'
 import { personTable, sessionTable } from './tables.ts'
-import { authLayer } from './provider.ts'
+import { Auth, authLayer } from './provider.ts'
 
 const applicationName = `vivid-auth-${NodeCrypto.randomBytes(8).toString('hex')}`
 const Caller = Schema.TaggedUnion({ Person: { personId: PersonId }, Vivid: {}, Runtime: {} })
@@ -35,6 +35,12 @@ const ProbeResult = Schema.Struct({ caller: Caller, pids: Schema.Array(Schema.In
 const decodeBackends = decodeStored(
   Schema.Struct({ rows: Schema.Array(Schema.Struct({ pid: Schema.Int })) }),
   'Better Auth backend list',
+)
+
+/** A positive termination receipt proves server exit before the next activity snapshot. */
+const decodeTermination = decodeStored(
+  Schema.Struct({ rows: Schema.Tuple([Schema.Struct({ gone: Schema.Boolean })]) }),
+  'Better Auth backend termination',
 )
 
 /** A receipt observes the real RPC request's last finalizer, without replacing authentication. */
@@ -164,12 +170,32 @@ describe.skipIf(!testDatabaseConfigured)('RPC authentication resource ownership'
         const config = yield* ServerConfig
         const receipts = yield* Receipts
         const client = yield* RpcTest.makeClient(probes)
-        // The pool outlives every call, so what an earlier case opened may still be there.
+        // Better Auth 1.7.5 starts checkSchema without awaiting it in auth/base.mjs.
+        // Await its cached receipt before emptying the pool so startup cannot race the probe.
+        const auth = yield* Auth
+        yield* Effect.promise(() =>
+          auth.$context.then((context) => {
+            if (context.checkSchema === undefined) expect.fail('Expected the Kysely schema check')
+            return context.checkSchema()
+          }),
+        )
+        // An idle connection would hide a wrong Better Auth call through pool reuse.
+        // PostgreSQL's timeout waits for server exit; pg-pool's warning acknowledges client removal.
+        const database = yield* Database
+        const warnings = yield* Warnings
+        for (const pid of yield* authBackends()) {
+          const termination = yield* database.run(
+            database.execute(sql`SELECT pg_terminate_backend(${pid}, 5000) AS gone`),
+          )
+          expect((yield* decodeTermination(termination)).rows[0].gone).toBe(true)
+          expect(yield* Queue.take(warnings)).toContain('lost an idle connection')
+        }
         const before = yield* authBackends()
+        expect(before).toEqual([])
         const result = yield* client.Probe(undefined, {
           headers: { authorization: `Bearer ${Redacted.value(config.RUNTIME_TOKEN)}` },
         })
-        expect(result).toEqual({ caller: Caller.cases.Runtime.make({}), pids: before })
+        expect(result).toEqual({ caller: Caller.cases.Runtime.make({}), pids: [] })
         yield* Queue.take(receipts)
       }),
     )
