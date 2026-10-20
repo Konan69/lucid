@@ -4,10 +4,12 @@ import {
   Renderer,
   type ActionEvent,
   type McpClientLike,
+  type ParseResult,
 } from '@openuidev/react-lang'
 import { StyleSheet, View } from 'react-native'
 import { Option } from 'effect'
-import { callDisplayTool, displayToolAnswer, said, writtenTools } from '@vivid/state'
+import { callDisplayTool, displayToolAnswer, feed, said, writtenTools } from '@vivid/state'
+import { useRef } from 'react'
 import { useLiveData, type LiveData } from '../data/live'
 import { library } from './library'
 
@@ -43,6 +45,7 @@ export function Display({
   arriving,
   live,
   onSay,
+  onState,
 }: {
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
@@ -51,8 +54,23 @@ export function Display({
   /** Whether this is the newest thing Vivid said and it is waiting for the Person. */
   live: boolean
   onSay: (words: string) => void
+  /**
+   * Hears what the Person has chosen inside it, for a Feed card whose own buttons say it: the
+   * program's declared defaults once it is read, then the defaults with every change over them.
+   * The web's `Display` does the same, and says why.
+   */
+  onState?: (chosen: feed.Chosen) => void
 }) {
   const data = useLiveData()
+  // The program's declared defaults, from its latest reading; only read when a change arrives.
+  const declared = useRef<feed.Chosen>({})
+  const read = (result: ParseResult | null) => {
+    declared.current = result === null ? {} : result.stateDeclarations
+    if (onState !== undefined) onState(declared.current)
+  }
+  const changed = (state: feed.Chosen) => {
+    if (onState !== undefined) onState({ ...declared.current, ...state })
+  }
   const answer = (event: ActionEvent) => {
     if (!live || event.type !== BuiltinActionType.ContinueConversation) return
     const words = said(
@@ -72,6 +90,8 @@ export function Display({
         library={library}
         isStreaming={arriving}
         onAction={answer}
+        onParseResult={read}
+        onStateUpdate={changed}
         toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
       />
     </View>

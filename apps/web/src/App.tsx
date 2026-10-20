@@ -287,5 +287,6 @@ const SCREEN = {
   '/t/$id': 'thread',
   '/invite/$id': 'thread',
   '/library': 'library',
+  '/feed': 'feed',
   '/projects/{-$id}': 'projects',
 } as const satisfies Record<keyof FileRoutesById, string>

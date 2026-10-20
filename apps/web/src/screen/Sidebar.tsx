@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   FolderClosed,
   Library,
+  Newspaper,
   PanelLeft,
   Plus,
   Search,
@@ -155,6 +156,11 @@ export function Sidebar({
             onCreateCompany={() => setCreatingCompany(true)}
           />
           <ToolRow icon={<Plus className="size-4" strokeWidth={1.6} />} label="New thread" to="/" />
+          <ToolRow
+            icon={<Newspaper className="size-4" strokeWidth={1.6} />}
+            label="Feed"
+            to="/feed"
+          />
           <ToolRow
             icon={<FolderClosed className="size-4" strokeWidth={1.6} />}
             label="Projects"

@@ -190,7 +190,7 @@ function Writing({ me, mood, starting, placeholder }: WritingProps) {
  * place for a new Thread, so they are still in the composer after visiting another screen and
  * after the app is closed.
  */
-function useStart() {
+export function useStart() {
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
