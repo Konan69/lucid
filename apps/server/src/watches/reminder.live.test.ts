@@ -18,7 +18,10 @@ const toolNames = (state: Parameters<typeof toolParts>[0]) =>
   toolParts(state).map((part) => `${part.toolName}:${part.state}`)
 
 /** A `use_tool` call as the model made it, and the receipt the made app answered with. */
-const UseTool = Schema.Struct({ tool: Schema.String })
+const UseTool = Schema.Struct({ tool: Schema.String, input: Schema.String })
+/** What Vivid asked the made app for, when it gave a delay rather than a clock time. */
+const After = Schema.Struct({ minutes: Schema.Finite })
+const decodeAfter = Schema.decodeUnknownOption(Schema.fromJsonString(After))
 const Receipt = Schema.Struct({
   ok: Schema.Literal(true),
   output: Schema.Struct({ at: Schema.String }),
@@ -80,6 +83,11 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           if (Option.isNone(receipt))
             return yield* Effect.sync(() => expect.fail('The reminder must be accepted'))
           const due = Date.parse(receipt.value.output.at)
+          // Asked as a delay, it must be the two minutes the Person said.
+          const requested = Option.flatMap(decodeUseTool(set.input), (call) =>
+            call.tool === 'remindIn' ? decodeAfter(call.input) : Option.none(),
+          )
+          if (Option.isSome(requested)) expect(requested.value.minutes).toBe(2)
           // Two minutes from when Vivid set it, which is some time inside its Run.
           expect(due).toBeGreaterThanOrEqual(sentAt + 115_000)
           expect(due).toBeLessThanOrEqual(settledAt + 125_000)
