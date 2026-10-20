@@ -5,6 +5,7 @@ import {
   type LibraryItem,
   type LibraryShelf,
 } from '@vivid/contracts'
+import { library } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
 import {
   Check,
@@ -30,7 +31,7 @@ import {
   X,
 } from 'lucide-react'
 import { useId, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
-import * as libraryData from '../data/library'
+import { upload } from '../data/library'
 import { changing, live, LiveState, useLive } from '../data/live'
 import { act, running } from '../data/app'
 import { engine } from '../data/runtime'
@@ -66,8 +67,8 @@ import { ENTER, PRESS, stagger } from './motion'
 
 /** The shell imports this name for the item it asks Vivid about. */
 export type LibraryDocument = LibraryItem
-type SearchResult = libraryData.SearchResult
-type LibraryList = libraryData.LibraryList
+type SearchResult = library.SearchResult
+type LibraryList = library.LibraryList
 
 // ── One folder, live ─────────────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ function useBrowser(workspace: Workspace) {
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const dragDepth = useRef(0)
 
-  const shelves = libraryData.shelvesOf(workspace)
+  const shelves = library.shelvesOf(workspace)
   // A personal space has one shelf, whatever was chosen in a Company before switching out of it;
   // the folders walked into belong to a shelf and are left behind with it.
   const shelf: LibraryShelf = Workspace.guards.Company(workspace) ? chosen : 'Mine'
@@ -206,7 +207,7 @@ function uploadActions(browser: Browser) {
   function send(file: File, id: string) {
     return Effect.gen(function* () {
       const result = yield* running(
-        libraryData.upload(file, { shelf, folderId }, (percent) =>
+        upload(file, { shelf, folderId }, (percent) =>
           // Once every byte has left, the server is reading the file until it answers.
           setStatus(
             id,
@@ -275,7 +276,7 @@ function browseActions(browser: Browser) {
       event.preventDefault()
       const text = Option.getOrElse(query, () => '').trim()
       if (text.length < 2) return
-      const result = yield* running(libraryData.search(text, folderId))
+      const result = yield* running(library.search(text, folderId))
       setRefused(refusal(result))
       if (Result.isSuccess(result)) setView(View.Results({ results: result.success }))
     })
@@ -283,7 +284,7 @@ function browseActions(browser: Browser) {
 
   function openResult(found: SearchResult) {
     return Effect.gen(function* () {
-      const result = yield* running(libraryData.readItem(found.documentId))
+      const result = yield* running(library.readItem(found.documentId))
       setRefused(refusal(result))
       if (Result.isSuccess(result)) setView(View.Item({ item: result.success }))
     })
@@ -296,7 +297,7 @@ function browseActions(browser: Browser) {
       setView(View.Browse())
       const result = yield* changing(
         (client) => client.DeleteLibraryItem({ id: item.id }),
-        () => store.expect(libraryData.itemRemoved(item.id)),
+        () => store.expect(library.itemRemoved(item.id)),
       )
       setRefused(refusal(result))
     })
@@ -316,7 +317,7 @@ function browseActions(browser: Browser) {
   /** Reads where a thing can go, then asks. The folders of a shelf are read when they are needed. */
   function askMove(open: (destinations: ReadonlyArray<LibraryFolder>) => Ask) {
     return Effect.gen(function* () {
-      const result = yield* running(libraryData.shelfFolders(shelf))
+      const result = yield* running(library.shelfFolders(shelf))
       setRefused(refusal(result))
       if (Result.isSuccess(result)) setAsk(Option.some(open(result.success)))
     })
@@ -384,7 +385,7 @@ function dialogActions(browser: Browser) {
     return Effect.gen(function* () {
       const result = yield* changing(
         (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
-        () => store.expect(libraryData.itemRenamed(item.id, name)),
+        () => store.expect(library.itemRenamed(item.id, name)),
       )
       if (Result.isSuccess(result)) {
         setView(View.Item({ item: result.success.document }))
@@ -398,7 +399,7 @@ function dialogActions(browser: Browser) {
     return Effect.gen(function* () {
       const result = yield* changing(
         (client) => client.PatchLibraryItem({ id: item.id, patch: { folderId: destination } }),
-        () => store.expect(libraryData.itemMoved(item.id, destination)),
+        () => store.expect(library.itemMoved(item.id, destination)),
       )
       if (Result.isSuccess(result)) {
         setView(View.Item({ item: result.success.document }))
@@ -720,7 +721,7 @@ function ShelfLevel({
       )}
       <Live state={contents} loading={<SkeletonList of="card" count={4} />}>
         {(list) => {
-          const level = libraryData.inFolder(list, folderId)
+          const level = library.inFolder(list, folderId)
           if (level.folders.length === 0 && level.documents.length === 0) {
             return <NothingHere company={browser.shelf === 'Company'} onUpload={onUpload} />
           }
@@ -847,7 +848,7 @@ const ITEM_STATUS = {
 /** The line beside an item: its size once Vivid has read it, otherwise where it stands. */
 const itemNote = (item: LibraryItem): string =>
   item.status === 'ready'
-    ? `${libraryData.formatBytes(item.size)} · ${item.chunkCount} ${item.chunkCount === 1 ? 'passage' : 'passages'}`
+    ? `${library.formatBytes(item.size)} · ${item.chunkCount} ${item.chunkCount === 1 ? 'passage' : 'passages'}`
     : ITEM_STATUS[item.status].label
 
 const folderNote = (folder: LibraryFolder): string =>
@@ -1100,7 +1101,7 @@ function ItemDetail({
         <div className="min-w-0 flex-1">
           <p className="truncate text-title text-ink">{item.name}</p>
           <p className="text-meta font-meta text-ink-3">
-            {libraryData.formatBytes(item.size)} · {item.chunkCount} passages
+            {library.formatBytes(item.size)} · {item.chunkCount} passages
           </p>
         </div>
         <IconButton label="Rename file" onClick={onRename}>

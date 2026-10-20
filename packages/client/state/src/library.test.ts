@@ -9,7 +9,14 @@ import {
 } from '@vivid/contracts'
 import { Result } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { inFolder, itemMoved, itemRemoved, itemRenamed, shelvesOf, uploadOutcome } from './library'
+import {
+  inFolder,
+  itemMoved,
+  itemRemoved,
+  itemRenamed,
+  shelvesOf,
+  uploadOutcome,
+} from './library.js'
 
 const NOW = Date.UTC(2026, 9, 1, 12)
 

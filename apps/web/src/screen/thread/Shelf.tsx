@@ -1,9 +1,8 @@
 import type { LibraryItem } from '@vivid/contracts'
-import { makeWhen, thisReader } from '@vivid/state'
+import { library, makeWhen, thisReader } from '@vivid/state'
 import { Array as Arr, Order } from 'effect'
 import { FileText } from 'lucide-react'
 import { useState } from 'react'
-import { formatBytes } from '../../data/library'
 import { live, LiveState, useLive } from '../../data/live'
 import { router } from '../../router'
 import { engine } from '../../data/runtime'
@@ -68,7 +67,7 @@ export function Shelf({ onClose }: { onClose: () => void }) {
                   entry={{
                     icon: <FileText className="size-4" />,
                     title: item.name,
-                    detail: `${formatBytes(item.size)} · ${when(item.updatedAt, opened)}`,
+                    detail: `${library.formatBytes(item.size)} · ${when(item.updatedAt, opened)}`,
                     lit: false,
                   }}
                 />

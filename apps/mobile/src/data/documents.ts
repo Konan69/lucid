@@ -1,11 +1,10 @@
-import type { LibraryFolderId, LibraryShelf } from '@vivid/contracts'
+import { library } from '@vivid/state'
 import { Effect, Option, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import * as DocumentPicker from 'expo-document-picker'
 import { File, Paths } from 'expo-file-system'
 import * as Sharing from 'expo-sharing'
 import { Platform } from 'react-native'
-import { uploadOutcome } from '../../../web/src/data/library'
 import { libraryAddress } from './server'
 import type { SignedIn } from './session'
 import { bearer, request } from './transport'
@@ -146,7 +145,7 @@ export const chooseDocument = Effect.fn('Documents.choose')(function* () {
 export const uploadDocument = Effect.fn('Documents.upload')(function* (
   session: SignedIn,
   chosen: Chosen,
-  destination: { readonly shelf: LibraryShelf; readonly folderId: LibraryFolderId | null },
+  destination: library.UploadDestination,
 ) {
   const answer = yield* Effect.tryPromise({
     // Building the form is inside the attempt: a file that cannot be read is a file not sent. The
@@ -166,7 +165,7 @@ export const uploadDocument = Effect.fn('Documents.upload')(function* (
     },
     catch: () => new DocumentUnavailable({ message: UNSENT }),
   })
-  return yield* Effect.fromResult(uploadOutcome(answer.status, answer.body))
+  return yield* Effect.fromResult(library.uploadOutcome(answer.status, answer.body))
 })
 
 /**
@@ -175,7 +174,7 @@ export const uploadDocument = Effect.fn('Documents.upload')(function* (
  */
 export const addDocument = Effect.fn('Documents.add')(function* (
   session: SignedIn,
-  destination: { readonly shelf: LibraryShelf; readonly folderId: LibraryFolderId | null },
+  destination: library.UploadDestination,
 ) {
   const chosen = yield* chooseDocument()
   if (Option.isNone(chosen)) return Option.none()

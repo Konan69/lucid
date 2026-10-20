@@ -5,7 +5,7 @@ import {
   type LibraryItem,
   type LibraryShelf,
 } from '@vivid/contracts'
-import type { LiveQuery } from '@vivid/state'
+import { library, type LiveQuery } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView } from 'react-native'
@@ -18,7 +18,6 @@ import {
   Library as LibraryIcon,
   Upload,
 } from 'lucide-react-native'
-import * as library from '../../../web/src/data/library'
 import { addDocument, openDocument } from '../data/documents'
 import { commit, warn } from '../data/haptics'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'

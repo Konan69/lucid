@@ -9,6 +9,8 @@ writes through the supplied client. Tests sit beside the behavior they prove.
 - `steps.ts`, `activity.ts`: turning tool calls into the step lines and activity a Person reads.
 - `shown.ts`: reading a `show` tool call into a card, and the helpers cards share.
 - `approvals.ts`, `projects.ts`, `resource.ts`: per-domain wording and derivations.
+- `library.ts` (`library`): the Library's shelves, levels, reads and upload answer; each surface
+  sends the bytes with its own platform API.
 - `drafts.ts`, `link.ts`, `signin.ts`, `when.ts`, `live.ts`: unsent text, links, sign-in pages,
   times as a Person reads them, and live-state helpers.
 
