@@ -42,6 +42,58 @@ const announcedBefore = Effect.fn('ChangesTest.announcedBefore')(function* (
 
 describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
   layer(testDatabaseLayer)((it) => {
+    /** JSON quotes, escapes and UTF-8 all count toward PostgreSQL's strict 8000-byte ceiling. */
+    it.effect('accepts 7999 bytes and refuses 8000 bytes before announcing anything', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        const identifier = `${'😀'.repeat(1997)}"\\x`
+        const accepted = [Topic.person(PersonId.make(identifier))]
+        const refused = [Topic.person(PersonId.make(`${identifier}x`))]
+        expect(Buffer.byteLength(JSON.stringify(accepted))).toBe(7999)
+        expect(Buffer.byteLength(JSON.stringify(refused))).toBe(8000)
+        yield* database.transaction((transaction) => announce(transaction, accepted))
+        expect((yield* Queue.take(notifications)).payload).toBe(JSON.stringify(accepted))
+        const split = [...accepted, Topic.person(PersonId.make('tail'))]
+        yield* database.transaction((transaction) => announce(transaction, split))
+        const splitMarker = [Topic.person(PersonId.make(crypto.randomUUID()))]
+        yield* database.transaction((transaction) => announce(transaction, splitMarker))
+        expect((yield* announcedBefore(notifications, JSON.stringify(splitMarker))).flat()).toEqual(
+          split,
+        )
+        const failure = yield* database
+          .transaction((transaction) => announce(transaction, refused))
+          .pipe(Effect.flip)
+        expect(failure).toBeInstanceOf(DatabaseFailure)
+        const marker = [Topic.person(PersonId.make(crypto.randomUUID()))]
+        yield* database.transaction((transaction) => announce(transaction, marker))
+        expect((yield* Queue.take(notifications)).payload).toBe(JSON.stringify(marker))
+      }).pipe(Effect.scoped),
+    )
+
+    /** A later marker closes observation even when an oversized publish was silently dropped. */
+    it.effect('publishes every UTF-8 owner before the next committed marker', () =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(changesLayer)
+        return yield* Effect.gen(function* () {
+          const database = yield* Database
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          const changes = yield* Changes
+          const topics = [0, 1, 2].map((index) =>
+            Topic.part('activity')(Topic.person(PersonId.make(`${'😀'.repeat(1200)}"${index}`))),
+          )
+          yield* changes.publish(topics)
+          const marker = [Topic.person(PersonId.make(crypto.randomUUID()))]
+          yield* database.transaction((transaction) => announce(transaction, marker))
+          const batches = yield* announcedBefore(notifications, JSON.stringify(marker))
+          expect(batches.flat()).toEqual(topics)
+          expect(batches.every((batch) => Buffer.byteLength(JSON.stringify(batch)) < 8000)).toBe(
+            true,
+          )
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped),
+    )
+
     /** Wide audiences must reach PostgreSQL in bounded payloads, retaining every affected owner. */
     it.effect('announces every owner when an audience exceeds one PostgreSQL payload', () =>
       Effect.gen(function* () {

@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeCrypto from 'node:crypto'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import { shellWord, snapshot } from './gate/cloud.mjs'
+import { refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
 
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const cases = {
@@ -11,8 +11,8 @@ const cases = {
   '7387315f': ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
   '138b9241': ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
   63938327: ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
-  b75fcc75: ['apps/server/src/live/changes.ts', 'apps/server/src/live/limits.test.ts'],
-  '7a00ed82': ['apps/server/src/live/changes.ts', 'apps/server/src/live/limits.test.ts'],
+  b75fcc75: ['apps/server/src/live/changes.ts', 'apps/server/src/live/changes.test.ts'],
+  '7a00ed82': ['apps/server/src/live/changes.ts', 'apps/server/src/live/changes.test.ts'],
   efb82bd7: [
     'apps/server/src/observability/export.ts',
     'apps/server/src/observability/outcomes.test.ts',
@@ -81,20 +81,28 @@ function git(directory, args) {
 const remoteReplay = String.raw`
 set -euo pipefail
 home="$HOME/vivid-gate/fast"
-sha="$1"; lockfile="$2"; test="$3"; fix="$4"; label="$5"
-tree=""
+sha="$1"; lockfile="$2"; test="$3"; fix="$4"; label="$5"; ref="$6"
+scratch=""
+trap 'if [ -n "$scratch" ]; then rm -rf "$scratch"; fi; git -C "$home/repo.git" update-ref -d "$ref" "$sha"' EXIT
+tree=""; waiting=""
 for candidate in "$home"/trees/slot-*; do
   [ -d "$candidate/node_modules" ] || continue
   if [ "$(sha256sum "$candidate/pnpm-lock.yaml" | cut -d' ' -f1)" != "$lockfile" ]; then
     echo "Skipping $candidate with a different lockfile" >&2; continue
   fi
+  if [ -z "$waiting" ]; then waiting="$candidate"; fi
   exec 9>"$candidate.lock"
   if flock -n 9; then tree="$candidate"; break; fi
   echo "Skipping busy $candidate" >&2
 done
-[ -n "$tree" ] || { echo "No free warm gate tree with the replay lockfile" >&2; exit 92; }
+if [ -z "$tree" ]; then
+  [ -n "$waiting" ] || { echo "No warm gate tree with the replay lockfile" >&2; exit 92; }
+  echo "Waiting up to 300s for $waiting" >&2
+  exec 9>"$waiting.lock"
+  flock -w 300 9 || { echo "Warm gate tree stayed busy" >&2; exit 92; }
+  tree="$waiting"
+fi
 scratch=$(mktemp -d "$tree/.cache/boundaries-$fix-XXXXXX")
-trap 'rm -rf "$scratch"' EXIT
 git clone --shared --no-checkout --quiet "$home/repo.git" "$scratch"
 git -C "$scratch" checkout --quiet --detach "$sha"
 printf '%s\n' 'node_modules/' '.cache/' '.turbo/' > "$scratch/.boxignore"
@@ -121,11 +129,12 @@ node scripts/gate.mjs focused "$test" --here --sha "$sha-replay-$fix"
 function runRemote(scratch, fix, test, host) {
   const { sha } = snapshot(scratch, process.env, false)
   const remote = `ssh://${host}/~/vivid-gate/fast/repo.git`
-  git(scratch, ['push', '--quiet', '--no-verify', remote, `${sha}:refs/gate/u14-${fix}-${sha}`])
+  const ref = `refs/gate/boundary-${fix}-${sha}`
+  git(scratch, ['push', '--quiet', '--no-verify', remote, `${sha}:${ref}`])
   const lockfile = NodeFS.readFileSync(NodePath.join(scratch, 'pnpm-lock.yaml'))
   const digest = NodeCrypto.createHash('sha256').update(lockfile).digest('hex')
   const label = git(root, ['rev-parse', '--short=12', 'HEAD']).trim()
-  const command = ['bash', '-c', remoteReplay, 'boundaries', sha, digest, test, fix, label]
+  const command = ['bash', '-c', remoteReplay, 'boundaries', sha, digest, test, fix, label, ref]
     .map(shellWord)
     .join(' ')
   const result = NodeChildProcess.spawnSync(
@@ -140,9 +149,10 @@ function runRemote(scratch, fix, test, host) {
 /** Restore only the historical decision in an owned clone, retaining current tests and imports. */
 function prove(fix, host) {
   if (!Object.hasOwn(cases, fix)) throw new Error('Choose a named historical boundary fix')
-  if (!['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3'].includes(host)) {
-    throw new Error('Pass --host with the devbox selected by devbox-pick')
-  }
+  const resolved = NodeChildProcess.spawnSync('ssh', ['-G', host], { encoding: 'utf8' })
+  if (resolved.status !== 0) throw new Error(`ssh does not know the host ${host}`)
+  const reason = refusedHost(resolved.stdout)
+  if (reason !== undefined) throw new Error(`the replay will not run on ${host}: ${reason}`)
   const cache = NodePath.join(root, '.cache/boundaries')
   NodeFS.mkdirSync(cache, { recursive: true })
   const scratch = NodeFS.mkdtempSync(NodePath.join(cache, `${fix}-`))

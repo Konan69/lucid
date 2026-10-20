@@ -33,7 +33,7 @@ fixes and remote verification described below.
 
 ### Optional server settings and required capabilities
 
-Inventory for U14, read from `apps/server/src` at the unit's base `302b9427`.
+Inventory of optional capability settings in `apps/server/src`.
 This records decisions only. It does not change configuration or deployment behavior.
 Recheck with `rg -n 'optionalSetting|Config\.option|Config\.withDefault' apps/server/src`.
 Test and live-proof settings are excluded from product capability requirements.
