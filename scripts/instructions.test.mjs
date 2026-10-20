@@ -35,7 +35,7 @@ void test('a CLAUDE.md that only imports its AGENTS.md passes', () => {
   )
 })
 
-/** The drift this check exists for: the root CLAUDE.md as it stood before the merge. */
+/** A CLAUDE.md with rules of its own is the drift this check exists for. */
 void test('a CLAUDE.md with its own rules fails and names the file to move them to', () => {
   assert.deepEqual(
     check({ 'AGENTS.md': '# rules\n', 'CLAUDE.md': '# Vivid agent instructions\n\nown prose\n' }),
@@ -43,7 +43,7 @@ void test('a CLAUDE.md with its own rules fails and names the file to move them 
   )
 })
 
-/** Without a CLAUDE.md, Claude Code never reads the directory's AGENTS.md. */
+/** Claude Code loads instructions from CLAUDE.md, so an AGENTS.md needs one beside it. */
 void test('an AGENTS.md without a CLAUDE.md fails', () => {
   assert.deepEqual(check({ 'packages/agent/runtime/AGENTS.md': '# runtime\n' }), [
     'packages/agent/runtime/CLAUDE.md is missing: create it with the single line @AGENTS.md',
