@@ -31,6 +31,7 @@ const closing = new Map<FeedCardId, string>()
 /** Flue owns message delivery and its idempotency receipt; RPC owns marking a card done. */
 const sending = Layer.succeed(feed.Sending, {
   send: Effect.fn('Feed.send')(function* ({ card, thread, pressed }: feed.Delivery) {
+    please()
     yield* feed.Settling.$match(pressed.how, {
       Said: ({ words, key }) =>
         Effect.tryPromise({
@@ -139,14 +140,12 @@ const please = () => {
  */
 export function answer(item: feed.Waiting, words: string) {
   press(item, feed.Settling.Said({ words, key: crypto.randomUUID() }))
-  please()
 }
 
 /** Closes a card that asks nothing of the Person (it has no buttons): "Done". */
 export function close(item: feed.Waiting, title: string) {
   closing.set(item.card, title)
   press(item, feed.Settling.Done())
-  please()
 }
 
 /** Cards this page has said were looked at, so a card is reported once. */
