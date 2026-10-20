@@ -177,7 +177,9 @@ const reportSeen = (card: FeedCardId) => {
  */
 const whole = (entry: IntersectionObserverEntry) =>
   entry.intersectionRatio >= 0.99 ||
-  (entry.rootBounds !== null && entry.intersectionRect.height >= entry.rootBounds.height - 1)
+  // A card taller than the view is reported at the step before it fills it: the observer only
+  // speaks at its thresholds, and the last one a tall card crosses can sit just short of full.
+  (entry.rootBounds !== null && entry.intersectionRect.height >= entry.rootBounds.height * 0.9)
 
 /** Mounted cards remain enumerable after a report so later posts can be observed again. */
 const cardOf = new Map<Element, FeedCardId>()

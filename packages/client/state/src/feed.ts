@@ -28,13 +28,14 @@ export type Working = typeof FeedItem.cases.Working.Type
 export type Settled = typeof FeedItem.cases.Settled.Type
 
 /**
- * Which post a card shows, as a value that only changes when Vivid posts again: the post itself,
- * or what the work is asking for when there is no post. The server's `at` is not it: marking a
+ * Which post a card shows, as a value that only changes when Vivid posts again or the work stops
+ * on something new: the post itself and what the work is asking for. An Approval or a question
+ * that arrives after the Person answered is a new thing to show, not part of the answered post.
+ * Two identical posts in a row read as one: telling them apart needs a revision from the server. The server's `at` is not it: marking a
  * card seen moves `at` too (`FeedStore.mark` writes `updatedAt`), so a press compared by `at`
  * could be taken as answering a new post the moment the card was marked seen.
  */
-export const revisionOf = (item: Waiting): string =>
-  JSON.stringify([item.post, item.post === null ? item.asking : []])
+export const revisionOf = (item: Waiting): string => JSON.stringify([item.post, item.asking])
 
 /** The three stages, each newest first, and how many things wait on the Person. */
 export interface FeedView {
