@@ -74,6 +74,8 @@ const runtimeInputs = [
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
   '/tsconfig.base.json',
+  '/tsconfig.hermes.json',
+  '/hermes.d.ts',
   '/.dockerignore',
 ]
 
@@ -96,6 +98,8 @@ const serverInputs = [
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
   '/tsconfig.base.json',
+  '/tsconfig.hermes.json',
+  '/hermes.d.ts',
   '/.dockerignore',
 ]
 
