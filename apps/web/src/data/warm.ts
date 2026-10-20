@@ -46,6 +46,10 @@ export const warm = {
   library: (): void => {
     begin(live.library.get('Mine'))
   },
+  /** The Feed: Vivid's own work, what waits on the Person, and what is handled. */
+  feed: (): void => {
+    begin(live.feed)
+  },
   /** The shelf of Projects. */
   projects: (): void => {
     begin(live.projects)
@@ -67,6 +71,7 @@ export const warm = {
    * Person who goes to the Library an hour into a session still finds them drawn.
    */
   places: (): void => {
+    keep(live.feed)
     keep(live.settings)
     keep(live.library.get('Mine'))
   },

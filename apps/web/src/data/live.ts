@@ -61,6 +61,8 @@ export const live = {
   suggestions: one((client) => client.WatchSuggestions()),
   /** The Person's own computers, each with its access and whether its desktop app is listening. */
   devices: one((client) => client.WatchDevices()),
+  /** What Vivid's own work in background Threads brings the Person: the Feed (`screen/Feed.tsx`). */
+  feed: one((client) => client.WatchFeed()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }
