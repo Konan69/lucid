@@ -1,3 +1,4 @@
+import * as NodeFS from 'node:fs'
 import { describe, expect, layer } from '@effect/vitest'
 import { FeedItem } from '@vivid/contracts'
 import { Duration, Effect, Option, Stream } from 'effect'
@@ -28,6 +29,13 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           )
           const state = yield* completeRun(fixture, asked)
           const steps = toolNames(state)
+          // Vitest hides a passing test's output; the trail is kept where the runner asks for it.
+          const trail = process.env['VIVID_PROOF_TRAIL']
+          if (trail !== undefined)
+            NodeFS.writeFileSync(
+              trail,
+              JSON.stringify({ reply: replyText(state), tools: toolParts(state) }, null, 2),
+            )
           // The trail is the evidence of what Vivid chose to do; it is printed on failure.
           expect(steps, replyText(state)).toContain('make_integration:output-available')
           expect(steps, replyText(state)).toContain('watch:output-available')

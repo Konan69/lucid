@@ -9,7 +9,7 @@ metadata:
 
 You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work.
 
-Agree the outcome first: what, when, in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remind sets any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
+Agree the outcome first: what, when, in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remindIn and remindAt set any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
 
 ## The source
 
@@ -74,21 +74,35 @@ const wait = workflow(
   },
 )
 
-const remind = mutation(
-  { input: object({ text: string(), at: string() }) },
-  async (ctx: MutationContext<typeof requirements>, input) => {
-    const at = Date.parse(input.at)
-    if (Number.isNaN(at)) throw new Error('at must be an ISO date-time with its offset')
-    const key = `reminder-${crypto.randomUUID()}`
-    await ctx.workflows.start({ workflow: 'wait', input: { text: input.text, at, key }, key })
-    return { at: new Date(at).toISOString() }
-  },
+// Starts one waiting run; a past time is refused, because the run would never wake.
+const start = async (ctx: MutationContext<typeof requirements>, text: string, at: number) => {
+  if (Number.isNaN(at) || at <= Date.now()) throw new Error('the time must be in the future')
+  const key = `reminder-${crypto.randomUUID()}`
+  await ctx.workflows.start({ workflow: 'wait', input: { text, at, key }, key })
+  return { at: new Date(at).toISOString() }
+}
+
+// "In 20 minutes": the app reads its own clock, so nobody has to know what time it is now.
+const remindIn = mutation(
+  { input: object({ text: string(), minutes: number() }) },
+  async (ctx: MutationContext<typeof requirements>, input) =>
+    start(ctx, input.text, Date.now() + input.minutes * 60_000),
 )
 
-export default defineApp(requirements, { tools: router({ remind, ring }), workflows: { wait } })
+// "Tomorrow at 9": an ISO date-time with the Person's offset.
+const remindAt = mutation(
+  { input: object({ text: string(), at: string() }) },
+  async (ctx: MutationContext<typeof requirements>, input) =>
+    start(ctx, input.text, Date.parse(input.at)),
+)
+
+export default defineApp(requirements, {
+  tools: router({ remindIn, remindAt, ring }),
+  workflows: { wait },
+})
 ```
 
-Make it once, `watch` `reminder.due` once with an instruction such as "Tell the Person on their Feed: <the reminder's text>", then set each reminder by calling the app's remind tool with `use_tool` and an ISO date-time **with the Person's offset** (for Lagos, `2026-10-17T09:00:00+01:00`). A mutation run by a workflow step must also be in the tools router. Put clock reads and randomness inside steps, never in the workflow body.
+Make it once, `watch` `reminder.due` once with an instruction such as "Tell the Person on their Feed: <the reminder's text>", then set each reminder with `use_tool`: remindIn with the minutes for anything said as "in N minutes or hours" (you do not know the current time, so never turn it into a clock time yourself), and remindAt with an ISO date-time **with the Person's offset** for a clock time on a date (for Lagos, `2026-10-17T09:00:00+01:00`). The answer is the time the app set: tell the Person that time. A mutation run by a workflow step must also be in the tools router. Put clock reads and randomness inside steps, never in the workflow body.
 
 ## Something on a schedule
 
@@ -134,7 +148,7 @@ Use `appCron` (five-field cron, with an IANA time zone) or `appInterval` (`{ min
 
 1. `make_integration` with the name and files. A failed build returns the compiler's message: fix that exact place and call again with the same name.
 2. `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
-3. For a reminder, call remind through `find_tools` and `use_tool`, and read back the time it answers.
+3. For a reminder, call remindIn or remindAt through `find_tools` and `use_tool`, and read back the time it answers.
 4. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
 
 Never put a password, key or personal data in the source. An app that needs a provider's account is a different job: connect that provider instead.
