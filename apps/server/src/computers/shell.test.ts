@@ -22,14 +22,8 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Ref, Schema, Stream } fr
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
-import {
-  Scope as ToolScope,
-  scopedRunner,
-} from '../../../../packages/agent/runtime/src/tools/scope.ts'
-import {
-  computerSandbox,
-  machineTools,
-} from '../../../../packages/agent/runtime/src/tools/sandbox.ts'
+import { computerSandbox, machineTools } from '@vivid/agent-runtime/sandbox'
+import { Scope as ToolScope, scopedRunner } from '@vivid/agent-runtime/scope'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'

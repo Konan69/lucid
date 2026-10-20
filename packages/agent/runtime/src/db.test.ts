@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
 import { Config, Effect, Predicate, Result, Schema, SchemaIssue } from 'effect'
-import { testDatabaseConfigured } from '../../../../apps/server/src/database/testdb.ts'
+import { testDatabaseConfigured } from '../tests/schema.ts'
 
 /** Exercise the project setup, including root project runs, without printing either URL. */
 it.effect('runtime database authority comes only from the explicit test URL', () =>

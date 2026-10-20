@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
+import { modelDelivery } from '@vivid/agent-runtime'
 import { DeliveryScope, PersonId, RuntimeRunRequest, ThreadId } from '@vivid/contracts'
-import { DeliveryMessage } from '../../../../../apps/server/src/threads/conversation.ts'
-import { flueMessage } from '../../../../../apps/server/src/threads/message.ts'
-import { cachedAuthority, modelDelivery, recordScope } from '../delivery.ts'
+import { DeliveryMessage } from './conversation.ts'
+import { flueMessage } from './message.ts'
 
 const marker = '69d8a703-98ad-41e7-a584-390a472a6637'
 const scope = DeliveryScope.make({
   acting: PersonId.make('MARK-person'),
 })
 
+/**
+ * What the server sends for each kind of delivery reaches the model as the runtime renders it,
+ * with no identifier and no acting scope in the text. The server owns the delivery shapes, so the
+ * check lives here and reads the runtime's renderer through its package entry.
+ */
 describe('delivery authority outside model text', () => {
   it('renders every server delivery kind without identifiers and keeps authority out of Flue history', () => {
     const messages = [
@@ -63,29 +67,5 @@ describe('delivery authority outside model text', () => {
       if (index === 2)
         expect(forwarded.attributes).toEqual({ from: 'Ada', turn: '3', outcome: 'approved' })
     }
-  })
-
-  it('a render misses after restart; private words still use creator authority without attributes', () => {
-    const threadId = ThreadId.make('unprepared-thread')
-    const signal = {
-      kind: 'signal' as const,
-      type: 'event',
-      body: 'Review.',
-      attributes: { turn: '1' },
-    }
-    expect(cachedAuthority(threadId, signal, Option.none())).toEqual(Option.none())
-    expect(
-      cachedAuthority(
-        threadId,
-        { kind: 'user', body: 'Review.' },
-        Option.some({ creator: scope.acting, creatorName: 'Ada' }),
-      ),
-    ).toEqual(Option.some({ acting: { threadId, personId: scope.acting } }))
-    recordScope(threadId, 1, scope)
-    expect(cachedAuthority(threadId, signal, Option.none())).toEqual(
-      Option.some({
-        acting: { threadId, personId: scope.acting },
-      }),
-    )
   })
 })

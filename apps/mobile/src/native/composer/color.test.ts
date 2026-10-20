@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { composerColor } from './color.ts'
-import { nativeThemes } from '../../../../../packages/design/tokens/src/native.ts'
+import { nativeThemes } from '@vivid/tokens/native'
 
 it('writes an opaque color as the hex both native parsers read', () => {
   for (const platform of ['android', 'ios']) {

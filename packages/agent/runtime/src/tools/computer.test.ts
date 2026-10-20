@@ -9,7 +9,6 @@ import {
 } from '@earendil-works/pi-ai'
 import { init, useModel, useSandbox } from '@flue/runtime'
 import { start } from '@flue/runtime/node'
-import { testDatabaseConfigured } from '../../../../../apps/server/src/database/testdb.ts'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeZlib from 'node:zlib'
 import { validateToolArguments } from '@earendil-works/pi-ai'
@@ -40,7 +39,7 @@ import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { browseModelTool, computerSandboxFactory, desktopModelTool } from './computer.ts'
 import { personComputerModelTool } from './windows.ts'
 import { Scope, scopedRunner, toolRunner } from './scope.ts'
-import { disposableStorage } from '../../tests/schema.ts'
+import { disposableStorage, testDatabaseConfigured } from '../../tests/schema.ts'
 
 /** Valid PNG with a large ancillary text chunk proves image bytes bypass the text budget. */
 const largePicture = () => {

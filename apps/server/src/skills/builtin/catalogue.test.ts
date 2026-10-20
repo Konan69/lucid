@@ -12,20 +12,22 @@ import {
   SkillOrigin,
   SkillScope,
 } from '@vivid/contracts'
-import { libraryTools } from '../../../../../packages/agent/runtime/src/tools/library.ts'
-import { connectionTools } from '../../../../../packages/agent/runtime/src/tools/connections.ts'
-import { askTools } from '../../../../../packages/agent/runtime/src/tools/ask.ts'
-import { memoryTools } from '../../../../../packages/agent/runtime/src/tools/memory.ts'
-import { noteTools } from '../../../../../packages/agent/runtime/src/tools/notes.ts'
-import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skills.ts'
-import { pictureTools } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
-import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
-import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
-import { watchTools } from '../../../../../packages/agent/runtime/src/tools/watches.ts'
-import { notifyTools } from '../../../../../packages/agent/runtime/src/tools/notify.ts'
-import type { RunTool } from '../../../../../packages/agent/runtime/src/tools/scope.ts'
-import * as views from '../../../../../packages/agent/runtime/src/tools/views.ts'
-import { SavedProcedures } from '../../../../../packages/agent/runtime/src/tools/snapshots.ts'
+import {
+  askTools,
+  codeTools,
+  connectionTools,
+  documentTools,
+  libraryTools,
+  memoryTools,
+  noteTools,
+  notifyTools,
+  pictureTools,
+  SavedProcedures,
+  skillTools,
+  views,
+  watchTools,
+} from '@vivid/agent-runtime'
+import type { RunTool } from '@vivid/agent-runtime/scope'
 import { procedureSuggestions } from '../../search/suggestions.ts'
 import { manifest } from '@vivid/skills'
 import { builtins, catalogue, procedures, summary } from './index.ts'

@@ -5,8 +5,7 @@
     "noEmit": true,
     "declaration": false,
     "emitDeclarationOnly": false,
-    // Integration tests import server fixtures; this no-emit graph must contain both owners.
-    "rootDir": "../../..",
+    "rootDir": ".",
     "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
   },
   "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "tests", "flue.config.ts"],

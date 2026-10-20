@@ -22,7 +22,6 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "catalog:",
     "@effect/vitest": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",

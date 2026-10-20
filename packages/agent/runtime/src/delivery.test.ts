@@ -80,4 +80,29 @@ describe('delivery authority recovery', () => {
     expect(cachedAuthority(thread, signal(1), Option.none())).toEqual(Option.none())
     expect(Option.isSome(cachedAuthority(thread, signal(513), Option.none()))).toBe(true)
   })
+
+  it('a render misses after restart; private words still use creator authority without attributes', () => {
+    const scope = DeliveryScope.make({ acting: PersonId.make('MARK-person') })
+    const threadId = ThreadId.make('unprepared-thread')
+    const signal = {
+      kind: 'signal' as const,
+      type: 'event',
+      body: 'Review.',
+      attributes: { turn: '1' },
+    }
+    expect(cachedAuthority(threadId, signal, Option.none())).toEqual(Option.none())
+    expect(
+      cachedAuthority(
+        threadId,
+        { kind: 'user', body: 'Review.' },
+        Option.some({ creator: scope.acting, creatorName: 'Ada' }),
+      ),
+    ).toEqual(Option.some({ acting: { threadId, personId: scope.acting } }))
+    recordScope(threadId, 1, scope)
+    expect(cachedAuthority(threadId, signal, Option.none())).toEqual(
+      Option.some({
+        acting: { threadId, personId: scope.acting },
+      }),
+    )
+  })
 })

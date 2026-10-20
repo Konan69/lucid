@@ -765,6 +765,9 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
+      '@vivid/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent/runtime
       '@vivid/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client/rpc
@@ -1017,9 +1020,6 @@ importers:
         specifier: 4.0.2
         version: 4.0.2
     devDependencies:
-      '@earendil-works/pi-ai':
-        specifier: 'catalog:'
-        version: 0.87.1(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(ws@8.21.3)(zod@4.5.4)
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))

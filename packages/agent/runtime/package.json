@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandbox": "./src/tools/sandbox.ts",
+    "./scope": "./src/tools/scope.ts"
+  },
   "engines": {
     "node": ">=22.19.0"
   },

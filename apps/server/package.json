@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {},
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
@@ -48,6 +49,7 @@
     "@types/ssh2": "1.15.6",
     "@types/web-push": "^3.6.4",
     "@typescript/native": "catalog:",
+    "@vivid/agent-runtime": "workspace:*",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-kit": "catalog:",
     "tsx": "catalog:",
