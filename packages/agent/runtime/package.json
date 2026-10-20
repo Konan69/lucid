@@ -7,7 +7,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/build.mjs",
     "check:types": "pnpm typecheck",
     "dev": "vite dev",
     "docs": "flue docs",
