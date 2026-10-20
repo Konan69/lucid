@@ -45,6 +45,7 @@ ENV CI=1
 ENV EXPO_NO_TELEMETRY=1
 RUN pnpm install --frozen-lockfile --filter @vivid/mobile...
 COPY apps/mobile apps/mobile
+COPY scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 RUN pnpm --filter @vivid/mobile run updates /app/apps/mobile/updates
 
 FROM base AS production

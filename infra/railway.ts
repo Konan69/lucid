@@ -91,6 +91,7 @@ const serverInputs = [
   '/packages/**',
   '/patches/**',
   '/scripts/migrate.mjs',
+  '/scripts/sentry-upload.mjs',
   '/package.json',
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
