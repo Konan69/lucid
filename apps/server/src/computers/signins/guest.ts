@@ -52,7 +52,7 @@ async function native(tool,args){
  return new Promise((resolve,reject)=>{
   const child=childProcess.execFile(binary,['call',tool,'--socket',socket],{timeout:10000,maxBuffer:4194304},(failure,stdout)=>{
    if(failure)return reject(Error());
-   try{const result=JSON.parse(stdout);if(result.isError===true||typeof result.code==='string')return reject(Error());resolve(result);}catch{reject(Error());}
+   try{const result=JSON.parse(stdout);if(result.isError===true||result.status==='refused'||result.effect==='refused'||typeof result.code==='string')return reject(Error());resolve(result);}catch{reject(Error());}
   });
   child.stdin.end(JSON.stringify({...args,session}));
  });
