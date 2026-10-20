@@ -32,6 +32,25 @@ const observed = (
     Effect.map(Option.getOrThrow),
   )
 
+/**
+ * Hono's in-process fetch does not abort response reads like network fetch. Couple the body to
+ * the request signal so SDK cancellation cannot leave a stream reconnecting after Flue stops.
+ */
+function fetchRuntime(router: ReturnType<typeof createAgentRouter>): typeof fetch {
+  return (input, options) => {
+    const request = new Request(input, options)
+    request.signal.throwIfAborted()
+    return Promise.resolve(router.fetch(request)).then((response) => {
+      request.signal.throwIfAborted()
+      if (response.body === null) return response
+      return new Response(
+        response.body.pipeThrough(new TransformStream(), { signal: request.signal }),
+        response,
+      )
+    })
+  }
+}
+
 /** Reproduce the provider's content indexes before Flue translates them into UI chunks. */
 function sequence(distinct: boolean) {
   const message = fauxAssistantMessage(
@@ -114,7 +133,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
           const router = createAgentRouter(Reply)
           const client = createFlueClient({
             url: `http://runtime.test/${id}`,
-            fetch: (input, options) => Promise.resolve(router.fetch(new Request(input, options))),
+            fetch: fetchRuntime(router),
           })
           const receipt = yield* Effect.tryPromise(() => init(Reply, { id }).dispatch('reply'))
           yield* Deferred.await(entered)
