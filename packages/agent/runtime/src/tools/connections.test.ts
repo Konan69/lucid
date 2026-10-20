@@ -1,11 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   AddIntegrationOutcome,
+  MakeIntegrationOutcome,
   ApprovalId,
   Connection,
   ConnectionOwnership,
   ConnectionState,
   ConnectionStep,
+  ConnectionAuthorization,
   ServiceId,
   TestIntegrationOutcome,
   ConnectionId,
@@ -40,6 +42,114 @@ const fixture = Effect.fn('ConnectionToolsTest.fixture')(function* () {
     }),
   )
   return { requests, rpc, tools: connectionTools(toolRunner(scope)) }
+})
+
+/** The Flue tool must call the new RPC, keep diagnostics, and stop for the existing secure card. */
+describe('make_integration', () => {
+  const connection = Connection.make({
+    id: ConnectionId.make('MARK-made-connection'),
+    service: ServiceId.make('made:Morning'),
+    serviceName: 'Morning',
+    mark: null,
+    name: null,
+    identity: null,
+    account: 'Morning',
+    origin: 'Catalogue',
+    ownership: ConnectionOwnership.cases.Personal.make({
+      owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
+    }),
+    state: ConnectionState.cases.NeedsAuthorization.make({}),
+    createdAt: 1,
+  })
+  for (const [outcome, expected] of [
+    [
+      MakeIntegrationOutcome.cases.Made.make({ account: 'Morning' }),
+      {
+        output: { ok: true, account: 'Morning', message: 'Made. It is ready as Morning.' },
+        terminate: false,
+      },
+    ],
+    [
+      MakeIntegrationOutcome.cases.BuildFailed.make({ message: 'index.ts: invalid source' }),
+      {
+        output: { ok: false, message: 'The build failed: index.ts: invalid source' },
+        terminate: false,
+      },
+    ],
+    [
+      MakeIntegrationOutcome.cases.PendingAuthorization.make({
+        account: 'Morning',
+        step: ConnectionStep.cases.EnterKey.make({
+          connection,
+          fields: [{ name: 'token', label: 'API key' }],
+        }),
+      }),
+      {
+        output: {
+          kind: 'connection-request',
+          authorization: ConnectionAuthorization.cases.EnterKey.make({
+            connectionId: connection.id,
+            fields: [{ name: 'token', label: 'API key' }],
+          }),
+        },
+        terminate: true,
+      },
+    ],
+    [
+      MakeIntegrationOutcome.cases.PendingAuthorization.make({
+        account: 'Morning',
+        step: ConnectionStep.cases.OpenSignIn.make({
+          connection,
+          address: 'https://example.test/sign-in',
+        }),
+      }),
+      {
+        output: {
+          kind: 'connection-request',
+          authorization: ConnectionAuthorization.cases.OpenSignIn.make({
+            connectionId: connection.id,
+          }),
+        },
+        terminate: true,
+      },
+    ],
+  ] as const) {
+    it.effect(`projects ${outcome._tag} ${'step' in outcome ? outcome.step._tag : ''}`, () =>
+      Effect.gen(function* () {
+        const { requests, rpc, tools } = yield* fixture()
+        const [, , , , , , tool] = tools
+        const files = [{ path: 'index.ts', content: 'export default {}' }]
+        const call = yield* Effect.promise(() =>
+          Promise.resolve(
+            tool.run({
+              data: { summary: 'Make morning check', name: 'Morning', files },
+              signal: new AbortController().signal,
+              toolCallId: 'MARK-call',
+              log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+            }),
+          ),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request')) return expect.fail('Expected RPC request')
+        expect(request.tag).toBe('MakeIntegration')
+        expect(request.payload).toEqual({ name: 'Morning', files })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- RPC protocol envelopes have no schema constructor.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.succeed(outcome),
+        })
+        const result = yield* Fiber.join(call)
+        expect(result).toMatchObject(expected)
+        expect(JSON.stringify(result)).not.toContain('MARK-person')
+        expect(JSON.stringify(result)).not.toContain('MARK-thread')
+        expect(JSON.stringify(result)).not.toContain('https://example.test/sign-in')
+        if (!MakeIntegrationOutcome.guards.PendingAuthorization(outcome))
+          expect(JSON.stringify(result)).not.toContain('MARK-')
+      }).pipe(Effect.scoped),
+    )
+  }
 })
 
 /** Exercise the real Flue callback, generated client and projection; control only the RPC transport. */

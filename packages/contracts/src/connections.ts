@@ -225,6 +225,41 @@ export const ConnectionStep = Schema.TaggedUnion({
 })
 export type ConnectionStep = typeof ConnectionStep.Type
 
+/** Source paths are canonical relative files; aliases cannot replace Vivid's pinned manifest. */
+export const MadeFile = Schema.Struct({
+  path: Schema.NonEmptyString.check(
+    Schema.isMaxLength(200),
+    Schema.makeFilter(
+      (path) =>
+        !path.includes('\\') &&
+        path !== 'package.json' &&
+        path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..'),
+    ),
+  ),
+  content: Schema.String.check(Schema.isMaxLength(200_000)),
+})
+export interface MadeFile extends Schema.Schema.Type<typeof MadeFile> {}
+
+/** Vivid supplies the framework manifest, while the author supplies bounded, distinct files. */
+export const MakeIntegrationRequest = Schema.Struct({
+  name: Schema.NonEmptyString.check(Schema.isMaxLength(40)),
+  files: Schema.Array(MadeFile).check(
+    Schema.isBetweenLength(1, 30),
+    Schema.makeFilter((files) => new Set(files.map((file) => file.path)).size === files.length),
+  ),
+})
+export interface MakeIntegrationRequest extends Schema.Schema.Type<typeof MakeIntegrationRequest> {}
+
+/** Repeated names reuse add's existing-account outcomes instead of allocating another app. */
+export const MakeIntegrationOutcome = Schema.TaggedUnion({
+  Made: { account: Schema.String },
+  PendingAuthorization: { account: Schema.String, step: ConnectionStep },
+  BuildFailed: { message: Schema.String },
+  AlreadyConnected: { account: Schema.String, name: Schema.String },
+  Failed: { account: Schema.String, name: Schema.String },
+})
+export type MakeIntegrationOutcome = typeof MakeIntegrationOutcome.Type
+
 /**
  * Key fields for a Connection that takes them. They travel from the Person's client to the server
  * and on to the credential store; they are never written to a Thread, a log or model context.

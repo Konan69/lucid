@@ -5,6 +5,7 @@ import {
   ServiceAuthorization,
   ServiceId,
   ServiceUnavailable,
+  type MadeFile,
 } from '@vivid/contracts'
 import * as Config from 'effect/Config'
 import * as Arr from 'effect/Array'
@@ -495,6 +496,13 @@ export type ExecutorFailure =
   | ExecutorResourceMissing
   | ExecutorApprovalUnsupported
 
+/** Only authored source deployment exposes compiler diagnostics for the author to repair. */
+export class ExecutorBuildFailed extends Schema.TaggedError<ExecutorBuildFailed>()(
+  'ExecutorBuildFailed',
+  { message: Schema.String },
+  { title: 'ExecutorBuildFailed' },
+) {}
+
 const BeginInput = Schema.Struct({
   connectionId: ConnectionId,
   service: ServiceId,
@@ -552,6 +560,10 @@ export interface ExecutorService {
   readonly add: (
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
+  /** Authored apps have a repairable build failure outside ordinary Connection failures. */
+  readonly make: (
+    input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
+  ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure | ExecutorBuildFailed>
   /** Renew authorization without allocating another app or account. */
   readonly reauthorize: (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
@@ -1072,6 +1084,61 @@ function referenceIdentity(references: ExecutorActiveReferences) {
   }
 }
 
+const decodeDeployedApp = Schema.decodeUnknownEffect(WireApp)
+const decodeBuildFailure = Schema.decodeUnknownOption(
+  Schema.TaggedStruct('VersionBuildFailed', {
+    message: Schema.String,
+  }),
+)
+
+/** A rejected first build has no retained app (Executor VersionBuildFailed at 26d03a48).
+ * Read diagnostics only here so existing keyed, Google and imported apps keep their failures. */
+function deployReader(client: HttpClient.HttpClient) {
+  const scoped = HttpClient.withScope(client)
+  return Effect.fn('Executor.deploy')(
+    function* (
+      request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>,
+    ) {
+      const context = { service: 'connections' as const, tool: null }
+      const prepared = yield* request.pipe(
+        Effect.mapError(() => ExecutorResponseInvalid.make(context)),
+      )
+      const response = yield* scoped
+        .execute(prepared)
+        .pipe(Effect.mapError(() => ExecutorTransportFailure.make(context)))
+      if (response.status === 401) return yield* ExecutorAccessDenied.make(context)
+      const invalid = () =>
+        response.status >= 500
+          ? ExecutorExecutionUncertain.make(context)
+          : ExecutorResponseInvalid.make(context)
+      const body = yield* response.json.pipe(Effect.mapError(invalid))
+      if (response.status >= 200 && response.status < 300)
+        return yield* decodeDeployedApp(body).pipe(Effect.mapError(invalid))
+      const build = decodeBuildFailure(body)
+      if (response.status === 422 && Option.isSome(build))
+        return yield* new ExecutorBuildFailed({
+          message: build.value.message.trim().slice(0, 4000),
+        })
+      const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
+      if (isKnownFailureTag(failure._tag)) return yield* translateFailure(failure._tag, null)
+      if (response.status >= 500) return yield* ExecutorExecutionUncertain.make(context)
+      return yield* ExecutorRejected.make({
+        ...context,
+        message: 'The Integration management request was refused.',
+      })
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: '90 seconds',
+          orElse: () =>
+            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+        }),
+      ),
+  )
+}
+
 /** Compile the narrow foreign response schemas once for this authenticated client. */
 function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const read = responseReader(client)
@@ -1094,6 +1161,15 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const readRemoval = read(Schema.Json)
   return {
     google,
+    readDeploy: deployReader(client),
+    readSchedules: read(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.NonEmptyString,
+          scope: Schema.optionalKey(Schema.Literal('app')),
+        }),
+      ),
+    ),
     readApp,
     readInventory,
     readConnection,
@@ -2011,7 +2087,63 @@ function makeBegin(
       }),
     )
   }, Effect.scoped)
-  return { begin, add: makeAdd(http, availability, configure, install) }
+  return {
+    begin,
+    add: makeAdd(http, availability, configure, install),
+    make: makeAuthored(http, availability, configure),
+  }
+}
+
+/** Authored sources own one app, including its schedules; failed configuration reclaims it. */
+function makeAuthored(
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+  configure: ReturnType<typeof makeConfigure>,
+) {
+  return Effect.fn('Executor.makeAuthored')(function* (
+    input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
+  ) {
+    const app = yield* Effect.acquireRelease(
+      http.readDeploy(
+        post('/apps/deploy', {
+          name: connectionAppName(input.connectionId),
+          files: input.files,
+        }),
+      ),
+      compensateApp(http),
+    )
+    const schedules = yield* http.readSchedules(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}/schedules/definitions`)),
+      null,
+    )
+    // User schedules would run as Vivid's Executor user, rather than the acting Person.
+    yield* Effect.forEach(
+      schedules.filter((schedule) => schedule.scope === 'app'),
+      (schedule) =>
+        http.readCall(
+          jsonBody(
+            HttpClientRequest.patch(`/apps/${query(app.id)}/schedules/${query(schedule.name)}`),
+            { enabled: true, scope: 'app' },
+          ),
+          null,
+        ),
+    )
+    const authorization =
+      Object.keys(app.requirements.accounts).length === 0
+        ? ServiceAuthorization.cases.None.make({})
+        : yield* availability.inspectApp(input, app)
+    return yield* configure(
+      input,
+      app,
+      ExecutorServiceEntry.make({
+        id: input.service,
+        name: input.label,
+        description: '',
+        domain: null,
+        authorization,
+      }),
+    )
+  }, Effect.scoped)
 }
 
 /** Every registration owns one app. Account completion fills that app's declared requirement. */
@@ -2998,6 +3130,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     add: Effect.fn('Executor.addPublic')((input) =>
       publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
+    make: registration.make,
     reauthorize: makeReauthorize(http, availability),
     inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
     reconcile: makeLegacyReconciliation(http),

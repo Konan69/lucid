@@ -14,6 +14,7 @@ import {
 } from 'effect'
 import {
   AddIntegrationRequest,
+  MakeIntegrationRequest,
   ServiceId,
   SignInSurface,
   AuditEvent,
@@ -55,7 +56,9 @@ import {
   type ExecutorService,
   ExecutorSignInRequired,
   ExecutorAuthorizationUnavailable,
+  ExecutorBuildFailed,
 } from './executor.ts'
+import { madeFiles, madeService } from './made.ts'
 import { executorFailure } from './errors.ts'
 import {
   connectionOf,
@@ -81,6 +84,8 @@ import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isPublicAddressRequired = Schema.is(ExecutorPublicAddressRequired)
+const isBuildFailed = Schema.is(ExecutorBuildFailed)
+const isSignInRequired = Schema.is(ExecutorSignInRequired)
 const isRetainedAuthorization = Schema.is(
   Schema.Union([ExecutorSignInRequired, ExecutorAuthorizationUnavailable]),
 )
@@ -246,11 +251,13 @@ const discardBegin = Effect.fn('Connections.discardBegin')(
 )
 
 /** Allocate the storage owner separately from the connecting Person's execution attribution. */
-const begin = Effect.fn('Connections.begin')(function* (
+const begin = Effect.fn('Connections.begin')(function* <E>(
   actor: Actor,
   request: BeginConnectionRequest,
   service: Service,
-  start: ExecutorService['begin'],
+  start: (
+    input: Parameters<ExecutorService['begin']>[0],
+  ) => Effect.Effect<typeof ExecutorStep.Type, E>,
 ) {
   let companyId: CompanyId | null = null
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
@@ -276,14 +283,6 @@ const begin = Effect.fn('Connections.begin')(function* (
     subject: actor.person.id,
     returnAddress: new URL('/api/connections/return', config.PUBLIC_URL).href,
   }).pipe(
-    Effect.catchTag(
-      'ExecutorSignInRequired',
-      Effect.fn('Connections.cancelSignIn')(function* (error) {
-        yield* discardBegin(executor, error.references)
-        return yield* error
-      }),
-    ),
-    Effect.mapError((error) => (isPublicAddressRequired(error) ? error : executorFailure(error))),
     Effect.flatMap((next) =>
       correlateSignIn(next).pipe(Effect.tapError(() => discardBegin(executor, next.references))),
     ),
@@ -351,6 +350,24 @@ const begin = Effect.fn('Connections.begin')(function* (
     OpenSignIn: ({ address }) => ConnectionStep.cases.OpenSignIn.make({ connection, address }),
   })
 })
+
+/** Imports retain their public-egress refusal for the add outcome mapping. */
+const publicBeginFailure = (error: import('./executor.ts').ExecutorFailure) =>
+  isPublicAddressRequired(error) ? error : executorFailure(error)
+
+/** A failed authored build remains repairable; other provider errors keep the shared translation. */
+const madeBeginFailure = (error: import('./executor.ts').ExecutorFailure | ExecutorBuildFailed) =>
+  isBuildFailed(error) ? error : executorFailure(error)
+
+/** Cancel an unusable grant before its failure is translated. Preserve authored build errors
+ * for the author without adding them to the catalogue/import adapter's failure channel. */
+function prepareBegin<A, E>(executor: ExecutorService, operation: Effect.Effect<A, E>) {
+  return operation.pipe(
+    Effect.tapError((error) =>
+      isSignInRequired(error) ? discardBegin(executor, error.references) : Effect.void,
+    ),
+  )
+}
 
 /** Retain a replacement request before reporting failure so the next Resume resolves that exact grant. */
 const retainAuthorization = Effect.fn('Connections.retainAuthorization')(function* (
@@ -604,6 +621,24 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
+    ...makeRegistration({ executor, provide, catalogServices }),
+    ...management,
+  }
+})
+
+/** Registration owns allocation and its failure translation; management owns existing accounts. */
+function makeRegistration(input: {
+  readonly executor: ExecutorService
+  readonly provide: <A, E>(
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
+  ) => Effect.Effect<A, E>
+  readonly catalogServices: () => Effect.Effect<
+    ReadonlyArray<Service>,
+    ReturnType<typeof executorFailure>
+  >
+}) {
+  const { executor } = input
+  return {
     /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
       actor: Actor,
@@ -611,19 +646,22 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       // Refuse non-admin sharing before catalog lookup or provider mutation.
       if (request.shared) yield* requireAdmin(actor.workspace)
-      const entry = (yield* catalogServices()).find((item) => item.id === request.service)
+      const entry = (yield* input.catalogServices()).find((item) => item.id === request.service)
       if (entry === undefined)
         return yield* new InvalidRequest({
           message: 'Choose an integration from the current catalogue.',
         })
       const start = Effect.fn('Connections.beginCatalog')(
-        (input: Parameters<ExecutorService['begin']>[0]) => executor.begin(input),
+        (input: Parameters<ExecutorService['begin']>[0]) =>
+          prepareBegin(executor, executor.begin(input)).pipe(Effect.mapError(publicBeginFailure)),
       )
-      return yield* provide(begin(actor, request, entry, start)).pipe(
-        Effect.catchTag('ExecutorPublicAddressRequired', (error) =>
-          Effect.fail(executorFailure(error)),
-        ),
-      )
+      return yield* input
+        .provide(begin(actor, request, entry, start))
+        .pipe(
+          Effect.catchTag('ExecutorPublicAddressRequired', (error) =>
+            Effect.fail(executorFailure(error)),
+          ),
+        )
     }),
     /** URL imports persist through the same compensation, ownership and authorization steps. */
     add: Effect.fn('Connections.add')(function* (
@@ -642,7 +680,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       const start: ExecutorService['begin'] = Effect.fn('Connections.import')((input) =>
         executor.add({ ...input, source }),
       )
-      return yield* provide(
+      return yield* input.provide(
         begin(
           actor,
           // The name Vivid gave is the server's own, kept as the service's name. Nobody has
@@ -650,13 +688,33 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
           // its initial browser return keeps the existing web destination.
           { service: importedService.id, name: null, shared: request.shared, from: 'Web' },
           importedService,
-          start,
+          (input) => prepareBegin(executor, start(input)).pipe(Effect.mapError(publicBeginFailure)),
         ),
       )
     }),
-    ...management,
+    /** Authored apps are personal and use the ordinary insertion/compensation boundary. */
+    make: Effect.fn('Connections.make')(function* (actor: Actor, request: MakeIntegrationRequest) {
+      const service = Service.make({
+        id: madeService(request.name),
+        name: request.name,
+        description: '',
+        mark: null,
+        authorization: ServiceAuthorization.cases.None.make({}),
+      })
+      return yield* input.provide(
+        begin(
+          actor,
+          { service: service.id, name: null, shared: false, from: 'Web' },
+          service,
+          (input) =>
+            prepareBegin(executor, executor.make({ ...input, files: madeFiles(request) })).pipe(
+              Effect.mapError(madeBeginFailure),
+            ),
+        ),
+      )
+    }),
   }
-})
+}
 
 /** Each Connection has its own lock through the last holder/waiter; idle locks are removed.
  * A slow external call cannot block unrelated Connections, and eviction cannot split a busy lock.

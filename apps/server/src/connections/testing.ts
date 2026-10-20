@@ -142,6 +142,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       ]
     }).pipe(Effect.withSpan('Executor.Test.catalog')),
     add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
+    make: Effect.fn('Executor.Test.make')((input) => makeExecutor(probe).begin(input)),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
       const identity = {
@@ -517,6 +518,37 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
       return [created, [...apps, created]]
     })
     return yield* hostedApp(state, app)
+  }
+  const removedApp = request.path.match(/^DELETE \/apps\/([^/]+)$/u)
+  if (removedApp !== null) {
+    const id = removedApp[1]
+    yield* Ref.update(state.apps, (apps) => apps.filter((app) => app.id !== id))
+    yield* Ref.update(state.selections, (selections) => {
+      const retained = new Map(selections)
+      if (id !== undefined) retained.delete(id)
+      return retained
+    })
+    return hostedRemoved
+  }
+  const unlinked = request.path.match(
+    /^DELETE \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/([^/]+)$/u,
+  )
+  if (unlinked !== null) {
+    const [, app, requirement, account] = unlinked
+    if (app === undefined || requirement === undefined || account === undefined)
+      return yield* Effect.die('Malformed fixture unlink target')
+    const selection = (yield* Ref.get(state.selections)).get(app)
+    if (selection === undefined) return hostedRemoved
+    const decoded = yield* decodeHostedSelections(selection)
+    const accounts = decoded[requirement]
+    if (accounts === undefined) return hostedRemoved
+    yield* Ref.update(state.selections, (selections) =>
+      new Map(selections).set(app, {
+        ...decoded,
+        [requirement]: accounts.filter((selected) => selected !== account),
+      }),
+    )
+    return hostedRemoved
   }
   const connectionPath = request.path.match(
     /^POST \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/connections$/u,

@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import type {
   AddIntegrationRequest,
+  MakeIntegrationRequest,
   FindIntegrationsRequest,
   TestIntegrationRequest,
   BeginConnectionRequest,
@@ -17,7 +18,12 @@ import type {
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
-import { addIntegration, findIntegrations, testIntegration } from './integrations.ts'
+import {
+  addIntegration,
+  findIntegrations,
+  makeIntegration,
+  testIntegration,
+} from './integrations.ts'
 import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
@@ -36,6 +42,11 @@ export const connectionHandlers = {
   AddIntegration: Effect.fn('Rpc.AddIntegration')(function* (request: AddIntegrationRequest) {
     yield* requireVivid()
     return yield* addIntegration(yield* requireActor(), request)
+  }),
+  /** Source deployment has the same attributed Run authority as importing an address. */
+  MakeIntegration: Effect.fn('Rpc.MakeIntegration')(function* (request: MakeIntegrationRequest) {
+    yield* requireVivid()
+    return yield* makeIntegration(yield* requireActor(), request)
   }),
   /** A read test is still an external account action and requires the ordinary Gate. */
   TestIntegration: Effect.fn('Rpc.TestIntegration')(function* (request: TestIntegrationRequest) {

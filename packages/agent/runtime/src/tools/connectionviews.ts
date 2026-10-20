@@ -1,5 +1,6 @@
 import {
   AddIntegrationOutcome,
+  MakeIntegrationOutcome,
   ConnectionAuthorization,
   ConnectionAuthorizationMessage,
   ConnectionMatch,
@@ -128,5 +129,21 @@ export function tested(outcome: TestIntegrationOutcome) {
     ApprovalRequired: approval,
     Blocked: ({ rule }) => ({ works: false, reason: modelText(rule) }),
     Unreachable: () => ({ works: false, reason: 'The integration could not be reached.' }),
+  })
+}
+
+/** Made apps use the same secure authorization card as imports; compiler messages expose no ids. */
+export function made(outcome: MakeIntegrationOutcome): Schema.Json {
+  return MakeIntegrationOutcome.match<Schema.Json>(outcome, {
+    Made: ({ account }) => ({
+      ok: true,
+      account: modelText(account),
+      message: `Made. It is ready as ${modelText(account)}.`,
+    }),
+    PendingAuthorization: (value) =>
+      added(AddIntegrationOutcome.cases.PendingAuthorization.make(value)),
+    BuildFailed: ({ message }) => ({ ok: false, message: `The build failed: ${message}` }),
+    AlreadyConnected: (value) => added(AddIntegrationOutcome.cases.AlreadyConnected.make(value)),
+    Failed: (value) => added(AddIntegrationOutcome.cases.Failed.make(value)),
   })
 }

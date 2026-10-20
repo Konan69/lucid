@@ -86,6 +86,8 @@ import {
   ACCOUNT_HANDLE_MAX,
   AddIntegrationRequest,
   AddIntegrationOutcome,
+  MakeIntegrationRequest,
+  MakeIntegrationOutcome,
   FindIntegrationsRequest,
   FindIntegrationsResponse,
   TestIntegrationRequest,
@@ -641,6 +643,11 @@ const TestIntegration = Rpc.make('TestIntegration', {
   payload: TestIntegrationRequest,
   success: TestIntegrationOutcome,
 })
+const MakeIntegration = Rpc.make('MakeIntegration', {
+  ...call,
+  payload: MakeIntegrationRequest,
+  success: MakeIntegrationOutcome,
+})
 
 // ── Connections (a provider's sign-in redirect returns over plain HTTP) ────
 const ListConnections = Rpc.make('ListConnections', { ...call, success: ConnectionListResponse })
@@ -1001,6 +1008,7 @@ export const VividRpc = RpcGroup.make(
   DeleteLibraryFolder,
   FindIntegrations,
   AddIntegration,
+  MakeIntegration,
   TestIntegration,
   ListConnections,
   WatchConnections,

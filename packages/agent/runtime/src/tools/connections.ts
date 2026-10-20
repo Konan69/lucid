@@ -2,6 +2,8 @@ import { defineTool } from '@flue/runtime'
 import {
   ConnectionStep,
   AddIntegrationOutcome,
+  MakeIntegrationOutcome,
+  MakeIntegrationRequest,
   InvalidRequest,
   TestIntegrationOutcome,
   ToolOutcome,
@@ -30,6 +32,7 @@ const ToolInput = Schema.Union([
   Schema.Json,
 ])
 export const decodeToolInput = Schema.decodeUnknownEffect(ToolInput)
+const decodeMadeRequest = Schema.decodeEffect(MakeIntegrationRequest)
 
 /** Discovery and execution recheck access through the same attributed RPC client. */
 export function connectionTools(runTool: RunTool) {
@@ -121,7 +124,55 @@ export function connectionTools(runTool: RunTool) {
       },
     }),
     ...integrationTools(runTool),
+    makeIntegrationTool(runTool),
   ] as const
+}
+
+/** Source is decoded at model ingress with the same bounds and path rules as the RPC. */
+function makeIntegrationTool(runTool: RunTool) {
+  return defineTool({
+    name: 'make_integration',
+    description:
+      "Make an Integration of your own: an app whose source you write, for something no connected Integration does, such as a reminder at a time, a check on a schedule, or a page to poll. Read the make-an-integration skill before writing it. Send only the source files; Vivid adds package.json. A failed build returns the compiler's message: fix the source and call again with the same name. Once made, watch its events with find_events and watch, and call its tools with find_tools and use_tool.",
+    input: v.object({
+      summary,
+      name: text('A clear name for this Integration.', 40),
+      files: v.pipe(
+        v.array(
+          v.object({
+            path: text('Relative source file path. Vivid adds package.json.', 200),
+            content: v.pipe(v.string(), v.maxLength(200_000)),
+          }),
+        ),
+        v.minLength(1),
+        v.maxLength(30),
+      ),
+    }),
+    /** The attributed RPC remains the deployment and authorization authority. */
+    run({ data, signal }) {
+      return runTool(
+        Effect.gen(function* () {
+          const { client } = yield* Scope
+          const request = yield* decodeMadeRequest({
+            name: data.name,
+            files: data.files,
+          }).pipe(
+            Effect.mapError(
+              () => new InvalidRequest({ message: 'Integration source files are invalid.' }),
+            ),
+          )
+          const outcome = yield* client.MakeIntegration(request)
+          return {
+            output: connectionViews.made(outcome),
+            terminate:
+              MakeIntegrationOutcome.guards.PendingAuthorization(outcome) &&
+              !ConnectionStep.guards.Done(outcome.step),
+          }
+        }),
+        { signal, tool: 'make_integration' },
+      )
+    },
+  })
 }
 
 /** Both account and tool must resolve exactly; model input never carries Connection authority. */

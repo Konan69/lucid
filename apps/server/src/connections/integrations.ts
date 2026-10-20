@@ -1,5 +1,6 @@
 import {
   AddIntegrationOutcome,
+  MakeIntegrationOutcome,
   openApiUnsupportedMessage,
   mcpQueryUnsupportedMessage,
   ConnectionMatch,
@@ -10,6 +11,7 @@ import {
   ToolOutcome,
   Workspace,
   type AddIntegrationRequest,
+  type MakeIntegrationRequest,
   type FindIntegrationsRequest,
   type TestIntegrationRequest,
 } from '@vivid/contracts'
@@ -22,6 +24,72 @@ import { useTool } from './tools.ts'
 import { namedAccounts } from './names.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
+import { madeService } from './made.ts'
+
+/** A made service is stable by name inside the Person's ownership scope. Ready and failed
+ * accounts are reused just like imports; only pending authorization may start another trip. */
+export const makeIntegration = Effect.fn('Connections.makeIntegration')(function* (
+  actor: Actor,
+  request: MakeIntegrationRequest,
+) {
+  const store = yield* ConnectionStore
+  const existing = namedAccounts(yield* store.records(actor)).find(
+    ({ row }) =>
+      row.personId === actor.person.id &&
+      row.companyId === null &&
+      row.service === madeService(request.name),
+  )
+  if (existing !== undefined) {
+    const state = yield* stateOf(existing.row)
+    return yield* ConnectionState.match<
+      Effect.Effect<MakeIntegrationOutcome, Effect.Error<ReturnType<typeof store.resume>>>
+    >(state, {
+      Ready: () =>
+        Effect.succeed(
+          MakeIntegrationOutcome.cases.AlreadyConnected.make({
+            account: existing.account,
+            name: existing.row.serviceName,
+          }),
+        ),
+      Failed: () =>
+        Effect.succeed(
+          MakeIntegrationOutcome.cases.Failed.make({
+            account: existing.account,
+            name: existing.row.serviceName,
+          }),
+        ),
+      NeedsAuthorization: () =>
+        store.resume(actor, existing.row.id, existing.row.returnsTo).pipe(
+          Effect.map((step) =>
+            MakeIntegrationOutcome.cases.PendingAuthorization.make({
+              account: existing.account,
+              step,
+            }),
+          ),
+        ),
+    })
+  }
+  const result = yield* store
+    .make(actor, request)
+    .pipe(
+      Effect.catchTag('ExecutorBuildFailed', ({ message }) =>
+        Effect.succeed(MakeIntegrationOutcome.cases.BuildFailed.make({ message })),
+      ),
+    )
+  if (MakeIntegrationOutcome.guards.BuildFailed(result)) return result
+  const selected = namedAccounts(yield* store.records(actor)).find(
+    ({ row }) => row.id === result.connection.id,
+  )
+  if (selected === undefined)
+    return yield* new NotFound({ message: 'Integration not found after registration' })
+  return ConnectionStep.match<MakeIntegrationOutcome>(result, {
+    Done: () => MakeIntegrationOutcome.cases.Made.make({ account: selected.account }),
+    OpenSignIn: (step) =>
+      MakeIntegrationOutcome.cases.PendingAuthorization.make({ account: selected.account, step }),
+    EnterKey: (step) =>
+      MakeIntegrationOutcome.cases.PendingAuthorization.make({ account: selected.account, step }),
+  })
+})
 
 /** Match names and descriptions; query words support requests such as “Google calendar”. */
 function matches(query: string, name: string, description: string) {
