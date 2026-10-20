@@ -6,18 +6,23 @@ import { chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
 
 const SITE = 'httpbingo.org'
 const VALUE = 'synthetic-copy-proof'
+/** Flue persists these tool receipts as JSON text, as the sibling egress proof observes. */
 const copied = Schema.decodeUnknownOption(
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    site: Schema.Literal(SITE),
-    outcome: CopySignInOutcome.cases.Copied,
-  }),
+  Schema.fromJsonString(
+    Schema.Struct({
+      ok: Schema.Literal(true),
+      site: Schema.Literal(SITE),
+      outcome: CopySignInOutcome.cases.Copied,
+    }),
+  ),
 )
 const page = Schema.decodeUnknownOption(
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    result: Schema.Struct({ address: Schema.String, outline: Schema.String }),
-  }),
+  Schema.fromJsonString(
+    Schema.Struct({
+      ok: Schema.Literal(true),
+      result: Schema.Struct({ address: Schema.String, outline: Schema.String }),
+    }),
+  ),
 )
 
 /** Full desktop consent → device link → Computer proof. The operator supplies a real desktop
