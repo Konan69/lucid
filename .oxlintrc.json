@@ -22,6 +22,12 @@
           "use": "apps/web/src/styles/index.css"
         }
       ]
+    },
+    "hermes": {
+      "approvedFinalizationRegistry": {
+        "file": "packages/client/state/src/live.ts",
+        "reason": "Checks typeof FinalizationRegistry before construction; sweeps dead names on Hermes instead."
+      }
     }
   },
   "ignorePatterns": [
@@ -110,7 +116,9 @@
     "typescript/no-unsafe-type-assertion": "off",
     "typescript/switch-exhaustiveness-check": [
       "error",
-      { "considerDefaultExhaustiveForUnions": false }
+      {
+        "considerDefaultExhaustiveForUnions": false
+      }
     ],
     "unicorn/consistent-function-scoping": "off",
     "anti-slop/no-chained-type-assertions": "warn",
@@ -357,6 +365,63 @@
         "no-shadow": "off",
         "max-lines-per-function": "off",
         "anti-slop/no-conditional-empty-object-spread": "off"
+      }
+    },
+    {
+      "files": [
+        "apps/mobile/index.ts",
+        "apps/mobile/src/**/*.{ts,tsx}",
+        "packages/client/{state,rpc}/src/**/*.{ts,tsx}",
+        "packages/contracts/src/**/*.{ts,tsx}",
+        "packages/design/{marks,tokens}/src/**/*.{ts,tsx}"
+      ],
+      "excludeFiles": ["**/*.test.{ts,tsx}", "**/tests/**"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Option",
+            "message": "Bare `Option` is the DOM <option> constructor. Import Option from effect/Option."
+          },
+          {
+            "name": "FinalizationRegistry",
+            "message": "Hermes on the phone has no FinalizationRegistry. Own the cache with its subscription or guard it as in packages/client/state/src/live.ts."
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "Effect",
+            "property": "orDie",
+            "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+          },
+          {
+            "object": "Effect",
+            "property": "orDieWith",
+            "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+          },
+          {
+            "object": "Intl",
+            "property": "RelativeTimeFormat",
+            "message": "Hermes on the phone has no Intl.RelativeTimeFormat. Use packages/client/state/src/when.ts."
+          },
+          {
+            "property": "toSorted",
+            "message": "Hermes on the phone has no Array.prototype.toSorted. Use Array.sort from effect/Array instead of raising lib."
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/client/state/src/live.ts"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Option",
+            "message": "Bare `Option` is the DOM <option> constructor. Import Option from effect/Option."
+          }
+        ]
       }
     }
   ]

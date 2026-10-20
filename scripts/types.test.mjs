@@ -27,6 +27,8 @@ function fixture(t) {
     'turbo.json',
     'scripts/types.mjs',
     'tsconfig.base.json',
+    'tsconfig.hermes.json',
+    'hermes.d.ts',
     'packages/contracts/package.json',
     'packages/contracts/tsconfig.json',
     'packages/contracts/tsconfig.types.json',
