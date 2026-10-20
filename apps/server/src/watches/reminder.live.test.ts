@@ -18,10 +18,17 @@ const toolNames = (state: Parameters<typeof toolParts>[0]) =>
   toolParts(state).map((part) => `${part.toolName}:${part.state}`)
 
 /** A `use_tool` call as the model made it, and the receipt the made app answered with. */
-const UseTool = Schema.Struct({ tool: Schema.String, input: Schema.String })
+// `use_tool` takes its input as an object or as JSON text (`runtime/src/tools/connections.ts`).
+const UseTool = Schema.Struct({
+  tool: Schema.String,
+  input: Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.Json)]),
+})
 /** What Vivid asked the made app for, when it gave a delay rather than a clock time. */
 const After = Schema.Struct({ minutes: Schema.Finite })
-const decodeAfter = Schema.decodeUnknownOption(Schema.fromJsonString(After))
+const afterFromText = Schema.decodeUnknownOption(Schema.fromJsonString(After))
+const afterFromObject = Schema.decodeUnknownOption(After)
+const decodeAfter = (input: typeof UseTool.Type.input) =>
+  Option.orElse(afterFromText(input), () => afterFromObject(input))
 const Receipt = Schema.Struct({
   ok: Schema.Literal(true),
   output: Schema.Struct({ at: Schema.String }),
