@@ -31,7 +31,11 @@ COPY packages packages
 COPY apps/server apps/server
 COPY apps/web apps/web
 COPY apps/desktop/src/shared apps/desktop/src/shared
-RUN pnpm --filter @vivid/web build
+# Which commit this build is, for Settings and error reports (`@vivid/contracts` build.ts). Railway
+# names the commit to a build started by a push; a build it did not start from one is unnamed.
+# Declared here, after the slow steps, because its value changes with every commit.
+ARG RAILWAY_GIT_COMMIT_SHA=""
+RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm --filter @vivid/web build
 
 # The mobile app's JavaScript, exported as an over-the-air update beside the web build, so every
 # deploy carries the app that matches its contracts (`apps/server/src/updates`). A stage of its
@@ -62,6 +66,9 @@ COPY --from=build --chown=node:node /app/apps/web/dist apps/web/dist
 COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updates
 # Preserve the existing ordered migration entry for deployment pre-start jobs.
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
+# The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`).
+ARG RAILWAY_GIT_COMMIT_SHA=""
+ENV VIVID_COMMIT=$RAILWAY_GIT_COMMIT_SHA
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

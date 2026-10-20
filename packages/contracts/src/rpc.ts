@@ -16,6 +16,7 @@ import {
   WriteDocumentRequest,
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
+import { ServerBuild } from './build.js'
 import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
 import {
   NotifyPersonOutcome,
@@ -288,6 +289,9 @@ const SwitchWorkspace = Rpc.make('SwitchWorkspace', {
   payload: { to: SwitchWorkspaceRequest },
   success: MeResponse,
 })
+/** The build of the server that is answering (`build.ts`), for Settings to say beside its own. */
+const GetBuild = Rpc.make('GetBuild', { ...call, success: ServerBuild })
+const WatchBuild = Rpc.make('WatchBuild', { ...live, success: ServerBuild })
 const GetSettings = Rpc.make('GetSettings', { ...call, success: Settings })
 const WatchSettings = Rpc.make('WatchSettings', { ...live, success: Settings })
 const PatchSettings = Rpc.make('PatchSettings', {
@@ -957,6 +961,8 @@ const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: Sugges
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
+  GetBuild,
+  WatchBuild,
   CreateCompany,
   SwitchWorkspace,
   GetSettings,

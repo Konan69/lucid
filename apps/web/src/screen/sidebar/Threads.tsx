@@ -129,8 +129,8 @@ export function relativeTime(updatedAt: number, now: number) {
 
 /**
  * Every Thread, in the order a busy Person should look at them: what is waiting on them, what
- * Vivid is working on, then everything else by day, then what they are done with. The first two
- * are cards because they are few and they matter; the rest are single lines.
+ * Vivid is working on, then everything else by day, then what they are done with. Every row is
+ * one line; the first two groups say where each Thread stands in the colour of its mark.
  *
  * A row is quiet. At rest it shows its title and when it last moved. Under the pointer the time
  * gives its place to the one thing most often done to a Thread: marking it done. Renaming is a
@@ -186,13 +186,17 @@ export function Threads({
       {needsYou.length > 0 && (
         <section>
           <Caption label="Needs you" count={needsYou.length} />
-          <ul className="flex flex-col gap-px">{needsYou.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">
+            {needsYou.map((thread) => row(thread, 'standing'))}
+          </ul>
         </section>
       )}
       {working.length > 0 && (
         <section>
           <Caption label="Working" count={working.length} />
-          <ul className="flex flex-col gap-px">{working.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">
+            {working.map((thread) => row(thread, 'standing'))}
+          </ul>
         </section>
       )}
       {BANDS.map((name) => {
@@ -270,7 +274,11 @@ function DayBand({
   )
 }
 
-type Variant = 'card' | 'line'
+/**
+ * What a row's mark says: where the Thread stands (`standing`, under "Needs you" and "Working"),
+ * or only whether it has something unread (`line`, everywhere else).
+ */
+type Variant = 'standing' | 'line'
 
 interface RowProps {
   readonly thread: Thread
@@ -298,13 +306,13 @@ const AT_REST =
  * that fades the list's edges cannot cut it, and its choices exist only while it is open.
  */
 function ThreadRow(props: RowProps) {
-  const { thread, variant, renaming, onDo, onRetitle } = props
+  const { thread, renaming, onDo, onRetitle } = props
   return (
     <ContextMenu>
       <ContextMenuTrigger render={<div className="group/thread relative" />}>
-        {variant === 'card' ? <CardFace {...props} /> : <LineFace {...props} />}
+        <Face {...props} />
         {renaming ? (
-          <RenameField thread={thread} variant={variant} onClose={() => onDo(Doing.Nothing())} />
+          <RenameField thread={thread} onClose={() => onDo(Doing.Nothing())} />
         ) : (
           <DoneAction thread={thread} />
         )}
@@ -317,56 +325,18 @@ function ThreadRow(props: RowProps) {
 }
 
 /**
- * A Thread that needs someone or is being worked on. It is the same row as every other Thread,
- * with one more line under the title: the last thing said in it.
+ * A Thread as one line: its mark, its title, who else is in it, and when it last moved. Under
+ * "Needs you" and "Working" the mark says which in its colour and the title is strong; anywhere
+ * else the mark says only whether the Thread has something unread.
  *
- * It used to be a bordered card with its own left edge, a "Needs you" badge and an empty first
- * line. Under a caption that already says "Needs you", the badge said it twice, and the card's
- * words started 12px to the left of the titles in the rows below it, so the list read as two
- * unrelated lists stacked. Now the mark, the title and the time sit on the same three edges in
- * every row; what sets these apart is the colour of the mark, the weight of the title and the
- * second line.
+ * Rows under "Needs you" and "Working" had a second line, the last thing said in the Thread, and
+ * before that were bordered cards. The developer, 5 October 2026: "We don't need the chat
+ * transcripts on the left, just the titles." The phone's rows are the same one line
+ * (`apps/mobile/src/screen/home/Row.tsx`).
  */
-function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
-  const needsYou = thread.attention === 'NeedsYou'
-  return (
-    <Link
-      to="/t/$id"
-      params={{ id: thread.id }}
-      // A row is pressed, not dragged: an anchor is draggable unless it says otherwise.
-      draggable={false}
-      onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
-      className={cn(ROW, 'items-start py-1.5', active ? 'bg-wash-selected' : HOVER)}
-    >
-      <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <i
-          aria-label={needsYou ? 'Needs you' : 'Working'}
-          role="img"
-          className={cn('size-1.5 rounded-full', needsYou ? 'bg-attention' : 'bg-working')}
-        />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex h-5.5 items-center gap-2.5">
-          <span
-            aria-busy={retitling}
-            className={cn('min-w-0 flex-1 truncate text-label font-strong text-ink', IN_FLUX)}
-          >
-            {thread.title}
-          </span>
-          <Audience thread={thread} />
-          <time className={cn('shrink-0 text-meta font-meta text-ink-3 tabular-nums', AT_REST)}>
-            {relativeTime(thread.updatedAt, now)}
-          </time>
-        </span>
-        <span className="block truncate text-meta font-meta text-ink-3">{thread.preview}</span>
-      </span>
-    </Link>
-  )
-}
-
-/** Any other Thread: a mark that says whether it has something unread, its title, and when. */
-function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
+function Face({ thread, variant, active, now, retitling, onDo }: RowProps) {
   const unread = thread.attention === 'Unread' && !active
+  const strong = variant === 'standing' || unread
   return (
     <Link
       to="/t/$id"
@@ -377,15 +347,19 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
       className={cn(ROW, FULL, active ? 'bg-wash-selected' : HOVER)}
     >
       <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <i className={cn('size-1.5 rounded-full', unread ? 'bg-primary' : 'bg-line-4')} />
+        {variant === 'standing' ? (
+          <Standing thread={thread} />
+        ) : (
+          <i className={cn('size-1.5 rounded-full', unread ? 'bg-primary' : 'bg-line-4')} />
+        )}
       </span>
       <span
         aria-busy={retitling}
         className={cn(
           'min-w-0 flex-1 truncate text-label',
           IN_FLUX,
-          unread && 'font-strong',
-          unread || active ? 'text-ink' : 'text-ink-2 group-hover/row:text-ink',
+          strong && 'font-strong',
+          strong || active ? 'text-ink' : 'text-ink-2 group-hover/row:text-ink',
         )}
       >
         {thread.title}
@@ -395,6 +369,18 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
         {relativeTime(thread.updatedAt, now)}
       </time>
     </Link>
+  )
+}
+
+/** The mark of a Thread that needs the Person or that Vivid is working on, named for a reader. */
+function Standing({ thread }: { thread: Thread }) {
+  const needsYou = thread.attention === 'NeedsYou'
+  return (
+    <i
+      aria-label={needsYou ? 'Needs you' : 'Working'}
+      role="img"
+      className={cn('size-1.5 rounded-full', needsYou ? 'bg-attention' : 'bg-working')}
+    />
   )
 }
 
@@ -443,26 +429,12 @@ function DoneAction({ thread }: { thread: Thread }) {
   )
 }
 
-/** Where the title sits in each kind of row, so the field lands exactly on the words it edits. */
-const FIELD_PLACE = {
-  card: 'top-1.5 right-1.5 left-9.5 h-5.5 text-label',
-  line: 'inset-y-1.5 right-1.5 left-9.5 text-label',
-} satisfies Record<Variant, string>
-
 /**
  * A Thread's title, being edited where it is. Enter or clicking away keeps the new title, Escape
  * keeps the old one. `settled` is what stops the blur that follows Enter or Escape from being read
  * as a second answer.
  */
-function RenameField({
-  thread,
-  variant,
-  onClose,
-}: {
-  thread: Thread
-  variant: Variant
-  onClose: () => void
-}) {
+function RenameField({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   const settled = useRef(false)
   const finish = (title: string | null) => {
     if (settled.current) return
@@ -483,10 +455,8 @@ function RenameField({
         if (event.key === 'Enter') finish(event.currentTarget.value)
         if (event.key === 'Escape') finish(null)
       }}
-      className={cn(
-        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-primary',
-        FIELD_PLACE[variant],
-      )}
+      // Over the row's title, so the field lands exactly on the words it edits.
+      className="absolute inset-y-1.5 right-1.5 left-9.5 rounded-xs bg-surface-3 px-1 text-label text-ink edge outline-none edge-primary"
     />
   )
 }
