@@ -112,6 +112,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
       state: 'working',
       origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
       startedAt: yield* Clock.currentTimeMillis,
+      admittedAt: yield* Clock.currentTimeMillis,
     }),
   )
   return { database, person, member, admin, outsider, threadId, runId, companyId }
@@ -211,8 +212,42 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
       }),
     )
 
+    it.effect('only admitted Runs can author a document, ignoring earlier reservations', () =>
+      Effect.gen(function* () {
+        const { database, person, threadId, runId } = yield* fixture()
+        const store = yield* ArtifactStore
+        yield* database.run(
+          database.update(runs).set({ turn: 2, admittedAt: null }).where(eq(runs.id, runId)),
+        )
+        const request = { title: 'Packing', body: 'Pack a coat.' }
+        expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
+          'NotFound',
+        )
+        expect(yield* store.list(person.id, threadId)).toEqual([])
+        yield* database.run(database.update(runs).set({ admittedAt: 2 }).where(eq(runs.id, runId)))
+        // A reservation left behind before acceptance has no response that could write this.
+        yield* database.run(
+          database.insert(runs).values({
+            id: RunId.make(NodeCrypto.randomUUID()),
+            threadId,
+            personId: person.id,
+            turn: 1,
+            state: 'working',
+            origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
+            startedAt: 1,
+          }),
+        )
+        yield* store.write(person.id, threadId, request)
+        const [written] = yield* store.list(person.id, threadId)
+        if (written === undefined) return yield* Effect.sync(() => expect.fail('Not written'))
+        expect((yield* store.get(person.id, { id: written.id })).shown.madeBy).toEqual(
+          ArtifactAuthor.cases.Vivid.make({ runId }),
+        )
+      }),
+    )
+
     it.effect(
-      'refuses ended and other-Person Runs, and gives a joined delivery\'s write to its host Run',
+      "refuses ended and other-Person Runs, and gives a joined delivery's write to its host Run",
       () =>
         Effect.gen(function* () {
           const { database, person, member, threadId, runId } = yield* fixture()
@@ -250,6 +285,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               state: 'working',
               origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
               startedAt: 2,
+              admittedAt: 2,
             }),
           )
           expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
@@ -269,6 +305,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               state: 'working',
               origin: encodeOrigin(StoredRunOrigin.cases.Decision.make({})),
               startedAt: 3,
+              admittedAt: 3,
             }),
           )
           expect(yield* store.write(person.id, threadId, request)).toMatchObject({ created: true })
