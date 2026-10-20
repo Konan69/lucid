@@ -4,6 +4,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import {
+  Appearance,
   InvalidRequest,
   Settings,
   type PatchSettingsRequest,
@@ -20,10 +21,16 @@ import { settingsTable } from './tables.ts'
 type SettingsStoreError = DatabaseInfrastructureError | InvalidRequest
 
 const decodeSettings = decodeStored(Settings, 'Settings')
+const decodeAppearance = decodeStored(Appearance, 'Appearance')
 
 export interface SettingsStoreService {
   /** A Person's settings, created with the defaults the first time they are asked for. */
   readonly get: (personId: PersonId) => Effect.Effect<Settings, DatabaseInfrastructureError>
+  /** Replaces the personal appearance inside the caller's transaction, including lazy Settings creation. */
+  readonly setAppearance: (
+    personId: PersonId,
+    appearance: Appearance,
+  ) => Effect.Effect<Appearance, DatabaseInfrastructureError>
   readonly patch: (
     personId: PersonId,
     request: PatchSettingsRequest,
@@ -97,7 +104,33 @@ const makeSettingsStore = Effect.fn('SettingsStore.make')(function* () {
     return yield* toSettings(yield* returned(rows, 'Settings'))
   })
 
-  return SettingsStore.of({ get, patch })
+  /** The ambient SQL transaction includes lazy creation, decoding, and the caller's notice. */
+  const setAppearance = Effect.fn('SettingsStore.setAppearance')(function* (
+    personId: PersonId,
+    appearance: Appearance,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    yield* get(personId)
+    const rows = yield* database.run(
+      database
+        .update(settingsTable)
+        .set({
+          vividName: appearance.name,
+          vividLook: appearance.look,
+          vividOutline: appearance.outline,
+          updatedAt: new Date(now),
+        })
+        .where(eq(settingsTable.personId, personId))
+        .returning({
+          name: settingsTable.vividName,
+          look: settingsTable.vividLook,
+          outline: settingsTable.vividOutline,
+        }),
+    )
+    return yield* decodeAppearance(yield* returned(rows, 'Appearance'))
+  })
+
+  return SettingsStore.of({ get, patch, setAppearance })
 })
 
 export const settingsStoreLayer = Layer.effect(SettingsStore, makeSettingsStore())

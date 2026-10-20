@@ -23,13 +23,14 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { CHANNEL, changesLayer, Topic } from '../live/changes.ts'
 import { nextValue, observing, payload, silent } from '../live/testing.ts'
+import { companyStoreLayer } from '../companies/store.ts'
 import { settingsStoreLayer } from '../settings/store.ts'
 import { settingsTable } from '../settings/tables.ts'
 import { appearanceHandlers } from './handlers.ts'
 import { AppearanceOwner, AppearanceStore, appearanceStoreLayer } from './store.ts'
 
 const testLayer = Layer.merge(appearanceStoreLayer, changesLayer).pipe(
-  Layer.provideMerge(settingsStoreLayer),
+  Layer.provideMerge(Layer.merge(settingsStoreLayer, companyStoreLayer)),
   Layer.provideMerge(testDatabaseLayer),
 )
 const teal = new Appearance({

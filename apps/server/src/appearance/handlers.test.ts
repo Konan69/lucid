@@ -14,12 +14,13 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { fixture, trustTestLayer } from '../approvals/testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { companyStoreLayer } from '../companies/store.ts'
 import { settingsStoreLayer } from '../settings/store.ts'
 import { appearanceHandlers } from './handlers.ts'
 import { appearanceStoreLayer } from './store.ts'
 
 const testLayer = appearanceStoreLayer.pipe(
-  Layer.provideMerge(settingsStoreLayer),
+  Layer.provideMerge(Layer.merge(settingsStoreLayer, companyStoreLayer)),
   Layer.provideMerge(trustTestLayer),
 )
 
