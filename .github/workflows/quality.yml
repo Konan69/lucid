@@ -64,6 +64,8 @@ jobs:
             stages: lint
           - name: Typecheck
             stages: typecheck
+          - name: Production builds
+            stages: build
     steps:
       - name: Checkout
         uses: actions/checkout@v4

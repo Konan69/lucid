@@ -294,6 +294,8 @@ async function runStages(root, selection, environment, { runId, directory }) {
     TURBO_TELEMETRY_DISABLED: '1',
     ...lintWorkers(environment),
   }
+  // The gate also builds uncommitted snapshots. No task or prerequisite may upload their maps.
+  delete env.SENTRY_AUTH_TOKEN
   delete env.VIVID_TEST_DATABASE_URL
   if (database !== undefined) {
     env.VIVID_TEST_DATABASE_URL = database.url

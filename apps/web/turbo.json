@@ -20,7 +20,8 @@
         "VIVID_SERVER",
         "EXPO_PUBLIC_*",
         "EXPO_NO_DOTENV",
-        "SENTRY_*"
+        "SENTRY_*",
+        "!SENTRY_AUTH_TOKEN"
       ],
       "passThroughEnv": ["CI", "EXPO_NO_TELEMETRY"]
     }
