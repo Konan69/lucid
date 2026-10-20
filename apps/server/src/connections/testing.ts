@@ -712,8 +712,9 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
   const url = yield* Effect.fromResult(NetAddress.toUrl(server.address))
   // Match production's scoped dispatcher: destroy this fixture's keep-alive connections before
   // its listener closes, rather than waiting for a global fetch pool's real-time idle expiry.
+  // A fresh layer keeps a suite memo map from lending another fixture a closed dispatcher.
   const configured = executorLayer.pipe(
-    Layer.provide(NodeHttpClient.layerUndici),
+    Layer.provide(Layer.fresh(NodeHttpClient.layerUndici)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({

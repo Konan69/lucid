@@ -449,11 +449,9 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           email: 'ada@work.example',
           avatarUrl: 'https://images.example/ada.png',
         })
-        const executor = yield* Effect.gen(function* () {
-          // This HTTP recorder observes the app check for this signed-in account.
-          const context = yield* Layer.build(remote.configured)
-          return yield* Executor.pipe(Effect.provide(context))
-        }).pipe(Effect.scoped)
+        // The client's scope must stay open until the account check finishes.
+        const context = yield* Layer.build(remote.configured)
+        const executor = yield* Executor.pipe(Effect.provide(context))
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada@work.example'),
         )
@@ -465,11 +463,8 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       Effect.gen(function* () {
         const remote = yield* hostedExecutorFixture()
         yield* Ref.set(remote.identity, { email: `${'a'.repeat(200)}@x.example`, username: 'ada' })
-        const executor = yield* Effect.gen(function* () {
-          // The candidate identity payloads and their requests belong to this validation case.
-          const context = yield* Layer.build(remote.configured)
-          return yield* Executor.pipe(Effect.provide(context))
-        }).pipe(Effect.scoped)
+        const context = yield* Layer.build(remote.configured)
+        const executor = yield* Executor.pipe(Effect.provide(context))
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada'),
         )
@@ -481,11 +476,8 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       () =>
         Effect.gen(function* () {
           const remote = yield* hostedExecutorFixture()
-          const executor = yield* Effect.gen(function* () {
-            // Keep the no-check and public-account request receipts local to this assertion.
-            const context = yield* Layer.build(remote.configured)
-            return yield* Executor.pipe(Effect.provide(context))
-          }).pipe(Effect.scoped)
+          const context = yield* Layer.build(remote.configured)
+          const executor = yield* Executor.pipe(Effect.provide(context))
           expect(yield* executor.identity(references(Option.some('account')))).toEqual(
             Option.none(),
           )
