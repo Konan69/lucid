@@ -103,8 +103,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],
@@ -341,8 +339,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],
@@ -362,8 +358,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],
@@ -383,8 +377,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],
@@ -404,8 +396,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],
@@ -447,8 +437,6 @@
         "!README.md",
         "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/tsconfig.hermes.json",
-        "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/test.mjs"
       ],
       "outputs": [".cache/gate/tests.json"],

@@ -3,10 +3,17 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
+    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo",
+    "types": ["react", "node"]
   },
   "files": [],
-  "include": ["app.config.ts", "vitest.config.ts", "src/**/*.test.ts", "src/**/*.test.tsx"],
+  "include": [
+    "app.config.ts",
+    "vitest.config.ts",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "design-reference/**/*.ts"
+  ],
   "exclude": [],
   "references": [
     {

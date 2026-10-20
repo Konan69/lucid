@@ -88,11 +88,48 @@ function replayLint() {
   }
 }
 
+/** Ambient Node types and newer lib references must not silently expand either production project. */
+function rejectGlobals() {
+  const mobile = 'apps/mobile/src/hermesprobe.ts'
+  const contracts = 'packages/contracts/src/hermesprobe.ts'
+  const probes = [
+    [
+      mobile,
+      'export {}; new DisposableStack(); new Float16Array(1); Buffer.from("x"); setImmediate(() => {});',
+    ],
+    [contracts, 'export {}; document.title; window.location;'],
+  ]
+  for (const [file, source] of probes) {
+    const path = NodePath.join(scratch, file)
+    NodeAssert.ok(!NodeFS.existsSync(path), `${file} must be a fresh probe`)
+    NodeFS.writeFileSync(path, source)
+    try {
+      const result = types()
+      const output = result.stdout + result.stderr
+      NodeAssert.notEqual(result.status, 0, output)
+      const names =
+        file === mobile ? ['DisposableStack', 'Float16Array', 'Buffer'] : ['document', 'window']
+      // React Native declares setImmediate itself in src/types/globals.d.ts; it does not imply Node types.
+      if (file === mobile) NodeAssert.doesNotMatch(output, /error TS\d+:[^\n]*'setImmediate'/u)
+      for (const name of names) {
+        const line = output
+          .split('\n')
+          .find((entry) => entry.includes('hermesprobe.ts') && entry.includes(`'${name}'`))
+        NodeAssert.ok(line, output)
+        process.stdout.write(`production global rejected: ${line}\n`)
+      }
+    } finally {
+      NodeFS.rmSync(path)
+    }
+  }
+}
+
 try {
   prepare()
   const head = types()
   NodeAssert.equal(head.status, 0, head.stdout + head.stderr)
   process.stdout.write('HEAD mobile production typecheck passed\n')
+  rejectGlobals()
   replayTypes('40dfdcce^', 'apps/mobile/src/screen/chat/asked.ts', /asked\.ts.*TS2550.*toSorted/u)
   replayTypes(
     'd5bb74f6^',

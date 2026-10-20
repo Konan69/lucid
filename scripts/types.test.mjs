@@ -63,6 +63,12 @@ function fixture(t) {
     NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/tsc-rs')),
     NodePath.join(root, 'node_modules/tsc-rs'),
   )
+  // The Node test project names its ambient types explicitly; the production project excludes them.
+  NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@types'), { recursive: true })
+  NodeFS.symlinkSync(
+    NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/@types/node')),
+    NodePath.join(root, 'node_modules/@types/node'),
+  )
   for (const directory of ['packages/contracts/src', 'packages/client/rpc/src']) {
     NodeFS.mkdirSync(NodePath.join(root, directory), { recursive: true })
   }

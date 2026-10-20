@@ -22,12 +22,6 @@
           "use": "apps/web/src/styles/index.css"
         }
       ]
-    },
-    "hermes": {
-      "approvedFinalizationRegistry": {
-        "file": "packages/client/state/src/live.ts",
-        "reason": "Checks typeof FinalizationRegistry before construction; sweeps dead names on Hermes instead."
-      }
     }
   },
   "ignorePatterns": [
@@ -373,7 +367,8 @@
         "apps/mobile/src/**/*.{ts,tsx}",
         "packages/client/{state,rpc}/src/**/*.{ts,tsx}",
         "packages/contracts/src/**/*.{ts,tsx}",
-        "packages/design/{marks,tokens}/src/**/*.{ts,tsx}"
+        "packages/design/{marks,tokens}/src/**/*.{ts,tsx}",
+        "apps/web/src/data/library.ts"
       ],
       "excludeFiles": ["**/*.test.{ts,tsx}", "**/tests/**"],
       "rules": {

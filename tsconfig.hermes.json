@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022"],
+    "types": []
   },
   "files": ["hermes.d.ts"]
 }

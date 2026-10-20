@@ -9,8 +9,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
-    "types": ["react", "node"]
+    "types": ["react"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
+  // Vendor code ships on the phone and is typechecked here; oxlint ignores vendor copies.
   "include": ["index.ts", "src/**/*.ts", "src/**/*.tsx", "vendor/**/*.ts", "vendor/**/*.tsx"],
   "references": [
     {

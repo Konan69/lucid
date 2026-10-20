@@ -11,7 +11,62 @@ const Manifest = Schema.Struct({
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 })
 const decodeManifest = Schema.decodeUnknownResult(Schema.fromJsonString(Manifest))
-const hermesLib = ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']
+const hermesLib = ['lib.es2022.d.ts']
+const domLib = [...hermesLib, 'lib.dom.d.ts']
+const browserLib = [...domLib, 'lib.dom.iterable.d.ts']
+
+/** Only TypeScript's bundled libraries count here; dependency declaration names are unrelated. */
+function libraryFiles(program) {
+  return program
+    .getSourceFiles()
+    .filter((source) => /\/typescript\/lib\/lib\.[^/]+\.d\.ts$/u.test(source.fileName))
+}
+
+/** Imports and triple-slash references can widen a program even when compilerOptions.lib is narrow. */
+function productionProgram(config) {
+  return TypeScript.createProgram({ rootNames: config.fileNames, options: config.options })
+}
+
+/** Inspect the import graph too, so a cross-app import cannot escape the phone's lint coverage. */
+export function productionSources(root, directory) {
+  const { config, diagnostics } = productionConfig(root, directory)
+  if (config === undefined || diagnostics.length > 0)
+    throw new Error(`Cannot read ${directory} production project`)
+  return productionProgram(config)
+    .getSourceFiles()
+    .filter((source) => !source.isDeclarationFile && !source.fileName.includes('/node_modules/'))
+    .map((source) => NodePath.relative(root, source.fileName))
+}
+
+/** Build the permitted transitive lib set from TypeScript itself, without application or @types imports. */
+function allowedLibraries(lib) {
+  const directory = NodePath.dirname(TypeScript.getDefaultLibFilePath({}))
+  const program = TypeScript.createProgram({
+    rootNames: lib.map((file) => NodePath.join(directory, file)),
+    options: { lib, types: [] },
+  })
+  return new Set(libraryFiles(program).map((source) => NodePath.basename(source.fileName)))
+}
+
+/** Keep the cheap config diagnostic separate from the loaded-library check so both causes are visible. */
+function libraryErrors(config, relative) {
+  const errors = []
+  const key = JSON.stringify(config.options.lib)
+  const lib = [hermesLib, domLib, browserLib].find((candidate) => JSON.stringify(candidate) === key)
+  if (lib === undefined) {
+    return [
+      `${relative}: effective lib must be ES2022, with DOM and DOM.Iterable only where needed for Hermes; use effect/Array instead of raising lib`,
+    ]
+  }
+  const allowed = allowedLibraries(lib)
+  const loaded = libraryFiles(productionProgram(config)).map((source) =>
+    NodePath.basename(source.fileName),
+  )
+  const wider = loaded.filter((file) => !allowed.has(file))
+  if (wider.length > 0)
+    errors.push(`${relative}: loaded libraries exceed the Hermes profile: ${wider.join(', ')}`)
+  return errors
+}
 
 /** Follow runtime workspace edges, including optional and peer imports, rather than a fixed list. */
 export function mobileClosure(root, manifestPaths) {
@@ -73,12 +128,7 @@ export function hermesConfigErrors(root, manifestPaths) {
         ),
       )
     }
-    const errors = []
-    if (JSON.stringify(config.options.lib) !== JSON.stringify(hermesLib)) {
-      errors.push(
-        `${relative}: effective lib must be ES2022, DOM, DOM.Iterable for Hermes; use effect/Array instead of raising lib`,
-      )
-    }
+    const errors = libraryErrors(config, relative)
     if (!config.fileNames.includes(NodePath.join(root, 'hermes.d.ts'))) {
       errors.push(`${relative}: inherit tsconfig.hermes.json to include hermes.d.ts`)
     }
