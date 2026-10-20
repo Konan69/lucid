@@ -58,7 +58,9 @@ function newSummary(root, before, tasks) {
   return NodeFS.readdirSync(directory)
     .filter((file) => file.endsWith('.json') && !before.has(file))
     .map((file) => decodeTurboSummary(NodeFS.readFileSync(NodePath.join(directory, file), 'utf8')))
-    .find((summary) => summary.tasks.some((task) => tasks.includes(task.task)))
+    .find((summary) =>
+      summary.tasks.some((task) => tasks.includes(task.task) || tasks.includes(task.taskId)),
+    )
 }
 
 function existingSummaries(root) {

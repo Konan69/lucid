@@ -4,8 +4,25 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
-      "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/sentry-upload.mjs",
+        "$TURBO_ROOT$/patches/**"
+      ],
+      "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"],
+      "env": [
+        "NODE_ENV",
+        "BABEL_ENV",
+        "VITE_*",
+        "VIVID_COMMIT",
+        "VIVID_SERVER_URL",
+        "VIVID_SERVER",
+        "EXPO_PUBLIC_*",
+        "EXPO_NO_DOTENV",
+        "SENTRY_*"
+      ],
+      "passThroughEnv": ["CI", "EXPO_NO_TELEMETRY"]
     },
     "typecheck": {
       "dependsOn": ["types", "^types", "checkinputs"],
@@ -465,6 +482,50 @@
         "!*.md"
       ],
       "outputs": []
+    },
+    "@vivid/agent-runtime#build": {
+      "dependsOn": ["checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/sentry-upload.mjs",
+        "$TURBO_ROOT$/patches/**"
+      ],
+      "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"],
+      "env": [
+        "NODE_ENV",
+        "BABEL_ENV",
+        "VITE_*",
+        "VIVID_COMMIT",
+        "VIVID_SERVER_URL",
+        "VIVID_SERVER",
+        "EXPO_PUBLIC_*",
+        "EXPO_NO_DOTENV",
+        "SENTRY_*"
+      ],
+      "passThroughEnv": ["CI", "EXPO_NO_TELEMETRY"]
+    },
+    "build:updates": {
+      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/sentry-upload.mjs",
+        "$TURBO_ROOT$/patches/**"
+      ],
+      "outputs": [".cache/updates/**"],
+      "env": [
+        "NODE_ENV",
+        "BABEL_ENV",
+        "VITE_*",
+        "VIVID_COMMIT",
+        "VIVID_SERVER_URL",
+        "VIVID_SERVER",
+        "EXPO_PUBLIC_*",
+        "EXPO_NO_DOTENV",
+        "SENTRY_*"
+      ],
+      "passThroughEnv": ["CI", "EXPO_NO_TELEMETRY"]
     }
   }
 }

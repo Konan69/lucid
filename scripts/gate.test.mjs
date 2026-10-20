@@ -108,7 +108,10 @@ void test('every Turbo stage task exists as a script or a root task', () => {
   )
   for (const stage of stages.filter((entry) => entry.tasks !== undefined))
     for (const task of stage.tasks) {
-      const declared = turbo.tasks[task] !== undefined || turbo.tasks[`//#${task}`] !== undefined
+      const declared =
+        turbo.tasks[task] !== undefined ||
+        turbo.tasks[task.slice(task.indexOf('#') + 1)] !== undefined ||
+        turbo.tasks[`//#${task}`] !== undefined
       assert.ok(declared, `${stage.name}: turbo.json has no task ${task}`)
       if (turbo.tasks[`//#${task}`] !== undefined)
         assert.notEqual(manifest.scripts[task], undefined, `package.json has no script ${task}`)

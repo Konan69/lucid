@@ -26,10 +26,12 @@ workspace source + shared rules/configs → Turbo task hash
 
 ```text
 policy (5 checks, together, always run)
-checks lane: lint, format, typecheck, tooling tests   one Turbo task at a time
-tests lane:  test per package                         beside the checks lane
+checks lane: lint, format, typecheck, build          one Turbo task at a time
+tests lane:  tooling, test per package               beside the checks lane
 ```
 
+- The `build` stage selects `@vivid/web#build`, `@vivid/agent-runtime#build`, and `@vivid/mobile#build:updates`. The first is the server image's `vite build`. The runtime image and gate call the same `packages/agent/runtime/scripts/build.mjs`, including its checks for uncompiled workspace imports and a bundled second copy of Effect. The phone task clears its private `.cache/updates` output and calls the image's existing `updates` publisher through `apps/mobile/scripts/export.mjs`. It exports both native platforms with metadata and public Expo config. It does not use the generic phone build.
+- Build tasks hash shared production source through `checkinputs`, the root TypeScript config, patches, source-map upload script, and build environment. Their outputs include the web and runtime `dist` directories and the phone's `.cache/updates`. The web's package-local Turbo override repeats the root inputs, outputs, and environment. `scripts/build.test.mjs` runs the actual gate and Turbo against small artifact writers to verify restoration, shared-source invalidation, exact package selection, and failure reporting.
 - Tests run through Turbo, one task per package. A test task hashes its package, its dependencies' production source (`checkinputs`), the explicit integration edges, and every test setting except the database address; it needs no build. A package nothing reached is replayed with its counts, so the verdict always reports the whole suite.
 - A task for one package replaces the generic task, and so does a package's own `turbo.json`; Turbo merges neither. Each such task repeats the generic inputs, outputs and environment, and `scripts/gate.test.mjs` fails when one drifts. Before this, the server, runtime, skills and mobile lint did not rerun when the lint configuration changed.
 - Every run creates one empty database and gives it to the suites. The server's migrated template is named by a digest of the migrations and kept on the test server; each test file clones it under the run's prefix, and the run drops everything with its prefix at the end. Without a database server the gate fails.
@@ -155,6 +157,22 @@ All three runs passed with zero Turbo cache hits. The split initially regressed 
 Server checking remains the largest native program. Initial splitting reduced its file count from 3,623 to 3,607 but increased parsed lines from 915,090 to 941,467 and type instantiations from 4,761,039 to 4,876,371. Larger generated declarations explain why a smaller source-file count did not establish a smaller semantic heap. Production/test boundaries reduce repeated implementation checking in several consumers, but the server graph still determines the overall peak.
 
 A real dry-run probe changed only `contracts/src/signin.test.ts`. Previously it invalidated 15 native tasks, including all five declaration producers and application consumers. Production/test input separation reduces this to the contracts test check and the conservative root check: two tasks. An actual check after appending a comment to that test completed in 0.74 seconds with 16 of 18 cache hits; all declaration producers and application checks were reused. An unchanged run hit all 18 entries in 0.32 seconds with approximately 111 MiB sampled largest-child RSS. Real compiler regressions also require an invalid test to fail while its production declarations replay from cache. Production edits and explicit relative integration inputs still invalidate consumers.
+
+### Production builds
+
+On 20 October 2026, U4 ran the shipping tasks on the eight-core, 15-GiB `cloudbox-konan`. These are single observations on a shared machine. The cold sample ran the phone publisher directly; the final task adds a small wrapper that clears its private output before calling that same publisher. Its subsequent uncached phone export took 105.1 seconds. No speed comparison is claimed because the snapshots and machine load differed.
+
+| `pnpm gate --only build --host cloudbox-konan` | Uncached task time | Gate wall time | Cached shipping tasks | Run              |
+| ---------------------------------------------- | -----------------: | -------------: | --------------------: | ---------------- |
+| First execution                                |            137.8 s |        138.3 s |                   0/3 | `mvh19j8z9670cf` |
+| Unchanged final implementation                 |              0.0 s |          0.2 s |                   3/3 | `mvh1puvmd1b98a` |
+| Comment added only to the runtime build script |              1.1 s |          1.4 s |                   2/3 | `mvh1qbqx7d9a84` |
+
+Task time sums executed shipping tasks, as the gate reports it. A cache hit restores outputs and replays logs. Gate wall time excludes the client connection and upload, which took total command time to 147.9, 2.9, and 4.6 seconds respectively. The changed-input probe appended `// U4 cache invalidation proof.` to `packages/agent/runtime/scripts/build.mjs`, ran the command above, and restored the file. Only the runtime task missed. The regression in `scripts/build.test.mjs` also deletes the fixture artifacts before a cache hit and requires their contents to be restored.
+
+The historical proof used an archive of `6be77f79^` with its own frozen dependencies on the same host. After `pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/web...`, `pnpm --filter @vivid/web build` exited 1 and printed 275 `unstableApiUsage` warnings. `pnpm --filter @vivid/web typecheck` exited 0. This reproduces the production failure that the former typecheck-only gate missed. The new stage runs that actual web build command, and its regression requires a failed bundler to fail the stage and name its package.
+
+The final implementation passed `pnpm gate affected --only lint,typecheck,build,tooling,format --host cloudbox-konan` in run `mvh1me5x61e3ed`. Typecheck reported zero Effect findings. The runtime extraction also matched the former Dockerfile program's JavaScript AST, ignoring comments and formatting. No Docker image was built or pushed. A separate attempt on `cloudbox-konan3` was stopped using its captured run process group after load reached 31 on eight cores with swap in use. It produced no verdict and is excluded from these results.
 
 ## Verification
 

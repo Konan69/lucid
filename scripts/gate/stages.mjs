@@ -31,6 +31,13 @@ export const stages = [
   { name: 'format', lane: 'checks', tasks: ['format:root'] },
   // `types` emits the declarations that `typecheck` consumers read; Turbo orders them.
   { name: 'typecheck', lane: 'checks', tasks: ['types', 'typecheck', 'typecheck:root'] },
+  // Qualified tasks select only image artifacts. Their source-only prerequisites avoid
+  // desktop binaries and the phone's generic export. Bundlers share the serialized checks lane.
+  {
+    name: 'build',
+    lane: 'checks',
+    tasks: ['@vivid/web#build', '@vivid/agent-runtime#build', '@vivid/mobile#build:updates'],
+  },
   // The tooling tests run compilers only on small fixtures, so they sit beside the tests. The
   // infrastructure check reads server and runtime source and is a task of its own: a server
   // change reruns that second of work, not every tooling test.
@@ -43,5 +50,8 @@ export const stageNames = stages.map((stage) => stage.name)
 /** The stage that owns a Turbo task id such as `@vivid/server#lint` or `//#lint:root`. */
 export function stageOfTask(taskId) {
   const task = taskId.slice(taskId.indexOf('#') + 1)
-  return stages.find((stage) => stage.tasks !== undefined && stage.tasks.includes(task))
+  return stages.find(
+    (stage) =>
+      stage.tasks !== undefined && (stage.tasks.includes(taskId) || stage.tasks.includes(task)),
+  )
 }
