@@ -162,12 +162,14 @@ describe('seen reports', () => {
     expect(reports.claim({ ...waiting, card: FeedCardId.make('other') })).toBe(true)
   })
 
-  it('retries a failed revision without forgetting a later report', () => {
+  it('retries a failed report, and a stale failure does not free a newer post', () => {
     const reports = seenReports()
     expect(reports.claim(waiting)).toBe(true)
-    expect(reports.claim(newPost)).toBe(true)
     reports.forget(seen)
     expect(reports.claim(waiting)).toBe(true)
+    expect(reports.claim(newPost)).toBe(true)
+    // The first post's report fails after the card moved on: the newer claim stands.
+    reports.forget(seen)
     expect(reports.claim(newPost)).toBe(false)
   })
 

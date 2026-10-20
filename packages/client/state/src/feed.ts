@@ -187,21 +187,23 @@ export const pressKey = (
 
 /**
  * Seen delivery belongs to a post on a card. Both surfaces reserve the same identity before
- * sending, and release only a refused report so another viewability event can retry it.
+ * sending, and release only a refused report so another viewability event can retry it. One
+ * entry per card, holding the post last reported: a new post replaces it, so the record never
+ * holds more than the cards on the Feed this session.
  */
 export const seenReports = () => {
-  const reported = new Set<string>()
-  const keyOf = (item: Waiting) => `${item.card}:${revisionOf(item)}`
+  const reported = new Map<FeedCardId, string>()
   return {
     /** Reserve before delivery so concurrent visibility events cannot send twice. */
     claim: (item: Waiting): boolean => {
-      const key = keyOf(item)
-      if (reported.has(key)) return false
-      reported.add(key)
+      const post = revisionOf(item)
+      if (reported.get(item.card) === post) return false
+      reported.set(item.card, post)
       return true
     },
+    /** A refused report frees its card, unless a newer post has been claimed since. */
     forget: (item: Waiting): void => {
-      reported.delete(keyOf(item))
+      if (reported.get(item.card) === revisionOf(item)) reported.delete(item.card)
     },
   }
 }
