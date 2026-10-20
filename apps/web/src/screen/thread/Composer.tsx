@@ -171,6 +171,7 @@ export const Composer = memo(function Composer({
                       <Mic className="size-4" />
                     </IconButton>
                   )}
+                  <Interrupt shown={working && Option.isSome(moving)} onStop={onStop} />
                   <Previous asked={Option.fromUndefinedOr(asked)} />
                   <SendOrStop does={doing(working, empty, moving)} onStop={onStop} onSend={press} />
                 </div>
@@ -235,6 +236,26 @@ function Field({
 }
 
 /**
+ * The way to stop Vivid while a question of its is up and it goes on working: the round button
+ * then moves on from the question, so stopping gets a small round of its own before the
+ * question's controls, as T3 Code puts it beside a pending question while its turn runs
+ * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch: `renderStopGenerationButton(true)`
+ * before Previous). Nothing when Vivid is not working or no question is being moved on from.
+ */
+function Interrupt({ shown, onStop }: { shown: boolean; onStop: () => void }) {
+  if (!shown) return null
+  return (
+    <button
+      aria-label="Stop"
+      onClick={onStop}
+      className="inline-flex size-8 motion-press cursor-pointer items-center justify-center rounded-full bg-ink text-surface-0 hover:bg-ink-2"
+    >
+      <Square className="size-3 fill-current" />
+    </button>
+  )
+}
+
+/**
  * The way back to the question before the one that is up, with what was picked there kept: an
  * outline button before the one that moves on, from the second question of a request (T3 Code's
  * `ComposerPrimaryActions.tsx`, the `pendingAction` branch: `variant="outline" size="sm"`, in the
@@ -265,10 +286,10 @@ interface Does {
 
 /**
  * Reads what the round button does. With nothing to send while a question from Vivid is up
- * (`asked`, which is nothing otherwise), it
- * moves on from the question, and can be pressed once the question has an answer; that comes
- * before stopping, because a Run that asked is waiting on the Person, not working. Otherwise it
- * sends, and while Vivid works with nothing written it is the way to stop it.
+ * (`asked`, which is nothing otherwise), it moves on from the question, and can be pressed once
+ * the question has an answer. Vivid keeps working after it asks, so stopping it then is the
+ * small button beside (`Interrupt`). Otherwise it sends, and while Vivid works with nothing
+ * written it is the way to stop it.
  */
 /**
  * The words on the button that moves on from a question, T3 Code's own

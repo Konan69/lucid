@@ -47,6 +47,7 @@ type Onward = import('./Composer').Onward
  */
 function composing(place: string, words: string, asked: Option.Option<Onward> = Option.none()) {
   const sent: Array<string> = []
+  const stops: Array<'stop'> = []
   const container = document.body.appendChild(document.createElement('div'))
   const root = createRoot(container)
   onTestFinished(() => {
@@ -62,7 +63,9 @@ function composing(place: string, words: string, asked: Option.Option<Onward> = 
         onSend={(message) => {
           sent.push(message)
         }}
-        onStop={() => undefined}
+        onStop={() => {
+          stops.push('stop')
+        }}
         asked={Option.getOrUndefined(asked)}
       />,
     )
@@ -76,7 +79,7 @@ function composing(place: string, words: string, asked: Option.Option<Onward> = 
     if (found === undefined) throw new Error(`The composer drew no button named ${name}.`)
     return found
   }
-  return { field, sent, button }
+  return { field, sent, stops, button }
 }
 
 /** Enter going down in the field, as the browser tells it: once, or again while it is held. */
@@ -186,6 +189,18 @@ describe('the composer while a question is up', () => {
 
     expect(sent).toEqual(['Skip that, just send it'])
     expect(moves).toEqual([])
+  })
+
+  it('stops Vivid, which keeps working after it asks, from a button of its own', () => {
+    const { moves, asked } = question({})
+    const { sent, stops, button } = composing('asked-working', '', asked)
+
+    act(() => button('Stop').click())
+
+    expect(stops).toEqual(['stop'])
+    expect(button('Next question').disabled).toBe(false)
+    expect(moves).toEqual([])
+    expect(sent).toEqual([])
   })
 
   it('goes back to the question before from its quiet button, from the second question on', () => {

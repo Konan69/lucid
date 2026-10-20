@@ -175,7 +175,7 @@ export function Composer({
   const sends = !empty && !disabled
   // While a question is up the trailing end moves on from it: with nothing written, and also
   // with words when the question is answered by writing, since the words are then its answer.
-  // That comes before stopping, because a Run that asked is waiting on the Person, not working.
+  // Vivid keeps working after it asks, so while it does a small stop sits beside (`Halt`).
   // Until 12 October 2026 a question answered by writing kept the round arrow, so the last
   // question never said "Submit" (seen on the emulator).
   const moving = movingOf(Option.fromUndefinedOr(asked), empty)
@@ -256,7 +256,13 @@ export function Composer({
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
             </View>
-            <Trailing moving={moving} empty={empty} sends={sends} onSend={act}>
+            <Trailing
+              moving={moving}
+              empty={empty}
+              sends={sends}
+              onSend={act}
+              onStop={working ? Option.some(onStop) : Option.none()}
+            >
               <Act working={working} stops={stops} idle={idle} onPress={act} />
             </Trailing>
           </View>
@@ -323,12 +329,15 @@ function Trailing({
   empty,
   sends,
   onSend,
+  onStop,
   children,
 }: {
   moving: Option.Option<Onward>
   empty: boolean
   sends: boolean
   onSend: () => void
+  /** How to stop Vivid, while it is working. */
+  onStop: Option.Option<() => void>
   children: ReactNode
 }) {
   return Option.match(moving, {
@@ -336,6 +345,7 @@ function Trailing({
     onSome: (asked) => (
       <Moving
         asked={asked}
+        onStop={onStop}
         ready={empty ? asked.ready : sends}
         onPress={empty ? asked.onNext : onSend}
       />
@@ -384,6 +394,44 @@ function Back({ asked }: { asked: Onward }) {
 }
 
 /**
+ * The way to stop Vivid while a question of its is up and it goes on working: the pill then moves
+ * on from the question, so stopping gets a 32-point round of its own before the way back, as
+ * T3 Code puts its stop beside a pending question while the turn runs
+ * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch: `renderStopGenerationButton(true)`
+ * before Previous). It is the quiet disc with the square in ink that `Act` shows when it stops,
+ * pressed 44 points tall, its slop stopping halfway to the control after it.
+ */
+function Halt({ onStop }: { onStop: () => void }) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ height: TARGET, justifyContent: 'center', marginLeft: PILL.gap }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel="Stop Vivid"
+        depth={0.96}
+        hitSlop={{
+          top: (TARGET - BACK) / 2,
+          bottom: (TARGET - BACK) / 2,
+          left: PILL.gap,
+          right: PILL.gap / 2,
+        }}
+        onPress={onStop}
+        style={({ pressed }) => ({
+          width: BACK,
+          height: BACK,
+          borderRadius: BACK / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
+        })}
+      >
+        <Square pointerEvents="none" size={11} color={c.foreground} fill={c.foreground} />
+      </Press>
+    </View>
+  )
+}
+
+/**
  * What takes the one button's place while a question is being moved on from: the way back
  * (`Back`), and a pill that moves on (`onPress`) once it may (`ready`). The pill says what it does in a
  * word, T3 Code's compact labels (`formatPendingPrimaryActionLabel`): "Next", or "Submit" on
@@ -393,11 +441,22 @@ function Back({ asked }: { asked: Onward }) {
  * Until the question has an answer the pill is a quiet shape with muted words, not a faded
  * accent: a neutral one reads as "pick something first". It is 34 points tall and pressed 44.
  */
-function Moving({ asked, ready, onPress }: { asked: Onward; ready: boolean; onPress: () => void }) {
+function Moving({
+  asked,
+  onStop,
+  ready,
+  onPress,
+}: {
+  asked: Onward
+  onStop: Option.Option<() => void>
+  ready: boolean
+  onPress: () => void
+}) {
   const { colors: c } = useTheme()
   const label = asked.last ? 'Submit' : 'Next'
   return (
     <>
+      {Option.match(onStop, { onNone: () => null, onSome: (stop) => <Halt onStop={stop} /> })}
       <Back asked={asked} />
       <View
         style={{
