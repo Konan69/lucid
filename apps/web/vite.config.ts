@@ -118,6 +118,7 @@ export default defineConfig(({ mode }) => {
           index('first.tsx'),
           route('/t/$id', 'thread.tsx'),
           route('/library', 'library.tsx'),
+          route('/feed', 'feed.tsx'),
           route('/projects/{-$id}', 'projects.tsx'),
           route('/invite/$id', 'invite.tsx'),
         ]),

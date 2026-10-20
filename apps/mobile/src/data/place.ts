@@ -24,6 +24,7 @@ const Page = Schema.Union([
   Schema.Struct({
     name: Schema.Literals([
       'Computer',
+      'Feed',
       'Library',
       'Projects',
       'Settings',
