@@ -15,7 +15,7 @@ import {
   type FlueConversationMessage,
 } from '@flue/sdk'
 import { textOf } from '@vivid/contracts'
-import { Effect, Option, Queue, Stream } from 'effect'
+import { Effect, Fiber, Option, Queue, Stream } from 'effect'
 import * as v from 'valibot'
 import { disposableStorage, testDatabaseConfigured } from '../tests/schema.ts'
 
@@ -36,10 +36,7 @@ function Reply() {
 Reply.agentName = 'reply'
 
 /** A public observation notification, rather than a timer, acknowledges each transport milestone. */
-const observed = (
-  states: Queue.Queue<AgentConversationObservationSnapshot>,
-  accepts: (state: AgentConversationObservationSnapshot) => boolean,
-) =>
+const observed = <Value>(states: Queue.Queue<Value>, accepts: (state: Value) => boolean) =>
   Stream.fromQueue(states).pipe(
     Stream.filter(accepts),
     Stream.runHead,
@@ -126,8 +123,9 @@ function toolSequence(): AssistantMessageEvent[] {
 }
 
 /** Real storage and runtime; only the provider's three ordered streams are test controlled. */
-const fixture = Effect.fn('FlueStream.fixture')(function* () {
+const fixture = Effect.fn('FlueStream.fixture')(function* (ending: 'Continue' | 'Terminate') {
   const { storage } = yield* disposableStorage
+  const requested = yield* Queue.unbounded<void>()
   const history = createAssistantMessageEventStream()
   const tool = createAssistantMessageEventStream()
   const answer = createAssistantMessageEventStream()
@@ -136,12 +134,27 @@ const fixture = Effect.fn('FlueStream.fixture')(function* () {
   const stream = () => {
     const next = pending.shift()
     if (next === undefined) expect.fail('The provider received an unexpected fourth call')
+    Queue.offerUnsafe(requested, undefined)
     return next
   }
+  function Ending() {
+    useModel('fixture/text')
+    useTool(
+      defineTool({
+        name: 'lookup',
+        description: 'Return a result and finish this response.',
+        input: v.object({}),
+        run: () => ({ output: { answer: 'found' }, terminate: true }),
+      }),
+    )
+    return 'Read the result and finish.'
+  }
+  Ending.agentName = 'ending'
+  const agent = ending === 'Terminate' ? Ending : Reply
   yield* Effect.acquireRelease(
     Effect.tryPromise(() =>
       start({
-        agents: [Reply],
+        agents: [agent],
         db: storage,
         providers: [{ ...faux.provider, stream, streamSimple: stream }],
       }),
@@ -156,56 +169,67 @@ const fixture = Effect.fn('FlueStream.fixture')(function* () {
   )
   for (const event of sequence(false)) history.push(event)
   const id = NodeCrypto.randomUUID()
-  const instance = init(Reply, { id })
+  const instance = init(agent, { id })
   const earlier = yield* Effect.tryPromise(() => instance.dispatch('An older reply'))
   yield* Effect.tryPromise(() => instance.read(earlier.submissionId))
+  yield* Queue.take(requested)
   const client = createFlueClient({
     url: `http://runtime.test/${id}`,
-    fetch: fetchRuntime(createAgentRouter(Reply)),
+    fetch: fetchRuntime(createAgentRouter(agent)),
   })
-  return { client, tool, answer }
+  return { client, tool, answer, instance, called: () => Queue.take(requested) }
 })
 
 /** Wire consumers receive only the current response, before its completion and settlement markers. */
-function replacements(chunks: readonly ConversationStreamChunk[], live: FlueConversationMessage) {
+function replacements(
+  chunks: readonly ConversationStreamChunk[],
+  live: FlueConversationMessage,
+  steps: number,
+) {
   expect(chunks.filter((chunk) => chunk.type === 'conversation-reset')).toEqual([])
   const messages = chunks.filter((chunk) => chunk.type === 'message-appended')
-  expect(messages.every((chunk) => chunk.message.submissionId === live.submissionId)).toBe(true)
   const appended = messages.filter((chunk) => chunk.message.role === 'assistant')
-  expect(appended).toHaveLength(2)
-  expect(appended.map((chunk) => chunk.message.id)).toEqual([live.id, live.id])
-  const [first, second] = appended
-  if (first === undefined || second === undefined)
-    expect.fail('Both completed steps must replace the response')
-  expect(first.message.parts).toEqual([
-    {
-      type: 'dynamic-tool',
-      toolCallId: 'lookup-1',
-      toolName: 'lookup',
-      input: {},
-      state: 'input-available',
-    },
-  ])
-  expect(second.message).toEqual(live)
+  expect(appended.every((chunk) => chunk.message.submissionId === live.submissionId)).toBe(true)
+  expect(appended).toHaveLength(1)
+  expect(appended.map((chunk) => chunk.message.id)).toEqual([live.id])
+  const [replacement] = appended
+  if (replacement === undefined) expect.fail('Settlement must reconcile the completed response')
+  expect(replacement.message).toEqual(live)
   const started = chunks.filter((chunk) => chunk.type === 'message-started')
-  expect(started.map((chunk) => chunk.messageId)).toEqual([live.id, live.id])
+  expect(started.map((chunk) => chunk.messageId)).toEqual(
+    Array.from({ length: steps }, () => live.id),
+  )
   const completed = chunks.filter((chunk) => chunk.type === 'message-completed')
-  expect(completed).toHaveLength(2)
-  for (const completion of completed) {
-    const before = chunks[chunks.indexOf(completion) - 1]
-    if (before === undefined || before.type !== 'message-appended')
-      expect.fail('Each completion must immediately follow its replacement')
-    expect(before.position.batch).toBe(completion.position.batch)
-  }
+  expect(completed).toHaveLength(steps)
   const settlement = chunks.findIndex((chunk) => chunk.type === 'submission-settled')
+  const before = chunks[settlement - 1]
+  const settled = chunks[settlement]
+  if (before === undefined || settled === undefined)
+    expect.fail('The completed Run must have a replacement before settlement')
+  expect(before).toEqual(replacement)
+  expect(before.position.batch).toBe(settled.position.batch)
   const lastCompletion = completed.at(-1)
   if (lastCompletion === undefined) expect.fail('The Run must complete a model step')
-  expect(settlement).toBeGreaterThan(chunks.indexOf(lastCompletion))
+  expect(chunks.indexOf(replacement)).toBeGreaterThan(chunks.indexOf(lastCompletion))
   expect(live.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({
     state: 'output-available',
     output: { answer: 'found' },
   })
 }
+
+/** One public event queue acknowledges model progress without sleeps or scheduler guesses. */
+const recording = Effect.fn('FlueStream.recording')(function* () {
+  const events = yield* Queue.unbounded<ConversationStreamChunk>()
+  const chunks: ConversationStreamChunk[] = []
+  return {
+    chunks,
+    onEvent: (chunk: ConversationStreamChunk) => {
+      chunks.push(chunk)
+      Queue.offerUnsafe(events, chunk)
+    },
+    next: (accepts: (chunk: ConversationStreamChunk) => boolean) => observed(events, accepts),
+  }
+})
 
 describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () => {
   for (const distinct of [false, true]) {
@@ -215,7 +239,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
         : 'reconciles text, thinking, and text from the same block to one text part via %s',
       (transport) =>
         Effect.gen(function* () {
-          const { client, tool, answer } = yield* fixture()
+          const { client, tool, answer } = yield* fixture('Continue')
           const receipt = yield* Effect.tryPromise(() =>
             client.send({ message: { kind: 'user', body: 'reply' } }),
           )
@@ -290,8 +314,111 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
               },
             ),
           )
-          replacements(chunks, live)
+          replacements(chunks, live, 2)
         }).pipe(Effect.scoped),
     )
   }
+  it.live(
+    'reconciles once before the first joined settlement and does not resend for the host',
+    () =>
+      Effect.gen(function* () {
+        const { client, tool, answer, instance, called } = yield* fixture('Continue')
+        const receipt = yield* Effect.tryPromise(() =>
+          client.send({ message: { kind: 'user', body: 'host' } }),
+        )
+        const wire = yield* recording()
+        const read = yield* Effect.tryPromise(() =>
+          client.wait(receipt, { onEvent: wire.onEvent }),
+        ).pipe(Effect.forkScoped)
+        yield* called()
+        const joined = yield* Effect.tryPromise(() =>
+          instance.dispatch('Joined during the held model step'),
+        )
+        for (const event of toolSequence()) tool.push(event)
+        for (const event of sequence(false)) answer.push(event)
+        yield* Fiber.join(read)
+        const history = yield* Effect.tryPromise(() => client.history())
+        const canonical = history.messages.find(
+          (message) =>
+            message.role === 'assistant' && message.submissionId === receipt.submissionId,
+        )
+        if (canonical === undefined) expect.fail('The host response must remain in history')
+        replacements(wire.chunks, canonical, 2)
+        const settlements = wire.chunks.filter((chunk) => chunk.type === 'submission-settled')
+        expect(settlements.map((chunk) => chunk.submissionId)).toEqual([
+          joined.submissionId,
+          receipt.submissionId,
+        ])
+        expect(settlements.map((chunk) => chunk.answeredBySubmissionId)).toEqual([
+          receipt.submissionId,
+          receipt.submissionId,
+        ])
+        expect((yield* Effect.tryPromise(() => instance.read(joined))).text).toBe(textOf(canonical))
+      }).pipe(Effect.scoped),
+  )
+
+  it.live('reconciles an aborted partial reply before publishing the aborted settlement', () =>
+    Effect.gen(function* () {
+      const { client, tool, answer, called } = yield* fixture('Continue')
+      const receipt = yield* Effect.tryPromise(() =>
+        client.send({ message: { kind: 'user', body: 'stop midway' } }),
+      )
+      const wire = yield* recording()
+      // An aborted SDK wait rejects; history and wire outcomes below establish the typed verdict.
+      const read = yield* Effect.tryPromise(() =>
+        client.wait(receipt, { onEvent: wire.onEvent }),
+      ).pipe(Effect.result, Effect.forkScoped)
+      yield* called()
+      for (const event of toolSequence()) tool.push(event)
+      yield* called()
+      for (const event of sequence(false).slice(0, -1)) answer.push(event)
+      yield* wire.next(
+        (chunk) => chunk.type === 'message-delta' && chunk.delta === 'Why Rivers Meander**',
+      )
+      expect(yield* Effect.tryPromise(() => client.abort())).toEqual({ aborted: true })
+      answer.end(fauxAssistantMessage('stopped', { stopReason: 'aborted' }))
+      yield* Fiber.join(read)
+      const history = yield* Effect.tryPromise(() => client.history())
+      const settled = history.settlements.find(
+        (value) => value.submissionId === receipt.submissionId,
+      )
+      if (settled === undefined) expect.fail('The aborted submission must settle')
+      expect(settled.outcome).toBe('aborted')
+      const canonical = history.messages.find(
+        (message) => message.role === 'assistant' && message.submissionId === receipt.submissionId,
+      )
+      if (canonical === undefined) expect.fail('Aborting must retain the partial response')
+      replacements(wire.chunks, canonical, 2)
+      expect(textOf(canonical)).toBe('**Why Rivers Meander**')
+    }).pipe(Effect.scoped),
+  )
+
+  it.live('reconciles after a terminating tool when no final model step follows it', () =>
+    Effect.gen(function* () {
+      const { client, tool, called } = yield* fixture('Terminate')
+      const receipt = yield* Effect.tryPromise(() =>
+        client.send({ message: { kind: 'user', body: 'finish with the tool' } }),
+      )
+      const wire = yield* recording()
+      const read = yield* Effect.tryPromise(() =>
+        client.wait(receipt, { onEvent: wire.onEvent }),
+      ).pipe(Effect.forkScoped)
+      yield* called()
+      for (const event of toolSequence()) tool.push(event)
+      yield* Fiber.join(read)
+      const history = yield* Effect.tryPromise(() => client.history())
+      const canonical = history.messages.find(
+        (message) => message.role === 'assistant' && message.submissionId === receipt.submissionId,
+      )
+      if (canonical === undefined)
+        expect.fail('The terminating tool response must remain in history')
+      replacements(wire.chunks, canonical, 1)
+      expect(textOf(canonical)).toBe('')
+      const settled = history.settlements.find(
+        (value) => value.submissionId === receipt.submissionId,
+      )
+      if (settled === undefined) expect.fail('The terminating tool submission must settle')
+      expect(settled.outcome).toBe('completed')
+    }).pipe(Effect.scoped),
+  )
 })
