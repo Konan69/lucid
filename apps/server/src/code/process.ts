@@ -559,7 +559,9 @@ export const codeProcessLayer = Layer.effect(
         if (bytes(input.request.code) > budgets.source) return oversized
         // Person and intent are part of input authority. A Query cannot borrow a Mutation's result,
         // and two readers of a shared Thread must never share private Integration data.
-        const hash = NodeCrypto.createHash('sha256').update(input.request.code).digest('hex')
+        const hash = NodeCrypto.createHash('sha256')
+          .update(JSON.stringify(input.request.code))
+          .digest('hex')
         const key = JSON.stringify([
           input.boundary.thread,
           input.boundary.person,

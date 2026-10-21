@@ -41,7 +41,7 @@ const messageText = Effect.fn('Code.messageText')(function* (
   const history = yield* decodeHistory(response).pipe(
     Effect.mapError(() => new RuntimeUnavailable({ message: 'Display response is invalid' })),
   )
-  const message = history.messages.find((message) => message.id === source.message)
+  const message = history.messages.find((candidate) => candidate.id === source.message)
   if (message === undefined || message.role !== 'assistant')
     return yield* new DisplayProgramRefused(refusal)
   return message.parts

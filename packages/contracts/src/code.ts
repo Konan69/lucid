@@ -66,6 +66,7 @@ export class DisplayProgramRefused extends Schema.TaggedError<DisplayProgramRefu
       "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
     ),
   },
+  { title: 'Display program refused' },
 ) {}
 
 /** A display runs for its signed-in reader, within the Thread its stored source belongs to. */

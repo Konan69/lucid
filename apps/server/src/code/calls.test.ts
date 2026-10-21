@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import {
   ApprovalDecision,
   CodeOutcome,
+  CodeFailure,
   RuleScope,
   DatabaseUnavailable,
   ServiceUnavailable,
@@ -150,6 +151,12 @@ const runDisplay = Effect.fn('Test.RunDisplayCode')(
     ),
 )
 
+/** Compare observable outcomes without constructing partial variants as expected values. */
+function checkCode(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.JsonObject) {
+  expect(outcome._tag).toBe(tag)
+  expect(outcome).toMatchObject(fields)
+}
+
 /** Connection credentials are replaced at their external adapter; all tenancy, Gate and Approval SQL is real. */
 describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
@@ -200,8 +207,8 @@ describe.skipIf(!testDatabaseConfigured)(
                   summary: 'Read',
                   kind: 'Query',
                 }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))), Effect.flip)
+                expect(failure).toHaveProperty('_tag', 'DisplayProgramRefused')
                 expect(failure).toMatchObject({
-                  _tag: 'DisplayProgramRefused',
                   message:
                     "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
                 })
@@ -212,7 +219,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 summary: 'Read',
                 kind: 'Query',
               }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))))
-              expect(accepted).toMatchObject({ _tag: 'Completed', result: 'Only Vivid wrote this' })
+              checkCode(accepted, 'Completed', { result: 'Only Vivid wrote this' })
             }),
             testLayer,
           ),
@@ -278,8 +285,7 @@ describe.skipIf(!testDatabaseConfigured)(
                   source: DisplaySource.cases.FeedPost.make({ post: FeedCardId.make('missing') }),
                 }).pipe(Effect.flip),
               ).toHaveProperty('_tag', 'DisplayProgramRefused')
-              expect(yield* storedDisplay(test.personal, request)).toMatchObject({
-                _tag: 'Completed',
+              checkCode(yield* storedDisplay(test.personal, request), 'Completed', {
                 result: 'A stored Feed program',
               })
               // A follow-up replaces the post. Its predecessor immediately loses execution authority.
@@ -328,7 +334,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 'Mutation',
                 `return await ${use('write')};`,
               )
-              expect(outcome).toMatchObject({ _tag: 'Blocked' })
+              checkCode(outcome, 'Blocked', {})
               const rows = yield* database.run(
                 database
                   .select()
@@ -336,11 +342,11 @@ describe.skipIf(!testDatabaseConfigured)(
                   .where(eq(auditEntries.threadId, test.companyId)),
               )
               expect(rows).toHaveLength(1)
+              expect(rows[0]).toHaveProperty('event._tag', 'ActionBlocked')
               expect(rows[0]).toMatchObject({
                 personId: test.owner.person.id,
                 by: 'vivid',
                 threadId: test.companyId,
-                event: { _tag: 'ActionBlocked' },
               })
               expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
             }),
@@ -361,13 +367,12 @@ describe.skipIf(!testDatabaseConfigured)(
               const release = yield* Deferred.make<void>()
               const count = yield* Ref.make(0)
               const held = CodeComputer.of({
-                open: (person) =>
-                  Effect.gen(function* () {
-                    const index = yield* Ref.updateAndGet(count, (n) => n + 1)
-                    yield* Queue.offer(opened, index)
-                    yield* Deferred.await(release)
-                    return yield* computer.open(person)
-                  }),
+                open: Effect.fn('Test.holdComputer')(function* (person) {
+                  const index = yield* Ref.updateAndGet(count, (n) => n + 1)
+                  yield* Queue.offer(opened, index)
+                  yield* Deferred.await(release)
+                  return yield* computer.open(person)
+                }),
               })
               const context = yield* Layer.build(
                 Layer.fresh(codeProcessLayer).pipe(
@@ -379,14 +384,13 @@ describe.skipIf(!testDatabaseConfigured)(
               // acknowledges actual admission or joining the pending result, not merely RPC ingress.
               const observed = CodeProcess.of({
                 ...process,
-                runDisplay: (input, dispatch) =>
-                  Effect.gen(function* () {
-                    const fiber = yield* process
-                      .runDisplay(input, dispatch)
-                      .pipe(Effect.forkChild({ startImmediately: true }))
-                    yield* Queue.offer(admitted, undefined)
-                    return yield* Fiber.join(fiber)
-                  }),
+                runDisplay: Effect.fn('Test.observeDisplay')(function* (input, dispatch) {
+                  const fiber = yield* process
+                    .runDisplay(input, dispatch)
+                    .pipe(Effect.forkChild({ startImmediately: true }))
+                  yield* Queue.offer(admitted, undefined)
+                  return yield* Fiber.join(fiber)
+                }),
               })
               const start = Effect.fn('Test.startDisplay')(function* (
                 kind: DisplayToolKind,
@@ -406,12 +410,10 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(yield* Queue.take(opened)).toBe(2)
               // Intent differs even with identical code. It must not borrow the automatic result.
               const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
-              expect(busy).toMatchObject({
-                _tag: 'Failed',
-                failure: {
-                  _tag: 'Busy',
+              checkCode(busy, 'Failed', {
+                failure: CodeFailure.cases.Busy.make({
                   message: 'Vivid is busy with other work. Try again in a moment.',
-                },
+                }),
                 calls: [],
               })
               const vivid = yield* run(test.personal, test.personalId, 'return 3;').pipe(
@@ -435,28 +437,39 @@ describe.skipIf(!testDatabaseConfigured)(
                 )
                 expect(yield* Queue.take(opened)).toBe(index + 4)
               }
-              expect(
+              checkCode(
                 yield* run(extra.member, extra.companyId, 'return 6;').pipe(
                   Effect.provideService(CodeProcess, observed),
                 ),
-              ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
+                'Failed',
+                {
+                  failure: CodeFailure.cases.Busy.make({
+                    message: 'Vivid is busy with other work. Try again in a moment.',
+                  }),
+                },
+              )
               // Vivid alone owns its Thread slot; the display pool did not claim it.
-              expect(
+              checkCode(
                 yield* run(test.personal, test.personalId, 'return 4;').pipe(
                   Effect.provideService(CodeProcess, observed),
                 ),
-              ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
+                'Failed',
+                {
+                  failure: CodeFailure.cases.Busy.make({
+                    message: 'Vivid is busy with other work. Try again in a moment.',
+                  }),
+                },
+              )
               yield* Deferred.succeed(release, undefined)
-              expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })
-              expect(yield* Fiber.join(duplicate)).toMatchObject({ _tag: 'Completed', result: 1 })
-              expect(yield* Fiber.join(second)).toMatchObject({ _tag: 'Completed', result: 2 })
-              expect(yield* Fiber.join(vivid)).toMatchObject({ _tag: 'Completed', result: 3 })
+              checkCode(yield* Fiber.join(first), 'Completed', { result: 1 })
+              checkCode(yield* Fiber.join(duplicate), 'Completed', { result: 1 })
+              checkCode(yield* Fiber.join(second), 'Completed', { result: 2 })
+              checkCode(yield* Fiber.join(vivid), 'Completed', { result: 3 })
               for (const peer of vividPeers)
-                expect(yield* Fiber.join(peer)).toMatchObject({ _tag: 'Completed', result: 5 })
+                checkCode(yield* Fiber.join(peer), 'Completed', { result: 5 })
               expect(yield* Ref.get(count)).toBe(6)
               // Completion releases the key. A later render runs again instead of caching a write.
-              expect(yield* Fiber.join(yield* start('Query', 'return 1;'))).toMatchObject({
-                _tag: 'Completed',
+              checkCode(yield* Fiber.join(yield* start('Query', 'return 1;')), 'Completed', {
                 result: 1,
               })
               expect(yield* Ref.get(count)).toBe(7)
