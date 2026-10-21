@@ -424,7 +424,11 @@ export const delivery = (threadId: ThreadId, run: string, tagName: string | null
         parts: textPart(value),
       }
 
-export const history = (messages: ReadonlyArray<unknown>, settled: ReadonlyArray<string> = []) => ({
+export const history = (
+  messages: ReadonlyArray<unknown>,
+  settled: ReadonlyArray<string> = [],
+  incarnation = 'test-runtime-incarnation',
+) => ({
   read: () =>
     Effect.succeed(
       HttpClientResponse.fromWeb(
@@ -432,6 +436,7 @@ export const history = (messages: ReadonlyArray<unknown>, settled: ReadonlyArray
         new Response(
           JSON.stringify({
             v: 1,
+            incarnation,
             messages,
             settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
           }),

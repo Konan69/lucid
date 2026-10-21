@@ -483,10 +483,99 @@ describe.skipIf(!testDatabaseConfigured)(
                 checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
                 expect(yield* Ref.get(harness.count)).toBe(count)
               }
-              expect(yield* Ref.get(reads)).toBe(2)
+              expect(yield* Ref.get(reads)).toBe(3)
             }),
             testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
           ),
+      )
+
+      /** A parsed final declaration never substitutes for Flue's current active-path authority. */
+      it.effect.each(['removed', 'replaced', 'reset'] as const)(
+        'refuses cached authority when the active response is %s',
+        (change) =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const request = {
+                source: DisplaySource.cases.ThreadMessage.make({
+                  thread: test.personalId,
+                  message: 'reply',
+                }),
+                code: 'return 1;',
+                summary: 'Read',
+                kind: 'Query' as const,
+              }
+              const message = {
+                id: 'reply',
+                role: 'assistant',
+                submissionId: 'submission',
+                parts: textPart(
+                  'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
+                ),
+              }
+              const current = yield* Ref.make(history([message], ['submission'], 'first'))
+              const runtime = Layer.mock(Runtime, {
+                read: Effect.fn('Test.currentDisplayHistory')(function* () {
+                  const snapshot = yield* Ref.get(current)
+                  return yield* snapshot.read()
+                }),
+              })
+              const context = yield* Layer.build(runtime)
+              const draw = storedDisplay(test.personal, request).pipe(Effect.provide(context))
+              checkCode(yield* draw, 'Completed', { result: 1 })
+              const changed = {
+                removed: history([], ['submission'], 'first'),
+                replaced: history(
+                  [{ ...message, parts: textPart('root = Text("Replacement response")') }],
+                  ['submission'],
+                  'first',
+                ),
+                reset: history([message], [], 'second'),
+              }
+              yield* Ref.set(current, changed[change])
+              if (change === 'reset') {
+                expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
+                yield* Ref.set(current, history([message], ['submission'], 'second'))
+                checkCode(yield* draw, 'Completed', { result: 1 })
+              } else {
+                expect(yield* draw.pipe(Effect.flip)).toMatchObject({
+                  _tag: 'DisplayProgramRefused',
+                })
+              }
+            }),
+            testLayer,
+          ),
+      )
+
+      /** A warm parser cache grants no access after a real Membership deletion. */
+      it.effect('refuses a cached draw after its reader loses Thread access', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const harness = yield* displayHarness()
+            const draw = runDisplay(test.member, test.companyId, 'Query', 'return 1;').pipe(
+              Effect.provideService(CodeProcess, harness.process),
+            )
+            for (const count of [1, 2]) {
+              const reader = yield* draw.pipe(Effect.forkChild)
+              yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
+              checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
+              expect(yield* Ref.get(harness.count)).toBe(count)
+            }
+            const database = yield* Database
+            yield* database.run(
+              database
+                .delete(membershipTable)
+                .where(eq(membershipTable.userId, test.member.person.id)),
+            )
+            expect(yield* draw.pipe(Effect.flip)).toMatchObject({
+              _tag: 'NotFound',
+              message: 'Thread not found',
+            })
+            expect(yield* Ref.get(harness.count)).toBe(2)
+          }),
+          testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
+        ),
       )
 
       /** Posting uses Vivid's real handler; execution reloads that same persisted card for its reader. */

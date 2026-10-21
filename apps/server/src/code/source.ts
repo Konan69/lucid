@@ -10,7 +10,7 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { stretches } from '@vivid/contracts/display'
-import { Cache, Context, Data, Duration, Effect, Exit, Layer, Option, Schema } from 'effect'
+import { Cache, Context, Data, Duration, Effect, Layer, Option, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -19,6 +19,7 @@ import type { Database, DatabaseInfrastructureError } from '../database/client.t
 
 /** Flue identifies final assistant responses by their submission's durable settlement. */
 const History = Schema.Struct({
+  incarnation: Schema.String,
   messages: Schema.Array(
     Schema.Struct({
       id: Schema.String,
@@ -100,11 +101,23 @@ function declarations(text: string) {
   return { programs, computed }
 }
 
-/** Structural keys reuse final declarations across renders without joining different messages. */
-class Message extends Data.Class<{ readonly thread: ThreadId; readonly message: string }> {}
+/** A parsed declaration belongs to the exact response in one Flue stream incarnation. */
+class Message extends Data.Class<{
+  readonly thread: ThreadId
+  readonly message: string
+  readonly incarnation: string
+  readonly text: string
+}> {}
 
-/** Flue 2.2.2 exposes history windows, but no public read of one message by id. */
-const messagePrograms = Effect.fn('Code.messagePrograms')(function* (source: Message) {
+/**
+ * Re-read active history before consulting parsed declarations. Flue 2.2.2's projector can
+ * suppress a superseded error's content or remove a compacted reply without a new incarnation.
+ * An incarnation key alone cannot prove a cached response is still on that active path.
+ */
+const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
+  source: Pick<Message, 'thread' | 'message'>,
+  messages: Cache.Cache<Message, typeof StoredPrograms.cases.Final.Type>,
+) {
   const response = yield* (yield* Runtime).read({
     threadId: source.thread,
     suffix: '',
@@ -137,7 +150,15 @@ const messagePrograms = Effect.fn('Code.messagePrograms')(function* (source: Mes
     .filter(isText)
     .map((part) => part.text)
     .join('\n\n')
-  return StoredPrograms.cases.Final.make(declarations(text))
+  return yield* Cache.get(
+    messages,
+    new Message({
+      thread: source.thread,
+      message: source.message,
+      incarnation: history.incarnation,
+      text,
+    }),
+  )
 }, Effect.scoped)
 
 type SourceFailure =
@@ -166,17 +187,15 @@ export class CodeSource extends Context.Service<CodeSource, CodeSourceService>()
   'vivid/CodeSource',
 ) {}
 
-/** Never cache unfinished messages or failures. Feed posts are mutable and are re-read every time. */
+/** Cache parsing only. Current access, active-path presence and settlement are checked on every draw. */
 export const codeSourceLayer = Layer.effect(
   CodeSource,
   Effect.gen(function* () {
-    const messages = yield* Cache.makeWith(messagePrograms, {
+    const messages = yield* Cache.make({
       capacity: 256,
-      requireServicesAt: 'lookup',
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) && StoredPrograms.guards.Final(exit.value)
-          ? Duration.infinity
-          : Duration.zero,
+      lookup: (message: Message) =>
+        Effect.sync(() => StoredPrograms.cases.Final.make(declarations(message.text))),
+      timeToLive: Duration.infinity,
     })
     return CodeSource.of({
       resolve: Effect.fn('Code.resolveSource')(function* (source, person, request) {
@@ -186,7 +205,7 @@ export const codeSourceLayer = Layer.effect(
               yield* requireThread(message.thread, person)
               return {
                 thread: message.thread,
-                stored: yield* Cache.get(messages, new Message(message)),
+                stored: yield* messagePrograms(message, messages),
               }
             }),
           FeedPost: ({ post }) =>
