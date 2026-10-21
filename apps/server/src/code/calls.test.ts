@@ -396,10 +396,7 @@ describe.skipIf(!testDatabaseConfigured)(
                   Effect.provideService(CodeProcess, observed),
                   Effect.forkChild,
                 )
-                yield* Effect.raceFirst(
-                  Queue.take(admitted),
-                  Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
-                )
+                yield* Effect.raceFirst(Queue.take(admitted), Fiber.join(fiber).pipe(Effect.asVoid))
                 return fiber
               })
               const first = yield* start('Query', 'return 1;')

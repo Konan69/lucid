@@ -1,10 +1,14 @@
-import { DisplayProgramRefused, DisplaySource, type PersonId } from '@vivid/contracts'
+import {
+  DisplayProgramRefused,
+  DisplaySource,
+  RuntimeUnavailable,
+  type PersonId,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
-import { RuntimeUnavailable } from '@vivid/contracts'
 
 /** Public history is Flue's durable record, the same read used by Runtime.documentRun. */
 const History = Schema.Struct({
