@@ -124,7 +124,14 @@ const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
   source: typeof DisplaySource.cases.ThreadMessage.Type,
   histories: Cache.Cache<ThreadId, typeof History.Type, RuntimeUnavailable, Runtime>,
 ) {
-  const history = yield* Cache.get(histories, source.thread)
+  const cached = yield* Cache.get(histories, source.thread)
+  // A snapshot from just before this reply's submission began lacks the message and shows nothing
+  // pending, which would read as a refusal; one fresh read decides an absent message instead.
+  const history = cached.messages.some((candidate) => candidate.id === source.message)
+    ? cached
+    : yield* Cache.invalidate(histories, source.thread).pipe(
+        Effect.andThen(Cache.get(histories, source.thread)),
+      )
   const message = history.messages.find((candidate) => candidate.id === source.message)
   // An absent message during a live submission is a wait, never cached as an authorship refusal.
   if (message === undefined) {

@@ -278,8 +278,9 @@ const callKind = Effect.fn('Display.callKind')(function* (name: string, tools: D
  * history is a moment behind; OpenUI does not ask an errored Query again by itself (its query
  * effect only re-runs when the program, form state or streaming flag changes, lang-core 1.0.0), so
  * without this the display would keep the wait. Six more asks over about half a minute, then the
- * wait is the answer and a redraw or `@Run` asks again. The asks belong to the call, so a display
- * that leaves the screen takes them with it.
+ * wait is the answer and a redraw or `@Run` asks again. Nothing cancels them when the display leaves
+ * the screen (the surfaces' `run` is not interrupted and OpenUI drops a late answer), so the budget
+ * is what bounds an abandoned call.
  */
 const WAITING_AGAIN = Schedule.max([Schedule.exponential('500 millis'), Schedule.recurs(6)])
 
