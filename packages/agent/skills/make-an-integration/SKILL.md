@@ -7,9 +7,9 @@ metadata:
     Adapted from Executor 2.0.0-beta.23's own app-authoring skill (packages/app-templates/executor/skills/app-authoring: SKILL.md, tools.md, events.md, workflows.md), for apps framework 0.0.1-beta.92. Vivid's names replace Executor's where they differ.
 ---
 
-You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work.
+You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work. An app that only holds data for a display (see "Data and controls for a display") has tools and no event: skip the event, the watch and the timing questions.
 
-Agree the outcome first: what, when, in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remindIn and remindAt set any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
+Agree the outcome first: what, and for background work when and in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remindIn and remindAt set any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
 
 ## The source
 
@@ -151,7 +151,7 @@ A made Integration's tools are reachable from a display like any other Integrati
 ## Make, fix, check
 
 1. `make_integration` with the name and files. A failed build returns the compiler's message: fix that exact place and call again with the same name.
-2. `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
+2. For background work, `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
 3. For a reminder, call remindIn or remindAt through `find_tools` and `use_tool`, and read back the time it answers.
 4. For a display app, call one query tool with `use_tool` and read back its answer before drawing the display.
 5. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
