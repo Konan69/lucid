@@ -419,6 +419,27 @@ describe.skipIf(!testDatabaseConfigured)(
                 Effect.forkChild,
               )
               expect(yield* Queue.take(opened)).toBe(3)
+              const extra = yield* fixture()
+              const vividPeers: Fiber.Fiber<CodeOutcome>[] = []
+              const requests = [
+                { actor: test.member, thread: test.companyId },
+                { actor: test.other, thread: test.otherId },
+                { actor: extra.personal, thread: extra.personalId },
+              ]
+              for (const [index, request] of requests.entries()) {
+                vividPeers.push(
+                  yield* run(request.actor, request.thread, 'return 5;').pipe(
+                    Effect.provideService(CodeProcess, observed),
+                    Effect.forkChild,
+                  ),
+                )
+                expect(yield* Queue.take(opened)).toBe(index + 4)
+              }
+              expect(
+                yield* run(extra.member, extra.companyId, 'return 6;').pipe(
+                  Effect.provideService(CodeProcess, observed),
+                ),
+              ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
               // Vivid alone owns its Thread slot; the display pool did not claim it.
               expect(
                 yield* run(test.personal, test.personalId, 'return 4;').pipe(
@@ -430,13 +451,15 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(yield* Fiber.join(duplicate)).toMatchObject({ _tag: 'Completed', result: 1 })
               expect(yield* Fiber.join(second)).toMatchObject({ _tag: 'Completed', result: 2 })
               expect(yield* Fiber.join(vivid)).toMatchObject({ _tag: 'Completed', result: 3 })
-              expect(yield* Ref.get(count)).toBe(3)
+              for (const peer of vividPeers)
+                expect(yield* Fiber.join(peer)).toMatchObject({ _tag: 'Completed', result: 5 })
+              expect(yield* Ref.get(count)).toBe(6)
               // Completion releases the key. A later render runs again instead of caching a write.
               expect(yield* Fiber.join(yield* start('Query', 'return 1;'))).toMatchObject({
                 _tag: 'Completed',
                 result: 1,
               })
-              expect(yield* Ref.get(count)).toBe(4)
+              expect(yield* Ref.get(count)).toBe(7)
             }),
             testLayer,
           ).pipe(Effect.provide(localCodeComputerLayer)),
