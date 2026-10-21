@@ -205,13 +205,43 @@ const displayHarness = Effect.fn('Test.displayHarness')(function* () {
       return yield* Fiber.join(fiber)
     }),
   })
+  // Pool proofs draw eight already-authored replies. A Thread snapshot must contain all of them,
+  // rather than changing to a different single-message history for each concurrent caller.
+  const runtime = yield* Layer.build(
+    Layer.mock(
+      Runtime,
+      history(
+        [1, 2, 3, 4, 5, 6, 7, 8].map((value) => {
+          const code = `return ${value};`
+          return {
+            id: JSON.stringify(['Query', code]),
+            role: 'assistant',
+            submissionId: 'done',
+            parts: textPart(
+              `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
+            ),
+          }
+        }),
+        ['done'],
+      ),
+    ),
+  )
   const start = Effect.fn('Test.startDisplay')(function* (
     actor: Actor,
     thread: ThreadId,
     kind: DisplayToolKind,
     code: string,
   ) {
-    const fiber = yield* runDisplay(actor, thread, kind, code).pipe(
+    const fiber = yield* storedDisplay(actor, {
+      source: DisplaySource.cases.ThreadMessage.make({
+        thread,
+        message: JSON.stringify([kind, code]),
+      }),
+      code,
+      summary: 'Work with records',
+      kind,
+    }).pipe(
+      Effect.provide(runtime),
       Effect.provideService(CodeProcess, observed),
       Effect.forkChild,
     )
