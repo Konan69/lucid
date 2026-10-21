@@ -125,7 +125,8 @@ void test('every Turbo stage task exists as a script or a root task', () => {
  * Turbo 2.11.2 replaces a generic task with a package-specific one; it does not merge them. An
  * override that names only `dependsOn` silently drops the shared inputs, outputs and environment
  * (before 6 Oct 2026 the server's lint did not rerun when `.oxlintrc.json` changed). Every
- * override must therefore repeat the generic task and differ only in its dependencies.
+ * override must therefore repeat the generic task. The phone also reads the prompt registry
+ * outside its package, so that file must participate in its test hash.
  */
 void test('a package-specific Turbo task keeps the generic task hash inputs and outputs', () => {
   const { tasks } = decodeTurboConfig(
@@ -134,13 +135,17 @@ void test('a package-specific Turbo task keeps the generic task hash inputs and 
   const overrides = Object.keys(tasks).filter((key) =>
     /^@vivid\/[\w-]+#(lint|typecheck|test)$/u.test(key),
   )
-  // Only the desktop test still needs an edge its manifest lacks (it reads the tokens' files).
   assert.ok(overrides.length >= 1)
   for (const key of overrides) {
     const generic = tasks[key.slice(key.indexOf('#') + 1)]
-    for (const field of ['inputs', 'outputs', 'passThroughEnv'])
-      if (generic[field] !== undefined && field !== 'passThroughEnv')
-        assert.deepEqual(tasks[key][field], generic[field], `${key} must repeat ${field}`)
+    for (const field of ['inputs', 'outputs', 'passThroughEnv']) {
+      const expected =
+        key === '@vivid/mobile#test' && field === 'inputs'
+          ? [...generic.inputs, '$TURBO_ROOT$/packages/agent/runtime/src/agents/parts.json']
+          : generic[field]
+      if (expected !== undefined && field !== 'passThroughEnv')
+        assert.deepEqual(tasks[key][field], expected, `${key} must repeat ${field}`)
+    }
     for (const dependency of generic.dependsOn)
       assert.ok(tasks[key].dependsOn.includes(dependency), `${key} must keep ${dependency}`)
   }
