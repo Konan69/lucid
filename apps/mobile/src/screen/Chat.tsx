@@ -759,7 +759,7 @@ function Conversation({
   // did not arrive are drawn the same way, under their own key.
   const lost = Option.filter(first, First.$is('Unsent'))
   // The submissions Flue has settled; a reply's displays wait for its own (`Message`, `settled`).
-  const settled = new Set(agent.settlements.map((settlement) => settlement.submissionId))
+  const settledIds = new Set(agent.settlements.map((settlement) => settlement.submissionId))
   const undelivered = new Set([...agent.failedSends.map((send) => send.id), ...lostKeys(id, lost)])
 
   function type(next: string) {
@@ -811,7 +811,7 @@ function Conversation({
             around={around}
             detail={detail}
             unsent={undelivered}
-            settled={settled}
+            settled={settledIds}
             covered={covered}
             onContinue={speak}
           />
