@@ -291,8 +291,8 @@ describe.skipIf(!testDatabaseConfigured)(
               'Query',
               'return await tools.read_page({address:"https://example.com/"});',
             )
+            expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
             expect(outcome).toMatchObject({
-              _tag: 'Completed',
               result: {
                 ok: false,
                 reason: 'This display runs automatically. Use a button to read a page.',
