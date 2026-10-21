@@ -27,6 +27,7 @@ function fixture(t, tests, kind = 'node') {
   git(template, ['init', '--quiet', '--initial-branch=main'])
   git(template, ['config', 'user.name', 'proof'])
   git(template, ['config', 'user.email', 'proof@localhost'])
+  NodeFS.writeFileSync(NodePath.join(template, '.gitignore'), 'node_modules/\n')
   NodeFS.writeFileSync(NodePath.join(template, 'package.json'), '{"type":"module"}')
   NodeFS.writeFileSync(NodePath.join(template, 'value.mjs'), 'export const value = 1\n')
   if (kind === 'vitest')
@@ -36,6 +37,7 @@ function fixture(t, tests, kind = 'node') {
     )
   git(template, [
     'add',
+    '.gitignore',
     'package.json',
     'value.mjs',
     ...(kind === 'vitest' ? ['vitest.config.mjs'] : []),
@@ -295,3 +297,124 @@ test('uses the new feature', () => { assert.equal(feature(), 2) })
     )
   },
 )
+
+void NodeTest.test(
+  'Vitest assertions, suites and each parameterized row prove a regression without a database',
+  async (t) => {
+    const target = fixture(
+      t,
+      `import { describe, it, expect } from 'vitest'
+import { value } from './value.mjs'
+it('anonymous callback', () => { expect(value).toBe(2) })
+describe('nested', () => {
+  it('inside a suite', () => { expect(value).toBe(2) })
+  it.each([1, 2])('row %i', () => { expect(value).toBe(2) })
+})
+`,
+      'vitest',
+    )
+    const outcome = await proveBranch(target, proofSelection(target, {}), {
+      ...env,
+      VIVID_TEST_DATABASE_URL: 'postgres://proof@127.0.0.1:1/proof',
+    })
+    process.stdout.write(formatProof(outcome))
+    assert.equal(outcome.passed, true)
+    assert.deepEqual(
+      outcome.results.map((result) => result.state),
+      Array(4).fill('PROVEN'),
+    )
+  },
+)
+
+void NodeTest.test('node suites and parent tests contribute only their leaf cases', async (t) => {
+  const target = fixture(
+    t,
+    `${nodeImports}
+import { describe } from 'node:test'
+describe('suite', () => {
+  test('suite leaf', () => { assert.equal(value, 2) })
+})
+test('parent', async (t) => {
+  await t.test('nested leaf', () => { assert.equal(value, 2) })
+})
+test('passing parent', async (t) => {
+  await t.test('surviving leaf', () => { assert.ok(value > 0) })
+})
+`,
+  )
+  const outcome = await proveBranch(target, proofSelection(target, {}), env)
+  process.stdout.write(formatProof(outcome))
+  assert.deepEqual(
+    outcome.results.map((result) => result.state),
+    ['PROVEN', 'PROVEN', 'SURVIVED'],
+  )
+  assert.equal(outcome.passed, false)
+})
+
+/** A trailer records why a completed case is inconclusive, never why the runner broke. */
+function explainInconclusive(target) {
+  git(target, [
+    'commit',
+    '--quiet',
+    '--allow-empty',
+    '-m',
+    'explain proof',
+    '-m',
+    'Proof-Inconclusive: a completed case needs separate provider evidence.',
+  ])
+}
+
+void NodeTest.test('a trailer cannot excuse a scratch dependency failure', async (t) => {
+  const target = fixture(t, `${nodeImports}test('fixed value', () => { assert.equal(value, 2) })\n`)
+  explainInconclusive(target)
+  NodeFS.symlinkSync(NodePath.join(target, 'absent'), NodePath.join(target, 'node_modules/broken'))
+  const outcome = await proveBranch(target, proofSelection(target, {}), env)
+  assert.equal(outcome.passed, false)
+  assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+})
+
+void NodeTest.test('a trailer cannot excuse a runner that exits without a receipt', async (t) => {
+  const target = fixture(t, `${nodeImports}test('exits runner', () => { process.exit(0) })\n`)
+  explainInconclusive(target)
+  const outcome = await proveBranch(target, proofSelection(target, {}), env)
+  assert.equal(outcome.passed, false)
+  assert.match(outcome.results[0].reason, /receipt/u)
+  assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+})
+
+void NodeTest.test('a trailer cannot excuse unavailable database infrastructure', async (t) => {
+  const target = fixture(
+    t,
+    `import { it, expect } from 'vitest'
+import { value } from './value.mjs'
+void process.env.VIVID_TEST_DATABASE_URL
+it('fixed value', () => { expect(value).toBe(2) })
+`,
+    'vitest',
+  )
+  explainInconclusive(target)
+  const outcome = await proveBranch(target, proofSelection(target, {}), {
+    ...env,
+    VIVID_TEST_DATABASE_URL: 'postgres://proof@127.0.0.1:1/proof',
+  })
+  assert.equal(outcome.passed, false)
+  assert.match(outcome.results[0].reason, /test database server refused/u)
+  assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+})
+
+void NodeTest.test('scratch dependencies replace an existing tracked link', async (t) => {
+  const target = fixture(
+    t,
+    `import { it, expect } from 'vitest'
+import { value } from './value.mjs'
+it('fixed value', () => { expect(value).toBe(2) })
+`,
+    'vitest',
+  )
+  git(target, ['add', '--force', 'node_modules/vitest'])
+  git(target, ['commit', '--quiet', '-m', 'seed an existing dependency link'])
+  const outcome = await proveBranch(target, proofSelection(target, {}), env)
+  process.stdout.write(formatProof(outcome))
+  assert.equal(outcome.passed, true)
+  assert.equal(outcome.results[0].state, 'PROVEN')
+})
