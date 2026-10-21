@@ -126,6 +126,8 @@ try {
       await NodeFSP.access(state.evidence + '/cleanup.json')
       console.log('Evidence retained: ' + state.evidence)
     } else {
+      if ((await command(['git', 'rev-parse', 'HEAD'])) !== state.head)
+        throw new Error('Checkout commit changed; clean this run and launch again')
       const { manual } = await import('./drive.mjs')
       if (action === 'feature')
         console.log(

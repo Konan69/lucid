@@ -11,8 +11,10 @@ export async function browser(state) {
   const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
   const executable = process.env.VIVID_VERIFY_BROWSER ?? 'agent-browser'
   const namespace = 'v-' + state.run.slice(-8)
-  const receipt = { executable, namespace, session: 'v', scratch: state.scratch }
+  const socketDirectory = '/tmp/vivid-verify-' + state.run.slice(-8)
+  const receipt = { executable, namespace, session: 'v', scratch: state.scratch, socketDirectory }
   await json(state.scratch + '/browser.json', receipt)
+  await NodeFSP.mkdir(socketDirectory, { mode: 0o700 })
   let sequence = 0
   const run = (args) =>
     command(
@@ -32,7 +34,7 @@ export async function browser(state) {
         env: {
           PATH: process.env.PATH,
           HOME: state.scratch,
-          AGENT_BROWSER_SOCKET_DIR: state.scratch + '/s',
+          AGENT_BROWSER_SOCKET_DIR: socketDirectory,
         },
         log: directory + '/' + String(++sequence).padStart(2, '0') + '-' + args[0] + '.json',
         redactions: [account.password],
@@ -99,6 +101,7 @@ export async function browser(state) {
   } finally {
     try {
       await run(['close'])
+      await NodeFSP.rm(socketDirectory, { recursive: true, force: true })
       await NodeFSP.unlink(state.scratch + '/browser.json')
     } catch (error) {
       verdict = { verdict: 'failed', head: state.head, error: error.stack }

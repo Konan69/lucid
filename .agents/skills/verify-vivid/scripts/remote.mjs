@@ -11,7 +11,8 @@ export async function remoteCleanup(state, execute) {
   if (
     browser.scratch !== state.scratch ||
     browser.namespace !== 'v-' + state.run.slice(-8) ||
-    browser.session !== 'v'
+    browser.session !== 'v' ||
+    browser.socketDirectory !== '/tmp/vivid-verify-' + state.run.slice(-8)
   )
     throw new Error('Browser ownership mismatch')
   await execute(
@@ -20,11 +21,12 @@ export async function remoteCleanup(state, execute) {
       env: {
         PATH: process.env.PATH,
         HOME: state.scratch,
-        AGENT_BROWSER_SOCKET_DIR: state.scratch + '/s',
+        AGENT_BROWSER_SOCKET_DIR: browser.socketDirectory,
       },
       log: state.evidence + '/browser-cleanup.json',
     },
   )
+  await NodeFSP.rm(browser.socketDirectory, { recursive: true, force: true })
   await NodeFSP.unlink(state.scratch + '/browser.json')
 }
 export const sshEnvironment = { PATH: process.env.PATH }

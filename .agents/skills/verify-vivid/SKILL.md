@@ -5,6 +5,8 @@ description: 'Verify Vivid product behavior through its real web client, authent
 
 # Verify Vivid
 
+Read [validation status](references/validation.md). The first complete devbox proof is blocked; this skill is not yet runtime-verified.
+
 Product files are read-only. Read the [feature map](features/README.md), then the touched feature. Run heavy work on the host returned by `~/bin/devbox-pick`; never use a Person's Computer or cloudbox-vivid. This skill launches an isolated composition of production server handlers and SQL stores beside the full shipped Flue runtime and web app. It does not launch the complete `apps/server/src/main.ts` graph. See [boundaries](references/boundaries.md) before relying on a verdict.
 
 ## Launch
