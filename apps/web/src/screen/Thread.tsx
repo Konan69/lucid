@@ -164,6 +164,10 @@ function contextFor({
   }
 }
 
+/** The ids of the submissions Flue has settled, in whatever way they ended. */
+const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) =>
+  new Set(settlements.map((settlement) => settlement.submissionId))
+
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`):
  * each message, and each answer to a question of Vivid's as a row of its own where it was given.
@@ -184,12 +188,15 @@ const Rows = memo(function Rows({
   visible,
   context,
   working,
+  settled,
   onContinue,
 }: {
   said: ReadonlyArray<FlueConversationMessage>
   visible: ReadonlyArray<FlueConversationMessage>
   context: ThreadContext
   working: boolean
+  /** The submissions Flue has settled (`settledIn`); a reply's displays wait for its own. */
+  settled: ReadonlySet<string>
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
   const newest = visible.at(-1)
@@ -216,6 +223,8 @@ const Rows = memo(function Rows({
               // not told when work starts and stops, and are not drawn again for it.
               working={working && latest}
               latest={latest}
+              // A reply that names no submission was never part of one, so nothing is pending.
+              settled={message.submissionId === undefined || settled.has(message.submissionId)}
               onContinue={onContinue}
             />
           </li>
@@ -245,8 +254,10 @@ function ConversationMessages({
   ended,
   onSay,
   hero,
+  settled,
 }: {
   hero: React.ReactNode
+  settled: ReadonlySet<string>
   ready: boolean
   empty: boolean
   working: boolean
@@ -282,6 +293,7 @@ function ConversationMessages({
         visible={visible}
         context={context}
         working={working}
+        settled={settled}
         onContinue={onContinue}
       />
       <OnTheirWay first={first} onAgain={onFirstAgain} />
@@ -367,6 +379,10 @@ function Conversation({
   const working = workingIn(opening, agent, first, detail)
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
   const visible = useMemo(() => shownIn(said), [said])
+  // Flue's settled submissions, kept the same until one settles: until the conversation's history
+  // has been read (`heardIn` frames) there are none, so every reply's displays wait for it rather
+  // than run a program the server would answer with a wait.
+  const settled = useMemo(() => settledIn(agent.settlements), [agent.settlements])
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
   const context = useMemo(
@@ -463,6 +479,7 @@ function Conversation({
             said={said}
             visible={visible}
             context={context}
+            settled={settled}
             onContinue={say}
             first={first}
             onFirstAgain={() => firstWords.again(id)}

@@ -78,6 +78,7 @@ export function Reply({
   text,
   streaming,
   making,
+  settled,
   live,
   onSay,
 }: {
@@ -96,6 +97,8 @@ export function Reply({
    * whole.
    */
   making: boolean
+  /** Whether Flue has settled the submission this reply answers (`Message`, `settled`). */
+  settled: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean
   onSay: (words: string) => void
@@ -111,7 +114,7 @@ export function Reply({
             source={source}
             key={stretch.from}
             text={stretch.text}
-            arriving={making || streaming || !stretch.whole}
+            arriving={making || streaming || !settled || !stretch.whole}
             live={live}
             onSay={onSay}
           />

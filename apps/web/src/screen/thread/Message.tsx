@@ -155,6 +155,15 @@ interface MessageProps {
   readonly working: boolean
   /** Whether this is the newest message in the Thread, the one a Person can still answer. */
   readonly latest: boolean
+  /**
+   * Whether Flue has settled the submission this reply answers (its `submissionId` is among the
+   * conversation's settlements). Neither `latest`, `working` nor a part's streaming state says so:
+   * Flue closes every streaming part between steps and folds a delivery written while the reply
+   * arrives into the same submission (`appendToolInput` in `@flue/sdk` 2.2.2,
+   * `projectConversationUi` in `@flue/runtime` 2.2.2), so the reply can look finished while its
+   * submission is not. The server runs a display's program only from a settled reply.
+   */
+  readonly settled: boolean
   readonly onContinue: (text: string) => void
 }
 
@@ -174,6 +183,7 @@ export const Message = memo(function Message({
   context,
   working,
   latest,
+  settled,
   onContinue,
 }: MessageProps) {
   if (message.role === 'user') {
@@ -186,6 +196,7 @@ export const Message = memo(function Message({
       context={context}
       working={working}
       latest={latest}
+      settled={settled}
       onContinue={onContinue}
     />
   )
@@ -197,6 +208,7 @@ function sameRow(was: MessageProps, now: MessageProps) {
     was.context === now.context &&
     was.working === now.working &&
     was.latest === now.latest &&
+    was.settled === now.settled &&
     was.onContinue === now.onContinue &&
     sameMessage(was.message, now.message)
   )
@@ -395,6 +407,7 @@ function Written({
   fresh,
   making,
   streaming,
+  settled,
   live,
   onSay,
 }: {
@@ -414,6 +427,8 @@ function Written({
    * writes while it arrives), and then `making` alone would let its Queries run early.
    */
   streaming: boolean
+  /** Whether the submission this reply answers is settled; see `MessageProps.settled`. */
+  settled: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean
   onSay: (words: string) => void
@@ -426,7 +441,7 @@ function Written({
         source={source}
         key={stretch.from}
         text={stretch.text}
-        arriving={making || streaming || !stretch.whole}
+        arriving={making || streaming || !settled || !stretch.whole}
         live={live}
         onSay={onSay}
       />
@@ -558,12 +573,14 @@ function FromVivid({
   context,
   working,
   latest,
+  settled,
   onContinue,
 }: {
   message: FlueConversationMessage
   context: ThreadContext
   working: boolean
   latest: boolean
+  settled: boolean
   onContinue: (text: string) => void
 }) {
   const text = textOf(message)
@@ -597,6 +614,7 @@ function FromVivid({
             fresh={fresh}
             making={making}
             streaming={streaming}
+            settled={settled}
             live={latest && !working}
             onSay={onContinue}
           />

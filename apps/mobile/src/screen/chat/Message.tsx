@@ -50,6 +50,7 @@ export function Message({
   fresh,
   latest,
   unsent,
+  settled,
   onContinue,
 }: {
   thread: ThreadId
@@ -67,6 +68,14 @@ export function Message({
   latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
   unsent: ReadonlySet<string>
+  /**
+   * Whether Flue has settled the submission this reply answers. Neither `latest`, `working` nor a
+   * part's streaming state says so: Flue closes every streaming part between steps and folds a
+   * delivery written while the reply arrives into the same submission (`appendToolInput` in
+   * `@flue/sdk` 2.2.2, `projectConversationUi` in `@flue/runtime` 2.2.2). The server runs a
+   * display's program only from a settled reply.
+   */
+  settled: boolean
   onContinue: Say
 }) {
   return Speaker.$match(speakerOf(message, around), {
@@ -92,6 +101,7 @@ export function Message({
           around={around}
           working={working}
           latest={latest}
+          settled={settled}
           onContinue={onContinue}
         />
       </Arriving>
@@ -280,6 +290,7 @@ function Spoken(props: {
   text: string
   streaming: boolean
   making: boolean
+  settled: boolean
   live: boolean
   onSay: Say
 }) {
@@ -295,6 +306,7 @@ function FromVivid({
   around,
   working,
   latest,
+  settled,
   onContinue,
 }: {
   thread: ThreadId
@@ -304,6 +316,7 @@ function FromVivid({
   around: Around
   working: boolean
   latest: boolean
+  settled: boolean
   onContinue: Say
 }) {
   const text = textOf(message)
@@ -336,6 +349,7 @@ function FromVivid({
           text={text}
           streaming={isStreaming(message)}
           making={making}
+          settled={settled}
           live={latest && !working}
           onSay={onContinue}
         />

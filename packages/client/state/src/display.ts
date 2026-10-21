@@ -217,33 +217,26 @@ const programFailure = (failure: CodeFailure): string =>
 const isWaiting = Schema.is(DisplayProgramWaiting)
 
 /**
- * The server's wait, as the display reads it: not an error and not the program's data, but the
- * tagged wait itself, so a display can tell it apart from any value a program returns.
- *
- * The surfaces never ask before the whole reply has arrived (`arriving` holds OpenUI until then),
- * so this answer only comes when the server has not yet stored the reply the surface saw finish.
- * OpenUI keeps it as the Query's data (`executeFetch` in lang-core 1.0.0 `dist/index.mjs` settles
- * any answer that does not throw), so the Query is not asked again while the display stays drawn
- * with the same arguments. It is asked again when the display is drawn anew (the Thread is opened
- * again, which starts a fresh query cache) or when a press refreshes it (`@Run` on the Query, which
- * goes through `invalidate`). Nothing asks on a timer.
+ * The server's wait: the reply this display came from is not yet settled in Flue's history. It is
+ * an error to OpenUI, never data: OpenUI keeps an error without settled data and asks again the
+ * next time it reads the display's Queries (`evaluateQueries`, lang-core 1.0.0), so the display
+ * runs its program once the reply has settled instead of keeping this wait as its answer. The
+ * surfaces also hold OpenUI (`arriving`) until the reply's submission is settled, so this only
+ * comes when the server's history is behind what the surface saw.
  */
-const waiting = (outcome: DisplayProgramWaiting): DisplayToolResult => ({
-  content: [{ type: 'text', text: 'Vivid is still finishing this reply.' }],
-  structuredContent: outcome,
-})
+const waiting = (): DisplayToolResult => failed('Vivid is still finishing this reply.')
 
 /**
  * The program's return value is the display's data; logs and execution receipts stay separate.
  *
- * A completed program is data, and the server's wait is its own tagged value (`waiting`). Every
- * other answer ran nothing or did not finish (Busy, a failure), so it is an error: OpenUI keeps a
+ * Only a completed program is data. Every other answer, the server's wait included, ran nothing or
+ * did not finish (Waiting, Busy, a failure), so it is an error: OpenUI keeps a
  * Query's error without settled data and asks again the next time it reads the display's Queries
  * (`evaluateQueries` asks for any Query whose cache entry has no data, lang-core 1.0.0).
  */
 export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResult =>
   isWaiting(outcome)
-    ? waiting(outcome)
+    ? waiting()
     : CodeOutcome.match(outcome, {
         Completed: ({ result }) =>
           displayToolResult(ToolOutcome.cases.Completed.make({ output: result })),

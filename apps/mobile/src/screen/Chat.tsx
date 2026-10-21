@@ -758,6 +758,8 @@ function Conversation({
   // can draw it as not sent instead of as said. Sending again clears the list. First words that
   // did not arrive are drawn the same way, under their own key.
   const lost = Option.filter(first, First.$is('Unsent'))
+  // The submissions Flue has settled; a reply's displays wait for its own (`Message`, `settled`).
+  const settled = new Set(agent.settlements.map((settlement) => settlement.submissionId))
   const undelivered = new Set([...agent.failedSends.map((send) => send.id), ...lostKeys(id, lost)])
 
   function type(next: string) {
@@ -809,6 +811,7 @@ function Conversation({
             around={around}
             detail={detail}
             unsent={undelivered}
+            settled={settled}
             covered={covered}
             onContinue={speak}
           />
@@ -1130,6 +1133,8 @@ interface MessagesProps {
   readonly detail: Option.Option<ThreadDetail>
   /** The ids of the messages written here that did not arrive. */
   readonly unsent: ReadonlySet<string>
+  /** The submissions Flue has settled. */
+  readonly settled: ReadonlySet<string>
   /**
    * How far the banner over the composer (a question's choices, an Approval) stands over the
    * foot of the conversation, in points (`chat/Banner.tsx`). The conversation keeps that much more clear under its newest words.
@@ -1420,6 +1425,7 @@ function Transcript(props: MessagesProps) {
               detail={props.detail}
               working={working}
               unsent={props.unsent}
+              settled={props.settled}
               onContinue={props.onContinue}
               onRow={(key, laid) => {
                 if (place.row(key, laid)) settle()
@@ -1606,6 +1612,7 @@ function Rows({
   detail,
   working,
   unsent,
+  settled,
   onContinue,
   onRow,
 }: {
@@ -1618,6 +1625,8 @@ function Rows({
   detail: Option.Option<ThreadDetail>
   working: boolean
   unsent: ReadonlySet<string>
+  /** The submissions Flue has settled. */
+  settled: ReadonlySet<string>
   onContinue: Say
   /** Where each row is laid out, for where the Person is reading (`useReadingPlace`). */
   onRow: (key: string, laid: Laid) => void
@@ -1654,6 +1663,10 @@ function Rows({
                 fresh={!known.has(key)}
                 latest={message === newest}
                 unsent={unsent}
+                // A reply that names no submission was never part of one, so nothing is pending.
+                settled={
+                  message.submissionId === undefined || settled.has(message.submissionId)
+                }
                 onContinue={onContinue}
               />,
             )
