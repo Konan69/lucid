@@ -298,7 +298,8 @@ async function journey(state, feature) {
       const text = replies
         .flatMap((m) => m.parts)
         .filter((p) => p.type === 'text' && p.text.trim())
-        .at(-1).text
+        .at(-1)
+        .text.trim()
       await run(['wait', '--text', text])
     }
     if (feature === 'reload') {
@@ -318,7 +319,8 @@ async function journey(state, feature) {
       const text = replies
         .flatMap((m) => m.parts)
         .filter((p) => p.type === 'text' && p.text.trim())
-        .at(-1).text
+        .at(-1)
+        .text.trim()
       await run(['wait', '--text', text])
     }
     await rendered(run, recipe.check)
