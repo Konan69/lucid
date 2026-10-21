@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
 import { command, json, identity, alive } from './process.mjs'
+import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history } from './wire.mjs'
 import { features } from './drive.mjs'
@@ -87,8 +88,19 @@ async function captureBrowser(receipt) {
     if (processes.some((p) => p.pid === pid)) return
     const owned = await identity(pid)
     processes.push(owned)
-    const children = (await fs.readFile(`/proc/${pid}/task/${pid}/children`, 'utf8')).trim()
-    for (const child of children.split(/\s+/).filter(Boolean)) await capture(Number(child))
+    for (const tid of await fs.readdir(`/proc/${pid}/task`)) {
+      const children = await fs
+        .readFile(`/proc/${pid}/task/${tid}/children`, 'utf8')
+        .catch((error) => {
+          if (error.code === 'ENOENT') return ''
+          throw error
+        })
+      for (const child of children.trim().split(/\s+/).filter(Boolean)) {
+        await capture(Number(child)).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      }
+    }
   }
   async function visit(directory) {
     for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
@@ -193,7 +205,7 @@ async function journey(state, feature) {
     await run([
       'wait',
       '--fn',
-      `document.querySelector('input[type=email]') || document.querySelector('[aria-label="Message Vivid"]')`,
+      `Boolean(document.querySelector('input[type=email]') || document.querySelector('[aria-label="Message Vivid"]'))`,
     ])
     const welcome = await run(['snapshot', '-i'])
     if (welcome.includes('I already have an account'))
@@ -255,13 +267,14 @@ async function journey(state, feature) {
   } finally {
     try {
       await run(['close'])
+      for (const owned of [...(receipt.processes ?? [])].reverse()) await stopCaptured(owned)
       for (const owned of receipt.processes ?? [])
         assert.equal(await alive(owned), false, 'Browser process survived close ' + owned.pid)
       await json(directory + '/browser-processes.json', receipt.processes ?? [])
       await fs.rm(receipt.socketDirectory, { recursive: true, force: true })
       await fs.unlink(state.scratch + '/browser.json')
     } catch (error) {
-      verdict = { ...base, verdict: 'failed', error: error.stack }
+      verdict = { ...verdict, verdict: 'failed', cleanupError: error.stack }
       process.exitCode = 1
     }
     await json(directory + '/verdict.json', verdict)
