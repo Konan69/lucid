@@ -75,7 +75,7 @@ async function launch() {
   const log = await NodeFSP.open(evidence + '/supervisor.log', 'a', 0o600)
   const child = NodeChildProcess.spawn(
     process.execPath,
-    ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
+    [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
     {
       cwd: root,
       detached: true,
@@ -129,7 +129,6 @@ try {
     } else {
       if ((await command(['git', 'rev-parse', 'HEAD'])) !== state.head)
         throw new Error('Checkout commit changed; clean this run and launch again')
-      const { manual } = await import('./drive.mjs')
       if (action === 'feature')
         console.log(
           await command(
@@ -165,12 +164,14 @@ try {
             },
           ),
         )
-      else
+      else {
+        const { manual } = await import('./drive.mjs')
         await manual(
           state,
           action,
           args.filter((arg) => !arg.startsWith('flue-')),
         )
+      }
     }
   }
 } catch (error) {

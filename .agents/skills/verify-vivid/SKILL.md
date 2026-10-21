@@ -19,7 +19,7 @@ VIVID_VERIFY_DEVBOX=cloudbox-konan .agents/skills/verify-vivid/verify launch
 
 Launch records `.cache/verify/flue-<timestamp>-<uuid>/state.json` before acquisition. Each run reserves fresh ports, an exact labelled PostgreSQL container, a synthetic Better Auth account, runtime notes, Vite caches and process generations. It applies both shipped migration owners. It builds through the runtime's shipped `pnpm build` and starts its emitted bootstrap with `VIVID_MODEL=rehearsal/script`. This is main's context-driven Pi faux provider. The full Vivid instructions and real tool handlers run; no provider key or cut-down prompt is used.
 
-Readiness requires PostgreSQL health, bound server/runtime/web receipts, runtime health advertising rehearsal/script, a web build through the shipped Vite config and preview proxy, proxied health and successful signup/signin. A failed launch retains logs and attempts cleanup. Run Cleanup even after failure. A live previous run is a conflict; clean its printed id explicitly.
+Readiness requires PostgreSQL health, bound server/runtime/web receipts, runtime health advertising rehearsal/script, a web build through the shipped Vite config and preview proxy, proxied health and successful signup/signin. Each process has a five-minute readiness deadline for a busy fallback host; only the real listener receipt marks it ready. A failed launch retains logs and attempts cleanup. Run Cleanup even after failure. A live previous run is a conflict; clean its printed id explicitly.
 
 ## Doctor
 

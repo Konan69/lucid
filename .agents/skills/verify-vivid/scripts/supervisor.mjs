@@ -13,9 +13,9 @@ import {
   root,
   skill,
   alive,
+  json,
 } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
-import { json } from './wire.mjs'
 import { remoteCleanup } from './remote.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
@@ -236,14 +236,10 @@ async function launch() {
     root + '/packages/agent/runtime/node_modules',
     state.scratch + '/runtime/node_modules',
   )
-  const runtime = await own(
-    'runtime',
-    [process.execPath, '--import', require.resolve('tsx'), state.scratch + '/runtime/server.mjs'],
-    {
-      cwd: state.scratch,
-      env: { ...env, PORT: String(state.ports.runtime) },
-    },
-  )
+  const runtime = await own('runtime', [process.execPath, state.scratch + '/runtime/server.mjs'], {
+    cwd: state.scratch,
+    env: { ...env, PORT: String(state.ports.runtime) },
+  })
   await signal(runtime, runtime.stdout, 'data', (bytes) =>
     bytes.toString().includes('[flue] Server listening'),
   )

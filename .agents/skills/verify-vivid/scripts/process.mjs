@@ -117,7 +117,7 @@ export async function command(
 }
 
 /** Readiness is a bound-listener log/IPC event. This deadline fails hung launch; it never marks ready. */
-export function signal(child, emitter, event, predicate, milliseconds = 90_000) {
+export function signal(child, emitter, event, predicate, milliseconds = 300_000) {
   const prior = child.observed?.[event]?.find(predicate)
   if (prior !== undefined) return Promise.resolve(prior)
   return new Promise((resolve, reject) => {
