@@ -1418,14 +1418,13 @@ function Transcript(props: MessagesProps) {
             {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
             <View style={{ height: HANG }} />
             <Rows
-              {...{ thread: id, messages }}
+              {...{ thread: id, messages, settled: props.settled }}
               lines={model.linesOf(messages.map(spokenOf), requestsOf(props.detail))}
               known={known}
               around={props.around}
               detail={props.detail}
               working={working}
               unsent={props.unsent}
-              settled={props.settled}
               onContinue={props.onContinue}
               onRow={(key, laid) => {
                 if (place.row(key, laid)) settle()
