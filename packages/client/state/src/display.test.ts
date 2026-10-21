@@ -138,8 +138,10 @@ describe('a program read as OpenUI reads it', () => {
 
   it('does not close a fence on a fence line inside a string', () => {
     const reply = `${FENCE}openui-lang\nroot = Text("a\n${FENCE}\nb")\n${FENCE}\nDone.`
-    expect(stretches(reply).map((stretch) => stretch.kind)).toEqual(['display', 'words'])
-    expect(stretches(reply)[0]?.text).toBe(`root = Text("a\n${FENCE}\nb")\n`)
+    expect(stretches(reply).map((stretch) => [stretch.kind, stretch.text])).toEqual([
+      ['display', `root = Text("a\n${FENCE}\nb")\n`],
+      ['words', '\nDone.'],
+    ])
   })
 
   it('draws an indented bare program', () => {
