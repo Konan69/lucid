@@ -53,7 +53,7 @@ const fixture = Effect.fn('LivePayload.fixture')(function* () {
   function Payload() {
     useModel('openrouter/z-ai/glm-5.3-flash')
     useTool(sample)
-    return 'Call sample exactly twelve times, one call per model step, waiting for each result. Then explain why rivers meander in three paragraphs, beginning with the bold heading **Why Rivers Meander**. Never repeat the sample payload in your answer.'
+    return 'Call sample exactly twelve times, one call per model step, waiting for each result. Read only step and remaining to choose the next action; payload is opaque padding and needs no analysis. When remaining is positive, call sample immediately. When remaining is zero, stop calling tools. Then explain why rivers meander in three paragraphs, beginning with the bold heading **Why Rivers Meander**. Never repeat the sample payload in your answer.'
   }
   Payload.agentName = 'live-payload'
   Payload.durability = { maxAttempts: 1 }
@@ -120,10 +120,15 @@ describe.skipIf(!enabled)('OpenRouter response reconciliation', () => {
           (unsubscribe) => Effect.sync(unsubscribe),
         )
         changed()
+        const controller = yield* Effect.acquireRelease(
+          Effect.sync(() => new AbortController()),
+          (value) => Effect.sync(() => value.abort()),
+        )
         const chunks: ConversationStreamChunk[] = []
         const arrived = new Map<ConversationStreamChunk, number>()
         yield* Effect.tryPromise(() =>
           client.wait(receipt, {
+            signal: controller.signal,
             onEvent: (chunk) => {
               chunks.push(chunk)
               arrived.set(chunk, performance.now())
