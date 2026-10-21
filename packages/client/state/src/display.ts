@@ -90,10 +90,7 @@ interface ProgramLine {
 }
 
 /** A program's lines, each with the state it starts in, and the state after the last. */
-function programLines(text: string): {
-  readonly lines: ReadonlyArray<ProgramLine>
-  readonly after: Lexical
-} {
+function programLines(text: string) {
   const lines: Array<ProgramLine> = []
   let state: Lexical = { quote: null, depth: 0 }
   let start = 0
