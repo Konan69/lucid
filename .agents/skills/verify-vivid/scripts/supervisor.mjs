@@ -229,8 +229,11 @@ async function helix() {
     ],
     { heavy: true, log: state.evidence + '/helix-docker.json' },
   )
-  const { readBatch } = await import(require.resolve('@helix-db/helix-db'))
-  const probe = readBatch().toQueryJson()
+  const { readBatch, g } = await import(require.resolve('@helix-db/helix-db'))
+  const probe = readBatch()
+    .varAs('probe', g().nWithLabel('VerifyReadiness').limit(1))
+    .returning(['probe'])
+    .toQueryJson()
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
