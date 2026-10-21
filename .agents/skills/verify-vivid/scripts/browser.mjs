@@ -101,6 +101,10 @@ async function captureBrowser(receipt) {
     }
   }
   for (const root of roots) await visit(root)
+  assert.ok(
+    processes.length > 0,
+    'No private browser daemon PID receipt; ownership cannot be proved',
+  )
   receipt.processes = processes
   await json(receipt.scratch + '/browser.json', receipt)
 }

@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor. 
 
 ## Gotchas
 
-Routines were removed from main. Watch workers are not mounted in this isolated composition; this recipe is blocked until a disposable Integration and full worker graph are available. Never recreate the removed Routine fixture.
+Routines were removed from main. The real Watch workers are mounted. This recipe is blocked until a disposable Integration with observable incoming events is connected. Never recreate the removed Routine fixture.

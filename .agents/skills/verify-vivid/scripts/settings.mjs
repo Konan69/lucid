@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import { parseEnv } from 'node:util'
 import { root, command, boot } from './process.mjs'
 
-/** These boot identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
+/** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
 const hosts = {
   'cloudbox-konan': 'box-node-a12c0c06aaf7d4a6',
   'cloudbox-konan2': 'box-node-c59a06f7f0a631f1',
@@ -13,9 +13,13 @@ const hosts = {
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
   if (devbox === 'local') {
+    if (os.hostname() !== 'Konan')
+      throw new Error('Local fallback is allowed only on the known developer PC')
+    await fs.access(os.homedir() + '/bin/devbox-pick')
     try {
       await command([os.homedir() + '/bin/devbox-pick'])
-    } catch {
+    } catch (error) {
+      if (!error.message.includes('no devbox reachable')) throw error
       return { devbox, hostBoot: boot, hostSelection: 'no devbox reachable' }
     }
     throw new Error('A devbox is reachable; local verification refused')
