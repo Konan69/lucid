@@ -470,7 +470,8 @@ const sequence = Effect.fn('AuthorityTest.sequence')(function* (events: Readonly
 
 layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
   describe.skipIf(!testDatabaseConfigured)('Generated Approval authority lifecycle', () => {
-    // Three runs bound each case under contention; the replay driver enforces mutation detection.
+    // Three runs at size six keep each seed's test well under the default timeout on a loaded host,
+    // and these fixed seeds still catch the 31fce913 owner and origin regressions.
     for (const seed of [20261021, 31913, 58475, 20261022]) {
       it.effect.prop(
         `preserves Thread, Run and Person authority after every command, seed ${seed}`,
