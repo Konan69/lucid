@@ -11,6 +11,8 @@ import { Option } from 'effect'
 import { callDisplayTool, displayToolAnswer, feed, said, writtenTools } from '@vivid/state'
 import { useRef } from 'react'
 import { useLiveData, type LiveData } from '../data/live'
+import { Recover } from '../ui/Recover'
+import { Label } from '../ui/ui'
 import { library } from './library'
 
 /** One parser for every display: it only reads which tools a program writes with. */
@@ -39,6 +41,10 @@ function integrations(run: LiveData['run'], writes: ReadonlySet<string>): McpCli
  * display is a record of what was asked, and pressing it would answer a question Vivid has
  * stopped asking, so there the buttons are drawn as spent and the press is not taken. What a
  * display changes inside itself (a tile picked, a field typed) needs no reply and always works.
+ *
+ * A display that cannot be drawn breaks only itself: `Recover` reports it and puts one line in its
+ * place, and tries again when more of the program arrives. Without it one bad program closed the
+ * whole app, and every launch reopened the same Thread and closed it again (21 Oct 2026).
  */
 export function Display({
   text,

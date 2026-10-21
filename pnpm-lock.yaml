@@ -384,6 +384,7 @@ overrides:
 
 patchedDependencies:
   '@flue/runtime@2.2.2': 0a2539a8a851290e597695a39af5d9509bb2499c4f6911841e1492ba5d2eb232
+  '@openuidev/react-lang@1.0.0': a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207
   '@react-native-menu/menu@2.0.0': 043796b1b24bb2fafd3f55d2ee23a1da6aaf0a17f0238000b6703878eaac0ea9
   '@react-navigation/native-stack@7.19.2': 72752c03667a50c70b75ee84fe193072ba9fedaebfd81e8fbef4c20e5db5ae73
   react-native-gesture-handler@2.32.0: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
@@ -522,7 +523,7 @@ importers:
         version: 2.2.2
       '@openuidev/react-lang':
         specifier: 'catalog:'
-        version: 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
+        version: 1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
       '@react-native-community/datetimepicker':
         specifier: 9.1.0
         version: 9.1.0(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -812,7 +813,7 @@ importers:
         version: 1.7.0
       '@openuidev/react-lang':
         specifier: 'catalog:'
-        version: 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
+        version: 1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
       '@sentry/core':
         specifier: 'catalog:'
         version: 11.1.0
@@ -13182,14 +13183,14 @@ snapshots:
       - '@types/node'
       - rxjs
 
-  '@openuidev/devtools@0.3.0(@openuidev/observability@0.0.4)(@openuidev/react-lang@1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@openuidev/devtools@0.3.0(@openuidev/observability@0.0.4)(@openuidev/react-lang@1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@openuidev/observability': 0.0.4
       lucide-react: 0.575.0(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
     optionalDependencies:
-      '@openuidev/react-lang': 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
+      '@openuidev/react-lang': 1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
 
   '@openuidev/lang-core@1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(zod@4.5.4)':
     dependencies:
@@ -13200,9 +13201,9 @@ snapshots:
 
   '@openuidev/observability@0.0.4': {}
 
-  '@openuidev/react-lang@1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)':
+  '@openuidev/react-lang@1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)':
     dependencies:
-      '@openuidev/devtools': 0.3.0(@openuidev/observability@0.0.4)(@openuidev/react-lang@1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@openuidev/devtools': 0.3.0(@openuidev/observability@0.0.4)(@openuidev/react-lang@1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@openuidev/lang-core': 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(zod@4.5.4)
       '@openuidev/observability': 0.0.4
       react: 19.2.3

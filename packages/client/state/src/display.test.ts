@@ -40,7 +40,7 @@ describe('a reply with displays in it', () => {
   it('shows nothing of a fence line it is still in the middle of', () => {
     expect(stretches(`Look:\n${FENCE}openui`)).toEqual([{ kind: 'words', from: 0, text: 'Look:' }])
     expect(stretches(`Look:\n${FENCE}openui-lang`)).toEqual([
-      { kind: 'words', from: 0, text: 'Look:\n' },
+      { kind: 'words', from: 0, text: 'Look:' },
     ])
   })
 
@@ -49,6 +49,53 @@ describe('a reply with displays in it', () => {
     expect(stretches(reply).map((stretch) => stretch.text)).toEqual([
       'root = Title("A")\n',
       'root = Title("B")\n',
+    ])
+  })
+})
+
+describe('a program written the other ways OpenUI recognises', () => {
+  it('draws a fence tagged openui', () => {
+    const reply = `Here:\n${FENCE}openui\nroot = Title("Hi")\n${FENCE}\nDone.`
+    expect(stretches(reply).map((stretch) => stretch.kind)).toEqual(['words', 'display', 'words'])
+  })
+
+  it('draws an untagged fence whose body is a program', () => {
+    const reply = `Open slots:\n\n${FENCE}\nroot = Col([head], 2)\nhead = Title("Slots")\n${FENCE}\n\npick one`
+    expect(stretches(reply)).toEqual([
+      { kind: 'words', from: 0, text: 'Open slots:\n\n' },
+      {
+        kind: 'display',
+        from: 13,
+        text: 'root = Col([head], 2)\nhead = Title("Slots")\n',
+        whole: true,
+      },
+      { kind: 'words', from: 64, text: '\n\npick one' },
+    ])
+  })
+
+  it('leaves code in another language as words, even when it assigns root', () => {
+    const reply = `Try:\n${FENCE}ts\nroot = 1\n${FENCE}\nThen run it.`
+    expect(stretches(reply)).toEqual([{ kind: 'words', from: 0, text: reply }])
+  })
+
+  it('draws a bare program and the words after it', () => {
+    const reply =
+      'root = Col([head, slot1], 2)\nhead = Title("Open slots")\nslot1 = Card([Title("Wed"),\n  Text("9:00")], "soft")\n\ntell me the slot.'
+    expect(stretches(reply)).toEqual([
+      {
+        kind: 'display',
+        from: 0,
+        text: 'root = Col([head, slot1], 2)\nhead = Title("Open slots")\nslot1 = Card([Title("Wed"),\n  Text("9:00")], "soft")\n',
+        whole: true,
+      },
+      { kind: 'words', from: 109, text: '\ntell me the slot.' },
+    ])
+  })
+
+  it('keeps a bare program arriving while a statement is still open', () => {
+    expect(stretches('Here:\nroot = Col([a,')).toEqual([
+      { kind: 'words', from: 0, text: 'Here:\n' },
+      { kind: 'display', from: 6, text: 'root = Col([a,', whole: false },
     ])
   })
 })

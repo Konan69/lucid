@@ -162,6 +162,7 @@ allowBuilds:
 
 patchedDependencies:
   '@flue/runtime@2.2.2': patches/@flue__runtime@2.2.2.patch
+  '@openuidev/react-lang@1.0.0': patches/@openuidev__react-lang@1.0.0.patch
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
