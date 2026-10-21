@@ -13,7 +13,7 @@
     "build": "expo export --platform all",
     "updates": "node scripts/publish.mjs",
     "build:updates": "node scripts/export.mjs",
-    "typecheck": "node ../../scripts/types.mjs tsconfig.types.json tsconfig.types.json",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.types.json tsconfig.tests.json",
     "lint": "node ../../scripts/lint.mjs"
   },
   "dependencies": {

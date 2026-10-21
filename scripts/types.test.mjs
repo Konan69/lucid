@@ -32,7 +32,6 @@ function fixture(t) {
     'packages/contracts/package.json',
     'packages/contracts/tsconfig.json',
     'packages/contracts/tsconfig.types.json',
-    'packages/contracts/tsconfig.tests.json',
     'packages/client/rpc/package.json',
     'packages/client/rpc/tsconfig.json',
     'packages/client/rpc/tsconfig.types.json',
@@ -40,6 +39,24 @@ function fixture(t) {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true })
     NodeFS.copyFileSync(NodePath.join(repositoryRoot, file), NodePath.join(root, file))
   }
+  // This compiler integration fixture owns a test project even though contracts has no tests.
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/contracts/tsconfig.tests.json'),
+    JSON.stringify({
+      extends: './tsconfig.types.json',
+      compilerOptions: {
+        composite: false,
+        noEmit: true,
+        declaration: false,
+        emitDeclarationOnly: false,
+        rootDir: '.',
+        tsBuildInfoFile: '.cache/typescript/tests.tsbuildinfo',
+      },
+      include: ['src/**/*.test.ts'],
+      exclude: [],
+      references: [{ path: './tsconfig.types.json' }],
+    }),
+  )
   // Turbo validates named package edges, even when this probe runs only two packages.
   const workspaces = NodeFS.readFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'utf8')
     .split('\n\n')[0]
@@ -53,6 +70,10 @@ function fixture(t) {
       NodePath.join(root, workspace, 'package.json'),
     )
   }
+  const contractManifest = NodePath.join(root, 'packages/contracts/package.json')
+  const manifest = JSON.parse(NodeFS.readFileSync(contractManifest, 'utf8'))
+  manifest.scripts.typecheck += ' tsconfig.tests.json'
+  NodeFS.writeFileSync(contractManifest, JSON.stringify(manifest))
   NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@typescript'), { recursive: true })
   NodeFS.symlinkSync(
     NodePath.join(repositoryRoot, 'node_modules/@typescript/native'),

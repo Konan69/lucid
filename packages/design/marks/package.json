@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json tsconfig.types.json",
+    "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json",
     "lint": "node ../../../scripts/lint.mjs"
   },
   "devDependencies": {
