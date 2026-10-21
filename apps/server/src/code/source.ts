@@ -47,11 +47,16 @@ const parser = createParser({})
 /** Computed expressions are not persisted program declarations. Only exact literal arguments count. */
 function literalProgram(args: ASTNode | null) {
   if (args === null || args.k !== 'Obj' || args.entries.length !== 2) return []
-  const code = args.entries.find(([name]) => name === 'code')?.[1]
-  const summary = args.entries.find(([name]) => name === 'summary')?.[1]
-  if (code?.k !== 'Str' || summary?.k !== 'Str') return []
-  return [{ code: code.v, summary: summary.v }]
+  const code = args.entries.find(([name]) => name === 'code')
+  const summary = args.entries.find(([name]) => name === 'summary')
+  if (code === undefined || summary === undefined) return []
+  if (code[1].k !== 'Str' || summary[1].k !== 'Str') return []
+  return [{ code: code[1].v, summary: summary[1].v }]
 }
+
+/** Only a literal tool name establishes that this declaration names the program interpreter. */
+const isRunCode = (tool: ASTNode | null) =>
+  tool !== null && tool.k === 'Str' && tool.v === 'run_code'
 
 /** Use the same stretch finder and parser as drawing; quoted prose is never executable evidence. */
 function declarations(text: string) {
@@ -62,14 +67,14 @@ function declarations(text: string) {
   // disjoint authority, so do not let an automatic call borrow that declaration's press policy.
   const computed = parsed.some((program) =>
     [...program.queryStatements, ...program.mutationStatements].some((statement) => {
-      if (statement.toolAST?.k !== 'Str') return true
+      if (statement.toolAST === null || statement.toolAST.k !== 'Str') return true
       return statement.toolAST.v === 'run_code' && literalProgram(statement.argsAST).length === 0
     }),
   )
   const programs = parsed.flatMap((parsed) => {
     return [
       ...parsed.queryStatements.flatMap((statement) =>
-        statement.complete && statement.toolAST?.k === 'Str' && statement.toolAST.v === 'run_code'
+        statement.complete && isRunCode(statement.toolAST)
           ? literalProgram(statement.argsAST).map((program) => ({
               ...program,
               kind: 'Query' as const,
@@ -77,7 +82,7 @@ function declarations(text: string) {
           : [],
       ),
       ...parsed.mutationStatements.flatMap((statement) =>
-        statement.toolAST?.k === 'Str' && statement.toolAST.v === 'run_code'
+        isRunCode(statement.toolAST)
           ? literalProgram(statement.argsAST).map((program) => ({
               ...program,
               kind: 'Mutation' as const,

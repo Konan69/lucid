@@ -13,6 +13,7 @@ import {
   BrowserAction,
   SessionId,
   DisplaySource,
+  DisplayProgramWaiting,
   FeedCardId,
   type RunDisplayCodeRequest,
   type DisplayCodeOutcome,
@@ -73,6 +74,9 @@ import { localCodeComputerLayer } from './testing.ts'
 import { codeSourceLayer } from './source.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
+const busyFailure = CodeFailure.cases.Busy.make({
+  message: 'Vivid is busy with other work. Try again in a moment.',
+})
 
 const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, absentMachineLayer)
 const computers = computerStoreLayer.pipe(
@@ -465,11 +469,12 @@ describe.skipIf(!testDatabaseConfigured)(
                   ).read()
                 }),
               })
+              const context = yield* Layer.build(runtime)
               const draw = storedDisplay(test.personal, request).pipe(
-                Effect.provide(runtime),
+                Effect.provide(context),
                 Effect.provideService(CodeProcess, harness.process),
               )
-              expect(yield* draw).toEqual({ _tag: 'DisplayProgramWaiting' })
+              expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
               expect(yield* Ref.get(harness.count)).toBe(0)
               yield* Ref.set(final, true)
               for (const count of [1, 2]) {
@@ -643,7 +648,7 @@ describe.skipIf(!testDatabaseConfigured)(
               ),
               'Failed',
               {
-                failure: { _tag: 'Busy' },
+                failure: busyFailure,
                 calls: [],
               },
             )
@@ -675,7 +680,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 Effect.provideService(CodeProcess, harness.process),
               ),
               'Failed',
-              { failure: { _tag: 'Busy' } },
+              { failure: busyFailure },
             )
             yield* Deferred.succeed(opening.release, undefined)
             checkCode(yield* Fiber.join(first), 'Completed', { result: 1 })
