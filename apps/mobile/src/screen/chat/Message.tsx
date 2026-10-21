@@ -1,5 +1,5 @@
 import type { FlueConversationMessage } from '@flue/sdk'
-import { textOf, type ThreadDetail } from '@vivid/contracts'
+import { textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -42,6 +42,7 @@ import { Reply } from './Words'
  * `Question.tsx`).
  */
 export function Message({
+  thread,
   message,
   around,
   detail,
@@ -51,6 +52,7 @@ export function Message({
   unsent,
   onContinue,
 }: {
+  thread: ThreadId
   message: FlueConversationMessage
   around: Around
   detail: Option.Option<ThreadDetail>
@@ -83,6 +85,7 @@ export function Message({
     Vivid: ({ answering }) => (
       <Arriving arrival={fresh ? 'answered' : 'there'}>
         <FromVivid
+          thread={thread}
           message={message}
           answering={answering}
           detail={detail}
@@ -272,12 +275,19 @@ function Stamp({ moment }: { moment: number }) {
 }
 
 /** What Vivid said, once it has said anything: its words and the displays among them. */
-function Spoken(props: { text: string; streaming: boolean; live: boolean; onSay: Say }) {
+function Spoken(props: {
+  thread: Option.Option<ThreadId>
+  text: string
+  streaming: boolean
+  live: boolean
+  onSay: Say
+}) {
   return props.text.length === 0 ? null : <Reply {...props} />
 }
 
 /** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
+  thread,
   message,
   answering,
   detail,
@@ -286,6 +296,7 @@ function FromVivid({
   latest,
   onContinue,
 }: {
+  thread: ThreadId
   message: FlueConversationMessage
   answering: Option.Option<string>
   detail: Option.Option<ThreadDetail>
@@ -315,6 +326,7 @@ function FromVivid({
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
         <Spoken
+          thread={Option.some(thread)}
           text={text}
           streaming={isStreaming(message)}
           live={latest && !working}

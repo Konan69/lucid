@@ -685,6 +685,29 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           'message',
           'This Integration action needs an approval Vivid cannot give yet.',
         )
+        // A display must preserve this reason as a tag rather than collapse it into InvalidRequest.
+        const reader = AuthState.Person({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          sessionId: SessionId.make('display-session'),
+        })
+        const found = yield* connectionHandlers
+          .FindTools({ query: 'write' })
+          .pipe(Effect.provideService(AuthContext, reader))
+        const writing = found.tools.find((tool) => tool.name === 'write')
+        if (writing === undefined) return yield* Effect.die('Expected writing Integration')
+        const displayFailure = yield* connectionHandlers
+          .UseDisplayTool({
+            name: `${writing.name}@${writing.account}`,
+            input: {},
+            kind: 'Mutation',
+          })
+          .pipe(
+            Effect.provideService(AuthContext, reader),
+            Effect.provideService(Executor, refused),
+            Effect.flip,
+          )
+        expect(displayFailure).toHaveProperty('_tag', 'DisplayApprovalUnsupported')
         yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
         const before = yield* Ref.get(probe.calls)
         const uncertain = yield* connectionHandlers

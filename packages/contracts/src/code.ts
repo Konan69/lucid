@@ -1,6 +1,6 @@
 import * as Schema from 'effect/Schema'
-import { ACCOUNT_HANDLE_MAX } from './connections.js'
-import { ApprovalId } from './identity.js'
+import { ACCOUNT_HANDLE_MAX, DisplayToolKind } from './connections.js'
+import { ApprovalId, ThreadId } from './identity.js'
 import { CodeCallKind } from './tools.js'
 
 export { CodeCallKind } from './tools.js'
@@ -49,6 +49,14 @@ export const RunCodeRequest = Schema.Struct({
   summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
 export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest> {}
+
+/** A display runs for its signed-in reader, within the Thread whose reply contains it. */
+export const RunDisplayCodeRequest = Schema.Struct({
+  ...RunCodeRequest.fields,
+  thread: ThreadId,
+  kind: DisplayToolKind,
+})
+export interface RunDisplayCodeRequest extends Schema.Schema.Type<typeof RunDisplayCodeRequest> {}
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
 export const CodeCallEnd = Schema.Literals([

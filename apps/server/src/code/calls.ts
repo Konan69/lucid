@@ -2,6 +2,7 @@ import {
   BrowseOutcome,
   BrowseRequest,
   CodeCallKind,
+  type DisplayToolKind,
   FindToolsRequest,
   ReadPageOutcome,
   ReadPageRequest,
@@ -16,7 +17,7 @@ import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
 import { Executor } from '../connections/executor.ts'
 import { ConnectionStore } from '../connections/store.ts'
-import { findTools, resolveTool, useTool } from '../connections/tools.ts'
+import { findTools, resolveTool, useQueryTool, useTool } from '../connections/tools.ts'
 import { DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore, computerBrowse } from '../computers/store.ts'
 import { Database } from '../database/client.ts'
@@ -76,10 +77,21 @@ const refused = Effect.fnUntraced(function* (
 })
 
 /** Resolve under current authority; the existing owner rechecks provider metadata and gates the action. */
-const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, input: Schema.Json) {
+const connection = Effect.fn('Code.useConnection')(function* (
+  actor: Actor,
+  input: Schema.Json,
+  kind: DisplayToolKind,
+) {
   const request = yield* decodeUse(input, { onExcessProperty: 'error' })
   const matched = yield* resolveTool(actor, request)
-  const outcome = yield* useTool(actor, {
+  if (kind === 'Query' && matched.effect !== 'read')
+    return yield* refused(
+      'use_tool',
+      { ok: false, reason: 'This display can only read. Use a button to make changes.' },
+      request.summary,
+    )
+  const use = kind === 'Query' ? useQueryTool : useTool
+  const outcome = yield* use(actor, {
     connectionId: matched.connectionId,
     tool: matched.name,
     input: request.input,
@@ -209,6 +221,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
 const dispatch = Effect.fn('Code.dispatch')(function* (
   boundary: CodeBoundary,
   call: typeof WorkerMessage.cases.Call.Type,
+  kind: DisplayToolKind,
 ) {
   const actor = yield* (yield* CodeAuthority).refresh(boundary)
   switch (call.kind) {
@@ -217,8 +230,15 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
       return returned(toolView(yield* findTools(actor, request)), request.query)
     }
     case 'use_tool':
-      return yield* connection(actor, call.input)
+      return yield* connection(actor, call.input, kind)
     case 'browse':
+      // Browser actions lack a read-only effect contract, so an automatic Query cannot use them.
+      if (kind === 'Query')
+        return yield* refused(
+          'browse',
+          { ok: false, reason: 'This display can only read. Use a button to use the browser.' },
+          'Check browser access',
+        )
       return yield* browse(actor, call.input)
     case 'read_page': {
       const request = yield* decodePage(call.input, { onExcessProperty: 'error' })
@@ -236,6 +256,7 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
 
 export interface CodeCallsService {
   readonly bind: (boundary: CodeBoundary) => Dispatch
+  readonly bindQuery: (boundary: CodeBoundary) => Dispatch
 }
 
 /** Binding captures trusted services, not guest input. Refresh occurs inside dispatch, after queuing. */
@@ -271,59 +292,62 @@ export const codeCallsLayer = Layer.effect(
         | PageReader
       >(),
     )
-    return CodeCalls.of({
-      bind: (boundary) =>
-        Effect.fn('Code.boundCall')((call) =>
-          dispatch(boundary, call).pipe(
-            Effect.provide(context),
-            Effect.catchTag('CodeAuthorityRevoked', () =>
-              Effect.succeed(
-                CallOutcome.cases.Blocked.make({
-                  rule: 'The Person can no longer act in this Thread.',
-                  summary: 'Check current authority',
-                }),
-              ),
+    // Both policies share authority refresh and recovery; only automatic display reads restrict effects.
+    const bind = (boundary: CodeBoundary, kind: DisplayToolKind): Dispatch =>
+      Effect.fn('Code.boundCall')((call) =>
+        dispatch(boundary, call, kind).pipe(
+          Effect.provide(context),
+          Effect.catchTag('CodeAuthorityRevoked', () =>
+            Effect.succeed(
+              CallOutcome.cases.Blocked.make({
+                rule: 'The Person can no longer act in this Thread.',
+                summary: 'Check current authority',
+              }),
             ),
-            Effect.catchTags({
-              SchemaError: () =>
-                refused(
-                  call.kind,
-                  { ok: false, reason: 'The tool arguments are invalid.' },
-                  'Check tool arguments',
-                ),
-              NotFound: () =>
-                refused(
-                  call.kind,
-                  { ok: false, reason: 'That tool is not available here.' },
-                  'Find the tool',
-                ),
-              InvalidRequest: () =>
-                refused(
-                  call.kind,
-                  { ok: false, reason: 'The request was refused.' },
-                  'Check the request',
-                ),
-              Conflict: () =>
-                refused(
-                  call.kind,
-                  { ok: false, reason: 'The account changed; discover its tools again.' },
-                  'Check the account',
-                ),
-            }),
-            // Owning adapters report post-dispatch loss as values. Remaining typed errors are
-            // pre-dispatch refusals; defects deliberately bypass this typed recovery.
-            Effect.catch(() =>
+          ),
+          Effect.catchTags({
+            SchemaError: () =>
               refused(
                 call.kind,
-                { ok: false, reason: 'The service is unavailable. No action was sent.' },
-                'Check service availability',
+                { ok: false, reason: 'The tool arguments are invalid.' },
+                'Check tool arguments',
               ),
+            NotFound: () =>
+              refused(
+                call.kind,
+                { ok: false, reason: 'That tool is not available here.' },
+                'Find the tool',
+              ),
+            InvalidRequest: () =>
+              refused(
+                call.kind,
+                { ok: false, reason: 'The request was refused.' },
+                'Check the request',
+              ),
+            Conflict: () =>
+              refused(
+                call.kind,
+                { ok: false, reason: 'The account changed; discover its tools again.' },
+                'Check the account',
+              ),
+          }),
+          // Owning adapters report post-dispatch loss as values. Remaining typed errors are
+          // pre-dispatch refusals; defects deliberately bypass this typed recovery.
+          Effect.catch(() =>
+            refused(
+              call.kind,
+              { ok: false, reason: 'The service is unavailable. No action was sent.' },
+              'Check service availability',
             ),
-            // Tool/Page/Device refusals and Gate Blocked decisions are recorded by their owners.
-            // CodeAuthorityRevoked also returns Blocked, but has no Gate decision and no matching
-            // Refusal case; authority revocation remains unrecorded in this vocabulary.
           ),
+          // Tool/Page/Device refusals and Gate Blocked decisions are recorded by their owners.
+          // CodeAuthorityRevoked also returns Blocked, but has no Gate decision and no matching
+          // Refusal case; authority revocation remains unrecorded in this vocabulary.
         ),
+      )
+    return CodeCalls.of({
+      bind: (boundary) => bind(boundary, 'Mutation'),
+      bindQuery: (boundary) => bind(boundary, 'Query'),
     })
   }),
 )

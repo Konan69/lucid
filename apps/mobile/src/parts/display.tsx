@@ -5,28 +5,42 @@ import {
   type ActionEvent,
   type McpClientLike,
   type ParseResult,
+  type OpenUIError,
 } from '@openuidev/react-lang'
+import type { ThreadId } from '@vivid/contracts'
 import { StyleSheet, View } from 'react-native'
 import { Option } from 'effect'
-import { callDisplayTool, displayToolAnswer, feed, said, writtenTools } from '@vivid/state'
+import {
+  callDisplayTool,
+  displayToolAnswer,
+  feed,
+  said,
+  displayTools,
+  type DisplayTools,
+} from '@vivid/state'
 import { useRef } from 'react'
 import { useLiveData, type LiveData } from '../data/live'
 import { Recover } from '../ui/Recover'
 import { Label } from '../ui/ui'
 import { library } from './library'
 
-/** One parser for every display: it only reads which tools a program writes with. */
+/** The parser supplies call intent and detects ambiguous automatic/button programs. */
 const parser = createParser(library.toJSONSchema(), 'Col')
 
 /**
- * The tools a display may call: the Person's own Integrations, named `tool@account` as Vivid
- * found them, run through the server for the Person looking at it. The web's `Display` does the
- * same; a `Query` that would change anything is refused there.
+ * Displays call named Integrations or run_code in their own Thread. The shared adapter keeps
+ * automatic programs read-only and returns OpenUI's error shape, exactly as on the web.
  */
-function integrations(run: LiveData['run'], writes: ReadonlySet<string>): McpClientLike {
+function integrations(
+  run: LiveData['run'],
+  tools: DisplayTools,
+  thread: Option.Option<ThreadId>,
+): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
-      run(callDisplayTool(name, Option.fromUndefinedOr(given), writes)).then(displayToolAnswer),
+      run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, thread)).then(
+        displayToolAnswer,
+      ),
   }
 }
 
@@ -47,13 +61,17 @@ function integrations(run: LiveData['run'], writes: ReadonlySet<string>): McpCli
  * whole app, and every launch reopened the same Thread and closed it again (21 Oct 2026).
  */
 export function Display({
+  thread,
   text,
   arriving,
   live,
   onSay,
   onState,
   initial,
+  onError,
 }: {
+  /** The owning Thread, when this display has one. */
+  thread: Option.Option<ThreadId>
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
   /** Whether more of it is still to come. */
@@ -69,6 +87,8 @@ export function Display({
   onState?: (chosen: feed.Chosen) => void
   /** Choices to start from, for a card drawn again after being scrolled away. */
   initial?: feed.Chosen
+  /** OpenUI reports Query/Mutation failures here; presentation belongs to the surface owner. */
+  onError?: (errors: OpenUIError[]) => void
 }) {
   const data = useLiveData()
   // The program's declared defaults, from its latest reading; only read when a change arrives.
@@ -110,7 +130,8 @@ export function Display({
           onParseResult={read}
           initialState={initial}
           onStateUpdate={changed}
-          toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
+          onError={onError}
+          toolProvider={integrations(data.run, displayTools(parser.parse(text)), thread)}
         />
       </Recover>
     </View>

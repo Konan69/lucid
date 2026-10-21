@@ -11,6 +11,7 @@ import {
   ProposedAction,
   ServiceAuthorization,
   ToolOutcome,
+  DisplayApprovalUnsupported,
   Workspace,
   type FindToolsRequest,
   type OfferConnectionRequest,
@@ -18,6 +19,7 @@ import {
   type Service,
   type UseDisplayToolRequest,
   type UseToolRequest,
+  type DisplayToolKind,
 } from '@vivid/contracts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { requireCompany, type Actor } from '../auth/access.ts'
@@ -29,6 +31,7 @@ import {
   ExecutorCallOutcome,
   ExecutorTool,
   ExecutorResourceMissing,
+  ExecutorApprovalUnsupported,
   connectionSetupMessage,
   resourceReason,
 } from './executor.ts'
@@ -51,6 +54,7 @@ const NamedTool = ExecutorTool.pipe(
 )
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
+const isApprovalUnsupported = Schema.is(ExecutorApprovalUnsupported)
 
 /** Distinct query words prevent repeated tokens from inflating relevance. */
 const words = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
@@ -340,12 +344,17 @@ export const runConnection = Effect.fn('Connections.run')(
     const executor = yield* Executor
     const outcome = yield* executor
       .call({ references: row.references, tool: target.tool, input: target.input })
-      .pipe(Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))))
+      .pipe(
+        Effect.mapError((error) =>
+          isResourceMissing(error) || isApprovalUnsupported(error) ? error : executorFailure(error),
+        ),
+      )
     return yield* ExecutorCallOutcome.match<
       Effect.Effect<
         ToolOutcome,
         | import('@vivid/contracts').NotFound
         | ReturnType<typeof executorFailure>
+        | ExecutorApprovalUnsupported
         | import('@vivid/contracts').Conflict
         | import('../database/client.ts').DatabaseInfrastructureError,
         ConnectionStore
@@ -540,9 +549,10 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
 })
 
 /** Tool refusals are data; permission and effect come from ownership and provider metadata. */
-export const useTool = Effect.fn('Connections.useTool')(function* (
+const useToolAs = Effect.fn('Connections.useTool')(function* (
   actor: Actor,
   request: UseToolRequest,
+  kind: DisplayToolKind,
 ) {
   const prepared = yield* prepareTool(actor, request)
   if (Result.isFailure(prepared)) {
@@ -553,6 +563,13 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     return toolAdmissionOutcome(prepared.failure)
   }
   const { row, tool } = prepared.success
+  // Discovery may change after name resolution. Recheck at the last admission before the Gate.
+  if (kind === 'Query' && tool.effect !== 'read') {
+    yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'use_tool' }))
+    return ToolOutcome.cases.Rejected.make({
+      message: 'This display can only read. Use a button to make changes.',
+    })
+  }
   // An Approval names the account as discovery named it to Vivid, so the Person is asked about
   // "Gmail (Work)" and never about a bare "Gmail" that could be either of two.
   const named = namedAccounts(yield* (yield* ConnectionStore).records(actor)).find(
@@ -586,8 +603,18 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
         }),
       ),
     Allowed: () => runConnection(actor, row, target),
-  })
+  }).pipe(
+    Effect.catchTag('ExecutorApprovalUnsupported', (error) => Effect.fail(executorFailure(error))),
+  )
 })
+
+/** Vivid's regular calls retain their existing Gate policy. */
+export const useTool = (actor: Actor, request: UseToolRequest) =>
+  useToolAs(actor, request, 'Mutation')
+
+/** Automatic display programs require a read effect at final admission, even after rediscovery. */
+export const useQueryTool = (actor: Actor, request: UseToolRequest) =>
+  useToolAs(actor, request, 'Query')
 
 /**
  * A display's own call into one of the Person's Integrations (OpenUI's `Query` and `Mutation`,
@@ -629,6 +656,10 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
       tool: tool.name,
       input: request.input,
     }),
+  ).pipe(
+    Effect.catchTag('ExecutorApprovalUnsupported', () =>
+      Effect.fail(new DisplayApprovalUnsupported({})),
+    ),
   )
 })
 
@@ -709,6 +740,12 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         Conflict: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
         InvalidRequest: ({ message }) =>
           Effect.succeed(ActionOutcome.cases.Failed.make({ reason: message })),
+        ExecutorApprovalUnsupported: () =>
+          Effect.succeed(
+            ActionOutcome.cases.Failed.make({
+              reason: 'This Integration action needs an approval Vivid cannot give yet.',
+            }),
+          ),
       }),
     ),
 )

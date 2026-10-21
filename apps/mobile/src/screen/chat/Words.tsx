@@ -1,3 +1,4 @@
+import type { ThreadId } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { stretches } from '@vivid/state'
 import { memo, useState } from 'react'
@@ -73,11 +74,13 @@ const Finished = memo(Formatted)
  * fills itself in (`arriving`), as the web's does.
  */
 export function Reply({
+  thread,
   text,
   streaming,
   live,
   onSay,
 }: {
+  thread: Option.Option<ThreadId>
   text: string
   streaming: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
@@ -92,6 +95,7 @@ export function Reply({
           <Finished key={stretch.from} text={stretch.text} fresh={fresh} />
         ) : (
           <Display
+            thread={thread}
             key={stretch.from}
             text={stretch.text}
             arriving={!stretch.whole}

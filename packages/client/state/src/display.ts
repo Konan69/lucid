@@ -1,6 +1,12 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import { ToolOutcome } from '@vivid/contracts'
-import { Effect, Option, Predicate, Result, Schema } from 'effect'
+import {
+  CodeFailure,
+  CodeOutcome,
+  RunCodeRequest,
+  ToolOutcome,
+  type ThreadId,
+} from '@vivid/contracts'
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect'
 
 /**
  * A display is part of Vivid's reply: a short program in OpenUI Lang. Each surface draws it with
@@ -283,17 +289,17 @@ export function said(pressed: string, formState: FormState): string {
   return [pressed, ...lines].join('\n')
 }
 
-/** One statement of a display that writes, as OpenUI's parser reports it: the tool it names. */
+/** A Query or Mutation's name expression, as OpenUI's parser reports it. */
 interface WritingStatement {
   readonly toolAST: { readonly k: string; readonly v?: unknown } | null
 }
 
 /**
  * The tools a display names in a `Mutation`. OpenUI's renderer calls the same provider for a
- * `Query` and a `Mutation`, so the surface tells them apart from the program itself: a tool named
- * here is run only when the Person presses the button that runs it.
+ * `Query` and a `Mutation`, so the surface derives intent from declarations. Programs declared in
+ * both forms are refused separately because these names alone cannot prove invocation intent.
  */
-export const writtenTools = (parsed: {
+const writtenTools = (parsed: {
   readonly mutationStatements: ReadonlyArray<WritingStatement>
 }): ReadonlySet<string> =>
   new Set(
@@ -305,6 +311,27 @@ export const writtenTools = (parsed: {
         : [],
     ),
   )
+
+/** OpenUI omits invocation intent, so automatic program reads must never inherit button authority. */
+export interface DisplayTools {
+  readonly writes: ReadonlySet<string>
+  readonly queriesProgram: boolean
+}
+
+/** An unresolved Query name might evaluate to run_code; conservatively treat it as an automatic program. */
+export const displayTools = (parsed: {
+  readonly mutationStatements: ReadonlyArray<WritingStatement>
+  readonly queryStatements: ReadonlyArray<WritingStatement>
+}): DisplayTools => ({
+  writes: writtenTools(parsed),
+  queriesProgram: parsed.queryStatements.some(
+    (statement) =>
+      statement.toolAST === null ||
+      statement.toolAST.k !== 'Str' ||
+      !Predicate.isString(statement.toolAST.v) ||
+      statement.toolAST.v === 'run_code',
+  ),
+})
 
 /**
  * What OpenUI's renderer reads back from a tool: MCP's shape, which it unwraps itself. Its
@@ -323,7 +350,7 @@ const failed = (text: string): DisplayToolResult => ({
 
 /**
  * The server's answer to a display's call, as the renderer reads it. Only a completed call has
- * data; every other outcome is an error whose words the display can show (`result.error`).
+ * data; every other outcome reaches OpenUI's error API and a Mutation's `result.error`.
  */
 export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
   ToolOutcome.match(outcome, {
@@ -331,14 +358,51 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
       content: [{ type: 'text', text: JSON.stringify(output) }],
       structuredContent: output,
     }),
-    Rejected: ({ message }) => failed(message),
-    Blocked: ({ rule }) => failed(rule),
-    ApprovalRequired: ({ summary }) => failed(`This needs your approval first: ${summary}`),
-    ConnectionNotReady: ({ serviceName }) => failed(`${serviceName} needs to be connected again.`),
+    Rejected: () =>
+      failed('The Integration rejected this request. Check the information and try again.'),
+    Blocked: () => failed('A rule prevents this action.'),
+    ApprovalRequired: () => failed('This needs your approval in the Thread.'),
+    ConnectionNotReady: () => failed('This Integration needs to be connected again.'),
     OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
   })
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
+const decodeProgram = Schema.decodeUnknownEffect(RunCodeRequest)
+
+/** A Feed display without a Thread cannot borrow authority from the currently open conversation. */
+export class DisplayThreadRequired extends Schema.TaggedError<DisplayThreadRequired>()(
+  'DisplayThreadRequired',
+  {},
+  { title: 'Display Thread required' },
+) {}
+
+/** A single provider name cannot prove whether OpenUI invoked its Query or its Mutation. */
+export class DisplayProgramAmbiguous extends Schema.TaggedError<DisplayProgramAmbiguous>()(
+  'DisplayProgramAmbiguous',
+  {},
+  { title: 'Display program intent is ambiguous' },
+) {}
+
+/** Program errors may contain input or credentials; only their typed category reaches the reader. */
+const programFailure = (failure: CodeFailure): string =>
+  CodeFailure.match(failure, {
+    Threw: () => 'The program failed. Ask Vivid to fix it.',
+    TimedOut: () => 'The program took too long and was stopped.',
+    OverLimit: ({ limit }) =>
+      `The program exceeded its ${limit} limit. Ask Vivid to do less at once.`,
+    Unavailable: () => 'Your Computer is unavailable. Open it and try again.',
+  })
+
+/** The program's return value is the display's data; logs and execution receipts stay separate. */
+export const displayCodeResult = (outcome: CodeOutcome): DisplayToolResult =>
+  CodeOutcome.match(outcome, {
+    Completed: ({ result }) =>
+      displayToolResult(ToolOutcome.cases.Completed.make({ output: result })),
+    ApprovalRequired: () => failed('This needs your approval in the Thread.'),
+    Blocked: () => failed('A rule prevents this action.'),
+    Failed: ({ failure }) => failed(programFailure(failure)),
+    OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
+  })
 
 /**
  * One call a display makes into the Person's Integrations, as OpenUI's renderer asks for it: a
@@ -347,22 +411,69 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 export const callDisplayTool = Effect.fn('Display.callTool')(function* (
   name: string,
   given: Option.Option<FormState>,
-  writes: ReadonlySet<string>,
+  tools: DisplayTools,
+  thread: Option.Option<ThreadId>,
 ) {
   const client = yield* VividRpcClient
+  const kind = tools.writes.has(name) ? 'Mutation' : 'Query'
+  if (name === 'run_code') {
+    if (tools.queriesProgram && tools.writes.has(name))
+      return yield* new DisplayProgramAmbiguous({})
+    if (Option.isNone(thread)) return yield* new DisplayThreadRequired({})
+    const request = yield* decodeProgram(
+      Option.getOrElse(given, () => ({})),
+      {
+        onExcessProperty: 'error',
+      },
+    )
+    return displayCodeResult(
+      yield* client.RunDisplayCode({ ...request, thread: thread.value, kind }),
+    )
+  }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
-  return yield* client.UseDisplayTool({
-    name,
-    input,
-    kind: writes.has(name) ? 'Mutation' : 'Query',
-  })
+  return displayToolResult(
+    yield* client.UseDisplayTool({
+      name,
+      input,
+      kind,
+    }),
+  )
 })
 
-/** The answer a surface hands back to the renderer: the server's outcome, or that none came. */
-export const displayToolAnswer = <Failure>(
-  answered: Result.Result<ToolOutcome, Failure>,
+/** A closed failure vocabulary preserves server refusals instead of replacing them with transport copy. */
+type DisplayToolFailure = Effect.Error<ReturnType<typeof callDisplayTool>>
+const displayFailure = Match.type<DisplayToolFailure>().pipe(
+  Match.tagsExhaustive({
+    DisplayApprovalUnsupported: () =>
+      'This Integration needs an approval Vivid cannot provide yet.',
+    DisplayThreadRequired: () => 'Open this display in its Thread to run the program.',
+    DisplayProgramAmbiguous: () =>
+      'This display mixes automatic programs with button actions. Ask Vivid to use separate displays.',
+    SchemaError: () => 'This display sent invalid information. Ask Vivid to fix it.',
+    NotFound: () => 'This Thread or Integration is no longer available to you.',
+    Forbidden: () => 'You do not have permission to run this display.',
+    Unauthenticated: () => 'Sign in again to use this display.',
+    Conflict: () => 'The Integration changed. Refresh this display and try again.',
+    InvalidRequest: () => 'This display sent a request Vivid could not accept.',
+    RuntimeUnavailable: () => 'Vivid is unavailable. Try again shortly.',
+    ServiceUnavailable: ({ service }) =>
+      ({
+        computer: 'Your Computer is unavailable. Open it and try again.',
+        connections: 'The Integration is unavailable. Try again shortly.',
+        memory: 'Vivid could not read its memory. Try again shortly.',
+      })[service],
+    DatabaseUnavailable: () => 'Vivid could not read the saved information. Try again shortly.',
+    DatabaseFailure: () => 'Vivid could not read the saved information. Try again shortly.',
+    DatabaseConstraintViolation: () => 'The saved information changed. Refresh and try again.',
+    RpcClientError: () => 'Vivid could not be reached. Check your internet and try again.',
+  }),
+)
+
+/** MCP errors enter OpenUI's Query/Mutation `.error` and Renderer.onError, without exposing raw failures. */
+export const displayToolAnswer = (
+  answered: Result.Result<DisplayToolResult, DisplayToolFailure>,
 ): DisplayToolResult =>
   Result.match(answered, {
-    onSuccess: displayToolResult,
-    onFailure: () => failed('Vivid could not reach this.'),
+    onSuccess: (result) => result,
+    onFailure: (failure) => failed(displayFailure(failure)),
   })

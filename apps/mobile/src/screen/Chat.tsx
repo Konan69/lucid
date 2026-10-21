@@ -1413,7 +1413,7 @@ function Transcript(props: MessagesProps) {
             {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
             <View style={{ height: HANG }} />
             <Rows
-              messages={messages}
+              {...{ thread: id, messages }}
               lines={model.linesOf(messages.map(spokenOf), requestsOf(props.detail))}
               known={known}
               around={props.around}
@@ -1598,6 +1598,7 @@ const END_ROOM = 10
  * when the message that delivered it turns up and gives it its lasting place.
  */
 function Rows({
+  thread,
   messages,
   lines,
   known,
@@ -1608,6 +1609,7 @@ function Rows({
   onContinue,
   onRow,
 }: {
+  thread: ThreadId
   messages: ReadonlyArray<FlueConversationMessage>
   lines: ReadonlyArray<model.Line>
   /** The messages that are not new here (`Transcript`). */
@@ -1644,6 +1646,7 @@ function Rows({
           : placed(
               key,
               <Message
+                thread={thread}
                 message={message}
                 around={around}
                 detail={detail}

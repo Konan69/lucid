@@ -141,13 +141,21 @@ const arrivingTitle = (first: FirstWords): Option.Option<string> =>
   })
 
 /** Keeps card attribution and pending questions tied to the same live Thread snapshot. */
-function contextFor(
-  detail: Option.Option<ThreadDetail>,
-  me: MeResponse['person']['id'],
-  shared: boolean,
-  runs: ThreadContext['runs'],
-): ThreadContext {
+function contextFor({
+  thread,
+  detail,
+  me,
+  shared,
+  runs,
+}: {
+  thread: ThreadId
+  detail: Option.Option<ThreadDetail>
+  me: MeResponse['person']['id']
+  shared: boolean
+  runs: ThreadContext['runs']
+}): ThreadContext {
   return {
+    thread: Option.some(thread),
     me,
     shared,
     runs,
@@ -362,8 +370,8 @@ function Conversation({
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
   const context = useMemo(
-    () => contextFor(detail, me.person.id, shared, runs),
-    [detail, me.person.id, shared, runs],
+    () => contextFor({ thread: id, detail, me: me.person.id, shared, runs }),
+    [id, detail, me.person.id, shared, runs],
   )
   // The hook answers with a new object on every streamed token, so `send` cannot depend on
   // `agent`; it depends on this, which is bound once, when the screen is first drawn. Flue types

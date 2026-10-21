@@ -36,7 +36,13 @@ import {
   WatchListResponse,
   WatchResponse,
 } from './watches.js'
-import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
+import {
+  CodeOutcome,
+  ReadPageOutcome,
+  ReadPageRequest,
+  RunCodeRequest,
+  RunDisplayCodeRequest,
+} from './code.js'
 import {
   AcceptMembershipRequest,
   ChangeRoleRequest,
@@ -108,6 +114,7 @@ import {
   ServiceCatalog,
   ToolOutcome,
   UseDisplayToolRequest,
+  DisplayApprovalUnsupported,
   UseToolRequest,
 } from './connections.js'
 import {
@@ -717,6 +724,7 @@ const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success:
 /** A display's Query or Mutation, run for the Person who is looking at it. */
 const UseDisplayTool = Rpc.make('UseDisplayTool', {
   ...call,
+  error: Schema.Union([RpcFailure, DisplayApprovalUnsupported]),
   payload: UseDisplayToolRequest,
   success: ToolOutcome,
 })
@@ -909,6 +917,12 @@ const UseDesktop = Rpc.make('UseDesktop', {
 // ── What Vivid can do without a Computer ───────────────────────────────────
 /** Runs a program Vivid wrote over the tools it already has. See `RunCodeRequest`. */
 const RunCode = Rpc.make('RunCode', { ...call, payload: RunCodeRequest, success: CodeOutcome })
+/** A Person may run a reply's program only inside a Thread they can currently read. */
+const RunDisplayCode = Rpc.make('RunDisplayCode', {
+  ...call,
+  payload: RunDisplayCodeRequest,
+  success: CodeOutcome,
+})
 /** Reads one public page. Private and local addresses are refused before anything is fetched. */
 const ReadPage = Rpc.make('ReadPage', {
   ...call,
@@ -1066,6 +1080,7 @@ export const VividRpc = RpcGroup.make(
   AnswerDeviceRequestRpc,
   UseDesktop,
   RunCode,
+  RunDisplayCode,
   ReadPage,
   Search,
   ListSuggestions,

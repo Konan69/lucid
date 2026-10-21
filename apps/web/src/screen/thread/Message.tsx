@@ -7,6 +7,7 @@ import {
   type InputRequest,
   type PersonId,
   type Run,
+  type ThreadId,
 } from '@vivid/contracts'
 import {
   asking,
@@ -41,6 +42,7 @@ const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
+  readonly thread: Option.Option<ThreadId>
   readonly me: PersonId
   readonly shared: boolean
   readonly runs: ReadonlyArray<Run>
@@ -387,11 +389,13 @@ function Signal({
  * keeps what the Person picked in it) while the words after it are still coming.
  */
 function Written({
+  thread,
   text,
   fresh,
   live,
   onSay,
 }: {
+  thread: Option.Option<ThreadId>
   text: string
   fresh: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
@@ -403,6 +407,7 @@ function Written({
       <Markdown key={stretch.from} content={stretch.text} fresh={fresh} />
     ) : (
       <Display
+        thread={thread}
         key={stretch.from}
         text={stretch.text}
         arriving={!stretch.whole}
@@ -564,7 +569,13 @@ function FromVivid({
         )}
         {making && <Doing tools={tools} wordless={text.length === 0} />}
         {text.length > 0 && (
-          <Written text={drawnText} fresh={fresh} live={latest && !working} onSay={onContinue} />
+          <Written
+            thread={context.thread}
+            text={drawnText}
+            fresh={fresh}
+            live={latest && !working}
+            onSay={onContinue}
+          />
         )}
         {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
         {!making && <Trail tools={tools} />}

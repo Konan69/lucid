@@ -350,6 +350,13 @@ export const UseDisplayToolRequest = Schema.Struct({
 })
 export interface UseDisplayToolRequest extends Schema.Schema.Type<typeof UseDisplayToolRequest> {}
 
+/** A provider's separate approval step cannot be supplied by pressing a display button. */
+export class DisplayApprovalUnsupported extends Schema.TaggedError<DisplayApprovalUnsupported>()(
+  'DisplayApprovalUnsupported',
+  {},
+  { title: 'Display approval unsupported' },
+) {}
+
 /**
  * What came of the request. Every variant is something Vivid can act on truthfully: use the
  * output, wait for a decision, offer the Connection, or tell the Person it may not.

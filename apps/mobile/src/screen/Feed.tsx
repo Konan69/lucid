@@ -154,6 +154,7 @@ export function Feed() {
             ),
             Working: ({ item }) => (
               <Card
+                thread={Option.some(item.thread)}
                 from={item.from}
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
@@ -237,6 +238,7 @@ function Waiting({
         </Label>
       )}
       <Card
+        thread={Option.some(item.thread)}
         from={item.from}
         at={item.at}
         post={post}
@@ -270,6 +272,7 @@ function Waiting({
  * still works and the buttons' words follow it (`feed.fill`).
  */
 function Card({
+  thread,
   from,
   at,
   post,
@@ -279,6 +282,7 @@ function Card({
   remember,
   onOpen,
 }: {
+  thread: Option.Option<ThreadId>
   from: string
   at: number
   post: Option.Option<FeedPost>
@@ -356,6 +360,7 @@ function Card({
           }}
         >
           <Display
+            thread={thread}
             text={display.value}
             arriving={false}
             live={false}

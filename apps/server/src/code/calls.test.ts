@@ -10,6 +10,8 @@ import {
   CodeCallKind,
   BrowseTarget,
   BrowserAction,
+  SessionId,
+  type DisplayToolKind,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -31,8 +33,13 @@ import {
   computerStoreLayer,
 } from '../computers/store.ts'
 import { Executor, ExecutorCallOutcome } from '../connections/executor.ts'
-import { ConnectionStore } from '../connections/store.ts'
-import { ConnectionProbe, connectionTestLayer, serviceId } from '../connections/testing.ts'
+import { ConnectionStore, ToolDiscovery } from '../connections/store.ts'
+import {
+  ConnectionProbe,
+  connectionTestLayer,
+  readTool,
+  serviceId,
+} from '../connections/testing.ts'
 import { ApprovalStore } from '../approvals/store.ts'
 import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
 import { RuleStore } from '../rules/store.ts'
@@ -81,6 +88,21 @@ const run = Effect.fn('Test.RunCode')((actor: Actor, thread: ThreadId, code: str
     ),
 )
 
+/** Display authority comes from the reader's session, never Vivid's private Run token. */
+const runDisplay = Effect.fn('Test.RunDisplayCode')(
+  (actor: Actor, thread: ThreadId, kind: DisplayToolKind, code: string) =>
+    codeHandlers.RunDisplayCode({ code, summary: 'Work with records', thread, kind }).pipe(
+      Effect.provideService(
+        AuthContext,
+        AuthState.Person({
+          person: actor.person,
+          workspace: actor.workspace,
+          sessionId: SessionId.make('display-reader-session'),
+        }),
+      ),
+    ),
+)
+
 /** Connection credentials are replaced at their external adapter; all tenancy, Gate and Approval SQL is real. */
 describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
@@ -96,6 +118,197 @@ describe.skipIf(!testDatabaseConfigured)(
         codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
       ),
     )((it) => {
+      /** Run the actual Node program and CodeCalls resolver; refusal must precede Gate and dispatch. */
+      it.effect(
+        'a display Query refuses a writing Integration call without sending it or creating an Approval',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              yield* (yield* ConnectionStore).begin(test.personal, {
+                from: 'Web',
+                service: serviceId,
+                name: null,
+                shared: false,
+              })
+              const outcome = yield* runDisplay(
+                test.personal,
+                test.personalId,
+                'Query',
+                `return await ${use('write')};`,
+              )
+              expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+              expect(outcome).toMatchObject({
+                result: {
+                  ok: false,
+                  reason: 'This display can only read. Use a button to make changes.',
+                },
+                calls: [{ kind: 'use_tool', end: 'refused' }],
+              })
+              expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+              expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
+            }),
+            testLayer,
+          ),
+      )
+
+      it.effect(
+        'a display Query rechecks the effect when discovery changes after name resolution',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const store = yield* ConnectionStore
+              yield* store.begin(test.personal, {
+                from: 'Web',
+                service: serviceId,
+                name: null,
+                shared: false,
+              })
+              const discoveries = yield* Ref.make(0)
+              const changing = ConnectionStore.of({
+                ...store,
+                tools: Effect.fn('Test.changingDiscovery')(function* () {
+                  const count = yield* Ref.updateAndGet(discoveries, (value) => value + 1)
+                  return ToolDiscovery.cases.Ready.make({
+                    tools: [{ ...readTool, effect: count === 1 ? 'read' : 'write' }],
+                  })
+                }),
+              })
+              const outcome = yield* withCalls(
+                runDisplay(test.personal, test.personalId, 'Query', `return await ${use('read')};`),
+                Layer.fresh(codeCallsLayer),
+              ).pipe(Effect.provideService(ConnectionStore, changing))
+              expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+              expect(outcome).toHaveProperty('result', {
+                ok: false,
+                reason: 'This display can only read. Use a button to make changes.',
+                problems: [],
+              })
+              expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+              expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
+            }),
+            testLayer,
+          ),
+      )
+
+      it.effect('a display Mutation still asks the Gate before a writing Integration call', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            yield* (yield* ConnectionStore).begin(test.personal, {
+              from: 'Web',
+              service: serviceId,
+              name: null,
+              shared: false,
+            })
+            const outcome = yield* runDisplay(
+              test.personal,
+              test.personalId,
+              'Mutation',
+              `return await ${use('write')};`,
+            )
+            expect(CodeOutcome.guards.ApprovalRequired(outcome)).toBe(true)
+            expect(outcome).toMatchObject({ calls: [{ kind: 'use_tool', end: 'needs approval' }] })
+            expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+            expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
+          }),
+          testLayer,
+        ),
+      )
+
+      for (const kind of ['Query', 'Mutation'] as const) {
+        it.effect(`a display ${kind} returns the program's selected read result`, () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              yield* (yield* ConnectionStore).begin(test.personal, {
+                from: 'Web',
+                service: serviceId,
+                name: null,
+                shared: false,
+              })
+              const outcome = yield* runDisplay(
+                test.personal,
+                test.personalId,
+                kind,
+                `return await ${use('read')};`,
+              )
+              expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+              expect(outcome).toMatchObject({ result: { ok: true }, calls: [{ end: 'completed' }] })
+              expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(1)
+            }),
+            testLayer,
+          ),
+        )
+        it.effect(`a display ${kind} refuses a reader outside the Thread audience`, () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const failure = yield* runDisplay(
+                test.other,
+                test.personalId,
+                kind,
+                'return "must not run";',
+              ).pipe(Effect.flip)
+              expect(failure).toHaveProperty('_tag', 'NotFound')
+            }),
+            testLayer,
+          ),
+        )
+      }
+
+      it.effect('a display Query refuses browser actions before using the Computer browser', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const outcome = yield* runDisplay(
+              test.personal,
+              test.personalId,
+              'Query',
+              'return await tools.browse({});',
+            )
+            expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+            expect(outcome).toMatchObject({
+              result: {
+                ok: false,
+                reason: 'This display can only read. Use a button to use the browser.',
+              },
+              calls: [{ kind: 'browse', end: 'refused' }],
+            })
+          }),
+          testLayer,
+        ),
+      )
+
+      it.effect('Vivid cannot invoke the reader-only display RPC', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const failure = yield* codeHandlers
+              .RunDisplayCode({
+                code: 'return 1',
+                summary: 'Read',
+                thread: test.personalId,
+                kind: 'Query',
+              })
+              .pipe(
+                Effect.provideService(
+                  AuthContext,
+                  AuthState.Vivid({
+                    person: test.personal.person,
+                    workspace: test.personal.workspace,
+                    threadId: test.personalId,
+                  }),
+                ),
+                Effect.flip,
+              )
+            expect(failure).toHaveProperty('_tag', 'Forbidden')
+          }),
+          testLayer,
+        ),
+      )
+
       it.effect(
         'composes real named Connection calls and a gated Computer command with only selected results returned',
         () =>
