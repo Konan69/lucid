@@ -28,8 +28,10 @@ import { library } from './library'
 const parser = createParser(library.toJSONSchema(), 'Col')
 
 /**
- * Displays call named Integrations or run_code in their own Thread. The shared adapter keeps
- * automatic programs read-only and returns OpenUI's error shape, exactly as on the web.
+ * Displays call named Integrations or run_code in their own Thread. The shared adapter lets an
+ * automatic program, one that runs when the display draws, call no Integration that writes, no
+ * browser and no page read; its run_code is still real JavaScript and can write local files or
+ * reach the network. It returns OpenUI's error shape, exactly as on the web.
  */
 function integrations(run: LiveData['run'], tools: DisplayTools, thread: ThreadId): McpClientLike {
   return {
