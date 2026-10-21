@@ -12,7 +12,17 @@ export async function browser(state) {
   const executable = process.env.VIVID_VERIFY_BROWSER ?? 'agent-browser'
   const namespace = 'v-' + state.run.slice(-8)
   const socketDirectory = '/tmp/vivid-verify-' + state.run.slice(-8)
-  const receipt = { executable, namespace, session: 'v', scratch: state.scratch, socketDirectory }
+  const profile = state.scratch + '/browser-profile'
+  const chrome = process.env.VIVID_VERIFY_CHROME ?? '/opt/google/chrome/chrome'
+  const receipt = {
+    executable,
+    namespace,
+    session: 'v',
+    scratch: state.scratch,
+    socketDirectory,
+    profile,
+    chrome,
+  }
   await json(state.scratch + '/browser.json', receipt)
   await NodeFSP.mkdir(socketDirectory, { mode: 0o700 })
   let sequence = 0
@@ -25,9 +35,9 @@ export async function browser(state) {
         '--session',
         'v',
         '--profile',
-        state.scratch + '/browser-profile',
+        profile,
         '--executable-path',
-        process.env.VIVID_VERIFY_CHROME ?? '/opt/google/chrome/chrome',
+        chrome,
         ...args,
       ],
       {

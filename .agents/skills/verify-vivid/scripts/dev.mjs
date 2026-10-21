@@ -6,24 +6,29 @@ const project = process.cwd()
 const require = NodeModule.createRequire(NodePath.join(project, 'package.json'))
 const vite = await import(require.resolve('vite'))
 
-/** Public Vite createServer/listen use the shipped web configuration with isolated caches.
- * apps/web/vite.config.ts also calls loadEnv(mode, process.cwd(), 'VIVID_') directly, outside
- * Vite's envDir option. An empty owned cwd isolates that call; explicit root keeps all actual
- * web source, manifest, plugins and tsconfig resolution on main's unchanged configuration.
- * No SDK internals or application files are patched. */
+/** Use the shipped build and preview configuration, with all output under disposable scratch.
+ * A cold dev graph serves thousands of modules and can time out before the first browser paint.
+ * The config also calls loadEnv against cwd; an empty owned cwd isolates that explicit read.
+ * Explicit root retains the actual source, plugins and tsconfig. No frontend source is patched. */
 const environment = NodePath.join(scratch, 'web-env')
 await NodeFSP.mkdir(environment, { recursive: true })
 process.chdir(environment)
-const server = await vite.createServer({
+const config = {
   root: project,
   configFile: NodePath.join(project, 'vite.config.ts'),
   envDir: false,
-  cacheDir: NodePath.join(scratch, role + '-cache'),
-  server: { host: '127.0.0.1', port: Number(port), strictPort: true },
-})
-await server.listen()
-process.send({ _tag: 'Ready', role })
-process.on('SIGTERM', async () => {
-  await server.close()
-  process.exit(0)
-})
+  cacheDir: NodePath.join(scratch, 'web-cache'),
+  build: { outDir: NodePath.join(scratch, 'web-dist'), emptyOutDir: true },
+}
+if (role === 'build') await vite.build(config)
+else {
+  const server = await vite.preview({
+    ...config,
+    preview: { host: '127.0.0.1', port: Number(port), strictPort: true },
+  })
+  process.send({ _tag: 'Ready', role })
+  process.on('SIGTERM', async () => {
+    await server.close()
+    process.exit(0)
+  })
+}

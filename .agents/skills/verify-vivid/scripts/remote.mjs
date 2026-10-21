@@ -12,11 +12,23 @@ export async function remoteCleanup(state, execute) {
     browser.scratch !== state.scratch ||
     browser.namespace !== 'v-' + state.run.slice(-8) ||
     browser.session !== 'v' ||
+    browser.profile !== state.scratch + '/browser-profile' ||
     browser.socketDirectory !== '/tmp/vivid-verify-' + state.run.slice(-8)
   )
     throw new Error('Browser ownership mismatch')
   await execute(
-    [browser.executable, '--namespace', browser.namespace, '--session', browser.session, 'close'],
+    [
+      browser.executable,
+      '--namespace',
+      browser.namespace,
+      '--session',
+      browser.session,
+      '--profile',
+      browser.profile,
+      '--executable-path',
+      browser.chrome,
+      'close',
+    ],
     {
       env: {
         PATH: process.env.PATH,

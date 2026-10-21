@@ -252,6 +252,12 @@ async function launch() {
   await json(state.evidence + '/runtime-health.json', runtimeValue)
   if (runtimeValue.model !== 'rehearsal/script' || runtimeValue.status !== 'ok')
     throw new Error('Rehearsal runtime health refused')
+  await run([process.execPath, skill + '/scripts/dev.mjs', 'build', state.scratch], {
+    cwd: root + '/apps/web',
+    env: { ...cleanEnv, VIVID_SERVER_URL: state.server },
+    heavy: true,
+    log: state.evidence + '/web-build.json',
+  })
   const web = await own(
     'web',
     [process.execPath, skill + '/scripts/dev.mjs', 'web', state.scratch, String(state.ports.web)],
