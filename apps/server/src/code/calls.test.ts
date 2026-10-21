@@ -25,6 +25,7 @@ import type { Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { Database } from '../database/client.ts'
+import { auditEntries } from '../audit/tables.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { absentMachineLayer } from '../computers/testing.ts'
@@ -296,6 +297,57 @@ describe.skipIf(!testDatabaseConfigured)(
           ),
       )
 
+      /** Existing audit attribution keeps Vivid authorship and the reader responsible for the call. */
+      it.effect(
+        'attributes a shared Thread display action to Vivid for the triggering Person',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const database = yield* Database
+              yield* database.run(
+                database
+                  .update(threads)
+                  .set({ audience: 'company' })
+                  .where(eq(threads.id, test.companyId)),
+              )
+              yield* (yield* ConnectionStore).begin(test.owner, {
+                from: 'Web',
+                service: serviceId,
+                name: null,
+                shared: false,
+              })
+              yield* (yield* RuleStore).create(test.owner, {
+                action: 'Never update records',
+                decision: 'Never',
+                scope: RuleScope.cases.Personal.make({}),
+              })
+              const outcome = yield* runDisplay(
+                test.owner,
+                test.companyId,
+                'Mutation',
+                `return await ${use('write')};`,
+              )
+              expect(outcome).toMatchObject({ _tag: 'Blocked' })
+              const rows = yield* database.run(
+                database
+                  .select()
+                  .from(auditEntries)
+                  .where(eq(auditEntries.threadId, test.companyId)),
+              )
+              expect(rows).toHaveLength(1)
+              expect(rows[0]).toMatchObject({
+                personId: test.owner.person.id,
+                by: 'vivid',
+                threadId: test.companyId,
+                event: { _tag: 'ActionBlocked' },
+              })
+              expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+            }),
+            testLayer,
+          ),
+      )
+
       /** Real source and audience checks wrap a supervisor observed only at its Computer adapter. */
       it.effect(
         'deduplicates display renders, returns Busy at their limit and preserves RunCode capacity',
@@ -346,12 +398,18 @@ describe.skipIf(!testDatabaseConfigured)(
                 return fiber
               })
               const first = yield* start('Query', 'return 1;')
+              yield* Effect.logInfo("const first = yield* start('Query', 'return 1;')")
               expect(yield* Queue.take(opened)).toBe(1)
               const duplicate = yield* start('Query', 'return 1;')
+              yield* Effect.logInfo("const duplicate = yield* start('Query', 'return 1;')")
               const second = yield* start('Query', 'return 2;')
+              yield* Effect.logInfo("const second = yield* start('Query', 'return 2;')")
               expect(yield* Queue.take(opened)).toBe(2)
               // Intent differs even with identical code. It must not borrow the automatic result.
               const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
+              yield* Effect.logInfo(
+                "const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))",
+              )
               expect(busy).toMatchObject({
                 _tag: 'Failed',
                 failure: {
@@ -365,6 +423,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 Effect.forkChild,
               )
               expect(yield* Queue.take(opened)).toBe(3)
+              yield* Effect.logInfo('expect(yield* Queue.take(opened)).toBe(3)')
               // Vivid alone owns its Thread slot; the display pool did not claim it.
               expect(
                 yield* run(test.personal, test.personalId, 'return 4;').pipe(
@@ -372,7 +431,11 @@ describe.skipIf(!testDatabaseConfigured)(
                 ),
               ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
               yield* Deferred.succeed(release, undefined)
+              yield* Effect.logInfo('yield* Deferred.succeed(release, undefined)')
               expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })
+              yield* Effect.logInfo(
+                "expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })",
+              )
               expect(yield* Fiber.join(duplicate)).toMatchObject({ _tag: 'Completed', result: 1 })
               expect(yield* Fiber.join(second)).toMatchObject({ _tag: 'Completed', result: 2 })
               expect(yield* Fiber.join(vivid)).toMatchObject({ _tag: 'Completed', result: 3 })
