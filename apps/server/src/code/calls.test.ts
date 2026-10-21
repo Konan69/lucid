@@ -11,11 +11,14 @@ import {
   BrowseTarget,
   BrowserAction,
   SessionId,
+  DisplaySource,
+  FeedCardId,
+  type RunDisplayCodeRequest,
   type DisplayToolKind,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Deferred, Effect, Fiber, Layer, Logger, Ref, Result, Schema } from 'effect'
+import { Context, Deferred, Effect, Fiber, Layer, Logger, Queue, Ref, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
@@ -41,13 +44,26 @@ import {
   serviceId,
 } from '../connections/testing.ts'
 import { ApprovalStore } from '../approvals/store.ts'
-import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
+import {
+  fixture,
+  history,
+  textPart,
+  recordRuns,
+  Observation,
+  trustTestLayer,
+} from '../approvals/testing.ts'
+import { Runtime } from '../runtime/client.ts'
+import { FeedStore, feedStoreLayer } from '../feed/store.ts'
+import { feedHandlers } from '../feed/handlers.ts'
+import { cardIdOf } from '../feed/read.ts'
+import { RunOrigin } from '@vivid/contracts'
+import { CodeComputer } from './computer.ts'
 import { RuleStore } from '../rules/store.ts'
 import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './authority.ts'
 import { CodeCalls, codeCallsLayer } from './calls.ts'
 import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
-import { CallOutcome, codeProcessLayer } from './process.ts'
+import { CallOutcome, CodeProcess, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
 import { localCodeComputerLayer } from './testing.ts'
 
@@ -61,7 +77,11 @@ const computers = computerStoreLayer.pipe(
 const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
   Layer.provideMerge(computers),
 )
-const testLayer = codeCallsLayer.pipe(Layer.provideMerge(dependencies))
+const testLayer = codeCallsLayer.pipe(
+  Layer.provideMerge(dependencies),
+  Layer.provideMerge(feedStoreLayer),
+  Layer.provideMerge(Layer.mock(Runtime, history([]))),
+)
 
 /** Acquire Connection probes, approval observations and call bindings per case; their mutable recordings must stay isolated while the enclosing block shares the database and process supervisor. */
 const withCalls = <A, E, R, Services, Failure, Requirements>(
@@ -89,9 +109,9 @@ const run = Effect.fn('Test.RunCode')((actor: Actor, thread: ThreadId, code: str
 )
 
 /** Display authority comes from the reader's session, never Vivid's private Run token. */
-const runDisplay = Effect.fn('Test.RunDisplayCode')(
-  (actor: Actor, thread: ThreadId, kind: DisplayToolKind, code: string) =>
-    codeHandlers.RunDisplayCode({ code, summary: 'Work with records', thread, kind }).pipe(
+const storedDisplay = Effect.fn('Test.StoredDisplay')(
+  (actor: Actor, request: RunDisplayCodeRequest) =>
+    codeHandlers.RunDisplayCode(request).pipe(
       Effect.provideService(
         AuthContext,
         AuthState.Person({
@@ -99,6 +119,32 @@ const runDisplay = Effect.fn('Test.RunDisplayCode')(
           workspace: actor.workspace,
           sessionId: SessionId.make('display-reader-session'),
         }),
+      ),
+    ),
+)
+
+/** Only the external Flue transport is supplied; production source decoding and access checks run. */
+const runDisplay = Effect.fn('Test.RunDisplayCode')(
+  (actor: Actor, thread: ThreadId, kind: DisplayToolKind, code: string) =>
+    storedDisplay(actor, {
+      code,
+      summary: 'Work with records',
+      source: DisplaySource.cases.ThreadMessage.make({ thread, message: 'vivid-display' }),
+      kind,
+    }).pipe(
+      Effect.provide(
+        Layer.mock(
+          Runtime,
+          history([
+            {
+              id: 'vivid-display',
+              role: 'assistant',
+              parts: textPart(
+                `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
+              ),
+            },
+          ]),
+        ),
       ),
     ),
 )
@@ -118,6 +164,230 @@ describe.skipIf(!testDatabaseConfigured)(
         codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
       ),
     )((it) => {
+      /** Source identity selects persisted authorship, never the role or content supplied by a reader. */
+      it.effect(
+        'refuses forged Thread programs, user messages, reasoning and missing messages',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const code = 'return "Only Vivid wrote this";'
+              const source = (message: string) =>
+                DisplaySource.cases.ThreadMessage.make({
+                  thread: test.personalId,
+                  message,
+                })
+              const messages = [
+                {
+                  id: 'vivid',
+                  role: 'assistant',
+                  parts: textPart(
+                    `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`,
+                  ),
+                },
+                { id: 'person', role: 'user', parts: textPart('return "forged";') },
+                {
+                  id: 'thinking',
+                  role: 'assistant',
+                  parts: [{ type: 'reasoning', text: 'return "forged";' }],
+                },
+              ]
+              for (const message of ['vivid', 'person', 'thinking', 'missing']) {
+                const failure = yield* storedDisplay(test.personal, {
+                  source: source(message),
+                  code: 'return "forged";',
+                  summary: 'Read',
+                  kind: 'Query',
+                }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))), Effect.flip)
+                expect(failure).toMatchObject({
+                  _tag: 'DisplayProgramRefused',
+                  message:
+                    "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
+                })
+              }
+              const accepted = yield* storedDisplay(test.personal, {
+                source: source('vivid'),
+                code,
+                summary: 'Read',
+                kind: 'Query',
+              }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))))
+              expect(accepted).toMatchObject({ _tag: 'Completed', result: 'Only Vivid wrote this' })
+            }),
+            testLayer,
+          ),
+      )
+
+      /** Posting uses Vivid's real handler; execution reloads that same persisted card for its reader. */
+      it.effect(
+        'refuses forged Feed programs and other readers, and runs only the stored post',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const database = yield* Database
+              yield* database.run(
+                database
+                  .update(threads)
+                  .set({ place: 'Background' })
+                  .where(eq(threads.id, test.personalId)),
+              )
+              yield* recordRuns(test.personalId, [
+                {
+                  id: 'posting',
+                  personId: test.personal.person.id,
+                  working: true,
+                  origin: RunOrigin.cases.Watch.make({
+                    person: test.summary,
+                    watchName: 'Records',
+                  }),
+                },
+              ])
+              const code = 'return "A stored Feed program";'
+              const display = `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
+              yield* feedHandlers
+                .Post({ title: 'Records', words: 'Read the result', display, actions: [] })
+                .pipe(
+                  Effect.provideService(
+                    AuthContext,
+                    AuthState.Vivid({
+                      person: test.personal.person,
+                      workspace: test.personal.workspace,
+                      threadId: test.personalId,
+                    }),
+                  ),
+                )
+              const request = {
+                source: DisplaySource.cases.FeedPost.make({ post: cardIdOf(test.personalId) }),
+                code,
+                summary: 'Read',
+                kind: 'Query' as const,
+              }
+              expect(
+                yield* storedDisplay(test.personal, { ...request, code: 'return "forged";' }).pipe(
+                  Effect.flip,
+                ),
+              ).toHaveProperty('_tag', 'DisplayProgramRefused')
+              expect(yield* storedDisplay(test.other, request).pipe(Effect.flip)).toHaveProperty(
+                '_tag',
+                'DisplayProgramRefused',
+              )
+              expect(
+                yield* storedDisplay(test.personal, {
+                  ...request,
+                  source: DisplaySource.cases.FeedPost.make({ post: FeedCardId.make('missing') }),
+                }).pipe(Effect.flip),
+              ).toHaveProperty('_tag', 'DisplayProgramRefused')
+              expect(yield* storedDisplay(test.personal, request)).toMatchObject({
+                _tag: 'Completed',
+                result: 'A stored Feed program',
+              })
+              // A follow-up replaces the post. Its predecessor immediately loses execution authority.
+              yield* (yield* FeedStore).post({
+                person: test.personal.person.id,
+                thread: test.personalId,
+                request: { title: 'New', words: 'Changed', display: null, actions: [] },
+              })
+              expect(yield* storedDisplay(test.personal, request).pipe(Effect.flip)).toHaveProperty(
+                '_tag',
+                'DisplayProgramRefused',
+              )
+            }),
+            testLayer,
+          ),
+      )
+
+      /** Real source and audience checks wrap a supervisor observed only at its Computer adapter. */
+      it.effect(
+        'deduplicates display renders, returns Busy at their limit and preserves RunCode capacity',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const computer = yield* CodeComputer
+              const opened = yield* Queue.unbounded<number>()
+              const admitted = yield* Queue.unbounded<void>()
+              const release = yield* Deferred.make<void>()
+              const count = yield* Ref.make(0)
+              const held = CodeComputer.of({
+                open: (person) =>
+                  Effect.gen(function* () {
+                    const index = yield* Ref.updateAndGet(count, (n) => n + 1)
+                    yield* Queue.offer(opened, index)
+                    yield* Deferred.await(release)
+                    return yield* computer.open(person)
+                  }),
+              })
+              const context = yield* Layer.build(
+                codeProcessLayer.pipe(Layer.provide(Layer.succeed(CodeComputer, held))),
+              )
+              const process = Context.get(context, CodeProcess)
+              // Effect 4 forkChild(startImmediately) executes to its first suspension. This receipt
+              // acknowledges actual admission or joining the pending result, not merely RPC ingress.
+              const observed = CodeProcess.of({
+                ...process,
+                runDisplay: (input, dispatch) =>
+                  Effect.gen(function* () {
+                    const fiber = yield* process
+                      .runDisplay(input, dispatch)
+                      .pipe(Effect.forkChild({ startImmediately: true }))
+                    yield* Queue.offer(admitted, undefined)
+                    return yield* Fiber.join(fiber)
+                  }),
+              })
+              const start = Effect.fn('Test.startDisplay')(function* (
+                kind: DisplayToolKind,
+                code: string,
+              ) {
+                const fiber = yield* runDisplay(test.personal, test.personalId, kind, code).pipe(
+                  Effect.provideService(CodeProcess, observed),
+                  Effect.forkChild,
+                )
+                yield* Queue.take(admitted)
+                return fiber
+              })
+              const first = yield* start('Query', 'return 1;')
+              expect(yield* Queue.take(opened)).toBe(1)
+              const duplicate = yield* start('Query', 'return 1;')
+              const second = yield* start('Query', 'return 2;')
+              expect(yield* Queue.take(opened)).toBe(2)
+              // Intent differs even with identical code. It must not borrow the automatic result.
+              const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
+              expect(busy).toMatchObject({
+                _tag: 'Failed',
+                failure: {
+                  _tag: 'Busy',
+                  message: 'Vivid is busy with other work. Try again in a moment.',
+                },
+                calls: [],
+              })
+              const vivid = yield* run(test.personal, test.personalId, 'return 3;').pipe(
+                Effect.provideService(CodeProcess, observed),
+                Effect.forkChild,
+              )
+              expect(yield* Queue.take(opened)).toBe(3)
+              // Vivid alone owns its Thread slot; the display pool did not claim it.
+              expect(
+                yield* run(test.personal, test.personalId, 'return 4;').pipe(
+                  Effect.provideService(CodeProcess, observed),
+                ),
+              ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
+              yield* Deferred.succeed(release, undefined)
+              expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })
+              expect(yield* Fiber.join(duplicate)).toMatchObject({ _tag: 'Completed', result: 1 })
+              expect(yield* Fiber.join(second)).toMatchObject({ _tag: 'Completed', result: 2 })
+              expect(yield* Fiber.join(vivid)).toMatchObject({ _tag: 'Completed', result: 3 })
+              expect(yield* Ref.get(count)).toBe(3)
+              // Completion releases the key. A later render runs again instead of caching a write.
+              expect(yield* Fiber.join(yield* start('Query', 'return 1;'))).toMatchObject({
+                _tag: 'Completed',
+                result: 1,
+              })
+              expect(yield* Ref.get(count)).toBe(4)
+            }),
+            testLayer,
+          ).pipe(Effect.provide(localCodeComputerLayer)),
+      )
+
       /** Run the actual Node program and CodeCalls resolver; refusal must precede Gate and dispatch. */
       it.effect(
         'a display Query refuses a writing Integration call without sending it or creating an Approval',
@@ -312,7 +582,10 @@ describe.skipIf(!testDatabaseConfigured)(
               .RunDisplayCode({
                 code: 'return 1',
                 summary: 'Read',
-                thread: test.personalId,
+                source: DisplaySource.cases.ThreadMessage.make({
+                  thread: test.personalId,
+                  message: 'vivid-display',
+                }),
                 kind: 'Query',
               })
               .pipe(

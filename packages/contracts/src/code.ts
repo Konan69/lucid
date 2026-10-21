@@ -1,6 +1,7 @@
 import * as Schema from 'effect/Schema'
 import { ACCOUNT_HANDLE_MAX, DisplayToolKind } from './connections.js'
 import { ApprovalId, ThreadId } from './identity.js'
+import { FeedCardId } from './feed.js'
 import { CodeCallKind } from './tools.js'
 
 export { CodeCallKind } from './tools.js'
@@ -50,10 +51,27 @@ export const RunCodeRequest = Schema.Struct({
 })
 export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest> {}
 
-/** A display runs for its signed-in reader, within the Thread whose reply contains it. */
+/** The stored Vivid content the reader is rendering, never client-supplied evidence of authorship. */
+export const DisplaySource = Schema.TaggedUnion({
+  ThreadMessage: { thread: ThreadId, message: Schema.NonEmptyString },
+  FeedPost: { post: FeedCardId },
+})
+export type DisplaySource = typeof DisplaySource.Type
+
+/** A reader may execute only program text found in the named stored Vivid content. */
+export class DisplayProgramRefused extends Schema.TaggedError<DisplayProgramRefused>()(
+  'DisplayProgramRefused',
+  {
+    message: Schema.Literal(
+      "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
+    ),
+  },
+) {}
+
+/** A display runs for its signed-in reader, within the Thread its stored source belongs to. */
 export const RunDisplayCodeRequest = Schema.Struct({
   ...RunCodeRequest.fields,
-  thread: ThreadId,
+  source: DisplaySource,
   kind: DisplayToolKind,
 })
 export interface RunDisplayCodeRequest extends Schema.Schema.Type<typeof RunDisplayCodeRequest> {}
@@ -87,6 +105,8 @@ export const CodeFailure = Schema.TaggedUnion({
    * the Person is using it, or its provider stopped answering. When no call is listed, nothing
    * was done for the Person; the program itself may have run for a while on the Computer. */
   Unavailable: {},
+  /** Server admission is exhausted; no Computer was opened and nothing ran. */
+  Busy: { message: Schema.Literal('Vivid is busy with other work. Try again in a moment.') },
 })
 export type CodeFailure = typeof CodeFailure.Type
 

@@ -10,6 +10,7 @@ import {
   type PersonId,
   type PostRequest,
   type ThreadId,
+  type FeedCardId,
 } from '@vivid/contracts'
 import { Database, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
@@ -23,6 +24,23 @@ const feedTopic = (person: PersonId) => [Topic.part('feed')(Topic.person(person)
 const makeStore = (database: Database['Service']) => {
   /** The whole Feed (`read.ts`), shared by List and Watch. */
   const list = (person: PersonId) => readFeed(database, person)
+
+  /** A posted display belongs to its Feed reader and must still have a readable backing Thread. */
+  const display = Effect.fn('FeedStore.display')(function* (person: PersonId, post: FeedCardId) {
+    return yield* database.run(
+      database
+        .select({ thread: feedCards.threadId, text: feedCards.display })
+        .from(feedCards)
+        .where(
+          and(
+            eq(feedCards.id, post),
+            eq(feedCards.personId, person),
+            readableThread(feedCards.threadId, person),
+          ),
+        )
+        .limit(1),
+    )
+  })
 
   /**
    * Vivid putting something in front of the Person from a background Thread. The first post makes
@@ -99,7 +117,7 @@ const makeStore = (database: Database['Service']) => {
     )
   })
 
-  return { list, post, mark }
+  return { list, display, post, mark }
 }
 
 export class FeedStore extends Context.Service<FeedStore, ReturnType<typeof makeStore>>()(

@@ -106,6 +106,7 @@ function failureWords(failure: CodeFailure): string {
     TimedOut: () => 'The program timed out',
     OverLimit: () => 'The program exceeded its limits',
     Unavailable: () => 'The program is unavailable',
+    Busy: ({ message }) => message,
   })
 }
 

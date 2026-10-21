@@ -586,7 +586,11 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
                 reply,
               ),
               'Failed',
-              { failure: CodeFailure.cases.Unavailable.make({}) },
+              {
+                failure: CodeFailure.cases.Busy.make({
+                  message: 'Vivid is busy with other work. Try again in a moment.',
+                }),
+              },
             )
           }
         }
@@ -597,7 +601,11 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
               reply,
             ),
             'Failed',
-            { failure: CodeFailure.cases.Unavailable.make({}) },
+            {
+              failure: CodeFailure.cases.Busy.make({
+                message: 'Vivid is busy with other work. Try again in a moment.',
+              }),
+            },
           )
         yield* Deferred.succeed(release, undefined)
         for (const fiber of fibers)

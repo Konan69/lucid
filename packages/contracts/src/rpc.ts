@@ -42,6 +42,7 @@ import {
   ReadPageRequest,
   RunCodeRequest,
   RunDisplayCodeRequest,
+  DisplayProgramRefused,
 } from './code.js'
 import {
   AcceptMembershipRequest,
@@ -919,7 +920,7 @@ const UseDesktop = Rpc.make('UseDesktop', {
 const RunCode = Rpc.make('RunCode', { ...call, payload: RunCodeRequest, success: CodeOutcome })
 /** A Person may run a reply's program only inside a Thread they can currently read. */
 const RunDisplayCode = Rpc.make('RunDisplayCode', {
-  ...call,
+  error: Schema.Union([RpcFailure, DisplayProgramRefused]),
   payload: RunDisplayCodeRequest,
   success: CodeOutcome,
 })

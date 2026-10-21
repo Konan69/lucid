@@ -13,6 +13,8 @@ export const budgets = {
   depth: 32,
   // Programs this server follows at once, each an open connection to a Computer.
   processes: 4,
+  // Display rendering has separate, smaller admission and never claims Vivid's per-Thread slot.
+  displays: 2,
   // Answers on their way to one program at once. Each is a request to the Computer's provider.
   replies: 8,
   pages: 8,

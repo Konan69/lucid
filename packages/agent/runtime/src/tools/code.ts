@@ -30,6 +30,7 @@ function failureView(failure: CodeFailure): Schema.Json {
     TimedOut: () => failure,
     OverLimit: () => failure,
     Unavailable: () => failure,
+    Busy: () => failure,
   })
 }
 
