@@ -295,46 +295,51 @@ interface WritingStatement {
 }
 
 /**
- * The tools a display names in a `Mutation`. OpenUI's renderer calls the same provider for a
- * `Query` and a `Mutation`, so the surface derives intent from declarations. Programs declared in
- * both forms are refused separately because these names alone cannot prove invocation intent.
+ * The tool names one kind of declaration can call. OpenUI evaluates a name written as an
+ * expression only when it calls, so such a name could be any tool and `computed` says it may be.
  */
-const writtenTools = (parsed: {
-  readonly mutationStatements: ReadonlyArray<WritingStatement>
-}): ReadonlySet<string> =>
-  new Set(
-    parsed.mutationStatements.flatMap((statement) =>
+interface Declared {
+  readonly names: ReadonlySet<string>
+  readonly computed: boolean
+}
+
+const declared = (statements: ReadonlyArray<WritingStatement>): Declared => ({
+  names: new Set(
+    statements.flatMap((statement) =>
       statement.toolAST !== null &&
       statement.toolAST.k === 'Str' &&
       Predicate.isString(statement.toolAST.v)
         ? [statement.toolAST.v]
         : [],
     ),
-  )
+  ),
+  computed: statements.some(
+    (statement) =>
+      statement.toolAST === null ||
+      statement.toolAST.k !== 'Str' ||
+      !Predicate.isString(statement.toolAST.v),
+  ),
+})
 
-/** OpenUI omits invocation intent, so automatic program reads must never inherit button authority. */
+/**
+ * What a display's `Query` and `Mutation` declarations can call. OpenUI's renderer calls the one
+ * provider with only a name for both (`fetchQuery` and `fireMutation` in lang-core's
+ * `index.mjs`), so the surface derives a call's intent from these declarations.
+ */
 export interface DisplayTools {
-  readonly writes: ReadonlySet<string>
-  readonly queriesProgram: boolean
-  readonly mutatesProgram: boolean
+  readonly queries: Declared
+  readonly mutations: Declared
 }
 
-/** An unresolved name in either declaration could evaluate to run_code and must count toward ambiguity. */
-const mayRunProgram = (statement: WritingStatement): boolean =>
-  statement.toolAST === null ||
-  statement.toolAST.k !== 'Str' ||
-  !Predicate.isString(statement.toolAST.v) ||
-  statement.toolAST.v === 'run_code'
-
-/** Both declaration kinds participate even when their name is resolved from display state at runtime. */
 export const displayTools = (parsed: {
   readonly mutationStatements: ReadonlyArray<WritingStatement>
   readonly queryStatements: ReadonlyArray<WritingStatement>
 }): DisplayTools => ({
-  writes: writtenTools(parsed),
-  queriesProgram: parsed.queryStatements.some(mayRunProgram),
-  mutatesProgram: parsed.mutationStatements.some(mayRunProgram),
+  queries: declared(parsed.queryStatements),
+  mutations: declared(parsed.mutationStatements),
 })
+
+const mayCall = (from: Declared, name: string): boolean => from.computed || from.names.has(name)
 
 /**
  * What OpenUI's renderer reads back from a tool: MCP's shape, which it unwraps itself. Its
@@ -372,18 +377,18 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 const decodeProgram = Schema.decodeUnknownEffect(RunCodeRequest)
 
-/** A Feed display without a Thread cannot borrow authority from the currently open conversation. */
-export class DisplayThreadRequired extends Schema.TaggedError<DisplayThreadRequired>()(
-  'DisplayThreadRequired',
-  {},
-  { title: 'Display Thread required' },
-) {}
-
 /** A single provider name cannot prove whether OpenUI invoked its Query or its Mutation. */
 export class DisplayProgramAmbiguous extends Schema.TaggedError<DisplayProgramAmbiguous>()(
   'DisplayProgramAmbiguous',
   {},
   { title: 'Display program intent is ambiguous' },
+) {}
+
+/** The same refusal for an Integration's tool, which a Query must never run with a press's authority. */
+export class DisplayToolAmbiguous extends Schema.TaggedError<DisplayToolAmbiguous>()(
+  'DisplayToolAmbiguous',
+  {},
+  { title: 'Display tool intent is ambiguous' },
 ) {}
 
 /** Program errors may contain input or credentials; only their typed category reaches the reader. */
@@ -408,41 +413,42 @@ export const displayCodeResult = (outcome: CodeOutcome): DisplayToolResult =>
   })
 
 /**
- * One call a display makes into the Person's Integrations, as OpenUI's renderer asks for it: a
- * `Query` unless the program runs this tool in a `Mutation`. The server runs it for the Person.
+ * Whether a call came from a `Query` or a `Mutation`. A name both kinds can call is refused,
+ * because answering it as a Query could run a press's write automatically. A name only a Mutation
+ * can call is one; anything else runs as a Query, the lesser authority.
+ */
+const callKind = Effect.fn('Display.callKind')(function* (name: string, tools: DisplayTools) {
+  const mutates = mayCall(tools.mutations, name)
+  if (mutates && mayCall(tools.queries, name)) {
+    if (name === 'run_code') return yield* new DisplayProgramAmbiguous({})
+    return yield* new DisplayToolAmbiguous({})
+  }
+  return mutates ? ('Mutation' as const) : ('Query' as const)
+})
+
+/**
+ * One call a display makes into the Person's Integrations or onto their Computer, as OpenUI's
+ * renderer asks for it. The server runs it for the Person, in the display's own Thread.
  */
 export const callDisplayTool = Effect.fn('Display.callTool')(function* (
   name: string,
   given: Option.Option<FormState>,
   tools: DisplayTools,
-  thread: Option.Option<ThreadId>,
+  thread: ThreadId,
 ) {
   const client = yield* VividRpcClient
+  const kind = yield* callKind(name, tools)
   if (name === 'run_code') {
-    if (tools.queriesProgram && tools.mutatesProgram) return yield* new DisplayProgramAmbiguous({})
-    if (Option.isNone(thread)) return yield* new DisplayThreadRequired({})
     const request = yield* decodeProgram(
       Option.getOrElse(given, () => ({})),
       {
         onExcessProperty: 'error',
       },
     )
-    return displayCodeResult(
-      yield* client.RunDisplayCode({
-        ...request,
-        thread: thread.value,
-        kind: tools.mutatesProgram ? 'Mutation' : 'Query',
-      }),
-    )
+    return displayCodeResult(yield* client.RunDisplayCode({ ...request, thread, kind }))
   }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
-  return displayToolResult(
-    yield* client.UseDisplayTool({
-      name,
-      input,
-      kind: tools.writes.has(name) ? 'Mutation' : 'Query',
-    }),
-  )
+  return displayToolResult(yield* client.UseDisplayTool({ name, input, kind }))
 })
 
 /** A closed failure vocabulary preserves server refusals instead of replacing them with transport copy. */
@@ -451,9 +457,10 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
   Match.tagsExhaustive({
     DisplayApprovalUnsupported: () =>
       'This Integration needs an approval Vivid cannot provide yet.',
-    DisplayThreadRequired: () => 'Open this display in its Thread to run the program.',
     DisplayProgramAmbiguous: () =>
       'This display mixes automatic programs with button actions. Ask Vivid to use separate displays.',
+    DisplayToolAmbiguous: () =>
+      'This display uses the same Integration action automatically and from a button. Ask Vivid to use separate displays.',
     SchemaError: () => 'This display sent invalid information. Ask Vivid to fix it.',
     NotFound: () => 'This Thread or Integration is no longer available to you.',
     Forbidden: () => 'You do not have permission to run this display.',

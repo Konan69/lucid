@@ -154,7 +154,7 @@ export function Feed() {
             ),
             Working: ({ item }) => (
               <Card
-                thread={Option.some(item.thread)}
+                thread={item.thread}
                 from={item.from}
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
@@ -238,7 +238,7 @@ function Waiting({
         </Label>
       )}
       <Card
-        thread={Option.some(item.thread)}
+        thread={item.thread}
         from={item.from}
         at={item.at}
         post={post}
@@ -282,7 +282,7 @@ function Card({
   remember,
   onOpen,
 }: {
-  thread: Option.Option<ThreadId>
+  thread: ThreadId
   from: string
   at: number
   post: Option.Option<FeedPost>

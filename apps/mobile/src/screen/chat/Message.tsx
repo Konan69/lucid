@@ -276,7 +276,7 @@ function Stamp({ moment }: { moment: number }) {
 
 /** What Vivid said, once it has said anything: its words and the displays among them. */
 function Spoken(props: {
-  thread: Option.Option<ThreadId>
+  thread: ThreadId
   text: string
   streaming: boolean
   live: boolean
@@ -326,7 +326,7 @@ function FromVivid({
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
         <Spoken
-          thread={Option.some(thread)}
+          thread={thread}
           text={text}
           streaming={isStreaming(message)}
           live={latest && !working}

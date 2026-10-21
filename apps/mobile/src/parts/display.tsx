@@ -31,11 +31,7 @@ const parser = createParser(library.toJSONSchema(), 'Col')
  * Displays call named Integrations or run_code in their own Thread. The shared adapter keeps
  * automatic programs read-only and returns OpenUI's error shape, exactly as on the web.
  */
-function integrations(
-  run: LiveData['run'],
-  tools: DisplayTools,
-  thread: Option.Option<ThreadId>,
-): McpClientLike {
+function integrations(run: LiveData['run'], tools: DisplayTools, thread: ThreadId): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
       run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, thread)).then(
@@ -70,8 +66,8 @@ export function Display({
   initial,
   onError,
 }: {
-  /** The owning Thread, when this display has one. */
-  thread: Option.Option<ThreadId>
+  /** The Thread this reply or card belongs to, whose authority its programs run with. */
+  thread: ThreadId
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
   /** Whether more of it is still to come. */

@@ -155,7 +155,7 @@ function contextFor({
   runs: ThreadContext['runs']
 }): ThreadContext {
   return {
-    thread: Option.some(thread),
+    thread,
     me,
     shared,
     runs,

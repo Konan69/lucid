@@ -42,7 +42,7 @@ const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
-  readonly thread: Option.Option<ThreadId>
+  readonly thread: ThreadId
   readonly me: PersonId
   readonly shared: boolean
   readonly runs: ReadonlyArray<Run>
@@ -395,7 +395,7 @@ function Written({
   live,
   onSay,
 }: {
-  thread: Option.Option<ThreadId>
+  thread: ThreadId
   text: string
   fresh: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */

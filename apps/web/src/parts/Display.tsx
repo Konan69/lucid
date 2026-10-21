@@ -28,7 +28,7 @@ const parser = createParser(library.toJSONSchema(), 'Col')
  * Displays call named Integrations or run_code in their own Thread. OpenUI runs a Query when
  * drawn and a Mutation after a press; the shared adapter preserves that policy and its errors.
  */
-function integrations(tools: DisplayTools, thread: Option.Option<ThreadId>): McpClientLike {
+function integrations(tools: DisplayTools, thread: ThreadId): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
       run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, thread)).then(
@@ -59,8 +59,8 @@ export function Display({
   onState,
   onError,
 }: {
-  /** The Thread this reply or card belongs to; absence never borrows the current route. */
-  thread: Option.Option<ThreadId>
+  /** The Thread this reply or card belongs to, whose authority its programs run with. */
+  thread: ThreadId
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
   /** Whether more of it is still to come. */

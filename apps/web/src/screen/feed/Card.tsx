@@ -34,7 +34,7 @@ export function Card({
   now,
   onOpen,
 }: {
-  thread: Option.Option<ThreadId>
+  thread: ThreadId
   /** What brought it: the background Thread's title. */
   from: string
   /** When it was posted or began, epoch milliseconds. */

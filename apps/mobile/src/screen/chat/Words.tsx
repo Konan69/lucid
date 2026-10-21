@@ -80,7 +80,7 @@ export function Reply({
   live,
   onSay,
 }: {
-  thread: Option.Option<ThreadId>
+  thread: ThreadId
   text: string
   streaming: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
