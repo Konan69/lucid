@@ -5,13 +5,13 @@ description: 'Verify Vivid product behavior through its real web client, authent
 
 # Verify Vivid
 
-Read [validation status](references/validation.md). The first complete devbox proof is blocked; this skill is not yet runtime-verified.
+Read [validation requirements and history](references/validation.md). A verdict belongs to the recorded commit, host and driven feature; the feature map alone proves nothing.
 
 Product files are read-only. Read the [feature map](features/README.md), then the touched feature. Run heavy work on the host returned by `~/bin/devbox-pick`; never use a Person's Computer or cloudbox-vivid. This skill launches an isolated composition of production server handlers and SQL stores beside the full shipped Flue runtime and web app. It does not launch the complete `apps/server/src/main.ts` graph. See [boundaries](references/boundaries.md) before relying on a verdict.
 
 ## Launch
 
-Set `VIVID_VERIFY_DEVBOX` to the alias returned by devbox-pick (replace cloudbox-konan below when needed). From an isolated checkout on that devbox, inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use `worktree-seed.sh` if the repo or `~/bin` supplies it; otherwise `pnpm install --frozen-lockfile`. Require Node 24+, the pinned pnpm, Docker with postgres:18-alpine, Python 3 with pidfd support, and flock.
+Run `~/bin/devbox-pick` first. Set `VIVID_VERIFY_DEVBOX` to its reachable alias (replace cloudbox-konan below when needed). If all allowed devboxes are unreachable, use this machine with `VIVID_VERIFY_DEVBOX=local`; never use cloudbox-vivid or change billing. From an isolated checkout on that devbox, inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use `worktree-seed.sh` if the repo or `~/bin` supplies it; otherwise `pnpm install --frozen-lockfile`. The launcher resolves tsx from the repository server dependencies and reports the install command when missing. Require Node 24+, the pinned pnpm, Docker with postgres:18-alpine, Python 3 with pidfd support, and flock.
 
 ```sh
 VIVID_VERIFY_DEVBOX=cloudbox-konan .agents/skills/verify-vivid/verify launch
@@ -40,9 +40,9 @@ Require exit 0 and `worthy: true` in `doctor.json`. Doctor checks captured boot/
 
 `feature all` attempts every mapped HTTP recipe. Failed or blocked verdicts make the command fail. Person mutations use Better Auth cookies and the public schema-derived NDJSON RPC; chat uses the real server gateway and public Flue SDK. WatchThread proves durable settlement independently of stream EOF. No internal setter or test-only product endpoint is driven.
 
-`browser` runs the existing agent-browser workflow headlessly on this same devbox, with its own namespace/session/profile and installed Chrome. Set `VIVID_VERIFY_BROWSER` to an installed native CLI path if it is not on PATH. It signs in via Email, Password and Sign in; sends in Message Vivid with Send; captures first message, rich table and document journeys, then reloads and captures them. It closes its browser in finally. Browser failure is a failed verdict, never an HTTP pass.
+`browser` runs the existing agent-browser workflow headlessly on this same devbox, with its own namespace/session/profile and installed Chrome. Set `VIVID_VERIFY_BROWSER` to an installed native CLI path if it is not on PATH. Set `VIVID_VERIFY_CHROME` to an installed Chrome/Chromium executable when `/opt/google/chrome/chrome` is absent. For example, an existing Playwright Chromium binary under your home cache works without installing another browser. Each browser action has a two-minute deadline so a cold Vite transform on the fallback host can complete. It signs in via Email, Password and Sign in; sends in Message Vivid with Send; captures first message, rich table and document journeys, then reloads and captures them. It closes its browser in finally. Browser failure is a failed verdict, never an HTTP pass.
 
-For a collaborative T3 preview run, use preview_status, preview_open on the printed web origin, snapshot and the same accessible names. Record with preview_recording_start/stop and close only the tab you opened. The browser must execute on the devbox; do not start local browser work. For other features, follow their exact entry points rather than substituting one convenient mutation.
+For a collaborative T3 preview run, use preview_status, preview_open on the printed web origin, snapshot and the same accessible names. Record with preview_recording_start/stop and close only the tab you opened. The browser must execute on the selected runtime host, including the authorized local fallback. For other features, follow their exact entry points rather than substituting one convenient mutation.
 
 ## Evidence
 

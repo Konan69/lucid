@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
-exec node --import ./apps/server/node_modules/tsx/dist/loader.mjs .agents/skills/verify-vivid/scripts/control.mjs "$@"
+loader=$(node --input-type=module -e 'import { createRequire } from "node:module"; import { resolve } from "node:path"; try { console.log(createRequire(resolve("apps/server/package.json")).resolve("tsx")) } catch { console.error("Install repository dependencies with pnpm install --frozen-lockfile before running verify-vivid"); process.exit(1) }')
+exec node --import "$loader" .agents/skills/verify-vivid/scripts/control.mjs "$@"

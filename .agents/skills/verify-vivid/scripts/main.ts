@@ -43,6 +43,8 @@ import { Config, ConfigProvider, Context, Effect, Layer, Predicate, Record, Sche
 import { HttpRouter, HttpServer, HttpServerResponse } from 'effect/http'
 import { RpcServer, RpcSerialization, RpcGroup } from 'effect/rpc'
 import { VividRpc } from '@vivid/contracts/rpc'
+import { ServiceUnavailable } from '@vivid/contracts'
+import { requireActor } from '../../../../apps/server/src/auth/access.ts'
 import { rpcAuthMiddlewareLayer } from '../../../../apps/server/src/auth/middleware.ts'
 import { settingsHandlers } from '../../../../apps/server/src/settings/handlers.ts'
 import { settingsStoreLayer } from '../../../../apps/server/src/settings/store.ts'
@@ -93,6 +95,15 @@ const handlers = {
   ...appearanceHandlers,
   ...computerHandlers,
   ReadPage: codeHandlers.ReadPage,
+  /** Context discovery must receive a typed refusal at the excluded Integration boundary.
+   * Omitting the RPC throws an unknown-tag defect before the runtime can degrade this read. */
+  ListConnections: Effect.fn('Verification.ListConnections')(function* () {
+    yield* requireActor()
+    return yield* ServiceUnavailable.make({
+      service: 'connections',
+      message: 'External integrations are outside this isolated verification run.',
+    })
+  }),
 }
 /** The handler map is the only vocabulary: the guard narrows omitted RPCs without a cast or
  * a second hand-maintained list, and retains the original contract/auth middleware. */

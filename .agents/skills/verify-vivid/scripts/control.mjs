@@ -1,6 +1,7 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodePath from 'node:path'
 import * as NodeOS from 'node:os'
+import { createRequire } from 'node:module'
 import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
@@ -9,6 +10,7 @@ import * as NodeChildProcess from 'node:child_process'
 import { root, skill, freePorts, identity, command, signal, json } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const cache = root + '/.cache/verify'
+const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
 
 /** The CLI always selects a run it created, never any ordinary application instance. */
 async function selected() {
@@ -21,11 +23,15 @@ async function selected() {
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
+  const devbox = process.env.VIVID_VERIFY_DEVBOX
+  if (NodeOS.hostname().toLowerCase().includes('cloudbox-vivid'))
+    throw new Error('Verification refuses the production Computer')
+  if (!['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3', 'local'].includes(devbox))
+    throw new Error(
+      'Set VIVID_VERIFY_DEVBOX to the selected devbox, or local when all are unreachable',
+    )
   await NodeFSP.mkdir(cache, { recursive: true })
   await recoverPrevious(cache)
-  const devbox = process.env.VIVID_VERIFY_DEVBOX
-  if (!['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3'].includes(devbox))
-    throw new Error('Launch on the selected devbox with VIVID_VERIFY_DEVBOX set to its alias')
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
@@ -69,12 +75,7 @@ async function launch() {
   const log = await NodeFSP.open(evidence + '/supervisor.log', 'a', 0o600)
   const child = NodeChildProcess.spawn(
     process.execPath,
-    [
-      '--import',
-      root + '/apps/server/node_modules/tsx/dist/loader.mjs',
-      skill + '/scripts/supervisor.mjs',
-      evidence + '/state.json',
-    ],
+    ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
     {
       cwd: root,
       detached: true,
@@ -135,7 +136,7 @@ try {
             [
               process.execPath,
               '--import',
-              root + '/apps/server/node_modules/tsx/dist/loader.mjs',
+              loader,
               skill + '/scripts/drive.mjs',
               state.evidence + '/state.json',
               args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
@@ -153,7 +154,7 @@ try {
             [
               process.execPath,
               '--import',
-              root + '/apps/server/node_modules/tsx/dist/loader.mjs',
+              loader,
               skill + '/scripts/browser.mjs',
               state.evidence + '/state.json',
             ],

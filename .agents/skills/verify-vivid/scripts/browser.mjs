@@ -27,7 +27,7 @@ export async function browser(state) {
         '--profile',
         state.scratch + '/browser-profile',
         '--executable-path',
-        '/opt/google/chrome/chrome',
+        process.env.VIVID_VERIFY_CHROME ?? '/opt/google/chrome/chrome',
         ...args,
       ],
       {
@@ -35,6 +35,7 @@ export async function browser(state) {
           PATH: process.env.PATH,
           HOME: state.scratch,
           AGENT_BROWSER_SOCKET_DIR: socketDirectory,
+          AGENT_BROWSER_DEFAULT_TIMEOUT: '120000',
         },
         log: directory + '/' + String(++sequence).padStart(2, '0') + '-' + args[0] + '.json',
         redactions: [account.password],
@@ -95,6 +96,8 @@ export async function browser(state) {
       thread: id,
     }
   } catch (error) {
+    await run(['errors']).catch(() => {})
+    await run(['console']).catch(() => {})
     await capture('failure').catch(() => {})
     verdict = { verdict: 'failed', head: state.head, error: error.stack }
     process.exitCode = 1

@@ -1,7 +1,9 @@
-# Validation status
+# Validation requirements and history
 
-This skill is a draft until its first complete devbox run succeeds. The author could not complete launch, Doctor, two feature drives and cleanup on 21 October 2026. Boat reported depleted billing, zero credit and usage_depleted; source setup reached current main but dependency installation did not finish. No product verdict or browser proof exists. Do not treat the mandatory rule as evidence that this skill already works.
+A complete proof runs Launch, Doctor, at least two mapped features through the browser, and Cleanup on the same recorded head. Require `worthy: true` in Doctor and passing HTTP/browser verdicts for the claimed features. Retain screenshots, action transcripts, durable history and cleanup audits under `.cache/verify/flue-…/`. The PR comment records the host, head and surviving evidence paths. The parent owns the exact-head Opus gate review.
 
-Checked locally: frontmatter, six required sections, all feature headings and relative links, executable launcher, Claude symlink, JavaScript syntax, narrow formatting and lint. Narrow lint has no errors and retains warnings in the inherited harness. Two focused process regressions pass: quick child exit and prior-boot ownership refusal. Docker-dependent crash/cleanup tests remain unrun. The exact-head Opus review belongs to the parent agent.
+The initial authoring attempt on 21 October 2026 drove no feature. Boat reported depleted credit and dependency installation did not finish. When all allowed devboxes are unreachable, the explicit local fallback avoids any billing change. Install the pinned repository dependencies before launch; tsx resolves through the server package rather than a global installation.
 
-Before approving this skill, restore devbox access, run the Launch, Doctor, Drive, Evidence and Cleanup sequence with at least two mapped features and browser actions, retain the evidence, and audit the captured PIDs, container and ports. Record any production startup failures as findings. Product files are read-only.
+The first local run reached Launch and Doctor, then exposed an omitted ListConnections route during runtime context loading. The helper now authenticates that read and returns ServiceUnavailable at the excluded Integration boundary. The shipped context loader handles that typed failure. Chrome's path is configurable and cold browser actions have a two-minute deadline. Failed runs remain failed evidence and do not establish feature coverage.
+
+Formatting, lint, syntax and process regression checks supplement the runtime proof. They do not replace it. Native phone/desktop, external Integrations and unscripted model quality remain separate claims; see the feature map and boundaries.
