@@ -229,6 +229,8 @@ function replacements(
   const settled = chunks[settlement]
   if (before === undefined || settled === undefined)
     expect.fail('The completed Run must have a replacement before settlement')
+  if (before.type !== 'message-appended' || settled.type !== 'submission-settled')
+    expect.fail('The terminal batch must contain the response upsert and settlement')
   expect(before).toEqual(replacement)
   expect(before.position.batch).toBe(settled.position.batch)
   const lastCompletion = completed.at(-1)
