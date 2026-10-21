@@ -9,9 +9,9 @@ Read the [feature map](features/README.md), the touched feature and [runtime bou
 
 ## Host and credentials
 
-Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. Use local only when no devbox is reachable. Evidence records selected alias, actual hostname and boot identity. Launch checks the alias against SSH-observed hostnames in `./scripts/settings.mjs`; refresh that mapping after a devbox replacement. Local launch reruns devbox-pick and refuses when one is reachable.
+Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, actual hostname and boot identity. Launch checks the alias against SSH-observed hostnames in `./scripts/settings.mjs`; refresh that mapping after a devbox replacement.
 
-On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser and Chrome. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
+On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser 0.39.0 and Chrome. Install that agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
 Set `VIVID_VERIFY_KEY_FILE` to an explicit private env file, or export the provider keys for this run. No development env or CLI auth store is read automatically. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. Do not copy [local Claude settings](../../../.claude/settings.local.json) or CLI auth stores into the proof checkout or evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. EXPLABS_API_KEY is required by the real server memory/title model. No production infrastructure setting is imported.
 
