@@ -49,7 +49,7 @@ async function rendered(run, kind) {
       await run([
         'wait',
         '--fn',
-        `Array.from(document.querySelectorAll('table')).some(t => ['Project','Hours','Owner'].every(h => Array.from(t.querySelectorAll('th')).some(c => c.textContent.trim() === h)) && ['Research','Writing','Review'].every(value => Array.from(t.querySelectorAll('tbody td')).some(c => c.textContent.trim() === value)))`,
+        `Array.from(document.querySelectorAll('table')).some(t => ['Project','Hours','Owner'].every(h => Array.from(t.querySelectorAll('th')).some(c => c.textContent.trim() === h)) && [['Research','4','Ada'],['Writing','3','Ben'],['Review','2','Cai']].every(expected => Array.from(t.querySelectorAll('tbody tr')).some(row => expected.every((value, i) => row.querySelectorAll('td')[i]?.textContent.trim() === value))))`,
       ])
       const result = JSON.parse(
         await run([
@@ -62,10 +62,14 @@ async function rendered(run, kind) {
         ['Project', 'Hours', 'Owner'].every((h) => t.headers.includes(h)),
       )
       assert.ok(table, 'Rendered table lacks Project/Hours/Owner column headers')
-      for (const row of ['Research', 'Writing', 'Review'])
+      for (const row of [
+        ['Research', '4', 'Ada'],
+        ['Writing', '3', 'Ben'],
+        ['Review', '2', 'Cai'],
+      ])
         assert.ok(
-          table.rows.some((r) => r.includes(row)),
-          'Missing table row ' + row,
+          table.rows.some((actual) => row.every((cell, i) => actual[i] === cell)),
+          'Missing table row ' + row.join(' / '),
         )
       break
     }

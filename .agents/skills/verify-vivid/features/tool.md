@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-The real rehearsal reply contains an openui-lang program. The browser renders Rehearsal workload, the Project/Hours/Owner columns and Research/Writing/Review rows before and after reload.
+The reply contains an openui-lang program. The browser checks the Project/Hours/Owner columns and the complete Research/4/Ada, Writing/3/Ben and Review/2/Cai rows before and after reload. The title is model-generated and is not the rendering assertion.
 
 ## How to get to it (user POV)
 

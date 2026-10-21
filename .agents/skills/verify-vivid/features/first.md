@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-A real Person contribution and streamed rehearsal reply persist through Flue history. GetThread reports a Completed Run.
+A Person contribution and a streamed reply from the selected model persist through Flue history. GetThread reports a Completed Run.
 
 ## How to get to it (user POV)
 

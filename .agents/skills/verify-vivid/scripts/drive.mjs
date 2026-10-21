@@ -233,10 +233,10 @@ async function picture(state, id, directory) {
 const recipes = { first, reload, tool, question, picture, document }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  stop: 'The shipped rehearsal model completes immediately. A reproducible active Run must be supplied before Stop can be proved; no held tool or fabricated response is installed.',
+  stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
   approve:
-    'Needs an actual pending proposal from a connected disposable Integration. Rehearsal has no destructive scene; synthetic Gate proposals do not prove the Person journey.',
-  deny: 'Needs an actual pending proposal from a connected disposable Integration. Rehearsal has no destructive scene.',
+    'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
+  deny: 'Needs an actual pending proposal from a connected disposable Integration.',
   watch:
     'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:

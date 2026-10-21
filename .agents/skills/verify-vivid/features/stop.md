@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature stop` after Launch and Doctor. I
 
 ## Gotchas
 
-Blocked with the immediate rehearsal model. Do not claim a stop proved after a Run already completed. No timing seam or held handler is installed.
+Blocked until a reproducible active Run recipe exists for the selected real model. Do not claim a stop proved after a Run already completed. No timing seam or held handler is installed.
