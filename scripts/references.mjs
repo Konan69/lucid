@@ -294,6 +294,16 @@ function unusedDeclarations(tree, references, declarations) {
         )
     }
   }
+  for (const entry of declarations.empty) {
+    if (
+      !references.some(
+        (reference) => reference.owner === entry.owner && reference.path === entry.path,
+      )
+    )
+      findings.push(
+        `scripts/references.json: empty declaration ${entry.owner}: ${entry.path} authorizes nothing; remove it`,
+      )
+  }
   for (const entry of declarations.examples) {
     for (const path of entry.paths) {
       if (
@@ -319,7 +329,7 @@ export function checkReferences(tree, input) {
   const references = referencesIn(tree)
   for (const reference of references) {
     if (exceptionFor(declarations.empty, reference) !== undefined) {
-      if (resolves(tree, reference, { ...declarations, generated: [] })) {
+      if (resolves(tree, reference, { ...declarations, generated: [], dependencies: [] })) {
         findings.push(
           `${reference.owner}: ${reference.path} is no longer empty; remove its declaration`,
         )

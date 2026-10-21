@@ -83,10 +83,12 @@ void test('future file guards need an exact owner, path and reason', () => {
     () => checkReferences(input, { ...policy, empty: [{ ...policy.empty[0], reason: '' }] }),
     /invalid reference configuration/,
   )
-  assert.equal(
-    checkReferences(input, { ...policy, empty: [{ ...policy.empty[0], owner: 'other.json' }] })
-      .length,
-    1,
+  assert.deepEqual(
+    checkReferences(input, { ...policy, empty: [{ ...policy.empty[0], owner: 'other.json' }] }),
+    [
+      '.oxlintrc.json: **/*.spec.ts matches no tracked source or declared generated path',
+      'scripts/references.json: empty declaration other.json: **/*.spec.ts authorizes nothing; remove it',
+    ],
   )
 })
 
@@ -267,6 +269,51 @@ void test('unused generated declarations expire when their last missing referenc
   assert.deepEqual(checkReferences(tree(entries), policy), [
     'scripts/references.json: generated declaration artifacts/** authorizes nothing; remove it',
   ])
+})
+
+void test('unused empty declarations expire when their owner stops referencing the path', () => {
+  const entries = { '.oxlintrc.json': '{"ignorePatterns":["apps/gone/**"]}' }
+  const policy = {
+    ...declarations,
+    empty: [
+      { owner: '.oxlintrc.json', path: 'apps/gone/**', reason: 'Protect future source files.' },
+    ],
+  }
+  assert.deepEqual(checkReferences(tree(entries), policy), [])
+  entries['.oxlintrc.json'] = '{"ignorePatterns":[]}'
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'scripts/references.json: empty declaration .oxlintrc.json: apps/gone/** authorizes nothing; remove it',
+  ])
+  entries['docs/guide.md'] = '`apps/gone/**`'
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'docs/guide.md: apps/gone/** matches no tracked source or declared generated path',
+    'scripts/references.json: empty declaration .oxlintrc.json: apps/gone/** authorizes nothing; remove it',
+  ])
+  delete entries['.oxlintrc.json']
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'docs/guide.md: apps/gone/** matches no tracked source or declared generated path',
+    'scripts/references.json: empty declaration .oxlintrc.json: apps/gone/** authorizes nothing; remove it',
+  ])
+})
+
+void test('dependency declarations cannot make an empty reference count as tracked source', () => {
+  const input = tree({
+    'apps/mobile/tsconfig.json': '{"extends":"expo/tsconfig.base"}',
+    'apps/mobile/tsconfig.tests.json': '{"extends":"expo/tsconfig.base"}',
+    'apps/mobile/package.json': '{"dependencies":{"expo":"55.0.0"}}',
+  })
+  const policy = {
+    ...declarations,
+    dependencies: [{ path: 'expo/tsconfig.base', reason: 'Pinned Expo config.' }],
+    empty: [
+      {
+        owner: 'apps/mobile/tsconfig.tests.json',
+        path: 'expo/tsconfig.base',
+        reason: 'Dependency-owned config is outside the tracked source inventory.',
+      },
+    ],
+  }
+  assert.deepEqual(checkReferences(input, policy), [])
 })
 
 void test('each example path expires independently when removed or satisfied by tracked source', () => {
