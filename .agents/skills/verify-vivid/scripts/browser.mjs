@@ -186,6 +186,11 @@ async function journey(state, feature) {
     await json(directory + '/context.json', { thread: id, ...base })
     await run(['open', state.web + '/t/' + id])
     await captureBrowser(receipt)
+    await run([
+      'wait',
+      '--fn',
+      `document.querySelector('input[type=email]') || document.querySelector('[aria-label="Message Vivid"]')`,
+    ])
     const welcome = await run(['snapshot', '-i'])
     if (welcome.includes('I already have an account'))
       await run(['find', 'text', 'I already have an account', 'click', '--exact'])

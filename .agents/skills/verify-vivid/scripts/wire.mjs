@@ -27,7 +27,7 @@ export async function request(
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(300_000),
   })
   if (headersReady) headersReady.resolve(response.status)
   let text = ''
@@ -60,7 +60,7 @@ export async function rpc(state, tag, payload, directory, name = tag) {
     method: 'POST',
     headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
     body: JSON.stringify(packet) + '\n',
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(300_000),
   })
   const text = await response.text()
   if (directory)
@@ -87,7 +87,7 @@ export async function settled(state, thread, count, terminal = 'Completed', dire
   const abort = new AbortController()
   const timeout = setTimeout(
     () => abort.abort(new Error('WatchThread settlement deadline')),
-    90_000,
+    300_000,
   )
   try {
     const response = await fetch(state.web + '/api/rpc', {
@@ -183,7 +183,7 @@ export async function client(state, thread, directory, name = 'stream', ready) {
 /** Separate admission from observation for held-tool, reconnect and stop recipes. */
 export async function read(state, thread, admission, directory, name = 'stream', ready) {
   const api = await client(state, thread, directory, name, ready)
-  const reply = await api.read(admission, { signal: AbortSignal.timeout(90_000) })
+  const reply = await api.read(admission, { signal: AbortSignal.timeout(300_000) })
   await json(directory + '/' + name + '-reply.json', reply)
   return reply.text
 }

@@ -68,7 +68,7 @@ export const runningCommands = new Map()
 
 export async function command(
   argv,
-  { cwd = root, env = process.env, log, heavy = false, redactions = [], record } = {},
+  { cwd = root, env = process.env, log, heavy = false, redactions = [], record, trim = true } = {},
 ) {
   const started = Date.now()
   const executable = heavy ? ['flock', lock, ...argv] : argv
@@ -116,7 +116,7 @@ export async function command(
       ) + '\n',
     )
   if (code !== 0) throw new Error(`${display.join(' ')} exited ${code}: ${output}`)
-  return output.trim()
+  return trim ? output.trim() : output
 }
 
 /** Readiness is a bound-listener log/IPC event. This deadline fails hung launch; it never marks ready. */

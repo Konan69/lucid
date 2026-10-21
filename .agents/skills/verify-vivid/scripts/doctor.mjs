@@ -20,7 +20,8 @@ export async function doctor(state) {
     ok: (await command(['git', 'rev-parse', 'HEAD'])) === state.head,
   }))
   await check('checkout tree', async () => ({
-    ok: (await command(['git', 'status', '--porcelain=v1', '-uall'])) === state.tree,
+    ok:
+      (await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })) === state.tree,
     dirty: state.dirty,
     tree: state.tree,
   }))

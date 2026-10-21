@@ -38,7 +38,7 @@ async function launch() {
   const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
   const modelConfig = await provider()
-  const tree = await command(['git', 'status', '--porcelain=v1', '-uall'])
+  const tree = await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
@@ -146,7 +146,7 @@ try {
     } else {
       if ((await command(['git', 'rev-parse', 'HEAD'])) !== state.head)
         throw new Error('Checkout commit changed; clean this run and launch again')
-      const tree = await command(['git', 'status', '--porcelain=v1', '-uall'])
+      const tree = await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })
       if (tree !== state.tree) throw new Error('Working tree changed; launch again')
       if (action === 'feature')
         console.log(

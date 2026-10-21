@@ -1,5 +1,5 @@
 import * as NodeFSP from 'node:fs/promises'
-import { root, skill, boot, alive, command, json, cache, dependencyLink } from './process.mjs'
+import { root, boot, alive, command, json, cache, dependencyLink } from './process.mjs'
 import { control } from './socket.mjs'
 import { remoteCleanup } from './remote.mjs'
 
