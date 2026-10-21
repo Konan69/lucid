@@ -394,16 +394,16 @@ describe.skipIf(!testDatabaseConfigured)(
                   Effect.provideService(CodeProcess, observed),
                   Effect.forkChild,
                 )
-                yield* Queue.take(admitted)
+                yield* Effect.raceFirst(
+                  Queue.take(admitted),
+                  Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+                )
                 return fiber
               })
               const first = yield* start('Query', 'return 1;')
-              yield* Effect.logInfo("const first = yield* start('Query', 'return 1;')")
               expect(yield* Queue.take(opened)).toBe(1)
               const duplicate = yield* start('Query', 'return 1;')
-              yield* Effect.logInfo("const duplicate = yield* start('Query', 'return 1;')")
               const second = yield* start('Query', 'return 2;')
-              yield* Effect.logInfo("const second = yield* start('Query', 'return 2;')")
               expect(yield* Queue.take(opened)).toBe(2)
               // Intent differs even with identical code. It must not borrow the automatic result.
               const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
@@ -431,7 +431,6 @@ describe.skipIf(!testDatabaseConfigured)(
                 ),
               ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
               yield* Deferred.succeed(release, undefined)
-              yield* Effect.logInfo('yield* Deferred.succeed(release, undefined)')
               expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })
               yield* Effect.logInfo(
                 "expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })",
