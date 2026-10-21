@@ -22,6 +22,7 @@ const History = Schema.Struct({
 })
 const decodeHistory = HttpClientResponse.schemaBodyJson(History)
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }))
+const refusal = { message: DisplayProgramRefused.fields.message.literal }
 
 /** Neither a message's role nor its text comes from the caller. Only public text parts count. */
 const messageText = Effect.fn('Code.messageText')(function* (
@@ -40,9 +41,12 @@ const messageText = Effect.fn('Code.messageText')(function* (
   const history = yield* decodeHistory(response).pipe(
     Effect.mapError(() => new RuntimeUnavailable({ message: 'Display response is invalid' })),
   )
-  return history.messages
-    .filter((message) => message.id === source.message && message.role === 'assistant')
-    .flatMap((message) => message.parts.filter(isText).map((part) => part.text))
+  const message = history.messages.find((message) => message.id === source.message)
+  if (message === undefined || message.role !== 'assistant')
+    return yield* new DisplayProgramRefused(refusal)
+  return message.parts
+    .filter(isText)
+    .map((part) => part.text)
     .join('\n\n')
 }, Effect.scoped)
 
@@ -64,15 +68,10 @@ export const displayThread = Effect.fn('Code.displayThread')(function* (
       Effect.gen(function* () {
         const [display] = yield* (yield* FeedStore).display(person, post)
         if (display === undefined || display.text === null)
-          return yield* new DisplayProgramRefused({
-            message: "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
-          })
+          return yield* new DisplayProgramRefused(refusal)
         return display
       }),
   })
-  if (!contains(stored.text, code))
-    return yield* new DisplayProgramRefused({
-      message: "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
-    })
+  if (!contains(stored.text, code)) return yield* new DisplayProgramRefused(refusal)
   return stored.thread
 })
