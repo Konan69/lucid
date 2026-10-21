@@ -1,0 +1,9 @@
+# Runtime boundaries
+
+Launch runs `apps/server/src/main.ts` unchanged. All handler groups, the product live transport, HTTP routes and background workers are composed by that entry point. There is no private server composition. PostgreSQL and Helix are disposable labelled containers. The Flue runtime uses its shipped build script, full agent prompt, provider declarations, tools and stores. The web uses its shipped build and preview configuration.
+
+Only model credentials are read from development key sources. Launch never imports application database URLs, Computer identities or production service credentials. Synthetic auth/Google configuration and a fresh VAPID pair belong to the disposable instance. Real Boat, Executor and Photon adapters are mounted with explicitly unconfigured credentials; Executor points at refused loopback port 1. No connected Integration, Computer, Google login, channel delivery or push delivery is proved. Failures at these external boundaries remain failures. A connected disposable authority is required before those features can pass.
+
+The server memory and title model require EXPLABS_API_KEY even when the Flue model is rehearsal. `VIVID_VERIFY_MODEL` selects the shipped model provider. Without an explicit choice a present key selects a real provider. `rehearsal/script` is explicit opt-in and verdicts say plumbing-only. It never proves model behaviour.
+
+Browser recipes are per feature. Missing recipes fail with no browser recipe. Document proof checks the rendered tool-card button and expanded list item. At this head the web has no GetArtifact caller or Artifact viewer, so opening/editing its body is blocked. The HTTP document recipe separately drives create, revise, read and both immutable versions through public product tools and RPC.
