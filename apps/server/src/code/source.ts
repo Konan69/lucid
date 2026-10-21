@@ -10,7 +10,7 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { stretches } from '@vivid/contracts/display'
-import { Cache, Context, Data, Duration, Effect, Layer, Option, Schema } from 'effect'
+import { Cache, Context, Duration, Effect, Exit, Layer, Option, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -101,34 +101,30 @@ function declarations(text: string) {
   return { programs, computed }
 }
 
-/** A parsed declaration belongs to the exact response in one Flue stream incarnation. */
-class Message extends Data.Class<{
-  readonly thread: ThreadId
-  readonly message: string
-  readonly incarnation: string
-  readonly text: string
-}> {}
-
-/**
- * Re-read active history before consulting parsed declarations. Flue 2.2.2 resets its projection
- * for compaction or superseded errors without a new incarnation; retry can replace reply content.
- * An incarnation key alone cannot prove a cached response is still on that active path.
- */
-const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
-  source: Pick<Message, 'thread' | 'message'>,
-  messages: Cache.Cache<Message, typeof StoredPrograms.cases.Final.Type>,
-) {
+/** Read and decode once per burst; no response body or HTTP resource escapes its scope. */
+const readHistory = Effect.fn('Code.readDisplayHistory')(function* (thread: ThreadId) {
   const response = yield* (yield* Runtime).read({
-    threadId: source.thread,
+    threadId: thread,
     suffix: '',
     search: '?view=history',
     accept: 'application/json',
   })
   if (response.status !== 200)
     return yield* new RuntimeUnavailable({ message: 'Display response could not be read' })
-  const history = yield* decodeHistory(response).pipe(
+  return yield* decodeHistory(response).pipe(
     Effect.mapError(() => new RuntimeUnavailable({ message: 'Display response is invalid' })),
   )
+}, Effect.scoped)
+
+/**
+ * Resolve against one short-lived active projection, including its incarnation and settlement.
+ * Flue can replace or remove a response without changing incarnation, so snapshots must expire.
+ */
+const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
+  source: typeof DisplaySource.cases.ThreadMessage.Type,
+  histories: Cache.Cache<ThreadId, typeof History.Type, RuntimeUnavailable, Runtime>,
+) {
+  const history = yield* Cache.get(histories, source.thread)
   const message = history.messages.find((candidate) => candidate.id === source.message)
   // An absent message during a live submission is a wait, never cached as an authorship refusal.
   if (message === undefined) {
@@ -150,16 +146,8 @@ const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
     .filter(isText)
     .map((part) => part.text)
     .join('\n\n')
-  return yield* Cache.get(
-    messages,
-    new Message({
-      thread: source.thread,
-      message: source.message,
-      incarnation: history.incarnation,
-      text,
-    }),
-  )
-}, Effect.scoped)
+  return StoredPrograms.cases.Final.make(declarations(text))
+})
 
 type SourceFailure =
   | DisplayProgramRefused
@@ -182,20 +170,23 @@ interface CodeSourceService {
   ) => Effect.Effect<typeof DisplayAdmission.Type, SourceFailure, Database | Runtime | FeedStore>
 }
 
-/** Parsed source authority owns the bounded final-message cache, while access stays per request. */
+/** Source authority owns shared history snapshots, while access stays per request. */
 export class CodeSource extends Context.Service<CodeSource, CodeSourceService>()(
   'vivid/CodeSource',
 ) {}
 
-/** Cache parsing only. Current access, active-path presence and settlement are checked on every draw. */
+/**
+ * Share pending and successful history reads across a Thread's draws for two seconds, bounded
+ * to 256 Threads. The returned incarnation belongs to that snapshot, never a permanent authority
+ * key. Expiry rechecks same-incarnation replacements and resets; failures remain retryable.
+ */
 export const codeSourceLayer = Layer.effect(
   CodeSource,
   Effect.gen(function* () {
-    const messages = yield* Cache.make({
+    const histories = yield* Cache.makeWith(readHistory, {
       capacity: 256,
-      lookup: (message: Message) =>
-        Effect.sync(() => StoredPrograms.cases.Final.make(declarations(message.text))),
-      timeToLive: Duration.infinity,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.seconds(2) : Duration.zero),
+      requireServicesAt: 'lookup',
     })
     return CodeSource.of({
       resolve: Effect.fn('Code.resolveSource')(function* (source, person, request) {
@@ -205,7 +196,7 @@ export const codeSourceLayer = Layer.effect(
               yield* requireThread(message.thread, person)
               return {
                 thread: message.thread,
-                stored: yield* messagePrograms(message, messages),
+                stored: yield* messagePrograms(message, histories),
               }
             }),
           FeedPost: ({ post }) =>

@@ -8,6 +8,7 @@ import {
   RuleScope,
   DatabaseUnavailable,
   ServiceUnavailable,
+  RuntimeUnavailable,
   CodeCallKind,
   BrowseTarget,
   BrowserAction,
@@ -487,9 +488,53 @@ describe.skipIf(!testDatabaseConfigured)(
         ),
       )
 
-      /** Finality is authoritative, and only the parsed final message survives between draws. */
+      /** A failed lookup cannot hold a recovered transport behind the success TTL. */
+      it.effect('retries history failures immediately without warming the cache', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const reads = yield* Ref.make(0)
+            const failure = RuntimeUnavailable.make({ message: 'History transport unavailable' })
+            const runtime = Layer.mock(Runtime, {
+              read: Effect.fn('Test.retryDisplayHistory')(function* () {
+                const count = yield* Ref.updateAndGet(reads, (value) => value + 1)
+                if (count === 1) return yield* failure
+                return yield* history(
+                  [
+                    {
+                      id: 'reply',
+                      role: 'assistant',
+                      submissionId: 'done',
+                      parts: textPart(
+                        'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
+                      ),
+                    },
+                  ],
+                  ['done'],
+                ).read()
+              }),
+            })
+            const context = yield* Layer.build(runtime)
+            const draw = storedDisplay(test.personal, {
+              source: DisplaySource.cases.ThreadMessage.make({
+                thread: test.personalId,
+                message: 'reply',
+              }),
+              code: 'return 1;',
+              summary: 'Read',
+              kind: 'Query',
+            }).pipe(Effect.provide(context))
+            expect(yield* draw.pipe(Effect.flip)).toEqual(failure)
+            checkCode(yield* draw, 'Completed', { result: 1 })
+            expect(yield* Ref.get(reads)).toBe(2)
+          }),
+          testLayer,
+        ),
+      )
+
+      /** Expiry refreshes settlement; warm history never caches an execution result. */
       it.effect(
-        'waits for final storage, then caches declarations without caching an execution',
+        'waits for final storage, then shares history without caching an execution',
         () =>
           withCalls(
             Effect.gen(function* () {
@@ -532,19 +577,22 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
               expect(yield* Ref.get(harness.count)).toBe(0)
               yield* Ref.set(final, true)
+              expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
+              expect(yield* Ref.get(reads)).toBe(1)
+              yield* TestClock.adjust('2 seconds')
               for (const count of [1, 2]) {
                 const reader = yield* draw.pipe(Effect.forkChild)
                 yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
                 checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
                 expect(yield* Ref.get(harness.count)).toBe(count)
               }
-              expect(yield* Ref.get(reads)).toBe(3)
+              expect(yield* Ref.get(reads)).toBe(2)
             }),
             testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
           ),
       )
 
-      /** A parsed final declaration never substitutes for Flue's current active-path authority. */
+      /** The two-second bound applies to removal, same-incarnation replacement and reset alike. */
       it.effect.each(['removed', 'replaced', 'reset'] as const)(
         'refuses cached authority when the active response is %s',
         (change) =>
@@ -588,9 +636,13 @@ describe.skipIf(!testDatabaseConfigured)(
                 reset: history([message], [], 'second'),
               }
               yield* Ref.set(current, changed[change])
+              yield* TestClock.adjust('1999 millis')
+              checkCode(yield* draw, 'Completed', { result: 1 })
+              yield* TestClock.adjust('1 millis')
               if (change === 'reset') {
                 expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
                 yield* Ref.set(current, history([message], ['submission'], 'second'))
+                yield* TestClock.adjust('2 seconds')
                 checkCode(yield* draw, 'Completed', { result: 1 })
               } else {
                 expect(yield* draw.pipe(Effect.flip)).toEqual(
@@ -604,7 +656,7 @@ describe.skipIf(!testDatabaseConfigured)(
           ),
       )
 
-      /** A warm parser cache grants no access after a real Membership deletion. */
+      /** A warm history cache grants no access after a real Membership deletion, even before expiry. */
       it.effect('refuses a cached draw after its reader loses Thread access', () =>
         withCalls(
           Effect.gen(function* () {
