@@ -83,7 +83,7 @@ function verifyFixture(root, lines) {
   })
 }
 
-void test('the repository infrastructure policy runs in the gate infrastructure task', () => {
+void test("the repository's images and watch lists pass the verifier", () => {
   assert.equal(verifyInfrastructure().result, 'ok')
 })
 

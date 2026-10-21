@@ -189,7 +189,12 @@ function configReferences(root, file) {
   })
 }
 
-/** Build configs can import helpers outside their package; follow literal module edges as well. */
+/**
+ * Build configs can import helpers outside their package; follow literal module edges as well.
+ * Computed filesystem reads, including path.resolve or path.join followed by copyFileSync,
+ * are not followed. Keep their targets inside a copied tree or add them to the Dockerfile COPY
+ * and Railway watch list by hand.
+ */
 function moduleReferences(root, file) {
   const tree = ts.createSourceFile(
     file,
@@ -296,6 +301,10 @@ function imageStage(root, label, parent) {
  * Install manifests must already exist in that stage. Build inputs follow FROM inheritance;
  * a later COPY or a COPY in an unrelated stage cannot repair an earlier install.
  * Roots name what each image promises to build, independently of its COPY instructions.
+ * Config traversal follows local tsconfig extends, references, explicit files and literal module
+ * imports. It does not follow computed filesystem reads, such as path.resolve or path.join with
+ * copyFileSync. Keep those targets inside a copied tree or add them to the Dockerfile COPY and
+ * Railway watch list by hand.
  */
 export function verifyImage({ root, dockerfile, stages }) {
   const graph = workspaceGraph(root)

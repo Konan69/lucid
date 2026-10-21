@@ -78,6 +78,19 @@ Nothing in the stack sees a push before Railway builds it, so the gate that `git
 only thing that keeps a failing tree out of production. Judge a deploy by Railway's deployment
 status and `/health`.
 
+`node scripts/infra-verify.mjs` checks the server and runtime images against their workspace
+dependency closures. It requires install-time manifests before `pnpm install` and production
+workspace trees before the build uses them. It follows local tsconfig `extends`, project
+references, explicit `files`, and literal module imports from copied packages' build configs.
+It checks those inputs against Dockerfile `COPY`, `.dockerignore`, and the Railway watch lists
+in `infra/railway.ts`.
+
+The verifier does not execute configs or follow computed filesystem reads. Examples include
+`path.resolve(__dirname, '..', '..')` in `apps/mobile/metro.config.cjs` and the paths built with
+`NodePath.join` for `copyFileSync` in `apps/mobile/app.config.ts`. When a config reads a computed
+path, keep its target inside a copied tree or add the target to the Dockerfile `COPY` and the
+image's Railway watch list by hand. A passing verifier cannot prove that such a target is present.
+
 `pnpm infra:deploy --yes` is now only for a change to the stack itself: a service, a variable, a
 volume, a watch path. It needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
 from a clean checkout of current `main`. A checkout from before 7 October 2026 still declares an
