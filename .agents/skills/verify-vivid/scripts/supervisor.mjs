@@ -229,10 +229,15 @@ async function helix() {
     ],
     { heavy: true, log: state.evidence + '/helix-docker.json' },
   )
+  const { readBatch } = await import(require.resolve('@helix-db/helix-db'))
+  const probe = readBatch().toQueryJson()
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${state.ports.helix}/health`, {
+      const response = await fetch(`http://127.0.0.1:${state.ports.helix}/v2/query`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: probe,
         signal: AbortSignal.timeout(2000),
       })
       if (response.ok) {
@@ -404,7 +409,7 @@ async function clean() {
     }
   }
   const containers = (await run(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
-  for (const container of [container, state.helixContainer]) {
+  for (const container of [state.container, state.helixContainer]) {
     if (containers.includes(container)) {
       try {
         const label = await run([
@@ -515,6 +520,10 @@ try {
   await launch()
 } catch (error) {
   await json(state.evidence + '/launch-failure.json', { error: error.stack })
+  if (state.helixCreated)
+    await run(['docker', 'logs', state.helixContainer], {
+      log: state.evidence + '/helix.log.json',
+    }).catch(() => {})
   if (process.connected) process.send({ ready: false, error: error.message })
   await cleanup()
   control.close()

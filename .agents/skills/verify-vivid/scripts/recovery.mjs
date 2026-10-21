@@ -15,6 +15,11 @@ export async function owned(state) {
     state.container !== 'vivid-verify-' + state.run
   )
     throw new Error('Verification ownership mismatch')
+  if (
+    state.helixContainer !== undefined &&
+    state.helixContainer !== 'vivid-verify-helix-' + state.run
+  )
+    throw new Error('Helix ownership mismatch')
   if ((await NodeFSP.realpath(evidence)) !== evidence)
     throw new Error('Evidence directory is a symlink')
   const scratch = await NodeFSP.lstat(state.scratch).catch((error) => {
