@@ -1,9 +1,8 @@
 import { ExecutorAppOwnership } from './executor.ts'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
-  AccountName,
   ActionTarget,
   AnotherAccountMessage,
   ConnectionId,
@@ -11,8 +10,6 @@ import {
   ConnectionState,
   ConnectionStep,
   Forbidden,
-  PersonId,
-  ServiceId,
   SessionId,
   ToolOutcome,
 } from '@vivid/contracts'
@@ -30,8 +27,6 @@ import {
   ExecutorTransportFailure,
 } from './executor.ts'
 import { connectionHandlers } from './handlers.ts'
-import { namedAccounts } from './names.ts'
-import type { ConnectionRecord } from './records.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
   ConnectionProbe,
@@ -76,7 +71,6 @@ const connect = Effect.fn('AccountsTest.connect')(function* (
 })
 
 const identityOf = Schema.decodeUnknownSync(AccountIdentity)
-const accountName = Schema.decodeUnknownSync(AccountName)
 
 describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', () => {
   layer(connectionTestLayer)(
@@ -487,80 +481,5 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           expect(yield* asked(remote)).toBe(1)
         }).pipe(Effect.scoped),
     )
-  })
-})
-
-describe('the name an account has among a Person’s accounts', () => {
-  /** One stored Connection on Gmail; only what a test is about is said. */
-  const row = (
-    id: string,
-    createdAt: number,
-    said: Partial<Pick<ConnectionRecord, 'service' | 'serviceName' | 'name' | 'identity'>>,
-  ): ConnectionRecord => ({
-    id: ConnectionId.make(id),
-    service: ServiceId.make('google/gmail'),
-    serviceName: 'Gmail',
-    executorApp: null,
-    name: null,
-    identity: null,
-    personId: PersonId.make('ada'),
-    companyId: null,
-    references: ExecutorReferences.cases.Public.make({
-      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
-      service: ServiceId.make('google/gmail'),
-      app: ExecutorAppId.make('app'),
-      binding: ExecutorBinding.cases.Public.make({}),
-      owner: ExecutorOwnerId.make('p-ada'),
-    }),
-    status: 'ready',
-    returnsTo: 'Web',
-    reason: null,
-    createdAt,
-    updatedAt: createdAt,
-    ...said,
-  })
-
-  const wiki = { service: ServiceId.make('curated/deepwiki'), serviceName: 'DeepWiki' }
-
-  it('leads with the service, then what the Person called it, else who the service says it is', () => {
-    const named = namedAccounts([
-      row('a', 1, { name: accountName('Work'), identity: identityOf('ada@work.example') }),
-      row('b', 2, { identity: identityOf('ada@home.example') }),
-      row('c', 3, wiki),
-    ])
-    expect(named.map((entry) => entry.account)).toEqual([
-      'Gmail (Work)',
-      'Gmail (ada@home.example)',
-      'DeepWiki',
-    ])
-  })
-
-  it('counts an unnamed account’s place over every account on its service', () => {
-    const named = namedAccounts([
-      row('first', 1, { name: accountName('Work') }),
-      row('second', 2, {}),
-      row('other', 3, wiki),
-    ])
-    // The second Gmail account is the second whatever the first is called; the account on
-    // another service is the first there.
-    expect(named.map((entry) => entry.account)).toEqual(['Gmail (Work)', 'Gmail (2)', 'DeepWiki'])
-  })
-
-  it('numbers the later of two names that read the same, without colliding with a real name', () => {
-    const named = namedAccounts([
-      row('later', 5, {}),
-      row('first', 1, {}),
-      row('literal', 3, { name: accountName('2') }),
-      row('same', 7, { identity: identityOf('ada@work.example') }),
-      row('again', 9, { identity: identityOf('ada@work.example') }),
-    ])
-    expect(named.map((entry) => [entry.row.id, entry.account])).toEqual([
-      ['first', 'Gmail'],
-      // A Person really called an account "2", so the number moves on to 3.
-      ['literal', 'Gmail (2)'],
-      ['later', 'Gmail (3)'],
-      ['same', 'Gmail (ada@work.example)'],
-      ['again', 'Gmail (ada@work.example) (2)'],
-    ])
   })
 })

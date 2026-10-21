@@ -7,13 +7,7 @@
     "types": ["react", "node"]
   },
   "files": [],
-  "include": [
-    "app.config.ts",
-    "vitest.config.ts",
-    "src/**/*.test.ts",
-    "src/**/*.test.tsx",
-    "design-reference/**/*.ts"
-  ],
+  "include": ["app.config.ts", "design-reference/**/*.ts"],
   "exclude": [],
   "references": [
     {

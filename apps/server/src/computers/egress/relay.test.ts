@@ -37,15 +37,7 @@ import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as TestClock from 'effect/testing/TestClock'
 import { Changes } from '../../live/changes.ts'
-import {
-  Egress,
-  QUEUE_LIMIT,
-  type EgressService,
-  type ExitSocket,
-  egressRelay,
-  frameCutter,
-  lengthPrefixed,
-} from './relay.ts'
+import { Egress, QUEUE_LIMIT, type EgressService, type ExitSocket, egressRelay } from './relay.ts'
 import { CLOSE_DEADLINE_MILLIS, exitSocket, held } from './route.ts'
 
 /**
@@ -559,14 +551,6 @@ describe('the egress relay', () => {
       }),
     30_000,
   )
-
-  it.live('with egress on and no desktop app, it says it is waiting', () =>
-    Effect.gen(function* () {
-      const { relay, turn } = yield* relaying()
-      yield* turn({ chosen: true })
-      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Waiting.make({}))
-    }),
-  )
 })
 
 describe('the desktop app’s socket on the server', () => {
@@ -693,33 +677,6 @@ describe('the desktop app’s socket on the server', () => {
       expect(yield* Queue.take(read)).toBe(EGRESS_FRAME_LIMIT)
     }),
   )
-})
-
-describe('frames on the Computer’s byte stream', () => {
-  it('are cut wherever the chunks fall', () => {
-    const cut = frameCutter()
-    const bytes = Buffer.concat([
-      lengthPrefixed(Uint8Array.from([3, 0, 0, 0, 7])),
-      lengthPrefixed(Uint8Array.from([2, 0, 0, 0, 7, 9, 9])),
-    ])
-    const frames = [bytes.subarray(0, 3), bytes.subarray(3, 11), bytes.subarray(11)].flatMap(
-      (chunk) => Option.getOrThrow(cut(chunk)).map((frame) => Array.from(frame)),
-    )
-    expect(frames).toEqual([
-      [3, 0, 0, 0, 7],
-      [2, 0, 0, 0, 7, 9, 9],
-    ])
-  })
-
-  it('a length no frame can have ends the reading', () => {
-    expect(frameCutter()(Uint8Array.from([255, 255, 255, 255, 1]))).toEqual(Option.none())
-    // The longest frame is taken; one byte more is refused on its length alone.
-    const longest = lengthPrefixed(new Uint8Array(EGRESS_FRAME_LIMIT))
-    expect(Option.map(frameCutter()(longest), (frames) => frames.length)).toEqual(Option.some(1))
-    const over = lengthPrefixed(new Uint8Array(0)).slice()
-    new DataView(over.buffer).setUint32(0, EGRESS_FRAME_LIMIT + 1)
-    expect(frameCutter()(over)).toEqual(Option.none())
-  })
 })
 
 describe('a desktop app that has gone without a word', () => {

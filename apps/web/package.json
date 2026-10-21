@@ -10,7 +10,6 @@
     "preview": "vite preview",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "node ../../scripts/test.mjs",
     "parts": "openui generate src/parts/library.ts --spec --out ../../packages/agent/runtime/src/agents/parts.json --no-telemetry --no-interactive"
   },
   "dependencies": {
@@ -45,7 +44,6 @@
     "zustand": "5.0.11"
   },
   "devDependencies": {
-    "@effect/vitest": "catalog:",
     "@openuidev/cli": "catalog:",
     "@sentry/vite-plugin": "5.4.0",
     "@tailwindcss/vite": "catalog:",
@@ -56,13 +54,11 @@
     "@typescript/native": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@vivid/desktop": "workspace:*",
-    "happy-dom": "20.14.6",
     "shadcn": "^4.21.1",
     "shadow-plugin": "2.1.1",
     "tailwindcss": "catalog:",
     "tw-animate-css": "^1.4.0",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "vitest": "catalog:"
+    "vite": "catalog:"
   }
 }

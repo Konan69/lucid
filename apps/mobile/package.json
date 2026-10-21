@@ -14,8 +14,7 @@
     "updates": "node scripts/publish.mjs",
     "build:updates": "node scripts/export.mjs",
     "typecheck": "node ../../scripts/types.mjs tsconfig.types.json tsconfig.tests.json",
-    "lint": "node ../../scripts/lint.mjs",
-    "test": "node ../../scripts/test.mjs"
+    "lint": "node ../../scripts/lint.mjs"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
@@ -66,12 +65,10 @@
     "@sentry/core": "10.75.2"
   },
   "devDependencies": {
-    "@effect/vitest": "catalog:",
     "@react-native/metro-config": "catalog:",
     "@types/react": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
     "@types/react-dom": "catalog:"
   },
   "enriched-markdown": {

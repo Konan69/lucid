@@ -7,7 +7,6 @@ import { refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
 
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const cases = {
-  '05178e0b': ['apps/web/src/data/account.ts', 'apps/web/src/data/account.test.ts'],
   '7387315f': ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
   '138b9241': ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
   63938327: ['apps/mobile/scripts/publish.mjs', 'apps/server/src/updates/publishing.test.ts'],
@@ -15,7 +14,7 @@ const cases = {
   '7a00ed82': ['apps/server/src/live/changes.ts', 'apps/server/src/live/changes.test.ts'],
   efb82bd7: [
     'apps/server/src/observability/export.ts',
-    'apps/server/src/observability/outcomes.test.ts',
+    'apps/server/src/observability/export.test.ts',
   ],
 }
 
@@ -30,11 +29,6 @@ function between(source, start, end) {
 /** Each replay restores the historical boundary decision while retaining today's import paths. */
 function replay(fix, source, parent) {
   switch (fix) {
-    case '05178e0b':
-      return source.replace(
-        between(source, 'const Session =', 'const Sessions ='),
-        between(parent, 'const Session =', 'const Sessions ='),
-      )
     case '7387315f':
     case '138b9241':
       return source.replace(

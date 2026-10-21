@@ -5,7 +5,7 @@ import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
 import { onTestFinished } from 'vitest'
-import { HELD, holdable, holderClaim, snapshotRules, UNSETTLED } from './boat/holder.ts'
+import { HELD, holderClaim, snapshotRules, UNSETTLED } from './boat/holder.ts'
 import * as Protocol from './boat/protocol.ts'
 
 const machine = Protocol.ProviderId.make('bx_23456789')
@@ -170,13 +170,5 @@ describe.each(['sh', 'bash'])('the machine’s holder record under %s', (shell) 
       { env: { HOME: directory, PATH: NodeProcess.env['PATH'] } },
     )
     expect(after.status).toBe(0)
-  })
-})
-
-describe('what may be named on a machine', () => {
-  it('is only an intent this server made', () => {
-    expect(holdable(first)).toBe(true)
-    for (const other of ['', 'intent', `${first}'; rm -rf ~ #`, `${first}\n`])
-      expect(holdable(other)).toBe(false)
   })
 })

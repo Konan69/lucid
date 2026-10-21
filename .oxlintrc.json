@@ -267,7 +267,7 @@
       }
     },
     {
-      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/test/**", "**/tests/**"],
+      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",

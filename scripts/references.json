@@ -80,21 +80,6 @@
       "reason": "Shared test config guards future TSX test files alongside existing TS suites."
     },
     {
-      "owner": "packages/client/state/tsconfig.tests.json",
-      "path": "src/**/*.test.tsx",
-      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
-    },
-    {
-      "owner": "packages/contracts/tsconfig.tests.json",
-      "path": "src/**/*.test.tsx",
-      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
-    },
-    {
-      "owner": "packages/design/marks/tsconfig.tests.json",
-      "path": "src/**/*.test.tsx",
-      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
-    },
-    {
       "owner": ".oxlintrc.json",
       "path": ".agent/**",
       "reason": "Future local tool metadata must stay outside product lint scopes."

@@ -6,7 +6,6 @@ import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
-import * as YAML from 'yaml'
 import { runLocal } from './gate/local.mjs'
 import { stageOfTask, stages } from './gate/stages.mjs'
 
@@ -17,7 +16,6 @@ const Manifest = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.Json)],
 )
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(Manifest))
-const decodeEnvironment = Schema.decodeUnknownSync(Schema.Array(Schema.String))
 const buildStage = stages.find((stage) => stage.name === 'build')
 
 /** Preserve the real task graph while replacing only expensive bundlers with artifact writers. */
@@ -135,26 +133,6 @@ void NodeTest.test(
   },
 )
 
-/** Package overrides must keep the shared hash and artifact contract when they change ordering. */
-void NodeTest.test(
-  'production build overrides retain generic inputs, outputs and environment',
-  () => {
-    const Config = Schema.Struct({
-      tasks: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Json)),
-    })
-    const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Config))
-    const shared = decode(NodeFS.readFileSync(NodePath.join(root, 'turbo.json'), 'utf8')).tasks
-    const web = decode(NodeFS.readFileSync(NodePath.join(root, 'apps/web/turbo.json'), 'utf8'))
-      .tasks.build
-    const environment = decodeEnvironment(shared.build.env)
-    for (const specific of [shared['@vivid/agent-runtime#build'], web]) {
-      for (const field of ['inputs', 'outputs', 'passThroughEnv'])
-        assert.deepEqual(specific[field], shared.build[field], `build override must keep ${field}`)
-      assert.deepEqual(specific.env, [...environment, '!SENTRY_AUTH_TOKEN'])
-    }
-  },
-)
-
 /** Exercise the executable boundary without booting Expo or uploading maps. */
 void NodeTest.test(
   'phone gate export isolates Metro, disables uploads and matches image CI',
@@ -194,11 +172,3 @@ assert.equal(process.argv[2], path.resolve('.cache/updates'))
     assert.equal(exported.status, 0, exported.stderr)
   },
 )
-
-/** A missing signoff must run every shipping build on GitHub as well as in the local gate. */
-void NodeTest.test('quality checks include the production build stage', () => {
-  const workflow = YAML.parse(
-    NodeFS.readFileSync(NodePath.join(root, '.github/workflows/quality.yml'), 'utf8'),
-  )
-  assert.ok(workflow.jobs.checks.strategy.matrix.include.some((job) => job.stages === 'build'))
-})

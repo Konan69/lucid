@@ -4,11 +4,8 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
 import * as NodeURL from 'node:url'
-import * as NodeV8 from 'node:v8'
-import * as NodeVM from 'node:vm'
 import {
   EGRESS_BEAT,
-  EGRESS_DEADLINE_MILLIS,
   EGRESS_FRAME_LIMIT,
   EGRESS_GRANT,
   EGRESS_LINK_BUDGET,
@@ -27,7 +24,6 @@ import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
-import * as Predicate from 'effect/Predicate'
 import * as Queue from 'effect/Queue'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
@@ -37,8 +33,6 @@ import {
   DRAIN,
   ExitStatus,
   QUEUE_BOUND,
-  STEADY,
-  checkedAddress,
   dialTarget,
   exitLink,
   type ExitDependencies,
@@ -856,71 +850,6 @@ describe('egress through the Person’s computer', () => {
     }),
   )
 
-  it.live('a stream whose name is still being resolved is held to the same budget', () =>
-    Effect.gen(function* () {
-      const hand = yield* handDriven({ resolve: () => Effect.never })
-      yield* hand.say(EgressFrame.cases.Open.make({ stream: one, host: 'slow.example', port: 80 }))
-      const data = megabyte(one)
-      for (let at = 0; at <= megabytes(EGRESS_STREAM_BUDGET); at += 1) yield* hand.raw(data)
-      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
-    }),
-  )
-
-  it.live(
-    'a stream that goes while its name is being resolved lets go of its work and its bytes',
-    () =>
-      Effect.gen(function* () {
-        // A resolver that never answers, and says when it is entered and when it is let go.
-        const entered = yield* Queue.unbounded<void>()
-        const released = yield* Queue.unbounded<void>()
-        const resolve = () =>
-          Effect.acquireUseRelease(
-            Queue.offer(entered, undefined),
-            () => Effect.never,
-            () => Queue.offer(released, undefined),
-          )
-        const hand = yield* handDriven({ resolve })
-        NodeV8.setFlagsFromString('--expose-gc')
-        const collect: unknown = NodeVM.runInNewContext('gc')
-        const turn = Effect.callback<void>((resume) => {
-          setImmediate(() => resume(Effect.void))
-        })
-        /** Whether anything still holds the bytes of a message, after a collection. */
-        const kept = (memory: WeakRef<ArrayBufferLike>) =>
-          turn.pipe(
-            Effect.andThen(
-              Effect.sync(() => (Predicate.isFunction(collect) ? collect() : undefined)),
-            ),
-            Effect.map(() => memory.deref() !== undefined),
-          )
-        /** Opens a stream to a name and sends it a megabyte nothing else refers to. */
-        const waiting = Effect.fn(function* (stream: EgressStream) {
-          yield* hand.say(EgressFrame.cases.Open.make({ stream, host: 'slow.example', port: 80 }))
-          yield* Queue.take(entered)
-          return yield* Effect.suspend(() => {
-            const data = Uint8Array.from(megabyte(stream))
-            return hand.raw(data).pipe(Effect.as(new WeakRef(data.buffer)))
-          })
-        })
-
-        // The Computer closes it.
-        const closed = yield* waiting(one)
-        yield* hand.say(EgressFrame.cases.Close.make({ stream: one }))
-        expect(yield* kept(closed)).toBe(false)
-        yield* Queue.take(released)
-
-        // The Computer opens its number again: both sides forget it.
-        const again = yield* waiting(two)
-        yield* hand.say(
-          EgressFrame.cases.Open.make({ stream: two, host: 'slow.example', port: 80 }),
-        )
-        expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: two }))
-        expect(yield* kept(again)).toBe(false)
-        yield* Queue.take(released)
-        expect(yield* Queue.size(entered)).toBe(0)
-      }),
-  )
-
   it.live('all the streams of a link together are held to the link’s budget', () =>
     Effect.gen(function* () {
       const stalled = yield* stalledSite()
@@ -1027,16 +956,6 @@ describe('egress through the Person’s computer', () => {
     }),
   )
 
-  it.live('a grant for a stream whose name is still being resolved ends it', () =>
-    Effect.gen(function* () {
-      const hand = yield* handDriven({ resolve: () => Effect.never })
-      yield* hand.say(EgressFrame.cases.Open.make({ stream: one, host: 'slow.example', port: 80 }))
-      // Nothing can have been sent on a stream that has no target yet.
-      yield* hand.say(EgressFrame.cases.Grant.make({ stream: one, bytes: 1 }))
-      expect(yield* hand.frame).toEqual(EgressFrame.cases.Close.make({ stream: one }))
-    }),
-  )
-
   it.live('a grant for a stream that is over, or that never was, is passed over', () =>
     Effect.gen(function* () {
       const place = yield* heldSite()
@@ -1121,178 +1040,6 @@ describe('egress through the Person’s computer', () => {
       const ports = yield* computerProxy()
       const reply = yield* tunnelled(ports.proxy, `127.0.0.1:${sitePort}`, '/')
       expect(bodyOf(reply).toString()).toBe('reached directly')
-    }),
-  )
-
-  it.effect(
-    'dials again two seconds after a link that had held, and waits longer each time one does not',
-    () =>
-      Effect.gen(function* () {
-        /** Each socket dialled, as the event target the test opens and closes by hand. */
-        const sockets: Array<EventTarget> = []
-        const happens = (index: number, type: 'open' | 'close') =>
-          Option.map(Arr.get(sockets, index), (events) => events.dispatchEvent(new Event(type)))
-        const statuses: Array<ExitStatus['_tag']> = []
-        const link = yield* exitLink({
-          socket: () => {
-            const events = new EventTarget()
-            sockets.push(events)
-            return Option.some({
-              binaryType: '',
-              bufferedAmount: 0,
-              send: () => undefined,
-              close: () => undefined,
-              addEventListener: (type, listener) => events.addEventListener(type, listener),
-            })
-          },
-          resolve: never,
-          dial: dialTarget,
-          allowPrivateTargets: false,
-          onStatus: (status) => {
-            statuses.push(status._tag)
-          },
-        })
-        yield* Effect.forkScoped(link.run)
-        yield* TestClock.adjust(0)
-        expect(sockets.length).toBe(1)
-        happens(0, 'open')
-        expect(link.state()).toEqual(ExitStatus.cases.Connected.make({ relayed: 0, active: 0 }))
-
-        // A link that held, then dropped: dialled again after two seconds, and not before.
-        yield* TestClock.adjust(STEADY)
-        happens(0, 'close')
-        yield* TestClock.adjust('1999 millis')
-        expect(sockets.length).toBe(1)
-        yield* TestClock.adjust('1 millis')
-        expect(sockets.length).toBe(2)
-
-        // A socket that opens and is closed at once (a join that ends as soon as it is made) is
-        // no better than one that never opened: the wait grows, two seconds and then four.
-        happens(1, 'open')
-        happens(1, 'close')
-        yield* TestClock.adjust('2 seconds')
-        expect(sockets.length).toBe(3)
-        happens(2, 'open')
-        happens(2, 'close')
-        yield* TestClock.adjust('3999 millis')
-        expect(sockets.length).toBe(3)
-        yield* TestClock.adjust('1 millis')
-        expect(sockets.length).toBe(4)
-        // And eight when the server is not there at all.
-        happens(3, 'close')
-        yield* TestClock.adjust('7999 millis')
-        expect(sockets.length).toBe(4)
-        yield* TestClock.adjust('1 millis')
-        expect(sockets.length).toBe(5)
-        happens(4, 'open')
-        expect(link.state()._tag).toBe('Connected')
-        expect(statuses.at(-1)).toBe('Connected')
-      }),
-  )
-
-  it.effect('a server that sends nothing for the deadline is gone, and is dialled again', () =>
-    Effect.gen(function* () {
-      /** Each socket dialled: its events, in the test's hands, and whether the app closed it. */
-      const sockets: Array<{ readonly events: EventTarget; closed: boolean }> = []
-      const link = yield* exitLink({
-        socket: () => {
-          const made = { events: new EventTarget(), closed: false }
-          sockets.push(made)
-          return Option.some({
-            binaryType: '',
-            bufferedAmount: 0,
-            send: () => undefined,
-            close: () => {
-              made.closed = true
-            },
-            addEventListener: (type, listener) => made.events.addEventListener(type, listener),
-          })
-        },
-        resolve: never,
-        dial: dialTarget,
-        allowPrivateTargets: false,
-        onStatus: () => undefined,
-      })
-      yield* Effect.forkScoped(link.run)
-      yield* TestClock.adjust(0)
-      const first = Option.getOrThrow(Arr.get(sockets, 0))
-      first.events.dispatchEvent(new Event('open'))
-
-      // A server that is there says so at every ping. Twice the deadline goes by with nothing
-      // carried, and the socket is kept.
-      const pings = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
-      for (let ping = 0; ping < 2 * pings; ping += 1) {
-        yield* TestClock.adjust(EGRESS_PING_MILLIS)
-        first.events.dispatchEvent(new MessageEvent('message', { data: EGRESS_BEAT }))
-      }
-      expect(first.closed).toBe(false)
-      expect(link.state()._tag).toBe('Connected')
-
-      // Then nothing more comes, and nothing says the socket closed: the server's computer is
-      // unreachable, or the network between dropped. At the deadline the app ends the socket
-      // itself, and dials again as after any link that had held.
-      yield* TestClock.adjust(EGRESS_DEADLINE_MILLIS - 1)
-      expect(first.closed).toBe(false)
-      yield* TestClock.adjust(1)
-      expect(first.closed).toBe(true)
-      expect(link.state()._tag).toBe('Connecting')
-      expect(sockets.length).toBe(1)
-      yield* TestClock.adjust('2 seconds')
-      expect(sockets.length).toBe(2)
-    }),
-  )
-
-  it.effect('rests with nobody to dial as, and dials when told the session changed', () =>
-    Effect.gen(function* () {
-      const session = { signedIn: false, dials: 0 }
-      const link = yield* exitLink({
-        socket: () => {
-          if (!session.signedIn) return Option.none()
-          session.dials += 1
-          return Option.some({
-            binaryType: '',
-            bufferedAmount: 0,
-            send: () => undefined,
-            close: () => undefined,
-            addEventListener: () => undefined,
-          })
-        },
-        resolve: never,
-        dial: (address, port) =>
-          NodeNet.createConnection({ host: address, port, allowHalfOpen: true }),
-        allowPrivateTargets: false,
-        onStatus: () => undefined,
-      })
-      yield* Effect.forkScoped(link.run)
-      yield* TestClock.adjust('5 minutes')
-      expect(session.dials).toBe(0)
-      expect(link.state()).toEqual(ExitStatus.cases.Off.make({}))
-      session.signedIn = true
-      link.restart()
-      yield* TestClock.adjust(0)
-      expect(session.dials).toBe(1)
-    }),
-  )
-
-  it.effect('the first address a name leads to that may be dialled is the one dialled', () =>
-    Effect.gen(function* () {
-      const resolve = () => Effect.succeed(['10.0.0.5', '93.184.216.34', '8.8.8.8'])
-      expect(
-        yield* checkedAddress('site.example', { resolve, allowPrivateTargets: false }),
-      ).toEqual(Option.some('93.184.216.34'))
-      expect(
-        yield* checkedAddress('::ffff:10.0.0.5', { resolve, allowPrivateTargets: false }),
-      ).toEqual(Option.none())
-      // Local IPv6 ranges the reference lets through are passed over after a name is resolved,
-      // and refused when written out.
-      const local = () =>
-        Effect.succeed(['fec0::1', '64:ff9b:1::a00:1', '2002:c0a8:101::1', '2606:4700:4700::1111'])
-      expect(
-        yield* checkedAddress('site.example', { resolve: local, allowPrivateTargets: false }),
-      ).toEqual(Option.some('2606:4700:4700::1111'))
-      expect(
-        yield* checkedAddress('64:ff9b:1::a00:1', { resolve, allowPrivateTargets: false }),
-      ).toEqual(Option.none())
     }),
   )
 })

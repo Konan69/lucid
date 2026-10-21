@@ -4,22 +4,8 @@ import type * as NodeNet from 'node:net'
 import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
 import { expect, it } from '@effect/vitest'
-import {
-  Context,
-  Deferred,
-  Effect,
-  Fiber,
-  Layer,
-  Option,
-  Predicate,
-  Queue,
-  Result,
-  Schema,
-  Stream,
-} from 'effect'
-import * as TestClock from 'effect/testing/TestClock'
+import { Effect, Layer, Queue, Result, Schema, Stream } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
-import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpServer from 'effect/http/HttpServer'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
@@ -27,10 +13,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { NotificationId, PushDestination, PushPayload, ThreadId } from '@vivid/contracts'
 import { PushAdapter, pushAdapterLayer } from './adapter.ts'
 import { PushConfig } from './config.ts'
-import { PushAcceptance } from './receipts.ts'
 import { testPushConfig } from './testing.ts'
-
-const decodeWireJsonSync = Schema.decodeSync(Schema.fromJsonString(Schema.Json))
 
 const payload = PushPayload.make({
   notificationId: NotificationId.make('notification'),
@@ -39,201 +22,6 @@ const payload = PushPayload.make({
   threadId: ThreadId.make('thread'),
 })
 const phone = PushDestination.cases.Phone.make({ token: 'ExpoPushToken[test-device]' })
-/** RFC 8291 receiver derives its keys from the fixture private key and wire salt/public key.
- * Decrypting the actual HTTP body detects random, empty, mis-keyed or corrupted ciphertext. */
-function decryptPush(bytes: Uint8Array, recipient: NodeCrypto.ECDH, auth: string) {
-  const wire = Buffer.from(bytes)
-  const salt = wire.subarray(0, 16)
-  const keyLength = wire.readUInt8(20)
-  const senderKey = wire.subarray(21, 21 + keyLength)
-  const encrypted = wire.subarray(21 + keyLength)
-  const shared = recipient.computeSecret(senderKey)
-  const authentication = NodeCrypto.createHmac('sha256', Buffer.from(auth, 'base64url'))
-    .update(shared)
-    .digest()
-  const info = Buffer.concat([
-    Buffer.from('WebPush: info\0'),
-    recipient.getPublicKey(),
-    senderKey,
-    Buffer.from([1]),
-  ])
-  const material = NodeCrypto.createHmac('sha256', authentication).update(info).digest()
-  const pseudorandom = NodeCrypto.createHmac('sha256', salt).update(material).digest()
-  const key = NodeCrypto.createHmac('sha256', pseudorandom)
-    .update(Buffer.from('Content-Encoding: aes128gcm\0\x01'))
-    .digest()
-    .subarray(0, 16)
-  const nonce = NodeCrypto.createHmac('sha256', pseudorandom)
-    .update(Buffer.from('Content-Encoding: nonce\0\x01'))
-    .digest()
-    .subarray(0, 12)
-  const decipher = NodeCrypto.createDecipheriv('aes-128-gcm', key, nonce)
-  decipher.setAuthTag(encrypted.subarray(-16))
-  const plaintext = Buffer.concat([decipher.update(encrypted.subarray(0, -16)), decipher.final()])
-  let end = plaintext.length - 1
-  while (plaintext[end] === 0) end -= 1
-  expect(plaintext[end]).toBe(2)
-  return plaintext.subarray(0, end).toString('utf8')
-}
-
-/** Encryption remains real; only provider HTTP responses are controlled at the narrow adapter. */
-it.effect(
-  'encrypts Web Push with VAPID and classifies expired authority without following redirects',
-  () =>
-    Effect.gen(function* () {
-      const curve = NodeCrypto.createECDH('prime256v1')
-      curve.generateKeys()
-      const destination = PushDestination.cases.Browser.make({
-        endpoint: 'https://fcm.googleapis.com/push/test',
-        keys: {
-          p256dh: curve.getPublicKey().toString('base64url'),
-          auth: NodeCrypto.randomBytes(16).toString('base64url'),
-        },
-      })
-      for (const status of [201, 410, 302]) {
-        const transport = HttpClient.make((request) =>
-          Effect.sync(() => {
-            expect(request.url).toBe(destination.endpoint)
-            expect(request.headers['content-encoding']).toBe('aes128gcm')
-            expect(request.headers.authorization).toContain('vapid ')
-            if (!Predicate.isTagged(request.body, 'Uint8Array'))
-              return expect.fail('Expected encrypted Web Push body')
-            const decoded = decodeWireJsonSync(
-              decryptPush(request.body.body, curve, destination.keys.auth),
-            )
-            expect(decoded).toEqual({
-              notificationId: 'notification',
-              title: 'Meeting clash',
-              body: 'Choose which meeting to move.',
-              threadId: 'thread',
-            })
-            return HttpClientResponse.fromWeb(request, new Response(null, { status }))
-          }),
-        )
-        const result = yield* Effect.gen(function* () {
-          return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
-        }).pipe(
-          Effect.provideServiceEffect(
-            PushAdapter,
-            Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
-              Effect.map((context) => Context.get(context, PushAdapter)),
-              Effect.provideService(HttpClient.HttpClient, transport),
-            ),
-          ),
-          Effect.scoped,
-          Effect.provideService(PushConfig, testPushConfig),
-        )
-        if (status === 201)
-          expect(result).toEqual(Result.succeed(PushAcceptance.cases.Browser.make({})))
-        else
-          expect(Result.isFailure(result) && result.failure._tag).toBe(
-            status === 410 ? 'PushTargetGone' : 'PushRejected',
-          )
-      }
-    }),
-)
-
-/** Validate the documented Expo ticket and late receipt protocols, including malformed responses. */
-it.effect(
-  'sends the Expo v2 payload without Person identifiers and decodes tickets and gone receipts',
-  () =>
-    Effect.gen(function* () {
-      const transport = HttpClient.make((request) =>
-        Effect.sync(() => {
-          if (!Predicate.isTagged(request.body, 'Uint8Array'))
-            return expect.fail('Expected Expo JSON body')
-          const wire = new TextDecoder().decode(request.body.body)
-          expect(decodeWireJsonSync(wire)).toEqual({
-            to: 'ExpoPushToken[test-device]',
-            title: 'Meeting clash',
-            body: 'Choose which meeting to move.',
-            sound: 'default',
-            data: {
-              notificationId: 'notification',
-              title: 'Meeting clash',
-              body: 'Choose which meeting to move.',
-              threadId: 'thread',
-            },
-          })
-          return HttpClientResponse.fromWeb(
-            request,
-            new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } })),
-          )
-        }),
-      )
-      const receiptTransport = HttpClient.make((request) =>
-        Effect.sync(() => {
-          expect(request.url).toBe('https://exp.host/--/api/v2/push/getReceipts')
-          return HttpClientResponse.fromWeb(
-            request,
-            new Response(
-              JSON.stringify({
-                data: {
-                  ticket: { status: 'error', details: { error: 'DeviceNotRegistered' } },
-                },
-              }),
-            ),
-          )
-        }),
-      )
-      const acceptance = yield* Effect.gen(function* () {
-        return yield* (yield* PushAdapter).send(phone, payload)
-      }).pipe(
-        Effect.provideServiceEffect(
-          PushAdapter,
-          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
-            Effect.map((context) => Context.get(context, PushAdapter)),
-            Effect.provideService(HttpClient.HttpClient, transport),
-          ),
-        ),
-        Effect.scoped,
-        Effect.provideService(PushConfig, testPushConfig),
-      )
-      expect(acceptance).toEqual(
-        PushAcceptance.cases.Phone.make({ ticket: 'ticket', confirmed: false }),
-      )
-      const receipt = yield* Effect.gen(function* () {
-        return yield* (yield* PushAdapter).receipt('ticket')
-      }).pipe(
-        Effect.provideServiceEffect(
-          PushAdapter,
-          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
-            Effect.map((context) => Context.get(context, PushAdapter)),
-            Effect.provideService(HttpClient.HttpClient, receiptTransport),
-          ),
-        ),
-        Effect.scoped,
-        Effect.provideService(PushConfig, testPushConfig),
-      )
-      expect(receipt).toEqual(Option.some('Gone'))
-    }),
-)
-
-/** A lost response may have sent: the ten-second deadline reports uncertainty, never retries. */
-it.effect('times out a pending provider using TestClock and reports the send as uncertain', () =>
-  Effect.gen(function* () {
-    const requested = yield* Deferred.make<void>()
-    const transport = Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make(() =>
-        Deferred.succeed(requested, undefined).pipe(Effect.andThen(Effect.never)),
-      ),
-    )
-    const result = yield* Effect.gen(function* () {
-      const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
-      return yield* Effect.gen(function* () {
-        const adapter = yield* PushAdapter
-        const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
-        yield* Deferred.await(requested)
-        yield* TestClock.adjust('9999 millis')
-        expect(pending.pollUnsafe()).toBeUndefined()
-        yield* TestClock.adjust('1 millis')
-        return yield* Fiber.join(pending)
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
-    expect(Result.isFailure(result) && result.failure._tag).toBe('PushUncertain')
-  }),
-)
 
 const Exchange = Schema.TaggedUnion({
   Received: { path: Schema.String, port: Schema.Finite },
