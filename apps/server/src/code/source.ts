@@ -2,13 +2,16 @@ import {
   DisplayProgramRefused,
   DisplaySource,
   RuntimeUnavailable,
+  type NotFound,
   type PersonId,
+  type ThreadId,
 } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
+import type { Database, DatabaseInfrastructureError } from '../database/client.ts'
 
 /** Public history is Flue's durable record, the same read used by Runtime.documentRun. */
 const History = Schema.Struct({
@@ -23,6 +26,13 @@ const History = Schema.Struct({
 const decodeHistory = HttpClientResponse.schemaBodyJson(History)
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }))
 const refusal = { message: DisplayProgramRefused.fields.message.literal }
+
+/** Both sources yield the same proven text; their storage authorities and failures remain explicit. */
+type StoredDisplay = Effect.Effect<
+  { readonly thread: ThreadId; readonly text: string },
+  DisplayProgramRefused | NotFound | RuntimeUnavailable | DatabaseInfrastructureError,
+  Database | Runtime | FeedStore
+>
 
 /** Neither a message's role nor its text comes from the caller. Only public text parts count. */
 const messageText = Effect.fn('Code.messageText')(function* (
@@ -61,7 +71,7 @@ export const displayThread = Effect.fn('Code.displayThread')(function* (
   person: PersonId,
   code: string,
 ) {
-  const stored = yield* DisplaySource.match(source, {
+  const stored = yield* DisplaySource.match<StoredDisplay>(source, {
     ThreadMessage: (message) =>
       messageText(message, person).pipe(Effect.map((text) => ({ thread: message.thread, text }))),
     FeedPost: ({ post }) =>
@@ -69,7 +79,7 @@ export const displayThread = Effect.fn('Code.displayThread')(function* (
         const [display] = yield* (yield* FeedStore).display(person, post)
         if (display === undefined || display.text === null)
           return yield* new DisplayProgramRefused(refusal)
-        return display
+        return { thread: display.thread, text: display.text }
       }),
   })
   if (!contains(stored.text, code)) return yield* new DisplayProgramRefused(refusal)
