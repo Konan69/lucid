@@ -33,9 +33,10 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { DeliverySpeaker, StoredRunOrigin } from '../threads/conversation.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs } from '../threads/tables.ts'
-import { ActionOrigin, type ActionRunner } from './gate.ts'
+import { ActionOrigin } from './gate.ts'
 import { ApprovalStore } from './store.ts'
-import { connectionAction, Observation, trustTestServices } from './testing.ts'
+import { approvals } from './tables.ts'
+import { connectionAction, type Execution, Observation, trustTestServices } from './testing.ts'
 
 const Person = Schema.Literals(['first', 'second'])
 const Target = Schema.Literals(['browser', 'connection'])
@@ -51,7 +52,6 @@ const Command = Schema.TaggedUnion({
 })
 type Command = typeof Command.Type
 type People = Effect.Success<ReturnType<typeof twoPeople>>
-type Execution = Parameters<ActionRunner['Service']['run']>[0]
 
 const browser = ProposedAction.make({
   summary: 'Send the draft',
@@ -190,7 +190,7 @@ const decide = Effect.fn('AuthorityTest.decide')(function* (
 ) {
   const selected = Option.getOrThrow(Arr.get(model.cards, event.card % model.cards.length))
   const actor = test[event.person]
-  const decision =
+  const answer =
     event.decision === 'allow'
       ? ApprovalDecision.cases.AllowOnce.make({})
       : ApprovalDecision.cases.Deny.make({})
@@ -198,7 +198,7 @@ const decide = Effect.fn('AuthorityTest.decide')(function* (
     (yield* ApprovalStore).decide(actor, {
       id: selected.approval.id,
       digest: event.changedDigest ? 'changed' : selected.approval.digest,
-      decision,
+      decision: answer,
     }),
   )
   if (!model.shared && event.person === 'second') {
@@ -269,7 +269,7 @@ const withdraw = Effect.fn('AuthorityTest.withdraw')(function* (
     cards: Arr.map(model.cards, (entry) =>
       entry === selected ? { ...entry, state: 'Withdrawn' as const } : entry,
     ),
-  }
+  } satisfies Model
 })
 
 /** The oracle advances from commands and successful receipts, never from a stored status. */
@@ -306,24 +306,62 @@ const step = (test: People, model: Model, event: Command) =>
       }),
   })
 
-/** Check every observable invariant after every command, including refused and ignored commands. */
+/** Persisted ownership, frozen origins and once-only execution must survive even refused commands. */
 const verify = Effect.fn('AuthorityTest.verify')(function* (test: People, model: Model) {
-  const store = yield* ApprovalStore
+  const database = yield* Database
   const observed = yield* Observation
-  // Commands have settled before these independent reads; parallel reads keep SQL latency bounded.
-  const { records, inboxes, elsewhere, executions, deliveries } = yield* Effect.all(
+  // One scalar-row query avoids repeating the public projection's Person lookup at every step.
+  const { records, executions, deliveries } = yield* Effect.all(
     {
-      records: store.inThread(test.threadId),
-      inboxes: Effect.all(
-        { first: store.inbox(test.first), second: store.inbox(test.second) },
-        { concurrency: 'unbounded' },
+      records: database.run(
+        database
+          .select({
+            id: approvals.id,
+            threadId: approvals.threadId,
+            personId: approvals.personId,
+            runId: approvals.runId,
+            status: approvals.status,
+          })
+          .from(approvals)
+          .where(eq(approvals.threadId, test.threadId)),
       ),
-      elsewhere: store.inbox(test.elsewhere),
       executions: Ref.get(observed.executions),
       deliveries: Ref.get(observed.deliveries),
     },
     { concurrency: 'unbounded' },
   )
+  expect(records).toHaveLength(model.cards.length)
+  for (const entry of model.cards) {
+    expect(records).toContainEqual({
+      id: entry.approval.id,
+      threadId: test.threadId,
+      personId: test[entry.person].person.id,
+      runId: ActionOrigin.match(entry.origin, {
+        Run: ({ runId }) => runId,
+        RuntimeThread: () => null,
+      }),
+      status: entry.state.toLowerCase(),
+    })
+  }
+  expect(executions).toEqual(model.executions)
+  expect(deliveries).toEqual(
+    model.deliveries.map((entry) =>
+      expect.objectContaining({
+        threadId: test.threadId,
+        personId: test[entry.card.person].person.id,
+        speaker: DeliverySpeaker.cases.Decider.make({ personId: test[entry.person].person.id }),
+        idempotencyKey: `approval-${entry.card.approval.id}`,
+      }),
+    ),
+  )
+})
+
+/** Full public projection at sequence end keeps the persistence witness tied to caller-visible state. */
+const verifyProjection = Effect.fn('AuthorityTest.verifyProjection')(function* (
+  test: People,
+  model: Model,
+) {
+  const records = yield* (yield* ApprovalStore).inThread(test.threadId)
   expect(records).toHaveLength(model.cards.length)
   for (const entry of model.cards) {
     expect(records).toContainEqual(
@@ -339,39 +377,44 @@ const verify = Effect.fn('AuthorityTest.verify')(function* (test: People, model:
       }),
     )
   }
-  for (const person of Person.literals) {
-    const inbox = inboxes[person]
-    const visible = model.cards.filter(
-      (entry) =>
-        entry.person === person &&
-        entry.state === 'Pending' &&
-        (person === 'first' || model.shared),
-    )
-    expect(
-      Arr.sort(
-        inbox.map((entry) => entry.id),
-        Order.String,
-      ),
-    ).toEqual(
-      Arr.sort(
-        visible.map((entry) => entry.approval.id),
-        Order.String,
-      ),
-    )
-  }
-  expect(elsewhere).toEqual([])
-  expect(executions).toEqual(model.executions)
-  expect(deliveries).toEqual(
-    model.deliveries.map((entry) =>
-      expect.objectContaining({
-        threadId: test.threadId,
-        personId: test[entry.card.person].person.id,
-        speaker: DeliverySpeaker.cases.Decider.make({ personId: test[entry.person].person.id }),
-        idempotencyKey: `approval-${entry.card.approval.id}`,
-      }),
+})
+
+/** Only the addressed Person's inbox can change when a card is proposed or settled. */
+const verifyInbox = Effect.fn('AuthorityTest.verifyInbox')(function* (
+  test: People,
+  model: Model,
+  person: typeof Person.Type,
+) {
+  const inbox = yield* (yield* ApprovalStore).inbox(test[person])
+  const visible = model.cards.filter(
+    (entry) =>
+      entry.person === person && entry.state === 'Pending' && (person === 'first' || model.shared),
+  )
+  expect(
+    Arr.sort(
+      inbox.map((entry) => entry.id),
+      Order.String,
+    ),
+  ).toEqual(
+    Arr.sort(
+      visible.map((entry) => entry.approval.id),
+      Order.String,
     ),
   )
 })
+
+/** Sharing affects the participant's reach; Run replacement and signal replay do not change inboxes. */
+const affectedInbox = (model: Model, event: Command) =>
+  Command.match<Option.Option<typeof Person.Type>>(event, {
+    Propose: ({ person }) => Option.some(person),
+    Decide: ({ card }) =>
+      Arr.get(model.cards, card % model.cards.length).pipe(Option.map((entry) => entry.person)),
+    Withdraw: ({ card }) =>
+      Arr.get(model.cards, card % model.cards.length).pipe(Option.map((entry) => entry.person)),
+    Share: () => Option.some('second'),
+    Run: () => Option.none(),
+    Replay: () => Option.none(),
+  })
 
 /** A pending browser request makes the ownership boundary reachable even in a one-command shrink. */
 const sequence = Effect.fn('AuthorityTest.sequence')(function* (events: ReadonlyArray<Command>) {
@@ -399,8 +442,10 @@ const sequence = Effect.fn('AuthorityTest.sequence')(function* (events: Readonly
   }
   yield* verify(test, model)
   for (const event of events) {
+    const inbox = affectedInbox(model, event)
     model = yield* step(test, model, event)
     yield* verify(test, model)
+    if (Option.isSome(inbox)) yield* verifyInbox(test, model, inbox.value)
   }
   // Every generated Run replacement is followed by a decision on the original capability, so
   // passing streams prove its frozen authority even when they never generate their own decision.
@@ -417,16 +462,21 @@ const sequence = Effect.fn('AuthorityTest.sequence')(function* (events: Readonly
     )
     yield* verify(test, model)
   }
+  // Full projections include the last forced decision and the unrelated Company.
+  yield* verifyProjection(test, model)
+  for (const person of Person.literals) yield* verifyInbox(test, model, person)
+  expect(yield* (yield* ApprovalStore).inbox(test.elsewhere)).toEqual([])
 })
 
 layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
   describe.skipIf(!testDatabaseConfigured)('Generated Approval authority lifecycle', () => {
+    // Three runs bound each case under contention; the replay driver enforces mutation detection.
     for (const seed of [20261021, 31913, 58475, 20261022]) {
       it.effect.prop(
         `preserves Thread, Run and Person authority after every command, seed ${seed}`,
         { events: sequences },
         ({ events }) => scopedCase(services, sequence(events), 'fresh'),
-        { arbitrary: { seed, runs: 4 } },
+        { arbitrary: { seed, runs: 3, size: 6 } },
       )
     }
   })

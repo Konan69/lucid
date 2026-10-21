@@ -63,9 +63,11 @@ const Judgment = Schema.TaggedUnion({
 })
 type Judgment = typeof Judgment.Type
 
+export type Execution = Parameters<ActionRunner['Service']['run']>[0]
+
 interface ObservationService {
   readonly actions: Effect.Effect<ReadonlyArray<ProposedAction>>
-  readonly executions: Ref.Ref<ReadonlyArray<Parameters<ActionRunner['Service']['run']>[0]>>
+  readonly executions: Ref.Ref<ReadonlyArray<Execution>>
   readonly deliveries: Ref.Ref<ReadonlyArray<Delivery>>
   readonly notices: Ref.Ref<ReadonlyArray<Notice>>
   readonly topics: Ref.Ref<ReadonlyArray<Topic>>
@@ -89,9 +91,7 @@ export class Observation extends Context.Service<Observation, ObservationService
 /** These ports record real store orchestration; PostgreSQL, audit, policy and claims stay production. */
 const ports = Layer.effectContext(
   Effect.gen(function* () {
-    const executions = yield* Ref.make<
-      ReadonlyArray<Parameters<ActionRunner['Service']['run']>[0]>
-    >([])
+    const executions = yield* Ref.make<ReadonlyArray<Execution>>([])
     const state = Observation.of({
       actions: Ref.get(executions).pipe(
         Effect.map((inputs) => inputs.map((input) => input.action)),
