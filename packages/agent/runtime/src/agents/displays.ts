@@ -51,7 +51,7 @@ failed = created.status == "error" ? Text(created.error, "sm", "danger") : null`
   `A live answer worked out by a program on the Person's Computer, and a button that runs another:
 
 root = Col([Title("Downloads folder", "lg"), Text(size.text, "sm"), acts], 3)
-size = Query("run_code", {code: "const { execSync } = await import(\"node:child_process\"); return { text: execSync(\"du -sh ~/Downloads\").toString().trim() }", summary: "Measure the Downloads folder"}, {text: "Measuring…"})
+size = Query("run_code", {code: "const { execSync } = await import('node:child_process'); return { text: execSync('du -sh ~/Downloads').toString().trim() }", summary: "Measure the Downloads folder"}, {text: "Measuring…"})
 acts = Row([Button("Not now", @ToAssistant("Leave the Downloads folder as it is"), "ghost"), Button("Clear it", @ToAssistant("Clear my Downloads folder"))], 2, null, "end")`,
 ] as const
 
