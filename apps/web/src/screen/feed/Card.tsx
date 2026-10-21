@@ -1,4 +1,4 @@
-import type { FeedPost, ThreadId } from '@vivid/contracts'
+import { DisplaySource, type FeedCardId, type FeedPost } from '@vivid/contracts'
 import { feed, makeWhen, thisReader } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode, type Ref } from 'react'
@@ -24,7 +24,7 @@ const when = makeWhen(thisReader())
  * the Person picks inside the display still works, and the bar's words follow it (`feed.fill`).
  */
 export function Card({
-  thread,
+  card,
   from,
   at,
   post,
@@ -34,7 +34,8 @@ export function Card({
   now,
   onOpen,
 }: {
-  thread: ThreadId
+  /** The card whose post this is; its display's programs run only as that post wrote them. */
+  card: FeedCardId
   /** What brought it: the background Thread's title. */
   from: string
   /** When it was posted or began, epoch milliseconds. */
@@ -80,7 +81,7 @@ export function Card({
           )}
         >
           <Display
-            thread={thread}
+            source={DisplaySource.cases.FeedPost.make({ post: card })}
             text={display.value}
             arriving={false}
             live={false}

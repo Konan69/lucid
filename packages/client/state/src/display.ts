@@ -4,7 +4,7 @@ import {
   CodeOutcome,
   RunCodeRequest,
   ToolOutcome,
-  type ThreadId,
+  type DisplaySource,
 } from '@vivid/contracts'
 import { Effect, Match, Option, Predicate, Result, Schema } from 'effect'
 
@@ -399,6 +399,7 @@ const programFailure = (failure: CodeFailure): string =>
     OverLimit: ({ limit }) =>
       `The program exceeded its ${limit} limit. Ask Vivid to do less at once.`,
     Unavailable: () => 'Your Computer is unavailable. Open it and try again.',
+    Busy: ({ message }) => message,
   })
 
 /** The program's return value is the display's data; logs and execution receipts stay separate. */
@@ -428,13 +429,15 @@ const callKind = Effect.fn('Display.callKind')(function* (name: string, tools: D
 
 /**
  * One call a display makes into the Person's Integrations or onto their Computer, as OpenUI's
- * renderer asks for it. The server runs it for the Person, in the display's own Thread.
+ * renderer asks for it. The server runs it for the Person, in the display's own Thread. A program
+ * names the stored content it was drawn from (`source`), so the server runs only program text it
+ * finds there, never text the reader supplied.
  */
 export const callDisplayTool = Effect.fn('Display.callTool')(function* (
   name: string,
   given: Option.Option<FormState>,
   tools: DisplayTools,
-  thread: ThreadId,
+  source: DisplaySource,
 ) {
   const client = yield* VividRpcClient
   const kind = yield* callKind(name, tools)
@@ -445,7 +448,7 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
         onExcessProperty: 'error',
       },
     )
-    return displayCodeResult(yield* client.RunDisplayCode({ ...request, thread, kind }))
+    return displayCodeResult(yield* client.RunDisplayCode({ ...request, source, kind }))
   }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
   return displayToolResult(yield* client.UseDisplayTool({ name, input, kind }))
@@ -459,6 +462,7 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
       'This Integration needs an approval Vivid cannot provide yet.',
     DisplayProgramAmbiguous: () =>
       'This display mixes automatic programs with button actions. Ask Vivid to use separate displays.',
+    DisplayProgramRefused: ({ message }) => message,
     DisplayToolAmbiguous: () =>
       'This display uses the same Integration action automatically and from a button. Ask Vivid to use separate displays.',
     SchemaError: () => 'This display sent invalid information. Ask Vivid to fix it.',

@@ -109,7 +109,7 @@ export function FeedView({
           {view.working.map((item) => (
             <Card
               key={item.card}
-              thread={item.thread}
+              card={item.card}
               from={item.from}
               at={item.since}
               post={Option.fromNullOr(item.post)}
@@ -156,7 +156,7 @@ function Waiting({ item, now, onOpen }: { item: feed.Waiting; now: number; onOpe
           <p className="pb-2 text-label text-danger">That did not reach Vivid. Press it again.</p>
         )}
         <Card
-          thread={item.thread}
+          card={item.card}
           from={item.from}
           at={item.at}
           post={post}

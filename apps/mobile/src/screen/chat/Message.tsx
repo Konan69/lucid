@@ -1,5 +1,5 @@
 import type { FlueConversationMessage } from '@flue/sdk'
-import { textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -276,7 +276,7 @@ function Stamp({ moment }: { moment: number }) {
 
 /** What Vivid said, once it has said anything: its words and the displays among them. */
 function Spoken(props: {
-  thread: ThreadId
+  source: DisplaySource
   text: string
   streaming: boolean
   live: boolean
@@ -326,7 +326,9 @@ function FromVivid({
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
         <Spoken
-          thread={thread}
+          // Flue's message id is stable from the first streamed step, so a program pressed while
+          // the reply arrives names the same stored reply the server later reads.
+          source={DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })}
           text={text}
           streaming={isStreaming(message)}
           live={latest && !working}

@@ -7,7 +7,7 @@ import {
   type ParseResult,
   type OpenUIError,
 } from '@openuidev/react-lang'
-import type { ThreadId } from '@vivid/contracts'
+import type { DisplaySource } from '@vivid/contracts'
 import { StyleSheet, View } from 'react-native'
 import { Option } from 'effect'
 import {
@@ -33,10 +33,14 @@ const parser = createParser(library.toJSONSchema(), 'Col')
  * browser and no page read; its run_code is still real JavaScript and can write local files or
  * reach the network. It returns OpenUI's error shape, exactly as on the web.
  */
-function integrations(run: LiveData['run'], tools: DisplayTools, thread: ThreadId): McpClientLike {
+function integrations(
+  run: LiveData['run'],
+  tools: DisplayTools,
+  source: DisplaySource,
+): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
-      run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, thread)).then(
+      run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, source)).then(
         displayToolAnswer,
       ),
   }
@@ -59,7 +63,7 @@ function integrations(run: LiveData['run'], tools: DisplayTools, thread: ThreadI
  * whole app, and every launch reopened the same Thread and closed it again (21 Oct 2026).
  */
 export function Display({
-  thread,
+  source,
   text,
   arriving,
   live,
@@ -68,8 +72,11 @@ export function Display({
   initial,
   onError,
 }: {
-  /** The Thread this reply or card belongs to, whose authority its programs run with. */
-  thread: ThreadId
+  /**
+   * The stored reply or Feed post this display was drawn from. The server runs a program only when
+   * its text is in that content, with the authority of the Thread the content belongs to.
+   */
+  source: DisplaySource
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
   /** Whether more of it is still to come. */
@@ -129,7 +136,7 @@ export function Display({
           initialState={initial}
           onStateUpdate={changed}
           onError={onError}
-          toolProvider={integrations(data.run, displayTools(parser.parse(text)), thread)}
+          toolProvider={integrations(data.run, displayTools(parser.parse(text)), source)}
         />
       </Recover>
     </View>

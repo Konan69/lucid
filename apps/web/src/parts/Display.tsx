@@ -7,7 +7,7 @@ import {
   type ParseResult,
   type OpenUIError,
 } from '@openuidev/react-lang'
-import type { ThreadId } from '@vivid/contracts'
+import type { DisplaySource } from '@vivid/contracts'
 import { Option } from 'effect'
 import {
   callDisplayTool,
@@ -28,10 +28,10 @@ const parser = createParser(library.toJSONSchema(), 'Col')
  * Displays call named Integrations or run_code in their own Thread. OpenUI runs a Query when
  * drawn and a Mutation after a press; the shared adapter preserves that policy and its errors.
  */
-function integrations(tools: DisplayTools, thread: ThreadId): McpClientLike {
+function integrations(tools: DisplayTools, source: DisplaySource): McpClientLike {
   return {
     callTool: ({ name, arguments: given }) =>
-      run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, thread)).then(
+      run(callDisplayTool(name, Option.fromUndefinedOr(given), tools, source)).then(
         displayToolAnswer,
       ),
   }
@@ -51,7 +51,7 @@ function integrations(tools: DisplayTools, thread: ThreadId): McpClientLike {
  * changes inside itself (a tile picked, a field typed) needs no reply and always works.
  */
 export function Display({
-  thread,
+  source,
   text,
   arriving,
   live,
@@ -59,8 +59,11 @@ export function Display({
   onState,
   onError,
 }: {
-  /** The Thread this reply or card belongs to, whose authority its programs run with. */
-  thread: ThreadId
+  /**
+   * The stored reply or Feed post this display was drawn from. The server runs a program only when
+   * its text is in that content, with the authority of the Thread the content belongs to.
+   */
+  source: DisplaySource
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
   /** Whether more of it is still to come. */
@@ -96,7 +99,7 @@ export function Display({
         onParseResult={read}
         onStateUpdate={changed}
         onError={onError}
-        toolProvider={integrations(displayTools(parser.parse(text)), thread)}
+        toolProvider={integrations(displayTools(parser.parse(text)), source)}
       />
     </section>
   )

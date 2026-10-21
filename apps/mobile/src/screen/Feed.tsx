@@ -1,4 +1,4 @@
-import type { FeedPost, ThreadId } from '@vivid/contracts'
+import { DisplaySource, type FeedCardId, type FeedPost, type ThreadId } from '@vivid/contracts'
 import { feed, greetingAt, makeWhen, thisReader } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
@@ -154,7 +154,7 @@ export function Feed() {
             ),
             Working: ({ item }) => (
               <Card
-                thread={item.thread}
+                card={item.card}
                 from={item.from}
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
@@ -238,7 +238,7 @@ function Waiting({
         </Label>
       )}
       <Card
-        thread={item.thread}
+        card={item.card}
         from={item.from}
         at={item.at}
         post={post}
@@ -258,7 +258,7 @@ function Waiting({
           />
         ))}
         now={now}
-        remember={Option.some({ card: item.card, post: feed.revisionOf(item) })}
+        remember={Option.some({ post: feed.revisionOf(item) })}
         onOpen={onOpen}
       />
     </Animated.View>
@@ -272,7 +272,7 @@ function Waiting({
  * still works and the buttons' words follow it (`feed.fill`).
  */
 function Card({
-  thread,
+  card,
   from,
   at,
   post,
@@ -282,7 +282,8 @@ function Card({
   remember,
   onOpen,
 }: {
-  thread: ThreadId
+  /** The card whose post this is; its display's programs run only as that post wrote them. */
+  card: FeedCardId
   from: string
   at: number
   post: Option.Option<FeedPost>
@@ -290,7 +291,7 @@ function Card({
   bar: Option.Option<(chosen: feed.Chosen) => ReactNode>
   now: number
   /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
-  remember: Option.Option<{ readonly card: string; readonly post: string }>
+  remember: Option.Option<{ readonly post: string }>
   onOpen: () => void
 }) {
   const { colors: c } = useTheme()
@@ -298,7 +299,7 @@ function Card({
   // once, so the renderer starts from it and is not handed a new start on every change.
   const [start] = useState<feed.Chosen>(() =>
     Option.getOrElse(
-      Option.flatMap(remember, ({ card, post }) =>
+      Option.flatMap(remember, ({ post }) =>
         Option.map(
           Option.filter(Option.fromUndefinedOr(remembered.get(card)), (kept) => kept.post === post),
           (kept) => kept.chosen,
@@ -309,7 +310,7 @@ function Card({
   )
   const [chosen, setChosen] = useState<feed.Chosen>(start)
   const choose = (next: feed.Chosen) => {
-    Option.map(remember, ({ card, post }) => remembered.set(card, { post, chosen: next }))
+    Option.map(remember, ({ post }) => remembered.set(card, { post, chosen: next }))
     setChosen(next)
   }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
@@ -360,7 +361,7 @@ function Card({
           }}
         >
           <Display
-            thread={thread}
+            source={DisplaySource.cases.FeedPost.make({ post: card })}
             text={display.value}
             arriving={false}
             live={false}

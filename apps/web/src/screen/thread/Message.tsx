@@ -1,5 +1,6 @@
 import type { FlueConversationMessage } from '@flue/react'
 import {
+  DisplaySource,
   InputRequestId,
   InputRequestState,
   textOf,
@@ -389,13 +390,14 @@ function Signal({
  * keeps what the Person picked in it) while the words after it are still coming.
  */
 function Written({
-  thread,
+  source,
   text,
   fresh,
   live,
   onSay,
 }: {
-  thread: ThreadId
+  /** The reply as Flue stored it, which every program drawn from it names. */
+  source: DisplaySource
   text: string
   fresh: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
@@ -407,7 +409,7 @@ function Written({
       <Markdown key={stretch.from} content={stretch.text} fresh={fresh} />
     ) : (
       <Display
-        thread={thread}
+        source={source}
         key={stretch.from}
         text={stretch.text}
         arriving={!stretch.whole}
@@ -570,7 +572,12 @@ function FromVivid({
         {making && <Doing tools={tools} wordless={text.length === 0} />}
         {text.length > 0 && (
           <Written
-            thread={context.thread}
+            // Flue's message id is stable from the first streamed step, so a program pressed while
+            // the reply arrives names the same stored reply the server later reads.
+            source={DisplaySource.cases.ThreadMessage.make({
+              thread: context.thread,
+              message: message.id,
+            })}
             text={drawnText}
             fresh={fresh}
             live={latest && !working}
