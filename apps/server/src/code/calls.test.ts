@@ -370,7 +370,9 @@ describe.skipIf(!testDatabaseConfigured)(
                   }),
               })
               const context = yield* Layer.build(
-                codeProcessLayer.pipe(Layer.provide(Layer.succeed(CodeComputer, held))),
+                Layer.fresh(codeProcessLayer).pipe(
+                  Layer.provide(Layer.succeed(CodeComputer, held)),
+                ),
               )
               const process = Context.get(context, CodeProcess)
               // Effect 4 forkChild(startImmediately) executes to its first suspension. This receipt
@@ -407,9 +409,6 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(yield* Queue.take(opened)).toBe(2)
               // Intent differs even with identical code. It must not borrow the automatic result.
               const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
-              yield* Effect.logInfo(
-                "const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))",
-              )
               expect(busy).toMatchObject({
                 _tag: 'Failed',
                 failure: {
@@ -423,7 +422,6 @@ describe.skipIf(!testDatabaseConfigured)(
                 Effect.forkChild,
               )
               expect(yield* Queue.take(opened)).toBe(3)
-              yield* Effect.logInfo('expect(yield* Queue.take(opened)).toBe(3)')
               // Vivid alone owns its Thread slot; the display pool did not claim it.
               expect(
                 yield* run(test.personal, test.personalId, 'return 4;').pipe(
@@ -432,9 +430,6 @@ describe.skipIf(!testDatabaseConfigured)(
               ).toMatchObject({ _tag: 'Failed', failure: { _tag: 'Busy' } })
               yield* Deferred.succeed(release, undefined)
               expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })
-              yield* Effect.logInfo(
-                "expect(yield* Fiber.join(first)).toMatchObject({ _tag: 'Completed', result: 1 })",
-              )
               expect(yield* Fiber.join(duplicate)).toMatchObject({ _tag: 'Completed', result: 1 })
               expect(yield* Fiber.join(second)).toMatchObject({ _tag: 'Completed', result: 2 })
               expect(yield* Fiber.join(vivid)).toMatchObject({ _tag: 'Completed', result: 3 })
