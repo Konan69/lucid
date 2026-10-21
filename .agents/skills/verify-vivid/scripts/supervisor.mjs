@@ -282,7 +282,7 @@ async function launch() {
     VIVID_HELIX_URL: `http://127.0.0.1:${state.ports.helix}`,
     VIVID_BUILD_COMMIT: state.head,
     VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
-    VIVID_BOAT_TEMPLATE: 'verify-unconfigured',
+    VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
     VIVID_EXECUTOR_URL: 'http://127.0.0.1:1',
     VIVID_EXECUTOR_KEY: 'unconfigured-disposable-verification',
     VIVID_EXECUTOR_ORGANIZATION: 'verify',
