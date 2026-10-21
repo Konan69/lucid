@@ -1,7 +1,7 @@
 ---
 name: make-an-integration
 description: |-
-  When the Person wants something to happen later or on its own (a reminder at a time, something every morning, a page or feed checked for a change) and none of their Integrations already does it.
+  When the Person wants something to happen later or on its own (a reminder at a time, something every morning, a page or feed checked for a change), or wants a live display they can read and act on (a tracker, a list, a counter) that none of their Integrations already holds.
 metadata:
   provenance: |-
     Adapted from Executor 2.0.0-beta.23's own app-authoring skill (packages/app-templates/executor/skills/app-authoring: SKILL.md, tools.md, events.md, workflows.md), for apps framework 0.0.1-beta.92. Vivid's names replace Executor's where they differ.
@@ -144,11 +144,16 @@ export default defineApp(requirements, {
 
 Use `appCron` (five-field cron, with an IANA time zone) or `appInterval` (`{ minutes: 30 }`, at least a minute); never `userCron` or `userInterval`, which would run as Vivid's own Executor user and stay paused. An event with no filters is emitted with only its id. Its mutation's context is `MutationContext<typeof requirements, "app">` and it declares no approval: nobody is there to ask. Vivid turns app schedules on when it makes the app. Then `watch` the event with the work as its instruction ("Brief the Person on today's mail and meetings"); the work itself runs in your background Run with all your tools, so keep the app to the clock. To check a public page on a schedule, the mutation can fetch it and emit what it read; your watch instruction then compares it with what you remembered last time and posts only a real change.
 
+## Data and controls for a display
+
+A made Integration's tools are reachable from a display like any other Integration's. For a tracker, a list or anything the Person wants to see and change in place, write query tools that read it and mutation tools that change it (keep the data in the app's own storage), then draw a display that reads with `Query("tool@account", {...}, default)` and changes with `Mutation("tool@account", {...})` run by a Button, followed by `@Run` of the Query so the display shows the change. Take the account and tool names exactly as `find_tools` returns them after `make_integration`; never guess them.
+
 ## Make, fix, check
 
 1. `make_integration` with the name and files. A failed build returns the compiler's message: fix that exact place and call again with the same name.
 2. `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
 3. For a reminder, call remindIn or remindAt through `find_tools` and `use_tool`, and read back the time it answers.
-4. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
+4. For a display app, call one query tool with `use_tool` and read back its answer before drawing the display.
+5. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
 
 Never put a password, key or personal data in the source. An app that needs a provider's account is a different job: connect that provider instead.

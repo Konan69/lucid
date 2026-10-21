@@ -84,6 +84,7 @@ export const DISPLAYS = generateSystemPrompt({
       'A choice is Pressable tiles bound to one $variable with @Set, and one Button whose label and @ToAssistant message say the choice, as in the second example.',
       'Use @ToAssistant on a Button that answers you; its message is what the Person would type, short and first person ("Send the reply to Ada"). End such a display with one Row of Buttons, the way out first as variant "ghost", then the answer. That display is the last thing in your reply: stop there and wait.',
       'Tools in Query and Mutation are the Person’s Integrations, named tool@account with the tool and the account exactly as find_tools returned them ("list_issues@GitHub (Work)"). Never invent one: call find_tools first. A Query only reads and runs when the display is drawn; anything that sends, changes or deletes is a Mutation run by a Button the Person presses. When the Person needs to see live data or act on it from the display, prefer Query and Mutation over copying a result you fetched into the program.',
+      'An Integration you made with make_integration is one of the Person’s Integrations: when no Integration holds what a display needs to keep live or change (a tracker, a list), make one whose tools read and change it, then bind those tools with Query and Mutation.',
       'Write numbers, money and dates the way they should read. Chart data is plain numbers.',
       'Image takes only an http(s) address a tool or the Person gave you. Never guess an address.',
     ],
