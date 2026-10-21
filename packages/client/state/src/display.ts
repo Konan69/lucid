@@ -316,21 +316,24 @@ const writtenTools = (parsed: {
 export interface DisplayTools {
   readonly writes: ReadonlySet<string>
   readonly queriesProgram: boolean
+  readonly mutatesProgram: boolean
 }
 
-/** An unresolved Query name might evaluate to run_code; conservatively treat it as an automatic program. */
+/** An unresolved name in either declaration could evaluate to run_code and must count toward ambiguity. */
+const mayRunProgram = (statement: WritingStatement): boolean =>
+  statement.toolAST === null ||
+  statement.toolAST.k !== 'Str' ||
+  !Predicate.isString(statement.toolAST.v) ||
+  statement.toolAST.v === 'run_code'
+
+/** Both declaration kinds participate even when their name is resolved from display state at runtime. */
 export const displayTools = (parsed: {
   readonly mutationStatements: ReadonlyArray<WritingStatement>
   readonly queryStatements: ReadonlyArray<WritingStatement>
 }): DisplayTools => ({
   writes: writtenTools(parsed),
-  queriesProgram: parsed.queryStatements.some(
-    (statement) =>
-      statement.toolAST === null ||
-      statement.toolAST.k !== 'Str' ||
-      !Predicate.isString(statement.toolAST.v) ||
-      statement.toolAST.v === 'run_code',
-  ),
+  queriesProgram: parsed.queryStatements.some(mayRunProgram),
+  mutatesProgram: parsed.mutationStatements.some(mayRunProgram),
 })
 
 /**
@@ -415,10 +418,8 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
   thread: Option.Option<ThreadId>,
 ) {
   const client = yield* VividRpcClient
-  const kind = tools.writes.has(name) ? 'Mutation' : 'Query'
   if (name === 'run_code') {
-    if (tools.queriesProgram && tools.writes.has(name))
-      return yield* new DisplayProgramAmbiguous({})
+    if (tools.queriesProgram && tools.mutatesProgram) return yield* new DisplayProgramAmbiguous({})
     if (Option.isNone(thread)) return yield* new DisplayThreadRequired({})
     const request = yield* decodeProgram(
       Option.getOrElse(given, () => ({})),
@@ -427,7 +428,11 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
       },
     )
     return displayCodeResult(
-      yield* client.RunDisplayCode({ ...request, thread: thread.value, kind }),
+      yield* client.RunDisplayCode({
+        ...request,
+        thread: thread.value,
+        kind: tools.mutatesProgram ? 'Mutation' : 'Query',
+      }),
     )
   }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
@@ -435,7 +440,7 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
     yield* client.UseDisplayTool({
       name,
       input,
-      kind,
+      kind: tools.writes.has(name) ? 'Mutation' : 'Query',
     }),
   )
 })
