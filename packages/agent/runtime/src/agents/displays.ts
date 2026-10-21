@@ -22,6 +22,12 @@ flights = Grid([f1, f2], 2, null, 2)
 f1 = Pressable([Caption("Arik Air"), Title("7:10", "lg"), Caption("Lands 8:25. ₦98,400")], @Set($flight, "Arik Air at 7:10"), $flight == "Arik Air at 7:10", 3)
 f2 = Pressable([Caption("Air Peace"), Title("8:40", "lg"), Caption("Lands 9:55. ₦112,750")], @Set($flight, "Air Peace at 8:40"), $flight == "Air Peace at 8:40", 3)
 acts = Row([Button("Not now", @ToAssistant("Not now"), "ghost"), Button("Book " + $flight, @ToAssistant("Book " + $flight))], 2, null, "end")`,
+  `Times to pick from, each one a press that answers:
+
+root = Col([Title("Call with Iyin", "lg"), wed, thu, acts], 3)
+wed = Col([Caption("Wed 21 Oct"), Row([Button("9:00", @ToAssistant("Book Iyin for Wed 21 Oct at 9:00"), "outline", null, "sm"), Button("10:30", @ToAssistant("Book Iyin for Wed 21 Oct at 10:30"), "outline", null, "sm"), Button("1:30 PM", @ToAssistant("Book Iyin for Wed 21 Oct at 1:30 PM"), "outline", null, "sm")], 2, null, "start", true)], 1)
+thu = Col([Caption("Thu 22 Oct"), Row([Button("9:00", @ToAssistant("Book Iyin for Thu 22 Oct at 9:00"), "outline", null, "sm"), Button("11:00", @ToAssistant("Book Iyin for Thu 22 Oct at 11:00"), "outline", null, "sm"), Button("2:00 PM", @ToAssistant("Book Iyin for Thu 22 Oct at 2:00 PM"), "outline", null, "sm")], 2, null, "start", true)], 1)
+acts = Row([Button("None of these work", @ToAssistant("None of these times work"), "ghost")], 2, null, "end")`,
 ] as const
 
 /**
@@ -73,6 +79,7 @@ export const DISPLAYS = generateSystemPrompt({
     additionalRules: [
       'Each fenced block is one whole display with its own root statement. Never send only the changed statements: a later display stands alone.',
       'Lead with the thing itself: a Chart, a Table, tiles to choose from, the letter in a Card. Keep words inside a display few; it is a card, not an essay.',
+      'Whenever your reply asks the Person to pick, confirm or answer something, the display holds the controls that do it: a Button or Pressable for every option. Never draw the options as static Cards or text and then ask in words ("pick one and I will send it").',
       'A choice is Pressable tiles bound to one $variable with @Set, and one Button whose label and @ToAssistant message say the choice, as in the second example.',
       'Use @ToAssistant on a Button that answers you; its message is what the Person would type, short and first person ("Send the reply to Ada"). End such a display with one Row of Buttons, the way out first as variant "ghost", then the answer. That display is the last thing in your reply: stop there and wait.',
       'Tools in Query and Mutation are the Person’s Integrations, named tool@account with the tool and the account exactly as find_tools returned them ("list_issues@GitHub (Work)"). Never invent one: call find_tools first. A Query only reads and runs when the display is drawn; anything that sends, changes or deletes is a Mutation run by a Button the Person presses. When the Person needs to see live data or act on it from the display, prefer Query and Mutation over copying a result you fetched into the program.',
