@@ -31,6 +31,7 @@ import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
 import { codeComputerLayer } from './code/computer.ts'
 import { codeProcessLayer } from './code/process.ts'
+import { codeSourceLayer } from './code/source.ts'
 import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
@@ -176,6 +177,7 @@ const serverProgram = Effect.gen(function* () {
     executorEventsLayer,
     watchedAppsLayer,
     codeCallsLayer,
+    codeSourceLayer,
     codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
   ).pipe(Layer.provideMerge(decisions))
   const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(

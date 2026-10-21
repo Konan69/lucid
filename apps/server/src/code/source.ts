@@ -1,45 +1,99 @@
+import { createParser, type ASTNode } from '@openuidev/lang-core'
 import {
   DisplayProgramRefused,
   DisplaySource,
+  DisplayToolKind,
+  RunCodeRequest,
   RuntimeUnavailable,
+  ThreadId,
   type NotFound,
   type PersonId,
-  type ThreadId,
 } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { stretches } from '@vivid/contracts/display'
+import { Cache, Context, Data, Duration, Effect, Exit, Layer, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
 import type { Database, DatabaseInfrastructureError } from '../database/client.ts'
 
-/** Public history is Flue's durable record, the same read used by Runtime.documentRun. */
+/** Flue identifies final assistant responses by their submission's durable settlement. */
 const History = Schema.Struct({
   messages: Schema.Array(
     Schema.Struct({
       id: Schema.String,
       role: Schema.String,
+      submissionId: Schema.optional(Schema.String),
       parts: Schema.Array(Schema.Json),
     }),
   ),
+  settlements: Schema.Array(Schema.Struct({ submissionId: Schema.String })),
 })
 const decodeHistory = HttpClientResponse.schemaBodyJson(History)
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }))
 const refusal = { message: DisplayProgramRefused.fields.message.literal }
+const Program = Schema.Struct({ ...RunCodeRequest.fields, kind: DisplayToolKind })
+const StoredPrograms = Schema.TaggedUnion({
+  Waiting: {},
+  Final: { programs: Schema.Array(Program), computed: Schema.Boolean },
+})
+export const DisplayAdmission = Schema.TaggedUnion({
+  Waiting: {},
+  Ready: { thread: ThreadId, kind: DisplayToolKind },
+})
+/** Component schemas affect drawing only; reserved Query/Mutation ASTs are parser-owned. */
+const parser = createParser({})
 
-/** Both sources yield the same proven text; their storage authorities and failures remain explicit. */
-type StoredDisplay = Effect.Effect<
-  { readonly thread: ThreadId; readonly text: string },
-  DisplayProgramRefused | NotFound | RuntimeUnavailable | DatabaseInfrastructureError,
-  Database | Runtime | FeedStore
->
+/** Computed expressions are not persisted program declarations. Only exact literal arguments count. */
+function literalProgram(args: ASTNode | null) {
+  if (args === null || args.k !== 'Obj' || args.entries.length !== 2) return []
+  const code = args.entries.find(([name]) => name === 'code')?.[1]
+  const summary = args.entries.find(([name]) => name === 'summary')?.[1]
+  if (code?.k !== 'Str' || summary?.k !== 'Str') return []
+  return [{ code: code.v, summary: summary.v }]
+}
 
-/** Neither a message's role nor its text comes from the caller. Only public text parts count. */
-const messageText = Effect.fn('Code.messageText')(function* (
-  source: typeof DisplaySource.cases.ThreadMessage.Type,
-  person: PersonId,
-) {
-  yield* requireThread(source.thread, person)
+/** Use the same stretch finder and parser as drawing; quoted prose is never executable evidence. */
+function declarations(text: string) {
+  const parsed = stretches(text).flatMap((stretch) =>
+    stretch.kind === 'display' && stretch.whole ? [parser.parse(stretch.text)] : [],
+  )
+  // A computed name or argument could invoke the other kind's literal program. It cannot prove
+  // disjoint authority, so do not let an automatic call borrow that declaration's press policy.
+  const computed = parsed.some((program) =>
+    [...program.queryStatements, ...program.mutationStatements].some((statement) => {
+      if (statement.toolAST?.k !== 'Str') return true
+      return statement.toolAST.v === 'run_code' && literalProgram(statement.argsAST).length === 0
+    }),
+  )
+  const programs = parsed.flatMap((parsed) => {
+    return [
+      ...parsed.queryStatements.flatMap((statement) =>
+        statement.complete && statement.toolAST?.k === 'Str' && statement.toolAST.v === 'run_code'
+          ? literalProgram(statement.argsAST).map((program) => ({
+              ...program,
+              kind: 'Query' as const,
+            }))
+          : [],
+      ),
+      ...parsed.mutationStatements.flatMap((statement) =>
+        statement.toolAST?.k === 'Str' && statement.toolAST.v === 'run_code'
+          ? literalProgram(statement.argsAST).map((program) => ({
+              ...program,
+              kind: 'Mutation' as const,
+            }))
+          : [],
+      ),
+    ]
+  })
+  return { programs, computed }
+}
+
+/** Structural keys reuse final declarations across renders without joining different messages. */
+class Message extends Data.Class<{ readonly thread: ThreadId; readonly message: string }> {}
+
+/** Flue 2.2.2 exposes history windows, but no public read of one message by id. */
+const messagePrograms = Effect.fn('Code.messagePrograms')(function* (source: Message) {
   const response = yield* (yield* Runtime).read({
     threadId: source.thread,
     suffix: '',
@@ -52,36 +106,98 @@ const messageText = Effect.fn('Code.messageText')(function* (
     Effect.mapError(() => new RuntimeUnavailable({ message: 'Display response is invalid' })),
   )
   const message = history.messages.find((candidate) => candidate.id === source.message)
-  if (message === undefined || message.role !== 'assistant')
+  // An absent message during a live submission is a wait, never cached as an authorship refusal.
+  if (message === undefined) {
+    const arriving = history.messages.some(
+      (candidate) =>
+        candidate.submissionId !== undefined &&
+        !history.settlements.some(
+          (settlement) => settlement.submissionId === candidate.submissionId,
+        ),
+    )
+    if (arriving) return StoredPrograms.cases.Waiting.make({})
     return yield* new DisplayProgramRefused(refusal)
-  return message.parts
+  }
+  if (message.role !== 'assistant' || message.submissionId === undefined)
+    return yield* new DisplayProgramRefused(refusal)
+  if (!history.settlements.some((settlement) => settlement.submissionId === message.submissionId))
+    return StoredPrograms.cases.Waiting.make({})
+  const text = message.parts
     .filter(isText)
     .map((part) => part.text)
     .join('\n\n')
+  return StoredPrograms.cases.Final.make(declarations(text))
 }, Effect.scoped)
 
-/** OpenUI embeds JavaScript as a string; preserve exact bytes, allowing only JSON string escaping. */
-function contains(text: string, code: string) {
-  return text.includes(code) || text.includes(JSON.stringify(code).slice(1, -1))
-}
+type SourceFailure =
+  | DisplayProgramRefused
+  | NotFound
+  | RuntimeUnavailable
+  | DatabaseInfrastructureError
 
-/** Access and authorship precede admission, so forged programs cannot open a Computer or consume a slot. */
-export const displayThread = Effect.fn('Code.displayThread')(function* (
-  source: DisplaySource,
-  person: PersonId,
-  code: string,
-) {
-  const stored = yield* DisplaySource.match<StoredDisplay>(source, {
-    ThreadMessage: (message) =>
-      messageText(message, person).pipe(Effect.map((text) => ({ thread: message.thread, text }))),
-    FeedPost: ({ post }) =>
-      Effect.gen(function* () {
-        const [display] = yield* (yield* FeedStore).display(person, post)
-        if (display === undefined || display.text === null)
+/** Both persisted authorities project the same declarations while retaining their I/O failures. */
+type StoredDisplay = Effect.Effect<
+  { readonly thread: ThreadId; readonly stored: typeof StoredPrograms.Type },
+  SourceFailure,
+  Database | Runtime | FeedStore
+>
+
+/** Parsed source authority owns the bounded final-message cache, while access stays per request. */
+export class CodeSource extends Context.Service<
+  CodeSource,
+  {
+    readonly resolve: (
+      source: DisplaySource,
+      person: PersonId,
+      request: RunCodeRequest,
+    ) => Effect.Effect<typeof DisplayAdmission.Type, SourceFailure, Database | Runtime | FeedStore>
+  }
+>()('vivid/CodeSource') {}
+
+/** Never cache unfinished messages or failures. Feed posts are mutable and are re-read every time. */
+export const codeSourceLayer = Layer.effect(
+  CodeSource,
+  Effect.gen(function* () {
+    const messages = yield* Cache.makeWith(messagePrograms, {
+      capacity: 256,
+      requireServicesAt: 'lookup',
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && StoredPrograms.guards.Final(exit.value)
+          ? Duration.infinity
+          : Duration.zero,
+    })
+    return CodeSource.of({
+      resolve: Effect.fn('Code.resolveSource')(function* (source, person, request) {
+        const stored = yield* DisplaySource.match<StoredDisplay>(source, {
+          ThreadMessage: (message) =>
+            Effect.gen(function* () {
+              yield* requireThread(message.thread, person)
+              return {
+                thread: message.thread,
+                stored: yield* Cache.get(messages, new Message(message)),
+              }
+            }),
+          FeedPost: ({ post }) =>
+            Effect.gen(function* () {
+              const [display] = yield* (yield* FeedStore).display(person, post)
+              if (display === undefined || display.text === null)
+                return yield* new DisplayProgramRefused(refusal)
+              return {
+                thread: display.thread,
+                stored: StoredPrograms.cases.Final.make(declarations(display.text)),
+              }
+            }),
+        })
+        if (StoredPrograms.guards.Waiting(stored.stored))
+          return DisplayAdmission.cases.Waiting.make({})
+        if (stored.stored.computed) return yield* new DisplayProgramRefused(refusal)
+        const matches = stored.stored.programs.filter((program) => program.code === request.code)
+        const kinds = new Set(matches.map((program) => program.kind))
+        const exact = matches.find((program) => program.summary === request.summary)
+        if (exact === undefined || kinds.size !== 1)
           return yield* new DisplayProgramRefused(refusal)
-        return { thread: display.thread, text: display.text }
+        return DisplayAdmission.cases.Ready.make({ thread: stored.thread, kind: exact.kind })
       }),
-  })
-  if (!contains(stored.text, code)) return yield* new DisplayProgramRefused(refusal)
-  return stored.thread
-})
+    })
+  }),
+)

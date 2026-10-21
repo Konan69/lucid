@@ -58,7 +58,7 @@ export const DisplaySource = Schema.TaggedUnion({
 })
 export type DisplaySource = typeof DisplaySource.Type
 
-/** A reader may execute only program text found in the named stored Vivid content. */
+/** A reader may execute only exact code and summary from a stored run_code declaration. */
 export class DisplayProgramRefused extends Schema.TaggedError<DisplayProgramRefused>()(
   'DisplayProgramRefused',
   {
@@ -73,9 +73,14 @@ export class DisplayProgramRefused extends Schema.TaggedError<DisplayProgramRefu
 export const RunDisplayCodeRequest = Schema.Struct({
   ...RunCodeRequest.fields,
   source: DisplaySource,
+  /** Untrusted client intent hint. The server derives policy only from its stored declaration. */
   kind: DisplayToolKind,
 })
 export interface RunDisplayCodeRequest extends Schema.Schema.Type<typeof RunDisplayCodeRequest> {}
+
+/** The stored reply has not settled yet. No program ran and a final draw may ask again. */
+export const DisplayProgramWaiting = Schema.TaggedStruct('DisplayProgramWaiting', {})
+export interface DisplayProgramWaiting extends Schema.Schema.Type<typeof DisplayProgramWaiting> {}
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
 export const CodeCallEnd = Schema.Literals([
@@ -141,6 +146,10 @@ export const CodeOutcome = Schema.TaggedUnion({
   OutcomeUnknown: { calls: Schema.Array(CodeCall) },
 })
 export type CodeOutcome = typeof CodeOutcome.Type
+
+/** Waiting is distinct from a failed execution and carries no completed result to cache. */
+export const DisplayCodeOutcome = Schema.Union([CodeOutcome, DisplayProgramWaiting])
+export type DisplayCodeOutcome = typeof DisplayCodeOutcome.Type
 
 /** Reading one public page without a Computer: the address in, its readable text out. */
 export const ReadPageRequest = Schema.Struct({

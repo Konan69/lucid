@@ -1,4 +1,3 @@
-import * as NodeCrypto from 'node:crypto'
 import {
   CodeCall,
   CodeOutcome,
@@ -30,6 +29,7 @@ import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { CodeComputer, type CodeComputerService, type Guest } from './computer.ts'
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
+import { makeDisplayPool } from './pool.ts'
 
 /** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
@@ -57,13 +57,14 @@ interface Program {
   readonly boundary: CodeBoundary
 }
 
+export interface DisplayProgram extends Program {
+  readonly kind: DisplayToolKind
+}
+
 export interface CodeProcessService {
   readonly run: (input: Program, dispatch: Dispatch) => Effect.Effect<CodeOutcome>
   /** Display readers share only identical in-flight work, outside Vivid's Thread and process permits. */
-  readonly runDisplay: (
-    input: Program & { readonly kind: DisplayToolKind },
-    dispatch: Dispatch,
-  ) => Effect.Effect<CodeOutcome>
+  readonly runDisplay: (input: DisplayProgram, dispatch: Dispatch) => Effect.Effect<CodeOutcome>
 }
 
 /** A supervised program is an authority seam, not a reusable guest session. */
@@ -533,9 +534,6 @@ export const codeProcessLayer = Layer.effect(
     const computer = yield* CodeComputer
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
-    // Cache evicts pending entries at capacity (Effect 4 Cache.ts); these entries instead own
-    // permits and must survive until completion. Never retain completed results or replay a write.
-    const displays = new Map<string, Deferred.Deferred<CodeOutcome>>()
     const busy = notAdmitted(
       CodeFailure.cases.Busy.make({
         message: 'Vivid is busy with other work. Try again in a moment.',
@@ -543,6 +541,10 @@ export const codeProcessLayer = Layer.effect(
     )
     const oversized = notAdmitted(
       CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
+    )
+    const displays = yield* makeDisplayPool(
+      (input, dispatch) => execute(computer, input, dispatch),
+      busy,
     )
     return CodeProcess.of({
       run: Effect.fn('Code.run')(function* (input, dispatch) {
@@ -557,27 +559,7 @@ export const codeProcessLayer = Layer.effect(
       }),
       runDisplay: Effect.fn('Code.runDisplay')(function* (input, dispatch) {
         if (bytes(input.request.code) > budgets.source) return oversized
-        // Person and intent are part of input authority. A Query cannot borrow a Mutation's result,
-        // and two readers of a shared Thread must never share private Integration data.
-        const hash = NodeCrypto.createHash('sha256')
-          .update(JSON.stringify(input.request.code))
-          .digest('hex')
-        const key = JSON.stringify([
-          input.boundary.thread,
-          input.boundary.person,
-          hash,
-          input.kind,
-          input.request.summary,
-        ])
-        const existing = displays.get(key)
-        if (existing !== undefined) return yield* Deferred.await(existing)
-        if (displays.size >= budgets.displays) return busy
-        const result = Deferred.makeUnsafe<CodeOutcome>()
-        displays.set(key, result)
-        return yield* execute(computer, input, dispatch).pipe(
-          Effect.onExit((exit) => Deferred.done(result, exit)),
-          Effect.ensuring(Effect.sync(() => displays.delete(key))),
-        )
+        return yield* displays(input, dispatch)
       }),
     })
   }),

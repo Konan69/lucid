@@ -43,6 +43,7 @@ import {
   RunCodeRequest,
   RunDisplayCodeRequest,
   DisplayProgramRefused,
+  DisplayCodeOutcome,
 } from './code.js'
 import {
   AcceptMembershipRequest,
@@ -922,7 +923,7 @@ const RunCode = Rpc.make('RunCode', { ...call, payload: RunCodeRequest, success:
 const RunDisplayCode = Rpc.make('RunDisplayCode', {
   error: Schema.Union([RpcFailure, DisplayProgramRefused]),
   payload: RunDisplayCodeRequest,
-  success: CodeOutcome,
+  success: DisplayCodeOutcome,
 })
 /** Reads one public page. Private and local addresses are refused before anything is fetched. */
 const ReadPage = Rpc.make('ReadPage', {

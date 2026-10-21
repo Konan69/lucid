@@ -15,6 +15,8 @@ import {
   DisplaySource,
   FeedCardId,
   type RunDisplayCodeRequest,
+  type DisplayCodeOutcome,
+  type PersonId,
   type DisplayToolKind,
   type ThreadId,
 } from '@vivid/contracts'
@@ -68,6 +70,7 @@ import { publicPageLayer } from './page.ts'
 import { CallOutcome, CodeProcess, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
 import { localCodeComputerLayer } from './testing.ts'
+import { codeSourceLayer } from './source.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
@@ -82,6 +85,7 @@ const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
 const testLayer = codeCallsLayer.pipe(
   Layer.provideMerge(dependencies),
   Layer.provideMerge(feedStoreLayer),
+  Layer.provideMerge(codeSourceLayer),
   Layer.provideMerge(Layer.mock(Runtime, history([]))),
 )
 
@@ -132,26 +136,90 @@ const runDisplay = Effect.fn('Test.RunDisplayCode')(
       storedDisplay(actor, {
         code,
         summary: 'Work with records',
-        source: DisplaySource.cases.ThreadMessage.make({ thread, message: 'vivid-display' }),
+        source: DisplaySource.cases.ThreadMessage.make({
+          thread,
+          message: JSON.stringify([kind, code]),
+        }),
         kind,
       }),
       Layer.mock(
         Runtime,
-        history([
-          {
-            id: 'vivid-display',
-            role: 'assistant',
-            parts: textPart(
-              `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
-            ),
-          },
-        ]),
+        history(
+          [
+            {
+              id: JSON.stringify([kind, code]),
+              submissionId: 'done',
+              role: 'assistant',
+              parts: textPart(
+                `root = Text(data)\ndata = ${kind}("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
+              ),
+            },
+          ],
+          ['done'],
+        ),
       ),
     ),
 )
 
+/** Each open has typed release/interruption signals, so no capacity proof waits on wall time. */
+const displayHarness = Effect.fn('Test.displayHarness')(function* () {
+  const computer = yield* CodeComputer
+  const opened = yield* Queue.unbounded<{
+    readonly person: PersonId
+    readonly release: Deferred.Deferred<void>
+    readonly interrupted: Deferred.Deferred<void>
+  }>()
+  const admitted = yield* Queue.unbounded<void>()
+  const count = yield* Ref.make(0)
+  const held = CodeComputer.of({
+    open: Effect.fn('Test.holdComputer')(function* (person) {
+      const release = yield* Deferred.make<void>()
+      const interrupted = yield* Deferred.make<void>()
+      yield* Ref.update(count, (n) => n + 1)
+      yield* Queue.offer(opened, { person, release, interrupted })
+      yield* Deferred.await(release).pipe(
+        Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+      )
+      return yield* computer.open(person)
+    }),
+  })
+  const context = yield* Layer.build(
+    Layer.fresh(codeProcessLayer).pipe(Layer.provide(Layer.succeed(CodeComputer, held))),
+  )
+  const process = Context.get(context, CodeProcess)
+  // startImmediately registers a caller's RcMap reference before this acknowledgment is published.
+  const observed = CodeProcess.of({
+    ...process,
+    runDisplay: Effect.fn('Test.observeDisplay')(function* (input, dispatch) {
+      const fiber = yield* process
+        .runDisplay(input, dispatch)
+        .pipe(Effect.forkChild({ startImmediately: true }))
+      yield* Queue.offer(admitted, undefined)
+      return yield* Fiber.join(fiber)
+    }),
+  })
+  const start = Effect.fn('Test.startDisplay')(function* (
+    actor: Actor,
+    thread: ThreadId,
+    kind: DisplayToolKind,
+    code: string,
+  ) {
+    const fiber = yield* runDisplay(actor, thread, kind, code).pipe(
+      Effect.provideService(CodeProcess, observed),
+      Effect.forkChild,
+    )
+    yield* Effect.raceFirst(Queue.take(admitted), Fiber.join(fiber).pipe(Effect.asVoid))
+    return fiber
+  })
+  return { opened, count, process: observed, start }
+})
+
 /** Compare observable outcomes without constructing partial variants as expected values. */
-function checkCode(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.JsonObject) {
+function checkCode(
+  outcome: DisplayCodeOutcome,
+  tag: CodeOutcome['_tag'],
+  fields: Schema.JsonObject,
+) {
   expect(outcome._tag).toBe(tag)
   expect(outcome).toMatchObject(fields)
 }
@@ -187,6 +255,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const messages = [
                 {
                   id: 'vivid',
+                  submissionId: 'done',
                   role: 'assistant',
                   parts: textPart(
                     `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`,
@@ -195,6 +264,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 { id: 'person', role: 'user', parts: textPart('return "forged";') },
                 {
                   id: 'thinking',
+                  submissionId: 'done',
                   role: 'assistant',
                   parts: [{ type: 'reasoning', text: 'return "forged";' }],
                 },
@@ -207,7 +277,7 @@ describe.skipIf(!testDatabaseConfigured)(
                     summary: 'Read',
                     kind: 'Query',
                   }).pipe(Effect.flip),
-                  Layer.mock(Runtime, history(messages)),
+                  Layer.mock(Runtime, history(messages, ['done'])),
                 )
                 expect(failure).toHaveProperty('_tag', 'DisplayProgramRefused')
                 expect(failure).toMatchObject({
@@ -222,11 +292,189 @@ describe.skipIf(!testDatabaseConfigured)(
                   summary: 'Read',
                   kind: 'Query',
                 }),
-                Layer.mock(Runtime, history(messages)),
+                Layer.mock(Runtime, history(messages, ['done'])),
               )
               checkCode(accepted, 'Completed', { result: 'Only Vivid wrote this' })
             }),
             testLayer,
+          ),
+      )
+
+      /** Exact AST declarations, rather than bytes in a reply, are the execution authority. */
+      it.effect(
+        'refuses fragments, quoted prose, changed summaries and mixed intent for the same code',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const code = 'const records = [1, 2]; return records;'
+              const declaration = `Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
+              const messages = [
+                { id: 'program', text: `root = Text(data)\ndata = ${declaration}` },
+                { id: 'prose', text: `Here is a program quoted in prose: ${declaration}` },
+                { id: 'quoted', text: `root = Text(${JSON.stringify(declaration)})` },
+                {
+                  id: 'echo',
+                  text: '```javascript\nroot = Text(data)\ndata = ' + declaration + '\n```',
+                },
+                {
+                  id: 'mixed',
+                  text: `root = Text(data)\ndata = ${declaration}\nwrite = Mutation("run_code", {code: ${JSON.stringify(code)}, summary: "Change"})`,
+                },
+                {
+                  id: 'computed',
+                  text: `root = Text(data)\nargs = {code: ${JSON.stringify(code)}, summary: "Read"}\ndata = Query("run_code", args)\nwrite = Mutation("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`,
+                },
+              ].map(({ id, text }) => ({
+                id,
+                role: 'assistant',
+                submissionId: 'done',
+                parts: textPart(text),
+              }))
+              for (const refused of [
+                { message: 'program', code: 'return records;', summary: 'Read' },
+                { message: 'program', code, summary: 'Changed' },
+                { message: 'prose', code, summary: 'Read' },
+                { message: 'quoted', code, summary: 'Read' },
+                { message: 'echo', code, summary: 'Read' },
+                { message: 'mixed', code, summary: 'Read' },
+                { message: 'computed', code, summary: 'Read' },
+              ]) {
+                expect(
+                  yield* withCalls(
+                    storedDisplay(test.personal, {
+                      source: DisplaySource.cases.ThreadMessage.make({
+                        thread: test.personalId,
+                        message: refused.message,
+                      }),
+                      code: refused.code,
+                      summary: refused.summary,
+                      kind: 'Mutation',
+                    }).pipe(Effect.flip),
+                    Layer.mock(Runtime, history(messages, ['done'])),
+                  ),
+                ).toHaveProperty('_tag', 'DisplayProgramRefused')
+              }
+              checkCode(
+                yield* withCalls(
+                  storedDisplay(test.personal, {
+                    source: DisplaySource.cases.ThreadMessage.make({
+                      thread: test.personalId,
+                      message: 'program',
+                    }),
+                    code,
+                    summary: 'Read',
+                    kind: 'Query',
+                  }),
+                  Layer.mock(Runtime, history(messages, ['done'])),
+                ),
+                'Completed',
+                { result: [1, 2] },
+              )
+            }),
+            testLayer,
+          ),
+      )
+
+      /** A forged Mutation hint cannot grant a draw-time Query the Gate's press policy. */
+      it.effect('derives Query policy from storage even when the client claims Mutation', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const code = `return await ${use('write')};`
+            const outcome = yield* withCalls(
+              storedDisplay(test.personal, {
+                source: DisplaySource.cases.ThreadMessage.make({
+                  thread: test.personalId,
+                  message: 'query',
+                }),
+                code,
+                summary: 'Read',
+                kind: 'Mutation',
+              }),
+              Layer.mock(
+                Runtime,
+                history(
+                  [
+                    {
+                      id: 'query',
+                      role: 'assistant',
+                      submissionId: 'done',
+                      parts: textPart(
+                        `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`,
+                      ),
+                    },
+                  ],
+                  ['done'],
+                ),
+              ),
+            )
+            checkCode(outcome, 'Completed', {
+              result: {
+                ok: false,
+                reason: 'This display runs automatically. Use a button to make changes.',
+              },
+            })
+            expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+            expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
+          }),
+          testLayer,
+        ),
+      )
+
+      /** Finality is authoritative, and only the parsed final message survives between draws. */
+      it.effect(
+        'waits for final storage, then caches declarations without caching an execution',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const harness = yield* displayHarness()
+              const final = yield* Ref.make(false)
+              const reads = yield* Ref.make(0)
+              const request = {
+                source: DisplaySource.cases.ThreadMessage.make({
+                  thread: test.personalId,
+                  message: 'reply',
+                }),
+                code: 'return 1;',
+                summary: 'Read',
+                kind: 'Query' as const,
+              }
+              const runtime = Layer.mock(Runtime, {
+                read: Effect.fn('Test.displayHistory')(function* () {
+                  yield* Ref.update(reads, (n) => n + 1)
+                  return yield* history(
+                    [
+                      {
+                        id: 'reply',
+                        role: 'assistant',
+                        submissionId: 'submission',
+                        parts: textPart(
+                          'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
+                        ),
+                      },
+                    ],
+                    (yield* Ref.get(final)) ? ['submission'] : [],
+                  ).read()
+                }),
+              })
+              const draw = storedDisplay(test.personal, request).pipe(
+                Effect.provide(runtime),
+                Effect.provideService(CodeProcess, harness.process),
+              )
+              expect(yield* draw).toEqual({ _tag: 'DisplayProgramWaiting' })
+              expect(yield* Ref.get(harness.count)).toBe(0)
+              yield* Ref.set(final, true)
+              for (const count of [1, 2]) {
+                const reader = yield* draw.pipe(Effect.forkChild)
+                yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
+                checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
+                expect(yield* Ref.get(harness.count)).toBe(count)
+              }
+              expect(yield* Ref.get(reads)).toBe(2)
+            }),
+            testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
           ),
       )
 
@@ -359,131 +607,149 @@ describe.skipIf(!testDatabaseConfigured)(
           ),
       )
 
-      /** Real source and audience checks wrap a supervisor observed only at its Computer adapter. */
+      /** Admission is observed through real handlers; only the external Computer opening is held. */
+      it.effect('isolates readers, queues four FIFO draws and preserves all RunCode permits', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const harness = yield* displayHarness()
+            const first = yield* harness.start(test.personal, test.personalId, 'Query', 'return 1;')
+            const opening = yield* Queue.take(harness.opened)
+            const duplicate = yield* harness.start(
+              test.personal,
+              test.personalId,
+              'Query',
+              'return 1;',
+            )
+            const second = yield* harness.start(
+              test.personal,
+              test.personalId,
+              'Query',
+              'return 2;',
+            )
+            const another = yield* Queue.take(harness.opened)
+            const queued = yield* Effect.forEach([3, 4, 5, 6], (n) =>
+              harness.start(test.personal, test.personalId, 'Query', `return ${n};`),
+            )
+            checkCode(
+              yield* Fiber.join(
+                yield* harness.start(test.personal, test.personalId, 'Query', 'return 7;'),
+              ),
+              'Failed',
+              {
+                failure: { _tag: 'Busy' },
+                calls: [],
+              },
+            )
+            // A second Person has independent admission while all six of the first Person's keys live.
+            const peer = yield* harness.start(test.other, test.otherId, 'Query', 'return 8;')
+            const peerOpening = yield* Queue.take(harness.opened)
+            expect(peerOpening.person).toBe(test.other.person.id)
+            yield* Deferred.succeed(peerOpening.release, undefined)
+            checkCode(yield* Fiber.join(peer), 'Completed', { result: 8 })
+            const extra = yield* fixture()
+            const vivid = yield* Effect.forEach(
+              [
+                { actor: test.personal, thread: test.personalId },
+                { actor: test.member, thread: test.companyId },
+                { actor: test.other, thread: test.otherId },
+                { actor: extra.personal, thread: extra.personalId },
+              ],
+              ({ actor, thread }) =>
+                Effect.gen(function* () {
+                  const fiber = yield* run(actor, thread, 'return 9;').pipe(
+                    Effect.provideService(CodeProcess, harness.process),
+                    Effect.forkChild,
+                  )
+                  return { fiber, opening: yield* Queue.take(harness.opened) }
+                }),
+            )
+            checkCode(
+              yield* run(extra.member, extra.companyId, 'return 10;').pipe(
+                Effect.provideService(CodeProcess, harness.process),
+              ),
+              'Failed',
+              { failure: { _tag: 'Busy' } },
+            )
+            yield* Deferred.succeed(opening.release, undefined)
+            checkCode(yield* Fiber.join(first), 'Completed', { result: 1 })
+            checkCode(yield* Fiber.join(duplicate), 'Completed', { result: 1 })
+            for (const [index, fiber] of queued.entries()) {
+              const next = yield* Queue.take(harness.opened)
+              expect(next.person).toBe(test.personal.person.id)
+              yield* Deferred.succeed(next.release, undefined)
+              checkCode(yield* Fiber.join(fiber), 'Completed', { result: index + 3 })
+            }
+            yield* Deferred.succeed(another.release, undefined)
+            checkCode(yield* Fiber.join(second), 'Completed', { result: 2 })
+            for (const request of vivid) {
+              yield* Deferred.succeed(request.opening.release, undefined)
+              checkCode(yield* Fiber.join(request.fiber), 'Completed', { result: 9 })
+            }
+            expect(yield* Ref.get(harness.count)).toBe(11)
+            const redraw = yield* harness.start(
+              test.personal,
+              test.personalId,
+              'Query',
+              'return 1;',
+            )
+            yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
+            checkCode(yield* Fiber.join(redraw), 'Completed', { result: 1 })
+            expect(yield* Ref.get(harness.count)).toBe(12)
+          }),
+          testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
+        ),
+      )
+
+      /** Unmounting the first reader cannot own another reader's execution or queued result. */
       it.effect(
-        'deduplicates display renders, returns Busy at their limit and preserves RunCode capacity',
+        'keeps shared execution for a surviving reader and interrupts only the last reader',
         () =>
           withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
-              const computer = yield* CodeComputer
-              const opened = yield* Queue.unbounded<number>()
-              const admitted = yield* Queue.unbounded<void>()
-              const release = yield* Deferred.make<void>()
-              const count = yield* Ref.make(0)
-              const held = CodeComputer.of({
-                open: Effect.fn('Test.holdComputer')(function* (person) {
-                  const index = yield* Ref.updateAndGet(count, (n) => n + 1)
-                  yield* Queue.offer(opened, index)
-                  yield* Deferred.await(release)
-                  return yield* computer.open(person)
-                }),
-              })
-              const context = yield* Layer.build(
-                Layer.fresh(codeProcessLayer).pipe(
-                  Layer.provide(Layer.succeed(CodeComputer, held)),
-                ),
+              const harness = yield* displayHarness()
+              const first = yield* harness.start(
+                test.personal,
+                test.personalId,
+                'Query',
+                'return 1;',
               )
-              const process = Context.get(context, CodeProcess)
-              // Effect 4 forkChild(startImmediately) executes to its first suspension. This receipt
-              // acknowledges actual admission or joining the pending result, not merely RPC ingress.
-              const observed = CodeProcess.of({
-                ...process,
-                runDisplay: Effect.fn('Test.observeDisplay')(function* (input, dispatch) {
-                  const fiber = yield* process
-                    .runDisplay(input, dispatch)
-                    .pipe(Effect.forkChild({ startImmediately: true }))
-                  yield* Queue.offer(admitted, undefined)
-                  return yield* Fiber.join(fiber)
-                }),
-              })
-              const start = Effect.fn('Test.startDisplay')(function* (
-                kind: DisplayToolKind,
-                code: string,
-              ) {
-                const fiber = yield* runDisplay(test.personal, test.personalId, kind, code).pipe(
-                  Effect.provideService(CodeProcess, observed),
-                  Effect.forkChild,
-                )
-                yield* Effect.raceFirst(Queue.take(admitted), Fiber.join(fiber).pipe(Effect.asVoid))
-                return fiber
-              })
-              const first = yield* start('Query', 'return 1;')
-              expect(yield* Queue.take(opened)).toBe(1)
-              const duplicate = yield* start('Query', 'return 1;')
-              const second = yield* start('Query', 'return 2;')
-              expect(yield* Queue.take(opened)).toBe(2)
-              // Intent differs even with identical code. It must not borrow the automatic result.
-              const busy = yield* Fiber.join(yield* start('Mutation', 'return 1;'))
-              checkCode(busy, 'Failed', {
-                failure: CodeFailure.cases.Busy.make({
-                  message: 'Vivid is busy with other work. Try again in a moment.',
-                }),
-                calls: [],
-              })
-              const vivid = yield* run(test.personal, test.personalId, 'return 3;').pipe(
-                Effect.provideService(CodeProcess, observed),
-                Effect.forkChild,
+              const opening = yield* Queue.take(harness.opened)
+              const duplicate = yield* harness.start(
+                test.personal,
+                test.personalId,
+                'Query',
+                'return 1;',
               )
-              expect(yield* Queue.take(opened)).toBe(3)
-              const extra = yield* fixture()
-              const requests = [
-                { actor: test.member, thread: test.companyId },
-                { actor: test.other, thread: test.otherId },
-                { actor: extra.personal, thread: extra.personalId },
-              ]
-              const vividPeers = yield* Effect.forEach(requests, (request, index) =>
-                Effect.gen(function* () {
-                  const fiber = yield* run(request.actor, request.thread, 'return 5;').pipe(
-                    Effect.provideService(CodeProcess, observed),
-                    Effect.forkChild,
-                  )
-                  expect(yield* Queue.take(opened)).toBe(index + 4)
-                  return fiber
-                }),
-              )
-              checkCode(
-                yield* run(extra.member, extra.companyId, 'return 6;').pipe(
-                  Effect.provideService(CodeProcess, observed),
-                ),
-                'Failed',
-                {
-                  failure: CodeFailure.cases.Busy.make({
-                    message: 'Vivid is busy with other work. Try again in a moment.',
-                  }),
-                },
-              )
-              // Vivid alone owns its Thread slot; the display pool did not claim it.
-              checkCode(
-                yield* run(test.personal, test.personalId, 'return 4;').pipe(
-                  Effect.provideService(CodeProcess, observed),
-                ),
-                'Failed',
-                {
-                  failure: CodeFailure.cases.Busy.make({
-                    message: 'Vivid is busy with other work. Try again in a moment.',
-                  }),
-                },
-              )
-              yield* Deferred.succeed(release, undefined)
-              checkCode(yield* Fiber.join(first), 'Completed', { result: 1 })
+              yield* Fiber.interrupt(first)
+              expect(yield* Deferred.isDone(opening.interrupted)).toBe(false)
+              yield* Deferred.succeed(opening.release, undefined)
               checkCode(yield* Fiber.join(duplicate), 'Completed', { result: 1 })
-              checkCode(yield* Fiber.join(second), 'Completed', { result: 2 })
-              checkCode(yield* Fiber.join(vivid), 'Completed', { result: 3 })
-              for (const peer of vividPeers)
-                checkCode(yield* Fiber.join(peer), 'Completed', { result: 5 })
-              expect(yield* Ref.get(count)).toBe(6)
-              // Completion releases the key. A later render runs again instead of caching a write.
-              checkCode(yield* Fiber.join(yield* start('Query', 'return 1;')), 'Completed', {
-                result: 1,
-              })
-              expect(yield* Ref.get(count)).toBe(7)
+              expect(yield* Ref.get(harness.count)).toBe(1)
+              const abandoned = yield* harness.start(
+                test.personal,
+                test.personalId,
+                'Query',
+                'return 2;',
+              )
+              const last = yield* Queue.take(harness.opened)
+              yield* Fiber.interrupt(abandoned)
+              yield* Deferred.await(last.interrupted)
+              const fresh = yield* harness.start(
+                test.personal,
+                test.personalId,
+                'Query',
+                'return 2;',
+              )
+              yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
+              checkCode(yield* Fiber.join(fresh), 'Completed', { result: 2 })
+              expect(yield* Ref.get(harness.count)).toBe(3)
             }),
             testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
           ),
       )
 
-      /** Run the actual Node program and CodeCalls resolver; refusal must precede Gate and dispatch. */
       it.effect(
         'a display Query refuses a writing Integration call without sending it or creating an Approval',
         () =>
