@@ -141,7 +141,7 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(outcome).toMatchObject({
                 result: {
                   ok: false,
-                  reason: 'This display can only read. Use a button to make changes.',
+                  reason: 'This display runs automatically. Use a button to make changes.',
                 },
                 calls: [{ kind: 'use_tool', end: 'refused' }],
               })
@@ -182,7 +182,7 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
               expect(outcome).toHaveProperty('result', {
                 ok: false,
-                reason: 'This display can only read. Use a button to make changes.',
+                reason: 'This display runs automatically. Use a button to make changes.',
                 problems: [],
               })
               expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
@@ -272,9 +272,32 @@ describe.skipIf(!testDatabaseConfigured)(
             expect(outcome).toMatchObject({
               result: {
                 ok: false,
-                reason: 'This display can only read. Use a button to use the browser.',
+                reason: 'This display runs automatically. Use a button to use the browser.',
               },
               calls: [{ kind: 'browse', end: 'refused' }],
+            })
+          }),
+          testLayer,
+        ),
+      )
+
+      it.effect('a display Query refuses page reads before making a network request', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const outcome = yield* runDisplay(
+              test.personal,
+              test.personalId,
+              'Query',
+              'return await tools.read_page({address:"https://example.com/"});',
+            )
+            expect(outcome).toMatchObject({
+              _tag: 'Completed',
+              result: {
+                ok: false,
+                reason: 'This display runs automatically. Use a button to read a page.',
+              },
+              calls: [{ kind: 'read_page', end: 'refused' }],
             })
           }),
           testLayer,

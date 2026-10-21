@@ -19,7 +19,9 @@ import {
   type Service,
   type UseDisplayToolRequest,
   type UseToolRequest,
-  type DisplayToolKind,
+  DisplayCallPolicy,
+  displayCallPolicy,
+  displayCallRefusal,
 } from '@vivid/contracts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { requireCompany, type Actor } from '../auth/access.ts'
@@ -552,7 +554,7 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
 const useToolAs = Effect.fn('Connections.useTool')(function* (
   actor: Actor,
   request: UseToolRequest,
-  kind: DisplayToolKind,
+  policy: DisplayCallPolicy,
 ) {
   const prepared = yield* prepareTool(actor, request)
   if (Result.isFailure(prepared)) {
@@ -564,10 +566,11 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
   }
   const { row, tool } = prepared.success
   // Discovery may change after name resolution. Recheck at the last admission before the Gate.
-  if (kind === 'Query' && tool.effect !== 'read') {
+  const refusal = displayCallRefusal(policy, tool.effect)
+  if (Option.isSome(refusal)) {
     yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'use_tool' }))
     return ToolOutcome.cases.Rejected.make({
-      message: 'This display can only read. Use a button to make changes.',
+      message: refusal.value,
     })
   }
   // An Approval names the account as discovery named it to Vivid, so the Person is asked about
@@ -610,11 +613,11 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
 
 /** Vivid's regular calls retain their existing Gate policy. */
 export const useTool = (actor: Actor, request: UseToolRequest) =>
-  useToolAs(actor, request, 'Mutation')
+  useToolAs(actor, request, DisplayCallPolicy.cases.Press.make({}))
 
 /** Automatic display programs require a read effect at final admission, even after rediscovery. */
 export const useQueryTool = (actor: Actor, request: UseToolRequest) =>
-  useToolAs(actor, request, 'Query')
+  useToolAs(actor, request, DisplayCallPolicy.cases.Draw.make({}))
 
 /**
  * A display's own call into one of the Person's Integrations (OpenUI's `Query` and `Mutation`,
@@ -638,7 +641,8 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
     tool: request.name.slice(0, at),
     account: request.name.slice(at + 1),
   })
-  if (request.kind === 'Query' && tool.effect !== 'read')
+  const refusal = displayCallRefusal(displayCallPolicy(request.kind), tool.effect)
+  if (Option.isSome(refusal))
     return ToolOutcome.cases.Rejected.make({
       message:
         'A Query only reads. This tool changes something: put it in a Mutation run by a button.',

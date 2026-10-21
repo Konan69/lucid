@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Match, Option, Schema } from 'effect'
 import { ActionEffect } from './approvals.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
@@ -342,6 +342,42 @@ export interface UseToolRequest extends Schema.Schema.Type<typeof UseToolRequest
  */
 export const DisplayToolKind = Schema.Literals(['Query', 'Mutation'] as const)
 export type DisplayToolKind = typeof DisplayToolKind.Type
+
+/** Automatic programs run on draw, with no Integration writes, browser actions or page reads.
+ * They still run real JavaScript on the Computer and are not a read-only sandbox. */
+export const DisplayCallPolicy = Schema.TaggedUnion({
+  Draw: {},
+  Press: {},
+})
+export type DisplayCallPolicy = typeof DisplayCallPolicy.Type
+
+/** Convert OpenUI's invocation vocabulary once, before admitting individual tool calls. */
+export const displayCallPolicy = (kind: DisplayToolKind): DisplayCallPolicy =>
+  Match.value(kind).pipe(
+    Match.when('Query', () => DisplayCallPolicy.cases.Draw.make({})),
+    Match.when('Mutation', () => DisplayCallPolicy.cases.Press.make({})),
+    Match.exhaustive,
+  )
+
+type DisplayCapability = ActionEffect | 'browser' | 'page'
+
+/** Both discovery and final admission consult this one capability policy. */
+export const displayCallRefusal = (
+  policy: DisplayCallPolicy,
+  capability: DisplayCapability,
+): Option.Option<string> =>
+  DisplayCallPolicy.match(policy, {
+    Draw: () => automaticRefusals[capability],
+    Press: () => Option.none(),
+  })
+
+const automaticRefusals: Readonly<Record<DisplayCapability, Option.Option<string>>> = {
+  read: Option.none(),
+  write: Option.some('This display runs automatically. Use a button to make changes.'),
+  destructive: Option.some('This display runs automatically. Use a button to make changes.'),
+  browser: Option.some('This display runs automatically. Use a button to use the browser.'),
+  page: Option.some('This display runs automatically. Use a button to read a page.'),
+}
 
 export const UseDisplayToolRequest = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(600)),

@@ -2,13 +2,14 @@ import {
   BrowseOutcome,
   BrowseRequest,
   CodeCallKind,
-  type DisplayToolKind,
+  DisplayCallPolicy,
+  displayCallRefusal,
   FindToolsRequest,
   ReadPageOutcome,
   ReadPageRequest,
   ToolOutcome,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { DecisionModel } from 'effect/ai'
 import { CodeToolNames } from '@vivid/contracts/code'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
@@ -80,17 +81,14 @@ const refused = Effect.fnUntraced(function* (
 const connection = Effect.fn('Code.useConnection')(function* (
   actor: Actor,
   input: Schema.Json,
-  kind: DisplayToolKind,
+  policy: DisplayCallPolicy,
 ) {
   const request = yield* decodeUse(input, { onExcessProperty: 'error' })
   const matched = yield* resolveTool(actor, request)
-  if (kind === 'Query' && matched.effect !== 'read')
-    return yield* refused(
-      'use_tool',
-      { ok: false, reason: 'This display can only read. Use a button to make changes.' },
-      request.summary,
-    )
-  const use = kind === 'Query' ? useQueryTool : useTool
+  const refusal = displayCallRefusal(policy, matched.effect)
+  if (Option.isSome(refusal))
+    return yield* refused('use_tool', { ok: false, reason: refusal.value }, request.summary)
+  const use = DisplayCallPolicy.match(policy, { Draw: () => useQueryTool, Press: () => useTool })
   const outcome = yield* use(actor, {
     connectionId: matched.connectionId,
     tool: matched.name,
@@ -221,7 +219,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
 const dispatch = Effect.fn('Code.dispatch')(function* (
   boundary: CodeBoundary,
   call: typeof WorkerMessage.cases.Call.Type,
-  kind: DisplayToolKind,
+  policy: DisplayCallPolicy,
 ) {
   const actor = yield* (yield* CodeAuthority).refresh(boundary)
   switch (call.kind) {
@@ -230,17 +228,25 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
       return returned(toolView(yield* findTools(actor, request)), request.query)
     }
     case 'use_tool':
-      return yield* connection(actor, call.input, kind)
-    case 'browse':
-      // Browser actions lack a read-only effect contract, so an automatic Query cannot use them.
-      if (kind === 'Query')
+      return yield* connection(actor, call.input, policy)
+    case 'browse': {
+      const refusal = displayCallRefusal(policy, 'browser')
+      if (Option.isSome(refusal))
         return yield* refused(
           'browse',
-          { ok: false, reason: 'This display can only read. Use a button to use the browser.' },
+          { ok: false, reason: refusal.value },
           'Check browser access',
         )
       return yield* browse(actor, call.input)
+    }
     case 'read_page': {
+      const refusal = displayCallRefusal(policy, 'page')
+      if (Option.isSome(refusal))
+        return yield* refused(
+          'read_page',
+          { ok: false, reason: refusal.value },
+          'Check page access',
+        )
       const request = yield* decodePage(call.input, { onExcessProperty: 'error' })
       const outcome = yield* readPage(request)
       return ReadPageOutcome.match(outcome, {
@@ -292,10 +298,10 @@ export const codeCallsLayer = Layer.effect(
         | PageReader
       >(),
     )
-    // Both policies share authority refresh and recovery; only automatic display reads restrict effects.
-    const bind = (boundary: CodeBoundary, kind: DisplayToolKind): Dispatch =>
+    // Both policies share authority refresh and recovery; only automatic display calls restrict capabilities.
+    const bind = (boundary: CodeBoundary, policy: DisplayCallPolicy): Dispatch =>
       Effect.fn('Code.boundCall')((call) =>
-        dispatch(boundary, call, kind).pipe(
+        dispatch(boundary, call, policy).pipe(
           Effect.provide(context),
           Effect.catchTag('CodeAuthorityRevoked', () =>
             Effect.succeed(
@@ -346,8 +352,8 @@ export const codeCallsLayer = Layer.effect(
         ),
       )
     return CodeCalls.of({
-      bind: (boundary) => bind(boundary, 'Mutation'),
-      bindQuery: (boundary) => bind(boundary, 'Query'),
+      bind: (boundary) => bind(boundary, DisplayCallPolicy.cases.Press.make({})),
+      bindQuery: (boundary) => bind(boundary, DisplayCallPolicy.cases.Draw.make({})),
     })
   }),
 )
