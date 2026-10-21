@@ -240,11 +240,7 @@ const displayHarness = Effect.fn('Test.displayHarness')(function* () {
       code,
       summary: 'Work with records',
       kind,
-    }).pipe(
-      Effect.provide(runtime),
-      Effect.provideService(CodeProcess, observed),
-      Effect.forkChild,
-    )
+    }).pipe(Effect.provide(runtime), Effect.provideService(CodeProcess, observed), Effect.forkChild)
     yield* Effect.raceFirst(Queue.take(admitted), Fiber.join(fiber).pipe(Effect.asVoid))
     return fiber
   })
@@ -563,63 +559,61 @@ describe.skipIf(!testDatabaseConfigured)(
       )
 
       /** Expiry refreshes settlement; warm history never caches an execution result. */
-      it.effect(
-        'waits for final storage, then shares history without caching an execution',
-        () =>
-          withCalls(
-            Effect.gen(function* () {
-              const test = yield* fixture()
-              const harness = yield* displayHarness()
-              const final = yield* Ref.make(false)
-              const reads = yield* Ref.make(0)
-              const request = {
-                source: DisplaySource.cases.ThreadMessage.make({
-                  thread: test.personalId,
-                  message: 'reply',
-                }),
-                code: 'return 1;',
-                summary: 'Read',
-                kind: 'Query' as const,
-              }
-              const runtime = Layer.mock(Runtime, {
-                read: Effect.fn('Test.displayHistory')(function* () {
-                  yield* Ref.update(reads, (n) => n + 1)
-                  return yield* history(
-                    [
-                      {
-                        id: 'reply',
-                        role: 'assistant',
-                        submissionId: 'submission',
-                        parts: textPart(
-                          'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
-                        ),
-                      },
-                    ],
-                    (yield* Ref.get(final)) ? ['submission'] : [],
-                  ).read()
-                }),
-              })
-              const context = yield* Layer.build(runtime)
-              const draw = storedDisplay(test.personal, request).pipe(
-                Effect.provide(context),
-                Effect.provideService(CodeProcess, harness.process),
-              )
-              expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
-              expect(yield* Ref.get(harness.count)).toBe(0)
-              yield* Ref.set(final, true)
-              expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
-              expect(yield* Ref.get(reads)).toBe(1)
-              yield* TestClock.adjust('2 seconds')
-              for (const count of [1, 2]) {
-                const reader = yield* draw.pipe(Effect.forkChild)
-                yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
-                checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
-                expect(yield* Ref.get(harness.count)).toBe(count)
-              }
-              expect(yield* Ref.get(reads)).toBe(2)
-            }),
-            testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
-          ),
+      it.effect('waits for final storage, then shares history without caching an execution', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const harness = yield* displayHarness()
+            const final = yield* Ref.make(false)
+            const reads = yield* Ref.make(0)
+            const request = {
+              source: DisplaySource.cases.ThreadMessage.make({
+                thread: test.personalId,
+                message: 'reply',
+              }),
+              code: 'return 1;',
+              summary: 'Read',
+              kind: 'Query' as const,
+            }
+            const runtime = Layer.mock(Runtime, {
+              read: Effect.fn('Test.displayHistory')(function* () {
+                yield* Ref.update(reads, (n) => n + 1)
+                return yield* history(
+                  [
+                    {
+                      id: 'reply',
+                      role: 'assistant',
+                      submissionId: 'submission',
+                      parts: textPart(
+                        'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
+                      ),
+                    },
+                  ],
+                  (yield* Ref.get(final)) ? ['submission'] : [],
+                ).read()
+              }),
+            })
+            const context = yield* Layer.build(runtime)
+            const draw = storedDisplay(test.personal, request).pipe(
+              Effect.provide(context),
+              Effect.provideService(CodeProcess, harness.process),
+            )
+            expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
+            expect(yield* Ref.get(harness.count)).toBe(0)
+            yield* Ref.set(final, true)
+            expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
+            expect(yield* Ref.get(reads)).toBe(1)
+            yield* TestClock.adjust('2 seconds')
+            for (const count of [1, 2]) {
+              const reader = yield* draw.pipe(Effect.forkChild)
+              yield* Deferred.succeed((yield* Queue.take(harness.opened)).release, undefined)
+              checkCode(yield* Fiber.join(reader), 'Completed', { result: 1 })
+              expect(yield* Ref.get(harness.count)).toBe(count)
+            }
+            expect(yield* Ref.get(reads)).toBe(2)
+          }),
+          testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
+        ),
       )
 
       /** The two-second bound applies to removal, same-incarnation replacement and reset alike. */
