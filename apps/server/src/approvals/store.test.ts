@@ -211,7 +211,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const failures = results.filter(Result.isFailure)
           expect(failures.map((result) => result.failure)).toEqual([expect.any(Conflict)])
           const observed = yield* Observation
-          expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+          expect(yield* observed.actions).toEqual([connectionAction])
           const deliveries = yield* Ref.get(observed.deliveries)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
@@ -246,7 +246,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           expect(Result.isFailure(result)).toBe(true)
           if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(Conflict)
-          expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          expect(yield* (yield* Observation).actions).toEqual([])
         }),
         'fresh',
       ),
@@ -286,7 +286,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(expired).toBeDefined()
             if (expired !== undefined)
               expect(ApprovalState.guards.Expired(expired.state)).toBe(true)
-            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+            expect(yield* (yield* Observation).actions).toEqual([])
             expect(yield* Ref.get((yield* Observation).topics)).toContain(`t:${test.personalId}`)
             expect(yield* Ref.get((yield* Observation).deliveries)).toEqual([
               expect.objectContaining({
@@ -318,7 +318,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           expect(Result.isFailure(result)).toBe(true)
           if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(NotFound)
-          expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          expect(yield* (yield* Observation).actions).toEqual([])
           expect(yield* store.inbox(test.owner)).toEqual([])
         }),
         'fresh',
@@ -339,7 +339,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(ApprovalState.guards.OutcomeUnknown(settled.state)).toBe(true)
           const again = yield* Effect.result(store.decide(test.personal, request))
           expect(Result.isFailure(again)).toBe(true)
-          expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+          expect(yield* observed.actions).toEqual([connectionAction])
           const audit = yield* loadAudit(test.personal)
           expect(audit.entries).toEqual([
             expect.objectContaining({
@@ -375,7 +375,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               decision: ApprovalDecision.cases.AlwaysAllow.make({}),
             })
             expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
-            expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+            expect(yield* observed.actions).toEqual([connectionAction])
             const rules = yield* (yield* RuleStore).list(test.personal)
             expect(rules).toHaveLength(1)
             expect(rules[0]).toMatchObject({
@@ -454,7 +454,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(records.map((row) => row.state._tag)).toEqual(
             expect.arrayContaining(['Denied', 'Withdrawn']),
           )
-          expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          expect(yield* (yield* Observation).actions).toEqual([])
         }),
         'fresh',
       ),
@@ -511,7 +511,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             yield* Effect.all([store.expire, store.expire], { concurrency: 2 })
             const records = yield* store.inThread(test.companyId)
             expect(records.map((row) => row.state._tag)).toEqual(['OutcomeUnknown'])
-            expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+            expect(yield* observed.actions).toEqual([connectionAction])
             expect(yield* Ref.get(observed.deliveries)).toEqual([
               expect.objectContaining({
                 threadId: approval.threadId,
@@ -542,7 +542,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(Result.isFailure(again)).toBe(true)
             if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(Conflict)
             yield* store.expire
-            expect(yield* Ref.get(observed.actions)).toHaveLength(1)
+            expect(yield* observed.actions).toHaveLength(1)
             expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
           }),
           'fresh',
@@ -610,7 +610,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             'Pending',
           ])
           expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
-          expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          expect(yield* (yield* Observation).actions).toEqual([])
           expect((yield* loadAudit(test.personal)).entries).toEqual([])
           const settled = yield* store.decide(test.personal, {
             id: approval.id,
@@ -656,7 +656,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               'Pending',
             ])
             expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
-            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+            expect(yield* (yield* Observation).actions).toEqual([])
             expect((yield* loadAudit(test.owner)).entries).toEqual([])
           }),
           'fresh',
@@ -683,7 +683,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(
               (yield* (yield* RuleStore).list(test.personal)).map((rule) => rule.decision),
             ).toEqual(['Allow'])
-            expect(yield* Ref.get((yield* Observation).actions)).toEqual([browserWrite])
+            expect(yield* (yield* Observation).actions).toEqual([browserWrite])
           }),
           'fresh',
         ),
@@ -720,7 +720,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect((yield* store.inThread(test.companyId)).map((row) => row.state._tag)).toEqual([
               'Pending',
             ])
-            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+            expect(yield* (yield* Observation).actions).toEqual([])
             expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
             expect((yield* loadAudit(test.owner)).entries).toEqual([])
           }),
@@ -781,7 +781,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe(
             'Conflict',
           )
-          expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
+          expect(yield* (yield* Observation).actions).toEqual([desktopAction])
         }),
         'fresh',
       ),

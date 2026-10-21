@@ -414,7 +414,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 { concurrency: 2 },
               )
               expect(decisions.filter(Result.isSuccess)).toHaveLength(1)
-              const actions = yield* Ref.get((yield* Observation).actions)
+              const actions = yield* (yield* Observation).actions
               expect(actions).toEqual([approval.action])
               expect(approval.action.target).toMatchObject({ input: { draft: 'original' } })
               return yield* Effect.void
@@ -492,7 +492,7 @@ describe.skipIf(!testDatabaseConfigured)(
                     ),
                   ).toBe(true)
                 }
-                expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+                expect(yield* (yield* Observation).actions).toEqual([])
                 return yield* Effect.void
               }),
               testLayer,

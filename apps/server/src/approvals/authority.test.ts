@@ -2,6 +2,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   ActionTarget,
   ApprovalDecision,
+  type ApprovalState,
   BrowseTarget,
   BrowserAction,
   Conflict,
@@ -13,11 +14,20 @@ import {
   type Approval,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Array as Arr, Clock, Effect, Layer, Option, Order, Ref, Result, Schema } from 'effect'
-import * as fc from 'fast-check'
+import {
+  Arbitrary,
+  Array as Arr,
+  Clock,
+  Effect,
+  Layer,
+  Option,
+  Order,
+  Ref,
+  Result,
+  Schema,
+} from 'effect'
 import { scopedCase } from '../../tests/case.ts'
 import { twoPeople } from '../../tests/people.ts'
-import { checkSequences } from '../../tests/property.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { DeliverySpeaker, StoredRunOrigin } from '../threads/conversation.ts'
@@ -30,10 +40,11 @@ import { connectionAction, Observation, trustTestServices } from './testing.ts'
 const Person = Schema.Literals(['first', 'second'])
 const Target = Schema.Literals(['browser', 'connection'])
 const Decision = Schema.Literals(['allow', 'deny'])
+const card = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))
 const Command = Schema.TaggedUnion({
   Propose: { person: Person, target: Target },
-  Decide: { person: Person, decision: Decision, card: Schema.Int, changedDigest: Schema.Boolean },
-  Withdraw: { person: Person, card: Schema.Int },
+  Decide: { person: Person, decision: Decision, card, changedDigest: Schema.Boolean },
+  Withdraw: { person: Person, card },
   Share: { shared: Schema.Boolean },
   Run: { person: Person, admitted: Schema.Boolean },
   Replay: {},
@@ -52,36 +63,36 @@ const browser = ProposedAction.make({
   }),
 })
 const actions = { browser, connection: connectionAction }
-const people = fc.constantFrom(...Person.literals)
-const card = fc.nat({ max: 3 })
-/** Short command streams shrink to a single authority violation while keeping real SQL affordable. */
-const command: fc.Arbitrary<Command> = fc.oneof(
-  fc
-    .record({ person: people, target: fc.constantFrom(...Target.literals) })
-    .map((value) => Command.cases.Propose.make(value)),
-  fc
-    .record({
-      person: people,
-      decision: fc.constantFrom(...Decision.literals),
-      card,
-      changedDigest: fc.boolean(),
-    })
-    .map((value) => Command.cases.Decide.make(value)),
-  fc.record({ person: people, card }).map((value) => Command.cases.Withdraw.make(value)),
-  fc.record({ shared: fc.boolean() }).map((value) => Command.cases.Share.make(value)),
-  fc
-    .record({ person: people, admitted: fc.boolean() })
-    .map((value) => Command.cases.Run.make(value)),
-  fc.constant(Command.cases.Replay.make({})),
+const decision = Arbitrary.schema(Command.cases.Decide)
+const allow = Arbitrary.map(Arbitrary.schema(Schema.Struct({ person: Person, card })), (value) =>
+  Command.cases.Decide.make({ ...value, decision: 'allow', changedDigest: false }),
 )
-const sequences = fc.array(command, { minLength: 1, maxLength: 8 })
+/** Weight valid-digest allowances so cross-Person authority is exercised before cards settle. */
+const commands: Arr.NonEmptyReadonlyArray<Arbitrary.Arbitrary<Command>> = [
+  allow,
+  allow,
+  allow,
+  decision,
+  Arbitrary.schema(Command.cases.Propose),
+  Arbitrary.schema(Command.cases.Withdraw),
+  Arbitrary.schema(Command.cases.Share),
+  Arbitrary.schema(Command.cases.Run),
+  Arbitrary.schema(Command.cases.Replay),
+]
+const command = Arbitrary.flatMap(
+  Arbitrary.schema(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: commands.length - 1 })),
+  ),
+  (index) => Option.getOrThrow(Arr.get(commands, index)),
+)
+const sequences = Arbitrary.array(command, { minLength: 1, maxLength: 6 })
 
 interface Card {
   readonly approval: Approval
   readonly person: typeof Person.Type
   readonly target: typeof Target.Type
   readonly origin: ActionOrigin
-  readonly state: 'Pending' | 'Succeeded' | 'Denied' | 'Withdrawn'
+  readonly state: ApprovalState['_tag']
 }
 interface Model {
   readonly shared: boolean
@@ -410,15 +421,12 @@ const sequence = Effect.fn('AuthorityTest.sequence')(function* (events: Readonly
 
 layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
   describe.skipIf(!testDatabaseConfigured)('Generated Approval authority lifecycle', () => {
-    // 58475 includes a participant's valid denial; 20261022 exposes the historical browser-owner bug.
     for (const seed of [20261021, 31913, 58475, 20261022]) {
-      it.effect(
+      it.effect.prop(
         `preserves Thread, Run and Person authority after every command, seed ${seed}`,
-        () =>
-          checkSequences(sequences, (events) => scopedCase(services, sequence(events), 'fresh'), {
-            seed,
-            numRuns: 4,
-          }),
+        { events: sequences },
+        ({ events }) => scopedCase(services, sequence(events), 'fresh'),
+        { arbitrary: { seed, runs: 4 } },
       )
     }
   })

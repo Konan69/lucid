@@ -52,7 +52,6 @@
     "@vivid/agent-runtime": "workspace:*",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-kit": "catalog:",
-    "fast-check": "4.10.2",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

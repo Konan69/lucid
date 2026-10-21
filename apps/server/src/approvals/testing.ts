@@ -64,7 +64,7 @@ const Judgment = Schema.TaggedUnion({
 type Judgment = typeof Judgment.Type
 
 interface ObservationService {
-  readonly actions: Ref.Ref<ReadonlyArray<ProposedAction>>
+  readonly actions: Effect.Effect<ReadonlyArray<ProposedAction>>
   readonly executions: Ref.Ref<ReadonlyArray<Parameters<ActionRunner['Service']['run']>[0]>>
   readonly deliveries: Ref.Ref<ReadonlyArray<Delivery>>
   readonly notices: Ref.Ref<ReadonlyArray<Notice>>
@@ -89,9 +89,14 @@ export class Observation extends Context.Service<Observation, ObservationService
 /** These ports record real store orchestration; PostgreSQL, audit, policy and claims stay production. */
 const ports = Layer.effectContext(
   Effect.gen(function* () {
+    const executions = yield* Ref.make<
+      ReadonlyArray<Parameters<ActionRunner['Service']['run']>[0]>
+    >([])
     const state = Observation.of({
-      actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
-      executions: yield* Ref.make<ReadonlyArray<Parameters<ActionRunner['Service']['run']>[0]>>([]),
+      actions: Ref.get(executions).pipe(
+        Effect.map((inputs) => inputs.map((input) => input.action)),
+      ),
+      executions,
       deliveries: yield* Ref.make<ReadonlyArray<Delivery>>([]),
       notices: yield* Ref.make<ReadonlyArray<Notice>>([]),
       topics: yield* Ref.make<ReadonlyArray<Topic>>([]),
@@ -143,9 +148,7 @@ const ports = Layer.effectContext(
     const runner = ActionRunner.of({
       /** Every execution is observable, so races are checked against the actual claim boundary. */
       run: Effect.fn('TrustTest.run')(function* (input) {
-        const { action } = input
         yield* Ref.update(state.executions, (executions) => executions.concat([input]))
-        yield* Ref.update(state.actions, (actions) => actions.concat([action]))
         if (yield* Ref.get(state.runnerDefect)) return yield* Effect.die('Injected runner defect')
         return yield* Ref.get(state.outcome)
       }),
