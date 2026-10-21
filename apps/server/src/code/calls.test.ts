@@ -434,6 +434,59 @@ describe.skipIf(!testDatabaseConfigured)(
         ),
       )
 
+      /** Concurrent declarations in different messages share history, not their execution results. */
+      it.effect('shares one in-flight history read across concurrent Thread draws', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const reads = yield* Ref.make(0)
+            const started = yield* Deferred.make<void>()
+            const release = yield* Deferred.make<void>()
+            const requests = [1, 2, 3, 4].map((value) => ({
+              source: DisplaySource.cases.ThreadMessage.make({
+                thread: test.personalId,
+                message: String(value),
+              }),
+              code: `return ${value};`,
+              summary: 'Read',
+              kind: 'Query' as const,
+            }))
+            const snapshot = history(
+              requests.map((request) => ({
+                id: request.source.message,
+                role: 'assistant',
+                submissionId: 'done',
+                parts: textPart(
+                  `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(request.code)}, summary: "Read"})`,
+                ),
+              })),
+              ['done'],
+            )
+            const runtime = Layer.mock(Runtime, {
+              read: Effect.fn('Test.sharedDisplayHistory')(function* () {
+                yield* Ref.update(reads, (count) => count + 1)
+                yield* Deferred.succeed(started, undefined)
+                yield* Deferred.await(release)
+                return yield* snapshot.read()
+              }),
+            })
+            const context = yield* Layer.build(runtime)
+            const draws = yield* Effect.forEach(
+              requests,
+              (request) => storedDisplay(test.personal, request),
+              { concurrency: 'unbounded' },
+            ).pipe(Effect.provide(context), Effect.forkChild)
+            yield* Deferred.await(started)
+            yield* Deferred.succeed(release, undefined)
+            const results = yield* Fiber.join(draws)
+            for (const [index, result] of results.entries())
+              checkCode(result, 'Completed', { result: index + 1 })
+            expect(yield* Ref.get(reads)).toBe(1)
+          }),
+          testLayer,
+        ),
+      )
+
       /** Finality is authoritative, and only the parsed final message survives between draws. */
       it.effect(
         'waits for final storage, then caches declarations without caching an execution',
