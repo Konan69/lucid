@@ -72,7 +72,11 @@ const OPENERS = '([{'
 const CLOSERS = ')]}'
 
 /** What one character outside a comment and an escape does to the string and bracket state. */
-function readChar(quote: Lexical['quote'], depth: number, c: string) {
+function readChar(
+  quote: Lexical['quote'],
+  depth: number,
+  c: string,
+): Pick<Lexical, 'quote' | 'depth'> {
   if (quote !== null) return { quote: c === quote ? null : quote, depth }
   if (c === '"' || c === "'") return { quote: c, depth }
   if (OPENERS.includes(c)) return { quote, depth: depth + 1 }
