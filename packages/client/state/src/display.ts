@@ -465,7 +465,9 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
     DatabaseUnavailable: () => 'Vivid could not read the saved information. Try again shortly.',
     DatabaseFailure: () => 'Vivid could not read the saved information. Try again shortly.',
     DatabaseConstraintViolation: () => 'The saved information changed. Refresh and try again.',
-    RpcClientError: () => 'Vivid could not be reached. Check your internet and try again.',
+    // A lost RPC reply does not prove a Mutation failed; never encourage a duplicate action.
+    RpcClientError: () =>
+      'No reply came back from Vivid. The action may have completed. Check before trying again.',
   }),
 )
 
