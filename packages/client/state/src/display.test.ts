@@ -144,6 +144,33 @@ describe('a program read as OpenUI reads it', () => {
     ])
   })
 
+  it('reads nothing inside a comment', () => {
+    expect(
+      stretches('root = Col([head])\n// The person\'s title (\nhead = Text("Hi")\n\nDone.').map(
+        (stretch) => [stretch.kind, stretch.text],
+      ),
+    ).toEqual([
+      ['display', 'root = Col([head])\n// The person\'s title (\nhead = Text("Hi")\n'],
+      ['words', '\nDone.'],
+    ])
+  })
+
+  it('closes a fence even when the program left a bracket open', () => {
+    const reply = `${FENCE}openui-lang\nroot = Col([Text("Hi")\n${FENCE}\nDone.`
+    expect(stretches(reply).map((stretch) => [stretch.kind, stretch.text])).toEqual([
+      ['display', 'root = Col([Text("Hi")\n'],
+      ['words', '\nDone.'],
+    ])
+  })
+
+  it('keeps the branches of a ternary in a bare program', () => {
+    const program = 'root = $show\n  ? Col([Text("A")])\n  : Col([Text("B")])\n$show = true\n'
+    expect(stretches(`${program}\nDone.`).map((stretch) => stretch.text)).toEqual([
+      program,
+      '\nDone.',
+    ])
+  })
+
   it('draws an indented bare program', () => {
     expect(stretches('  root = Title("Hi")')).toEqual([
       { kind: 'display', from: 0, text: '  root = Title("Hi")', whole: true },

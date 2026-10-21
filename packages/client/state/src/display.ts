@@ -21,6 +21,8 @@ const TAGS: ReadonlySet<string> = new Set(['openui-lang', 'openui'])
 const ROOT = /^\s*root\s*=(?!=)/u
 /** One statement of a program: `name = ...` or `$name = ...`, never a comparison. */
 const STATEMENT = /^\s*\$?[A-Za-z_]\w*\s*=(?!=)/u
+/** A line that carries on the expression above it, such as the branches of a ternary. */
+const OPERATOR = /^\s*(?:[?:]|&&|\|\|)/u
 /** A comment line, which OpenUI's parser drops (`stripComments` in lang-core's `parser.ts`). */
 const COMMENT = /^\s*(?:\/\/|#)/u
 
@@ -66,7 +68,8 @@ const CLOSERS = ')]}'
 
 /**
  * One line of a program read as OpenUI's tokenizer reads it: strings in either quote, with
- * backslash escapes, may run across lines, and brackets inside them do not count.
+ * backslash escapes, may run across lines, and brackets inside them do not count; a comment
+ * (`//` or `#` outside a string) ends what the line says.
  */
 function readLine(line: string, from: Lexical): Lexical {
   let { quote, depth } = from
@@ -76,6 +79,7 @@ function readLine(line: string, from: Lexical): Lexical {
       if (c === '\\') at += 1
       else if (c === quote) quote = null
     } else if (c === '"' || c === "'") quote = c
+    else if (c === '#' || line.startsWith('//', at)) break
     else if (OPENERS.includes(c)) depth += 1
     else if (CLOSERS.includes(c)) depth = Math.max(0, depth - 1)
   }
@@ -103,7 +107,8 @@ function programLines(text: string) {
 }
 
 /** Whether a line is open, still part of the statement before it. */
-const continues = (line: ProgramLine) => line.state.quote !== null || line.state.depth > 0
+const continues = (line: ProgramLine) =>
+  line.state.quote !== null || line.state.depth > 0 || OPERATOR.test(line.text)
 
 /**
  * Where a bare program that starts at the beginning of `text` ends: after its last statement, or
@@ -125,10 +130,11 @@ function programEnd(text: string): number | null {
 /**
  * The closing fence of a program's fence: a line of only backticks outside a string, so a string
  * that holds a fence line stays in the program (upstream `stripFences` skips strings the same way).
+ * Open brackets do not hold it: OpenUI's parser closes them itself.
  */
 function programClose(body: string): { readonly index: number; readonly length: number } | null {
   const line = programLines(body).lines.find(
-    (candidate) => !continues(candidate) && CLOSE.test(candidate.text),
+    (candidate) => candidate.state.quote === null && CLOSE.test(candidate.text),
   )
   return line === undefined ? null : { index: line.start, length: line.text.length }
 }
