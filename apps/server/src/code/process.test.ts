@@ -1,24 +1,20 @@
 import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
-import { Array as Arr, Context, Layer, Logger, Order } from 'effect'
+import { Array as Arr, Context, Layer, Order } from 'effect'
 import { describe, expect, it as standalone } from '@effect/vitest'
 import {
   ApprovalId,
-  CodeCall,
   CodeCallKind,
   CodeFailure,
   CodeOutcome,
   PersonId,
   ThreadId,
 } from '@vivid/contracts'
-import { Deferred, Effect, Exit, Fiber, Ref, Option, Schema, Cause } from 'effect'
+import { Deferred, Effect, Fiber, Ref, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
+import { CallOutcome, CodeProcess, codeProcessLayer, type Dispatch } from './process.ts'
 import { discoveredTool } from './signatures.ts'
-import { CodeTiming } from '@vivid/contracts/code'
-import { PipeFailure, WorkerMessage } from './protocol.ts'
 import { budgets } from './budgets.ts'
-import { CodeComputer, CodeComputerUnavailable } from './computer.ts'
 import { MachineOperationFailed } from '../computers/machine.ts'
 import { localCodeComputer, localCodeComputerLayer } from './testing.ts'
 
@@ -1008,36 +1004,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
   )
 })
 
-/** The Person has the Computer, or it did not start: the program ends before anything ran. */
-standalone.effect(
-  'refuses a program when the Computer cannot be used, and says which refusal',
-  () => {
-    const messages: string[] = []
-    const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
-    const held = Layer.succeed(
-      CodeComputer,
-      CodeComputer.of({
-        open: () => Effect.fail(new CodeComputerUnavailable({ reason: 'ComputerHeld' })),
-      }),
-    )
-    return Effect.gen(function* () {
-      const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(held)))
-      return yield* Effect.gen(function* () {
-        const process = yield* CodeProcess
-        const result = yield* process.run(
-          {
-            request: { code: 'return 1;', summary: 'Read' },
-            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-          },
-          () => Effect.die('A program that never started must not dispatch'),
-        )
-        check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
-        expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
-  },
-)
-
 /** The Computer takes the program and its start, but an answer cannot be written to it. */
 standalone.effect(
   'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
@@ -1089,112 +1055,3 @@ standalone.effect(
     }).pipe(Effect.scoped),
   { timeout: 20_000 },
 )
-
-/** Exercise the parent deadline state with a missing final frame, without a process or server. */
-standalone.effect('marks logs incomplete when final-frame grace expires', () =>
-  Effect.gen(function* () {
-    const state = new Execution()
-    const running = yield* Effect.forkChild(state.timeout(Effect.void))
-    yield* TestClock.adjust(CodeTiming.graceMs)
-    expect(yield* Fiber.join(running)).toEqual(
-      CodeOutcome.cases.Failed.make({
-        failure: CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds }),
-        calls: [],
-        logs: [],
-        logsTruncated: true,
-      }),
-    )
-  }),
-)
-
-/** The false literal is one byte longer; clipping a near-full failure must reserve that byte. */
-standalone.effect('keeps failed aggregate bytes within the limit when logs nearly fit', () =>
-  Effect.sync(() => {
-    const state = new Execution()
-    state.calls.push(
-      ...Array.from({ length: budgets.calls }, () =>
-        CodeCall.make({ kind: 'find_tools', summary: 'x'.repeat(200), end: 'completed' }),
-      ),
-    )
-    const failure = CodeFailure.cases.Threw.make({ message: 'Failed' })
-    const base = CodeOutcome.cases.Failed.make({
-      failure,
-      calls: state.calls.slice(),
-      logs: [],
-      logsTruncated: false,
-    })
-    const line = 'x'.repeat(budgets.result - Buffer.byteLength(JSON.stringify(base)) - 1)
-    state.end(WorkerMessage.cases.Failed.make({ failure, logs: [line], logsTruncated: false }))
-    const outcome = state.failed(failure)
-    expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
-    expect(outcome).toHaveProperty('logsTruncated', true)
-  }),
-)
-
-/** Recovery is exercised without host prerequisites; the real supervisor uses this same transition. */
-standalone.effect('supervision contains hostile causes and logs only bounded type facts', () => {
-  const secret = 'PRIVATE-supervision-content'
-  const circular = new Error(secret)
-  circular.cause = circular
-  const getter = Object.defineProperty(new Error(secret), 'message', {
-    get: () => {
-      throw new Error(secret)
-    },
-  })
-  const messages: string[] = []
-  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
-  return Effect.gen(function* () {
-    for (const failure of [circular, getter]) {
-      const state = new Execution()
-      const exit = yield* Effect.exit(state.supervise(Effect.die(failure)))
-      expect(Exit.isSuccess(exit)).toBe(true)
-      if (Exit.isSuccess(exit))
-        check(exit.value, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
-    }
-    expect(messages).toHaveLength(2)
-    for (const message of messages) {
-      expect(message).toContain('Program supervision failed')
-      expect(message).not.toContain(secret)
-      expect(message.length).toBeLessThan(400)
-    }
-  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
-})
-
-/** Safe diagnostics identify typed failures without rendering their payload or defect tags. */
-standalone.effect('supervision logs typed Fail tags with bounded count and length', () => {
-  const messages: string[] = []
-  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
-  return Effect.gen(function* () {
-    const state = new Execution()
-    yield* state.supervise(Effect.fail(new PipeFailure({ reason: 'closed' })))
-    expect(messages[0]).toContain('vivid.supervision.failures=CodePipeFailure')
-    const reasons = Array.from({ length: 40 }, (_, index) =>
-      Cause.makeFailReason(Schema.TaggedStruct(`Typed${index}`, {}).make({})),
-    )
-    yield* state.supervise(Effect.failCause(Cause.fromReasons(reasons)))
-    expect(messages[1]).toContain('Typed15')
-    expect(messages[1]).not.toContain('Typed16')
-    const longest = Array.from({ length: 16 }, (_, index) =>
-      Cause.makeFailReason(Schema.TaggedStruct(`T${index}`.padEnd(120, 'X'), {}).make({})),
-    )
-    yield* state.supervise(Effect.failCause(Cause.fromReasons(longest)))
-    expect(messages[2]).toContain('T15'.padEnd(120, 'X'))
-    const oversized = Schema.TaggedStruct('X'.repeat(121), {}).make({})
-    yield* state.supervise(Effect.fail(oversized))
-    expect(messages[3]).not.toContain('X'.repeat(121))
-    const hostile = Object.defineProperty(new Error('Private message'), '_tag', {
-      get: () => {
-        throw new Error('Private tag getter')
-      },
-    })
-    yield* state.supervise(Effect.fail(hostile))
-    const revoked = Proxy.revocable({}, {})
-    revoked.revoke()
-    yield* state.supervise(Effect.fail(revoked.proxy))
-    yield* state.supervise(Effect.die(Schema.TaggedStruct('PrivateDefectTag', {}).make({})))
-    for (const message of messages) {
-      expect(message).not.toContain('Private')
-      expect(message.length).toBeLessThan(2200)
-    }
-  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
-})

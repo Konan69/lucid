@@ -129,6 +129,10 @@ authority for Connection status and credentials. The machine owns client interac
 - [ ] Demonstrate removal of meaningful duplicated behavior without adding framework workarounds.
 - [ ] Record adopt/defer/reject with evidence; only then consider follow-ups or future lifecycles.
 
+State invariants belong in the Effect Machine or the type model. Do not write pure unit tests,
+property tests or sequence tests of state. Prove behavior through database-backed integration
+tests or a live run through the real runtime.
+
 Persisted server lifecycles require additional race and restart tests through real storage and
 Flue seams. Follow the isolated test-database policy. Keep production scheduling, execution,
 credential handling, and computer-control implementations in their existing owned systems.

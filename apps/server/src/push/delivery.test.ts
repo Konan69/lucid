@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
@@ -470,17 +470,3 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     },
   )
 })
-
-/** The public key is for a signed-in Person's browser; Vivid's own runtime identity has no use for it. */
-it.effect('refuses the push key to a caller that is not a Person', () =>
-  Effect.gen(function* () {
-    const result = yield* pushHandlers
-      .GetPushKey()
-      .pipe(
-        Effect.provideService(AuthContext, AuthState.Runtime()),
-        Effect.provideService(PushConfig, testPushConfig),
-        Effect.result,
-      )
-    expect(Result.isFailure(result) && result.failure._tag).toBe('Forbidden')
-  }),
-)

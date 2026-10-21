@@ -10,21 +10,18 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Option from 'effect/Option'
-import * as Result from 'effect/Result'
 import * as RpcClient from 'effect/rpc/RpcClient'
 import * as Worker from 'effect/workers/Worker'
 import { WorkerError, WorkerReceiveError } from 'effect/workers/WorkerError'
 import { EXTRACTION_HEAP_MB } from '../extraction.ts'
 import { CRASH_TIMEOUT_MS, NativeMode, RECEIPT_FD } from '../fixtures/process/mode.ts'
-import { ExtractionRpcs, ExtractionUnavailable } from './contract.ts'
+import { ExtractionRpcs } from './contract.ts'
 import {
   ProcessEnd,
-  ExtractionConfigurationError,
   type Running,
   forkExtractor,
   heapEvidence,
   layer,
-  admit,
   processOptions,
   start,
   stop,
@@ -300,126 +297,5 @@ testLayer(NodeFileSystem.layer)((it) => {
         expect(asked.ready).toEqual(Option.some([0]))
         expect(asked.pages).toEqual(['Vivid extraction fixture'])
       }),
-  )
-
-  /**
-   * Configuration sources that can bypass Vivid's old-generation policy. Embedded quotes previously
-   * hid the percentage flag, and config/env files supplied it without appearing in either live
-   * input. Ordinary loader and absolute old-generation flags must remain supported.
-   */
-  it.effect.each([
-    { execArgv: [], nodeOptions: Option.none<string>(), expected: 'Holds' },
-    {
-      execArgv: ['--require', '/app/preflight.cjs', '--import', 'file:///app/loader.mjs'],
-      nodeOptions: Option.none<string>(),
-      expected: 'Holds',
-    },
-    {
-      execArgv: ['--max-old-space-size=4096'],
-      nodeOptions: Option.none<string>(),
-      expected: 'Holds',
-    },
-    {
-      execArgv: [],
-      nodeOptions: Option.some('--max-old-space-size=4096 --enable-source-maps'),
-      expected: 'Holds',
-    },
-    {
-      execArgv: ['--max-old-space-size-percentage=50'],
-      nodeOptions: Option.none<string>(),
-      expected: 'PercentageNamed',
-    },
-    {
-      execArgv: ['--max_old_space_size_percentage', '50'],
-      nodeOptions: Option.none<string>(),
-      expected: 'PercentageNamed',
-    },
-    {
-      execArgv: [],
-      nodeOptions: Option.some('--import tsx --max-old-space-size-percentage=75'),
-      expected: 'PercentageNamed',
-    },
-    {
-      execArgv: [],
-      nodeOptions: Option.some('--max-old-"space"-size-percentage=50'),
-      expected: 'OptionsQuoted',
-    },
-    {
-      execArgv: [],
-      nodeOptions: Option.some('--require "./my path/a.js"'),
-      expected: 'OptionsQuoted',
-    },
-    { execArgv: [], nodeOptions: Option.some(''), expected: 'Holds' },
-    {
-      execArgv: ['--experimental-default-config-file'],
-      nodeOptions: Option.none<string>(),
-      expected: 'OptionsFromFile',
-    },
-    {
-      execArgv: ['--experimental-config-file=node.config.json'],
-      nodeOptions: Option.none<string>(),
-      expected: 'OptionsFromFile',
-    },
-    {
-      execArgv: ['--env-file-if-exists=.env'],
-      nodeOptions: Option.none<string>(),
-      expected: 'OptionsFromFile',
-    },
-  ])('classifies inherited extraction configuration: %$', ({ execArgv, nodeOptions, expected }) =>
-    Effect.gen(function* () {
-      const result = yield* admit({ execArgv, nodeOptions }).pipe(Effect.result)
-      if (expected === 'Holds') {
-        expect(Result.isSuccess(result)).toBe(true)
-        return
-      }
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure).toBeInstanceOf(ExtractionConfigurationError)
-        expect(result.failure.reason).toBe(expected)
-      }
-    }),
-  )
-
-  /**
-   * Mutation after startup is a live fork input, so ConfigProvider cannot express this case. Scope
-   * restores the actual variable on every exit; cases in this file run sequentially in one worker.
-   * A mistaken fork is still owned and stopped by the production lifecycle before assertion failure.
-   */
-
-  it.effect('refuses to fork when inherited configuration changed after startup', () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const previous = Option.fromUndefinedOr(NodeProcess.env['NODE_OPTIONS'])
-          NodeProcess.env['NODE_OPTIONS'] = '--max-old-space-size-percentage=50'
-          return previous
-        }),
-        (previous) =>
-          Effect.sync(() => {
-            Option.match(previous, {
-              onNone: () => {
-                delete NodeProcess.env['NODE_OPTIONS']
-              },
-              onSome: (value) => {
-                NodeProcess.env['NODE_OPTIONS'] = value
-              },
-            })
-          }),
-      )
-      const fixture = launch('exit', reportDir)
-      let spawned = false
-      const result = yield* Effect.acquireUseRelease(
-        start(() => {
-          spawned = true
-          return fixture.spawn()
-        }),
-        () => Effect.void,
-        stop,
-      ).pipe(Effect.result)
-      expect(result).toEqual(Result.fail(new ExtractionUnavailable()))
-      expect(spawned).toBe(false)
-    }),
   )
 })

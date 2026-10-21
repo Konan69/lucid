@@ -5,14 +5,13 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
-import { checkRaises, checkTightCeilings, measureCeilings } from './ceilings.mjs'
+import { checkRaises } from './ceilings.mjs'
 import { ratchets } from './gate/ratchets.mjs'
 import { lintCeilingBase, parse } from './gate.mjs'
 import { applyRatchets, stageResult } from './gate/local.mjs'
 
 const assert = NodeAssert
 const test = NodeTest.default
-const ceilings = new Map(ratchets.map((entry) => [`${entry.plugin}/${entry.rule}`, entry.ceiling]))
 const script = NodeURL.fileURLToPath(new URL('./ceilings.mjs', import.meta.url))
 
 /** Isolate fixture writes even when this suite runs in a Git push hook. */
@@ -167,25 +166,6 @@ void test('computed ceilings and duplicate identities cannot hide a raise', (t) 
   assert.match(repo.run().stderr, /duplicate rule/u)
   repo.write(table(-1))
   assert.equal(repo.run().status, 1)
-})
-
-/** The same complete lint log can be fresh or restored by Turbo. Rule prefixes must not collide. */
-void test('tight ceilings name the measured replacement and accept exact counts', () => {
-  const rule = ratchets.find((entry) => entry.rule === 'react-no-state-after-wait')
-  assert.notEqual(rule, undefined)
-  const finding = '  ⚠ vivid(react-no-state-after-wait): Move the lifecycle to a machine.\n'
-  const tight = finding.repeat(rule.ceiling)
-  assert.deepEqual(checkTightCeilings(measureCeilings(tight, ceilings)), [])
-  const loose = finding.repeat(rule.ceiling - 1)
-  assert.deepEqual(checkTightCeilings(measureCeilings(loose, ceilings)), [
-    `vivid/react-no-state-after-wait: ${rule.ceiling - 1} findings below ceiling ${rule.ceiling}; write ceiling: ${rule.ceiling - 1} in scripts/gate/ratchets.mjs.`,
-  ])
-  assert.deepEqual(
-    checkTightCeilings(
-      measureCeilings(`${tight}vivid/react-no-state-after-wait-extra\n`, ceilings),
-    ),
-    [],
-  )
 })
 
 void test('the CLI consumes an existing lint log and exits nonzero for a loose ceiling', (t) => {

@@ -21,6 +21,8 @@ export const stages = [
       ['node', 'scripts/versions.mjs'],
       ['node', 'scripts/instructions.mjs'],
       ['node', 'scripts/references.mjs'],
+      ['node', 'scripts/tasks.mjs'],
+      ['node', 'scripts/infra-verify.mjs'],
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
       ['node', 'scripts/owners.mjs'],
@@ -39,10 +41,8 @@ export const stages = [
     lane: 'checks',
     tasks: ['@vivid/web#build', '@vivid/agent-runtime#build', '@vivid/mobile#build:updates'],
   },
-  // The tooling tests run compilers only on small fixtures, so they sit beside the tests. The
-  // infrastructure check reads server and runtime source and is a task of its own: a server
-  // change reruns that second of work, not every tooling test.
-  { name: 'tooling', lane: 'tests', tasks: ['test:tooling', 'test:infra'] },
+  // Tooling integration proofs run compilers on small fixtures beside the application tests.
+  { name: 'tooling', lane: 'tests', tasks: ['test:tooling'] },
   { name: 'test', lane: 'tests', tasks: ['test'] },
   // Reversal reads branch history and must run afresh, outside Turbo's content-only cache.
   { name: 'proof', commands: [['node', 'scripts/proof.mjs']] },

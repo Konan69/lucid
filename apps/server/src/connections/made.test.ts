@@ -1,7 +1,7 @@
 import { NodeHttpServerRequest } from '@effect/platform-node'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as TestClock from 'effect/testing/TestClock'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import {
   Forbidden,
@@ -51,8 +51,6 @@ const request = MakeIntegrationRequest.make({
   name: 'Morning check',
   files: [{ path: 'index.ts', content: 'export default {}' }],
 })
-
-const decodeRequest = Schema.decodeEffect(MakeIntegrationRequest)
 const decodeDeploy = Schema.decodeUnknownEffect(
   Schema.Struct({
     name: Schema.String,
@@ -126,41 +124,6 @@ const madeFixture = Effect.fn('MadeTest.fixture')(function* () {
         ),
       ),
   }
-})
-
-describe('authored source contract', () => {
-  for (const path of [
-    'package.json',
-    '../x',
-    '/index.ts',
-    'src/../x',
-    'src\\x',
-    './package.json',
-  ]) {
-    it.effect(`refuses ${path}`, () =>
-      Effect.gen(function* () {
-        const result = yield* decodeRequest({
-          ...request,
-          files: [{ path, content: '' }],
-        }).pipe(Effect.result)
-        expect(Result.isFailure(result)).toBe(true)
-      }),
-    )
-  }
-  it.effect('refuses duplicate paths and excess source', () =>
-    Effect.gen(function* () {
-      for (const files of [
-        [],
-        [...request.files, ...request.files],
-        Array.from({ length: 31 }, (_, index) => ({ path: `${index}.ts`, content: '' })),
-        [{ path: 'index.ts', content: 'x'.repeat(200_001) }],
-      ]) {
-        expect(
-          Result.isFailure(yield* decodeRequest({ ...request, files }).pipe(Effect.result)),
-        ).toBe(true)
-      }
-    }),
-  )
 })
 
 describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapters', () => {

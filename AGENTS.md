@@ -94,7 +94,7 @@ A lifecycle is state that moves through named steps and waits on something betwe
 - An event a state does not name is not taken. Do not guard a press with a flag a component keeps; disable the control from the machine's own reading (`isWaiting`) and let the machine refuse the event as well. The one exception is an adapter that must act inside the gesture itself, before the machine can have answered (a browser only opens a tab while it handles the click): it may hold a reservation until the machine's next snapshot, in the adapter, with the reason beside it (`apps/web/src/data/connecting.ts` `press`).
 - What differs by surface is a `Context.Service` the app provides: how the server is asked, how a page is opened, how a form is brought up. The machine imports nothing from React, the DOM or React Native.
 - A screen reads the machine through its atoms and says its own words from one exhaustive `.match` over what the machine exposes. No `if`/`else` chain over state names.
-- Test it as a graph with `MachineTest` from `@typeonce/effect-machine/testing`, hand-answered services and the test clock. Use acknowledged probes for ignored events and generated runtime command sequences for business invariants, with reproducible seeds and shrinking. Planner traces do not execute invoked work and cannot prove runtime cancellation or completion. A state is published before its work starts, so hand answers through a queue and never assume a call is already waiting.
+- Put state invariants in the Effect Machine or the type model. Do not write pure unit tests, property tests or sequence tests of state. Prove behavior through database-backed integration tests or live runs through the real runtime.
 
 A value that only mirrors the server is not a lifecycle; it is a live query. A single yes or no that nothing waits on is plain state. A server lifecycle stays in the database behind guarded writes: a machine in memory does not replace a transaction, an idempotency key or a Run.
 
@@ -108,7 +108,7 @@ Filenames are one word; directories carry context. Allowed descriptive suffixes 
 
 Comment exhaustively above logic. Every non-trivial function, class method, hook, route handler, store operation, Effect program, and implementation block with a non-obvious step needs JSDoc or a leading comment. Explain **why** the code exists: the invariant, ordering, units, data shape, failure mode, prior behavior, intended behavior, and relevant installed source or documentation. Do not restate syntax. A comment must never explain away a dishonest model; replace “this field is only set when…” with a tagged variant or `Option`.
 
-Test observable behavior through public seams. Delete tautological tests that only repeat a literal, prove an Effect primitive, or show that a schema accepts the value used to define it. Prefer real adapters, deliberate test Layers, checked-in integration tests, and local PostgreSQL when persistence semantics matter. Do not create throwaway smoke scripts or mock the seam whose behavior the test claims to prove.
+Do not write pure unit tests, property tests or sequence tests of state. Put state invariants in the Effect Machine or the type model. Prove observable behavior through database-backed integration tests or live runs through the real runtime. Keep database-backed integration tests and live proofs in the gate. Do not create throwaway smoke scripts or mock the seam whose behavior the test claims to prove.
 
 Fixtures must never touch a shared app database. Use disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`, never fallback to `DATABASE_URL` or an app env file, and register cleanup before the first write so failed setup/assertions retain cleanup. Process termination can skip teardown, so database isolation is mandatory.
 
@@ -118,7 +118,7 @@ LLM-behavior live evaluations need real credentials, an explicit opt-in environm
 
 ## Verifying
 
-Use the smallest proof that demonstrates the changed behavior: focused tests first, then the narrow lint or typecheck surface. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
+Use the smallest proof that demonstrates the changed behavior: a focused database-backed integration test or a live run through the real runtime, then the narrow lint or typecheck surface. Do not add pure unit tests, property tests or sequence tests of state. State invariants belong in the Effect Machine or the type model. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
 
 ## Where heavy work runs
 

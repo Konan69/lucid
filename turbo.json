@@ -246,41 +246,6 @@
       ],
       "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
-    "@vivid/mobile#test": {
-      "dependsOn": ["checkinputs"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "!README.md",
-        "!AGENTS.md",
-        "$TURBO_ROOT$/tsconfig.base.json",
-        "$TURBO_ROOT$/scripts/test.mjs",
-        "$TURBO_ROOT$/packages/agent/runtime/src/agents/parts.json"
-      ],
-      "outputs": [".cache/gate/tests.json"],
-      "env": [
-        "VIVID_TEST_*",
-        "VIVID_LIVE_*",
-        "EXPLABS_API_KEY",
-        "OPENCODE_API_KEY",
-        "!VIVID_TEST_DATABASE_URL"
-      ],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
-    },
-    "//#test:infra": {
-      "inputs": [
-        "*",
-        "apps/**",
-        "packages/**",
-        "scripts/**",
-        ".github/workflows/**",
-        ".agents/skills/infra/**",
-        "docs/19-infrastructure.md",
-        "infra/**",
-        "!**/node_modules/**",
-        "!*.md"
-      ],
-      "outputs": []
-    },
     "@vivid/agent-runtime#build": {
       "dependsOn": ["checkinputs"],
       "inputs": [

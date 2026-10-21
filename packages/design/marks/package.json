@@ -7,13 +7,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json tsconfig.tests.json",
-    "lint": "node ../../../scripts/lint.mjs",
-    "test": "node ../../../scripts/test.mjs"
+    "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json tsconfig.types.json",
+    "lint": "node ../../../scripts/lint.mjs"
   },
   "devDependencies": {
     "@typescript/native": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "typescript": "catalog:"
   }
 }

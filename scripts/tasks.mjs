@@ -3,6 +3,7 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeFS from 'node:fs'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
+import * as YAML from 'yaml'
 import { stages } from './gate/stages.mjs'
 
 const assert = NodeAssert
@@ -63,7 +64,13 @@ function checkTestEnvironment(tasks) {
   for (const [name, task] of Object.entries(tasks).filter(([key]) => /(^|#)test$/u.test(key))) {
     assert.deepEqual(
       task.env,
-      ['VIVID_TEST_*', 'VIVID_LIVE_*', 'EXPLABS_API_KEY', 'OPENCODE_API_KEY', '!VIVID_TEST_DATABASE_URL'],
+      [
+        'VIVID_TEST_*',
+        'VIVID_LIVE_*',
+        'EXPLABS_API_KEY',
+        'OPENCODE_API_KEY',
+        '!VIVID_TEST_DATABASE_URL',
+      ],
       `turbo.json: ${name} must hash every test setting except the disposable database address`,
     )
     assert.deepEqual(
@@ -74,9 +81,56 @@ function checkTestEnvironment(tasks) {
   }
 }
 
+/** Shipping overrides keep the production hash while excluding source-map upload authority. */
+function checkBuild(tasks) {
+  const web = read(Turbo, '../apps/web/turbo.json').tasks.build
+  for (const task of [tasks['@vivid/agent-runtime#build'], web]) {
+    for (const field of ['inputs', 'outputs', 'passThroughEnv'])
+      assert.deepEqual(
+        task[field],
+        tasks.build[field],
+        `build override must repeat ${field} in turbo.json`,
+      )
+    assert.notEqual(tasks.build.env, undefined, 'turbo.json: declare build.env')
+    assert.deepEqual(
+      task.env,
+      [...tasks.build.env, '!SENTRY_AUTH_TOKEN'],
+      'build override must exclude SENTRY_AUTH_TOKEN in turbo.json',
+    )
+  }
+}
+
+/** A missing local signoff still needs production builds in the GitHub quality matrix. */
+function checkWorkflow() {
+  const Workflow = Schema.Struct({
+    jobs: Schema.Struct({
+      checks: Schema.Struct({
+        strategy: Schema.Struct({
+          matrix: Schema.Struct({
+            include: Schema.Array(Schema.Struct({ stages: Schema.String })),
+          }),
+        }),
+      }),
+    }),
+  })
+  const workflow = Result.getOrThrow(
+    Schema.decodeUnknownResult(Workflow)(
+      YAML.parse(
+        NodeFS.readFileSync(new URL('../.github/workflows/quality.yml', import.meta.url), 'utf8'),
+      ),
+    ),
+  )
+  assert.ok(
+    workflow.jobs.checks.strategy.matrix.include.some((job) => job.stages === 'build'),
+    '.github/workflows/quality.yml: add the build stage to checks.strategy.matrix.include',
+  )
+}
+
 const { tasks } = read(Turbo, '../turbo.json')
 const { scripts } = read(Manifest, '../package.json')
 checkStages(tasks, scripts)
 checkOverrides(tasks)
 checkTestEnvironment(tasks)
+checkBuild(tasks)
+checkWorkflow()
 console.log('Task policy passed')

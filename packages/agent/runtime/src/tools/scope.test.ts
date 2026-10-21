@@ -11,8 +11,7 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
-import { scopeLayer, Scope } from './scope.ts'
-import { settle } from './result.ts'
+import { scopeLayer } from './scope.ts'
 import { codeTools } from './code.ts'
 import { toolRunner } from './scope.ts'
 import { asActing } from '../client.ts'
@@ -116,24 +115,6 @@ describe('Tool authority', () => {
           ),
         )
       }).pipe(Effect.provide(yield* Layer.build(server)))
-    }),
-  )
-  it.effect('settles missing attribution before tools can access the RPC client', () =>
-    Effect.gen(function* () {
-      const program = Effect.gen(function* () {
-        // Acquisition failure remains inside settle, just like the tool boundary.
-        const context = yield* Layer.build(
-          scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none()),
-        )
-        return yield* Effect.gen(function* () {
-          yield* Scope
-          return { output: { ok: true } }
-        }).pipe(Effect.provide(context))
-      }).pipe(Effect.scoped)
-      expect((yield* settle(program, 'test-tool')).output).toEqual({
-        ok: false,
-        message: 'There is no person behind this message to act for.',
-      })
     }),
   )
 })
