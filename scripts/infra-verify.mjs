@@ -378,13 +378,17 @@ const assertContainerPolicy = (root) => {
   assert.notEqual(trigger, null, 'the repository source must be declared once')
   assert.ok(trigger[1].includes("branch: 'main'"), 'production is built from main')
   assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
-  for (const [name, dockerfilePath, stages] of [
-    ['Runtime', 'packages/agent/runtime/Dockerfile', { build: ['@vivid/agent-runtime'] }],
-    [
-      'Server',
-      'apps/server/Dockerfile',
-      { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
-    ],
+  for (const { name, dockerfilePath, stages } of [
+    {
+      name: 'Runtime',
+      dockerfilePath: 'packages/agent/runtime/Dockerfile',
+      stages: { build: ['@vivid/agent-runtime'] },
+    },
+    {
+      name: 'Server',
+      dockerfilePath: 'apps/server/Dockerfile',
+      stages: { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
+    },
   ]) {
     const declaration = railwaySource.match(
       new RegExp(`Railway\\.Service\\('${name}', \\{([\\s\\S]*?)^  \\}\\)`, 'm'),
