@@ -118,6 +118,8 @@ LLM-behavior live evaluations need real credentials, an explicit opt-in environm
 
 ## Verifying
 
+Every change touching product behaviour must run `.agents/skills/verify-vivid/verify` on the touched feature before it is called done. Read `.agents/skills/verify-vivid/SKILL.md`; name its feature file and surviving evidence path in the PR body. A failed or blocked feature remains unverified.
+
 Use the smallest proof that demonstrates the changed behavior: a focused database-backed integration test or a live run through the real runtime, then the narrow lint or typecheck surface. Do not add pure unit tests, property tests or sequence tests of state. State invariants belong in the Effect Machine or the type model. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
 
 ## Where heavy work runs

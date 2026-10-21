@@ -1,0 +1,9 @@
+# Runtime boundaries
+
+The server helper composes production Better Auth, authenticated RPC, conversation gateway, Threads/Runs, Inputs, Approvals, Companies, Projects, notifications, drafts, settings, appearance, skills, Computer records and Artifacts over real PostgreSQL. The runtime uses its unmodified app, Flue PostgreSQL adapter, full Vivid prompt and shipped rehearsal/script. The web uses its unmodified Vite configuration and same-origin proxy. This is the inherited reference composition method, not a claim about the complete deployment entry point.
+
+External boundaries are explicit. The shipped silentLearningLayer and silentChannelRepliesLayer do no external extraction or channel delivery. A deterministic MemoryModel returns a rehearsal Thread title. Notifier is inert. absentMachineLayer refuses all machine operations. The external ActionRunner returns Failed; Reviewer/RuleJudge are controlled seams inherited from the old composition. Google OAuth configuration is synthetic and Google is never contacted. Email signup/signin is real. No application env file or existing database is read.
+
+Library extraction, incoming channels, Watch workers, Integration connection/execution, push delivery, Helix memory and unscripted title/model generation are outside this graph. Their mapped recipes report blocked. Failed external execution is never promoted to success. No synthetic pending Approval, held AskInput handler or private proposal command is installed. Stop during an active Run and mid-stream reconnect remain blocked with the immediate rehearsal model.
+
+Source anchors are apps/server/src/main.ts, apps/server/src/rpc/server.ts, apps/server/src/http/router.ts, packages/agent/runtime/src/app.ts, packages/agent/runtime/src/providers/rehearsal/script.ts and packages/agent/runtime/scripts/build.mjs. Read them before expanding coverage. Keep product files unchanged when a prerequisite fails; report the observed finding.

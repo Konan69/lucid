@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+exec node --import ./apps/server/node_modules/tsx/dist/loader.mjs .agents/skills/verify-vivid/scripts/control.mjs "$@"
