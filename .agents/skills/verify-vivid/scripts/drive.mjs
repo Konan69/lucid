@@ -72,7 +72,7 @@ async function completed(state, id, directory, count = 1) {
   await rows(state, id, directory)
   return { detail, page }
 }
-/** One new Thread gets one Person contribution and a real streamed keyless rehearsal reply. */
+/** One new Thread gets one Person contribution and a real streamed reply from the selected model. */
 async function first(state, id, directory) {
   const text = await chat(state, id, 'Hello Vivid', directory)
   NodeAssert.ok(text.trim().length > 0)
@@ -82,7 +82,8 @@ async function first(state, id, directory) {
     page.messages.map((message) => message.role),
     ['user', 'assistant'],
   )
-  NodeAssert.ok(words(page).includes(text))
+  const normalized = (value) => value.replace(/\s+/g, ' ').trim()
+  NodeAssert.ok(normalized(words(page)).includes(normalized(text)))
 }
 /** Inline OpenUI is part of the real reply; no obsolete show tool is expected. */
 async function tool(state, id, directory) {

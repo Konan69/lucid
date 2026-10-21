@@ -46,7 +46,11 @@ async function dom(run, expression) {
 async function rendered(run, kind) {
   switch (kind) {
     case 'table': {
-      await run(['wait', 'table'])
+      await run([
+        'wait',
+        '--fn',
+        `Array.from(document.querySelectorAll('table')).some(t => ['Project','Hours','Owner'].every(h => Array.from(t.querySelectorAll('th')).some(c => c.textContent.trim() === h)) && ['Research','Writing','Review'].every(value => Array.from(t.querySelectorAll('tbody td')).some(c => c.textContent.trim() === value)))`,
+      ])
       const result = JSON.parse(
         await run([
           'eval',
@@ -66,13 +70,22 @@ async function rendered(run, kind) {
       break
     }
     case 'document': {
-      await run(['wait', 'button[aria-expanded]'])
+      await run([
+        'wait',
+        '--fn',
+        `Array.from(document.querySelectorAll('button[aria-expanded]')).some(b => b.textContent.includes('Wrote a document') || b.textContent.includes('more steps'))`,
+      ])
       const names = await dom(
         run,
         `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('Wrote a document') || text.includes('more steps'))`,
       )
       assert.equal(names.length, 1, 'Expected one rendered document tool card')
       await run(['find', 'role', 'button', 'click', '--name', names[0], '--exact'])
+      await run([
+        'wait',
+        '--fn',
+        `Array.from(document.querySelectorAll('button[aria-expanded="true"] + ol > li')).some(li => li.innerText.trim().startsWith('Wrote a document'))`,
+      ])
       const steps = await dom(
         run,
         `Array.from(document.querySelectorAll('button[aria-expanded="true"] + ol > li')).map(li => li.innerText.trim())`,
