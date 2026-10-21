@@ -100,6 +100,55 @@ describe('a program written the other ways OpenUI recognises', () => {
   })
 })
 
+describe('a reply that only looks like a program', () => {
+  it('is words when root is compared, not assigned', () => {
+    expect(stretches('root == 1')).toEqual([{ kind: 'words', from: 0, text: 'root == 1' }])
+  })
+
+  it('leaves a fence with any other tag as words', () => {
+    const reply = `${FENCE}json5\nroot = 1\n${FENCE}`
+    expect(stretches(reply)).toEqual([{ kind: 'words', from: 0, text: reply }])
+  })
+})
+
+describe('a program read as OpenUI reads it', () => {
+  it('ignores brackets inside single-quoted strings', () => {
+    expect(stretches("root = Text('Use ( here')\n\nDone.")).toEqual([
+      { kind: 'display', from: 0, text: "root = Text('Use ( here')\n", whole: true },
+      { kind: 'words', from: 26, text: '\nDone.' },
+    ])
+  })
+
+  it('keeps a string that runs across lines in the program', () => {
+    expect(stretches('root = Text("a\n(b")\nDone.').map((stretch) => stretch.kind)).toEqual([
+      'display',
+      'words',
+    ])
+  })
+
+  it('keeps statements after a comment', () => {
+    const [display] = stretches('root = Col([head])\n// title\nhead = Text("Hi")\n\nDone.')
+    expect(display).toEqual({
+      kind: 'display',
+      from: 0,
+      text: 'root = Col([head])\n// title\nhead = Text("Hi")\n',
+      whole: true,
+    })
+  })
+
+  it('does not close a fence on a fence line inside a string', () => {
+    const reply = `${FENCE}openui-lang\nroot = Text("a\n${FENCE}\nb")\n${FENCE}\nDone.`
+    expect(stretches(reply).map((stretch) => stretch.kind)).toEqual(['display', 'words'])
+    expect(stretches(reply)[0]?.text).toBe(`root = Text("a\n${FENCE}\nb")\n`)
+  })
+
+  it('draws an indented bare program', () => {
+    expect(stretches('  root = Title("Hi")')).toEqual([
+      { kind: 'display', from: 0, text: '  root = Title("Hi")', whole: true },
+    ])
+  })
+})
+
 describe('what a press says', () => {
   it('is the Button’s words alone when no form was filled', () => {
     expect(said('Book Arik Air at 7:10', { $flight: 'Arik Air at 7:10' })).toBe(

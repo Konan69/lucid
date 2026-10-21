@@ -13,11 +13,16 @@ import { Effect, Option, Predicate, Result, Schema } from 'effect'
  * program (`root = ...`), or a bare program starting `root =` on its own line. The prompt asks for
  * the first; a model that writes one of the others still gets a display drawn, never its source.
  */
-const FENCE = /^```([a-z-]*)[ \t]*$/u
+/** A fence line; its tag is the first word of whatever follows the backticks. */
+const FENCE = /^```[ \t]*([^`\s]*)[^`\n]*$/u
+const CLOSE = /^```[ \t]*$/u
 const TAGS: ReadonlySet<string> = new Set(['openui-lang', 'openui'])
-const ROOT = /^root\s*=/u
+/** A program's first statement. Upstream's `ROOT_ASSIGN` allows leading space, and so does this. */
+const ROOT = /^\s*root\s*=(?!=)/u
 /** One statement of a program: `name = ...` or `$name = ...`, never a comparison. */
 const STATEMENT = /^\s*\$?[A-Za-z_]\w*\s*=(?!=)/u
+/** A comment line, which OpenUI's parser drops (`stripComments` in lang-core's `parser.ts`). */
+const COMMENT = /^\s*(?:\/\/|#)/u
 
 /** A stretch of a reply, in order: words to read, or a display to draw. */
 export type Stretch =
@@ -36,46 +41,99 @@ const OPENING = /(?:^|\n)`{1,3}[a-z-]*$/u
 /** Words between displays; a stretch of only blank lines is nothing to draw. */
 function words(text: string, from: number): ReadonlyArray<Stretch> {
   const pending = OPENING.exec(text)
-  const cut = pending === null ? text.length : pending.index
+  // A fence line that closes a code block already open is the end of that block, not a new one.
+  const closing =
+    pending !== null &&
+    text
+      .slice(0, pending.index)
+      .split('\n')
+      .filter((line) => line.startsWith('```')).length %
+      2 ===
+      1
+  const cut = pending === null || closing ? text.length : pending.index
   const kept = text.slice(0, cut)
   return kept.trim() === '' ? [] : [{ kind: 'words', from, text: kept }]
 }
 
-/** How far brackets open on a line, outside its double-quoted strings, change the depth. */
-function depthAfter(line: string, depth: number): number {
-  let inString = false
-  let next = depth
-  for (let at = 0; at < line.length; at += 1) {
-    const c = line[at]
-    if (inString) {
-      if (c === '\\') at += 1
-      else if (c === '"') inString = false
-    } else if (c === '"') inString = true
-    else if (c === '(' || c === '[' || c === '{') next += 1
-    else if (c === ')' || c === ']' || c === '}') next -= 1
-  }
-  return next
+/** Where a program's text stands at the start of a line: inside a string or not, how deeply nested. */
+interface Lexical {
+  readonly quote: '"' | "'" | null
+  readonly depth: number
 }
+
+const OPENERS = '([{'
+const CLOSERS = ')]}'
+
+/**
+ * One line of a program read as OpenUI's tokenizer reads it: strings in either quote, with
+ * backslash escapes, may run across lines, and brackets inside them do not count.
+ */
+function readLine(line: string, from: Lexical): Lexical {
+  let { quote, depth } = from
+  for (let at = 0; at < line.length; at += 1) {
+    const c = line.charAt(at)
+    if (quote !== null) {
+      if (c === '\\') at += 1
+      else if (c === quote) quote = null
+    } else if (c === '"' || c === "'") quote = c
+    else if (OPENERS.includes(c)) depth += 1
+    else if (CLOSERS.includes(c)) depth = Math.max(0, depth - 1)
+  }
+  return { quote, depth }
+}
+
+/** A line of a program with the lexical state it starts in and where it starts. */
+interface ProgramLine {
+  readonly start: number
+  readonly text: string
+  readonly state: Lexical
+}
+
+/** A program's lines, each with the state it starts in, and the state after the last. */
+function programLines(text: string): {
+  readonly lines: ReadonlyArray<ProgramLine>
+  readonly after: Lexical
+} {
+  const lines: Array<ProgramLine> = []
+  let state: Lexical = { quote: null, depth: 0 }
+  let start = 0
+  for (const line of text.split('\n')) {
+    lines.push({ start, text: line, state })
+    state = readLine(line, state)
+    start += line.length + 1
+  }
+  return { lines, after: state }
+}
+
+/** Whether a line is open, still part of the statement before it. */
+const continues = (line: ProgramLine) => line.state.quote !== null || line.state.depth > 0
 
 /**
  * Where a bare program that starts at the beginning of `text` ends: after its last statement, or
- * after the last line of a statement whose brackets are still open. A blank line belongs to the
- * program only when another statement follows it. `null` while the reply so far ends inside a
- * statement whose brackets are still open.
+ * after the last line of a statement whose string or brackets are still open. A blank or comment
+ * line belongs to the program only when another statement follows it. `null` while the reply so
+ * far ends inside an open statement.
  */
 function programEnd(text: string): number | null {
-  const lines = text.split('\n')
-  let depth = 0
+  const { lines, after } = programLines(text)
   let end = 0
-  let at = 0
   for (const line of lines) {
-    const inside = depth > 0 || STATEMENT.test(line)
-    if (!inside && line.trim() !== '') return end
-    depth = Math.max(0, depthAfter(line, depth))
-    at += line.length + 1
-    if (inside) end = Math.min(at, text.length)
+    if (continues(line) || STATEMENT.test(line.text)) {
+      end = Math.min(line.start + line.text.length + 1, text.length)
+    } else if (line.text.trim() !== '' && !COMMENT.test(line.text)) return end
   }
-  return depth === 0 ? text.length : null
+  return after.quote === null && after.depth === 0 ? text.length : null
+}
+
+/**
+ * The closing fence of a program's fence: a line of only backticks outside a string, so a string
+ * that holds a fence line stays in the program (upstream `stripFences` skips strings the same way).
+ */
+function programClose(body: string): { readonly index: number; readonly length: number } | null {
+  const line = programLines(body).lines.find(
+    (candidate) => !continues(candidate) && CLOSE.test(candidate.text),
+  )
+  return line === undefined ? null : { index: line.start, length: line.text.length }
 }
 
 /** The first place a program starts in a reply: a fence line or a bare `root =` line. */
@@ -84,6 +142,16 @@ interface Opening {
   /** Where the program's own text begins. */
   readonly body: number
   readonly fenced: boolean
+}
+
+/**
+ * Whether a fence holds a program: OpenUI's own tags always do; a fence with no tag does when its
+ * body starts `root =`. An untagged fence whose first line has not arrived yet is held as a
+ * display, since that is what an untagged fence in a reply from Vivid almost always is.
+ */
+function fencesProgram(tag: string, body: string): boolean {
+  if (TAGS.has(tag)) return true
+  return tag === '' && (ROOT.test(body) || 'root ='.startsWith(body))
 }
 
 /**
@@ -99,14 +167,10 @@ function nextOpening(reply: string): Opening | null {
     if (ROOT.test(line)) return { at, body: at, fenced: false }
     const fence = FENCE.exec(line)
     if (fence !== null && eol !== -1) {
-      const body = reply.slice(eol + 1).trimStart()
-      const tag = fence[1] ?? ''
-      // An untagged fence whose first line has not arrived yet is held as a display: it is drawn
-      // as one if it turns out to be a program, which is what an untagged fence in a reply
-      // from Vivid almost always is.
-      const program =
-        TAGS.has(tag) || (tag === '' && (ROOT.test(body) || 'root ='.startsWith(body)))
-      if (program) return { at, body: eol + 1, fenced: true }
+      if (fencesProgram(fence[1] ?? '', reply.slice(eol + 1).trimStart())) {
+        return { at, body: eol + 1, fenced: true }
+      }
+      // Code in another language is not read as a program: its apostrophes are not strings.
       const close = /^```[ \t]*$/mu.exec(reply.slice(eol + 1))
       if (close === null) return null
       at = eol + 1 + close.index + close[0].length
@@ -138,9 +202,9 @@ export function stretches(reply: string, from = 0): ReadonlyArray<Stretch> {
       ...stretches(body.slice(end), from + opening.body + end),
     ]
   }
-  const close = /^```[ \t]*$/mu.exec(body)
+  const close = programClose(body)
   if (close === null) return [...head, { kind: 'display', from: at, text: body, whole: false }]
-  const rest = close.index + close[0].length
+  const rest = close.index + close.length
   return [
     ...head,
     { kind: 'display', from: at, text: body.slice(0, close.index), whole: true },

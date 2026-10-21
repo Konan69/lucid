@@ -94,16 +94,25 @@ export function Display({
     // An older display's answers read as spent by their own drawn opacity (`controls.tsx` turns a
     // press away when the display is not live).
     <View data-parts={live ? 'live' : 'spent'} style={styles.sheet}>
-      <Renderer
-        response={text}
-        library={library}
-        isStreaming={arriving}
-        onAction={answer}
-        onParseResult={read}
-        initialState={initial}
-        onStateUpdate={changed}
-        toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
-      />
+      <Recover
+        from={text}
+        fallback={
+          <Label size="label" tone="ink-2">
+            This part of the reply could not be shown.
+          </Label>
+        }
+      >
+        <Renderer
+          response={text}
+          library={library}
+          isStreaming={arriving}
+          onAction={answer}
+          onParseResult={read}
+          initialState={initial}
+          onStateUpdate={changed}
+          toolProvider={integrations(data.run, writtenTools(parser.parse(text)))}
+        />
+      </Recover>
     </View>
   )
 }
