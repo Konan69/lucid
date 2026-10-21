@@ -84,7 +84,11 @@ async function first(state, id, directory) {
     ['user', 'assistant'],
   )
   const normalized = (value) => value.replace(/\s+/g, ' ').trim()
-  NodeAssert.ok(normalized(words(page)).includes(normalized(text)))
+  NodeAssert.ok(
+    normalized(
+      words({ messages: page.messages.filter((message) => message.role === 'assistant') }),
+    ).includes(normalized(text)),
+  )
 }
 /** Inline OpenUI is part of the real reply; no obsolete show tool is expected. */
 async function tool(state, id, directory) {
@@ -125,11 +129,6 @@ async function reload(state, id, directory) {
 }
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
-  NodeAssert.equal(
-    state.modelKind,
-    'rehearsal',
-    'Question HTTP recipe is rehearsal-only; real-model question recipe is blocked',
-  )
   await chat(state, id, 'ask me', directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
   NodeAssert.equal(detail.requests.length, 1)
@@ -278,10 +277,15 @@ const blocked = {
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   feed: 'Needs a real Watch occurrence. No incoming Integration is configured.',
 }
+const realBlocked = {
+  ...blocked,
+  question: 'Question HTTP recipe is rehearsal-only; real-model question recipe is blocked',
+}
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
   const chosen = feature === 'all' ? features : [feature]
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
+  const unavailable = state.modelKind === 'real' ? realBlocked : blocked
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name
@@ -290,7 +294,8 @@ export async function drive(state, feature) {
     let id
     let verdict
     try {
-      if (blocked[name]) verdict = { feature: name, verdict: 'blocked', reason: blocked[name] }
+      if (unavailable[name])
+        verdict = { feature: name, verdict: 'blocked', reason: unavailable[name] }
       else {
         id = await thread(state, directory, 'Verify ' + name)
         await recipes[name](state, id, directory)

@@ -45,6 +45,35 @@ async function dom(run, expression) {
   return typeof value === 'string' ? JSON.parse(value) : value
 }
 
+/** FromVivid places settled Markdown beside the Copy message control (Message.tsx).
+ * Count assistant messages, not descendants or Person text that happens to contain the reply. */
+function replyCount(text) {
+  return `Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).filter(button => Array.from(button.parentElement.parentElement.children).some(element => element !== button.parentElement && element.innerText.trim() === ${JSON.stringify(text)})).length`
+}
+
+/** The same presence assertion must reject the pre-follow-up DOM and pass after rendering. */
+function requireReply(count) {
+  assert.equal(count, 1, 'Expected exactly one assistant message with the exact reply')
+}
+
+/** Retain counts at each DOM boundary so HTTP history cannot substitute for visible replies. */
+async function exactReply(run, text, directory, stage) {
+  const expression = replyCount(text)
+  if (stage !== 'before') await run(['wait', '--fn', expression + ' === 1'])
+  const count = await dom(run, expression)
+  const receipt = { stage, text, count, expression }
+  await json(directory + '/' + stage + '-reply.json', receipt)
+  if (stage === 'before') {
+    assert.equal(count, 0, 'Follow-up reply already present before sending')
+    assert.throws(() => requireReply(count), { name: 'AssertionError' })
+    await json(directory + '/before-reply-negative.json', {
+      ...receipt,
+      verdict: 'rejected',
+      reason: 'The presence assertion rejects the live DOM with the follow-up still unsent',
+    })
+  } else requireReply(count)
+}
+
 /** The checks use rendered semantic elements. Raw source or assistant prose cannot satisfy them. */
 async function rendered(run, kind) {
   switch (kind) {
@@ -282,6 +311,7 @@ async function journey(state, feature) {
       await capture('existing-reloaded')
     }
     await capture('before')
+    if (feature === 'reload') await exactReply(run, 'amber-orchid', directory, 'before')
     const recipe = recipes[feature]
     const phrase =
       state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
@@ -294,35 +324,20 @@ async function journey(state, feature) {
       replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
       'No assistant reply',
     )
-    if (recipe.check === 'reply' || recipe.check === 'reload') {
-      const text = replies
-        .flatMap((m) => m.parts)
-        .filter((p) => p.type === 'text' && p.text.trim())
-        .at(-1)
-        .text.trim()
-      await run(['wait', '--text', text])
-    }
-    if (feature === 'reload') {
-      const last = replies.at(-1)
-      assert.match(
-        last.parts
-          .filter((p) => p.type === 'text')
-          .map((p) => p.text)
-          .join(' '),
-        /amber-orchid/i,
-      )
-    }
+    const text = replies
+      .at(-1)
+      .parts.filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('')
+      .trim()
+    if (feature === 'reload') assert.equal(text, 'amber-orchid')
+    if (recipe.check === 'reply' || recipe.check === 'reload')
+      await exactReply(run, text, directory, 'after')
     await rendered(run, recipe.check)
     await capture('after')
     await run(['reload'])
-    if (recipe.check === 'reply' || recipe.check === 'reload') {
-      const text = replies
-        .flatMap((m) => m.parts)
-        .filter((p) => p.type === 'text' && p.text.trim())
-        .at(-1)
-        .text.trim()
-      await run(['wait', '--text', text])
-    }
+    if (recipe.check === 'reply' || recipe.check === 'reload')
+      await exactReply(run, text, directory, 'reloaded')
     await rendered(run, recipe.check)
     await capture('reloaded')
     const reloaded = await history(state, id, directory, 'reloaded-history')

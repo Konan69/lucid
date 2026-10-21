@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-A settled Thread exists before the client opens it. Reopening and reloading preserve its first turn. A contextual follow-up recalls amber-orchid, creates exactly one second turn, and both turns survive another reload.
+A settled Thread exists before the client opens it. Reopening and reloading preserve its first turn. A contextual follow-up recalls amber-orchid, creates exactly one second turn, and both turns survive another reload. The browser counts settled assistant messages whose trimmed Markdown text exactly equals amber-orchid. The count must be zero before the follow-up and one after it and after reload. before-reply-negative.json records the same presence assertion rejecting the live state with the follow-up unsent.
 
 ## How to get to it (user POV)
 

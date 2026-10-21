@@ -73,9 +73,6 @@ async function launch() {
     cleaned: false,
   }
   await json(evidence + '/state.json', state)
-  await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
-    mode: 0o600,
-  })
   await NodeFSP.writeFile(cache + '/current', run + '\n')
   const dependencies = dependencyLink
   const existing = await NodeFSP.lstat(dependencies).catch((error) => {
@@ -90,42 +87,54 @@ async function launch() {
     throw new Error('Verification dependency link is not ours')
   if (!existing) await NodeFSP.symlink(root + '/apps/server/node_modules', dependencies)
   const log = await NodeFSP.open(evidence + '/supervisor.log', 'a', 0o600)
-  const child = NodeChildProcess.spawn(
-    process.execPath,
-    [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
-    {
-      cwd: root,
-      detached: true,
-      stdio: ['ignore', log.fd, log.fd, 'ipc'],
-      env: {
-        PATH: process.env.PATH,
-        HOME: scratch,
-        COREPACK_HOME:
-          process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
-        COREPACK_ENABLE_NETWORK: '0',
-      },
-    },
-  )
-  state.processes.supervisor = await identity(child.pid)
-  await json(evidence + '/state.json', state)
-  let receipt
+  let child
+  // A failed spawn, identity capture or readiness step must not retain the provider handoff.
   try {
+    await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
+      mode: 0o600,
+    })
+    child = NodeChildProcess.spawn(
+      process.execPath,
+      [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
+      {
+        cwd: root,
+        detached: true,
+        stdio: ['ignore', log.fd, log.fd, 'ipc'],
+        env: {
+          PATH: process.env.PATH,
+          HOME: scratch,
+          COREPACK_HOME:
+            process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
+          COREPACK_ENABLE_NETWORK: '0',
+        },
+      },
+    )
+    state.processes.supervisor = await identity(child.pid)
+    await json(evidence + '/state.json', state)
     // The shared heavy queue is part of launch elapsed time, not evidence of server readiness.
-    receipt = await signal(
+    const receipt = await signal(
       child,
       child,
       'message',
       (value) => Object.hasOwn(value, 'ready'),
       2_700_000,
     )
+    if (!receipt.ready) throw new Error(receipt.error + '; evidence ' + evidence)
+    console.log(
+      JSON.stringify(
+        JSON.parse(await NodeFSP.readFile(evidence + '/launch.json', 'utf8')),
+        null,
+        2,
+      ),
+    )
   } finally {
-    if (child.connected) child.disconnect()
-    child.unref()
+    await NodeFSP.rm(scratch + '/provider.json', { force: true })
+    if (child) {
+      if (child.connected) child.disconnect()
+      child.unref()
+    }
+    await log.close()
   }
-  if (!receipt.ready) throw new Error(receipt.error + '; evidence ' + evidence)
-  console.log(
-    JSON.stringify(JSON.parse(await NodeFSP.readFile(evidence + '/launch.json', 'utf8')), null, 2),
-  )
 }
 
 try {

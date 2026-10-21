@@ -39,4 +39,4 @@ All hashes in `skills-lock.json` exclude each skill's `UPSTREAM.md`. External sk
 | vitest-evals | getsentry/vitest-evals | `8cff207d` | two pnpm install edits | Complete current refresh |
 | app-designer | supplied by the owner as `app-designer.zip` | `local-2026-10-13` | pnpm in place of the other package manager | New: direction by three rendered explorations, slop scan, critic rubric |
 | image-gen | owner's own skill | `local-2026-10-13` | reads the model output one level deeper, as the provider now returns it | New: image assets through Cloudflare unified AI |
-| verify-vivid | Vivid owner | `local-2026-10-21` | ownership and cleanup from `5b9deee3` | Current-main Flue rehearsal, real SQL, web evidence and mandatory feature verification |
+| verify-vivid | Vivid owner | `local-2026-10-21` | ownership and cleanup from `5b9deee3` | Real-model Flue journeys, assistant-scoped DOM counts, disposable SQL, cleanup and mandatory feature verification |
