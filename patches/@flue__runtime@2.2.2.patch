@@ -1,5 +1,18 @@
+diff --git a/dist/conversation-stream-store-2-jUriih.mjs b/dist/conversation-stream-store-2-jUriih.mjs
+index 210bfa06fdd35f698d537e41f6d2adf9299529bd..3bbed57ee0c4e100aa3ff253a8e9f2b1d6d4a4ba 100644
+--- a/dist/conversation-stream-store-2-jUriih.mjs
++++ b/dist/conversation-stream-store-2-jUriih.mjs
+@@ -4094,6 +4094,8 @@ var Session = class {
+ 			const overflow = assistant !== void 0 && isAssistantContextOverflow(assistant, this.agentLoop.state.model.contextWindow ?? 0);
+ 			const retryable = !overflow && assistant !== void 0 && isRetryableModelError(assistant);
+ 			if (turnCompleted && !overflow && !retryable) {
++				// Providers may finish their stream normally after cancellation.
++				throwIfHalted();
+ 				const settledAssistant = assistant ?? this.agentLoop.state.messages.findLast((message) => message.role === "assistant");
+ 				if (settledAssistant !== void 0) await this.checkCompaction(settledAssistant);
+ 				if (assistant?.stopReason === "error" || assistant?.stopReason === "aborted") await this.rebuildCanonicalContext();
 diff --git a/dist/dispatch-BlxCz6iq.mjs b/dist/dispatch-BlxCz6iq.mjs
-index 94d0dc4e069259c5f321b429e5a086ed724c5158..f493151e8a6eda4143c918e0eb881c7faac05a10 100644
+index 94d0dc4e069259c5f321b429e5a086ed724c5158..8901d88d8df188bd108a5f1a493155721c0b4c7a 100644
 --- a/dist/dispatch-BlxCz6iq.mjs
 +++ b/dist/dispatch-BlxCz6iq.mjs
 @@ -2409,8 +2409,7 @@ function classifyConversationSubmission(conversation, inputEntryId, options) {
@@ -28,18 +41,19 @@ index 94d0dc4e069259c5f321b429e5a086ed724c5158..f493151e8a6eda4143c918e0eb881c7f
  		if (entry.type !== "message") continue;
  		const projected = projectCompletedMessage(entry, supersededErrors.has(entry.id));
  		if (projected) {
-@@ -2768,6 +2767,33 @@ function requiresSnapshotReset(record, state) {
+@@ -2768,6 +2767,44 @@ function requiresSnapshotReset(record, state) {
  	const superseded = supersededAssistantErrorEntryIds(conversation);
  	return getActiveConversationPath(conversation).some((entry) => entry.type === "message" && entry.message.role === "assistant" && entry.submissionId === record.submissionId && superseded.has(entry.id));
  }
 +/**
 +* Vivid workaround for Flue 2.2.2: deltas omit canonical block identity.
-+* Project only this response, from its first step through the active leaf,
++* At settlement, project this response from its first step through the active leaf,
 +* using history's projector for tool outputs, anchored data and metadata.
 +* Older responses are neither projected nor sent. Remove when upstream
-+* preserves block identity or reconciles completed messages itself.
++* preserves block identity or reconciles settled responses itself.
 +*/
-+function projectCompletedResponse(conversation, messageId, submissionId, streamOffset) {
++function projectResponse(state, record, messageId, submissionId) {
++	const conversation = state.conversations.get(record.conversationId);
 +	const path = [];
 +	let entry = conversation.entries.get(conversation.activeLeafId);
 +	while (entry) {
@@ -47,34 +61,85 @@ index 94d0dc4e069259c5f321b429e5a086ed724c5158..f493151e8a6eda4143c918e0eb881c7f
 +		if (entry.id === messageId) break;
 +		entry = conversation.entries.get(entry.parentId);
 +	}
-+	const scoped = {
-+		...conversation,
-+		inProgressMessages: new Map([...conversation.inProgressMessages].filter(([id, message]) => id === messageId || submissionId && message.submissionId === submissionId))
-+	};
-+	const message = projectConversationUi(scoped, streamOffset, path.reverse()).messages.find((message) => message.id === messageId);
-+	if (!message) throw new ConversationRecordInvariantError({
-+		recordId: messageId,
-+		recordType: "assistant_message_completed",
-+		reason: "Completed response is absent from the active conversation path."
++	// The host's settlement drops dangling in-progress steps. A joined
++	// settlement arrives first, so exclude them here as final history does.
++	const scoped = { ...conversation, inProgressMessages: new Map() };
++	return projectConversationUi(scoped, state.recordsThroughOffset, path.reverse()).messages.find((message) => message.id === messageId);
++}
++/**
++* Joined deliveries settle before their host. Resolve both to the response owner
++* and send only its first settlement's replacement. A reclaimed attempt may
++* have no assistant-start record, so attempt identity alone cannot deduplicate.
++*/
++function isFirstResponseSettlement(record, host, state, byAttempt) {
++	for (const candidate of state.recordsById.values()) {
++		if (candidate.type !== "submission_settled" || candidate.conversationId !== record.conversationId) continue;
++		const owner = (typeof candidate.attemptId === "string" ? byAttempt.get(candidate.attemptId) : void 0) ?? candidate.submissionId;
++		if (owner === host) return candidate.id === record.id;
++	}
++	throw new ConversationRecordInvariantError({
++		recordId: record.id,
++		recordType: record.type,
++		reason: "Settlement is absent from reduced conversation state."
 +	});
-+	return message;
 +}
  function encodeRecord(record, conversationId, state, responseIds) {
  	const uiMessageId = (messageId) => (record.submissionId ? responseIds.get(record.submissionId) : void 0) ?? messageId;
  	switch (record.type) {
-@@ -2874,6 +2900,12 @@ function encodeRecord(record, conversationId, state, responseIds) {
+@@ -2873,12 +2910,19 @@ function encodeRecord(record, conversationId, state, responseIds) {
+ 			input: record.arguments,
  			...record.timestamp ? { timestamp: record.timestamp } : {}
  		}];
- 		case "assistant_message_completed": return [{
-+			// The SDK's existing message-appended upsert replaces by the stable
-+			// first-step id before completion. Settlement follows in stream order.
-+			type: "message-appended",
-+			conversationId,
-+			message: projectCompletedResponse(state.conversations.get(record.conversationId), uiMessageId(record.messageId), record.submissionId, state.recordsThroughOffset)
-+		}, {
- 			type: "message-completed",
- 			conversationId,
- 			messageId: uiMessageId(record.messageId),
+-		case "assistant_message_completed": return [{
+-			type: "message-completed",
+-			conversationId,
+-			messageId: uiMessageId(record.messageId),
+-			...record.timestamp ? { timestamp: record.timestamp } : {}
+-		}];
++		case "assistant_message_completed": {
++			const completed = {
++				type: "message-completed",
++				conversationId,
++				messageId: uiMessageId(record.messageId),
++				...record.timestamp ? { timestamp: record.timestamp } : {}
++			};
++			// Tracked responses reconcile once at settlement. An untracked step
++			// has no settlement and no accumulated response to resend.
++			if (record.submissionId) return [completed];
++			const message = projectResponse(state, record, record.messageId, record.submissionId);
++			return message ? [{ type: "message-appended", conversationId, message }, completed] : [completed];
++		}
+ 		case "tool_results_committed": {
+ 			const conversation = state.conversations.get(record.conversationId);
+ 			if (!conversation) return [];
+@@ -2887,8 +2931,9 @@ function encodeRecord(record, conversationId, state, responseIds) {
+ 			return assistant.message.content.flatMap((block) => block.type === "toolCall" ? encodeToolResultEntry(conversation, record.assistantMessageId, block.id, conversationId) : []);
+ 		}
+ 		case "submission_settled": {
+-			const answeredBy = typeof record.attemptId === "string" ? assistantSubmissionByAttempt(state).get(record.attemptId) : void 0;
+-			return [{
++			const byAttempt = assistantSubmissionByAttempt(state);
++			const answeredBy = typeof record.attemptId === "string" ? byAttempt.get(record.attemptId) : void 0;
++			const settled = {
+ 				type: "submission-settled",
+ 				conversationId,
+ 				submissionId: record.submissionId,
+@@ -2896,7 +2941,14 @@ function encodeRecord(record, conversationId, state, responseIds) {
+ 				...record.error === void 0 ? {} : { error: record.error },
+ 				...answeredBy === void 0 ? {} : { answeredBySubmissionId: answeredBy },
+ 				...record.timestamp ? { timestamp: record.timestamp } : {}
+-			}];
++			};
++			const host = answeredBy ?? record.submissionId;
++			const messageId = responseIds.get(host);
++			if (!messageId || !isFirstResponseSettlement(record, host, state, byAttempt)) return [settled];
++			const message = projectResponse(state, record, messageId, host);
++			// An unmaterialized partial step can disappear at settlement; there
++			// is no canonical response to upsert in that case.
++			return message ? [{ type: "message-appended", conversationId, message }, settled] : [settled];
+ 		}
+ 		default: return [];
+ 	}
 diff --git a/dist/sql-agent-execution-store-C0vwyWZB.mjs b/dist/sql-agent-execution-store-C0vwyWZB.mjs
 index 8d022fce823a6e9f9a2bf8a222b309b5fccbcff1..09672d75cbbcced4924974f8a2ecbb56a64425ea 100644
 --- a/dist/sql-agent-execution-store-C0vwyWZB.mjs

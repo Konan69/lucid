@@ -3,6 +3,7 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   createAssistantMessageEventStream,
   type AssistantMessageEvent,
+  type ProviderStreams,
 } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import { defineTool, init, useModel, useTool } from '@flue/runtime'
@@ -126,17 +127,32 @@ function toolSequence(): AssistantMessageEvent[] {
 const fixture = Effect.fn('FlueStream.fixture')(function* (ending: 'Continue' | 'Terminate') {
   const { storage } = yield* disposableStorage
   const requested = yield* Queue.unbounded<void>()
+  const cancelled = yield* Queue.unbounded<void>()
   const history = createAssistantMessageEventStream()
   const tool = createAssistantMessageEventStream()
   const answer = createAssistantMessageEventStream()
   const pending = [history, tool, answer]
   const faux = fauxProvider({ provider: 'fixture', models: [{ id: 'text' }] })
-  const stream = () => {
+  const stream: ProviderStreams['stream'] = (_model, _context, options) => {
     const next = pending.shift()
     if (next === undefined) expect.fail('The provider received an unexpected fourth call')
+    // The controlled provider must honor the same request abort signal as a real gateway.
+    if (options !== undefined && options.signal !== undefined) {
+      const cancel = () => {
+        Queue.offerUnsafe(cancelled, undefined)
+        next.push({
+          type: 'error',
+          reason: 'aborted',
+          error: fauxAssistantMessage('stopped', { stopReason: 'aborted' }),
+        })
+      }
+      if (options.signal.aborted) cancel()
+      else options.signal.addEventListener('abort', cancel, { once: true })
+    }
     Queue.offerUnsafe(requested, undefined)
     return next
   }
+  /** A terminating tool has no following model answer to trigger reconciliation. */
   function Ending() {
     useModel('fixture/text')
     useTool(
@@ -177,10 +193,17 @@ const fixture = Effect.fn('FlueStream.fixture')(function* (ending: 'Continue' | 
     url: `http://runtime.test/${id}`,
     fetch: fetchRuntime(createAgentRouter(agent)),
   })
-  return { client, tool, answer, instance, called: () => Queue.take(requested) }
+  return {
+    client,
+    tool,
+    answer,
+    instance,
+    called: () => Queue.take(requested),
+    aborted: () => Queue.take(cancelled),
+  }
 })
 
-/** Wire consumers receive only the current response, before its completion and settlement markers. */
+/** Wire consumers receive one canonical response immediately before its first settlement. */
 function replacements(
   chunks: readonly ConversationStreamChunk[],
   live: FlueConversationMessage,
@@ -219,10 +242,15 @@ function replacements(
 
 /** One public event queue acknowledges model progress without sleeps or scheduler guesses. */
 const recording = Effect.fn('FlueStream.recording')(function* () {
+  const controller = yield* Effect.acquireRelease(
+    Effect.sync(() => new AbortController()),
+    (value) => Effect.sync(() => value.abort()),
+  )
   const events = yield* Queue.unbounded<ConversationStreamChunk>()
   const chunks: ConversationStreamChunk[] = []
   return {
     chunks,
+    signal: controller.signal,
     onEvent: (chunk: ConversationStreamChunk) => {
       chunks.push(chunk)
       Queue.offerUnsafe(events, chunk)
@@ -328,7 +356,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
         )
         const wire = yield* recording()
         const read = yield* Effect.tryPromise(() =>
-          client.wait(receipt, { onEvent: wire.onEvent }),
+          client.wait(receipt, { onEvent: wire.onEvent, signal: wire.signal }),
         ).pipe(Effect.forkScoped)
         yield* called()
         const joined = yield* Effect.tryPromise(() =>
@@ -359,14 +387,14 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
 
   it.live('reconciles an aborted partial reply before publishing the aborted settlement', () =>
     Effect.gen(function* () {
-      const { client, tool, answer, called } = yield* fixture('Continue')
+      const { client, tool, answer, called, aborted } = yield* fixture('Continue')
       const receipt = yield* Effect.tryPromise(() =>
         client.send({ message: { kind: 'user', body: 'stop midway' } }),
       )
       const wire = yield* recording()
       // An aborted SDK wait rejects; history and wire outcomes below establish the typed verdict.
       const read = yield* Effect.tryPromise(() =>
-        client.wait(receipt, { onEvent: wire.onEvent }),
+        client.wait(receipt, { onEvent: wire.onEvent, signal: wire.signal }),
       ).pipe(Effect.result, Effect.forkScoped)
       yield* called()
       for (const event of toolSequence()) tool.push(event)
@@ -376,7 +404,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
         (chunk) => chunk.type === 'message-delta' && chunk.delta === 'Why Rivers Meander**',
       )
       expect(yield* Effect.tryPromise(() => client.abort())).toEqual({ aborted: true })
-      answer.end(fauxAssistantMessage('stopped', { stopReason: 'aborted' }))
+      yield* aborted()
       yield* Fiber.join(read)
       const history = yield* Effect.tryPromise(() => client.history())
       const settled = history.settlements.find(
@@ -401,7 +429,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue live reply reconciliation', () =>
       )
       const wire = yield* recording()
       const read = yield* Effect.tryPromise(() =>
-        client.wait(receipt, { onEvent: wire.onEvent }),
+        client.wait(receipt, { onEvent: wire.onEvent, signal: wire.signal }),
       ).pipe(Effect.forkScoped)
       yield* called()
       for (const event of toolSequence()) tool.push(event)

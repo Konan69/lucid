@@ -39,22 +39,27 @@ schema-derived `VividRpcClient`.
 
 ## Patched Flue
 
-`patches/@flue__runtime@2.2.2.patch` holds two independent fixes. When upgrading Flue or
-removing either fix, read [Live reply reconciliation](README.md#live-reply-reconciliation).
+`patches/@flue__runtime@2.2.2.patch` holds three independent fixes. When upgrading Flue or
+removing any fix, read [Live reply reconciliation](README.md#live-reply-reconciliation).
 
 - **Flush cadence.** The conversation writer's `CANONICAL_FLUSH_DELAY_MS` changes from 1,000
   to 100. Production measured 158 text updates arriving in four lumps on 11 October 2026.
   The lower delay costs about ten durable append batches per second of streaming, instead of one.
   When Flue exposes the delay as a setting, configure it and remove only the writer hunk.
-- **Completed replies.** The dispatch projector replaces the completed response through the SDK's
-  `message-appended` upsert before its completion marker. This repairs text parts split by
-  interleaved thinking while preserving distinct canonical blocks. Each completed model step
-  projects and resends its response, including earlier tool outputs. Remove these dispatch hunks
-  only when Flue preserves live block identity or reconciles completion itself, and the runtime
-  transport tests still pass.
+- **Settled replies.** The dispatch projector replaces the response through the SDK's
+  `message-appended` upsert before its first resolved settlement. This repairs text parts split
+  by interleaved thinking while preserving distinct canonical blocks. Each response is projected
+  and sent once, including its tool outputs. Joined deliveries resolve to the host response, so their later
+  settlements do not resend it. Untracked steps reconcile at completion because they have no
+  settlement or accumulated response. Remove these dispatch hunks only when Flue preserves live
+  block identity or reconciles settlement itself, and the runtime transport tests still pass.
+- **Cancelled partial replies.** The model recovery loop checks its halt condition before returning
+  a completed turn. A provider can close normally after its request was aborted; returning first
+  made the coordinator settle that partial reply as completed. Remove this hunk when upstream
+  propagates cancellation on that path and the partial-reply abort test still passes.
 
 The dist filenames carry build hashes, so an upgrade fails installation until the patch is
-updated. Delete the patch file and its `patchedDependencies` entry only after both fixes have
+updated. Delete the patch file and its `patchedDependencies` entry only after all three fixes have
 upstream replacements.
 
 ## Runtime contract

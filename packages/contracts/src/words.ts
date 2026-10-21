@@ -6,7 +6,7 @@ export interface Worded {
 }
 
 /**
- * Each supplied text part is a paragraph. Completed replies have canonical blocks after runtime
+ * Each supplied text part is a paragraph. Settled replies have canonical blocks after runtime
  * reconciliation; streaming parts can still split where text and reasoning alternate. Reasoning
  * is neither a paragraph nor evidence that text blocks join. Conversation screens and outbound
  * replies share this extraction rule.

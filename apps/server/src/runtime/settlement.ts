@@ -34,7 +34,7 @@ const meaningful = (message: FlueConversationMessage): boolean =>
  * once, even when several Runs end. An empty final text remains legal after real tool work.
  *
  * `textOf` joins canonical text blocks as paragraphs for screens and outbound replies alike.
- * The runtime reconciles the live completion batch with history before settlement is observed.
+ * The runtime reconciles with history in the batch that publishes the first settlement.
  */
 const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Settlement> => {
   const settled = state.settlements.find((candidate) => candidate.submissionId === runId)

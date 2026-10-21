@@ -121,8 +121,14 @@ describe.skipIf(!enabled)('OpenRouter response reconciliation', () => {
         )
         changed()
         const chunks: ConversationStreamChunk[] = []
+        const arrived = new Map<ConversationStreamChunk, number>()
         yield* Effect.tryPromise(() =>
-          client.wait(receipt, { onEvent: (chunk) => chunks.push(chunk) }),
+          client.wait(receipt, {
+            onEvent: (chunk) => {
+              chunks.push(chunk)
+              arrived.set(chunk, performance.now())
+            },
+          }),
         )
         const result = yield* Stream.fromQueue(states).pipe(
           Stream.filter(
@@ -149,7 +155,15 @@ describe.skipIf(!enabled)('OpenRouter response reconciliation', () => {
         expect(textOf(live)).toContain('Why Rivers Meander')
         expect(calls()).toBe(samples)
         const metrics = measure(chunks)
-        console.info(`reconciliation ${JSON.stringify(metrics)}`)
+        const completed = chunks.findLast((chunk) => chunk.type === 'message-completed')
+        const settled = chunks.find((chunk) => chunk.type === 'submission-settled')
+        const completedAt = completed === undefined ? undefined : arrived.get(completed)
+        const settledAt = settled === undefined ? undefined : arrived.get(settled)
+        if (completedAt === undefined || settledAt === undefined)
+          expect.fail('The actual response must complete and settle on the public wire')
+        console.info(
+          `reconciliation ${JSON.stringify({ ...metrics, finalSettlementGapMs: settledAt - completedAt })}`,
+        )
         expect(metrics.toolOutputs).toBe(samples)
         expect(metrics.modelSteps).toBe(samples + 1)
         expect(metrics.replacements).toBe(1)

@@ -51,28 +51,44 @@ and remaining limits.
 
 ## Live reply reconciliation
 
-The runtime patch in `patches/@flue__runtime@2.2.2.patch` reconciles each completed
+The runtime patch in `patches/@flue__runtime@2.2.2.patch` reconciles each settled
 assistant response through Flue's existing `message-appended` upsert. Flue 2.2.2 keeps
 provider content indexes in canonical records but omits block identity from UI deltas.
 Its SDK splits a part whenever text and reasoning alternate. A single provider text block can
 therefore appear as several live parts, while distinct blocks must remain distinct.
 
-Completion projects only the current response with history's own projector, retaining its
-first-step message ID, earlier model steps, tool outputs, anchored data, and metadata.
-It stops at the response's first entry rather than projecting older replies. The wire carries
-one canonical message per completed model step, followed by Flue's unchanged completion marker.
-Durable stream order places replacement before completion and the later settlement, so the
-server and clients settle only after replacement. Completion never requests a conversation reset
-or resends older replies.
-During streaming, delta parts still follow Flue's original kind boundaries.
+The first settlement resolving to a response projects only that response with history's own projector,
+retaining the first-step message ID, earlier model steps, tool outputs, anchored data, and metadata.
+It stops at the response's first entry rather than projecting older replies. Joined deliveries
+settle before their host, so the replacement precedes the first joined settlement in its own
+batch. Later settlements resolving to that response do not resend it. Model-step completions
+keep their original markers and send no replacement for a tracked response.
 
-Remove this completion change when Flue carries block identity through live projection or
-reconciles completion upstream. No SDK patch is required. `@flue/react` uses the SDK observer,
-so web, phone, desktop, and server observation all consume the same message upsert. The shared
-`textOf` in contracts then joins canonical text blocks as paragraphs without guessing from
-reasoning. `src/stream.test.ts` proves both block sequences across two model steps with a real
-tool call through storage, the HTTP router, and SDK observation. It also checks the public wire
-for stable message IDs, one-message replacements, no reset, and replacement before settlement.
+Each tool output travels in its original chunk and once in the final replacement. Reconciliation
+bytes therefore grow with the final response, rather than with the sum of every intermediate
+response. An untracked step has no settlement and no accumulated response, so it reconciles
+at its own completion. Neither path requests a conversation reset or resends older replies.
+During streaming, delta parts still follow Flue's original kind boundaries. A failed step that
+Flue never materializes can disappear from final history; this upsert cannot delete a live
+ghost when no canonical response remains. Dangling in-progress steps are excluded from the
+replacement before joined settlement, matching the later host settlement.
+The model recovery
+loop also checks cancellation before returning a completed turn, so a provider that closes
+normally after an abort cannot turn a stopped partial reply into a completed submission.
+
+Remove this change when Flue carries block identity through live projection or reconciles
+settlement upstream. No SDK patch is required. `@flue/react` uses the SDK observer, so web,
+phone, desktop, and server observation all consume the same message upsert. The shared `textOf`
+in contracts joins canonical text blocks as paragraphs without guessing from reasoning.
+`src/stream.test.ts` exercises the public storage, HTTP router, SDK observation, and wire through
+SSE and long-poll. It covers both block sequences, tool outputs, joined deliveries, aborted
+partial replies, and terminating tools. It checks stable message IDs, one replacement before
+the first settlement, no reset, and no older replies resent.
+
+`src/payload.live.test.ts` measures a real twelve-tool-call response through the production
+OpenRouter provider and compares live output with history. It requires
+`VIVID_LIVE_RECONCILIATION=1`, `OPENROUTER_API_KEY`, and an isolated database supplied through
+`VIVID_TEST_DATABASE_URL`. It stays skipped in the ordinary gate.
 
 ## Models and rehearsal
 
