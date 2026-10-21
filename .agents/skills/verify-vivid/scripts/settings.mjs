@@ -58,12 +58,46 @@ export async function provider() {
         sources.push(file)
       }
   }
+  if (!process.env.VIVID_VERIFY_KEY_FILE) {
+    for (const file of [
+      os.homedir() + '/.local/share/opencode/auth.json',
+      os.homedir() + '/.pi/agent/auth.json',
+    ]) {
+      const text = await fs.readFile(file, 'utf8').catch((error) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+      if (text === null) continue
+      let auth
+      try {
+        auth = JSON.parse(text)
+      } catch {
+        throw new Error('Invalid provider auth file: ' + file)
+      }
+      for (const [id, name] of [
+        ['opencode-go', 'OPENCODE_API_KEY'],
+        ['openrouter', 'OPENROUTER_API_KEY'],
+      ]) {
+        const entry = auth[id]
+        if (
+          entry &&
+          ['api', 'api_key'].includes(entry.type) &&
+          typeof entry.key === 'string' &&
+          entry.key.length &&
+          !env[name]
+        ) {
+          env[name] = entry.key
+          sources.push(file)
+        }
+      }
+    }
+  }
   const model =
     process.env.VIVID_VERIFY_MODEL ??
-    (env.EXPLABS_API_KEY
-      ? 'explabs/glm-5.3-flash'
-      : env.OPENCODE_API_KEY
-        ? 'opencode-go/glm-5.3-flash'
+    (env.OPENCODE_API_KEY
+      ? 'opencode-go/glm-5.3-flash'
+      : env.EXPLABS_API_KEY
+        ? 'explabs/glm-5.3-flash'
         : env.OPENROUTER_API_KEY
           ? 'openrouter/z-ai/glm-5.3-flash'
           : 'rehearsal/script')

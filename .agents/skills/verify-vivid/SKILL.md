@@ -13,9 +13,9 @@ Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox
 
 On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser and Chrome. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
-The model key source is `VIVID_VERIFY_KEY_FILE`, or the checkout `.env`, the main checkout `.env`, then `~/.config/vivid/verify.env`. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. EXPLABS_API_KEY is required by the real server memory/title model. No production infrastructure setting is imported.
+The model key source is `VIVID_VERIFY_KEY_FILE`, or the checkout `.env`, the main checkout `.env`, then `~/.config/vivid/verify.env`. API-key entries in `~/.local/share/opencode/auth.json` and `~/.pi/agent/auth.json` fill missing model keys. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. EXPLABS_API_KEY is required by the real server memory/title model. No production infrastructure setting is imported.
 
-`VIVID_VERIFY_MODEL` selects a shipped model id. With a key available the default is a real model, preferring `explabs/glm-5.3-flash`. Explicit `rehearsal/script` proves plumbing only. Every feature file states its model requirement. Read [boundaries](references/boundaries.md) for unavailable external authorities.
+`VIVID_VERIFY_MODEL` selects a shipped model id. With a key available the default is a real model, preferring the shipped default `opencode-go/glm-5.3-flash` when its key exists. Explicit `rehearsal/script` proves plumbing only. Every feature file states its model requirement. Read [boundaries](references/boundaries.md) for unavailable external authorities.
 
 ## Launch and doctor
 
