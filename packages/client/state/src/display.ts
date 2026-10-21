@@ -8,7 +8,7 @@ import {
   type DisplayCodeOutcome,
   type DisplaySource,
 } from '@vivid/contracts'
-import { Effect, Match, Option, Predicate, Result, Schema } from 'effect'
+import { Effect, Match, Option, Predicate, Result, Schedule, Schema } from 'effect'
 
 /**
  * How a reply splits into words and displays lives with the contracts, because the server reads a
@@ -273,6 +273,17 @@ const callKind = Effect.fn('Display.callKind')(function* (name: string, tools: D
 })
 
 /**
+ * How a program is asked again while the server waits for the reply it was drawn from to settle.
+ * The surfaces already hold a display until its reply is settled, so a wait means the server's
+ * history is a moment behind; OpenUI does not ask an errored Query again by itself (its query
+ * effect only re-runs when the program, form state or streaming flag changes, lang-core 1.0.0), so
+ * without this the display would keep the wait. Six more asks over about half a minute, then the
+ * wait is the answer and a redraw or `@Run` asks again. The asks belong to the call, so a display
+ * that leaves the screen takes them with it.
+ */
+const WAITING_AGAIN = Schedule.max([Schedule.exponential('500 millis'), Schedule.recurs(6)])
+
+/**
  * One call a display makes into the Person's Integrations or onto their Computer, as OpenUI's
  * renderer asks for it. The server runs it for the Person, in the display's own Thread. A program
  * names the stored content it was drawn from (`source`), so the server runs only program text it
@@ -293,7 +304,10 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
         onExcessProperty: 'error',
       },
     )
-    return displayCodeResult(yield* client.RunDisplayCode({ ...request, source, kind }))
+    const outcome = yield* client
+      .RunDisplayCode({ ...request, source, kind })
+      .pipe(Effect.repeat({ while: isWaiting, schedule: WAITING_AGAIN }))
+    return displayCodeResult(outcome)
   }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
   return displayToolResult(yield* client.UseDisplayTool({ name, input, kind }))
