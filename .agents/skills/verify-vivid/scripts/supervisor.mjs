@@ -192,7 +192,8 @@ async function database() {
     })
 }
 
-/** Readiness comes from the product health route on this run's reserved loopback port. */
+/** The product entry exposes HTTP health but no IPC readiness receipt. Launch probes that
+ * route; elapsed time alone never establishes readiness. Feature checks use WatchThread signals. */
 async function serverReady(child) {
   const deadline = Date.now() + 120_000
   while (Date.now() < deadline) {
@@ -207,6 +208,7 @@ async function serverReady(child) {
   throw new Error('Product server health deadline')
 }
 
+/** Helix has no configured Docker health event. Launch waits for a successful read-only query. */
 async function helix() {
   state.helixCreated = true
   await save()
@@ -264,7 +266,9 @@ async function launch() {
   state.server = `http://127.0.0.1:${state.ports.server}`
   const token = crypto.randomUUID()
   await NodeFSP.writeFile(state.scratch + '/runtime-token', token, { mode: 0o600 })
-  const provider = JSON.parse(await NodeFSP.readFile(state.scratch + '/provider.json', 'utf8'))
+  const providerText = await NodeFSP.readFile(state.scratch + '/provider.json', 'utf8')
+  await NodeFSP.unlink(state.scratch + '/provider.json')
+  const provider = JSON.parse(providerText)
   const curve = NodeCrypto.createECDH('prime256v1')
   curve.generateKeys()
   const env = {
@@ -385,6 +389,7 @@ function cleanup() {
 /** Coalesce concurrent teardown callers so none can claim cleanup before its owned resources exit. */
 async function clean() {
   cleaning = true
+  await NodeFSP.rm(state.scratch + '/provider.json', { force: true })
   const failures = []
   for (const captured of Object.values(state.commands ?? {})) {
     if (!runningCommands.has(captured.pid)) await stopCaptured(captured, true)

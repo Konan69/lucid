@@ -186,6 +186,23 @@ export async function checkout() {
   return {
     tree,
     dirty: tree.length > 0,
-    diffHash: NodeCrypto.createHash('sha256').update(diff).digest('hex'),
+    diffHash: await contentsHash(diff),
   }
+}
+
+/** NUL framing binds each untracked path and byte length to its bytes, including binary files. */
+async function contentsHash(diff) {
+  const hash = NodeCrypto.createHash('sha256').update(diff)
+  const files = await command(['git', 'ls-files', '-o', '--exclude-standard', '-z'], {
+    trim: false,
+  })
+  for (const file of files.split('\0').filter(Boolean).sort()) {
+    const location = root + '/' + file
+    const stat = await NodeFSP.lstat(location)
+    const bytes = stat.isSymbolicLink()
+      ? Buffer.from(await NodeFSP.readlink(location))
+      : await NodeFSP.readFile(location)
+    hash.update(file + '\0' + bytes.length + '\0').update(bytes)
+  }
+  return hash.digest('hex')
 }

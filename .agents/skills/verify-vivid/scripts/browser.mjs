@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict'
 import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
-import { rpc, settled, history } from './wire.mjs'
+import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 
 const missing = {
@@ -19,7 +19,10 @@ const missing = {
 }
 const recipes = {
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
-  reload: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reload' },
+  reload: {
+    phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
+    check: 'reload',
+  },
   tool: {
     phrase:
       'Show a rich interactive table using an openui-lang Table, not Markdown. Columns Project, Hours, Owner. Rows Research | 4 | Ada, Writing | 3 | Ben, Review | 2 | Cai. Title Workload.',
@@ -234,6 +237,18 @@ async function journey(state, feature) {
     const id = crypto.randomUUID()
     await rpc(state, 'CreateThread', { id, title: 'Verify ' + feature, projectId: null }, directory)
     await json(directory + '/context.json', { thread: id, ...base })
+    let existing
+    if (feature === 'reload') {
+      await chat(
+        state,
+        id,
+        'Remember the verification marker amber-orchid. Acknowledge briefly.',
+        directory,
+        'seed',
+      )
+      await settled(state, id, 1, 'Completed', directory)
+      existing = await history(state, id, directory, 'existing-history')
+    }
     await run(['open', state.web + '/t/' + id])
     await captureBrowser(receipt)
     await run([
@@ -250,13 +265,29 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
+    if (existing) {
+      await run([
+        'wait',
+        '--text',
+        'Remember the verification marker amber-orchid. Acknowledge briefly.',
+      ])
+      const reopened = await history(state, id, directory, 'reopened-history')
+      assert.deepEqual(reopened.messages, existing.messages)
+      await run(['reload'])
+      await run([
+        'wait',
+        '--text',
+        'Remember the verification marker amber-orchid. Acknowledge briefly.',
+      ])
+      await capture('existing-reloaded')
+    }
     await capture('before')
     const recipe = recipes[feature]
     const phrase =
       state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
     await run(['find', 'label', 'Message Vivid', 'fill', phrase])
     await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
-    await settled(state, id, 1, 'Completed', directory)
+    await settled(state, id, feature === 'reload' ? 2 : 1, 'Completed', directory)
     const page = await history(state, id, directory)
     const replies = page.messages.filter((m) => m.role === 'assistant')
     assert.ok(
@@ -266,8 +297,19 @@ async function journey(state, feature) {
     if (recipe.check === 'reply' || recipe.check === 'reload') {
       const text = replies
         .flatMap((m) => m.parts)
-        .find((p) => p.type === 'text' && p.text.trim()).text
+        .filter((p) => p.type === 'text' && p.text.trim())
+        .at(-1).text
       await run(['wait', '--text', text])
+    }
+    if (feature === 'reload') {
+      const last = replies.at(-1)
+      assert.match(
+        last.parts
+          .filter((p) => p.type === 'text')
+          .map((p) => p.text)
+          .join(' '),
+        /amber-orchid/i,
+      )
     }
     await rendered(run, recipe.check)
     await capture('after')
@@ -275,13 +317,18 @@ async function journey(state, feature) {
     if (recipe.check === 'reply' || recipe.check === 'reload') {
       const text = replies
         .flatMap((m) => m.parts)
-        .find((p) => p.type === 'text' && p.text.trim()).text
+        .filter((p) => p.type === 'text' && p.text.trim())
+        .at(-1).text
       await run(['wait', '--text', text])
     }
     await rendered(run, recipe.check)
     await capture('reloaded')
     const reloaded = await history(state, id, directory, 'reloaded-history')
-    assert.equal(reloaded.messages.filter((m) => m.role === 'user').length, 1)
+    assert.equal(
+      reloaded.messages.filter((m) => m.role === 'user').length,
+      feature === 'reload' ? 2 : 1,
+    )
+    assert.deepEqual(reloaded.messages, page.messages)
     if (feature === 'document') {
       const artifacts = await rpc(state, 'ListArtifacts', { threadId: id }, directory)
       assert.equal(artifacts.artifacts.length, 1)
@@ -294,7 +341,9 @@ async function journey(state, feature) {
       scope:
         feature === 'document'
           ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
-          : 'send and rendered reply before and after reload',
+          : feature === 'reload'
+            ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
+            : 'send and rendered reply before and after reload',
     }
   } catch (error) {
     await run(['errors']).catch(() => {})

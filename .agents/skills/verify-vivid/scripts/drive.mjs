@@ -2,6 +2,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
 import { chat, history, rpc, request, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
+import { assertTable } from './table.mjs'
 export const features = [
   'first',
   'reload',
@@ -96,18 +97,39 @@ async function tool(state, id, directory) {
     directory,
   )
   const { page } = await completed(state, id, directory)
-  NodeAssert.ok(words(page).includes('openui-lang'))
-  NodeAssert.ok(words(page).includes('Project'))
+  await assertTable(page)
 }
 /** Reconnect from durable history, independently of the original stream. */
 async function reload(state, id, directory) {
-  await first(state, id, directory)
-  const page = await history(state, id, directory, 'reloaded-history')
-  NodeAssert.equal(page.messages.filter((message) => message.role === 'user').length, 1)
-  NodeAssert.ok(page.messages.some((m) => m.role === 'assistant'))
+  await chat(
+    state,
+    id,
+    'Remember the verification marker amber-orchid. Acknowledge briefly.',
+    directory,
+    'seed',
+  )
+  const before = await completed(state, id, directory)
+  const reopened = await history(state, id, directory, 'reopened-history')
+  NodeAssert.deepEqual(reopened.messages, before.page.messages)
+  await chat(
+    state,
+    id,
+    'What verification marker did I ask you to remember? Reply with the marker only.',
+    directory,
+    'followup',
+  )
+  const { page } = await completed(state, id, directory, 2)
+  NodeAssert.equal(page.messages.filter((message) => message.role === 'user').length, 2)
+  const last = page.messages.filter((m) => m.role === 'assistant').at(-1)
+  NodeAssert.match(words({ messages: [last] }), /amber-orchid/i)
 }
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
+  NodeAssert.equal(
+    state.modelKind,
+    'rehearsal',
+    'Question HTTP recipe is rehearsal-only; real-model question recipe is blocked',
+  )
   await chat(state, id, 'ask me', directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
   NodeAssert.equal(detail.requests.length, 1)
@@ -182,8 +204,20 @@ async function document(state, id, directory) {
     directory,
     'read',
   )
-  const { page } = await completed(state, id, directory, 3)
-  NodeAssert.ok(words(page).includes('2'))
+  const { page, detail } = await completed(state, id, directory, 3)
+  const read = page.messages
+    .filter((message) => message.role === 'assistant' && message.submissionId === detail.runs[2].id)
+    .flatMap((message) => message.parts)
+    .find(
+      (part) =>
+        part.type === 'dynamic-tool' &&
+        part.toolName === 'read_document' &&
+        part.state === 'output-available',
+    )
+  NodeAssert.ok(read, 'Third Run did not execute read_document')
+  NodeAssert.equal(read.output.ok, true)
+  NodeAssert.equal(read.output.version, 2)
+  NodeAssert.match(read.output.body, /Ready for review\./)
   const v1 = await rpc(
     state,
     'GetArtifact',
@@ -201,6 +235,7 @@ async function document(state, id, directory) {
   NodeAssert.equal(v1.shown.number, 1)
   NodeAssert.equal(v2.shown.number, 2)
   NodeAssert.notEqual(v1.body, v2.body)
+  NodeAssert.match(v2.body, /Ready for review\./)
 }
 /** Main's image attachment follows Flue's wire format. Compare exact reloaded private bytes. */
 async function picture(state, id, directory) {

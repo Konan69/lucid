@@ -4,11 +4,11 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-The same Person message and assistant reply appear once after a new history read and browser reload.
+A settled Thread exists before the client opens it. Reopening and reloading preserve its first turn. A contextual follow-up recalls amber-orchid, creates exactly one second turn, and both turns survive another reload.
 
 ## How to get to it (user POV)
 
-Open a Thread after sending a message, then reload the page.
+Open an existing Thread, reload, then ask a follow-up about its earlier message.
 
 ## Driving it with verify-vivid
 
@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature reload` after Launch and Doctor.
 
 ## Gotchas
 
-This recipe proves settled reload. Reconnect during an active Run needs a provider that stays active long enough; it is unproved by the immediate rehearsal model.
+This recipe proves reopening an existing settled Thread and continuing its context. Mid-stream reconnect remains unproved. The first feature starts from an empty Thread; reload starts with durable history.

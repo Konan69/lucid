@@ -1,8 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
-import * as path from 'node:path'
 import { parseEnv } from 'node:util'
-import { root, command, boot } from './process.mjs'
+import { command, boot } from './process.mjs'
 
 /** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
 const hosts = {
@@ -31,66 +30,24 @@ export async function host() {
   return { devbox, hostBoot: boot, hostSelection: 'devbox-pick; SSH hostname verified' }
 }
 
-/** Read only provider keys, never a database URL or Computer authority from an application env. */
+/** Credentials require an explicit file or environment; other tools' auth stores are never read. */
 export async function provider() {
-  const common = await command(['git', 'rev-parse', '--git-common-dir'])
-  const candidates = process.env.VIVID_VERIFY_KEY_FILE
-    ? [process.env.VIVID_VERIFY_KEY_FILE]
-    : [
-        root + '/.env',
-        path.resolve(root, common, '..', '.env'),
-        os.homedir() + '/.config/vivid/verify.env',
-      ]
+  const candidates = process.env.VIVID_VERIFY_KEY_FILE ? [process.env.VIVID_VERIFY_KEY_FILE] : []
   const names = ['EXPLABS_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
   const env = Object.fromEntries(
-    names.filter((name) => process.env[name]).map((name) => [name, process.env[name]]),
+    names.flatMap((name) =>
+      !candidates.length && process.env[name] ? [[name, process.env[name]]] : [],
+    ),
   )
   const sources = []
   for (const file of new Set(candidates)) {
-    const text = await fs.readFile(file, 'utf8').catch((error) => {
-      if (error.code === 'ENOENT') return ''
-      throw error
-    })
+    const text = await fs.readFile(file, 'utf8')
     const parsed = parseEnv(text)
     for (const name of names)
       if (!env[name] && parsed[name]) {
         env[name] = parsed[name]
         sources.push(file)
       }
-  }
-  if (!process.env.VIVID_VERIFY_KEY_FILE) {
-    for (const file of [
-      os.homedir() + '/.local/share/opencode/auth.json',
-      os.homedir() + '/.pi/agent/auth.json',
-    ]) {
-      const text = await fs.readFile(file, 'utf8').catch((error) => {
-        if (error.code === 'ENOENT') return null
-        throw error
-      })
-      if (text === null) continue
-      let auth
-      try {
-        auth = JSON.parse(text)
-      } catch {
-        throw new Error('Invalid provider auth file: ' + file)
-      }
-      for (const [id, name] of [
-        ['opencode-go', 'OPENCODE_API_KEY'],
-        ['openrouter', 'OPENROUTER_API_KEY'],
-      ]) {
-        const entry = auth[id]
-        if (
-          entry &&
-          ['api', 'api_key'].includes(entry.type) &&
-          typeof entry.key === 'string' &&
-          entry.key.length &&
-          !env[name]
-        ) {
-          env[name] = entry.key
-          sources.push(file)
-        }
-      }
-    }
   }
   const model =
     process.env.VIVID_VERIFY_MODEL ??
@@ -100,7 +57,11 @@ export async function provider() {
         ? 'explabs/glm-5.3-flash'
         : env.OPENROUTER_API_KEY
           ? 'openrouter/z-ai/glm-5.3-flash'
-          : 'rehearsal/script')
+          : null)
+  if (!model)
+    throw new Error(
+      'No model credentials. Set VIVID_VERIFY_KEY_FILE or explicit provider environment variables; rehearsal requires VIVID_VERIFY_MODEL=rehearsal/script',
+    )
   const key = model.startsWith('explabs/')
     ? 'EXPLABS_API_KEY'
     : model.startsWith('openrouter/')

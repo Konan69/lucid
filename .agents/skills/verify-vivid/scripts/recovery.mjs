@@ -111,6 +111,7 @@ except (ProcessLookupError, FileNotFoundError):
  * Docker absence is success; presence requires the exact label before removal. Evidence survives. */
 export async function recover(state) {
   await owned(state)
+  await NodeFSP.rm(state.scratch + '/provider.json', { force: true })
   if (await supervisorAlive(state)) {
     try {
       return await control(state, { action: 'cleanup' })
