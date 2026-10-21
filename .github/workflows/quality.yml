@@ -173,7 +173,8 @@ jobs:
 
   proof:
     name: Regression proof
-    # A signoff may come from a feature branch where proof was skipped for this same commit.
+    # CI proves only pull requests from fix/ branches. Direct pushes to main are proved only
+    # by the push hook when the local branch name starts with fix/.
     if: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'fix/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
