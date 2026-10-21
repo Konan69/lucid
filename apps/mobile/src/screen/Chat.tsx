@@ -1663,9 +1663,7 @@ function Rows({
                 latest={message === newest}
                 unsent={unsent}
                 // A reply that names no submission was never part of one, so nothing is pending.
-                settled={
-                  message.submissionId === undefined || settled.has(message.submissionId)
-                }
+                settled={message.submissionId === undefined || settled.has(message.submissionId)}
                 onContinue={onContinue}
               />,
             )

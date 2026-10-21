@@ -169,8 +169,18 @@ function contextFor({
  * history is read (`heardIn` frames) there are none, so every reply's displays wait for it rather
  * than run a program the server would answer with a wait. Kept the same until one settles.
  */
-const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) =>
-  new Set(settlements.map((settlement) => settlement.submissionId))
+const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) => {
+  // Flue hands back the same list until a submission settles, so the set made for it is kept and
+  // the rows are not drawn again for a set that only looks new.
+  const known = settledSets.get(settlements)
+  if (known !== undefined) return known
+  const made: ReadonlySet<string> = new Set(
+    settlements.map((settlement) => settlement.submissionId),
+  )
+  settledSets.set(settlements, made)
+  return made
+}
+const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
 
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`):
@@ -383,7 +393,6 @@ function Conversation({
   const working = workingIn(opening, agent, first, detail)
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
   const visible = useMemo(() => shownIn(said), [said])
-  const settled = useMemo(() => settledIn(agent.settlements), [agent.settlements])
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
   const context = useMemo(
@@ -480,7 +489,7 @@ function Conversation({
             said={said}
             visible={visible}
             context={context}
-            settled={settled}
+            settled={settledIn(agent.settlements)}
             onContinue={say}
             first={first}
             onFirstAgain={() => firstWords.again(id)}
