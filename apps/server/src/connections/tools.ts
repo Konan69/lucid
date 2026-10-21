@@ -644,8 +644,7 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
   const refusal = displayCallRefusal(displayCallPolicy(request.kind), tool.effect)
   if (Option.isSome(refusal))
     return ToolOutcome.cases.Rejected.make({
-      message:
-        'A Query only reads. This tool changes something: put it in a Mutation run by a button.',
+      message: refusal.value,
     })
   const row = (yield* (yield* ConnectionStore).records(actor)).find(
     (record) => record.id === tool.connectionId,
