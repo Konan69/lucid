@@ -77,8 +77,23 @@ export async function browserDirectories(state) {
  * owned process gets a finite shutdown deadline and escalation, never a sleep or a PID-name lookup. */
 export async function stopCaptured(process, group = false) {
   if (!(await alive(process))) return { process, alreadyGone: true }
-  const script =
-    'import os,signal,select,sys; pid=int(sys.argv[1]); fd=os.pidfd_open(pid); signal.pidfd_send_signal(fd,signal.SIGTERM); group=sys.argv[2]=="group"; group and os.killpg(pid,signal.SIGTERM); exited=select.select([fd],[],[],8)[0]; (not exited) and signal.pidfd_send_signal(fd,signal.SIGKILL); assert exited or select.select([fd],[],[],8)[0], "owned process did not exit"'
+  const script = `import os, signal, select, sys
+pid = int(sys.argv[1])
+try:
+    fd = os.pidfd_open(pid)
+    stat = open(f"/proc/{pid}/stat").read()
+    if stat[stat.rfind(")") + 2:].split()[19] != sys.argv[3]:
+        sys.exit(0)
+    if sys.argv[2] == "group":
+        os.killpg(pid, signal.SIGTERM)
+    signal.pidfd_send_signal(fd, signal.SIGTERM)
+    exited = select.select([fd], [], [], 8)[0]
+    if not exited:
+        signal.pidfd_send_signal(fd, signal.SIGKILL)
+        assert select.select([fd], [], [], 8)[0], "owned process did not exit"
+except (ProcessLookupError, FileNotFoundError):
+    pass
+`
   return {
     process,
     output: await command([
@@ -87,6 +102,7 @@ export async function stopCaptured(process, group = false) {
       script,
       String(process.pid),
       group ? 'group' : 'single',
+      process.start,
     ]),
   }
 }
