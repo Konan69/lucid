@@ -3,12 +3,17 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
-import { root, skill, identity, command, alive, boot } from './process.mjs'
+import * as NodeOS from 'node:os'
+const testCache = await NodeFSP.mkdtemp(NodeOS.tmpdir() + '/vivid-recovery-')
+process.env.VIVID_VERIFY_CACHE = testCache
+NodeTest.after(() => NodeFSP.rm(testCache, { recursive: true, force: true }))
+const { root, skill, identity, command, alive, boot } = await import('./process.mjs')
 
 /** Exercise the actual CLI after a captured process exits; no lifecycle seam is mocked. */
 async function cli(args) {
   const child = NodeChildProcess.spawn(skill + '/verify', args, {
     cwd: root,
+    env: { ...process.env, VIVID_VERIFY_DEVBOX: 'invalid-test-host' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -26,7 +31,7 @@ async function fixture(context, live = false) {
     new Date().toISOString().replace(/[^0-9]/g, '') +
     '-' +
     crypto.randomUUID().slice(0, 8)
-  const evidence = root + '/.cache/verify/' + run
+  const evidence = testCache + '/' + run
   const scratch = evidence + '/instance'
   const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
     stdio: ['pipe', 'ignore', 'ignore'],

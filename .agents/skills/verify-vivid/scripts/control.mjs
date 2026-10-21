@@ -7,15 +7,15 @@ import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
 import * as NodeChildProcess from 'node:child_process'
-import { root, skill, freePorts, identity, command, signal, json } from './process.mjs'
+import { root, skill, freePorts, identity, command, signal, json, cache } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
-const cache = root + '/.cache/verify'
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
 
 /** The CLI always selects a run it created, never any ordinary application instance. */
 async function selected() {
-  const names = (await NodeFSP.readdir(cache)).filter((name) => name.startsWith('flue-')).sort()
-  const run = args.find((arg) => arg.startsWith('flue-')) ?? names.at(-1)
+  const run =
+    args.find((arg) => arg.startsWith('flue-')) ??
+    (await NodeFSP.readFile(cache + '/current', 'utf8').catch(() => '')).trim()
   if (!run || !/^flue-[a-z0-9-]+$/.test(run))
     throw new Error('No verification run; execute verify launch')
   return JSON.parse(await NodeFSP.readFile(cache + '/' + run + '/state.json', 'utf8'))
@@ -23,15 +23,12 @@ async function selected() {
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
-  const devbox = process.env.VIVID_VERIFY_DEVBOX
-  if (NodeOS.hostname().toLowerCase().includes('cloudbox-vivid'))
-    throw new Error('Verification refuses the production Computer')
-  if (!['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3', 'local'].includes(devbox))
-    throw new Error(
-      'Set VIVID_VERIFY_DEVBOX to the selected devbox, or local when all are unreachable',
-    )
   await NodeFSP.mkdir(cache, { recursive: true })
   await recoverPrevious(cache)
+  const { host, provider } = await import('./settings.mjs')
+  const hostReceipt = await host()
+  const modelConfig = await provider()
+  const tree = await command(['git', 'status', '--porcelain=v1', '-uall'])
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
@@ -41,7 +38,7 @@ async function launch() {
     crypto.randomUUID().slice(0, 8)
   const evidence = cache + '/' + run
   const scratch = evidence + '/instance'
-  const ports = await freePorts(['database', 'server', 'web', 'runtime'])
+  const ports = await freePorts(['database', 'helix', 'server', 'web', 'runtime'])
   await NodeFSP.mkdir(scratch, { recursive: true, mode: 0o700 })
   const state = {
     run,
@@ -53,13 +50,23 @@ async function launch() {
     started: new Date().toISOString(),
     head,
     branch,
-    devbox,
+    ...hostReceipt,
+    tree,
+    dirty: tree.length > 0,
+    model: modelConfig.model,
+    modelKind: modelConfig.model.startsWith('rehearsal/') ? 'rehearsal' : 'real',
+    keySource: modelConfig.source,
     hostname: NodeOS.hostname(),
     boot,
+    helixContainer: 'vivid-verify-helix-' + run,
     ready: false,
     cleaned: false,
   }
   await json(evidence + '/state.json', state)
+  await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
+    mode: 0o600,
+  })
+  await NodeFSP.writeFile(cache + '/current', run + '\n')
   const dependencies = skill + '/scripts/node_modules'
   const existing = await NodeFSP.lstat(dependencies).catch((error) => {
     if (error.code === 'ENOENT') return null
@@ -129,6 +136,8 @@ try {
     } else {
       if ((await command(['git', 'rev-parse', 'HEAD'])) !== state.head)
         throw new Error('Checkout commit changed; clean this run and launch again')
+      const tree = await command(['git', 'status', '--porcelain=v1', '-uall'])
+      if (tree !== state.tree) throw new Error('Working tree changed; launch again')
       if (action === 'feature')
         console.log(
           await command(
@@ -156,6 +165,7 @@ try {
               loader,
               skill + '/scripts/browser.mjs',
               state.evidence + '/state.json',
+              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
             ],
             {
               heavy: true,

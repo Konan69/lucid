@@ -1,5 +1,5 @@
 import * as NodeFSP from 'node:fs/promises'
-import { root, skill, boot, alive, command, json } from './process.mjs'
+import { root, skill, boot, alive, command, json, cache } from './process.mjs'
 import { control } from './socket.mjs'
 import { remoteCleanup } from './remote.mjs'
 
@@ -8,7 +8,7 @@ import { remoteCleanup } from './remote.mjs'
 export async function owned(state) {
   if (!/^flue-\d{17}-[a-f0-9]{8}$/.test(state.run))
     throw new Error('Invalid verification run identity')
-  const evidence = root + '/.cache/verify/' + state.run
+  const evidence = cache + '/' + state.run
   if (
     state.evidence !== evidence ||
     state.scratch !== evidence + '/instance' ||
@@ -110,20 +110,22 @@ export async function recover(state) {
   }
   const names = (await command(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
   let container = 'absent'
-  if (names.includes(state.container)) {
-    const label = await command([
-      'docker',
-      'inspect',
-      '--format',
-      '{{index .Config.Labels "vivid.verify"}}',
-      state.container,
-    ])
-    if (label !== state.run) throw new Error('Container ownership mismatch; left untouched')
-    await command(['docker', 'rm', '--force', '--volumes', state.container], {
-      heavy: true,
-      log: state.evidence + '/container-cleanup.json',
-    })
-    container = 'removed'
+  for (const name of [state.container, state.helixContainer].filter(Boolean)) {
+    if (names.includes(name)) {
+      const label = await command([
+        'docker',
+        'inspect',
+        '--format',
+        '{{index .Config.Labels "vivid.verify"}}',
+        name,
+      ])
+      if (label !== state.run) throw new Error('Container ownership mismatch; left untouched')
+      await command(['docker', 'rm', '--force', '--volumes', name], {
+        heavy: true,
+        log: state.evidence + '/container-cleanup.json',
+      })
+      container = 'removed'
+    }
   }
   await remoteCleanup(state, (argv, options) =>
     command(argv, {
@@ -158,7 +160,6 @@ export async function recover(state) {
 export async function dependenciesCleanup() {
   // The link is shared by this checkout's runs. Cleaning retained evidence cannot revoke
   // module resolution while another captured supervisor still owns an active instance.
-  const cache = root + '/.cache/verify'
   for (const name of await NodeFSP.readdir(cache)) {
     if (!name.startsWith('flue-')) continue
     const state = JSON.parse(await NodeFSP.readFile(cache + '/' + name + '/state.json', 'utf8'))

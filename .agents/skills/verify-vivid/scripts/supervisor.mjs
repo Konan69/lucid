@@ -3,6 +3,7 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeNet from 'node:net'
 import * as NodePath from 'node:path'
+import * as NodeCrypto from 'node:crypto'
 import * as NodeModule from 'node:module'
 import {
   command,
@@ -191,17 +192,76 @@ async function database() {
     })
 }
 
-/** Port of verify-vivid-pi/scripts/supervisor.mjs:launch. Main's Flue process runs
- * beside the server, on its own recorded port, using its shipped rehearsal model and PostgreSQL. */
+/** Readiness comes from the product health route on this run's reserved loopback port. */
+async function serverReady(child) {
+  const deadline = Date.now() + 120_000
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null)
+      throw new Error('Product server exited before health')
+    try {
+      const response = await fetch(state.server + '/health', { signal: AbortSignal.timeout(2000) })
+      if (response.ok && (await response.json()).ok) return
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error('Product server health deadline')
+}
+
+async function helix() {
+  state.helixCreated = true
+  await save()
+  await run(
+    [
+      'docker',
+      'run',
+      '--detach',
+      '--name',
+      state.helixContainer,
+      '--label',
+      'vivid.verify=' + state.run,
+      '-e',
+      'HELIX_DATA_DIR=/var/lib/helix',
+      '-e',
+      'HELIX_HTTP_ADDR=0.0.0.0:8080',
+      '-p',
+      `127.0.0.1:${state.ports.helix}:8080`,
+      'ghcr.io/helixdb/helixdb:v0.0.5',
+    ],
+    { heavy: true, log: state.evidence + '/helix-docker.json' },
+  )
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${state.ports.helix}/health`, {
+        signal: AbortSignal.timeout(2000),
+      })
+      if (response.ok) {
+        await json(state.evidence + '/helix-health.json', {
+          status: response.status,
+          body: await response.text(),
+        })
+        return
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error('Disposable Helix health deadline')
+}
+
 async function launch() {
   await ownReceipt()
   await database()
+  await helix()
   state.web = `http://127.0.0.1:${state.ports.web}`
   state.server = `http://127.0.0.1:${state.ports.server}`
   const token = crypto.randomUUID()
   await NodeFSP.writeFile(state.scratch + '/runtime-token', token, { mode: 0o600 })
+  const provider = JSON.parse(await NodeFSP.readFile(state.scratch + '/provider.json', 'utf8'))
+  const curve = NodeCrypto.createECDH('prime256v1')
+  curve.generateKeys()
   const env = {
     ...cleanEnv,
+    ...provider,
     DATABASE_URL: databaseUrl(),
     VIVID_TEST_DATABASE_URL: databaseUrl(),
     AUTH_SECRET: 'Verify-Auth!0123456789-ABCDefghijklmnop',
@@ -210,7 +270,19 @@ async function launch() {
     VIVID_SERVER_URL: state.server,
     VIVID_RUNTIME_TOKEN: token,
     VIVID_MEMORY_DIR: state.scratch + '/memory',
-    VIVID_MODEL: 'rehearsal/script',
+    VIVID_MODEL: state.model,
+    VIVID_HELIX_URL: `http://127.0.0.1:${state.ports.helix}`,
+    VIVID_BUILD_COMMIT: state.head,
+    VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
+    VIVID_BOAT_TEMPLATE: 'verify-unconfigured',
+    VIVID_EXECUTOR_URL: 'http://127.0.0.1:1',
+    VIVID_EXECUTOR_KEY: 'unconfigured-disposable-verification',
+    VIVID_EXECUTOR_ORGANIZATION: 'verify',
+    VIVID_PHOTON_PROJECT_ID: 'verify-unconfigured',
+    VIVID_PHOTON_PROJECT_SECRET: 'unconfigured-disposable-verification',
+    VIVID_PUSH_VAPID_PUBLIC: curve.getPublicKey().toString('base64url'),
+    VIVID_PUSH_VAPID_PRIVATE: curve.getPrivateKey().toString('base64url'),
+    VIVID_PUSH_SUBJECT: 'mailto:verify@example.test',
     VIVID_DECISIONS: 'off',
     GOOGLE_CLIENT_ID: 'rehearsal',
     GOOGLE_CLIENT_SECRET: 'unused-google-rehearsal-authority',
@@ -219,13 +291,13 @@ async function launch() {
   }
   serverChild = await own(
     'server',
-    [process.execPath, '--import', require.resolve('tsx'), skill + '/scripts/main.ts'],
+    [process.execPath, '--import', require.resolve('tsx'), root + '/apps/server/src/main.ts'],
     {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env,
     },
   )
-  await signal(serverChild, serverChild, 'message', (value) => value._tag === 'Ready')
+  await serverReady(serverChild)
   await run([process.execPath, skill + '/scripts/build.mjs', state.scratch], {
     cwd: root + '/packages/agent/runtime',
     env,
@@ -246,8 +318,8 @@ async function launch() {
   const runtimeHealth = await fetch(env.VIVID_RUNTIME_URL + '/health')
   const runtimeValue = await runtimeHealth.json()
   await json(state.evidence + '/runtime-health.json', runtimeValue)
-  if (runtimeValue.model !== 'rehearsal/script' || runtimeValue.status !== 'ok')
-    throw new Error('Rehearsal runtime health refused')
+  if (runtimeValue.model !== state.model || runtimeValue.status !== 'ok')
+    throw new Error('Selected runtime health refused')
   await run([process.execPath, skill + '/scripts/dev.mjs', 'build', state.scratch], {
     cwd: root + '/apps/web',
     env: { ...cleanEnv, VIVID_SERVER_URL: state.server },
@@ -277,6 +349,12 @@ async function launch() {
     web: state.web,
     server: state.server,
     run: state.run,
+    head: state.head,
+    dirty: state.dirty,
+    tree: state.tree,
+    model: state.model,
+    modelKind: state.modelKind,
+    host: state.hostname,
   })
   if (process.connected) process.send({ ready: true, run: state.run })
 }
@@ -326,22 +404,24 @@ async function clean() {
     }
   }
   const containers = (await run(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
-  if (state.containerCreated && containers.includes(state.container)) {
-    try {
-      const label = await run([
-        'docker',
-        'inspect',
-        '--format',
-        '{{index .Config.Labels "vivid.verify"}}',
-        state.container,
-      ])
-      if (label !== state.run) throw new Error('Container ownership mismatch')
-      await run(['docker', 'rm', '--force', '--volumes', state.container], {
-        heavy: true,
-        log: state.evidence + '/container-cleanup.json',
-      })
-    } catch (error) {
-      failures.push(error.message)
+  for (const container of [container, state.helixContainer]) {
+    if (containers.includes(container)) {
+      try {
+        const label = await run([
+          'docker',
+          'inspect',
+          '--format',
+          '{{index .Config.Labels "vivid.verify"}}',
+          container,
+        ])
+        if (label !== state.run) throw new Error('Container ownership mismatch')
+        await run(['docker', 'rm', '--force', '--volumes', container], {
+          heavy: true,
+          log: state.evidence + '/container-cleanup.json',
+        })
+      } catch (error) {
+        failures.push(error.message)
+      }
     }
   }
   await remoteCleanup(state, run)

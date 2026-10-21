@@ -9,7 +9,8 @@ export const root = NodePath.resolve(
   '../../../..',
 )
 export const skill = root + '/.agents/skills/verify-vivid'
-export const lock = NodePath.dirname(root) + '/.heavy.lock'
+export const lock = root + '/.cache/verify-heavy.lock'
+export const cache = process.env.VIVID_VERIFY_CACHE ?? root + '/.cache/verify'
 export const boot = (await NodeFSP.readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim()
 
 /** Atomic publication keeps ownership readable across a crash; independent evidence writers

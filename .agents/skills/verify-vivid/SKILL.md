@@ -1,68 +1,60 @@
 ---
 name: verify-vivid
-description: 'Verify Vivid product behavior through its real web client, authenticated RPC, Flue runtime and disposable PostgreSQL. Use before calling a product behavior change done, and record the touched feature file and evidence path in the PR.'
+description: Verify Vivid behaviour through its real server entry, web client, full agent prompt, model, tools and disposable stores. Use before calling a product behaviour change verified. Record the feature file and surviving evidence path in the PR.
 ---
 
 # Verify Vivid
 
-Read [validation requirements and history](references/validation.md). A verdict belongs to the recorded commit, host and driven feature; the feature map alone proves nothing.
+Read the [feature map](features/README.md), the touched feature and [runtime boundaries](references/boundaries.md). Product source stays unchanged. This skill starts `apps/server/src/main.ts`, the shipped Flue runtime and web, with disposable PostgreSQL and Helix. A missing recipe or authority is blocked, never verified.
 
-Product files are read-only. Read the [feature map](features/README.md), then the touched feature. Run heavy work on the host returned by `~/bin/devbox-pick`; never use a Person's Computer or cloudbox-vivid. This skill launches an isolated composition of production server handlers and SQL stores beside the full shipped Flue runtime and web app. It does not launch the complete `apps/server/src/main.ts` graph. See [boundaries](references/boundaries.md) before relying on a verdict.
+## Host and credentials
 
-## Launch
+Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. Use local only when no devbox is reachable. Evidence records selected alias, actual hostname and boot identity. Launch checks the alias against SSH-observed hostnames in `scripts/settings.mjs`; refresh that mapping after a devbox replacement. Local launch reruns devbox-pick and refuses when one is reachable.
 
-Run `~/bin/devbox-pick` first. Set `VIVID_VERIFY_DEVBOX` to its reachable alias (replace cloudbox-konan below when needed). If all allowed devboxes are unreachable, use this machine with `VIVID_VERIFY_DEVBOX=local`; never use cloudbox-vivid or change billing. From an isolated checkout on that devbox, inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use `worktree-seed.sh` if the repo or `~/bin` supplies it; otherwise `pnpm install --frozen-lockfile`. The launcher resolves tsx from the repository server dependencies and reports the install command when missing. Require Node 24+, the pinned pnpm, Docker with postgres:18-alpine, Python 3 with pidfd support, and flock.
+On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser and Chrome. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
+
+The model key source is `VIVID_VERIFY_KEY_FILE`, or the checkout `.env`, the main checkout `.env`, then `~/.config/vivid/verify.env`. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. EXPLABS_API_KEY is required by the real server memory/title model. No production infrastructure setting is imported.
+
+`VIVID_VERIFY_MODEL` selects a shipped model id. With a key available the default is a real model, preferring `explabs/glm-5.3-flash`. Explicit `rehearsal/script` proves plumbing only. Every feature file states its model requirement. Read [boundaries](references/boundaries.md) for unavailable external authorities.
+
+## Launch and doctor
 
 ```sh
-VIVID_VERIFY_DEVBOX=cloudbox-konan .agents/skills/verify-vivid/verify launch
+VIVID_VERIFY_DEVBOX=cloudbox-konan VIVID_VERIFY_KEY_FILE=/private/verify.env .agents/skills/verify-vivid/verify launch
+.agents/skills/verify-vivid/verify doctor flue-<printed-id>
 ```
 
-Launch records `.cache/verify/flue-<timestamp>-<uuid>/state.json` before acquisition. Each run reserves fresh ports, an exact labelled PostgreSQL container, a synthetic Better Auth account, runtime notes, Vite caches and process generations. It applies both shipped migration owners. It builds through the runtime's shipped `pnpm build` and starts its emitted bootstrap with `VIVID_MODEL=rehearsal/script`. This is main's context-driven Pi faux provider. The full Vivid instructions and real tool handlers run; no provider key or cut-down prompt is used.
+Require exit 0 and `worthy: true` from doctor. Launch captures HEAD and `git status --porcelain=v1 -uall`. Dirty trees are labelled dirty in state, doctor and every verdict. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
 
-Readiness requires PostgreSQL health, bound server/runtime/web receipts, runtime health advertising rehearsal/script, a web build through the shipped Vite config and preview proxy, proxied health and successful signup/signin. Each process has a five-minute readiness deadline for a busy fallback host; only the real listener receipt marks it ready. A failed launch retains logs and attempts cleanup. Run Cleanup even after failure. A live previous run is a conflict; clean its printed id explicitly.
+Each run owns fresh ports, labelled containers, synthetic Better Auth account, model/runtime notes, build outputs, Vite caches and captured process generations. The shipped runtime build gets only a scratch outDir override and retains its workspace bundling rules. It never empties the checkout dist. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Readiness requires actual product health, runtime model health, Helix health, web build/proxy and successful signup/signin. Startup failure keeps evidence and attempts cleanup.
 
-## Doctor
+## Drive the touched feature
 
 ```sh
-.agents/skills/verify-vivid/verify doctor
+.agents/skills/verify-vivid/verify feature first flue-<id>
+.agents/skills/verify-vivid/verify browser first flue-<id>
+.agents/skills/verify-vivid/verify feature document flue-<id>
+.agents/skills/verify-vivid/verify browser document flue-<id>
 ```
 
-Require exit 0 and `worthy: true` in `doctor.json`. Doctor checks captured boot/start ticks, listener ownership, exact Docker label/port, database readiness, rehearsal health and the single-origin proxy. It only reads the product and writes evidence. It does not repair the instance.
+`feature all` and `browser all` attempt every mapped feature. Missing browser recipes exit unsuccessfully with `no browser recipe`. Only the requested feature's journey can produce its verdict. HTTP uses Person cookies, public contracts/RPC and the real server gateway. WatchThread proves settlement. Browser uses the composer, Send and reload, records snapshots/screenshots and asserts semantic DOM. Tool checks table columns and rows. Document checks the tool-card element and expanded list item; the Artifact opener is blocked in this web client. Full document proof also requires the HTTP versioning recipe.
 
-## Drive
+The repository workflow uses agent-browser on the selected host with a private namespace, session and profile. Read its installed core skill before use. Set `VIVID_VERIFY_BROWSER` and `VIVID_VERIFY_CHROME` when binaries are elsewhere. Browser processes are recorded from its private PID receipts. Close always runs in finally; cleanup retries retained receipts.
 
-```sh
-.agents/skills/verify-vivid/verify feature first
-.agents/skills/verify-vivid/verify feature tool
-.agents/skills/verify-vivid/verify feature document
-.agents/skills/verify-vivid/verify browser
-```
+## Evidence and cleanup
 
-`feature all` attempts every mapped HTTP recipe. Failed or blocked verdicts make the command fail. Person mutations use Better Auth cookies and the public schema-derived NDJSON RPC; chat uses the real server gateway and public Flue SDK. WatchThread proves durable settlement independently of stream EOF. No internal setter or test-only product endpoint is driven.
-
-`browser` runs the existing agent-browser workflow headlessly on this same devbox, with its own namespace/session/profile and installed Chrome. Set `VIVID_VERIFY_BROWSER` to an installed native CLI path if it is not on PATH. Set `VIVID_VERIFY_CHROME` to an installed Chrome/Chromium executable when `/opt/google/chrome/chrome` is absent. For example, an existing Playwright Chromium binary under your home cache works without installing another browser. Each browser action has a two-minute deadline so a busy fallback host can complete rendering. It signs in via Email, Password and Sign in; sends in Message Vivid with Send; captures first message, rich table and document journeys, then reloads and captures them. It closes its browser in finally. Browser failure is a failed verdict, never an HTTP pass.
-
-For a collaborative T3 preview run, use preview_status, preview_open on the printed web origin, snapshot and the same accessible names. Record with preview_recording_start/stop and close only the tab you opened. The browser must execute on the selected runtime host, including the authorized local fallback. For other features, follow their exact entry points rather than substituting one convenient mutation.
-
-## Evidence
-
-Keep `.cache/verify/flue-…/` after Cleanup. Each run retains its commit, branch, port/container manifest, build/start logs, Doctor, action request/response bodies, public stream/history, settlement, read-only SQL and per-feature verdicts. Browser evidence retains command/output, accessibility snapshots and screenshots before and after reload. Secrets and the synthetic session stay in disposable `instance/` and are removed.
-
-A screenshot proves only its visible state. Prove the Person action and resulting state together, plus durable side effects. Rehearsal scenes prove plumbing and real tool effects; they do not evaluate unscripted model quality. A new commit needs new evidence. In the PR body name `.agents/skills/verify-vivid/features/<feature>.md` and the surviving evidence directory, with devbox hostname.
-
-## Cleanup
+Evidence stays under `.cache/verify/flue-…/`. Include the feature file, exact head, working-tree status, model kind/id, host, per-feature HTTP/browser verdicts and evidence directory in the PR body. A screenshot proves its visible state only. Failed, blocked and plumbing-only runs remain unverified. For a blocked feature write `blocked: <reason>` and make unblocking its recipe the next task. A parent must obtain the different-family gate at the exact pushed head.
 
 ```sh
-.agents/skills/verify-vivid/verify cleanup
+.agents/skills/verify-vivid/verify cleanup flue-<id>
+ps -p <captured-pids> -o pid,ppid,args
 docker ps -a --filter label=vivid.verify --format '{{.Names}} {{.Status}} {{.Ports}}'
 ```
 
-Cleanup validates canonical paths and exact container labels, signals only captured process generations, removes its anonymous database volume, browser profile and scratch, and preserves proof. Recovery uses boot ids/start ticks and pidfd after a supervisor crash. Never kill by name or pattern. Confirm the captured PIDs have gone with `ps -p <manifest-pids> -o pid,ppid,args`, its ports have no listeners with `ss -ltnp`, and its exact container is absent with `docker ps -a`. Save these outputs in `cleanup-audit.txt`. An ownership mismatch is a refusal, not a cleaned run.
+Save cleanup audits beside evidence. Confirm captured generations exited, owned ports closed and both exact containers absent. Cleanup validates canonical paths and labels, stops captured generations only, removes private scratch and volumes, and retains evidence. Never kill by pattern. Delete any private remote key file after cleanup.
 
-## Helpers
+## Skill checks
 
-The executable `verify` dispatches launch, doctor, feature, browser and cleanup. An optional printed flue-… id selects a retained run. `create-thread`, `chat 'phrase'`, `history`, `sign-in` and `stop` are manual public helpers; use only a real selected Thread.
+Run all eight lifecycle regressions with `node --test .agents/skills/verify-vivid/scripts/recovery.test.mjs`. Fixtures use a separate temporary evidence root and are removed after tests. They never update the live current pointer. Format/lint with the skill's format.mjs and lint.mjs configs. These checks supplement the real runtime proof.
 
-Ownership and crash regression checks run on the devbox with `node --test .agents/skills/verify-vivid/scripts/recovery.test.mjs`. Narrow helper formatting/lint use `pnpm exec oxfmt --config .agents/skills/verify-vivid/format.mjs --check .agents/skills/verify-vivid` and `pnpm exec oxlint --config .agents/skills/verify-vivid/lint.mjs .agents/skills/verify-vivid`. The configs inherit repo rules and remove only the blanket skill exclusion.
-
-Use `/maintain-verification-skill` when contracts, scenes or controls change. Keep the feature map and owner hash current.
+Manual public helpers are `sign-in`, `create-thread`, `chat`, `history` and `stop`. Use `/maintain-verification-skill` when contracts or controls change. Read [validation requirements](references/validation.md) before claiming completion.

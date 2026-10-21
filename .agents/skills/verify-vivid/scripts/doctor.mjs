@@ -19,6 +19,21 @@ export async function doctor(state) {
   await check('checkout commit', async () => ({
     ok: (await command(['git', 'rev-parse', 'HEAD'])) === state.head,
   }))
+  await check('checkout tree', async () => ({
+    ok: (await command(['git', 'status', '--porcelain=v1', '-uall'])) === state.tree,
+    dirty: state.dirty,
+    tree: state.tree,
+  }))
+  await check('disposable Helix', async () => {
+    const value = JSON.parse(await command(['docker', 'inspect', state.helixContainer]))[0]
+    const binding = value.NetworkSettings.Ports['8080/tcp']
+    return {
+      ok:
+        value.State.Running &&
+        value.Config.Labels['vivid.verify'] === state.run &&
+        binding.some((b) => b.HostIp === '127.0.0.1' && Number(b.HostPort) === state.ports.helix),
+    }
+  })
   for (const role of ['supervisor', 'server', 'web', 'runtime'])
     await check(role + ' process', async () => ({
       ok: currentBoot && (await alive(state.processes[role])),
@@ -55,12 +70,12 @@ export async function doctor(state) {
     ])
     return { ok: output.includes('accepting connections'), output }
   })
-  await check('Flue rehearsal runtime', async () => {
+  await check('Flue selected runtime', async () => {
     if (!currentBoot || !(await ownsPort(state.processes.runtime, state.ports.runtime)))
       return { ok: false, reason: 'No owned runtime listener' }
     const { status } = await import('./wire.mjs')
     const value = await status(state)
-    return { ok: value.model === 'rehearsal/script' && value.status === 'ok', status: value }
+    return { ok: value.model === state.model && value.status === 'ok', status: value }
   })
   await check('single-origin health', async () => {
     if (!currentBoot || !(await ownsPort(state.processes.web, state.ports.web)))
@@ -73,7 +88,15 @@ export async function doctor(state) {
       health: value,
     }
   })
-  const result = { worthy: checks.every((value) => value.ok), head: state.head, checks }
+  const result = {
+    worthy: checks.every((value) => value.ok),
+    head: state.head,
+    dirty: state.dirty,
+    tree: state.tree,
+    model: state.model,
+    host: state.hostname,
+    checks,
+  }
   await NodeFSP.writeFile(state.evidence + '/doctor.json', JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result, null, 2))
   if (!result.worthy) process.exitCode = 1

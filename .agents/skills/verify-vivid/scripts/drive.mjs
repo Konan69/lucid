@@ -75,7 +75,8 @@ async function completed(state, id, directory, count = 1) {
 /** One new Thread gets one Person contribution and a real streamed keyless rehearsal reply. */
 async function first(state, id, directory) {
   const text = await chat(state, id, 'Hello Vivid', directory)
-  NodeAssert.match(text, /^Try one of these phrases:/)
+  NodeAssert.ok(text.trim().length > 0)
+  if (state.modelKind === 'rehearsal') NodeAssert.match(text, /^Try one of these phrases:/)
   const { page } = await completed(state, id, directory)
   NodeAssert.deepEqual(
     page.messages.map((message) => message.role),
@@ -85,17 +86,24 @@ async function first(state, id, directory) {
 }
 /** Inline OpenUI is part of the real reply; no obsolete show tool is expected. */
 async function tool(state, id, directory) {
-  await chat(state, id, 'show a table', directory)
+  await chat(
+    state,
+    id,
+    state.modelKind === 'rehearsal'
+      ? 'show a table'
+      : 'Show a rich interactive table using an openui-lang Table, not Markdown. Columns Project, Hours, Owner. Rows Research | 4 | Ada, Writing | 3 | Ben, Review | 2 | Cai. Title Workload.',
+    directory,
+  )
   const { page } = await completed(state, id, directory)
   NodeAssert.ok(words(page).includes('openui-lang'))
-  NodeAssert.ok(words(page).includes('Rehearsal workload'))
+  NodeAssert.ok(words(page).includes('Project'))
 }
 /** Reconnect from durable history, independently of the original stream. */
 async function reload(state, id, directory) {
   await first(state, id, directory)
   const page = await history(state, id, directory, 'reloaded-history')
   NodeAssert.equal(page.messages.filter((message) => message.role === 'user').length, 1)
-  NodeAssert.ok(words(page).includes('Try one of these phrases:'))
+  NodeAssert.ok(page.messages.some((m) => m.role === 'assistant'))
 }
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
@@ -121,7 +129,15 @@ async function question(state, id, directory) {
 }
 /** Vivid writes and revises through real tools; Person reads confirm immutable versions. */
 async function document(state, id, directory) {
-  await chat(state, id, 'write a document', directory, 'write')
+  await chat(
+    state,
+    id,
+    state.modelKind === 'rehearsal'
+      ? 'write a document'
+      : 'Use write_document to create a document titled Verification plan with body # Verification plan\nResearch, writing and review. Only write this one document.',
+    directory,
+    'write',
+  )
   await completed(state, id, directory)
   const created = await rpc(
     state,
@@ -132,9 +148,20 @@ async function document(state, id, directory) {
   )
   NodeAssert.equal(created.artifacts.length, 1)
   const artifact = created.artifacts[0]
-  NodeAssert.equal(artifact.title, 'Rehearsal plan')
+  NodeAssert.equal(
+    artifact.title,
+    state.modelKind === 'rehearsal' ? 'Rehearsal plan' : 'Verification plan',
+  )
   NodeAssert.equal(artifact.version, 1)
-  await chat(state, id, 'revise the document', directory, 'revise')
+  await chat(
+    state,
+    id,
+    state.modelKind === 'rehearsal'
+      ? 'revise the document'
+      : 'Use revise_document to revise the existing Verification plan document. Keep the same id, add the sentence Ready for review. Do not create another document.',
+    directory,
+    'revise',
+  )
   await completed(state, id, directory, 2)
   const revised = await rpc(
     state,
@@ -145,9 +172,34 @@ async function document(state, id, directory) {
   )
   NodeAssert.equal(revised.artifacts[0].id, artifact.id)
   NodeAssert.equal(revised.artifacts[0].version, 2)
-  await chat(state, id, 'read the document', directory, 'read')
+  await chat(
+    state,
+    id,
+    state.modelKind === 'rehearsal'
+      ? 'read the document'
+      : 'Use read_document to read the existing Verification plan document at its latest version and tell me the version number.',
+    directory,
+    'read',
+  )
   const { page } = await completed(state, id, directory, 3)
-  NodeAssert.ok(words(page).includes('version 2'))
+  NodeAssert.ok(words(page).includes('2'))
+  const v1 = await rpc(
+    state,
+    'GetArtifact',
+    { id: artifact.id, version: 1 },
+    directory,
+    'version-1',
+  )
+  const v2 = await rpc(
+    state,
+    'GetArtifact',
+    { id: artifact.id, version: 2 },
+    directory,
+    'version-2',
+  )
+  NodeAssert.equal(v1.shown.number, 1)
+  NodeAssert.equal(v2.shown.number, 2)
+  NodeAssert.notEqual(v1.body, v2.body)
 }
 /** Main's image attachment follows Flue's wire format. Compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
@@ -179,15 +231,15 @@ async function picture(state, id, directory) {
 }
 const recipes = { first, reload, tool, question, picture, document }
 const blocked = {
-  code: 'Needs a disposable Person Computer. This run uses absentMachineLayer and has no production Computer authority.',
+  code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'The shipped rehearsal model completes immediately. A reproducible active Run must be supplied before Stop can be proved; no held tool or fabricated response is installed.',
   approve:
     'Needs an actual pending proposal from a connected disposable Integration. Rehearsal has no destructive scene; synthetic Gate proposals do not prove the Person journey.',
   deny: 'Needs an actual pending proposal from a connected disposable Integration. Rehearsal has no destructive scene.',
   watch:
-    'Needs a connected disposable Integration with observable incoming events. The isolated server does not mount Watch workers.',
+    'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:
-    'Needs the full extraction worker and Library routes. This isolated composition does not mount them.',
+    'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   feed: 'Needs a real Watch occurrence. No incoming Integration is configured.',
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
@@ -206,7 +258,10 @@ export async function drive(state, feature) {
       else {
         id = await thread(state, directory, 'Verify ' + name)
         await recipes[name](state, id, directory)
-        verdict = { feature: name, verdict: 'proved' }
+        verdict = {
+          feature: name,
+          verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
+        }
       }
     } catch (error) {
       verdict = { feature: name, verdict: 'failed', error: error.stack }
@@ -218,6 +273,11 @@ export async function drive(state, feature) {
     verdict = {
       ...verdict,
       head: state.head,
+      dirty: state.dirty,
+      tree: state.tree,
+      model: state.model,
+      modelKind: state.modelKind,
+      host: state.hostname,
       command: '.agents/skills/verify-vivid/verify feature ' + name + ' ' + state.run,
       evidence: directory,
       seconds: (Date.now() - started) / 1000,

@@ -1,5 +1,7 @@
 # Watches
 
+Model requirement: needs a real model. Rehearsal proves plumbing only.
+
 ## Sub-features
 
 A durable Watch receives an actual event, creates a bounded background Run and appears in Feed. Record provider receipt, Watch and Run ids.
@@ -10,7 +12,7 @@ Connect a disposable Integration. Ask Vivid to follow an event, then produce a r
 
 ## Driving it with verify-vivid
 
-Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor. Inspect `watch/verdict.json`, the action transcript, settlement, history and SQL. Then drive the visible controls with `verify browser` or the same owned browser session. A blocked recipe exits unsuccessfully and names its missing prerequisite.
+Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor. Inspect `watch/verdict.json`, the action transcript, settlement, history and SQL. Then run `verify browser watch`. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
 
 ## Gotchas
 
