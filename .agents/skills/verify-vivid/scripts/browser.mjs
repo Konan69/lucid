@@ -240,17 +240,21 @@ async function journey(state, feature) {
     await run(['find', 'label', 'Message Vivid', 'fill', phrase])
     await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
     await settled(state, id, 1, 'Completed', directory)
-    await run(['wait', '[aria-label="Message Vivid"]'])
     const page = await history(state, id, directory)
     const replies = page.messages.filter((m) => m.role === 'assistant')
     assert.ok(
       replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
       'No assistant reply',
     )
+    if (recipe.check === 'reply' || recipe.check === 'reload') {
+      const text = replies
+        .flatMap((m) => m.parts)
+        .find((p) => p.type === 'text' && p.text.trim()).text
+      await run(['wait', '--text', text])
+    }
     await rendered(run, recipe.check)
     await capture('after')
     await run(['reload'])
-    await run(['wait', '[aria-label="Message Vivid"]'])
     if (recipe.check === 'reply' || recipe.check === 'reload') {
       const text = replies
         .flatMap((m) => m.parts)
