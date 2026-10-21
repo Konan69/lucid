@@ -249,14 +249,10 @@
     "//#test:infra": {
       "inputs": [
         "*",
-        "scripts/infra-verify.mjs",
-        "scripts/infra-verify.test.mjs",
         "apps/**",
         "packages/**",
         "scripts/**",
         ".github/workflows/**",
-        "apps/server/src/**",
-        "packages/agent/runtime/src/**",
         ".agents/skills/infra/**",
         "docs/19-infrastructure.md",
         "infra/**",
