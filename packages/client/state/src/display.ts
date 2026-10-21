@@ -71,6 +71,15 @@ const DANGLING = /(?:[?:=,+]|&&|\|\|)\s*$/u
 const OPENERS = '([{'
 const CLOSERS = ')]}'
 
+/** What one character outside a comment and an escape does to the string and bracket state. */
+function readChar(quote: Lexical['quote'], depth: number, c: string) {
+  if (quote !== null) return { quote: c === quote ? null : quote, depth }
+  if (c === '"' || c === "'") return { quote: c, depth }
+  if (OPENERS.includes(c)) return { quote, depth: depth + 1 }
+  if (CLOSERS.includes(c)) return { quote, depth: Math.max(0, depth - 1) }
+  return { quote, depth }
+}
+
 /**
  * One line of a program read as OpenUI's tokenizer reads it: strings in either quote, with
  * backslash escapes, may run across lines, and brackets inside them do not count; a comment
@@ -81,15 +90,15 @@ function readLine(line: string, from: Lexical): Lexical {
   let code = line.length
   for (let at = 0; at < line.length; at += 1) {
     const c = line.charAt(at)
-    if (quote !== null) {
-      if (c === '\\') at += 1
-      else if (c === quote) quote = null
-    } else if (c === '"' || c === "'") quote = c
-    else if (c === '#' || line.startsWith('//', at)) {
+    if (quote !== null && c === '\\') {
+      at += 1
+      continue
+    }
+    if (quote === null && (c === '#' || line.startsWith('//', at))) {
       code = at
       break
-    } else if (OPENERS.includes(c)) depth += 1
-    else if (CLOSERS.includes(c)) depth = Math.max(0, depth - 1)
+    }
+    ;({ quote, depth } = readChar(quote, depth, c))
   }
   const said = line.slice(0, code)
   // A comment or blank line says nothing, so it leaves an expression as open as it found it.
