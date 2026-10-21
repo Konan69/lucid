@@ -128,25 +128,24 @@ const storedDisplay = Effect.fn('Test.StoredDisplay')(
 /** Only the external Flue transport is supplied; production source decoding and access checks run. */
 const runDisplay = Effect.fn('Test.RunDisplayCode')(
   (actor: Actor, thread: ThreadId, kind: DisplayToolKind, code: string) =>
-    storedDisplay(actor, {
-      code,
-      summary: 'Work with records',
-      source: DisplaySource.cases.ThreadMessage.make({ thread, message: 'vivid-display' }),
-      kind,
-    }).pipe(
-      Effect.provide(
-        Layer.mock(
-          Runtime,
-          history([
-            {
-              id: 'vivid-display',
-              role: 'assistant',
-              parts: textPart(
-                `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
-              ),
-            },
-          ]),
-        ),
+    withCalls(
+      storedDisplay(actor, {
+        code,
+        summary: 'Work with records',
+        source: DisplaySource.cases.ThreadMessage.make({ thread, message: 'vivid-display' }),
+        kind,
+      }),
+      Layer.mock(
+        Runtime,
+        history([
+          {
+            id: 'vivid-display',
+            role: 'assistant',
+            parts: textPart(
+              `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Work with records"})`,
+            ),
+          },
+        ]),
       ),
     ),
 )
@@ -201,24 +200,30 @@ describe.skipIf(!testDatabaseConfigured)(
                 },
               ]
               for (const message of ['vivid', 'person', 'thinking', 'missing']) {
-                const failure = yield* storedDisplay(test.personal, {
-                  source: source(message),
-                  code: 'return "forged";',
-                  summary: 'Read',
-                  kind: 'Query',
-                }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))), Effect.flip)
+                const failure = yield* withCalls(
+                  storedDisplay(test.personal, {
+                    source: source(message),
+                    code: 'return "forged";',
+                    summary: 'Read',
+                    kind: 'Query',
+                  }).pipe(Effect.flip),
+                  Layer.mock(Runtime, history(messages)),
+                )
                 expect(failure).toHaveProperty('_tag', 'DisplayProgramRefused')
                 expect(failure).toMatchObject({
                   message:
                     "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
                 })
               }
-              const accepted = yield* storedDisplay(test.personal, {
-                source: source('vivid'),
-                code,
-                summary: 'Read',
-                kind: 'Query',
-              }).pipe(Effect.provide(Layer.mock(Runtime, history(messages))))
+              const accepted = yield* withCalls(
+                storedDisplay(test.personal, {
+                  source: source('vivid'),
+                  code,
+                  summary: 'Read',
+                  kind: 'Query',
+                }),
+                Layer.mock(Runtime, history(messages)),
+              )
               checkCode(accepted, 'Completed', { result: 'Only Vivid wrote this' })
             }),
             testLayer,
@@ -422,21 +427,21 @@ describe.skipIf(!testDatabaseConfigured)(
               )
               expect(yield* Queue.take(opened)).toBe(3)
               const extra = yield* fixture()
-              const vividPeers: Fiber.Fiber<CodeOutcome>[] = []
               const requests = [
                 { actor: test.member, thread: test.companyId },
                 { actor: test.other, thread: test.otherId },
                 { actor: extra.personal, thread: extra.personalId },
               ]
-              for (const [index, request] of requests.entries()) {
-                vividPeers.push(
-                  yield* run(request.actor, request.thread, 'return 5;').pipe(
+              const vividPeers = yield* Effect.forEach(requests, (request, index) =>
+                Effect.gen(function* () {
+                  const fiber = yield* run(request.actor, request.thread, 'return 5;').pipe(
                     Effect.provideService(CodeProcess, observed),
                     Effect.forkChild,
-                  ),
-                )
-                expect(yield* Queue.take(opened)).toBe(index + 4)
-              }
+                  )
+                  expect(yield* Queue.take(opened)).toBe(index + 4)
+                  return fiber
+                }),
+              )
               checkCode(
                 yield* run(extra.member, extra.companyId, 'return 6;').pipe(
                   Effect.provideService(CodeProcess, observed),
@@ -474,8 +479,8 @@ describe.skipIf(!testDatabaseConfigured)(
               })
               expect(yield* Ref.get(count)).toBe(7)
             }),
-            testLayer,
-          ).pipe(Effect.provide(localCodeComputerLayer)),
+            testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
+          ),
       )
 
       /** Run the actual Node program and CodeCalls resolver; refusal must precede Gate and dispatch. */
