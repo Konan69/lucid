@@ -158,7 +158,7 @@ async function document(state, id, directory) {
     id,
     state.modelKind === 'rehearsal'
       ? 'revise the document'
-      : 'Use revise_document to revise the existing Verification plan document. Keep the same id, add the sentence Ready for review. Do not create another document.',
+      : 'Use write_document with the same title Verification plan to revise the existing document. Send the whole body with the added sentence Ready for review. Do not change the title.',
     directory,
     'revise',
   )

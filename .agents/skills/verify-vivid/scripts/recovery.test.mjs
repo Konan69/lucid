@@ -6,6 +6,7 @@ import * as NodeEvents from 'node:events'
 import * as NodeOS from 'node:os'
 const testCache = await NodeFSP.mkdtemp(NodeOS.tmpdir() + '/vivid-recovery-')
 process.env.VIVID_VERIFY_CACHE = testCache
+process.env.VIVID_VERIFY_DEPENDENCIES = testCache + '/dependencies'
 NodeTest.after(() => NodeFSP.rm(testCache, { recursive: true, force: true }))
 const { root, skill, identity, command, alive, boot } = await import('./process.mjs')
 
@@ -176,7 +177,7 @@ NodeTest.test(
   async (context) => {
     const live = await fixture(context, true)
     const dead = await fixture(context)
-    const link = skill + '/scripts/node_modules'
+    const link = testCache + '/dependencies'
     const target = root + '/apps/server/node_modules'
     context.after(async () => {
       if ((await NodeFSP.readlink(link).catch(() => null)) === target) await NodeFSP.unlink(link)

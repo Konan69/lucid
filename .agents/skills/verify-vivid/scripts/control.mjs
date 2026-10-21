@@ -7,7 +7,17 @@ import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
 import * as NodeChildProcess from 'node:child_process'
-import { root, skill, freePorts, identity, command, signal, json, cache } from './process.mjs'
+import {
+  root,
+  skill,
+  freePorts,
+  identity,
+  command,
+  signal,
+  json,
+  cache,
+  dependencyLink,
+} from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
 
@@ -67,7 +77,7 @@ async function launch() {
     mode: 0o600,
   })
   await NodeFSP.writeFile(cache + '/current', run + '\n')
-  const dependencies = skill + '/scripts/node_modules'
+  const dependencies = dependencyLink
   const existing = await NodeFSP.lstat(dependencies).catch((error) => {
     if (error.code === 'ENOENT') return null
     throw error

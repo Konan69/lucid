@@ -1,5 +1,5 @@
 import * as NodeFSP from 'node:fs/promises'
-import { root, skill, boot, alive, command, json, cache } from './process.mjs'
+import { root, skill, boot, alive, command, json, cache, dependencyLink } from './process.mjs'
 import { control } from './socket.mjs'
 import { remoteCleanup } from './remote.mjs'
 
@@ -166,7 +166,7 @@ export async function dependenciesCleanup() {
     await owned(state)
     if (!state.cleaned && (await supervisorAlive(state))) return
   }
-  const link = skill + '/scripts/node_modules'
+  const link = dependencyLink
   if (
     (await NodeFSP.readlink(link).catch((error) => {
       if (error.code === 'ENOENT' || error.code === 'EINVAL') return null
