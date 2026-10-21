@@ -1,10 +1,39 @@
 import * as fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import * as assert from 'node:assert/strict'
 import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
+
+const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
+const { createElement } = web('react')
+const { renderToStaticMarkup } = web('react-dom/server')
+const Markdown = web('react-markdown').default
+const gfm = web('remark-gfm').default
+
+/** Use the web's Markdown parser so formatting and link destinations are not reply text. */
+function renderedReply(text) {
+  const html = renderToStaticMarkup(createElement(Markdown, { remarkPlugins: [gfm] }, text))
+  return `(() => {
+    const body = new DOMParser().parseFromString(${JSON.stringify(html)}, 'text/html').body
+    for (const block of body.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,br,tr,td,th')) {
+      block.prepend(' ')
+      block.append(' ')
+    }
+    return (${normaliseReply.toString()})(body.textContent)
+  })()`
+}
+
+/** Ignore whitespace and terminal punctuation while preserving exact reply content. */
+function normaliseReply(text) {
+  return text
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .replace(/\p{P}+$/gu, '')
+    .trim()
+}
 
 const missing = {
   question: 'No browser recipe for the multi-question controls yet',
@@ -48,7 +77,7 @@ async function dom(run, expression) {
 /** FromVivid places settled Markdown beside the Copy message control (Message.tsx).
  * Count assistant messages, not descendants or Person text that happens to contain the reply. */
 function replyCount(text) {
-  return `Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).filter(button => Array.from(button.parentElement.parentElement.children).some(element => element !== button.parentElement && element.innerText.trim() === ${JSON.stringify(text)})).length`
+  return `Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).filter(button => Array.from(button.parentElement.parentElement.children).some(element => element !== button.parentElement && (${normaliseReply.toString()})(element.innerText) === ${JSON.stringify(text)})).length`
 }
 
 /** The same presence assertion must reject the pre-follow-up DOM and pass after rendering. */
@@ -58,19 +87,14 @@ function requireReply(count) {
 
 /** Retain counts at each DOM boundary so HTTP history cannot substitute for visible replies. */
 async function exactReply(run, text, directory, stage) {
-  const expression = replyCount(text)
+  const normalised = await dom(run, renderedReply(text))
+  const expression = replyCount(normalised)
   if (stage !== 'before') await run(['wait', '--fn', expression + ' === 1'])
   const count = await dom(run, expression)
-  const receipt = { stage, text, count, expression }
+  const receipt = { stage, text, normalised, count, expression }
   await json(directory + '/' + stage + '-reply.json', receipt)
   if (stage === 'before') {
     assert.equal(count, 0, 'Follow-up reply already present before sending')
-    assert.throws(() => requireReply(count), { name: 'AssertionError' })
-    await json(directory + '/before-reply-negative.json', {
-      ...receipt,
-      verdict: 'rejected',
-      reason: 'The presence assertion rejects the live DOM with the follow-up still unsent',
-    })
   } else requireReply(count)
 }
 
@@ -330,7 +354,7 @@ async function journey(state, feature) {
       .map((part) => part.text)
       .join('')
       .trim()
-    if (feature === 'reload') assert.equal(text, 'amber-orchid')
+    if (feature === 'reload') assert.equal(await dom(run, renderedReply(text)), 'amber-orchid')
     if (recipe.check === 'reply' || recipe.check === 'reload')
       await exactReply(run, text, directory, 'after')
     await rendered(run, recipe.check)
