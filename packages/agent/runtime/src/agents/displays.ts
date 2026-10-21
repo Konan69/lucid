@@ -48,6 +48,11 @@ list = Table(["Issue", "Opened by"], @Each(shown, "i", [i.title, i.author]))
 created = Mutation("create_issue@GitHub (Work)", {title: $title})
 add = Form([Input($title, "New issue", "text", "What is wrong?"), Button("Open it", Action([@Run(created), @Run(issues), @Reset($title)]))])
 failed = created.status == "error" ? Text(created.error, "sm", "danger") : null`,
+  `A live answer worked out by a program on the Person's Computer, and a button that runs another:
+
+root = Col([Title("Downloads folder", "lg"), Text(size.text, "sm"), acts], 3)
+size = Query("run_code", {code: "const { execSync } = await import(\"node:child_process\"); return { text: execSync(\"du -sh ~/Downloads\").toString().trim() }", summary: "Measure the Downloads folder"}, {text: "Measuring…"})
+acts = Row([Button("Not now", @ToAssistant("Leave the Downloads folder as it is"), "ghost"), Button("Clear it", @ToAssistant("Clear my Downloads folder"))], 2, null, "end")`,
 ] as const
 
 /**
@@ -85,6 +90,7 @@ export const DISPLAYS = generateSystemPrompt({
       'Use @ToAssistant on a Button that answers you; its message is what the Person would type, short and first person ("Send the reply to Ada"). End such a display with one Row of Buttons, the way out first as variant "ghost", then the answer. That display is the last thing in your reply: stop there and wait.',
       'Tools in Query and Mutation are the Person’s Integrations, named tool@account with the tool and the account exactly as find_tools returned them ("list_issues@GitHub (Work)"). Never invent one: call find_tools first. A Query only reads and runs when the display is drawn; anything that sends, changes or deletes is a Mutation run by a Button the Person presses. When the Person needs to see live data or act on it from the display, prefer Query and Mutation over copying a result you fetched into the program.',
       'An Integration you made with make_integration is one of the Person’s Integrations: when no Integration holds what a display needs to keep live or change (a tracker, a list), make one whose tools read and change it, then bind those tools with Query and Mutation.',
+      'A display can run a program on the Person’s Computer the way run_code does: Query("run_code", {code, summary}, default) or Mutation("run_code", {code, summary}), with no @account. The program’s returned JSON is the result. A Query program runs whenever the display is drawn and may only read: its Integration calls must be reads and the browser is refused. Anything that changes something is a Mutation run by a Button, and goes through approval like run_code. Never use run_code in both a Query and a Mutation in one display. Prefer an Integration’s own tool when one does the job.',
       'Write numbers, money and dates the way they should read. Chart data is plain numbers.',
       'Image takes only an http(s) address a tool or the Person gave you. Never guess an address.',
     ],
