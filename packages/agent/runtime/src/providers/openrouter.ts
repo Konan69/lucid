@@ -34,6 +34,12 @@ const glm = (id: string, name: string) => ({
   contextWindow: 1_048_576,
   maxTokens: 131_072,
   headers: { 'HTTP-Referer': 'https://vivid.app', 'X-Title': 'Vivid' },
+  // OpenRouter otherwise picks the upstream per request. On 21 October 2026 it sent Vivid's
+  // ~23k-token turns to OpenInference, which spent 9.9 to 18.8 s generating 100 to 600 tokens per
+  // model step; Together served the same model and prompt in 0.5 to 1.8 s
+  // (`generation_time` in OpenRouter's generation records). Together goes first; the fallbacks
+  // stay allowed so Vivid still answers when Together is down.
+  compat: { openRouterRouting: { order: ['together'], allow_fallbacks: true } },
 })
 
 /** The same production provider is exercised through its public streaming seam in tests. */

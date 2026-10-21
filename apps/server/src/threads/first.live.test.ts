@@ -9,7 +9,7 @@ import { chainArrival, chainLayer, completeRun } from '../runtime/chains.ts'
  * model loaded the first-conversation skill and went straight to `ask_person`, so a new Person met
  * a form instead of Vivid. Clients draw whatever Vivid writes above the cards of the same reply,
  * so what is checked is the reply itself: it has words of Vivid's own, and they are written
- * before the question is asked. The introduction identifies Vivid by name; the remaining
+ * before any question. Whether to ask at all is the model's choice. The introduction identifies Vivid by name; the remaining
  * wording belongs to the model and is not compared against the prompt.
  *
  * One real signup, the server's own first Thread and one real model reply; no judge, no retry.
@@ -19,7 +19,7 @@ layer(chainLayer, { excludeTestServices: true })((it) => {
     'First conversation live chain',
     () => {
       it.effect(
-        'Vivid says who it is before it asks its first question',
+        'Vivid says who it is before it asks anything',
         () =>
           Effect.gen(function* () {
             const fixture = yield* chainArrival()
@@ -41,30 +41,30 @@ layer(chainLayer, { excludeTestServices: true })((it) => {
                 : [],
             )
             expect(spoke, 'Vivid must say something of its own in its first reply').not.toBe(-1)
-            // A call the runtime refuses is made again, and the Person sees the refused one as a
-            // failed step above their first question; one that is only refused leaves no card.
+            // Asking is the model's choice since 21 October 2026. When it does ask, it asks once,
+            // the call is accepted, and the words come first; a refused call would show the
+            // Person a failed step above the card.
             expect(
               questions.map((question) => question.state),
-              'Vivid must ask its first question once, and the call must be accepted',
-            ).toEqual(['output-available'])
-            expect(spoke, 'The words must come before the question').toBeLessThan(
-              Math.min(...questions.map((question) => question.index)),
+              'Vivid asks at most one accepted question',
+            ).toEqual(questions.length === 0 ? [] : ['output-available'])
+            const firstQuestion = Math.min(
+              parts.length,
+              ...questions.map((question) => question.index),
             )
-            const beforeQuestion = parts
-              .slice(0, Math.min(...questions.map((question) => question.index)))
+            expect(spoke, 'The words must come before any question').toBeLessThan(firstQuestion)
+            const introduction = parts
+              .slice(0, firstQuestion)
               .flatMap((part) => (part.type === 'text' ? [part.text] : []))
               .join(' ')
-            expect(
-              beforeQuestion,
-              'The introduction must identify Vivid before the first question',
-            ).toMatch(/\bVivid\b/u)
-            // The card is drawn from the stored question, not from the call: it has to be there
-            // and still waiting for the Person. This Thread has had one Run, so it is that Run's.
+            expect(introduction, 'The introduction must identify Vivid').toMatch(/\bVivid\b/u)
+            // A card is drawn from the stored question, not from the call, so an asked question
+            // must be waiting for the Person. This Thread has had one Run, so it is that Run's.
             const asked = yield* fixture.rpc.GetThread({ id: fixture.threadId })
             expect(
               asked.requests.map((request) => request.state._tag),
-              'The question must be waiting for the Person in the Thread',
-            ).toEqual(['Waiting'])
+              'An asked question must be waiting for the Person in the Thread',
+            ).toEqual(questions.map(() => 'Waiting'))
           }).pipe(Effect.scoped),
         { timeout: 240_000 },
       )

@@ -49,9 +49,10 @@ export const flueMessage = (
       // Every other signal is acted on without words ("do not narrate it"), and a model that
       // reads this one the same way loads the skill and opens with a bare question card: on
       // 5 October 2026 five of twelve first Threads did. The body therefore says who speaks and
-      // in what order, so the standing rule and the skill do not have to be weighed against
-      // each other.
-      body: "This is the Person's first Thread. Nothing has been said yet, so you speak first. Activate the first-conversation skill and follow it. Your reply must open with your own words to the Person, written as text, before you ask them anything.",
+      // in what order. It names no skill and no tool: on 21 October 2026 the order to activate
+      // the first-conversation skill and then ask cost two extra model steps before the first
+      // word, and the model chooses its own tools.
+      body: "This is the Person's first Thread. Nothing has been said yet, so you speak first. Open with your own words to the Person, written as text. Use your tools only when this reply needs them.",
       attributes: attribution,
     }),
   })
