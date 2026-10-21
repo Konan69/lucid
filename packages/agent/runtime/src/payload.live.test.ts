@@ -160,7 +160,7 @@ describe.skipIf(!enabled)('OpenRouter response reconciliation', () => {
         expect(textOf(live)).toContain('Why Rivers Meander')
         expect(calls()).toBe(samples)
         const metrics = measure(chunks)
-        const completed = chunks.findLast((chunk) => chunk.type === 'message-completed')
+        const completed = chunks.filter((chunk) => chunk.type === 'message-completed').at(-1)
         const settled = chunks.find((chunk) => chunk.type === 'submission-settled')
         const completedAt = completed === undefined ? undefined : arrived.get(completed)
         const settledAt = settled === undefined ? undefined : arrived.get(settled)
