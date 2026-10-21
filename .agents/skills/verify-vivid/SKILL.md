@@ -24,7 +24,7 @@ VIVID_VERIFY_DEVBOX=cloudbox-konan VIVID_VERIFY_KEY_FILE=/private/verify.env .ag
 .agents/skills/verify-vivid/verify doctor flue-<printed-id>
 ```
 
-Require exit 0 and `worthy: true` from doctor. Launch captures HEAD and `git status --porcelain=v1 -uall`. Dirty trees are labelled dirty in state, doctor and every verdict. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
+Require exit 0 and `worthy: true` from doctor. Launch captures HEAD, `git status --porcelain=v1 -uall` and a SHA-256 hash of `git diff --binary HEAD`. Dirty trees are labelled dirty in state, doctor and every verdict. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
 
 Each run owns fresh ports, labelled containers, synthetic Better Auth account, model/runtime notes, build outputs, Vite caches and captured process generations. The shipped runtime build gets only a scratch outDir override and retains its workspace bundling rules. It never empties the checkout dist. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Readiness requires actual product health, runtime model health, Helix health, web build/proxy and successful signup/signin. Startup failure keeps evidence and attempts cleanup.
 

@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
@@ -176,4 +177,15 @@ export async function ownsPort(owned, port) {
 /** Only recorded PIDs with the original Linux start time may be signalled after a CLI restart. */
 export async function terminate(owned, sig = 'SIGTERM', group = false) {
   if (await alive(owned)) process.kill(group ? -owned.pid : owned.pid, sig)
+}
+
+/** Status labels dirtiness; the diff hash distinguishes edits with identical porcelain status. */
+export async function checkout() {
+  const tree = await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })
+  const diff = await command(['git', 'diff', '--binary', 'HEAD'], { trim: false })
+  return {
+    tree,
+    dirty: tree.length > 0,
+    diffHash: NodeCrypto.createHash('sha256').update(diff).digest('hex'),
+  }
 }

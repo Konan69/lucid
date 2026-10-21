@@ -1,5 +1,5 @@
 import * as NodeFSP from 'node:fs/promises'
-import { alive, ownsPort, command } from './process.mjs'
+import { alive, ownsPort, command, checkout } from './process.mjs'
 import { owned, sameBoot } from './recovery.mjs'
 
 /** Read-only checks record individual missing resources instead of throwing on partial/crashed
@@ -19,12 +19,10 @@ export async function doctor(state) {
   await check('checkout commit', async () => ({
     ok: (await command(['git', 'rev-parse', 'HEAD'])) === state.head,
   }))
-  await check('checkout tree', async () => ({
-    ok:
-      (await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })) === state.tree,
-    dirty: state.dirty,
-    tree: state.tree,
-  }))
+  await check('checkout tree', async () => {
+    const current = await checkout()
+    return { ok: current.tree === state.tree && current.diffHash === state.diffHash, ...current }
+  })
   await check('disposable Helix', async () => {
     const value = JSON.parse(await command(['docker', 'inspect', state.helixContainer]))[0]
     const binding = value.NetworkSettings.Ports['8080/tcp']
@@ -93,6 +91,7 @@ export async function doctor(state) {
     worthy: checks.every((value) => value.ok),
     head: state.head,
     dirty: state.dirty,
+    diffHash: state.diffHash,
     tree: state.tree,
     model: state.model,
     host: state.hostname,

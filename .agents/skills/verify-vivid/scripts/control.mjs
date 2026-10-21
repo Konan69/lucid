@@ -17,6 +17,7 @@ import {
   json,
   cache,
   dependencyLink,
+  checkout,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
@@ -38,7 +39,7 @@ async function launch() {
   const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
   const modelConfig = await provider()
-  const tree = await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })
+  const snapshot = await checkout()
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
@@ -61,8 +62,7 @@ async function launch() {
     head,
     branch,
     ...hostReceipt,
-    tree,
-    dirty: tree.length > 0,
+    ...snapshot,
     model: modelConfig.model,
     modelKind: modelConfig.model.startsWith('rehearsal/') ? 'rehearsal' : 'real',
     keySource: modelConfig.source,
@@ -132,7 +132,7 @@ try {
   if (action === 'launch') await launch()
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed | browser | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed | browser <feature> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
@@ -146,8 +146,9 @@ try {
     } else {
       if ((await command(['git', 'rev-parse', 'HEAD'])) !== state.head)
         throw new Error('Checkout commit changed; clean this run and launch again')
-      const tree = await command(['git', 'status', '--porcelain=v1', '-uall'], { trim: false })
-      if (tree !== state.tree) throw new Error('Working tree changed; launch again')
+      const snapshot = await checkout()
+      if (snapshot.tree !== state.tree || snapshot.diffHash !== state.diffHash)
+        throw new Error('Working tree changed; launch again')
       if (action === 'feature')
         console.log(
           await command(

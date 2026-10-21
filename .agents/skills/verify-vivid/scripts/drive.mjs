@@ -274,6 +274,7 @@ export async function drive(state, feature) {
       ...verdict,
       head: state.head,
       dirty: state.dirty,
+      diffHash: state.diffHash,
       tree: state.tree,
       model: state.model,
       modelKind: state.modelKind,

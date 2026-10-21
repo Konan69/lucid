@@ -359,6 +359,7 @@ async function launch() {
     run: state.run,
     head: state.head,
     dirty: state.dirty,
+    diffHash: state.diffHash,
     tree: state.tree,
     model: state.model,
     modelKind: state.modelKind,

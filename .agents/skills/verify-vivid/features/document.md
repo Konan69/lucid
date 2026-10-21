@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-One Rehearsal plan Artifact advances from version 1 to 2 under the same id. The real read tool reports version 2. Person ListArtifacts and SQL retain the immutable versions. Reload retains the rendered Wrote a document tool card. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
+One titled Artifact advances from version 1 to 2 under the same id. The real read tool reports version 2. Person ListArtifacts and SQL retain the immutable versions. Reload retains the rendered Wrote a document tool card. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
 
 ## How to get to it (user POV)
 
@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature document` after Launch and Docto
 
 ## Gotchas
 
-The document is real SQL data written by the runtime tools. Person edits and version conflict handling are separate entry points; open the Artifact and edit it when those paths change.
+The document is real SQL data written by the runtime tools. Person edits and version conflict handling are separate RPC entry points. Opening the body in the web is blocked until the product has an Artifact viewer and this skill has its browser recipe.

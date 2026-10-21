@@ -36,6 +36,12 @@ const recipes = {
 for (const name of features)
   assert.ok(recipes[name] || missing[name], 'Unmapped browser feature ' + name)
 
+/** Read semantic DOM through the owned browser, with the serialized result retained as evidence. */
+async function dom(run, expression) {
+  const value = JSON.parse(await run(['eval', 'JSON.stringify(' + expression + ')']))
+  return typeof value === 'string' ? JSON.parse(value) : value
+}
+
 /** The checks use rendered semantic elements. Raw source or assistant prose cannot satisfy them. */
 async function rendered(run, kind) {
   switch (kind) {
@@ -61,12 +67,22 @@ async function rendered(run, kind) {
     }
     case 'document': {
       await run(['wait', 'button[aria-expanded]'])
-      const snapshot = await run(['snapshot'])
-      assert.match(snapshot, /button "Wrote a document/)
-      await run(['find', 'role', 'button', 'click', '--name', 'Wrote a document', '--exact'])
-      const expanded = await run(['snapshot'])
-      assert.match(expanded, /listitem:[\s\S]*Wrote a document/)
-      await run(['find', 'role', 'button', 'click', '--name', 'Wrote a document', '--exact'])
+      const names = await dom(
+        run,
+        `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('Wrote a document') || text.includes('more steps'))`,
+      )
+      assert.equal(names.length, 1, 'Expected one rendered document tool card')
+      await run(['find', 'role', 'button', 'click', '--name', names[0], '--exact'])
+      const steps = await dom(
+        run,
+        `Array.from(document.querySelectorAll('button[aria-expanded="true"] + ol > li')).map(li => li.innerText.trim())`,
+      )
+      assert.ok(
+        steps.some((text) => text.startsWith('Wrote a document')),
+        'No document receipt in the expanded card',
+      )
+      await run(['snapshot'])
+      await run(['find', 'role', 'button', 'click', '--name', names[0], '--exact'])
       break
     }
     case 'reply':
@@ -139,6 +155,7 @@ async function journey(state, feature) {
     model: state.model,
     modelKind: state.modelKind,
     host: state.hostname,
+    diffHash: state.diffHash,
     evidence: directory,
   }
   if (missing[feature]) {
