@@ -5,6 +5,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
+import * as Schema from 'effect/Schema'
 
 const assert = NodeAssert
 const test = NodeTest.default
@@ -14,6 +15,12 @@ const repositoryRoot = NodePath.resolve(
 )
 const turbo = NodePath.join(repositoryRoot, 'node_modules/turbo/bin/turbo')
 const oxlint = NodePath.join(repositoryRoot, 'node_modules/oxlint/bin/oxlint')
+
+const Manifest = Schema.StructWithRest(
+  Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) }),
+  [Schema.Record(Schema.String, Schema.Json)],
+)
+const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(Manifest))
 
 /** Exercise the real pinned compiler and repository configs with small owned source files. */
 function fixture(t) {
@@ -71,7 +78,7 @@ function fixture(t) {
     )
   }
   const contractManifest = NodePath.join(root, 'packages/contracts/package.json')
-  const manifest = JSON.parse(NodeFS.readFileSync(contractManifest, 'utf8'))
+  const manifest = decodeManifest(NodeFS.readFileSync(contractManifest, 'utf8'))
   manifest.scripts.typecheck += ' tsconfig.tests.json'
   NodeFS.writeFileSync(contractManifest, JSON.stringify(manifest))
   NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@typescript'), { recursive: true })
