@@ -10,7 +10,7 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { stretches } from '@vivid/contracts/display'
-import { Cache, Context, Data, Duration, Effect, Exit, Layer, Schema } from 'effect'
+import { Cache, Context, Data, Duration, Effect, Exit, Layer, Option, Schema } from 'effect'
 import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -43,6 +43,7 @@ export const DisplayAdmission = Schema.TaggedUnion({
 })
 /** Component schemas affect drawing only; reserved Query/Mutation ASTs are parser-owned. */
 const parser = createParser({})
+const decodeProgram = Schema.decodeUnknownOption(RunCodeRequest)
 
 /** Computed expressions are not persisted program declarations. Only exact literal arguments count. */
 function literalProgram(args: ASTNode | null) {
@@ -51,7 +52,7 @@ function literalProgram(args: ASTNode | null) {
   const summary = args.entries.find(([name]) => name === 'summary')
   if (code === undefined || summary === undefined) return []
   if (code[1].k !== 'Str' || summary[1].k !== 'Str') return []
-  return [{ code: code[1].v, summary: summary[1].v }]
+  return Option.toArray(decodeProgram({ code: code[1].v, summary: summary[1].v }))
 }
 
 /** Only a literal tool name establishes that this declaration names the program interpreter. */
@@ -71,25 +72,30 @@ function declarations(text: string) {
       return statement.toolAST.v === 'run_code' && literalProgram(statement.argsAST).length === 0
     }),
   )
-  const programs = parsed.flatMap((parsed) => {
-    return [
-      ...parsed.queryStatements.flatMap((statement) =>
-        statement.complete && isRunCode(statement.toolAST)
-          ? literalProgram(statement.argsAST).map((program) => ({
-              ...program,
-              kind: 'Query' as const,
-            }))
-          : [],
-      ),
-      ...parsed.mutationStatements.flatMap((statement) =>
-        isRunCode(statement.toolAST)
-          ? literalProgram(statement.argsAST).map((program) => ({
-              ...program,
-              kind: 'Mutation' as const,
-            }))
-          : [],
-      ),
-    ]
+  const programs = parsed.flatMap((tree) => {
+    const queries = tree.queryStatements.flatMap((statement) =>
+      statement.complete && isRunCode(statement.toolAST)
+        ? literalProgram(statement.argsAST).map((program) =>
+            Program.make({
+              code: program.code,
+              summary: program.summary,
+              kind: 'Query',
+            }),
+          )
+        : [],
+    )
+    const mutations = tree.mutationStatements.flatMap((statement) =>
+      isRunCode(statement.toolAST)
+        ? literalProgram(statement.argsAST).map((program) =>
+            Program.make({
+              code: program.code,
+              summary: program.summary,
+              kind: 'Mutation',
+            }),
+          )
+        : [],
+    )
+    return queries.concat(mutations)
   })
   return { programs, computed }
 }
@@ -147,17 +153,18 @@ type StoredDisplay = Effect.Effect<
   Database | Runtime | FeedStore
 >
 
+interface CodeSourceService {
+  readonly resolve: (
+    source: DisplaySource,
+    person: PersonId,
+    request: RunCodeRequest,
+  ) => Effect.Effect<typeof DisplayAdmission.Type, SourceFailure, Database | Runtime | FeedStore>
+}
+
 /** Parsed source authority owns the bounded final-message cache, while access stays per request. */
-export class CodeSource extends Context.Service<
-  CodeSource,
-  {
-    readonly resolve: (
-      source: DisplaySource,
-      person: PersonId,
-      request: RunCodeRequest,
-    ) => Effect.Effect<typeof DisplayAdmission.Type, SourceFailure, Database | Runtime | FeedStore>
-  }
->()('vivid/CodeSource') {}
+export class CodeSource extends Context.Service<CodeSource, CodeSourceService>()(
+  'vivid/CodeSource',
+) {}
 
 /** Never cache unfinished messages or failures. Feed posts are mutable and are re-read every time. */
 export const codeSourceLayer = Layer.effect(

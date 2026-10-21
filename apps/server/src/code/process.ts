@@ -29,7 +29,7 @@ import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { CodeComputer, type CodeComputerService, type Guest } from './computer.ts'
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
-import { makeDisplayPool } from './pool.ts'
+import { DisplayPool, displayPoolLayer } from './pool.ts'
 
 /** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
@@ -542,10 +542,7 @@ export const codeProcessLayer = Layer.effect(
     const oversized = notAdmitted(
       CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
     )
-    const displays = yield* makeDisplayPool(
-      (input, dispatch) => execute(computer, input, dispatch),
-      busy,
-    )
+    const displays = yield* DisplayPool
     return CodeProcess.of({
       run: Effect.fn('Code.run')(function* (input, dispatch) {
         if (bytes(input.request.code) > budgets.source) return oversized
@@ -559,8 +556,8 @@ export const codeProcessLayer = Layer.effect(
       }),
       runDisplay: Effect.fn('Code.runDisplay')(function* (input, dispatch) {
         if (bytes(input.request.code) > budgets.source) return oversized
-        return yield* displays(input, dispatch)
+        return yield* displays.run(input, execute(computer, input, dispatch))
       }),
     })
   }),
-)
+).pipe(Layer.provide(displayPoolLayer))
