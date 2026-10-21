@@ -44,7 +44,7 @@ function release(pool: PersonPool, ticket: Deferred.Deferred<void>) {
     const next = pool.waiting.shift()
     if (next !== undefined) {
       pool.active.add(next)
-      Deferred.succeedUnsafe(next, undefined)
+      Deferred.doneUnsafe(next, Effect.void)
     }
     return
   }
@@ -75,7 +75,7 @@ export const makeDisplayPool = Effect.fn('Code.makeDisplayPool')(function* (
         const ticket = Deferred.makeUnsafe<void>()
         if (pool.active.size < budgets.personDisplays) {
           pool.active.add(ticket)
-          Deferred.succeedUnsafe(ticket, undefined)
+          Deferred.doneUnsafe(ticket, Effect.void)
         } else pool.waiting.push(ticket)
         people.set(person, pool)
         return Option.some({ pool, ticket })
