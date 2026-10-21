@@ -5,10 +5,6 @@
       "reason": "Flue's ignored durable local state, never source."
     },
     {
-      "path": ".alchemy",
-      "reason": "Alchemy owns ignored deployment state."
-    },
-    {
       "path": "docs/prds",
       "reason": "Private product requirement documents are deliberately ignored."
     },
@@ -59,7 +55,9 @@
     {
       "path": "artifacts/**",
       "reason": "Private generated research and proof artifacts are deliberately ignored."
-    },
+    }
+  ],
+  "dependencies": [
     {
       "path": "expo/tsconfig.base",
       "reason": "Expo ships this config in the pinned dependency; the phone manifest declares Expo."
@@ -95,16 +93,6 @@
       "owner": "packages/design/marks/tsconfig.tests.json",
       "path": "src/**/*.test.tsx",
       "reason": "Shared test config guards future TSX test files alongside existing TS suites."
-    },
-    {
-      "owner": "tsconfig.json",
-      "path": "packages/*/drizzle.config.ts",
-      "reason": "Future workspace migration owners must be included in the root TypeScript graph."
-    },
-    {
-      "owner": "tsconfig.json",
-      "path": "packages/*/*/drizzle.config.ts",
-      "reason": "Future workspace migration owners must be included in the root TypeScript graph."
     },
     {
       "owner": ".oxlintrc.json",

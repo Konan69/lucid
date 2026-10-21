@@ -16,8 +16,8 @@ schema-derived `VividRpcClient`.
   skills it can use, their time zone.
 - `src/db.ts` — Flue's database composition root: configuration and pool construction.
 - `src/storage.ts` — pure `flueStorage(pool)`, the production PostgreSQL runner; Flue owns pool close.
-- `src/index.ts` — what another package may import by name (`@vivid/agent-runtime`, plus `./sandbox`,
-  `./scope` and `./signins`): only the server's and the desktop app's tests read it. Nothing outside this package reaches a file here by path.
+- `src/index.ts` — what another package may import by name (`@vivid/agent-runtime`, plus
+  `@vivid/agent-runtime/sandbox`, `@vivid/agent-runtime/scope` and `@vivid/agent-runtime/signins`): only the server's and the desktop app's tests read it. Nothing outside this package reaches a file here by path.
 - `tests/schema.ts` — a disposable schema on explicit test authority, with a separate surviving cleanup connection, and `testDatabaseConfigured` for gating suites; the runtime never imports the server's test database.
 - `tests/routes.ts` — production Hono/Flue route fixture using public start/stop and a controlled faux provider.
 - `tests/setup.ts` — Vitest worker authority, settled before any import because Effect copies the environment once: only the explicit test URL reaches runtime tests and unconfigured workers have no `DATABASE_URL`; no inherited `VIVID_SERVER_URL`; a worker-owned `VIVID_RUNTIME_TOKEN`.

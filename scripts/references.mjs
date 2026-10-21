@@ -9,6 +9,7 @@ import * as Schema from 'effect/Schema'
 
 const isString = Schema.is(Schema.String)
 const strings = Schema.Array(Schema.String)
+/** Decode only path-bearing config fields so each format keeps its own resolution semantics. */
 const configSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -39,8 +40,10 @@ const configSchema = Schema.Struct({
   ),
 })
 const reason = Schema.String.check(Schema.isPattern(/\S/))
+/** Missing paths need an explicit purpose and reason; dependency exports are not generated files. */
 const declarationsSchema = Schema.Struct({
   generated: Schema.Array(Schema.Struct({ path: Schema.String, reason })),
+  dependencies: Schema.Array(Schema.Struct({ path: Schema.String, reason })),
   empty: Schema.Array(Schema.Struct({ owner: Schema.String, path: Schema.String, reason })),
   examples: Schema.Array(Schema.Struct({ owner: Schema.String, paths: strings, reason })),
 })
@@ -94,7 +97,11 @@ function exceptionFor(entries, reference) {
   return entries.find((entry) => entry.owner === reference.owner && entry.path === reference.path)
 }
 
-/** Paths in prose are repository-root paths or document-relative links; code fences are examples. */
+/**
+ * Check Markdown links and backticked ./, ../ or the repository directory prefixes listed below.
+ * Bare root filenames, .github/, .husky/, patches/ and unbackticked text are outside this scan.
+ * Fenced code and placeholder paths are examples, so they cannot establish source requirements.
+ */
 function proseReferences(tree, owner) {
   const text = tree.read(owner).replace(/^(```|~~~)[\s\S]*?^\1[^\n]*$/gm, '')
   const references = []
@@ -233,14 +240,14 @@ function dependencyResolves(tree, reference, declarations) {
         { ...manifest.dependencies, ...manifest.devDependencies },
         dependency,
       )
-      return declared && declarations.generated.some((entry) => entry.path === reference.path)
+      return declared && declarations.dependencies.some((entry) => entry.path === reference.path)
     }
     if (base === '.') return false
     base = NodePath.posix.dirname(base)
   }
 }
 
-/** A generated root grants only the declared path pattern, never every missing child under it. */
+/** Non-glob generated paths authorize that exact path; a `/**` suffix authorizes its whole subtree. */
 function resolves(tree, reference, declarations) {
   if (reference.path.startsWith('!')) return true
   if (reference.purpose === 'dependency') return dependencyResolves(tree, reference, declarations)
@@ -261,6 +268,50 @@ function resolves(tree, reference, declarations) {
   })
 }
 
+/** Owner-specific examples cannot hide an identical missing path in a different document. */
+function isExample(declarations, reference) {
+  return declarations.examples.some(
+    (entry) => entry.owner === reference.owner && entry.paths.includes(reference.path),
+  )
+}
+
+/** A declaration must still authorize a missing reference, not merely name a path that now exists. */
+function unusedDeclarations(tree, references, declarations) {
+  const strict = { ...declarations, generated: [], dependencies: [] }
+  const missing = references.filter((reference) => !resolves(tree, reference, strict))
+  const required = missing.filter(
+    (reference) =>
+      exceptionFor(declarations.empty, reference) === undefined &&
+      !isExample(declarations, reference),
+  )
+  const findings = []
+  for (const kind of ['generated', 'dependencies']) {
+    for (const entry of declarations[kind]) {
+      const policy = { ...strict, [kind]: [entry] }
+      if (!required.some((reference) => resolves(tree, reference, policy)))
+        findings.push(
+          `scripts/references.json: ${kind} declaration ${entry.path} authorizes nothing; remove it`,
+        )
+    }
+  }
+  for (const entry of declarations.examples) {
+    for (const path of entry.paths) {
+      if (
+        !missing.some(
+          (reference) =>
+            reference.owner === entry.owner &&
+            reference.path === path &&
+            exceptionFor(declarations.empty, reference) === undefined,
+        )
+      )
+        findings.push(
+          `scripts/references.json: examples declaration ${entry.owner}: ${path} authorizes nothing; remove it`,
+        )
+    }
+  }
+  return findings
+}
+
 /** All exemptions are reviewable data with reasons, scoped to one owner and exact reference. */
 export function checkReferences(tree, input) {
   const declarations = decode(declarationsSchema, input, 'scripts/references.json')
@@ -275,20 +326,16 @@ export function checkReferences(tree, input) {
       }
       continue
     }
-    if (
-      declarations.examples.some(
-        (entry) => entry.owner === reference.owner && entry.paths.includes(reference.path),
-      )
-    )
-      continue
+    if (isExample(declarations, reference)) continue
     if (!resolves(tree, reference, declarations))
       findings.push(
         `${reference.owner}: ${reference.path} matches no tracked source or declared generated path`,
       )
   }
-  return [...new Set(findings)]
+  return [...new Set([...findings, ...unusedDeclarations(tree, references, declarations)])]
 }
 
+// Importing the checker for fixtures must not read the live checkout or set the test process exit code.
 if (
   process.argv[1] !== undefined &&
   NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)

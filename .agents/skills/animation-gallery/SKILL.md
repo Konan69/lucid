@@ -88,7 +88,7 @@ One haptic per user action, on the causal frame, never as the only feedback.
 | Streaming text & lists (recipe not yet catalogued) | Typewriter; Text morph; Enter / Exit; Layout animation |
 | Loading (recipe not yet catalogued) | Skeleton / Shimmer; Linear; Pulse; Crossfade |
 
-Linked families have bundled recipes. Other families list vocabulary only; use the animate skill before implementing them.
+Open linked families for bundled recipes. For vocabulary-only families, apply `animate` or `animate-expo` before implementation.
 
 ## Source policy
 

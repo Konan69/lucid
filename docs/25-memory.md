@@ -135,7 +135,7 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
 - The runtime reads a memory brief through `MemoryAccess.brief` in
   `apps/server/src/memory/store.ts`. Its cache key includes the authorized memories and Person.
   A cache miss asks the extraction model to summarize those memories; successful summaries are
-  cached for ten minutes. The former memory page module and `GetMemoryPage` are no longer used.
+  cached for ten minutes.
 - The model's knowledge-base tools are `recall` and `remember`. It changes and removes what it
   knows on its notes (`read_note`, `write_note`, `delete_note`); a Person corrects and removes
   knowledge-base facts in Settings.

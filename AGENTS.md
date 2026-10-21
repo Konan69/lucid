@@ -211,10 +211,10 @@ Use these terms in code, contracts, tests, and copy. Do not create synonyms for 
 
 Each rule here fails a check whose message names the fix, so an agent learns it from the failure rather than from this page. A unit that adds a check adds its row.
 
-| Rule                                                                                                            | Enforced by                               | The message names             |
-| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------------- |
-| One instruction file per directory; `CLAUDE.md` is only the line `@AGENTS.md`                                   | `scripts/instructions.mjs` (policy stage) | the file to reduce or create  |
-| Source references exist; generated roots and empty scopes are declared with reasons; lint scope lives in config | `scripts/references.mjs` (policy stage)   | the stale path or declaration |
+| Rule                                                                                                                                                                                                                                                                        | Enforced by                               | The message names             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------------- |
+| One instruction file per directory; `CLAUDE.md` is only the line `@AGENTS.md`                                                                                                                                                                                               | `scripts/instructions.mjs` (policy stage) | the file to reduce or create  |
+| Config paths and Markdown links exist; prose checks only backticked relative paths and listed directory prefixes, excluding bare root filenames, `.github/`, `.husky/`, `patches/`, and unbackticked text; declarations have reasons and expire; lint scope lives in config | `scripts/references.mjs` (policy stage)   | the stale path or declaration |
 
 ## Agent skills
 

@@ -30,7 +30,7 @@ const decodeDiagnostics = Schema.decodeUnknownSync(
   ),
 )
 
-const declarations = { generated: [], empty: [], examples: [] }
+const declarations = { generated: [], dependencies: [], empty: [], examples: [] }
 
 /** A source inventory is the check's public input, independent of filesystem accidents. */
 function tree(entries) {
@@ -219,14 +219,93 @@ void test('a packaged extends needs its exact declared path and its owning depen
   }
   const policy = {
     ...declarations,
-    generated: [{ path: 'expo/tsconfig.base', reason: 'Pinned Expo config.' }],
+    dependencies: [{ path: 'expo/tsconfig.base', reason: 'Pinned Expo config.' }],
   }
   assert.deepEqual(checkReferences(tree(entries), policy), [])
   entries['apps/mobile/tsconfig.json'] = '{"extends":"expo/tsconfig.typo"}'
-  assert.equal(checkReferences(tree(entries), policy).length, 1)
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'apps/mobile/tsconfig.json: expo/tsconfig.typo matches no tracked source or declared generated path',
+    'scripts/references.json: dependencies declaration expo/tsconfig.base authorizes nothing; remove it',
+  ])
   entries['apps/mobile/tsconfig.json'] = '{"extends":"expo/tsconfig.base"}'
   entries['apps/mobile/package.json'] = '{}'
-  assert.equal(checkReferences(tree(entries), policy).length, 1)
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'apps/mobile/tsconfig.json: expo/tsconfig.base matches no tracked source or declared generated path',
+    'scripts/references.json: dependencies declaration expo/tsconfig.base authorizes nothing; remove it',
+  ])
+})
+
+void test('prose checks links and backticked directory prefixes within its documented limits', () => {
+  const input = tree({
+    'AGENTS.md': [
+      '`apps/server/missing.ts` and [config](turbo.json)',
+      '`turbo.json`, `alchemy.run.ts`, `tsconfig.base.json`, `CODING_STANDARDS.md`, `.oxlintrc.json`',
+      '`.github/missing.yml`, `.husky/missing`, `patches/missing.patch`',
+      'apps/server/unbackticked.ts and `@vivid/agent-runtime/sandbox`',
+      '```ts\nconst example = `apps/server/fenced.ts`\n```',
+    ].join('\n'),
+  })
+  assert.deepEqual(checkReferences(input, declarations), [
+    'AGENTS.md: apps/server/missing.ts matches no tracked source or declared generated path',
+    'AGENTS.md: turbo.json matches no tracked source or declared generated path',
+  ])
+})
+
+void test('unused generated declarations expire when their last missing reference disappears', () => {
+  const entries = { 'AGENTS.md': '`artifacts/proof/result.json`' }
+  const policy = {
+    ...declarations,
+    generated: [{ path: 'artifacts/**', reason: 'Ignored proof output.' }],
+  }
+  assert.deepEqual(checkReferences(tree(entries), policy), [])
+  entries['AGENTS.md'] = ''
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'scripts/references.json: generated declaration artifacts/** authorizes nothing; remove it',
+  ])
+  entries['AGENTS.md'] = '`artifacts/proof/result.json`'
+  entries['artifacts/proof/result.json'] = '{}'
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'scripts/references.json: generated declaration artifacts/** authorizes nothing; remove it',
+  ])
+})
+
+void test('each example path expires independently when removed or satisfied by tracked source', () => {
+  const entries = { 'docs/guide.md': '`apps/missing.ts` and `apps/proposed.ts`' }
+  const policy = {
+    ...declarations,
+    examples: [
+      {
+        owner: 'docs/guide.md',
+        paths: ['apps/missing.ts', 'apps/proposed.ts'],
+        reason: 'Proposed files.',
+      },
+    ],
+  }
+  assert.deepEqual(checkReferences(tree(entries), policy), [])
+  entries['docs/guide.md'] = '`apps/proposed.ts`'
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'scripts/references.json: examples declaration docs/guide.md: apps/missing.ts authorizes nothing; remove it',
+  ])
+  entries['apps/proposed.ts'] = ''
+  assert.deepEqual(checkReferences(tree(entries), policy), [
+    'scripts/references.json: examples declaration docs/guide.md: apps/missing.ts authorizes nothing; remove it',
+    'scripts/references.json: examples declaration docs/guide.md: apps/proposed.ts authorizes nothing; remove it',
+  ])
+})
+
+void test('generated declarations do not authorize packaged dependency configs', () => {
+  const input = tree({
+    'apps/mobile/tsconfig.json': '{"extends":"expo/tsconfig.base"}',
+    'apps/mobile/package.json': '{"dependencies":{"expo":"55.0.0"}}',
+  })
+  const policy = {
+    ...declarations,
+    generated: [{ path: 'expo/tsconfig.base', reason: 'Misclassified dependency config.' }],
+  }
+  assert.deepEqual(checkReferences(input, policy), [
+    'apps/mobile/tsconfig.json: expo/tsconfig.base matches no tracked source or declared generated path',
+    'scripts/references.json: generated declaration expo/tsconfig.base authorizes nothing; remove it',
+  ])
 })
 
 void test('lint exclusions require tracked files or an exact declared future guard', () => {
