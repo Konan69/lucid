@@ -381,6 +381,12 @@ describe.skipIf(!testDatabaseConfigured)(
         withCalls(
           Effect.gen(function* () {
             const test = yield* fixture()
+            yield* (yield* ConnectionStore).begin(test.personal, {
+              from: 'Web',
+              service: serviceId,
+              name: null,
+              shared: false,
+            })
             const code = `return await ${use('write')};`
             const outcome = yield* withCalls(
               storedDisplay(test.personal, {
