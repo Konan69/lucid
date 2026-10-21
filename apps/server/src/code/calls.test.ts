@@ -14,6 +14,8 @@ import {
   SessionId,
   DisplaySource,
   DisplayProgramWaiting,
+  DisplayProgramRefused,
+  NotFound,
   FeedCardId,
   type RunDisplayCodeRequest,
   type DisplayCodeOutcome,
@@ -538,9 +540,11 @@ describe.skipIf(!testDatabaseConfigured)(
                 yield* Ref.set(current, history([message], ['submission'], 'second'))
                 checkCode(yield* draw, 'Completed', { result: 1 })
               } else {
-                expect(yield* draw.pipe(Effect.flip)).toMatchObject({
-                  _tag: 'DisplayProgramRefused',
-                })
+                expect(yield* draw.pipe(Effect.flip)).toEqual(
+                  DisplayProgramRefused.make({
+                    message: DisplayProgramRefused.fields.message.literal,
+                  }),
+                )
               }
             }),
             testLayer,
@@ -568,10 +572,9 @@ describe.skipIf(!testDatabaseConfigured)(
                 .delete(membershipTable)
                 .where(eq(membershipTable.userId, test.member.person.id)),
             )
-            expect(yield* draw.pipe(Effect.flip)).toMatchObject({
-              _tag: 'NotFound',
-              message: 'Thread not found',
-            })
+            expect(yield* draw.pipe(Effect.flip)).toEqual(
+              NotFound.make({ message: 'Thread not found' }),
+            )
             expect(yield* Ref.get(harness.count)).toBe(2)
           }),
           testLayer.pipe(Layer.provideMerge(localCodeComputerLayer)),
