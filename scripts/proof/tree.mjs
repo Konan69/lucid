@@ -12,6 +12,8 @@ function git(root, args) {
 /** External dependencies stay warm; workspace links point into the disposable clone. */
 function linkDependencies(source, target, roots) {
   if (!NodeFS.existsSync(source)) return
+  // Replace only the clone's dependency tree, including pre-existing scoped directory links.
+  NodeFS.rmSync(target, { recursive: true, force: true })
   NodeFS.mkdirSync(target, { recursive: true })
   for (const entry of NodeFS.readdirSync(source)) {
     if (entry === '.cache' || entry === '.vite') continue

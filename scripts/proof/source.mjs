@@ -52,3 +52,19 @@ export function caseBody(test, bodies) {
       (test.line !== body.bodyStart || test.column < body.bodyStartColumn),
   )
 }
+
+/** A parent declaration owns subtests, not an additional independently provable case. */
+export function leafBodies(bodies) {
+  return bodies.filter(
+    (body) =>
+      !bodies.some(
+        (child) =>
+          child !== body &&
+          child.namedTest &&
+          child.start >= body.bodyStart &&
+          (child.start !== body.bodyStart || child.startColumn >= body.bodyStartColumn) &&
+          child.end <= body.bodyEnd &&
+          (child.end !== body.bodyEnd || child.endColumn <= body.bodyEndColumn),
+      ),
+  )
+}

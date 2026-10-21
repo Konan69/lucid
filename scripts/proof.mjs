@@ -8,8 +8,9 @@ import * as NodeUtil from 'node:util'
 import { snapshot } from './gate/cloud.mjs'
 import { openRunDatabase } from './gate/database.mjs'
 import { logged, runIdentifier, stopChildrenOnSignal } from './gate/process.mjs'
+import { needsDatabase } from './proof/database.mjs'
 import { judgeCase, readReceipt } from './proof/report.mjs'
-import { caseBody, changedLines, testBodies } from './proof/source.mjs'
+import { caseBody, changedLines, leafBodies, testBodies } from './proof/source.mjs'
 import { scratchTree } from './proof/tree.mjs'
 
 const repositoryRoot = NodePath.resolve(NodeURL.fileURLToPath(new URL('../', import.meta.url)))
@@ -74,10 +75,9 @@ async function runTests(tree, files, run) {
             '--reporter=default',
             `--reporter=${reporter}`,
           ]
-    const database =
-      group.kind === 'vitest'
-        ? await openRunDatabase(repositoryRoot, run.env, runIdentifier())
-        : undefined
+    const database = needsDatabase(tree, group.files)
+      ? await openRunDatabase(repositoryRoot, run.env, runIdentifier())
+      : undefined
     // Signal cleanup closes this phase's database before removing its scratch source.
     const closeDatabase = async () => {
       if (database !== undefined) await database.close()
@@ -87,10 +87,13 @@ async function runTests(tree, files, run) {
       const env = { ...run.env, CI: '1', VIVID_PROOF_REPORT: report }
       // A proof may itself be exercised by node:test; its child is a separate runner.
       delete env.NODE_TEST_CONTEXT
+      delete env.VIVID_TEST_DATABASE_URL
       if (database !== undefined) env.VIVID_TEST_DATABASE_URL = database.url
       const result = await logged([process.execPath, ...args], { cwd: tree, env, log: run.log })
       exit += result.exit
-      reports.push(readReceipt(report))
+      const receipt = readReceipt(report)
+      if (receipt.unhandled > 0) throw new Error('proof runner reported an unhandled failure')
+      reports.push(receipt)
     } finally {
       await closeDatabase()
       cleanups.delete(closeDatabase)
@@ -108,7 +111,7 @@ function candidates(tree, base, files) {
   return files.map((file) => {
     const diff = git(tree, ['diff', '--unified=0', base, 'HEAD', '--', file])
     const source = NodeFS.readFileSync(NodePath.join(tree, file), 'utf8')
-    return { file, bodies: testBodies(file, source), ranges: changedLines(diff) }
+    return { file, bodies: leafBodies(testBodies(file, source)), ranges: changedLines(diff) }
   })
 }
 
@@ -223,13 +226,11 @@ export async function proveBranch(root, selection, environment) {
       reason,
     }
   } catch (error) {
-    const reason = exemption(root, selection.base)
     return {
-      passed: reason !== undefined,
+      passed: false,
       results: [{ state: 'INCONCLUSIVE', label: selection.branch, reason: error.message }],
       seconds: (Date.now() - started) / 1000,
       branch: selection.branch,
-      reason,
     }
   } finally {
     if (NodeFS.existsSync(log)) process.stdout.write(NodeFS.readFileSync(log, 'utf8'))

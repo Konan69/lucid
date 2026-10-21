@@ -24,21 +24,12 @@ function git(directory, args, input) {
 
 const replays = [
   { sha: '002aef1f', module: 'activity', name: 'says a built-in way of working' },
-  { sha: '1cfd6d45', module: 'reveal', name: 'keeps moving on a device whose frames' },
+  { sha: 'dd4b8c56', module: 'mend', name: 'closes a fence with the marker and indent' },
   { sha: 'b54686ee', module: 'sync', name: 'are left waiting, and nothing is written' },
 ]
 
 /** Retain old adapter capabilities so the reverted implementation can reach its assertion. */
 function assertionReachable(module, source) {
-  if (module === 'reveal')
-    return source.replace(
-      'waiting.push(step)',
-      `waiting.push(step)
-      return () => {
-        const index = waiting.indexOf(step)
-        if (index >= 0) waiting.splice(index, 1)
-      }`,
-    )
   // Count a forbidden write rather than recursively reentering until the stack overflows.
   if (module === 'sync') return source.replace('        sync.changed()\n', '')
   return source
@@ -55,7 +46,12 @@ for (const replay of replays)
       git(target, ['config', 'user.email', 'proof@localhost'])
       const code = `packages/client/state/src/${replay.module}.ts`
       const test = `packages/client/state/src/${replay.module}.test.ts`
-      const patch = `${git(root, ['diff', `${replay.sha}^`, replay.sha, '--', code])}\n`
+      const historical = `${git(root, ['diff', `${replay.sha}^`, replay.sha, '--', code])}\n`
+      // The parser was later exported for consumers; replay its algorithm while keeping that API.
+      const patch =
+        replay.module === 'mend'
+          ? historical.replaceAll(/^(?<sign>[+-])const FENCE/gmu, '$<sign>export const FENCE')
+          : historical
       let tests = assertionReachable(
         replay.module,
         NodeFS.readFileSync(NodePath.join(target, test), 'utf8'),
@@ -82,5 +78,6 @@ for (const replay of replays)
       process.stdout.write(formatProof(outcome))
       NodeAssert.equal(outcome.passed, true)
       NodeAssert.equal(outcome.results.length, 1)
+      NodeAssert.equal(outcome.results[0].state, 'PROVEN')
     },
   )

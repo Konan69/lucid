@@ -332,11 +332,9 @@ void NodeTest.test('node suites and parent tests contribute only their leaf case
     `${nodeImports}
 import { describe } from 'node:test'
 describe('suite', () => {
-  test('suite leaf', () => { assert.equal(value, 2) })
+  test('suite leaf', () => { assert.equal(value, 2) }); test('same-line leaf', () => { assert.equal(value, 2) })
 })
-test('parent', async (t) => {
-  await t.test('nested leaf', () => { assert.equal(value, 2) })
-})
+test('parent', async (t) => { await t.test('nested leaf', () => { assert.equal(value, 2) }) })
 test('passing parent', async (t) => {
   await t.test('surviving leaf', () => { assert.ok(value > 0) })
 })
@@ -346,7 +344,7 @@ test('passing parent', async (t) => {
   process.stdout.write(formatProof(outcome))
   assert.deepEqual(
     outcome.results.map((result) => result.state),
-    ['PROVEN', 'PROVEN', 'SURVIVED'],
+    ['PROVEN', 'PROVEN', 'PROVEN', 'SURVIVED'],
   )
   assert.equal(outcome.passed, false)
 })
@@ -373,14 +371,17 @@ void NodeTest.test('a trailer cannot excuse a scratch dependency failure', async
   assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
 })
 
-void NodeTest.test('a trailer cannot excuse a runner that exits without a receipt', async (t) => {
-  const target = fixture(t, `${nodeImports}test('exits runner', () => { process.exit(0) })\n`)
-  explainInconclusive(target)
-  const outcome = await proveBranch(target, proofSelection(target, {}), env)
-  assert.equal(outcome.passed, false)
-  assert.match(outcome.results[0].reason, /receipt/u)
-  assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
-})
+void NodeTest.test(
+  'a trailer cannot excuse a runner that exits before completing a case',
+  async (t) => {
+    const target = fixture(t, `${nodeImports}test('exits runner', () => { process.exit(0) })\n`)
+    explainInconclusive(target)
+    const outcome = await proveBranch(target, proofSelection(target, {}), env)
+    assert.equal(outcome.passed, false)
+    assert.match(outcome.results[0].reason, /runner/u)
+    assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+  },
+)
 
 void NodeTest.test('a trailer cannot excuse unavailable database infrastructure', async (t) => {
   const target = fixture(
@@ -418,3 +419,94 @@ it('fixed value', () => { expect(value).toBe(2) })
   assert.equal(outcome.passed, true)
   assert.equal(outcome.results[0].state, 'PROVEN')
 })
+
+void NodeTest.test(
+  'database fixture imports get a separate disposable database in each phase',
+  async (t) => {
+    const body = `import { it, expect, afterEach } from 'vitest'
+import { value } from './value.mjs'
+import { connect } from './database.mjs'
+const clients = []
+afterEach(async () => { for (const client of clients) await client.end() })
+it('creates its own table', async () => {
+  const client = connect()
+  clients.push(client)
+  await client.connect()
+  await client.query('CREATE TABLE proof (value integer)')
+  expect(value).toBe(2)
+})
+`
+    const target = fixture(t, body, 'vitest')
+    NodeFS.writeFileSync(
+      NodePath.join(target, 'database.mjs'),
+      `import pg from 'pg'
+export const connect = () => new pg.Client({connectionString: process.env.VIVID_TEST_DATABASE_URL})
+`,
+    )
+    NodeFS.symlinkSync(
+      NodeFS.realpathSync(NodePath.join(root, 'apps/server/node_modules/pg')),
+      NodePath.join(target, 'node_modules/pg'),
+    )
+    git(target, ['add', 'database.mjs'])
+    git(target, ['commit', '--quiet', '-m', 'database fixture base'])
+    const base = git(target, ['rev-parse', 'HEAD'])
+    NodeFS.writeFileSync(NodePath.join(target, 'value.mjs'), 'export const value = 3\n')
+    NodeFS.writeFileSync(NodePath.join(target, 'value.test.ts'), body.replace('toBe(2)', 'toBe(3)'))
+    git(target, ['add', 'value.mjs', 'value.test.ts'])
+    git(target, ['commit', '--quiet', '-m', 'fix value with database fixture'])
+    const outcome = await proveBranch(target, proofSelection(target, { 'proof-base': base }), {
+      ...env,
+      VIVID_TEST_DATABASE_URL: undefined,
+    })
+    process.stdout.write(formatProof(outcome))
+    assert.equal(outcome.passed, true)
+    assert.deepEqual(
+      outcome.results.map((result) => result.state),
+      ['PROVEN'],
+    )
+  },
+)
+
+void NodeTest.test('a trailer cannot excuse a clone rejected by Git', async (t) => {
+  const target = fixture(t, `${nodeImports}test('fixed value', () => { assert.equal(value, 2) })\n`)
+  explainInconclusive(target)
+  const selection = proofSelection(target, {})
+  const settings = {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'protocol.file.allow',
+    GIT_CONFIG_VALUE_0: 'never',
+  }
+  const previous = Object.keys(settings).map((key) => [key, process.env[key]])
+  t.after(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+  Object.assign(process.env, settings)
+  const outcome = await proveBranch(target, selection, env)
+  assert.equal(outcome.passed, false)
+  assert.match(outcome.results[0].reason, /proof scratch:.*transport 'file' not allowed/u)
+  assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+})
+
+void NodeTest.test(
+  'a trailer cannot excuse a reporter that cannot write its receipt',
+  async (t) => {
+    const target = fixture(
+      t,
+      `${nodeImports}
+import { mkdirSync } from 'node:fs'
+test('blocks receipt', () => {
+  mkdirSync(process.env.VIVID_PROOF_REPORT)
+  assert.equal(value, 2)
+})
+`,
+    )
+    explainInconclusive(target)
+    const outcome = await proveBranch(target, proofSelection(target, {}), env)
+    assert.equal(outcome.passed, false)
+    assert.match(outcome.results[0].reason, /EISDIR/u)
+    assert.doesNotMatch(formatProof(outcome), /accepted by commit trailer/u)
+  },
+)

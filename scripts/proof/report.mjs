@@ -21,9 +21,10 @@ const decodeReceipt = Schema.decodeUnknownResult(Schema.fromJsonString(Receipt))
 
 /** A missing or malformed receipt is a runner failure, never evidence against a fix. */
 export function readReceipt(file) {
-  if (!NodeFS.existsSync(file)) return { tests: [], unhandled: 1 }
+  if (!NodeFS.existsSync(file)) throw new Error('proof runner did not write a receipt')
   const decoded = decodeReceipt(NodeFS.readFileSync(file, 'utf8'))
-  return Result.isFailure(decoded) ? { tests: [], unhandled: 1 } : decoded.success
+  if (Result.isFailure(decoded)) throw new Error('proof runner wrote an invalid receipt')
+  return decoded.success
 }
 
 /** Require the assertion's first user frame to be inside the case, excluding setup hooks. */
@@ -32,7 +33,7 @@ function assertionInBody(test, body) {
     if (error.name !== 'AssertionError') return false
     const frames = [
       ...error.stack.matchAll(
-        /(?:\(|\s)(?:file:\/\/)?(?<file>[^()\n]+):(?<line>\d+):(?<column>\d+)\)?/gu,
+        /(?:\(|\bat )(?:file:\/\/)?(?<file>[^()\s]+):(?<line>\d+):(?<column>\d+)\)?/gu,
       ),
     ]
     const frame = frames.find(
