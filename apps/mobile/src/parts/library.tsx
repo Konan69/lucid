@@ -1,5 +1,5 @@
 import { createLibrary } from '@openuidev/react-lang'
-import { Box, Card, Col, Divider, Form, Grid, Media, Row, Spacer } from './layout'
+import { Box, Card, Col, Divider, Form, Grid, Row, Spacer } from './layout'
 import { Icon, Image } from './media'
 import { Table } from './table'
 import { Badge, Caption, Label, Link, List, ListItem, Text, Title } from './text'
@@ -33,7 +33,6 @@ export const library = createLibrary({
     Grid,
     Card,
     Carousel,
-    Media,
     Divider,
     Spacer,
     Title,
@@ -61,7 +60,7 @@ export const library = createLibrary({
   componentGroups: [
     {
       name: 'Layout',
-      components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Media', 'Divider', 'Spacer'],
+      components: ['Col', 'Row', 'Box', 'Grid', 'Card', 'Carousel', 'Divider', 'Spacer'],
     },
     {
       name: 'Text',

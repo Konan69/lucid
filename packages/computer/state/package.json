@@ -4,8 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./src/*": "./src/*"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs",

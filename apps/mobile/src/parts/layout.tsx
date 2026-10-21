@@ -258,40 +258,6 @@ export const Form = defineComponent({
   ),
 })
 
-/**
- * Vivid's addition to the library: the media of a feed card. It runs edge to edge under what
- * Vivid says, the way a photo does in a social feed, and holds photos at one height. (The web's
- * description names a Map; the phone has no map part, so none can reach it.)
- */
-export const Media = defineComponent({
-  name: 'Media',
-  props: z.object({
-    children,
-    height: z.number().optional(),
-    weights: z.array(z.number()).optional(),
-  }),
-  description:
-    'Edge-to-edge strip of media that opens a feed card: a Map, photos, or both side by side at one height (default 150). weights sets their relative widths, e.g. [3, 2]. Put it first in the root Col.',
-  component: ({ props, renderNode }) => {
-    const items = (Array.isArray(props.children) ? props.children.flat() : []).filter(
-      (c) => c != null,
-    )
-    const height = Math.min(360, Math.max(96, props.height ?? 150))
-    return (
-      <View style={{ flexDirection: 'row', height, overflow: 'hidden' as const }}>
-        {items.map((item, i) => (
-          <View
-            key={i}
-            style={{ flexGrow: Math.max(1, props.weights?.[i] ?? 1), flexShrink: 1, minWidth: 0 }}
-          >
-            {renderNode(item)}
-          </View>
-        ))}
-      </View>
-    )
-  },
-})
-
 const styles = StyleSheet.create({
   /** The display's own rhythm when a column names no gap of its own. */
   article: { gap: 12 },

@@ -44,7 +44,7 @@ This is **per-file database isolation plus per-case row cleanup**. It is not per
 Consequences:
 
 - Cases in one file share one database. Global scans (scheduler claims, replay sweeps, pending-work queries) see every row the file has left behind, so each fixture uses fresh UUIDs and removes its rows, and a case that asserts on a global scan checks for older obligations first (`pendingWork` in `apps/server/src/library/fixtures.ts`).
-- A fixture's cleanup failure must fail the test, not log: see `cleanupFailed` in `apps/server/src/runtime/testing.ts`.
+- A fixture's cleanup failure must fail the test, not log: see `cleanupFailed` in `apps/server/src/drafts/testing.ts`.
 - `layer(testLayer)` from `@effect/vitest` builds its Layer once per `describe` block. The SQL pool is shared by that block's cases and closed by the Layer scope before `afterAll` drops the clone.
 - The server project runs with `maxWorkers: 2` (`apps/server/vitest.config.ts`); files are parallel, cases inside a file are not isolated from each other.
 
@@ -59,8 +59,8 @@ If a claim truly needs a database per case, that is a missing capability; state 
 Compose the store under test over it, flat:
 
 ```ts
-// apps/server/src/runtime/testing.ts
-export const productLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
+// apps/server/src/threads/runs.test.ts
+const testLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 ```
 
 ## Pick the seam first
