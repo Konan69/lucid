@@ -33,6 +33,8 @@ const TurboConfig = Schema.Struct({
   tasks: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Json)),
 })
 const decodeTurboConfig = Schema.decodeUnknownSync(Schema.fromJsonString(TurboConfig))
+/** A task's `inputs` is a list of globs; Turbo rejects any other shape, so the test may throw on one. */
+const decodeInputs = Schema.decodeUnknownSync(Schema.Array(Schema.String))
 const Manifest = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(Manifest))
 
@@ -141,7 +143,10 @@ void test('a package-specific Turbo task keeps the generic task hash inputs and 
     for (const field of ['inputs', 'outputs', 'passThroughEnv']) {
       const expected =
         key === '@vivid/mobile#test' && field === 'inputs'
-          ? [...generic.inputs, '$TURBO_ROOT$/packages/agent/runtime/src/agents/parts.json']
+          ? [
+              ...decodeInputs(generic.inputs),
+              '$TURBO_ROOT$/packages/agent/runtime/src/agents/parts.json',
+            ]
           : generic[field]
       if (expected !== undefined && field !== 'passThroughEnv')
         assert.deepEqual(tasks[key][field], expected, `${key} must repeat ${field}`)
