@@ -110,8 +110,8 @@ class Message extends Data.Class<{
 }> {}
 
 /**
- * Re-read active history before consulting parsed declarations. Flue 2.2.2's projector can
- * suppress a superseded error's content or remove a compacted reply without a new incarnation.
+ * Re-read active history before consulting parsed declarations. Flue 2.2.2 resets its projection
+ * for compaction or superseded errors without a new incarnation; retry can replace reply content.
  * An incarnation key alone cannot prove a cached response is still on that active path.
  */
 const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
