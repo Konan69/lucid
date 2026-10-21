@@ -171,6 +171,14 @@ describe('a program read as OpenUI reads it', () => {
     ])
   })
 
+  it('keeps a ternary whose operators end their lines', () => {
+    const program = 'root = $show ?\n  Col([Text("A")]) :\n  Col([Text("B")])\n$show = true\n'
+    expect(stretches(`${program}\nDone.`).map((stretch) => stretch.text)).toEqual([
+      program,
+      '\nDone.',
+    ])
+  })
+
   it('draws an indented bare program', () => {
     expect(stretches('  root = Title("Hi")')).toEqual([
       { kind: 'display', from: 0, text: '  root = Title("Hi")', whole: true },

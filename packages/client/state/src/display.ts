@@ -61,7 +61,12 @@ function words(text: string, from: number): ReadonlyArray<Stretch> {
 interface Lexical {
   readonly quote: '"' | "'" | null
   readonly depth: number
+  /** Whether the line before ended on an operator, so the expression goes on (`a ?`, `x =`). */
+  readonly dangling: boolean
 }
+
+/** An operator that, ending a line, leaves its expression to the next one. */
+const DANGLING = /(?:[?:=,+]|&&|\|\|)\s*$/u
 
 const OPENERS = '([{'
 const CLOSERS = ')]}'
@@ -73,17 +78,23 @@ const CLOSERS = ')]}'
  */
 function readLine(line: string, from: Lexical): Lexical {
   let { quote, depth } = from
+  let code = line.length
   for (let at = 0; at < line.length; at += 1) {
     const c = line.charAt(at)
     if (quote !== null) {
       if (c === '\\') at += 1
       else if (c === quote) quote = null
     } else if (c === '"' || c === "'") quote = c
-    else if (c === '#' || line.startsWith('//', at)) break
-    else if (OPENERS.includes(c)) depth += 1
+    else if (c === '#' || line.startsWith('//', at)) {
+      code = at
+      break
+    } else if (OPENERS.includes(c)) depth += 1
     else if (CLOSERS.includes(c)) depth = Math.max(0, depth - 1)
   }
-  return { quote, depth }
+  const said = line.slice(0, code)
+  // A comment or blank line says nothing, so it leaves an expression as open as it found it.
+  const dangling = said.trim() === '' ? from.dangling : quote === null && DANGLING.test(said)
+  return { quote, depth, dangling }
 }
 
 /** A line of a program with the lexical state it starts in and where it starts. */
@@ -96,7 +107,7 @@ interface ProgramLine {
 /** A program's lines, each with the state it starts in, and the state after the last. */
 function programLines(text: string) {
   const lines: Array<ProgramLine> = []
-  let state: Lexical = { quote: null, depth: 0 }
+  let state: Lexical = { quote: null, depth: 0, dangling: false }
   let start = 0
   for (const line of text.split('\n')) {
     lines.push({ start, text: line, state })
@@ -108,7 +119,10 @@ function programLines(text: string) {
 
 /** Whether a line is open, still part of the statement before it. */
 const continues = (line: ProgramLine) =>
-  line.state.quote !== null || line.state.depth > 0 || OPERATOR.test(line.text)
+  line.state.quote !== null ||
+  line.state.depth > 0 ||
+  line.state.dangling ||
+  OPERATOR.test(line.text)
 
 /**
  * Where a bare program that starts at the beginning of `text` ends: after its last statement, or
@@ -124,7 +138,7 @@ function programEnd(text: string): number | null {
       end = Math.min(line.start + line.text.length + 1, text.length)
     } else if (line.text.trim() !== '' && !COMMENT.test(line.text)) return end
   }
-  return after.quote === null && after.depth === 0 ? text.length : null
+  return after.quote === null && after.depth === 0 && !after.dangling ? text.length : null
 }
 
 /**
