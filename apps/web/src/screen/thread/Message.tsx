@@ -393,6 +393,8 @@ function Written({
   source,
   text,
   fresh,
+  making,
+  streaming,
   live,
   onSay,
 }: {
@@ -400,6 +402,18 @@ function Written({
   source: DisplaySource
   text: string
   fresh: boolean
+  /**
+   * Whether Vivid is still making the newest reply and this is it. A display whose own end has
+   * arrived still waits for the reply's: the server runs a program only from a reply it has stored
+   * whole.
+   */
+  making: boolean
+  /**
+   * Whether this reply's own parts are still streaming. It is checked beside `making` because a
+   * reply can still be streaming after it stops being the newest thing in the Thread (the Person
+   * writes while it arrives), and then `making` alone would let its Queries run early.
+   */
+  streaming: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean
   onSay: (words: string) => void
@@ -412,7 +426,7 @@ function Written({
         source={source}
         key={stretch.from}
         text={stretch.text}
-        arriving={!stretch.whole}
+        arriving={making || streaming || !stretch.whole}
         live={live}
         onSay={onSay}
       />
@@ -572,14 +586,17 @@ function FromVivid({
         {making && <Doing tools={tools} wordless={text.length === 0} />}
         {text.length > 0 && (
           <Written
-            // Flue's message id is stable from the first streamed step, so a program pressed while
-            // the reply arrives names the same stored reply the server later reads.
+            // Flue streams every step of a reply under the id of its first step, the id its history
+            // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so
+            // a display drawn while the reply arrives already names the reply the server reads.
             source={DisplaySource.cases.ThreadMessage.make({
               thread: context.thread,
               message: message.id,
             })}
             text={drawnText}
             fresh={fresh}
+            making={making}
+            streaming={streaming}
             live={latest && !working}
             onSay={onContinue}
           />

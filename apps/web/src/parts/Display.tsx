@@ -66,7 +66,14 @@ export function Display({
   source: DisplaySource
   /** The display, in OpenUI Lang, exactly as Vivid wrote it. */
   text: string
-  /** Whether more of it is still to come. */
+  /**
+   * Whether more of it, or more of the reply it stands in, is still to come. A surface passes true
+   * while the stretch is not whole, while Vivid is still making the newest reply and this is it,
+   * or while this reply's own parts are still streaming (a reply that stopped being the newest
+   * can still be arriving). Until all three are settled OpenUI holds the display (`blocked` in react-lang 1.0.0's `useOpenUIState`): its Queries are
+   * not read, its Mutations are not taken and its controls are drawn as streaming. When this turns
+   * false its Queries run, once, against the reply the server has stored whole.
+   */
   arriving: boolean
   /** Whether this is the newest thing Vivid said and it is waiting for the Person. */
   live: boolean

@@ -279,6 +279,7 @@ function Spoken(props: {
   source: DisplaySource
   text: string
   streaming: boolean
+  making: boolean
   live: boolean
   onSay: Say
 }) {
@@ -311,7 +312,9 @@ function FromVivid({
   // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
   // Vivid is about to speak, where the row was a face beside nothing.
   const silent = text.length === 0 && tools.length === 0
-  const awaited = silent && (isStreaming(message) || (latest && working))
+  // Only the newest reply can still be in the making; an older one is whole.
+  const making = latest && working
+  const awaited = silent && (isStreaming(message) || making)
   return (
     <View style={{ flexDirection: 'row', gap: 10 }}>
       <View style={{ marginTop: 1 }}>
@@ -326,11 +329,13 @@ function FromVivid({
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
         <Spoken
-          // Flue's message id is stable from the first streamed step, so a program pressed while
-          // the reply arrives names the same stored reply the server later reads.
+          // Flue streams every step of a reply under the id of its first step, the id its history
+          // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a
+          // display drawn while the reply arrives already names the reply the server reads.
           source={DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })}
           text={text}
           streaming={isStreaming(message)}
+          making={making}
           live={latest && !working}
           onSay={onContinue}
         />

@@ -77,13 +77,25 @@ export function Reply({
   source,
   text,
   streaming,
+  making,
   live,
   onSay,
 }: {
   /** The reply as Flue stored it, which every program drawn from it names. */
   source: DisplaySource
   text: string
+  /**
+   * Whether this reply's own parts are still streaming. A display waits for it beside `making`,
+   * because a reply can still be streaming after it stops being the newest thing in the Thread
+   * (the Person writes while it arrives), and then `making` alone would let its Queries run early.
+   */
   streaming: boolean
+  /**
+   * Whether Vivid is still making the newest reply and this is it. A display whose own end has
+   * arrived still waits for the reply's: the server runs a program only from a reply it has stored
+   * whole.
+   */
+  making: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean
   onSay: (words: string) => void
@@ -99,7 +111,7 @@ export function Reply({
             source={source}
             key={stretch.from}
             text={stretch.text}
-            arriving={!stretch.whole}
+            arriving={making || streaming || !stretch.whole}
             live={live}
             onSay={onSay}
           />
