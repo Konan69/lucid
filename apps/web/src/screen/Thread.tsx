@@ -164,7 +164,11 @@ function contextFor({
   }
 }
 
-/** The ids of the submissions Flue has settled, in whatever way they ended. */
+/**
+ * The ids of the submissions Flue has settled, in whatever way they ended. Before the conversation's
+ * history is read (`heardIn` frames) there are none, so every reply's displays wait for it rather
+ * than run a program the server would answer with a wait. Kept the same until one settles.
+ */
 const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) =>
   new Set(settlements.map((settlement) => settlement.submissionId))
 
@@ -379,8 +383,6 @@ function Conversation({
   const working = workingIn(opening, agent, first, detail)
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
   const visible = useMemo(() => shownIn(said), [said])
-  // Flue's settled submissions; before its history is read (`heardIn` frames) there are none, so
-  // every reply's displays wait for it rather than run a program the server would make wait.
   const settled = useMemo(() => settledIn(agent.settlements), [agent.settlements])
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
