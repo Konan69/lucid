@@ -39,6 +39,7 @@
     "check": "node scripts/types.mjs"
   },
   "devDependencies": {
+    "@vivid/compiler": "workspace:*",
     "@alchemy.run/frontend-frameworks": "catalog:",
     "@effect/vitest": "catalog:",
     "@maschwenk/tsrslint": "0.1.5",
