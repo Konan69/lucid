@@ -1,6 +1,7 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeModule from 'node:module'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
@@ -552,7 +553,16 @@ function exhaustiveFindings(setting) {
             '--no-ignore',
             exhaustiveFixtures,
           ],
-          { cwd: repositoryRoot, encoding: 'utf8' },
+          {
+            cwd: repositoryRoot,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              OXLINT_TSGOLINT_PATH: NodeModule.createRequire(import.meta.url)(
+                '@maschwenk/tsrslint',
+              ).binaryPath(),
+            },
+          },
         )
       } catch (cause) {
         const failure = decodeProcessFailure(cause)

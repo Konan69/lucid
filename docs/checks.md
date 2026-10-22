@@ -116,6 +116,21 @@ The observed tsgolint allocation was approximately 3.6 GiB of private resident m
 
 ## Measurements
 
+### Rust typed lint
+
+The runner selects `@maschwenk/tsrslint` 0.1.5 through Oxlint's `OXLINT_TSGOLINT_PATH`. A caller's explicit path wins and participates in Turbo's lint cache key. The native binary supports Linux x64, Linux arm64, and macOS arm64. The Go backend and its platform packages are no longer dependencies.
+
+On 22 October 2026, the eight-core Konan devbox ran the whole lint graph with forced cache misses, one warm-up and five alternating measured runs per side. Both sides exited 0 and ran all 13 scopes.
+
+| Backend                     | Median wall time | Median sampled process-tree peak RSS |
+| --------------------------- | ---------------: | -----------------------------------: |
+| `oxlint-tsgolint` 7.0.2002  |          26.96 s |                            2,593 MiB |
+| `@maschwenk/tsrslint` 0.1.5 |           9.66 s |                            1,717 MiB |
+
+Wall-time ranges were 25.28 to 28.22 s and 9.18 to 10.54 s. RSS is the sum of descendants sampled every 100 ms and can count shared pages more than once. It is not GNU time's largest individual-process RSS. These are shipped configurations: one Oxlint worker and the default Go worker, with tsrslint's internal worker count unchanged. CPU samples show semantic analysis as the active work. Other verification workloads were running on the box. A contended warm-up took 187.99 s and is excluded from the medians.
+
+A fresh comparison of JSON diagnostics against main matched all 224 findings across all 13 scopes, with 0 missing and 0 extra. Earlier measurements at the same main commit were 25.96 s and 2,572 MiB for Go, versus 8.69 s and 1,737 MiB for Rust, with the same diagnostic parity. Their raw logs remain at `cloudbox-konan:/tmp/tsrs-bench-logs`. The fresh runs, process samples, per-scope JSON, comparison script, and summaries are at `cloudbox-konan:/tmp/vivid-tooling-evidence`.
+
 On the same 4-core, 8-GiB idle Cloudbox and source snapshot (base `133644c3`), GNU time measured:
 
 | Lint invocation                                | Peak process RSS | Wall time |

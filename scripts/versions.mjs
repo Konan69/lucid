@@ -10,6 +10,7 @@ export const versions = Object.freeze({
   '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
   '@effect/language-service': '0.87.2',
+  '@maschwenk/tsrslint': '0.1.5',
   '@effect/tsgo': '0.51.0',
   'tsc-rs': '0.1.0',
   '@effect/platform-node': '4.0.2',

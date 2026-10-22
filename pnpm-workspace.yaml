@@ -195,3 +195,7 @@ minimumReleaseAgeExclude:
   - '@tsc-rs/darwin-arm64@0.1.0'
   - '@tsc-rs/linux-x64@0.1.0'
   - tsc-rs@0.1.0
+  - '@maschwenk/tsrslint@0.1.5'
+  - '@maschwenk/tsrslint-linux-x64@0.1.5'
+  - '@maschwenk/tsrslint-linux-arm64@0.1.5'
+  - '@maschwenk/tsrslint-darwin-arm64@0.1.5'

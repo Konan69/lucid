@@ -16,6 +16,7 @@ const LintReceipt = Schema.Struct({
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
   workers: Schema.String,
+  backend: Schema.String,
 })
 const decodeLintReceipt = Schema.decodeUnknownSync(Schema.fromJsonString(LintReceipt))
 
@@ -23,14 +24,23 @@ const decodeLintReceipt = Schema.decodeUnknownSync(Schema.fromJsonString(LintRec
 function fixture(t) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-lint-'))
   t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }))
-  for (const directory of ['scripts', 'apps/web', 'node_modules/oxlint/bin']) {
+  for (const directory of [
+    'scripts',
+    'apps/web',
+    'node_modules/oxlint/bin',
+    'node_modules/@maschwenk/tsrslint',
+  ]) {
     NodeFS.mkdirSync(NodePath.join(root, directory), { recursive: true })
   }
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'node_modules/@maschwenk/tsrslint/index.js'),
+    'exports.binaryPath = () => "/fixture/tsrslint"\n',
+  )
   NodeFS.copyFileSync(script, NodePath.join(root, 'scripts/lint.mjs'))
   NodeFS.writeFileSync(
     NodePath.join(root, 'node_modules/oxlint/bin/oxlint'),
     `const args = process.argv.slice(2)
-console.log(JSON.stringify({ args, cwd: process.cwd(), workers: process.env.GOMAXPROCS }))
+console.log(JSON.stringify({ args, cwd: process.cwd(), workers: process.env.GOMAXPROCS, backend: process.env.OXLINT_TSGOLINT_PATH }))
 if (args.includes('--fixture-failure')) {
   console.error('fixture lint diagnostic')
   process.exitCode = 7
@@ -43,6 +53,7 @@ if (args.includes('--fixture-failure')) {
 /** Clear ambient worker overrides so the default is tested deliberately. */
 function invoke(root, cwd, args = [], workers) {
   const environment = { ...process.env }
+  delete environment.OXLINT_TSGOLINT_PATH
   delete environment.GOMAXPROCS
   delete environment.VIVID_LINT_THREADS
   if (workers !== undefined) environment.GOMAXPROCS = workers
@@ -65,6 +76,7 @@ void test('package lint keeps full type analysis and runs its entire directory f
   const observed = decodeLintReceipt(result.stdout)
   assert.equal(observed.cwd, root)
   assert.equal(observed.workers, '1')
+  assert.equal(observed.backend, '/fixture/tsrslint')
   assert.ok(observed.args.includes('--type-aware'))
   assert.ok(observed.args.includes('--threads=1'))
   assert.equal(observed.args.at(-1), 'apps/web')
@@ -116,4 +128,19 @@ void test('lint rejects paths outside the repository', (t) => {
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
   assert.match(result.stderr, /inside the Vivid workspace/u)
+})
+
+void test('an explicit type-aware backend is respected', (t) => {
+  const root = fixture(t)
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(root, 'scripts/lint.mjs')],
+    {
+      cwd: root,
+      env: { ...process.env, OXLINT_TSGOLINT_PATH: '/custom/backend' },
+      encoding: 'utf8',
+    },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(decodeLintReceipt(result.stdout).backend, '/custom/backend')
 })

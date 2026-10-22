@@ -1,6 +1,7 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeModule from 'node:module'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
@@ -309,7 +310,9 @@ void test('typed lint diagnoses production, tests, and consumers before declarat
         env: {
           ...process.env,
           GOMAXPROCS: '1',
-          OXLINT_TSGOLINT_PATH: NodePath.join(repositoryRoot, 'node_modules/.bin/tsgolint'),
+          OXLINT_TSGOLINT_PATH: NodeModule.createRequire(import.meta.url)(
+            '@maschwenk/tsrslint',
+          ).binaryPath(),
         },
         encoding: 'utf8',
       },
