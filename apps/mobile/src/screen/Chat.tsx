@@ -51,7 +51,7 @@ import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onCatchUp } from '../data/foreground'
-import type { Whose } from '../data/heard'
+import type { Kept, Whose } from '../data/heard'
 import { heardIn, heardThrough } from '../data/hearing'
 import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
 import { isShown, lastWordsOf, Speaker, speakerOf, type Around } from '../data/message'
@@ -740,7 +740,7 @@ function Conversation({
   const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
   const around = aroundOf(me.person.id, shared, detail)
-  const { said, ready } = drawn(agent, heardIn(whose, id))
+  const { said, ready, settled: finished } = drawn(agent, heardIn(whose, id))
   const whole = agent.historyReady
   const shown = withFirst(standInOf(id, first), { messages: said.filter(isShown), ready: whole })
   // First words count as on their way from the send until the Thread's own two sources have both
@@ -758,8 +758,9 @@ function Conversation({
   // can draw it as not sent instead of as said. Sending again clears the list. First words that
   // did not arrive are drawn the same way, under their own key.
   const lost = Option.filter(first, First.$is('Unsent'))
-  // The submissions Flue has settled; a reply's displays wait for its own (`Message`, `settled`).
-  const settledIds = new Set(agent.settlements.map((settlement) => settlement.submissionId))
+  // The submissions Flue has settled, from the same reading as `said`; a reply's displays wait for
+  // its own (`Message`, `settled`).
+  const settledIds = new Set(finished)
   const undelivered = new Set([...agent.failedSends.map((send) => send.id), ...lostKeys(id, lost)])
 
   function type(next: string) {
@@ -1164,25 +1165,25 @@ function useConversation(id: ThreadId) {
  * What a Thread is drawn from. Until its conversation has been read, that is what this phone last
  * heard in it (`data/hearing.ts`): its words are on the first frame, and the reading takes their
  * place when it arrives. It used to be drawn as its outline for that round trip, on every opening.
+ * The submissions that had ended (`settled`) come from the same reading as the words, so a kept
+ * reply whose submission had ended is drawn as ended, and its displays do not wait again.
  *
  * `ready` here is only that there is something to draw. Whether the Thread's first words are
  * already in the conversation (`withFirst`) is known once it has been read whole: what the phone
  * kept is its newest messages and may not reach back to them.
  */
-const drawn = (
-  agent: ReturnType<typeof useFlueAgent>,
-  heard: Option.Option<ReadonlyArray<FlueConversationMessage>>,
-): { readonly said: ReadonlyArray<FlueConversationMessage>; readonly ready: boolean } =>
-  agent.historyReady
-    ? { said: agent.messages, ready: true }
-    : // Kept messages that are all hidden ones would draw as an empty Thread, which this one is not.
-      Option.match(
-        Option.filter(heard, (kept) => kept.some(isShown)),
-        {
-          onNone: () => ({ said: agent.messages, ready: false }),
-          onSome: (said) => ({ said, ready: true }),
-        },
-      )
+const drawn = (agent: ReturnType<typeof useFlueAgent>, heard: Option.Option<Kept>) => {
+  const settled = agent.settlements.map((settlement) => settlement.submissionId)
+  if (agent.historyReady) return { said: agent.messages, settled, ready: true }
+  // Kept messages that are all hidden ones would draw as an empty Thread, which this one is not.
+  return Option.match(
+    Option.filter(heard, (kept) => kept.messages.some(isShown)),
+    {
+      onNone: () => ({ said: agent.messages, settled, ready: false }),
+      onSome: (kept) => ({ said: kept.messages, settled: kept.settled, ready: true }),
+    },
+  )
+}
 
 /**
  * What a Thread's page is. It is decided once (`pageOf`) for everything that depends on it: the

@@ -1,4 +1,4 @@
-import type { FlueClient, FlueConversationMessage } from '@flue/sdk'
+import type { FlueClient } from '@flue/sdk'
 import type { ThreadId } from '@vivid/contracts'
 import { Effect, Option, Semaphore } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
@@ -13,6 +13,7 @@ import {
   settledOf,
   withHeard,
   type Heard,
+  type Kept,
   type Whose,
 } from './heard'
 import { forgetFile, keepFileAside, recallFile } from './storage'
@@ -60,11 +61,12 @@ export const heardReadAtom = Atom.make((get) => !AsyncResult.isInitial(get(recal
 const standing = (): Option.Option<Heard> =>
   Option.getOrElse(door.get(changed), () => Option.flatten(AsyncResult.value(door.get(recalled))))
 
-/** What was last said in a Thread, when this phone has it and it is this Person's. */
-export const heardIn = (
-  whose: Whose,
-  thread: ThreadId,
-): Option.Option<ReadonlyArray<FlueConversationMessage>> => heardAt(standing(), whose, thread)
+/**
+ * What was last said in a Thread and which of its replies had ended, when this phone has it and
+ * it is this Person's.
+ */
+export const heardIn = (whose: Whose, thread: ThreadId): Option.Option<Kept> =>
+  heardAt(standing(), whose, thread)
 
 /** Whether the file is behind memory and a write is already waiting for `REST_MS` to pass. */
 let owed = false
@@ -99,27 +101,33 @@ AppState.addEventListener('change', (state) => {
   if (state !== 'active' && owed) launch(write)
 })
 
-/** Whether two lists hold the very same messages. Flue makes a new object for one that changed. */
-const sameMessages = (
-  one: ReadonlyArray<FlueConversationMessage>,
-  other: ReadonlyArray<FlueConversationMessage>,
-) => one.length === other.length && one.every((message, index) => message === other[index])
+/** Whether two lists hold the very same items. Flue makes a new object for a message that changed. */
+const sameItems = <A>(one: ReadonlyArray<A>, other: ReadonlyArray<A>) =>
+  one.length === other.length && one.every((item, index) => item === other[index])
 
 /**
- * The settled messages last kept for each Thread, as the conversation handed them over. A
- * conversation speaks at every word that arrives and almost none of those change what is worth
- * keeping; comparing the objects themselves says so without reading a word of them.
+ * Whether two keepings say the same: the same messages, and the same submissions ended among
+ * them. Either can move without the other: the Person's message stays kept while its submission
+ * runs, and is the same message when that submission fails or is stopped before Vivid has said
+ * a word.
  */
-const last = new Map<ThreadId, ReadonlyArray<FlueConversationMessage>>()
+const sameKept = (one: Kept, other: Kept) =>
+  sameItems(one.messages, other.messages) && sameItems(one.settled, other.settled)
+
+/**
+ * What was last kept for each Thread, as the conversation handed it over. A conversation speaks
+ * at every word that arrives and almost none of those change what is worth keeping; comparing
+ * the message objects and the ended ids themselves (`sameKept`) says so without reading a word.
+ */
+const last = new Map<ThreadId, Kept>()
 
 /** Keeps what a Thread's conversation now says, in memory at once and in the file after a rest. */
-const keep = (whose: Whose, thread: ThreadId, settled: ReadonlyArray<FlueConversationMessage>) => {
+const keep = (whose: Whose, thread: ThreadId, kept: Kept) => {
   // A conversation with nothing settled in it has nothing to draw sooner; what was kept stays.
-  if (settled.length === 0) return
-  if (Option.exists(Option.fromUndefinedOr(last.get(thread)), (was) => sameMessages(was, settled)))
-    return
-  last.set(thread, settled)
-  const next = withHeard(standing(), whose, { thread, messages: settled, at: Date.now() })
+  if (kept.messages.length === 0) return
+  if (Option.exists(Option.fromUndefinedOr(last.get(thread)), (was) => sameKept(was, kept))) return
+  last.set(thread, kept)
+  const next = withHeard(standing(), whose, { thread, kept, at: Date.now() })
   door.set(changed, Option.some(Option.some(next)))
   if (owed) return
   owed = true
