@@ -309,7 +309,6 @@ void test('typed lint diagnoses production, tests, and consumers before declarat
         cwd: root,
         env: {
           ...process.env,
-          GOMAXPROCS: '1',
           OXLINT_TSGOLINT_PATH: NodeModule.createRequire(import.meta.url)(
             '@maschwenk/tsrslint',
           ).binaryPath(),

@@ -522,7 +522,7 @@ const decodeExhaustiveOutput = Schema.decodeUnknownSync(
 
 /**
  * Runs the native type-aware rule over the checked-in fixtures and returns the fixture file names
- * it reports. The rule needs real types, so this is the one test that starts tsgolint; the fixture
+ * it reports. The rule needs real types, so this is the one test that starts tsrslint; the fixture
  * project is four files with no imports outside its directory. `--no-ignore` is required because
  * the root config ignores `scripts/__fixtures__`, which holds deliberately wrong code.
  */

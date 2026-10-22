@@ -85,6 +85,7 @@ const forcedVersions = Object.freeze({
 const requiredByManifest = Object.freeze({
   'package.json': [
     '@effect/vitest',
+    '@maschwenk/tsrslint',
     '@shadcn/lint',
     'konsistent',
     '@types/node',

@@ -268,16 +268,12 @@ export async function runLocal(root, selection, environment) {
 }
 
 /**
- * Lint stays one package at a time, but that one process may use several cores: up to four of
- * each kind of worker, never more than half the machine. docs/checks.md measured one worker of
- * each as the safe default for a developer's own run; a second Go worker cost 0.3 GiB and the
- * whole-workspace run with eight threads was 1.7 times faster than with one. A value already
- * in the environment wins.
+ * Lint stays one package at a time. Oxlint uses up to four workers, never more than half
+ * the machine; tsrslint owns its internal worker count. An explicit VIVID_LINT_THREADS wins.
  */
 function lintWorkers(environment) {
   const workers = String(Math.max(1, Math.min(4, Math.floor(NodeOS.availableParallelism() / 2))))
   return {
-    GOMAXPROCS: environment.GOMAXPROCS === undefined ? workers : environment.GOMAXPROCS,
     VIVID_LINT_THREADS:
       environment.VIVID_LINT_THREADS === undefined ? workers : environment.VIVID_LINT_THREADS,
   }

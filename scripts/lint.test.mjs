@@ -15,7 +15,6 @@ const script = NodeURL.fileURLToPath(new URL('./lint.mjs', import.meta.url))
 const LintReceipt = Schema.Struct({
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
-  workers: Schema.String,
   backend: Schema.String,
 })
 const decodeLintReceipt = Schema.decodeUnknownSync(Schema.fromJsonString(LintReceipt))
@@ -40,7 +39,7 @@ function fixture(t) {
   NodeFS.writeFileSync(
     NodePath.join(root, 'node_modules/oxlint/bin/oxlint'),
     `const args = process.argv.slice(2)
-console.log(JSON.stringify({ args, cwd: process.cwd(), workers: process.env.GOMAXPROCS, backend: process.env.OXLINT_TSGOLINT_PATH }))
+console.log(JSON.stringify({ args, cwd: process.cwd(), backend: process.env.OXLINT_TSGOLINT_PATH }))
 if (args.includes('--fixture-failure')) {
   console.error('fixture lint diagnostic')
   process.exitCode = 7
@@ -54,9 +53,8 @@ if (args.includes('--fixture-failure')) {
 function invoke(root, cwd, args = [], workers) {
   const environment = { ...process.env }
   delete environment.OXLINT_TSGOLINT_PATH
-  delete environment.GOMAXPROCS
   delete environment.VIVID_LINT_THREADS
-  if (workers !== undefined) environment.GOMAXPROCS = workers
+  if (workers !== undefined) environment.VIVID_LINT_THREADS = workers
   return NodeChildProcess.spawnSync(
     process.execPath,
     [NodePath.join(root, 'scripts/lint.mjs'), ...args],
@@ -75,7 +73,6 @@ void test('package lint keeps full type analysis and runs its entire directory f
   assert.equal(result.status, 0, result.stderr)
   const observed = decodeLintReceipt(result.stdout)
   assert.equal(observed.cwd, root)
-  assert.equal(observed.workers, '1')
   assert.equal(observed.backend, '/fixture/tsrslint')
   assert.ok(observed.args.includes('--type-aware'))
   assert.ok(observed.args.includes('--threads=1'))
@@ -114,11 +111,11 @@ void test('lint exit status and diagnostics propagate', (t) => {
 })
 
 /** Deliberate worker comparisons must remain possible through the documented env. */
-void test('an explicit Go worker setting is respected', (t) => {
+void test('an explicit Oxlint worker setting is respected', (t) => {
   const root = fixture(t)
   const result = invoke(root, root, [], '2')
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(decodeLintReceipt(result.stdout).workers, '2')
+  assert.ok(decodeLintReceipt(result.stdout).args.includes('--threads=2'))
 })
 
 /** An outside cwd must never turn a cached package task into a different scope. */
@@ -143,4 +140,19 @@ void test('an explicit type-aware backend is respected', (t) => {
   )
   assert.equal(result.status, 0, result.stderr)
   assert.equal(decodeLintReceipt(result.stdout).backend, '/custom/backend')
+})
+
+void test('an empty type-aware backend setting uses tsrslint', (t) => {
+  const root = fixture(t)
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(root, 'scripts/lint.mjs')],
+    {
+      cwd: root,
+      env: { ...process.env, OXLINT_TSGOLINT_PATH: '' },
+      encoding: 'utf8',
+    },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(decodeLintReceipt(result.stdout).backend, '/fixture/tsrslint')
 })

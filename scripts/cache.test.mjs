@@ -176,7 +176,7 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
   assert.equal(boundary.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
 })
 
-/** tsgolint reopens referenced source, so declaration emission must not delay lint. */
+/** tsrslint reopens referenced source, so declaration emission must not delay lint. */
 void test('lint checks every workspace without executing declaration producers', (t) => {
   const root = fixture(t)
   runTurbo(root, ['lint', 'lint:root', '--concurrency=1', '--ui=stream'])

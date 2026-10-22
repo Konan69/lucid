@@ -6,9 +6,8 @@
  * and so always run) or Turbo `tasks` (hashed per package, replayed when their inputs are
  * unchanged). Turbo stages belong to a lane, and each lane is one Turbo invocation:
  *
- * - `checks` runs one task at a time. Typed lint and native typechecking each hold a whole
- *   TypeScript program in memory (docs/checks.md measured 3.6 GiB for one tsgolint process), so
- *   two of them never overlap.
+ * - `checks` runs one task at a time. Typed lint and typechecking each keep compiler state
+ *   in memory, so two of them never overlap.
  * - `tests` runs beside it. Vitest workers are plain Node processes with no compiler heap, and
  *   the tasks here depend only on input-hash tasks that execute nothing, so the two invocations
  *   never build the same output.
