@@ -24,7 +24,7 @@ import { ThinkingOrb } from 'thinking-orbs'
 import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
-import { conversationOf, heardIn } from '../data/conversation'
+import { answeringIn, conversationOf, heardIn, type Heard } from '../data/conversation'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { router } from '../router'
 import { link } from '../data/runtime'
@@ -165,11 +165,12 @@ function contextFor({
 }
 
 /**
- * The ids of the submissions Flue has settled, in whatever way they ended. Before the conversation's
- * history is read (`heardIn` frames) there are none, so every reply's displays wait for it rather
- * than run a program the server would answer with a wait. Kept the same until one settles.
+ * The ids of the submissions Flue has settled, in whatever way they ended (completed, failed or
+ * aborted). They come from the same reading as the words drawn beside them (`heardIn` until the
+ * hook has read the history), so a reply that had ended is drawn as ended from the first frame,
+ * and one that had not still waits. Kept the same until one settles.
  */
-const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) => {
+const settledIn = (settlements: Heard['settlements']) => {
   // Flue hands back the same list until a submission settles, so the set made for it is kept and
   // the rows are not drawn again for a set that only looks new.
   const known = settledSets.get(settlements)
@@ -181,6 +182,36 @@ const settledIn = (settlements: ReturnType<typeof useFlueAgent>['settlements']) 
   return made
 }
 const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
+
+/**
+ * The conversation as this screen reads it (`standingOf`). `answering` says whether a reply is
+ * under way; `historyReady` and `error` are the hook's own, whether it has read the history yet
+ * and why it could not.
+ */
+type Standing = Heard &
+  Pick<ReturnType<typeof useFlueAgent>, 'historyReady' | 'error'> & { readonly answering: boolean }
+
+/**
+ * What the conversation says now: the hook's own reading once it has read the history, and until
+ * then what was already known (`heardIn`). The words, the submissions that had ended and whether a
+ * reply is under way are taken from one reading, never one from each: cached words beside the
+ * hook's still empty endings drew every reply that had ended as one still arriving, and beside
+ * its still `idle` status drew a reply under way as ended, then as working a frame later. Before
+ * the history is read the hook's status still counts what it sent itself.
+ */
+const standingOf = (
+  agent: ReturnType<typeof useFlueAgent>,
+  heard: Option.Option<Heard>,
+): Standing => {
+  const { messages, settlements } = agent.historyReady
+    ? agent
+    : Option.getOrElse(heard, () => agent)
+  const answering =
+    agent.status === 'submitted' ||
+    agent.status === 'streaming' ||
+    (!agent.historyReady && Option.exists(heard, answeringIn))
+  return { messages, settlements, answering, historyReady: agent.historyReady, error: agent.error }
+}
 
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`):
@@ -359,15 +390,16 @@ function Conversation({
   // The hook begins reading in an effect, so on the first frame of every visit it has no words
   // even when the conversation is open and known, and a conversation that was parked is read again
   // (`data/conversation.ts`). Until then the words are taken from the conversation itself
-  // (`heardIn`), and the Thread is drawn with them instead of as one that is still opening.
+  // (`heardIn`, with the endings and the activity of the same reading), and the Thread is drawn
+  // with them.
   const heard = heardIn(id)
   const ready = agent.historyReady || Option.isSome(heard)
-  const read = agent.historyReady ? agent.messages : Option.getOrElse(heard, () => agent.messages)
+  const standing = standingOf(agent, heard)
   // A new Thread's first words are drawn from the moment they were sent (`saidWith`). The same
   // list until the conversation or the words move.
   const said = useMemo(
-    () => saidWith(id, first, read, agent.historyReady),
-    [id, first, read, agent.historyReady],
+    () => saidWith(id, first, standing.messages, agent.historyReady),
+    [id, first, standing.messages, agent.historyReady],
   )
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
@@ -390,7 +422,7 @@ function Conversation({
   // the Thread's own record arrives to say so, that is known from having opened it, so the page
   // shows Vivid thinking from its first frame and never an empty Thread.
   const opening = useArrival(openedFor(id)) && Option.isNone(thread)
-  const working = workingIn(opening, agent, first, detail)
+  const working = workingIn(opening, standing, first, detail)
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
   const visible = useMemo(() => shownIn(said), [said])
   // Made once per answer from the server, not once per streamed token: every row is given it,
@@ -489,7 +521,7 @@ function Conversation({
             said={said}
             visible={visible}
             context={context}
-            settled={settledIn(agent.settlements)}
+            settled={settledIn(standing.settlements)}
             onContinue={say}
             first={first}
             onFirstAgain={() => firstWords.again(id)}
@@ -648,14 +680,13 @@ function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void
  */
 const workingIn = (
   opening: boolean,
-  agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'historyReady' | 'error'>,
+  standing: Pick<Standing, 'answering' | 'historyReady' | 'error'>,
   first: FirstWords,
   detail: Option.Option<ThreadDetail>,
 ): boolean =>
   opening ||
-  agent.status === 'submitted' ||
-  agent.status === 'streaming' ||
-  onItsWay(first, agent, detail) ||
+  standing.answering ||
+  onItsWay(first, standing, detail) ||
   Option.exists(detail, (value) => value.thread.attention === 'Working')
 
 const onItsWay = (

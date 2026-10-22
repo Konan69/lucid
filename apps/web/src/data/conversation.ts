@@ -3,7 +3,7 @@ import {
   type AgentConversationObservation,
   type AgentConversationObservationSnapshot,
   type FlueClient,
-  type FlueConversationMessage,
+  type FlueConversationState,
 } from '@flue/sdk'
 import type { ThreadId } from '@vivid/contracts'
 import { Option } from 'effect'
@@ -29,6 +29,32 @@ import { Option } from 'effect'
  */
 /** What this module uses of a Flue client: the one call it answers itself. */
 type Observable = Pick<FlueClient, 'observe'>
+
+/**
+ * What a conversation had said and which of its submissions had ended, both from one reading.
+ * They are kept and handed out together: words drawn beside an older or emptier list of endings
+ * would show a reply that has ended as one still arriving, and its displays would wait again.
+ */
+export type Heard = Pick<FlueConversationState, 'messages' | 'settlements'>
+
+/**
+ * Whether what was heard has a reply under way, by `@flue/react`'s own rule for a conversation it
+ * observed (`converge`, 2.2.2 `dist/index.mjs`): an assistant's text or reasoning still streaming,
+ * or a message of a submission that has not settled. The hook reports `idle` until it has read the
+ * history, so a screen drawn from what was heard asks this of the same reading instead.
+ */
+export const answeringIn = (heard: Heard): boolean => {
+  const settled = new Set(heard.settlements.map((settlement) => settlement.submissionId))
+  return heard.messages.some(
+    (message) =>
+      (message.submissionId !== undefined && !settled.has(message.submissionId)) ||
+      (message.role === 'assistant' &&
+        message.parts.some(
+          (part) =>
+            (part.type === 'text' || part.type === 'reasoning') && part.state === 'streaming',
+        )),
+  )
+}
 
 interface Held<Client> {
   readonly client: Client
@@ -74,18 +100,18 @@ export const makeConversations = <Client extends Observable>(
   /** Open conversations, the most recently used last: a `Map` keeps the order they were set in. */
   const open = new Map<ThreadId, Held<Client>>()
   /**
-   * What parked conversations had said when their streams were ended, the most recently parked
-   * last. A Thread opened again keeps its entry until its new observation has read the
-   * conversation (`heard`), and is parked afresh when it is next let go.
+   * What parked conversations had said, and which submissions had ended, when their streams were
+   * ended, the most recently parked last. A Thread opened again keeps its entry until its new
+   * observation has read the conversation (`heard`), and is parked afresh when it is next let go.
    */
-  const parked = new Map<ThreadId, ReadonlyArray<FlueConversationMessage>>()
+  const parked = new Map<ThreadId, Heard>()
 
-  /** Keeps what a conversation being let go had said, when it had been read. */
+  /** Keeps what a conversation being let go had said and ended, when it had been read. */
   const park = (id: ThreadId, held: Held<Client>) => {
     const conversation = held.snapshot().conversation
     if (conversation === undefined) return
     parked.delete(id)
-    parked.set(id, conversation.messages)
+    parked.set(id, conversation)
   }
 
   /**
@@ -192,20 +218,17 @@ export const makeConversations = <Client extends Observable>(
      */
     of: (id: ThreadId): Client => touch(id).client,
     /**
-     * What has been said in a Thread, when its conversation is open here and has been read, or was
-     * parked. A screen's own reading of the conversation begins a moment after it is drawn (the
-     * hook that reads it starts in an effect), and a parked one is read again from the server; so
-     * for that first frame, or that round trip, it has nothing. This is what is already known, for
-     * the screen to draw until its own reading catches up. It does not open anything or mark the
-     * conversation as used.
+     * What has been said in a Thread and which submissions have ended (`Heard`), when its
+     * conversation is open here and has been read, or was parked. A screen's own reading of the
+     * conversation begins a moment after it is drawn (the hook that reads it starts in an effect),
+     * and a parked one is read again from the server; so for that first frame, or that round trip,
+     * it has nothing, endings included. This is what is already known, for the screen to draw until
+     * its own reading catches up. It does not open anything or mark the conversation as used.
      */
-    heard: (id: ThreadId): Option.Option<ReadonlyArray<FlueConversationMessage>> =>
+    heard: (id: ThreadId): Option.Option<Heard> =>
       Option.orElse(
-        Option.map(
-          Option.flatMap(Option.fromUndefinedOr(open.get(id)), (held) =>
-            Option.fromUndefinedOr(held.snapshot().conversation),
-          ),
-          (conversation) => conversation.messages,
+        Option.flatMap(Option.fromUndefinedOr(open.get(id)), (held) =>
+          Option.fromUndefinedOr(held.snapshot().conversation),
         ),
         () => Option.fromUndefinedOr(parked.get(id)),
       ),
