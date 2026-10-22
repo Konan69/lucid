@@ -8,12 +8,8 @@ const repositoryRoot = NodePath.resolve(
 )
 
 /**
- * The type checker: tsc-rs (pingdotgg/ts-rust), a Rust port of the native TypeScript compiler
- * with the same command line and the Effect language service rules built in. Measured on this
- * repository on 7 Oct 2026 (docs/checks.md): the whole typecheck graph cold in 11 s against 28 s
- * for native `tsc` 7.0.2 with one checker, at the same 2 GB peak, and the same diagnostics.
- * Linux x64 and macOS arm64 only. `@typescript/native` stays installed for typed lint and
- * editors, and `apps/web`'s build still compiles with it.
+ * tsc-rs bundles the native TypeScript checker and Effect diagnostics.
+ * `@typescript/native` and its Effect patch stay for editors; the web build is Vite-only.
  */
 export const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
 

@@ -192,9 +192,13 @@ minimumReleaseAgeExclude:
   - '@effect/tsgo-win32-arm64@0.51.0'
   - '@effect/tsgo-win32-x64@0.51.0'
   - '@effect/tsgo@0.51.0'
-  - '@tsc-rs/darwin-arm64@0.1.0'
-  - '@tsc-rs/linux-x64@0.1.0'
-  - tsc-rs@0.1.0
+  - '@tsc-rs/darwin-arm64@0.8.0'
+  - '@tsc-rs/linux-x64@0.8.0'
+  - tsc-rs@0.8.0
+  - '@tsc-rs/darwin-x64@0.8.0'
+  - '@tsc-rs/linux-arm64@0.8.0'
+  - '@tsc-rs/win32-arm64@0.8.0'
+  - '@tsc-rs/win32-x64@0.8.0'
   - '@maschwenk/tsrslint@0.1.5'
   - '@maschwenk/tsrslint-linux-x64@0.1.5'
   - '@maschwenk/tsrslint-linux-arm64@0.1.5'

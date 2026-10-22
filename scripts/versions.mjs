@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import * as TypeScript from 'typescript'
 import { hermesConfigErrors } from './hermes.mjs'
 
 export const versions = Object.freeze({
@@ -12,7 +13,7 @@ export const versions = Object.freeze({
   '@effect/language-service': '0.87.2',
   '@maschwenk/tsrslint': '0.1.5',
   '@effect/tsgo': '0.51.0',
-  'tsc-rs': '0.1.0',
+  'tsc-rs': '0.8.0',
   '@effect/platform-node': '4.0.2',
   '@effect/sql-pg': '4.0.2',
   '@effect/vitest': '4.0.2',
@@ -201,11 +202,17 @@ const TypeScriptConfig = Schema.Struct({
   ),
 })
 const decodePackageManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest))
-const decodeTypeScriptConfig = Schema.decodeUnknownSync(Schema.fromJsonString(TypeScriptConfig))
+const decodeTypeScriptConfig = Schema.decodeUnknownSync(TypeScriptConfig)
 const readPackageManifest = (root, relativePath) =>
   decodePackageManifest(NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8'))
-const readTypeScriptConfig = (root, relativePath) =>
-  decodeTypeScriptConfig(NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8'))
+const readTypeScriptConfig = (root, relativePath) => {
+  const source = NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8')
+  const parsed = TypeScript.parseConfigFileTextToJson(relativePath, source)
+  if (parsed.error !== undefined) {
+    throw new Error(TypeScript.flattenDiagnosticMessageText(parsed.error.messageText, '\n'))
+  }
+  return decodeTypeScriptConfig(parsed.config)
+}
 
 /** Read one flat mapping from pnpm-workspace.yaml without adding a bootstrap dependency. */
 function readWorkspaceMapping(root, section) {
