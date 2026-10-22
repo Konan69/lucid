@@ -41,7 +41,8 @@ export function needsDatabase(tree, files) {
   const visited = new Set()
   while (pending.length > 0) {
     const file = NodeFS.realpathSync(pending.pop())
-    if (visited.has(file) || file.includes('node_modules/')) continue
+    if (visited.has(file) || file.includes('node_modules/') || !/\.[cm]?[jt]sx?$/u.test(file))
+      continue
     visited.add(file)
     const scanned = sourceImports(file, NodeFS.readFileSync(file, 'utf8'))
     if (scanned.database) return true

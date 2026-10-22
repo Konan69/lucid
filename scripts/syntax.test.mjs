@@ -6,6 +6,8 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeTest from 'node:test'
 import { scanSource } from './effect-boundary-audit.mjs'
 import { parseJsonc } from './jsonc.mjs'
+import { needsDatabase } from './proof/database.mjs'
+import { parseSource } from './syntax.mjs'
 import { testBodies } from './proof/source.mjs'
 
 const cases = [
@@ -220,3 +222,28 @@ NodeTest.test(
     NodeAssert.deepEqual(hermesConfigErrors(directory, ['apps/mobile/package.json']), [])
   },
 )
+
+NodeTest.test('invalid source stops AST consumers with the file and parse error', () => {
+  NodeAssert.throws(() => parseSource('broken.ts', 'const value = ;'), /broken\.ts: .+/u)
+})
+
+NodeTest.test('database discovery follows source imports past JSON assets', (context) => {
+  NodeFS.mkdirSync('.cache', { recursive: true })
+  const root = NodeFS.mkdtempSync(NodePath.resolve('.cache/database-json-'))
+  context.after(() => NodeFS.rmSync(root, { recursive: true, force: true }))
+  NodeFS.writeFileSync(NodePath.join(root, 'asset.json'), '{"label":"VIVID_TEST_DATABASE_URL"}')
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'plain.ts'),
+    "import asset from './asset.json'; export const label = asset.label",
+  )
+  NodeAssert.equal(needsDatabase(root, ['plain.ts']), false)
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'database.ts'),
+    'export const url = process.env.VIVID_TEST_DATABASE_URL',
+  )
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'backed.ts'),
+    "import './database.js'; import './asset.json'",
+  )
+  NodeAssert.equal(needsDatabase(root, ['backed.ts']), true)
+})

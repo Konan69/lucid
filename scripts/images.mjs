@@ -278,6 +278,29 @@ function requireBuild(context, graph, roots) {
   requireConfigs(context, graph)
 }
 
+/** Root pnpm configuration and workspace manifests must exist before each install. */
+function requireInstall(context, line, graph) {
+  for (const file of [
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    '.pnpmfile.cjs',
+    '.npmrc',
+    'patches',
+  ]) {
+    if (NodeFS.existsSync(NodePath.join(context.root, file)))
+      requireCopied(context, file, 'before pnpm install reads root configuration')
+  }
+  for (const { directory, manifest } of installPackages(line, graph)) {
+    requireCopied(
+      context,
+      NodePath.posix.join(directory, 'package.json'),
+      `before pnpm install for ${manifest.name}`,
+    )
+    context.installed.add(manifest.name)
+  }
+}
+
 /** FROM inherits a snapshot of its parent, so later stages cannot repair the parent's inputs. */
 function imageStage(root, label, parent) {
   const inherited = parent === undefined ? { copies: [], installed: [] } : parent
@@ -312,14 +335,7 @@ export function verifyImage({ root, dockerfile, stages }) {
       assert.notEqual(context, undefined, 'COPY must belong to an image stage')
       context.copies.push(...copyEntries(line))
     } else if (/^RUN .*\bpnpm install\b/.test(line)) {
-      for (const { directory, manifest } of installPackages(line, graph)) {
-        requireCopied(
-          context,
-          NodePath.posix.join(directory, 'package.json'),
-          `before pnpm install for ${manifest.name}`,
-        )
-        context.installed.add(manifest.name)
-      }
+      requireInstall(context, line, graph)
     } else if (line.startsWith('RUN ') && stages[context.label] !== undefined) {
       requireBuild(context, graph, stages[context.label])
     }

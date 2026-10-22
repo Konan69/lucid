@@ -24,7 +24,7 @@
     "check:package-manager": "node scripts/package-manager.mjs",
     "check:versions": "node scripts/versions.mjs",
     "test:lint-rules": "node --test scripts/oxlint-plugin-vivid.test.mjs",
-    "test:tooling": "node --test scripts/oxlint-plugin-vivid.test.mjs scripts/lint.test.mjs scripts/cache.test.mjs scripts/types.test.mjs scripts/gate.test.mjs scripts/release.test.mjs scripts/ceilings.test.mjs scripts/owners.test.mjs scripts/hermes.test.mjs scripts/build.test.mjs scripts/boundary.test.mjs scripts/references.test.mjs scripts/proof.test.mjs scripts/compiler-policy.test.mjs scripts/structure.test.mjs scripts/syntax.test.mjs",
+    "test:tooling": "node --test scripts/oxlint-plugin-vivid.test.mjs scripts/lint.test.mjs scripts/cache.test.mjs scripts/types.test.mjs scripts/gate.test.mjs scripts/release.test.mjs scripts/ceilings.test.mjs scripts/owners.test.mjs scripts/hermes.test.mjs scripts/build.test.mjs scripts/boundary.test.mjs scripts/references.test.mjs scripts/proof.test.mjs scripts/compiler-policy.test.mjs scripts/structure.test.mjs scripts/syntax.test.mjs scripts/images.test.mjs",
     "quality": "pnpm infra:verify && node scripts/gate.mjs full",
     "db:migrate": "node scripts/migrate.mjs",
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",

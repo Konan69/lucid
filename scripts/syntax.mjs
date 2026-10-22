@@ -4,7 +4,10 @@ import * as Schema from 'effect/Schema'
 const isString = Schema.is(Schema.String)
 
 export function parseSource(file, source) {
-  return parseSync(file, source, { astType: 'ts', range: true }).program
+  const result = parseSync(file, source, { astType: 'ts', range: true })
+  if (result.errors.length > 0)
+    throw new Error(`${file}: ${result.errors.map((error) => error.message).join('; ')}`)
+  return result.program
 }
 
 export function walk(node, visit, parent) {

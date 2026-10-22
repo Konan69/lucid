@@ -1,8 +1,5 @@
 import * as NodeFS from 'node:fs'
-import * as NodeOS from 'node:os'
-import * as NodeChildProcess from 'node:child_process'
 import * as NodePath from 'node:path'
-import * as NodeURL from 'node:url'
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeTest from 'node:test'
 import { commandErrors } from './compiler-policy.mjs'
@@ -45,36 +42,34 @@ test('the documented project check runs the pinned checker', () => {
   )
 })
 
-for (const compiler of ['tsc', 'tsgo']) {
-  test(`pnpm exec rejects ${compiler} before reaching a global compiler`, () => {
-    const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
-    const result = NodeChildProcess.spawnSync('pnpm', ['exec', compiler, '--version'], {
-      cwd: root,
-      encoding: 'utf8',
-    })
-    assert.notEqual(result.status, 0)
-    if (compiler === 'tsc') assert.match(result.stderr + result.stdout, /Use pnpm check <project>/u)
-  })
-}
-
 NodeTest.test('historical compiler names are prose, while runnable examples remain checked', () => {
   assert.deepEqual(commandErrors('docs/checks.md', '| `tsc` 7.0.2 | 28.3 s |'), [])
   assert.equal(commandErrors('docs/checks.md', 'Run `tsc`.').length, 1)
   assert.equal(commandErrors('docs/checks.md', '```sh\ntsc\n```').length, 1)
 })
 
-NodeTest.test('pnpm rejects a compiler package reached through node and a file path', (context) => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-compiler-guard-'))
-  context.after(() => NodeFS.rmSync(directory, { recursive: true, force: true }))
-  const file = NodePath.join(directory, 'node_modules/typescript/lib/driver.js')
-  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true })
-  NodeFS.writeFileSync(file, 'console.log("compiler executed")')
-  const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
-  const result = NodeChildProcess.spawnSync('pnpm', ['exec', 'node', file], {
-    cwd: root,
-    encoding: 'utf8',
+for (const source of ['tsc -b', '    tsc -b', '\ttsc']) {
+  test(`Markdown compiler commands fail without an instruction verb: ${source}`, () => {
+    assert.equal(commandErrors('docs/checks.md', source).length, 1)
   })
-  assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /Use pnpm check <project>/u)
-  assert.equal(result.stdout, '')
+}
+
+for (const source of ['Run `tsc-rs`, not `tsc`.', 'tsc-rs', 'Run `tsc-rs`.']) {
+  test(`the native checker is allowed in Markdown: ${source}`, () => {
+    assert.deepEqual(commandErrors('docs/checks.md', source), [])
+  })
+}
+
+test('workspace installs expose no legacy compiler bins', () => {
+  for (const manifest of NodeFS.globSync(
+    ['package.json', 'apps/*/package.json', 'packages/**/package.json'],
+    { exclude: ['**/node_modules/**'] },
+  )) {
+    for (const name of ['tsc', 'tsgo']) {
+      assert.equal(
+        NodeFS.existsSync(NodePath.join(NodePath.dirname(manifest), 'node_modules/.bin', name)),
+        false,
+      )
+    }
+  }
 })

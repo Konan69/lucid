@@ -46,12 +46,18 @@ export function commandErrors(file, source) {
   if (NodePath.basename(file) === 'package.json') return packageErrors(file, decodeManifest(source))
   if (file.startsWith('.husky/'))
     return forbidden.test(source) ? [`${file}: compiler commands must use scripts/types.mjs`] : []
-  const commands = [...source.matchAll(/(`+)([^`]+)\1/gu)].flatMap((match) =>
+  const prose = source.replace(/,\s*not\s+(`+)(?:tsc|tsgo)\1/giu, '')
+  const commands = [...prose.matchAll(/(`+)([^`]+)\1/gu)].flatMap((match) =>
     match[1].length >= 3 || !/^(?:tsc|tsgo)$/u.test(match[2]) ? [match[2]] : [],
   )
-  const instructions = source
+  const instructions = prose
     .split('\n')
-    .filter((line) => /\b(?:run|use|execute|invoke)\b/iu.test(line))
+    .filter(
+      (line) =>
+        /\b(?:run|use|execute|invoke)\b/iu.test(line) ||
+        /^(?: {4}|\t)/u.test(line) ||
+        /^\s*(?:[$>]\s*|[-*]\s+)?(?:tsc|tsgo)(?:\s+-|$)/u.test(line),
+    )
   return [...commands, ...instructions].some((command) => forbidden.test(command))
     ? [`${file}: document pnpm check with a project path`]
     : []

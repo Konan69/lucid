@@ -277,7 +277,7 @@
       }
     },
     {
-      "files": [".pnpmfile.cjs", "**/*.config.*", "scripts/**", "**/scripts/**"],
+      "files": ["**/*.config.*", "scripts/**", "**/scripts/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",

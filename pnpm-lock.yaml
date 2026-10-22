@@ -374,8 +374,6 @@ overrides:
   jose: 6.2.10
   effect: 4.0.2
 
-pnpmfileChecksum: sha256-S/GwipSr/ofhpGOBrPQDPHCE6C3wRwrjPVbNsEmKRK4=
-
 patchedDependencies:
   '@flue/runtime@2.2.2': 0a2539a8a851290e597695a39af5d9509bb2499c4f6911841e1492ba5d2eb232
   '@openuidev/react-lang@1.0.0': a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207
@@ -411,19 +409,13 @@ importers:
         version: 24.13.6
       alchemy:
         specifier: 'catalog:'
-        version: 2.0.0-beta.81(d256ac306834c0a3666b04bd95081d1d)
+        version: 2.0.0-beta.81(b783a81c262234596d11a99c4a063c52)
       effect:
         specifier: 4.0.2
         version: 4.0.2
       husky:
         specifier: 9.1.7
         version: 9.1.7
-      jsonc-parser:
-        specifier: 3.3.1
-        version: 3.3.1
-      oxc-parser:
-        specifier: 0.154.0
-        version: 0.154.0
       oxfmt:
         specifier: 0.68.0
         version: 0.68.0
@@ -445,6 +437,12 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
+      oxc-parser:
+        specifier: 0.154.0
+        version: 0.154.0
 
   apps/desktop:
     dependencies:
@@ -520,7 +518,7 @@ importers:
         version: 10.75.2
       '@sentry/react-native':
         specifier: 'catalog:'
-        version: 8.29.0(1d035c6849f12c1f37bf908f04db9dd2)
+        version: 8.29.0(dd041699833a6fb31f173c0774f371e1)
       '@shopify/react-native-skia':
         specifier: 2.6.2
         version: 2.6.2(react-native-reanimated@4.5.1(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -574,13 +572,13 @@ importers:
         version: 57.0.4(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))
       expo-sharing:
         specifier: 'catalog:'
-        version: 57.0.21(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+        version: 57.0.21(3bb5a4f5466a28bdd0694aa19c510adf)
       expo-system-ui:
         specifier: 'catalog:'
-        version: 57.0.4(d602510730bb7670eca662efb1817215)
+        version: 57.0.4(26d25c7a068313282f35d9b97d9bb2d1)
       expo-updates:
         specifier: 'catalog:'
-        version: 57.0.24(ea2eab2f3ed0e9df785f80f5dce03344)
+        version: 57.0.24(0a233cbce81e7e6de7c609922796a14a)
       lucide-react-native:
         specifier: 'catalog:'
         version: 1.47.0(react-native-svg@15.15.4(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -674,7 +672,7 @@ importers:
         version: link:../../packages/agent/skills
       alchemy:
         specifier: 'catalog:'
-        version: 2.0.0-beta.81(f6206a632ee2eec3239d1ffd6eef36c7)
+        version: 2.0.0-beta.81(e72af40b6c242fa9267e7d514372a2a2)
       better-auth:
         specifier: 'catalog:'
         version: 1.7.5(@opentelemetry/api@1.9.0)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2)(zod@4.5.4))(pg@8.23.0)(react-dom@19.2.6(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
@@ -994,6 +992,7 @@ importers:
       effect:
         specifier: 4.0.2
         version: 4.0.2
+    devDependencies: {}
 
   packages/client/state:
     dependencies:
@@ -1009,6 +1008,7 @@ importers:
       effect:
         specifier: 4.0.2
         version: 4.0.2
+    devDependencies: {}
 
   packages/computer/state:
     dependencies:
@@ -1037,8 +1037,10 @@ importers:
       effect:
         specifier: 4.0.2
         version: 4.0.2
+    devDependencies: {}
 
-  packages/design/marks: {}
+  packages/design/marks:
+    devDependencies: {}
 
   packages/design/tokens: {}
 
@@ -2505,11 +2507,8 @@ packages:
 
   '@expo/require-utils@57.0.5':
     resolution: {integrity: sha512-kTAXj9lDFEIPMsbAOGCGbjBbMF0oi7CqkYM79KOX0DDD9wSwXmlKL1z2h8OwsrBf7mbOo2DjlRvZu4BEjrIxGw==}
-    peerDependencies:
-      typescript: '*'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   '@expo/router-server@57.0.10':
     resolution: {integrity: sha512-8rGh6N5di7jzu7UC1SuIA1TWmVd+vBwOHwC7/1ww+FA6CcxcWyQlcPl39h2+Jpnul78CVzWpIjOcdKsZsp2zXw==}
@@ -3318,14 +3317,12 @@ packages:
   '@opentelemetry/sdk-trace-base@2.11.0':
     resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
     engines: {node: ^18.19.0 || >=20.6.0}
-    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-base@2.7.1':
     resolution: {integrity: sha512-NAYIlsF8MPUsKqJMiDQJTMPOmlbawC1Iz/omMLygZ1C9am8fTKYjTaI+OZM+WTY3t3Glo0wnOg/6/pac6RGPPw==}
     engines: {node: ^18.19.0 || >=20.6.0}
-    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
@@ -3391,12 +3388,6 @@ packages:
     cpu: [arm]
     os: [android]
 
-  '@oxc-parser/binding-android-arm-eabi@0.154.0':
-    resolution: {integrity: sha512-sDdEtDl7vKdCvf54j72RJbowE3jCmyRz/+oOB6IAwQxAHZ0eI+Dcj4hvVnm0b9Dy31plUkdmfds9C+/Zt895Tg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm]
-    os: [android]
-
   '@oxc-parser/binding-android-arm64@0.143.0':
     resolution: {integrity: sha512-9BbdjHETk6O3zH/DDid9IgBtF0GlpLabNKN231uraXpRDSfY+iiZxTP5bk1Z63GBownVdhdINFIeddmMz4MzpQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3405,12 +3396,6 @@ packages:
 
   '@oxc-parser/binding-android-arm64@0.148.0':
     resolution: {integrity: sha512-sg/6Ez0KdAygsu0POELux9wN1Po2CP93WY8eNl4DBKIGprsd4QSHBXOb471Pu9i2OCD5sLkISSb2agZEhVn2Zw==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [android]
-
-  '@oxc-parser/binding-android-arm64@0.154.0':
-    resolution: {integrity: sha512-UHrDPELzvWZoVkIDdSycj4bzcTMCJG3IbN++mSUgVBaUtNtWHjQ98U6Vz5bpF/1Ic3FYJyYhMr74huO5tVvpZw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [android]
@@ -3427,12 +3412,6 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
-  '@oxc-parser/binding-darwin-arm64@0.154.0':
-    resolution: {integrity: sha512-mokYzajOSXxtSRDWCdHARGdntrKH+rZZ24Jzo8AtafyNzz0NARmpMm26Tc5B6qiGrr6UliWibHCOif1qRN2vaA==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [darwin]
-
   '@oxc-parser/binding-darwin-x64@0.143.0':
     resolution: {integrity: sha512-qd1hl2d+lXgHv/VQ/M9qm8TrMC5T4RqDBwtOnl+1D0QMjwcz+8AaB4JSg8STgeag0GP6a6L74XEGAsrTSJWNzQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3441,12 +3420,6 @@ packages:
 
   '@oxc-parser/binding-darwin-x64@0.148.0':
     resolution: {integrity: sha512-6ZeklaamrMy4H2JmhvcJg6iip59tYILtuLaILxyAHT3l5FDxnI5ihVievAft5ZmAbqtlWHErOi1OpJK8gy1wcA==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
-    os: [darwin]
-
-  '@oxc-parser/binding-darwin-x64@0.154.0':
-    resolution: {integrity: sha512-WbtUBrclOVItWfLRSvs+Z/WLtXxJ2Ctv50PyuX894HzDN5/e0qzxVpTNPIVMzOerBhgKtFsSMcfxlYIAbvdVgg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [darwin]
@@ -3463,12 +3436,6 @@ packages:
     cpu: [x64]
     os: [freebsd]
 
-  '@oxc-parser/binding-freebsd-x64@0.154.0':
-    resolution: {integrity: sha512-YooHZSLawOe2fqm+lDdG8oAaQh2NYV/RMYTYzWRLy72stm2BgE9O/8Al6kFENjkmzyyBccDLLBirGxVtpzQfrw==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
-    os: [freebsd]
-
   '@oxc-parser/binding-linux-arm-gnueabihf@0.143.0':
     resolution: {integrity: sha512-T/GXusuOkPNQhCQCSBbcU/N8j0rAypuDBl1IyFK+lyYT594XsVz80clPC/OtbSSpBGyJxj8uYEfctxVuxVYoww==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3477,12 +3444,6 @@ packages:
 
   '@oxc-parser/binding-linux-arm-gnueabihf@0.148.0':
     resolution: {integrity: sha512-eOr3M+6iGbbxNL4PSS0VtsyQ2eOUxSBh00BqO22SbolDimPSYsBuLr/LCrZBkiqW2BoabhR6V4R8jrRAay7hjg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm]
-    os: [linux]
-
-  '@oxc-parser/binding-linux-arm-gnueabihf@0.154.0':
-    resolution: {integrity: sha512-hKOwhZbrXdTwc4bGVfbLCXl9f2swl6zWdISocLQSNX9MgPmwHE3qGzOUkCrkuGpwdCVHPnkfOwsqTuYsrP5uNg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm]
     os: [linux]
@@ -3499,12 +3460,6 @@ packages:
     cpu: [arm]
     os: [linux]
 
-  '@oxc-parser/binding-linux-arm-musleabihf@0.154.0':
-    resolution: {integrity: sha512-tnjiooXEU013349O/yxKbF5Cusp1CfHWQ8kYR8tGeRzR/P4sOpQGQo21fsS71M0fMD6ESLq+lbvXFWi43PuKeQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm]
-    os: [linux]
-
   '@oxc-parser/binding-linux-arm64-gnu@0.143.0':
     resolution: {integrity: sha512-WJBbD186AZmMGaSIhlktC+rPl8L3peCTXAh88Ih9uEvK0en2mPojGyCGYiL6mHtV1RPV3JyfJW5t6n5hh0lXhA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3514,13 +3469,6 @@ packages:
 
   '@oxc-parser/binding-linux-arm64-gnu@0.148.0':
     resolution: {integrity: sha512-Fnu95O4eZ5i++GPvIzBEZ8y4ddTLR+D9paYa8JRaRk6ZK7nHQiWP5xtrhcPQsXqgat1d7sU/d5rbbI0p1FTHSQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@oxc-parser/binding-linux-arm64-gnu@0.154.0':
-    resolution: {integrity: sha512-Cao2kj+8d7BT6XJU1gV9eVQjV+Cr+e8vQm3tddDRZiM2hHrMDxwy3j6t+ofaSl0idyuPPCZ4AlpmQoj8yOT1QA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
@@ -3540,13 +3488,6 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@oxc-parser/binding-linux-arm64-musl@0.154.0':
-    resolution: {integrity: sha512-uiwA0V3q8llWA7/8r+a9BBjk4j5YMDmi6wfOsyQfGOJMQSLHEiZ3HI8ulea766ykUa9wJFWk9XWEl4uJrZLQqw==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
   '@oxc-parser/binding-linux-ppc64-gnu@0.143.0':
     resolution: {integrity: sha512-RsnO/NoD8376LMJq8JS8TwI0ieNaFRTuNe2GVJntQg6gwZNMENZsEbknHdVwjpOmxdGLGodcwaGSbAeRr5Bgjw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3556,13 +3497,6 @@ packages:
 
   '@oxc-parser/binding-linux-ppc64-gnu@0.148.0':
     resolution: {integrity: sha512-9LkaYvfiF8hMOw900csAvkf1oxE8XlmMeGowu5BcastSSwV8mKvKRMNU7HsV+ycyj1dQD8pX5qgOw8ja6SJacg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [ppc64]
-    os: [linux]
-    libc: [glibc]
-
-  '@oxc-parser/binding-linux-ppc64-gnu@0.154.0':
-    resolution: {integrity: sha512-LICfN0Xs4Zdko+bJy6eOAEQojDuIR26suF2JtOsMaXjgbCrpRSH7/NCvJhY13YvYBx12V6hnwrL8n0lk0rbNJQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ppc64]
     os: [linux]
@@ -3582,13 +3516,6 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@oxc-parser/binding-linux-riscv64-gnu@0.154.0':
-    resolution: {integrity: sha512-gbbSYxLF8ssRbQ2qQPy+2EhGNwNH1bAoRdkk6cnWaKHqmCikpSIPtpXjFbCCtjTi0uojqOM3ghFQwQPbDQsU0Q==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [riscv64]
-    os: [linux]
-    libc: [glibc]
-
   '@oxc-parser/binding-linux-riscv64-musl@0.143.0':
     resolution: {integrity: sha512-T8CpdD+SfE01DnIOD4HpVxu0ZJOfMJ/VhCvikKfaXAxkZ+9veyLM/D2hpi7Y2hFUyPmVQO3FNZHmYzV/WlVR4g==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3598,13 +3525,6 @@ packages:
 
   '@oxc-parser/binding-linux-riscv64-musl@0.148.0':
     resolution: {integrity: sha512-uPqZexvKJmEgq4mAu36qe2xTfXZE7oyik1R7KtZ5tl8qKlq1U1fIqTFRUEBZqRGvforoTrGIpatRzcoPKO66RA==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [riscv64]
-    os: [linux]
-    libc: [musl]
-
-  '@oxc-parser/binding-linux-riscv64-musl@0.154.0':
-    resolution: {integrity: sha512-nSnRYYDLCcRVjSQzF3g6rKqCNYwo5o+aQgnn8BBXfe+ofCgMGlGqkfRyvXm6ptZvoxNkkWtLlqM8W7Xc3j6ZnQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [riscv64]
     os: [linux]
@@ -3624,13 +3544,6 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@oxc-parser/binding-linux-s390x-gnu@0.154.0':
-    resolution: {integrity: sha512-BxBQoJKtzRQgZEKQIt6CDUm8RGKC5T8Qo4576yDa5/xgc10X3fBDItMbRabzLtbUBfTqKLl+8AVr/H6CF7W22g==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [s390x]
-    os: [linux]
-    libc: [glibc]
-
   '@oxc-parser/binding-linux-x64-gnu@0.143.0':
     resolution: {integrity: sha512-659ujfqLy6k7cuH3sbzhd8b+ztSq+i6E2E9pG78Q0BmHjAExfGIdgc8cGgMdwAozDXeZFHkJ+LXYJdWsaGdgyw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3640,13 +3553,6 @@ packages:
 
   '@oxc-parser/binding-linux-x64-gnu@0.148.0':
     resolution: {integrity: sha512-2qhDSJwKzbSZzF7lDqqk8sr/yXsmwr3PeUa4/nazIF+zFAYz1gVPEfC34GQtGxzJUUmklaYAL63368LEfrMeyw==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@oxc-parser/binding-linux-x64-gnu@0.154.0':
-    resolution: {integrity: sha512-/whkust2vYy+GjRUVL5cWaJmEu6jkdFfo5mkxgckyeOX61eMwo4iBoiwzeJZeMWAdzb/XOtQyLApHhFht3sOWA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
@@ -3666,13 +3572,6 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@oxc-parser/binding-linux-x64-musl@0.154.0':
-    resolution: {integrity: sha512-EXURTyW9riw4B/kZnnE+58emAtw6+3VEszQfXUZkRqGaKIcmWDYkZtKB+xY/blHvuZ+Qy/fDclc31nmUCgtkSA==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
   '@oxc-parser/binding-openharmony-arm64@0.143.0':
     resolution: {integrity: sha512-8rIKWR2BFuifbIK/1XB9wTaSdtuJ25dlE7ZQYDnEwj/2xH2vHsxnvIjHT3ZjSVuLLwGGlSslIG/fbOJ8TV8rTw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3681,12 +3580,6 @@ packages:
 
   '@oxc-parser/binding-openharmony-arm64@0.148.0':
     resolution: {integrity: sha512-1UGbaQWEXUCLqAmaR5kwRDjx/R4S5LQKZkM9CHmaHkuKhriOF32aRLfS0jCRNE2yGQJLMEA1z9UucbBVqjXnDw==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [openharmony]
-
-  '@oxc-parser/binding-openharmony-arm64@0.154.0':
-    resolution: {integrity: sha512-ZRFooyH3qsR6vuR4jFGlG3XM36490SvvXtNaUahBK4zHpooMdTHNaOMtGGJI0EW38m5hi4rOco9kw7ZwCIp28w==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [openharmony]
@@ -3703,12 +3596,6 @@ packages:
     cpu: [arm64]
     os: [win32]
 
-  '@oxc-parser/binding-win32-arm64-msvc@0.154.0':
-    resolution: {integrity: sha512-U0Vp+4lvwUa/PnOCJTZOjydj1rX2+VLHz4Y2vSFqlN8/7LTiURgD7z4uQ9yNv9O/NlU3mELBnPDlu7aaSYG1zQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
-    os: [win32]
-
   '@oxc-parser/binding-win32-ia32-msvc@0.143.0':
     resolution: {integrity: sha512-25P7AaHk4R88Yv2XH4gToDVmh0cOu+bEURQU10CRrmvgabfRArSGAP5osmwUKeSUHj0VS50upbpbRWWW/m7mHA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3717,12 +3604,6 @@ packages:
 
   '@oxc-parser/binding-win32-ia32-msvc@0.148.0':
     resolution: {integrity: sha512-i3p4x+mvwtjcE1J5HM6V7ggsbXiznExN/4MkNyOy3dfXrVV3bnkSfmZxvo6/84qCVX4ShkpNE1SKt9biIF31GQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [ia32]
-    os: [win32]
-
-  '@oxc-parser/binding-win32-ia32-msvc@0.154.0':
-    resolution: {integrity: sha512-Hc8QgsFY5eUUP25we8TISUruibG2cDt0H4IcPG9RKdabb6odkCzIqjV6Gk9beGWGuOwMVCr81H/Su1q363LCCg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ia32]
     os: [win32]
@@ -3739,12 +3620,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@oxc-parser/binding-win32-x64-msvc@0.154.0':
-    resolution: {integrity: sha512-hD7judkUMA/hZPoamvKADs6+an1smp8UTK0aMYRijkvi00K/1vl7vEtmyn2JyQ9S+vibtnfcNzxqTLGyJUZCRQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
-    os: [win32]
-
   '@oxc-project/types@0.143.0':
     resolution: {integrity: sha512-u6JZdLBTLotrNC9Vd6vPssINdzcCzleKAH6EJKImQb7GtYvX5keN2dxkoK44stCc4tffE6QQRtZTXVSzsLUlWA==}
 
@@ -3753,9 +3628,6 @@ packages:
 
   '@oxc-project/types@0.148.0':
     resolution: {integrity: sha512-Nm4s/jB+4FpFsPhWGEC4h7rzksesmtnMXomo6rCMcg/b8zLQuOziRgkCS1fxDCXOlJB/6Q8oABOZ/OP6RIPj9A==}
-
-  '@oxc-project/types@0.154.0':
-    resolution: {integrity: sha512-KYOUGQFlLWR+s4QMV2Q9ko38TZm7EdO87Qm7rvZLqk/webse/cDjtyxKhg/47l0byCbs/k46LT8qc4PKjAikzA==}
 
   '@oxfmt/binding-android-arm-eabi@0.68.0':
     resolution: {integrity: sha512-dhfYPbzv/h9JgHjNkl2R6sOjUfxDyLGOZVb3g8/ScaTNwwJcYgmHh8kcYFDUhinuy1QAoANCWUvw1jlk+z6gAg==}
@@ -4038,6 +3910,7 @@ packages:
   '@photon-ai/otel@3.8.1':
     resolution: {integrity: sha512-VDGj/iYk8ZXQhPLUYjNXtIAa7AA3kVGpjupn99ShiSotgbLeskXCOiAO4G0TlER2oUeoI9ovLU2fEyA87bMExw==}
     engines: {node: '>=20'}
+    peerDependencies: {}
 
   '@photon-ai/proto@0.2.4':
     resolution: {integrity: sha512-DQANEp0gHvtwqpMGEF0ufa0hs1nniRdsSuo0Q/TG6GoL1WjC5tp59tHFSLUeIm6fvnAuRjREsGzURz3+/69g7g==}
@@ -4845,12 +4718,21 @@ packages:
     resolution: {integrity: sha512-nZyWTmSpJEXl6VtWVMBJve/7x12DZu6sIX1z1a+ZMaHlQQRs9Zpu6NbTe/gmxYXVRpkjxyDYpZ5gx2IM6f/Wkw==}
     engines: {node: '>=18.0.0'}
 
+  '@smithy/node-http-handler@4.12.0':
+    resolution: {integrity: sha512-0mq1pHadfyXCYCqm2cNpbjNIT+fbaUpNxewZb/YNr2L0IrEVMOb8gM/Fl4K6XvHCW3uSNDFwPl/+iKm0bx9jYg==}
+    engines: {node: '>=18.0.0'}
+    deprecated: Depreacted due to a memory leak issue https://github.com/smithy-lang/smithy-typescript/issues/2258
+
   '@smithy/node-http-handler@4.12.1':
     resolution: {integrity: sha512-ThMkboGeONWXAelq9FvGsuJC4rOi+qyC4/zhUF58xYpxUg5sQKx2VXZYJmtNjr4dSuBJ1HeJXETQILCz3wOHvw==}
     engines: {node: '>=18.0.0'}
 
   '@smithy/signature-v4@5.7.3':
     resolution: {integrity: sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/types@4.17.2':
+    resolution: {integrity: sha512-FOKpVZob9MPTn2znRzGrnsMHv7BOsKVw3XiP/cOyYLDVZ9qKp4nifIiSCuUU/fIj5Vu0UOAxCFr+qRAtG0NUkA==}
     engines: {node: '>=18.0.0'}
 
   '@smithy/types@4.19.0':
@@ -5217,6 +5099,9 @@ packages:
   '@types/node@18.19.130':
     resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
 
+  '@types/node@24.13.3':
+    resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
+
   '@types/node@24.13.6':
     resolution: {integrity: sha512-SGrw/h3KPFshy3OE6ZL53LMBG5vGQQ8/gIpiqz/kRZhPJ7HgwCEs8LBuNtWLa8dvGZVpSF7+Bf+c11HUrCb/yg==}
 
@@ -5258,6 +5143,9 @@ packages:
   '@types/whatwg-mimetype@3.0.2':
     resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
 
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
@@ -5276,6 +5164,7 @@ packages:
   '@typescript-eslint/project-service@8.70.0':
     resolution: {integrity: sha512-hFHbTNqhU9G+2eKFXCBVb1tjFT/LceiJ4+HfLO4pTpDI0KHi6iajpcFFkaSQ9gXmCh7n82A0PthaayEdN6mspQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    peerDependencies: {}
 
   '@typescript-eslint/scope-manager@8.70.0':
     resolution: {integrity: sha512-8nP3Kwh5hlgZ4FicGvmznAmJe8UL4sdU8tLukrPaMuQmDuk4Y8xYfzu/aYZW4xT2JCgc7H/TpDI5cGlxcWJSqQ==}
@@ -5284,6 +5173,7 @@ packages:
   '@typescript-eslint/tsconfig-utils@8.70.0':
     resolution: {integrity: sha512-adnkeeNq9Sq1sUf4+FRVc0KdgYghzsgFpZSQVZVvY0LCuUuN0FnQgyGzCJeC4fW1cdXseBAjU2EOqUIjbNcZUw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    peerDependencies: {}
 
   '@typescript-eslint/types@8.70.0':
     resolution: {integrity: sha512-asTOIYhDg4zdzOScCyaytrsV3cR6B4ecPQlXw/dJIm7J/MZTtCtfVII9JD8Geh4jTCrK/Xe6cg5UevoleMcoJQ==}
@@ -5292,6 +5182,7 @@ packages:
   '@typescript-eslint/typescript-estree@8.70.0':
     resolution: {integrity: sha512-d9NmHMPEKQ7QCLLm1jI3zmoQBwT5KwFYjXBJ9ymZfKCUU+5rmTRykKAFvH5Qn/ZCds3CEAFS9OC9M/jkl0X2bA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    peerDependencies: {}
 
   '@typescript-eslint/visitor-keys@8.70.0':
     resolution: {integrity: sha512-BoC8PiO4Hkdo0TVJh9Ntxr5MxPDI7/oFsrygN5ADelFSeXG/qgNuucIGA+L5Z6JpPTE/uRfcTWtscjbUaufepQ==}
@@ -5891,6 +5782,8 @@ packages:
   capnp-es@0.0.16:
     resolution: {integrity: sha512-pqhhnRqGfDdgHa+rz4JVO9j1jnkyqsHRYrD4RBtIwxCknYSRG7Mjs+x3IRfd20u+ZGS0IhW2L7cDv9ZcIkCYhQ==}
     hasBin: true
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   capnweb@0.12.0:
     resolution: {integrity: sha512-jgZ/LMtMVTi+RVlooIslH78Gg23XbDTdvcLghWx3oz17D6u5GuJARt+uhZk/wcTo+f81eeabfnow4d3zLBj+JQ==}
@@ -6155,6 +6048,8 @@ packages:
   cosmiconfig@9.0.2:
     resolution: {integrity: sha512-gtTZxTDau1wL7Y7zifc2dd8jHSK/k6BTx/2Xp/BpdlAdnlYWFVt7qhJqgwi7637yRwRQ3qL4ZidbB4I8tA5VOg==}
     engines: {node: '>=14'}
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   cpu-features@0.0.10:
     resolution: {integrity: sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA==}
@@ -7587,9 +7482,6 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
-  jsonc-parser@3.3.1:
-    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
-
   jsonfile@4.0.0:
     resolution: {integrity: sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg==}
 
@@ -8505,10 +8397,6 @@ packages:
 
   oxc-parser@0.148.0:
     resolution: {integrity: sha512-syxUKHeUll89RIABQADcI7sikYrwyssvA6gj4phSSIPezKVM8yMaLAiLLSc7fmzVvrwybfFGFbW5zme9sX87rg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-
-  oxc-parser@0.154.0:
-    resolution: {integrity: sha512-Gr/6fkjZwi937c4Tsz8y0iO4U0FLPkZI6JSVucLAIvQyqh379px7RS8ORIc0HOORbFjXZ6zyqWLl53qxhSeofw==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
   oxfmt@0.68.0:
@@ -9651,6 +9539,7 @@ packages:
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
     engines: {node: '>=18.12'}
+    peerDependencies: {}
 
   ts-error@1.0.6:
     resolution: {integrity: sha512-tLJxacIQUM82IR7JO1UUkKlYuUTmoY9HBJAmNWFzheSlDS5SPMcNIepejHJa4BpPQLAcbRhRf3GDJzyj6rbKvA==}
@@ -9877,22 +9766,18 @@ packages:
 
   valibot@1.2.0:
     resolution: {integrity: sha512-mm1rxUsmOxzrwnX5arGS+U4T25RdvpPjPN4yR0u9pUBov9+zGVtO84tif1eY4r6zWxVxu3KzIyknJy3rxfRZZg==}
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   valibot@1.4.2:
     resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
-    peerDependencies:
-      typescript: '*'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   valibot@1.5.0:
     resolution: {integrity: sha512-nil6AkP2TChWL43Z5uJ6GTxX01CUA+g8LWUM+N/rB9NBbkUMaUsi9PUNzlUPgoKASgmx9f7eGOYpJ04/fSa6FQ==}
-    peerDependencies:
-      typescript: '*'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
+    peerDependencies: {}
+    peerDependenciesMeta: {}
 
   validate-npm-package-name@5.0.1:
     resolution: {integrity: sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ==}
@@ -10245,6 +10130,138 @@ packages:
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
+  '@oxc-parser/binding-android-arm-eabi@0.154.0':
+    resolution: {integrity: sha512-sDdEtDl7vKdCvf54j72RJbowE3jCmyRz/+oOB6IAwQxAHZ0eI+Dcj4hvVnm0b9Dy31plUkdmfds9C+/Zt895Tg==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [android]
+
+  '@oxc-parser/binding-android-arm64@0.154.0':
+    resolution: {integrity: sha512-UHrDPELzvWZoVkIDdSycj4bzcTMCJG3IbN++mSUgVBaUtNtWHjQ98U6Vz5bpF/1Ic3FYJyYhMr74huO5tVvpZw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [android]
+
+  '@oxc-parser/binding-darwin-arm64@0.154.0':
+    resolution: {integrity: sha512-mokYzajOSXxtSRDWCdHARGdntrKH+rZZ24Jzo8AtafyNzz0NARmpMm26Tc5B6qiGrr6UliWibHCOif1qRN2vaA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@oxc-parser/binding-darwin-x64@0.154.0':
+    resolution: {integrity: sha512-WbtUBrclOVItWfLRSvs+Z/WLtXxJ2Ctv50PyuX894HzDN5/e0qzxVpTNPIVMzOerBhgKtFsSMcfxlYIAbvdVgg==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [darwin]
+
+  '@oxc-parser/binding-freebsd-x64@0.154.0':
+    resolution: {integrity: sha512-YooHZSLawOe2fqm+lDdG8oAaQh2NYV/RMYTYzWRLy72stm2BgE9O/8Al6kFENjkmzyyBccDLLBirGxVtpzQfrw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@oxc-parser/binding-linux-arm-gnueabihf@0.154.0':
+    resolution: {integrity: sha512-hKOwhZbrXdTwc4bGVfbLCXl9f2swl6zWdISocLQSNX9MgPmwHE3qGzOUkCrkuGpwdCVHPnkfOwsqTuYsrP5uNg==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [linux]
+
+  '@oxc-parser/binding-linux-arm-musleabihf@0.154.0':
+    resolution: {integrity: sha512-tnjiooXEU013349O/yxKbF5Cusp1CfHWQ8kYR8tGeRzR/P4sOpQGQo21fsS71M0fMD6ESLq+lbvXFWi43PuKeQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [linux]
+
+  '@oxc-parser/binding-linux-arm64-gnu@0.154.0':
+    resolution: {integrity: sha512-Cao2kj+8d7BT6XJU1gV9eVQjV+Cr+e8vQm3tddDRZiM2hHrMDxwy3j6t+ofaSl0idyuPPCZ4AlpmQoj8yOT1QA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-arm64-musl@0.154.0':
+    resolution: {integrity: sha512-uiwA0V3q8llWA7/8r+a9BBjk4j5YMDmi6wfOsyQfGOJMQSLHEiZ3HI8ulea766ykUa9wJFWk9XWEl4uJrZLQqw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@oxc-parser/binding-linux-ppc64-gnu@0.154.0':
+    resolution: {integrity: sha512-LICfN0Xs4Zdko+bJy6eOAEQojDuIR26suF2JtOsMaXjgbCrpRSH7/NCvJhY13YvYBx12V6hnwrL8n0lk0rbNJQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [ppc64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-riscv64-gnu@0.154.0':
+    resolution: {integrity: sha512-gbbSYxLF8ssRbQ2qQPy+2EhGNwNH1bAoRdkk6cnWaKHqmCikpSIPtpXjFbCCtjTi0uojqOM3ghFQwQPbDQsU0Q==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-riscv64-musl@0.154.0':
+    resolution: {integrity: sha512-nSnRYYDLCcRVjSQzF3g6rKqCNYwo5o+aQgnn8BBXfe+ofCgMGlGqkfRyvXm6ptZvoxNkkWtLlqM8W7Xc3j6ZnQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [musl]
+
+  '@oxc-parser/binding-linux-s390x-gnu@0.154.0':
+    resolution: {integrity: sha512-BxBQoJKtzRQgZEKQIt6CDUm8RGKC5T8Qo4576yDa5/xgc10X3fBDItMbRabzLtbUBfTqKLl+8AVr/H6CF7W22g==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-x64-gnu@0.154.0':
+    resolution: {integrity: sha512-/whkust2vYy+GjRUVL5cWaJmEu6jkdFfo5mkxgckyeOX61eMwo4iBoiwzeJZeMWAdzb/XOtQyLApHhFht3sOWA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-x64-musl@0.154.0':
+    resolution: {integrity: sha512-EXURTyW9riw4B/kZnnE+58emAtw6+3VEszQfXUZkRqGaKIcmWDYkZtKB+xY/blHvuZ+Qy/fDclc31nmUCgtkSA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@oxc-parser/binding-openharmony-arm64@0.154.0':
+    resolution: {integrity: sha512-ZRFooyH3qsR6vuR4jFGlG3XM36490SvvXtNaUahBK4zHpooMdTHNaOMtGGJI0EW38m5hi4rOco9kw7ZwCIp28w==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [openharmony]
+
+  '@oxc-parser/binding-win32-arm64-msvc@0.154.0':
+    resolution: {integrity: sha512-U0Vp+4lvwUa/PnOCJTZOjydj1rX2+VLHz4Y2vSFqlN8/7LTiURgD7z4uQ9yNv9O/NlU3mELBnPDlu7aaSYG1zQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [win32]
+
+  '@oxc-parser/binding-win32-ia32-msvc@0.154.0':
+    resolution: {integrity: sha512-Hc8QgsFY5eUUP25we8TISUruibG2cDt0H4IcPG9RKdabb6odkCzIqjV6Gk9beGWGuOwMVCr81H/Su1q363LCCg==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [ia32]
+    os: [win32]
+
+  '@oxc-parser/binding-win32-x64-msvc@0.154.0':
+    resolution: {integrity: sha512-hD7judkUMA/hZPoamvKADs6+an1smp8UTK0aMYRijkvi00K/1vl7vEtmyn2JyQ9S+vibtnfcNzxqTLGyJUZCRQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [win32]
+
+  '@oxc-project/types@0.154.0':
+    resolution: {integrity: sha512-KYOUGQFlLWR+s4QMV2Q9ko38TZm7EdO87Qm7rvZLqk/webse/cDjtyxKhg/47l0byCbs/k46LT8qc4PKjAikzA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
+
+  oxc-parser@0.154.0:
+    resolution: {integrity: sha512-Gr/6fkjZwi937c4Tsz8y0iO4U0FLPkZI6JSVucLAIvQyqh379px7RS8ORIc0HOORbFjXZ6zyqWLl53qxhSeofw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+
 snapshots:
 
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))':
@@ -10268,6 +10285,7 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
       - proxy-agent
+      - typescript
 
   '@alchemy.run/floci@2.0.0-beta.81(effect@4.0.2)':
     dependencies:
@@ -10293,6 +10311,7 @@ snapshots:
       - bufferutil
       - proxy-agent
       - redis
+      - typescript
       - utf-8-validate
 
   '@alchemy.run/node-utils@2.0.0-beta.81':
@@ -10323,8 +10342,8 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.12.1
-      '@smithy/types': 4.19.0
+      '@smithy/node-http-handler': 4.12.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/core@3.977.9':
@@ -10334,7 +10353,7 @@ snapshots:
       '@aws/lambda-invoke-store': 0.3.0
       '@smithy/core': 3.33.3
       '@smithy/signature-v4': 5.7.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       bowser: 2.14.1
       tslib: 2.8.1
 
@@ -10343,7 +10362,7 @@ snapshots:
       '@aws-sdk/core': 3.977.9
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-http@3.972.72':
@@ -10352,8 +10371,8 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.12.1
-      '@smithy/types': 4.19.0
+      '@smithy/node-http-handler': 4.12.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-ini@3.973.15':
@@ -10369,7 +10388,7 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/credential-provider-imds': 4.5.2
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-login@3.972.77':
@@ -10378,7 +10397,7 @@ snapshots:
       '@aws-sdk/nested-clients': 3.997.44
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-node@3.972.82':
@@ -10392,7 +10411,7 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/credential-provider-imds': 4.5.2
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-process@3.972.70':
@@ -10400,7 +10419,7 @@ snapshots:
       '@aws-sdk/core': 3.977.9
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-sso@3.973.14':
@@ -10410,7 +10429,7 @@ snapshots:
       '@aws-sdk/token-providers': 3.1116.0
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/credential-provider-web-identity@3.972.76':
@@ -10419,21 +10438,21 @@ snapshots:
       '@aws-sdk/nested-clients': 3.997.44
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/eventstream-handler-node@3.972.34':
     dependencies:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/middleware-eventstream@3.972.29':
     dependencies:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/middleware-websocket@3.972.52':
@@ -10443,7 +10462,7 @@ snapshots:
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
       '@smithy/signature-v4': 5.7.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/nested-clients@3.997.44':
@@ -10453,15 +10472,15 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.12.1
-      '@smithy/types': 4.19.0
+      '@smithy/node-http-handler': 4.12.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/signature-v4-multi-region@3.996.46':
     dependencies:
       '@aws-sdk/types': 3.974.5
       '@smithy/signature-v4': 5.7.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/token-providers@3.1116.0':
@@ -10470,7 +10489,7 @@ snapshots:
       '@aws-sdk/nested-clients': 3.997.44
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/token-providers@3.1127.0':
@@ -10479,17 +10498,17 @@ snapshots:
       '@aws-sdk/nested-clients': 3.997.44
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/types@3.974.5':
     dependencies:
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws-sdk/xml-builder@3.972.40':
     dependencies:
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@aws/lambda-invoke-store@0.3.0': {}
@@ -11695,7 +11714,7 @@ snapshots:
     dependencies:
       '@types/json-schema': 7.0.15
 
-  '@expo/cli@57.0.26(0c83087932ca42b1b2a215727e4bb901)':
+  '@expo/cli@57.0.26(3b570828fdb1bf5d65d70a1c0154a4b6)':
     dependencies:
       '@expo/code-signing-certificates': 0.0.6
       '@expo/config': 57.0.9(supports-color@8.1.1)
@@ -11714,10 +11733,10 @@ snapshots:
       '@expo/plist': 0.8.1
       '@expo/prebuild-config': 57.0.16(supports-color@8.1.1)
       '@expo/require-utils': 57.0.5(supports-color@8.1.1)
-      '@expo/router-server': 57.0.10(41cb52e18d2175df6812c70d732f6881)
+      '@expo/router-server': 57.0.10(ebf18ecb75b9ae16838576c0cab1acb8)
       '@expo/schema-utils': 57.0.2
       '@expo/spawn-async': 1.8.0
-      '@expo/ws-tunnel': 2.0.0(ws@8.22.0)
+      '@expo/ws-tunnel': 2.0.0(ws@8.21.3)
       '@expo/xcpretty': 4.4.4
       '@react-native/dev-middleware': 0.86.3(supports-color@8.1.1)
       accepts: 1.3.8
@@ -11755,7 +11774,7 @@ snapshots:
       terminal-link: 2.1.1
       toqr: 0.1.1
       wrap-ansi: 7.0.0
-      ws: 8.22.0
+      ws: 8.21.3
       zod: 3.25.76
     optionalDependencies:
       react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
@@ -12005,10 +12024,11 @@ snapshots:
       '@babel/code-frame': 7.29.7
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/plugin-transform-modules-commonjs': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+    optionalDependencies: {}
     transitivePeerDependencies:
       - supports-color
 
-  '@expo/router-server@57.0.10(41cb52e18d2175df6812c70d732f6881)':
+  '@expo/router-server@57.0.10(ebf18ecb75b9ae16838576c0cab1acb8)':
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
       expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
@@ -12031,9 +12051,9 @@ snapshots:
 
   '@expo/sudo-prompt@9.3.2': {}
 
-  '@expo/ws-tunnel@2.0.0(ws@8.22.0)':
+  '@expo/ws-tunnel@2.0.0(ws@8.21.3)':
     dependencies:
-      ws: 8.22.0
+      ws: 8.21.3
 
   '@expo/xcpretty@4.4.4':
     dependencies:
@@ -12196,7 +12216,7 @@ snapshots:
       google-auth-library: 10.9.1(supports-color@8.1.1)
       p-retry: 4.6.2
       protobufjs: 7.6.6
-      ws: 8.22.0
+      ws: 8.21.3
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4)
     transitivePeerDependencies:
@@ -12478,7 +12498,7 @@ snapshots:
       '@jest/schemas': 29.6.3
       '@types/istanbul-lib-coverage': 2.0.6
       '@types/istanbul-reports': 3.0.4
-      '@types/node': 24.13.6
+      '@types/node': 24.13.3
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
@@ -12543,8 +12563,8 @@ snapshots:
 
   '@libsql/isomorphic-ws@0.1.5':
     dependencies:
-      '@types/ws': 8.18.2
-      ws: 8.22.0
+      '@types/ws': 8.18.1
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -12802,15 +12822,14 @@ snapshots:
 
   '@opentelemetry/api-logs@0.218.0':
     dependencies:
-      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/api': 1.9.0
 
   '@opentelemetry/api-logs@0.219.0':
     dependencies:
-      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/api': 1.9.0
     optional: true
 
-  '@opentelemetry/api@1.9.0':
-    optional: true
+  '@opentelemetry/api@1.9.0': {}
 
   '@opentelemetry/api@1.9.1': {}
 
@@ -13005,16 +13024,10 @@ snapshots:
   '@oxc-parser/binding-android-arm-eabi@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-android-arm-eabi@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-android-arm64@0.143.0':
     optional: true
 
   '@oxc-parser/binding-android-arm64@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-android-arm64@0.154.0':
     optional: true
 
   '@oxc-parser/binding-darwin-arm64@0.143.0':
@@ -13023,16 +13036,10 @@ snapshots:
   '@oxc-parser/binding-darwin-arm64@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-darwin-arm64@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-darwin-x64@0.143.0':
     optional: true
 
   '@oxc-parser/binding-darwin-x64@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-darwin-x64@0.154.0':
     optional: true
 
   '@oxc-parser/binding-freebsd-x64@0.143.0':
@@ -13041,16 +13048,10 @@ snapshots:
   '@oxc-parser/binding-freebsd-x64@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-freebsd-x64@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-linux-arm-gnueabihf@0.143.0':
     optional: true
 
   '@oxc-parser/binding-linux-arm-gnueabihf@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-linux-arm-gnueabihf@0.154.0':
     optional: true
 
   '@oxc-parser/binding-linux-arm-musleabihf@0.143.0':
@@ -13059,16 +13060,10 @@ snapshots:
   '@oxc-parser/binding-linux-arm-musleabihf@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-linux-arm-musleabihf@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-linux-arm64-gnu@0.143.0':
     optional: true
 
   '@oxc-parser/binding-linux-arm64-gnu@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-linux-arm64-gnu@0.154.0':
     optional: true
 
   '@oxc-parser/binding-linux-arm64-musl@0.143.0':
@@ -13077,16 +13072,10 @@ snapshots:
   '@oxc-parser/binding-linux-arm64-musl@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-linux-arm64-musl@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-linux-ppc64-gnu@0.143.0':
     optional: true
 
   '@oxc-parser/binding-linux-ppc64-gnu@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-linux-ppc64-gnu@0.154.0':
     optional: true
 
   '@oxc-parser/binding-linux-riscv64-gnu@0.143.0':
@@ -13095,16 +13084,10 @@ snapshots:
   '@oxc-parser/binding-linux-riscv64-gnu@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-linux-riscv64-gnu@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-linux-riscv64-musl@0.143.0':
     optional: true
 
   '@oxc-parser/binding-linux-riscv64-musl@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-linux-riscv64-musl@0.154.0':
     optional: true
 
   '@oxc-parser/binding-linux-s390x-gnu@0.143.0':
@@ -13113,16 +13096,10 @@ snapshots:
   '@oxc-parser/binding-linux-s390x-gnu@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-linux-s390x-gnu@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-linux-x64-gnu@0.143.0':
     optional: true
 
   '@oxc-parser/binding-linux-x64-gnu@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-linux-x64-gnu@0.154.0':
     optional: true
 
   '@oxc-parser/binding-linux-x64-musl@0.143.0':
@@ -13131,16 +13108,10 @@ snapshots:
   '@oxc-parser/binding-linux-x64-musl@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-linux-x64-musl@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-openharmony-arm64@0.143.0':
     optional: true
 
   '@oxc-parser/binding-openharmony-arm64@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-openharmony-arm64@0.154.0':
     optional: true
 
   '@oxc-parser/binding-win32-arm64-msvc@0.143.0':
@@ -13149,16 +13120,10 @@ snapshots:
   '@oxc-parser/binding-win32-arm64-msvc@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-win32-arm64-msvc@0.154.0':
-    optional: true
-
   '@oxc-parser/binding-win32-ia32-msvc@0.143.0':
     optional: true
 
   '@oxc-parser/binding-win32-ia32-msvc@0.148.0':
-    optional: true
-
-  '@oxc-parser/binding-win32-ia32-msvc@0.154.0':
     optional: true
 
   '@oxc-parser/binding-win32-x64-msvc@0.143.0':
@@ -13167,16 +13132,11 @@ snapshots:
   '@oxc-parser/binding-win32-x64-msvc@0.148.0':
     optional: true
 
-  '@oxc-parser/binding-win32-x64-msvc@0.154.0':
-    optional: true
-
   '@oxc-project/types@0.143.0': {}
 
   '@oxc-project/types@0.146.0': {}
 
   '@oxc-project/types@0.148.0': {}
-
-  '@oxc-project/types@0.154.0': {}
 
   '@oxfmt/binding-android-arm-eabi@0.68.0':
     optional: true
@@ -13395,6 +13355,8 @@ snapshots:
       std-env: 3.10.0
       valibot: 1.2.0
       zeptomatch: 2.1.0
+    transitivePeerDependencies:
+      - typescript
 
   '@prisma/get-platform@7.2.0':
     dependencies:
@@ -13965,7 +13927,7 @@ snapshots:
       '@sentry/conventions': 0.24.0
       '@sentry/core': 11.1.0
 
-  '@sentry/react-native@8.29.0(1d035c6849f12c1f37bf908f04db9dd2)':
+  '@sentry/react-native@8.29.0(dd041699833a6fb31f173c0774f371e1)':
     dependencies:
       '@sentry/browser': 10.75.2
       '@sentry/bundler-plugins': 10.75.2(supports-color@8.1.1)
@@ -13983,7 +13945,7 @@ snapshots:
       '@react-navigation/native': 7.4.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       dotenv: 17.4.2
       expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
-      expo-updates: 57.0.24(ea2eab2f3ed0e9df785f80f5dce03344)
+      expo-updates: 57.0.24(0a233cbce81e7e6de7c609922796a14a)
       metro: 0.84.6(supports-color@8.1.1)
       metro-config: 0.84.6(supports-color@8.1.1)
       metro-resolver: 0.84.6
@@ -14058,6 +14020,7 @@ snapshots:
       oxc-parser: 0.148.0
     transitivePeerDependencies:
       - supports-color
+      - typescript
 
   '@shadcn/registry@0.1.0(supports-color@8.1.1)':
     dependencies:
@@ -14087,6 +14050,7 @@ snapshots:
       zod: 3.25.76
     transitivePeerDependencies:
       - supports-color
+      - typescript
 
   '@shopify/react-native-skia@2.6.2(react-native-reanimated@4.5.1(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)':
     dependencies:
@@ -14109,19 +14073,25 @@ snapshots:
 
   '@smithy/core@3.33.3':
     dependencies:
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@smithy/credential-provider-imds@4.5.2':
     dependencies:
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@smithy/fetch-http-handler@5.7.2':
     dependencies:
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
+      tslib: 2.8.1
+
+  '@smithy/node-http-handler@4.12.0':
+    dependencies:
+      '@smithy/core': 3.33.3
+      '@smithy/types': 4.17.2
       tslib: 2.8.1
 
   '@smithy/node-http-handler@4.12.1':
@@ -14133,7 +14103,11 @@ snapshots:
   '@smithy/signature-v4@5.7.3':
     dependencies:
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.19.0
+      '@smithy/types': 4.17.2
+      tslib: 2.8.1
+
+  '@smithy/types@4.17.2':
+    dependencies:
       tslib: 2.8.1
 
   '@smithy/types@4.19.0':
@@ -14485,6 +14459,10 @@ snapshots:
     dependencies:
       undici-types: 5.26.5
 
+  '@types/node@24.13.3':
+    dependencies:
+      undici-types: 7.18.2
+
   '@types/node@24.13.6':
     dependencies:
       undici-types: 7.18.2
@@ -14530,6 +14508,10 @@ snapshots:
   '@types/whatwg-mimetype@3.0.2':
     optional: true
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.13.6
+
   '@types/ws@8.18.2':
     dependencies:
       '@types/node': 24.13.6
@@ -14563,7 +14545,8 @@ snapshots:
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/visitor-keys': 8.70.0
 
-  '@typescript-eslint/tsconfig-utils@8.70.0': {}
+  '@typescript-eslint/tsconfig-utils@8.70.0':
+    dependencies: {}
 
   '@typescript-eslint/types@8.70.0': {}
 
@@ -14699,7 +14682,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.81(d256ac306834c0a3666b04bd95081d1d):
+  alchemy@2.0.0-beta.81(b783a81c262234596d11a99c4a063c52):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.2)
@@ -14747,7 +14730,7 @@ snapshots:
       drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(pg@8.23.0)(typebox@1.3.27)(valibot@1.5.0)(zod@4.5.4)
       pg: 8.23.0
       vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
-      ws: 8.22.0
+      ws: 8.21.3
     transitivePeerDependencies:
       - '@types/node'
       - '@types/react'
@@ -14755,9 +14738,10 @@ snapshots:
       - hono
       - proxy-agent
       - react-devtools-core
+      - typescript
       - utf-8-validate
 
-  alchemy@2.0.0-beta.81(f6206a632ee2eec3239d1ffd6eef36c7):
+  alchemy@2.0.0-beta.81(e72af40b6c242fa9267e7d514372a2a2):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.2)
@@ -14805,7 +14789,7 @@ snapshots:
       drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2)(zod@4.5.4)
       pg: 8.23.0
       vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
-      ws: 8.22.0
+      ws: 8.21.3
     transitivePeerDependencies:
       - '@types/node'
       - '@types/react'
@@ -14813,6 +14797,7 @@ snapshots:
       - hono
       - proxy-agent
       - react-devtools-core
+      - typescript
       - utf-8-validate
 
   anser@1.4.10: {}
@@ -15284,7 +15269,8 @@ snapshots:
     dependencies:
       '@webgpu/types': 0.1.21
 
-  capnp-es@0.0.16: {}
+  capnp-es@0.0.16:
+    optionalDependencies: {}
 
   capnweb@0.12.0: {}
 
@@ -15355,7 +15341,7 @@ snapshots:
 
   chrome-launcher@0.15.2(supports-color@8.1.1):
     dependencies:
-      '@types/node': 24.13.6
+      '@types/node': 24.13.3
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2(supports-color@8.1.1)
@@ -15364,7 +15350,7 @@ snapshots:
 
   chromium-edge-launcher@0.3.0(supports-color@8.1.1):
     dependencies:
-      '@types/node': 24.13.6
+      '@types/node': 24.13.3
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2(supports-color@8.1.1)
@@ -15549,6 +15535,7 @@ snapshots:
       import-fresh: 3.3.1
       js-yaml: 4.3.2
       parse-json: 5.2.0
+    optionalDependencies: {}
 
   cpu-features@0.0.10:
     dependencies:
@@ -16081,7 +16068,7 @@ snapshots:
 
   expect-type@1.4.0: {}
 
-  expo-asset@57.0.18(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1):
+  expo-asset@57.0.18(3bb5a4f5466a28bdd0694aa19c510adf):
     dependencies:
       '@expo/image-utils': 0.11.5(supports-color@8.1.1)
       expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
@@ -16209,7 +16196,7 @@ snapshots:
 
   expo-server@57.0.3: {}
 
-  expo-sharing@57.0.21(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1):
+  expo-sharing@57.0.21(3bb5a4f5466a28bdd0694aa19c510adf):
     dependencies:
       '@expo/config-plugins': 57.0.9(supports-color@8.1.1)
       '@expo/config-types': 57.0.2
@@ -16223,7 +16210,7 @@ snapshots:
 
   expo-structured-headers@57.0.1: {}
 
-  expo-system-ui@57.0.4(d602510730bb7670eca662efb1817215):
+  expo-system-ui@57.0.4(26d25c7a068313282f35d9b97d9bb2d1):
     dependencies:
       '@react-native/normalize-colors': 0.86.3
       debug: 4.4.3(supports-color@8.1.1)
@@ -16238,7 +16225,7 @@ snapshots:
     dependencies:
       expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
 
-  expo-updates@57.0.24(ea2eab2f3ed0e9df785f80f5dce03344):
+  expo-updates@57.0.24(0a233cbce81e7e6de7c609922796a14a):
     dependencies:
       '@expo/code-signing-certificates': 0.0.6
       '@expo/plist': 0.8.1
@@ -16266,7 +16253,7 @@ snapshots:
   expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1):
     dependencies:
       '@babel/runtime': 7.29.7
-      '@expo/cli': 57.0.26(0c83087932ca42b1b2a215727e4bb901)
+      '@expo/cli': 57.0.26(3b570828fdb1bf5d65d70a1c0154a4b6)
       '@expo/config': 57.0.9(supports-color@8.1.1)
       '@expo/config-plugins': 57.0.9(supports-color@8.1.1)
       '@expo/devtools': 57.0.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -16278,7 +16265,7 @@ snapshots:
       '@expo/metro-config': 57.0.12(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
       '@ungap/structured-clone': 1.4.0
       babel-preset-expo: 57.0.12(@babel/core@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-refresh@0.14.2)(supports-color@8.1.1)
-      expo-asset: 57.0.18(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-asset: 57.0.18(3bb5a4f5466a28bdd0694aa19c510adf)
       expo-constants: 57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
       expo-file-system: 57.0.7(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))
       expo-font: 57.0.4(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -16989,7 +16976,7 @@ snapshots:
   jest-util@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 24.13.6
+      '@types/node': 24.13.3
       chalk: 4.1.2
       ci-info: 3.9.0
       graceful-fs: 4.2.11
@@ -17006,7 +16993,7 @@ snapshots:
 
   jest-worker@29.7.0:
     dependencies:
-      '@types/node': 24.13.6
+      '@types/node': 24.13.3
       jest-util: 29.7.0
       merge-stream: 2.0.0
       supports-color: 8.1.1
@@ -17062,8 +17049,6 @@ snapshots:
   json-with-bigint@3.5.12: {}
 
   json5@2.2.3: {}
-
-  jsonc-parser@3.3.1: {}
 
   jsonfile@4.0.0:
     optionalDependencies:
@@ -18367,30 +18352,6 @@ snapshots:
       '@oxc-parser/binding-win32-x64-msvc': 0.148.0
     optional: true
 
-  oxc-parser@0.154.0:
-    dependencies:
-      '@oxc-project/types': 0.154.0
-    optionalDependencies:
-      '@oxc-parser/binding-android-arm-eabi': 0.154.0
-      '@oxc-parser/binding-android-arm64': 0.154.0
-      '@oxc-parser/binding-darwin-arm64': 0.154.0
-      '@oxc-parser/binding-darwin-x64': 0.154.0
-      '@oxc-parser/binding-freebsd-x64': 0.154.0
-      '@oxc-parser/binding-linux-arm-gnueabihf': 0.154.0
-      '@oxc-parser/binding-linux-arm-musleabihf': 0.154.0
-      '@oxc-parser/binding-linux-arm64-gnu': 0.154.0
-      '@oxc-parser/binding-linux-arm64-musl': 0.154.0
-      '@oxc-parser/binding-linux-ppc64-gnu': 0.154.0
-      '@oxc-parser/binding-linux-riscv64-gnu': 0.154.0
-      '@oxc-parser/binding-linux-riscv64-musl': 0.154.0
-      '@oxc-parser/binding-linux-s390x-gnu': 0.154.0
-      '@oxc-parser/binding-linux-x64-gnu': 0.154.0
-      '@oxc-parser/binding-linux-x64-musl': 0.154.0
-      '@oxc-parser/binding-openharmony-arm64': 0.154.0
-      '@oxc-parser/binding-win32-arm64-msvc': 0.154.0
-      '@oxc-parser/binding-win32-ia32-msvc': 0.154.0
-      '@oxc-parser/binding-win32-x64-msvc': 0.154.0
-
   oxfmt@0.68.0:
     dependencies:
       tinypool: 2.1.2
@@ -19345,6 +19306,7 @@ snapshots:
       - '@cfworker/json-schema'
       - babel-plugin-macros
       - supports-color
+      - typescript
 
   shadow-plugin@2.1.1: {}
 
@@ -19472,6 +19434,7 @@ snapshots:
     transitivePeerDependencies:
       - ffmpeg-static
       - supports-color
+      - typescript
 
   split2@4.2.0: {}
 
@@ -19699,7 +19662,8 @@ snapshots:
 
   ts-algebra@2.0.0: {}
 
-  ts-api-utils@2.5.0: {}
+  ts-api-utils@2.5.0:
+    dependencies: {}
 
   ts-error@1.0.6: {}
 
@@ -19882,12 +19846,15 @@ snapshots:
 
   uuid@7.0.3: {}
 
-  valibot@1.2.0: {}
+  valibot@1.2.0:
+    optionalDependencies: {}
 
   valibot@1.4.2:
+    optionalDependencies: {}
     optional: true
 
-  valibot@1.5.0: {}
+  valibot@1.5.0:
+    optionalDependencies: {}
 
   validate-npm-package-name@5.0.1: {}
 
@@ -20050,8 +20017,7 @@ snapshots:
 
   ws@7.5.13: {}
 
-  ws@8.21.3:
-    optional: true
+  ws@8.21.3: {}
 
   ws@8.22.0: {}
 
@@ -20149,3 +20115,386 @@ snapshots:
       use-sync-external-store: 1.6.0(react@19.2.3)
 
   zwitch@2.0.4: {}
+
+  '@expo/cli@57.0.26(0c83087932ca42b1b2a215727e4bb901)':
+    dependencies:
+      '@expo/code-signing-certificates': 0.0.6
+      '@expo/config': 57.0.9(supports-color@8.1.1)
+      '@expo/config-plugins': 57.0.9(supports-color@8.1.1)
+      '@expo/devcert': 1.2.1(supports-color@8.1.1)
+      '@expo/env': 2.4.3(supports-color@8.1.1)
+      '@expo/image-utils': 0.11.5(supports-color@8.1.1)
+      '@expo/inline-modules': 0.1.7(supports-color@8.1.1)
+      '@expo/json-file': 11.0.1
+      '@expo/log-box': 57.0.4(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      '@expo/metro': 56.0.2(supports-color@8.1.1)
+      '@expo/metro-config': 57.0.12(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
+      '@expo/metro-file-map': 57.0.3(supports-color@8.1.1)
+      '@expo/osascript': 2.7.1
+      '@expo/package-manager': 1.13.1
+      '@expo/plist': 0.8.1
+      '@expo/prebuild-config': 57.0.16(supports-color@8.1.1)
+      '@expo/require-utils': 57.0.5(supports-color@8.1.1)
+      '@expo/router-server': 57.0.10(41cb52e18d2175df6812c70d732f6881)
+      '@expo/schema-utils': 57.0.2
+      '@expo/spawn-async': 1.8.0
+      '@expo/ws-tunnel': 2.0.0(ws@8.22.0)
+      '@expo/xcpretty': 4.4.4
+      '@react-native/dev-middleware': 0.86.3(supports-color@8.1.1)
+      accepts: 1.3.8
+      agent-cli-detector: 0.1.7
+      arg: 5.0.2
+      bplist-creator: 0.1.0
+      bplist-parser: 0.3.2
+      chalk: 4.1.2
+      ci-info: 3.9.0
+      compression: 1.8.1(supports-color@8.1.1)
+      connect: 3.7.0(supports-color@8.1.1)
+      debug: 4.4.3(supports-color@8.1.1)
+      dnssd-advertise: 1.1.6
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-server: 57.0.3
+      fetch-nodeshim: 0.4.10
+      getenv: 2.0.0
+      glob: 13.0.6
+      lan-network: 0.2.1
+      multitars: 1.0.2
+      node-forge: 1.4.0
+      npm-package-arg: 11.0.3
+      ora: 3.4.0
+      picomatch: 4.0.7
+      pretty-format: 29.7.0
+      progress: 2.0.3
+      prompts: 2.4.2
+      resolve-from: 5.0.0
+      sandbox-cli-detector: 0.2.0
+      semver: 7.8.5
+      send: 0.19.2(supports-color@8.1.1)
+      slugify: 1.6.9
+      stacktrace-parser: 0.1.11
+      structured-headers: 0.4.1
+      terminal-link: 2.1.1
+      toqr: 0.1.1
+      wrap-ansi: 7.0.0
+      ws: 8.22.0
+      zod: 3.25.76
+    optionalDependencies:
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - '@expo/metro-runtime'
+      - bufferutil
+      - expo-constants
+      - expo-font
+      - react
+      - react-dom
+      - react-server-dom-webpack
+      - supports-color
+      - typescript
+      - utf-8-validate
+
+  '@expo/router-server@57.0.10(41cb52e18d2175df6812c70d732f6881)':
+    dependencies:
+      debug: 4.4.3(supports-color@8.1.1)
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-constants: 57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
+      expo-font: 57.0.4(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      expo-server: 57.0.3
+      react: 19.2.3
+    optionalDependencies:
+      react-dom: 19.2.3(react@19.2.3)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@expo/ws-tunnel@2.0.0(ws@8.22.0)':
+    dependencies:
+      ws: 8.22.0
+
+  '@oxc-parser/binding-android-arm-eabi@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-android-arm64@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-darwin-arm64@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-darwin-x64@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-freebsd-x64@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm-gnueabihf@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm-musleabihf@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm64-gnu@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm64-musl@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-ppc64-gnu@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-riscv64-gnu@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-riscv64-musl@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-s390x-gnu@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-x64-gnu@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-x64-musl@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-openharmony-arm64@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-win32-arm64-msvc@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-win32-ia32-msvc@0.154.0':
+    optional: true
+
+  '@oxc-parser/binding-win32-x64-msvc@0.154.0':
+    optional: true
+
+  '@oxc-project/types@0.154.0': {}
+
+  '@sentry/react-native@8.29.0(1d035c6849f12c1f37bf908f04db9dd2)':
+    dependencies:
+      '@sentry/browser': 10.75.2
+      '@sentry/bundler-plugins': 10.75.2(supports-color@8.1.1)
+      '@sentry/cli': 3.8.0
+      '@sentry/core': 10.75.2
+      '@sentry/expo-upload-sourcemaps': 8.29.0(@expo/env@2.4.3(supports-color@8.1.1))(dotenv@17.4.2)
+      '@sentry/react': 10.75.2(react@19.2.3)
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    optionalDependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@expo/config': 57.0.9(supports-color@8.1.1)
+      '@expo/config-types': 57.0.2
+      '@expo/env': 2.4.3(supports-color@8.1.1)
+      '@react-navigation/native': 7.4.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      dotenv: 17.4.2
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-updates: 57.0.24(ea2eab2f3ed0e9df785f80f5dce03344)
+      metro: 0.84.6(supports-color@8.1.1)
+      metro-config: 0.84.6(supports-color@8.1.1)
+      metro-resolver: 0.84.6
+      open: 11.0.4
+      promise: 8.3.0
+    transitivePeerDependencies:
+      - encoding
+      - rollup
+      - supports-color
+      - webpack
+
+  alchemy@2.0.0-beta.81(d256ac306834c0a3666b04bd95081d1d):
+    dependencies:
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.2)
+      '@alchemy.run/node-utils': 2.0.0-beta.81
+      '@alchemy.run/sigil': 0.1.0-alpha.1(@types/react@19.2.18)(react-devtools-core@6.1.5)
+      '@distilled.cloud/acme': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/aws': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/axiom': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/doppler': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/fly-io': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/gcp': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/hetzner': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/infisical': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/neon': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/planetscale': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/prisma': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/railway': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/stripe': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/zerossl': 1.0.0-rc.13(effect@4.0.2)
+      '@effect/sql-d1': 4.0.2(effect@4.0.2)
+      '@effect/sql-sqlite-do': 4.0.2(effect@4.0.2)
+      '@libsql/client': 0.17.4
+      '@neon/functions': 0.11.0(hono@4.13.8)
+      '@octokit/rest': 22.0.1
+      '@octokit/webhooks': 14.2.0
+      '@prisma/dev': 0.20.0
+      '@types/aws-lambda': 8.10.163
+      capnweb: 0.12.0
+      effect: 4.0.2
+      fflate: 0.8.3
+      libsodium-wrappers: 0.8.4
+      pathe: 2.0.3
+      picomatch: 4.0.7
+      rolldown: 1.2.5
+      tinyglobby: 0.2.17
+      yaml: 2.9.0
+    optionalDependencies:
+      '@alchemy.run/frontend-frameworks': 2.0.0-beta.81(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.2)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@effect/platform-node': 4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@effect/sql-pg': 4.0.2(effect@4.0.2)
+      '@effect/vitest': 4.0.2(effect@4.0.2)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
+      drizzle-kit: 1.0.0-rc.5-ab785fc
+      drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(pg@8.23.0)(typebox@1.3.27)(valibot@1.5.0)(zod@4.5.4)
+      pg: 8.23.0
+      vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
+      ws: 8.22.0
+    transitivePeerDependencies:
+      - '@types/node'
+      - '@types/react'
+      - bufferutil
+      - hono
+      - proxy-agent
+      - react-devtools-core
+      - utf-8-validate
+
+  alchemy@2.0.0-beta.81(f6206a632ee2eec3239d1ffd6eef36c7):
+    dependencies:
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.2)
+      '@alchemy.run/node-utils': 2.0.0-beta.81
+      '@alchemy.run/sigil': 0.1.0-alpha.1(@types/react@19.2.18)(react-devtools-core@6.1.5)
+      '@distilled.cloud/acme': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/aws': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/axiom': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/doppler': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/fly-io': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/gcp': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/hetzner': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/infisical': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/neon': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/planetscale': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/prisma': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/railway': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/stripe': 1.0.0-rc.13(effect@4.0.2)
+      '@distilled.cloud/zerossl': 1.0.0-rc.13(effect@4.0.2)
+      '@effect/sql-d1': 4.0.2(effect@4.0.2)
+      '@effect/sql-sqlite-do': 4.0.2(effect@4.0.2)
+      '@libsql/client': 0.17.4
+      '@neon/functions': 0.11.0(hono@4.13.8)
+      '@octokit/rest': 22.0.1
+      '@octokit/webhooks': 14.2.0
+      '@prisma/dev': 0.20.0
+      '@types/aws-lambda': 8.10.163
+      capnweb: 0.12.0
+      effect: 4.0.2
+      fflate: 0.8.3
+      libsodium-wrappers: 0.8.4
+      pathe: 2.0.3
+      picomatch: 4.0.7
+      rolldown: 1.2.5
+      tinyglobby: 0.2.17
+      yaml: 2.9.0
+    optionalDependencies:
+      '@alchemy.run/frontend-frameworks': 2.0.0-beta.81(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.2)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@effect/platform-node': 4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@effect/sql-pg': 4.0.2(effect@4.0.2)
+      '@effect/vitest': 4.0.2(effect@4.0.2)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
+      drizzle-kit: 1.0.0-rc.5-ab785fc
+      drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2)(zod@4.5.4)
+      pg: 8.23.0
+      vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
+      ws: 8.22.0
+    transitivePeerDependencies:
+      - '@types/node'
+      - '@types/react'
+      - bufferutil
+      - hono
+      - proxy-agent
+      - react-devtools-core
+      - utf-8-validate
+
+  expo-asset@57.0.18(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1):
+    dependencies:
+      '@expo/image-utils': 0.11.5(supports-color@8.1.1)
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-constants: 57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  expo-sharing@57.0.21(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1):
+    dependencies:
+      '@expo/config-plugins': 57.0.9(supports-color@8.1.1)
+      '@expo/config-types': 57.0.2
+      '@expo/plist': 0.8.1
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  expo-system-ui@57.0.4(d602510730bb7670eca662efb1817215):
+    dependencies:
+      '@react-native/normalize-colors': 0.86.3
+      debug: 4.4.3(supports-color@8.1.1)
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    optionalDependencies:
+      react-native-web: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+    transitivePeerDependencies:
+      - supports-color
+
+  expo-updates@57.0.24(ea2eab2f3ed0e9df785f80f5dce03344):
+    dependencies:
+      '@expo/code-signing-certificates': 0.0.6
+      '@expo/plist': 0.8.1
+      '@expo/spawn-async': 1.8.0
+      arg: 4.1.3
+      chalk: 4.1.2
+      debug: 4.4.3(supports-color@8.1.1)
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+      expo-eas-client: 57.0.4
+      expo-manifests: 57.0.2(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))
+      expo-structured-headers: 57.0.1
+      expo-updates-interface: 57.0.2(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))
+      getenv: 2.0.0
+      glob: 13.0.6
+      ignore: 5.3.2
+      nullthrows: 1.1.1
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+      resolve-from: 5.0.0
+    optionalDependencies:
+      expo-dev-client: 57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))
+    transitivePeerDependencies:
+      - supports-color
+
+  jsonc-parser@3.3.1: {}
+
+  oxc-parser@0.154.0:
+    dependencies:
+      '@oxc-project/types': 0.154.0
+    optionalDependencies:
+      '@oxc-parser/binding-android-arm-eabi': 0.154.0
+      '@oxc-parser/binding-android-arm64': 0.154.0
+      '@oxc-parser/binding-darwin-arm64': 0.154.0
+      '@oxc-parser/binding-darwin-x64': 0.154.0
+      '@oxc-parser/binding-freebsd-x64': 0.154.0
+      '@oxc-parser/binding-linux-arm-gnueabihf': 0.154.0
+      '@oxc-parser/binding-linux-arm-musleabihf': 0.154.0
+      '@oxc-parser/binding-linux-arm64-gnu': 0.154.0
+      '@oxc-parser/binding-linux-arm64-musl': 0.154.0
+      '@oxc-parser/binding-linux-ppc64-gnu': 0.154.0
+      '@oxc-parser/binding-linux-riscv64-gnu': 0.154.0
+      '@oxc-parser/binding-linux-riscv64-musl': 0.154.0
+      '@oxc-parser/binding-linux-s390x-gnu': 0.154.0
+      '@oxc-parser/binding-linux-x64-gnu': 0.154.0
+      '@oxc-parser/binding-linux-x64-musl': 0.154.0
+      '@oxc-parser/binding-openharmony-arm64': 0.154.0
+      '@oxc-parser/binding-win32-arm64-msvc': 0.154.0
+      '@oxc-parser/binding-win32-ia32-msvc': 0.154.0
+      '@oxc-parser/binding-win32-x64-msvc': 0.154.0
