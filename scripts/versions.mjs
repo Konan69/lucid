@@ -3,17 +3,17 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
-import * as TypeScript from 'typescript'
+import { parseJsonc } from './jsonc.mjs'
 import { hermesConfigErrors } from './hermes.mjs'
 
 export const versions = Object.freeze({
   '@earendil-works/pi-ai': '0.87.1',
   '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
-  '@effect/language-service': '0.87.2',
   '@maschwenk/tsrslint': '0.1.5',
-  '@effect/tsgo': '0.51.0',
   'tsc-rs': '0.8.0',
+  'oxc-parser': '0.154.0',
+  'jsonc-parser': '3.3.1',
   '@effect/platform-node': '4.0.2',
   '@effect/sql-pg': '4.0.2',
   '@effect/vitest': '4.0.2',
@@ -32,7 +32,6 @@ export const versions = Object.freeze({
   '@types/pg': '8.23.1',
   '@types/react': '19.2.18',
   '@types/react-dom': '19.2.3',
-  '@typescript/native': 'npm:typescript@7.0.2',
   '@vitejs/plugin-react': '6.1.1',
   alchemy: '2.0.0-beta.81',
   'better-auth': '1.7.5',
@@ -55,7 +54,6 @@ export const versions = Object.freeze({
   hono: '4.13.8',
   'lucide-react': '1.47.0',
   'lucide-react-native': '1.47.0',
-  konsistent: '1.0.0-beta.9',
   oxlint: '1.83.0',
   'oxlint-tailwindcss': '1.12.0',
   pg: '8.23.0',
@@ -68,7 +66,6 @@ export const versions = Object.freeze({
   'react-native-worklets': '0.10.1',
   tailwindcss: '4.3.3',
   tsx: '4.23.13',
-  typescript: '6.0.3',
   valibot: '1.5.0',
   vite: '8.3.0',
   vitest: '5.0.1',
@@ -87,7 +84,6 @@ const requiredByManifest = Object.freeze({
     '@effect/vitest',
     '@maschwenk/tsrslint',
     '@shadcn/lint',
-    'konsistent',
     '@types/node',
     'oxlint',
     'oxlint-tailwindcss',
@@ -96,13 +92,11 @@ const requiredByManifest = Object.freeze({
   'apps/desktop/package.json': [
     '@effect/vitest',
     '@types/node',
-    '@typescript/native',
     'effect',
     'electron',
     'electron-builder',
     'electron-builder-squirrel-windows',
     'esbuild',
-    'typescript',
     'vitest',
   ],
   'apps/mobile/package.json': [
@@ -208,11 +202,7 @@ const readPackageManifest = (root, relativePath) =>
   decodePackageManifest(NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8'))
 const readTypeScriptConfig = (root, relativePath) => {
   const source = NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8')
-  const parsed = TypeScript.parseConfigFileTextToJson(relativePath, source)
-  if (parsed.error !== undefined) {
-    throw new Error(TypeScript.flattenDiagnosticMessageText(parsed.error.messageText, '\n'))
-  }
-  return decodeTypeScriptConfig(parsed.config)
+  return decodeTypeScriptConfig(parseJsonc(source, relativePath))
 }
 
 /** Read one flat mapping from pnpm-workspace.yaml without adding a bootstrap dependency. */
@@ -307,37 +297,11 @@ function dependencySectionErrors(relativePath, section, dependencies, catalog) {
   return errors
 }
 
-/** Report native and tooling compiler drift for one package that runs tsc. */
-function compilerErrors(relativePath, manifest, catalog) {
-  const typecheck = manifest.scripts === undefined ? undefined : manifest.scripts.typecheck
-  if (typecheck === undefined || !/(?:^|\s)tsc(?:\s|$)/u.test(typecheck)) return []
-  const development = manifest.devDependencies === undefined ? {} : manifest.devDependencies
-  const nativeTypeScript = resolveWorkspaceVersion(
-    '@typescript/native',
-    development['@typescript/native'],
-    catalog,
-  )
-  const toolingTypeScript = resolveWorkspaceVersion('typescript', development.typescript, catalog)
-  const errors = []
-  if (nativeTypeScript !== versions['@typescript/native']) {
-    errors.push(
-      `${relativePath}: tsc typecheck must resolve @typescript/native ${versions['@typescript/native']}`,
-    )
-  }
-  if (toolingTypeScript !== versions.typescript) {
-    errors.push(`${relativePath}: tooling TypeScript must resolve to ${versions.typescript}`)
-  }
-  return errors
-}
-
 /** Validate one workspace manifest against every authoritative version pin. */
 function manifestErrors(relativePath, manifest, catalog) {
-  return [
-    ...manifestSections(manifest).flatMap(({ section, dependencies }) =>
-      dependencySectionErrors(relativePath, section, dependencies, catalog),
-    ),
-    ...compilerErrors(relativePath, manifest, catalog),
-  ]
+  return manifestSections(manifest).flatMap(({ section, dependencies }) =>
+    dependencySectionErrors(relativePath, section, dependencies, catalog),
+  )
 }
 
 /** Report missing or drifting dependencies required on specific package surfaces. */
@@ -367,50 +331,15 @@ function overrideErrors(overrides, catalog) {
   })
 }
 
-/**
- * The type checker and the Effect language service for the native compiler. `effect-tsgo patch`
- * is what makes the native compiler print Effect diagnostics; without it none is printed at all
- * (the state from the move to TypeScript 7 until 7 Oct 2026).
- */
-function compilerToolingErrors(scripts, development) {
-  const errors = []
-  if (
-    scripts.prepare === undefined ||
-    !scripts.prepare.includes('effect-tsgo patch --typescript')
-  ) {
-    errors.push('package.json: prepare must patch the native compiler with effect-tsgo')
-  }
-  if (development['tsc-rs'] !== versions['tsc-rs']) {
-    errors.push(`package.json: tsc-rs must be ${versions['tsc-rs']}`)
-  }
-  if (development['@effect/tsgo'] !== versions['@effect/tsgo']) {
-    errors.push(`package.json: @effect/tsgo must be ${versions['@effect/tsgo']}`)
-  }
-  return errors
-}
-
 /** Report root package policies that keep every compiler path consistent. */
-function rootManifestErrors(manifest, catalog) {
+function rootManifestErrors(manifest) {
   const errors = []
   const development = manifest.devDependencies === undefined ? {} : manifest.devDependencies
   const scripts = manifest.scripts === undefined ? {} : manifest.scripts
-  const languageService = resolveWorkspaceVersion(
-    '@effect/language-service',
-    development['@effect/language-service'],
-    catalog,
-  )
-  if (manifest.pnpm !== undefined) {
+  if (manifest.pnpm !== undefined)
     errors.push('package.json: pnpm settings belong in pnpm-workspace.yaml under pnpm 12')
-  }
-  if (languageService !== versions['@effect/language-service']) {
-    errors.push(
-      `package.json: @effect/language-service must resolve to ${versions['@effect/language-service']}`,
-    )
-  }
-  if (scripts.prepare === undefined || !scripts.prepare.includes('effect-language-service patch')) {
-    errors.push('package.json: prepare must patch TypeScript with effect-language-service')
-  }
-  errors.push(...compilerToolingErrors(scripts, development))
+  if (development['tsc-rs'] !== versions['tsc-rs'])
+    errors.push(`package.json: tsc-rs must be ${versions['tsc-rs']}`)
   // The lint runner owns mandatory type-aware analysis; the public command must
   // enter Turbo so successful package checks and their diagnostics can be reused.
   if (scripts.lint === undefined || !scripts.lint.startsWith('turbo run lint lint:root ')) {
@@ -459,7 +388,7 @@ export function validateVersions(root) {
     ),
     ...requiredDependencyErrors(root, catalog),
     ...overrideErrors(overrides, catalog),
-    ...rootManifestErrors(rootManifest, catalog),
+    ...rootManifestErrors(rootManifest),
     ...typeScriptConfigErrors(root),
     ...hermesConfigErrors(root, paths.slice(1)),
   ]

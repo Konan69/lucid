@@ -32,13 +32,11 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native": "catalog:",
     "@vivid/agent-runtime": "workspace:*",
     "electron": "catalog:",
     "electron-builder": "catalog:",
     "electron-builder-squirrel-windows": "catalog:",
     "esbuild": "catalog:",
-    "typescript": "catalog:",
     "vitest": "catalog:"
   }
 }

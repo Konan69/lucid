@@ -4,7 +4,10 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
-import ts from 'typescript'
+import * as ts from 'tsc-rs/unstable/ast'
+import { API, SymbolFlags, ModuleKind, ModuleResolutionKind } from 'tsc-rs/unstable/sync'
+import { createFileSystem } from 'tsc-rs/unstable/fs'
+import { libraryDirectory } from './native.mjs'
 
 const repositoryRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -12,7 +15,6 @@ const repositoryRoot = NodePath.resolve(
 )
 const serverRoot = 'apps/server/src/'
 // Standard collection signatures distinguish Map/Set.delete from Drizzle without loading SDKs.
-const libraryDirectory = NodePath.dirname(ts.getDefaultLibFilePath({}))
 const libraries = new Map(
   [
     'lib.es5.d.ts',
@@ -21,13 +23,26 @@ const libraries = new Map(
     'lib.es2015.symbol.d.ts',
     'lib.es2015.symbol.wellknown.d.ts',
   ].map((file) => [
-    `typescript/${file}`,
+    `/typescript/${file}`,
     NodeFS.readFileSync(NodePath.join(libraryDirectory, file), 'utf8'),
   ]),
 )
 const writes = new Set(['insert', 'update', 'delete', 'upsert'])
 // These modules construct disposable test data, never application records.
 const fixtures = new Set(['library/fixtures.ts', 'runtime/chains.ts'])
+
+function declarations(symbol) {
+  return symbol.declarations.map((handle) => handle.resolve()).filter((node) => node !== undefined)
+}
+
+function findAncestor(node, predicate) {
+  let current = node
+  while (current !== undefined) {
+    if (predicate(current)) return current
+    current = current.parent
+  }
+  return undefined
+}
 
 /** Production writers alone define this boundary; test setup may populate several domains. */
 function isWriter(file) {
@@ -44,7 +59,7 @@ function isWriter(file) {
 function symbolOf(checker, expression) {
   const symbol = checker.getSymbolAtLocation(expression)
   if (symbol === undefined) return undefined
-  return symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol
+  return symbol.flags & SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol
 }
 
 /** Both dot and literal bracket calls name the same mutation in JavaScript. */
@@ -63,12 +78,12 @@ function propertyName(expression) {
 function isTableFactory(checker, expression) {
   const target = ts.isPropertyAccessExpression(expression) ? expression.expression : expression
   const symbol = checker.getSymbolAtLocation(target)
-  if (symbol === undefined || symbol.declarations === undefined) return false
-  for (const declaration of symbol.declarations) {
+  if (symbol === undefined) return false
+  for (const declaration of declarations(symbol)) {
     const imported = ts.isImportSpecifier(declaration)
       ? (declaration.propertyName ?? declaration.name).text
       : propertyName(expression)
-    const module = ts.findAncestor(declaration, ts.isImportDeclaration)
+    const module = findAncestor(declaration, ts.isImportDeclaration)
     if (
       module !== undefined &&
       module.moduleSpecifier.text === 'drizzle-orm/pg-core' &&
@@ -100,7 +115,7 @@ function tablesOf(checker, expression, tables, seen = new Set()) {
   const table = tables.get(symbol)
   if (table !== undefined) return [table]
   seen.add(symbol)
-  for (const declaration of symbol.declarations ?? []) {
+  for (const declaration of declarations(symbol)) {
     if (declaration.type !== undefined) {
       return tablesInType(checker, declaration.type, tables, seen)
     }
@@ -140,8 +155,8 @@ function unrelatedReceiver(checker, node, seen = new Set()) {
   const symbol = checker.getSymbolAtLocation(node)
   if (symbol === undefined || seen.has(symbol)) return false
   seen.add(symbol)
-  return (symbol.declarations ?? []).some((declaration) => {
-    const imported = ts.findAncestor(declaration, ts.isImportDeclaration)
+  return declarations(symbol).some((declaration) => {
+    const imported = findAncestor(declaration, ts.isImportDeclaration)
     if (imported !== undefined) {
       return nonBuilderImport(declaration, imported)
     }
@@ -154,7 +169,7 @@ function unrelatedReceiver(checker, node, seen = new Set()) {
 
 /** Local bodies are audited where they construct queries, including methods bound by callers. */
 function implementedDeclaration(checker, declaration, seen) {
-  if (declaration.getSourceFile().fileName.startsWith('typescript/')) return true
+  if (declaration.getSourceFile().fileName.startsWith('/typescript/')) return true
   if (ts.isMethodDeclaration(declaration) || ts.isFunctionDeclaration(declaration))
     return declaration.body !== undefined
   if (ts.isPropertyAssignment(declaration))
@@ -182,7 +197,7 @@ function locallyImplemented(checker, expression, seen = new Set()) {
   const symbol = symbolOf(checker, expression)
   if (symbol === undefined || seen.has(symbol)) return false
   seen.add(symbol)
-  return (symbol.declarations ?? []).some((declaration) =>
+  return declarations(symbol).some((declaration) =>
     implementedDeclaration(checker, declaration, seen),
   )
 }
@@ -191,13 +206,13 @@ function locallyImplemented(checker, expression, seen = new Set()) {
 function dependencyField(checker, receiver) {
   const symbol = checker.getSymbolAtLocation(receiver)
   if (symbol === undefined) return undefined
-  const binding = (symbol.declarations ?? []).find(ts.isBindingElement)
+  const binding = declarations(symbol).find(ts.isBindingElement)
   if (binding === undefined) return undefined
   let parameter = binding.parent.parent
   if (ts.isVariableDeclaration(parameter) && parameter.initializer !== undefined) {
     const input = symbolOf(checker, parameter.initializer)
-    if (input === undefined || input.declarations === undefined) return undefined
-    parameter = input.declarations[0]
+    if (input === undefined) return undefined
+    parameter = declarations(input)[0]
   }
   if (parameter.type === undefined || !ts.isTypeLiteralNode(parameter.type)) return undefined
   return parameter.type.members.find(
@@ -218,8 +233,8 @@ function serviceInterface(checker, declaration) {
 
 /** An explicitly declared Effect command is executed by its service, rather than a query builder. */
 function effectCommand(property) {
-  if (property === undefined || property.declarations === undefined) return false
-  return property.declarations.some((declaration) => {
+  if (property === undefined) return false
+  return declarations(property).some((declaration) => {
     const signature = declaration.type
     if (signature === undefined || !ts.isFunctionTypeNode(signature)) return false
     const result = signature.type
@@ -237,7 +252,7 @@ function localServiceMethod(checker, expression) {
   if (!ts.isTypeReferenceNode(field.type.objectType)) return false
   const service = symbolOf(checker, field.type.objectType.typeName)
   if (service === undefined) return false
-  return (service.declarations ?? []).some((declaration) => {
+  return declarations(service).some((declaration) => {
     const type = serviceInterface(checker, declaration)
     return type !== undefined && effectCommand(type.getProperty(expression.name.text))
   })
@@ -275,15 +290,22 @@ function operationOf(checker, expression, seen = new Set()) {
   const symbol = symbolOf(checker, expression)
   if (symbol === undefined || seen.has(symbol)) return named
   seen.add(symbol)
-  const declaration = (symbol.declarations ?? []).find(operationBinding)
+  const declaration = declarations(symbol).find(operationBinding)
   return declaration === undefined ? named : declaredOperation(checker, declaration, seen)
 }
 
 /** Table declarations, rather than a hand-maintained table list, identify each owning domain. */
+function programSources(program) {
+  return program.getSourceFileNames().map((file) => ({
+    file: file.slice(1),
+    source: program.getSourceFile(file),
+  }))
+}
+
 function declaredTables(program, checker) {
   const tables = new Map()
-  for (const source of program.getSourceFiles()) {
-    if (!source.fileName.startsWith(serverRoot)) continue
+  for (const { file, source } of programSources(program)) {
+    if (!file.startsWith(serverRoot)) continue
     const visit = (node) => {
       if (
         ts.isVariableDeclaration(node) &&
@@ -292,11 +314,11 @@ function declaredTables(program, checker) {
         ts.isCallExpression(node.initializer) &&
         isTableFactory(checker, node.initializer.expression)
       ) {
-        const path = source.fileName.slice(serverRoot.length).split('/')
+        const path = file.slice(serverRoot.length).split('/')
         const domain = path.length > 1 ? path[0] : undefined
         tables.set(checker.getSymbolAtLocation(node.name), { domain, name: node.name.text })
       }
-      ts.forEachChild(node, visit)
+      node.forEachChild(visit)
     }
     visit(source)
   }
@@ -304,46 +326,30 @@ function declaredTables(program, checker) {
 }
 
 /** A virtual filesystem makes historical module resolution independent of cwd and disk. */
-function sourceProgram(sources) {
-  const files = new Map([...sources, ...libraries])
-  const normalize = (file) => NodePath.posix.normalize(file).replace(/^\/+/u, '')
-  const directories = new Set(['', '.'])
-  for (const file of files.keys()) {
-    let directory = NodePath.posix.dirname(file)
-    while (!directories.has(directory)) {
-      directories.add(directory)
-      directory = NodePath.posix.dirname(directory)
-    }
-  }
-  const host = ts.createCompilerHost({})
-  host.getSourceFile = (file, languageVersion) => {
-    const name = normalize(file)
-    const source = files.get(name)
-    return source === undefined
-      ? undefined
-      : ts.createSourceFile(name, source, languageVersion, true)
-  }
-  host.fileExists = (file) => files.has(normalize(file))
-  host.readFile = (file) => files.get(normalize(file))
-  host.directoryExists = (directory) => directories.has(normalize(directory))
-  host.realpath = normalize
-  host.getCurrentDirectory = () => '/'
-  return ts.createProgram(
-    [...files.keys()],
-    {
-      noResolve: true,
-      noLib: true,
-      types: [],
-      allowImportingTsExtensions: true,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    },
-    host,
-  )
+function sourceProgram(api, sources) {
+  return api.createSnapshot({
+    fileSystem: createFileSystem([
+      ...Array.from(sources, ([file, text]) => [`/${file}`, text]),
+      ...libraries,
+    ]),
+    createPrograms: [
+      {
+        rootFiles: [...sources.keys()].map((file) => `/${file}`).concat([...libraries.keys()]),
+        compilerOptions: {
+          noResolve: true,
+          noLib: true,
+          types: [],
+          allowImportingTsExtensions: true,
+          module: ModuleKind.NodeNext,
+          moduleResolution: ModuleResolutionKind.NodeNext,
+        },
+      },
+    ],
+  })
 }
 
 /** Excluded test support must stay unreachable from production, including through re-exports. */
-function excludedImport(node, source, sources) {
+function excludedImport(node, file, sources) {
   let specifier
   if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) specifier = node.moduleSpecifier
   if (
@@ -356,7 +362,7 @@ function excludedImport(node, source, sources) {
   if (specifier === undefined || !ts.isStringLiteral(specifier) || !specifier.text.startsWith('.'))
     return undefined
   const target = NodePath.posix.normalize(
-    NodePath.posix.join(NodePath.posix.dirname(source.fileName), specifier.text),
+    NodePath.posix.join(NodePath.posix.dirname(file), specifier.text),
   )
   const resolved = [
     target,
@@ -399,8 +405,10 @@ function writeFindings(checker, node, tables, domain) {
  * Sources map repository-relative paths to text for working trees and historical replays.
  */
 export function checkOwners(sources) {
-  const program = sourceProgram(sources)
-  const checker = program.getTypeChecker()
+  using api = new API({ cwd: '/' })
+  using snapshot = sourceProgram(api, sources)
+  const program = snapshot.operation.createdPrograms[0]
+  const checker = program.getProject().checker
   const tables = declaredTables(program, checker)
   const domains = new Set(
     [...tables.values()].flatMap((table) => (table.domain === undefined ? [] : [table.domain])),
@@ -415,23 +423,23 @@ export function checkOwners(sources) {
     ]
   }
   const findings = []
-  for (const source of program.getSourceFiles()) {
-    if (!source.fileName.startsWith(serverRoot) || !isWriter(source.fileName)) continue
-    const domain = source.fileName.slice(serverRoot.length).split('/')[0]
+  for (const { file, source } of programSources(program)) {
+    if (!file.startsWith(serverRoot) || !isWriter(file)) continue
+    const domain = file.slice(serverRoot.length).split('/')[0]
     const visit = (node) => {
       const violations = writeFindings(checker, node, tables, domain)
-      const excluded = excludedImport(node, source, sources)
+      const excluded = excludedImport(node, file, sources)
       if (excluded !== undefined)
-        violations.push({ message: `production imports excluded test support ${excluded}` })
+        violations.push({
+          message: `production imports excluded test support ${excluded}`,
+        })
       if (violations.length > 0) {
         const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
         findings.push(
-          ...violations.map((violation) =>
-            Object.assign({ file: source.fileName, line: line + 1 }, violation),
-          ),
+          ...violations.map((violation) => Object.assign({ file, line: line + 1 }, violation)),
         )
       }
-      ts.forEachChild(node, visit)
+      node.forEachChild(visit)
     }
     visit(source)
   }

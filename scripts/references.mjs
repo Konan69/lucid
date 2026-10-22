@@ -3,7 +3,7 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import ts from 'typescript'
+import { parseJsonc } from './jsonc.mjs'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 
@@ -78,11 +78,8 @@ export function repository(directory, revision) {
   }
 }
 
-/** Configs permit JSON comments. TypeScript's parser preserves strings containing comment syntax. */
 function config(tree, file) {
-  const parsed = ts.parseConfigFileTextToJson(file, tree.read(file))
-  if (parsed.error !== undefined) throw new Error(`${file}: invalid JSON configuration`)
-  return decode(configSchema, parsed.config, file)
+  return decode(configSchema, parseJsonc(tree.read(file), file), file)
 }
 
 /** A directory reference names tracked descendants; glob matching uses Node's brace-aware matcher. */
@@ -352,12 +349,8 @@ if (
 ) {
   const tree = repository(root, process.argv[2])
   const file = 'scripts/references.json'
-  const declarations = ts.parseConfigFileTextToJson(
-    file,
-    NodeFS.readFileSync(NodePath.join(root, file), 'utf8'),
-  )
-  if (declarations.error !== undefined) throw new Error(`${file}: invalid JSON configuration`)
-  const findings = checkReferences(tree, declarations.config)
+  const declarations = parseJsonc(NodeFS.readFileSync(NodePath.join(root, file), 'utf8'), file)
+  const findings = checkReferences(tree, declarations)
   for (const finding of findings) process.stderr.write(`${finding}\n`)
   process.stdout.write(`references: ${findings.length} stale references\n`)
   process.exitCode = findings.length === 0 ? 0 : 1

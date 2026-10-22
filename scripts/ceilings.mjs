@@ -6,7 +6,7 @@ import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import ts from 'typescript'
+import { parseSync } from 'oxc-parser'
 import { countFindings } from './gate/ratchets.mjs'
 
 const tablePath = 'scripts/gate/ratchets.mjs'
@@ -16,6 +16,7 @@ const Ceiling = Schema.Struct({
   rule: Schema.NonEmptyString,
   ceiling: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 })
+const isLiteral = Schema.is(Schema.Union([Schema.String, Schema.Number]))
 const decodeCeiling = Schema.decodeUnknownResult(Ceiling)
 
 /** Git failures must not look like an empty baseline and silently permit every raise. */
@@ -62,35 +63,33 @@ function ceilingMap(entries) {
 
 /** Only literal fields are legal in the ceiling table, so checking never executes historical code. */
 function literalField(property) {
-  if (!ts.isPropertyAssignment(property)) throw new Error('ceilings: expected a literal property')
-  const value = property.initializer
-  if (ts.isStringLiteral(value))
-    return [property.name.getText().replaceAll(/['"]/gu, ''), value.text]
-  if (ts.isNumericLiteral(value)) return [property.name.getText(), Number(value.text)]
-  throw new Error(`ceilings: expected a literal value for ${property.name.getText()}`)
+  if (property.type !== 'Property' || property.computed || property.method || property.shorthand)
+    throw new Error('ceilings: expected a literal property')
+  const name = property.key.name ?? property.key.value
+  const value = property.value
+  if (value.type === 'Literal' && isLiteral(value.value)) return [String(name), value.value]
+  throw new Error(`ceilings: expected a literal value for ${name}`)
 }
 
-/** AST parsing accepts quote style and field order changes without weakening the comparison. */
 function tableCeilings(source) {
-  const file = ts.createSourceFile(
-    tablePath,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS,
-  )
-  if (file.parseDiagnostics.length > 0) throw new Error(`ceilings: cannot parse ${tablePath}`)
-  const declarations = file.statements
-    .filter(ts.isVariableStatement)
-    .flatMap((statement) => statement.declarationList.declarations)
-    .filter((declaration) => declaration.name.getText(file) === 'ratchets')
+  const parsed = parseSync(tablePath, source)
+  if (parsed.errors.length > 0) throw new Error(`ceilings: cannot parse ${tablePath}`)
+  const declarations = parsed.program.body
+    .map((statement) =>
+      statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement,
+    )
+    .filter((statement) => statement !== null && statement.type === 'VariableDeclaration')
+    .flatMap((statement) => statement.declarations)
+    .filter(
+      (declaration) => declaration.id.type === 'Identifier' && declaration.id.name === 'ratchets',
+    )
   if (declarations.length !== 1) throw new Error('ceilings: expected one ratchets declaration')
-  const array = declarations[0].initializer
-  if (array === undefined || !ts.isArrayLiteralExpression(array))
+  const array = declarations[0].init
+  if (array === null || array.type !== 'ArrayExpression')
     throw new Error('ceilings: ratchets must be a literal array')
   return ceilingMap(
     array.elements.map((entry) => {
-      if (!ts.isObjectLiteralExpression(entry))
+      if (entry === null || entry.type !== 'ObjectExpression')
         throw new Error('ceilings: expected a literal entry')
       return Object.fromEntries(entry.properties.map(literalField))
     }),

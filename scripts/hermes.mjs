@@ -2,7 +2,8 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as Schema from 'effect/Schema'
 import * as Result from 'effect/Result'
-import * as TypeScript from 'typescript'
+import { API } from 'tsc-rs/unstable/sync'
+import { libraryDirectory } from './native.mjs'
 
 const Manifest = Schema.Struct({
   name: Schema.String,
@@ -15,41 +16,42 @@ const hermesLib = ['lib.es2022.d.ts']
 const domLib = [...hermesLib, 'lib.dom.d.ts']
 const browserLib = [...domLib, 'lib.dom.iterable.d.ts']
 
-/** Only TypeScript's bundled libraries count here; dependency declaration names are unrelated. */
 function libraryFiles(program) {
   return program
-    .getSourceFiles()
-    .filter((source) => /\/typescript\/lib\/lib\.[^/]+\.d\.ts$/u.test(source.fileName))
+    .getSourceFileNames()
+    .filter(
+      (file) =>
+        file.startsWith(`${libraryDirectory}/`) &&
+        /^lib\.[^/]+\.d\.ts$/u.test(NodePath.basename(file)),
+    )
 }
 
-/** Imports and triple-slash references can widen a program even when compilerOptions.lib is narrow. */
-function productionProgram(config) {
-  return TypeScript.createProgram({ rootNames: config.fileNames, options: config.options })
+function productionProgram(api, config) {
+  return api.createProgram(config.fileNames, config.options)
 }
 
-/** Inspect the import graph too, so a cross-app import cannot escape the phone's lint coverage. */
 export function productionSources(root, directory) {
-  const { config, diagnostics } = productionConfig(root, directory)
+  using api = new API({ cwd: root })
+  const { config, diagnostics } = productionConfig(api, root, directory)
   if (config === undefined || diagnostics.length > 0)
     throw new Error(`Cannot read ${directory} production project`)
-  return productionProgram(config)
-    .getSourceFiles()
-    .filter((source) => !source.isDeclarationFile && !source.fileName.includes('/node_modules/'))
-    .map((source) => NodePath.relative(root, source.fileName))
+  using program = productionProgram(api, config)
+  return program
+    .getSourceFileNames()
+    .filter((file) => !/\.d\.[cm]?ts$/u.test(file) && !file.includes('/node_modules/'))
+    .map((file) => NodePath.relative(root, file))
 }
 
-/** Build the permitted transitive lib set from TypeScript itself, without application or @types imports. */
-function allowedLibraries(lib) {
-  const directory = NodePath.dirname(TypeScript.getDefaultLibFilePath({}))
-  const program = TypeScript.createProgram({
-    rootNames: lib.map((file) => NodePath.join(directory, file)),
-    options: { lib, types: [] },
-  })
-  return new Set(libraryFiles(program).map((source) => NodePath.basename(source.fileName)))
+function allowedLibraries(api, lib) {
+  using program = api.createProgram(
+    lib.map((file) => NodePath.join(libraryDirectory, file)),
+    { lib, types: [] },
+  )
+  return new Set(libraryFiles(program).map((file) => NodePath.basename(file)))
 }
 
 /** Keep the cheap config diagnostic separate from the loaded-library check so both causes are visible. */
-function libraryErrors(config, relative) {
+function libraryErrors(api, config, relative) {
   const errors = []
   const key = JSON.stringify(config.options.lib)
   const lib = [hermesLib, domLib, browserLib].find((candidate) => JSON.stringify(candidate) === key)
@@ -58,10 +60,9 @@ function libraryErrors(config, relative) {
       `${relative}: effective lib must be ES2022, with DOM and DOM.Iterable only where needed for Hermes; use effect/Array instead of raising lib`,
     ]
   }
-  const allowed = allowedLibraries(lib)
-  const loaded = libraryFiles(productionProgram(config)).map((source) =>
-    NodePath.basename(source.fileName),
-  )
+  const allowed = allowedLibraries(api, lib)
+  using program = productionProgram(api, config)
+  const loaded = libraryFiles(program).map((file) => NodePath.basename(file))
   const wider = loaded.filter((file) => !allowed.has(file))
   if (wider.length > 0)
     errors.push(`${relative}: loaded libraries exceed the Hermes profile: ${wider.join(', ')}`)
@@ -96,21 +97,11 @@ export function mobileClosure(root, manifestPaths) {
   return closure
 }
 
-/** Use TypeScript's own JSONC and inheritance resolution, so Expo cannot silently supply ESNext. */
-function productionConfig(root, directory) {
+function productionConfig(api, root, directory) {
   const types = NodePath.join(root, directory, 'tsconfig.types.json')
   const path = NodeFS.existsSync(types) ? types : NodePath.join(root, directory, 'tsconfig.json')
-  const diagnostics = []
-  const config = TypeScript.getParsedCommandLineOfConfigFile(
-    path,
-    {},
-    {
-      ...TypeScript.sys,
-      onUnRecoverableConfigFileDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
-    },
-  )
-  if (config === undefined) return { path, diagnostics }
-  return { path, config, diagnostics: diagnostics.concat(config.errors) }
+  const config = api.parseConfigFile(path)
+  return { path, config, diagnostics: config.errors }
 }
 
 /**
@@ -118,17 +109,16 @@ function productionConfig(root, directory) {
  * including shared packages checked separately by Turbo before the phone consumes their types.
  */
 export function hermesConfigErrors(root, manifestPaths) {
+  using api = new API({ cwd: root })
   return mobileClosure(root, manifestPaths).flatMap((directory) => {
-    const { path, config, diagnostics } = productionConfig(root, directory)
+    const { path, config, diagnostics } = productionConfig(api, root, directory)
     const relative = NodePath.relative(root, path)
     if (config === undefined || diagnostics.length > 0) {
       return [`${relative}: cannot read Hermes production project`].concat(
-        diagnostics.map((diagnostic) =>
-          TypeScript.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
-        ),
+        diagnostics.map((diagnostic) => diagnostic.text),
       )
     }
-    const errors = libraryErrors(config, relative)
+    const errors = libraryErrors(api, config, relative)
     if (!config.fileNames.includes(NodePath.join(root, 'hermes.d.ts'))) {
       errors.push(`${relative}: inherit tsconfig.hermes.json to include hermes.d.ts`)
     }

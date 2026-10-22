@@ -9,9 +9,5 @@
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json",
     "lint": "node ../../../scripts/lint.mjs"
-  },
-  "devDependencies": {
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:"
   }
 }

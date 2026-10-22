@@ -19,9 +19,5 @@
   "dependencies": {
     "@flue/sdk": "catalog:",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:"
   }
 }

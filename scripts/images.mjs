@@ -3,7 +3,8 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import ts from 'typescript'
+import { isStringLiteral, parseSource, walk } from './syntax.mjs'
+import { parseJsonc } from './jsonc.mjs'
 import * as YAML from 'yaml'
 
 const assert = NodeAssert
@@ -157,14 +158,12 @@ function requireCopied(context, required, reason) {
   )
 }
 
-/** TypeScript owns JSONC parsing. Local extends, project references and explicit files are inputs. */
 function configReferences(root, file) {
-  const parsed = ts.parseConfigFileTextToJson(
+  const config = decode(
+    Config,
+    parseJsonc(NodeFS.readFileSync(NodePath.join(root, file), 'utf8'), file),
     file,
-    NodeFS.readFileSync(NodePath.join(root, file), 'utf8'),
   )
-  assert.equal(parsed.error, undefined, `${file}: invalid TypeScript config`)
-  const config = decode(Config, parsed.config, file)
   const extended = config.extends === undefined ? [] : [config.extends].flat()
   const local = extended.filter(
     (reference) => reference.startsWith('.') || reference.startsWith('/'),
@@ -196,32 +195,26 @@ function configReferences(root, file) {
  * and Railway watch list by hand.
  */
 function moduleReferences(root, file) {
-  const tree = ts.createSourceFile(
-    file,
-    NodeFS.readFileSync(NodePath.join(root, file), 'utf8'),
-    ts.ScriptTarget.Latest,
-  )
+  const tree = parseSource(file, NodeFS.readFileSync(NodePath.join(root, file), 'utf8'))
   const references = []
-  const visit = (node) => {
+  walk(tree, (node) => {
     if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined
+      ['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(node.type) &&
+      node.source
     )
-      references.push(node.moduleSpecifier)
+      references.push(node.source)
     if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'require'
+      node.type === 'CallExpression' &&
+      node.callee.type === 'Identifier' &&
+      node.callee.name === 'require'
     )
       references.push(...node.arguments)
-    ts.forEachChild(node, visit)
-  }
-  visit(tree)
+  })
   return references
     .values()
-    .filter((node) => ts.isStringLiteral(node) && node.text.startsWith('.'))
+    .filter((node) => isStringLiteral(node) && node.value.startsWith('.'))
     .map((node) => {
-      const relative = NodePath.posix.join(NodePath.posix.dirname(file), node.text)
+      const relative = NodePath.posix.join(NodePath.posix.dirname(file), node.value)
       const candidates = [
         relative,
         relative.replace(/\.js$/, '.ts'),
