@@ -34,10 +34,10 @@ const TurboRun = Schema.Struct({
 const decodeTurboRun = Schema.decodeUnknownSync(Schema.fromJsonString(TurboRun))
 
 /** Run the pinned real Turbo binary; probes replace only expensive check commands. */
-function runTurbo(root, args) {
+function runTurbo(root, args, environment = {}) {
   const result = NodeChildProcess.spawnSync(process.execPath, [turbo, 'run', ...args], {
     cwd: root,
-    env: { ...process.env, CI: '1', TURBO_TELEMETRY_DISABLED: '1' },
+    env: { ...process.env, ...environment, CI: '1', TURBO_TELEMETRY_DISABLED: '1' },
     encoding: 'utf8',
     maxBuffer: 4 * 1024 * 1024,
   })
@@ -113,6 +113,7 @@ if (task === 'types') {
   fs.writeFileSync('.cache/typescript/types.tsbuildinfo', 'cached declaration build info')
 }
 console.log('typescript(no-explicit-any): probe diagnostic')
+console.log('backend=' + process.env.OXLINT_TSGOLINT_PATH)
 `,
   )
   for (const args of [
@@ -356,4 +357,18 @@ void test('root checks ignore generated workspace files and reuse successful res
   const executions = NodeFS.readFileSync(NodePath.join(root, '.cache/executions'), 'utf8')
   runTurbo(root, args)
   assert.equal(NodeFS.readFileSync(NodePath.join(root, '.cache/executions'), 'utf8'), executions)
+})
+
+void test('backend overrides reach lint tasks and invalidate cached diagnostics', (t) => {
+  const root = fixture(t)
+  const args = ['lint', 'lint:root', '--dry=json']
+  const before = decodeTurboRun(runTurbo(root, args, { OXLINT_TSGOLINT_PATH: '/backend/a' }).stdout)
+  const after = decodeTurboRun(runTurbo(root, args, { OXLINT_TSGOLINT_PATH: '/backend/b' }).stdout)
+  for (const task of before.tasks.filter((entry) => entry.command !== '<NONEXISTENT>')) {
+    assert.notEqual(task.hash, after.tasks.find((entry) => entry.taskId === task.taskId).hash)
+  }
+  const result = runTurbo(root, ['lint', '--filter=@vivid/computer', '--ui=stream'], {
+    OXLINT_TSGOLINT_PATH: '/backend/a',
+  })
+  assert.match(result.stdout, /backend=\/backend\/a/u)
 })

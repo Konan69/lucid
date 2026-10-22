@@ -39,6 +39,7 @@
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
+      "env": ["OXLINT_TSGOLINT_PATH"],
       "dependsOn": ["checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
@@ -69,6 +70,7 @@
       "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md"]
     },
     "//#lint:root": {
+      "env": ["OXLINT_TSGOLINT_PATH"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "apps/**",
