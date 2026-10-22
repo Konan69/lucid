@@ -101,3 +101,8 @@ NodeTest.test('structural conventions cannot be suppressed through lint directiv
     [],
   )
 })
+
+NodeTest.test('directive scans reject malformed source with and without suppression', () => {
+  for (const prefix of ['', '// oxlint-disable\n'])
+    assert.throws(() => directiveErrors('apps/web/src/example.ts', `${prefix}const = ;`), /apps\/web\/src\/example\.ts/u)
+})

@@ -48,13 +48,13 @@ NodeTest.test('historical compiler names are prose, while runnable examples rema
   assert.equal(commandErrors('docs/checks.md', '```sh\ntsc\n```').length, 1)
 })
 
-for (const source of ['tsc -b', '    tsc -b', '\ttsc']) {
+for (const source of ['tsc -b', '    tsc -b', '\ttsc', '1. tsc -b', 'Then tsc -b builds it.']) {
   test(`Markdown compiler commands fail without an instruction verb: ${source}`, () => {
     assert.equal(commandErrors('docs/checks.md', source).length, 1)
   })
 }
 
-for (const source of ['Run `tsc-rs`, not `tsc`.', 'tsc-rs', 'Run `tsc-rs`.']) {
+for (const source of ['Run `tsc-rs`, not `tsc`.', 'tsc-rs', 'Run `tsc-rs`.', 'Never run `tsc`.', 'Run `tsc-rs` instead of `tsc`.']) {
   test(`the native checker is allowed in Markdown: ${source}`, () => {
     assert.deepEqual(commandErrors('docs/checks.md', source), [])
   })
