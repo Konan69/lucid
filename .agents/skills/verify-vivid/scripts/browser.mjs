@@ -88,6 +88,7 @@ function requireReply(count) {
 /** Retain counts at each DOM boundary so HTTP history cannot substitute for visible replies. */
 async function exactReply(run, text, directory, stage) {
   const normalised = await dom(run, renderedReply(text))
+  assert.ok(normalised.length > 0, 'Assistant reply is empty after normalisation')
   const expression = replyCount(normalised)
   if (stage !== 'before') await run(['wait', '--fn', expression + ' === 1'])
   const count = await dom(run, expression)
