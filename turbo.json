@@ -35,7 +35,7 @@
         "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
@@ -56,7 +56,7 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "checkinputs": {
@@ -84,7 +84,7 @@
         "!docs/**",
         "!**/*.md"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "//#typecheck:root": {
@@ -100,7 +100,7 @@
         "!docs/**",
         "!**/*.md"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/root.tsbuildinfo"]
     },
     "//#format:root": {
@@ -155,7 +155,7 @@
         "$TURBO_ROOT$/hermes.d.ts",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
     },
     "@vivid/contracts#typeinputs": {
@@ -226,7 +226,7 @@
         "!**/node_modules/**",
         "!*.md"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "passThroughEnv": ["GOMEMLIMIT", "GOGC"],
       "outputs": []
     },
     "@vivid/desktop#test": {

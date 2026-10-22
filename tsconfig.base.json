@@ -26,6 +26,8 @@
         "ignoreEffectSuggestionsInTscExitCode": false,
         "missingDiagnosticNextLine": "error",
         "diagnosticSeverity": {
+          // Konan uses unstable Effect 4 APIs intentionally.
+          "unstableApiUsage": "off",
           "anyUnknownInErrorContext": "error",
           "asyncFunction": "error",
           "newPromise": "error",
