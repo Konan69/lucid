@@ -82,11 +82,7 @@ function fixture(t) {
   const manifest = decodeManifest(NodeFS.readFileSync(contractManifest, 'utf8'))
   manifest.scripts.typecheck += ' tsconfig.tests.json'
   NodeFS.writeFileSync(contractManifest, JSON.stringify(manifest))
-  NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@typescript'), { recursive: true })
-  NodeFS.symlinkSync(
-    NodePath.join(repositoryRoot, 'node_modules/@typescript/native'),
-    NodePath.join(root, 'node_modules/@typescript/native'),
-  )
+  NodeFS.mkdirSync(NodePath.join(root, 'node_modules'), { recursive: true })
   // The checker scripts/types.mjs runs; its platform package resolves through the real path.
   NodeFS.symlinkSync(
     NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/tsc-rs')),

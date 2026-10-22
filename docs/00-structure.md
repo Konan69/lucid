@@ -26,13 +26,7 @@ before adding a file. Extend it in the same change that adds a directory.
 
 ## Enforcement
 
-`pnpm structure` runs [konsistent](https://github.com/vercel-labs/konsistent) against
-`konsistent.json`, and the gate's policy stage (`scripts/gate/stages.mjs`) runs it on every push. It fails on a multi-word source
-file or package directory, on a `utils`/`helpers`/`common`/`shared`/`misc` module, on a server
-`handlers.ts` that imports Drizzle, and on a server `store.ts` that imports an HTTP or RPC module.
-`konsistent.json` currently has no source-consolidation exceptions; its `!` entries only exclude
-package dependency directories from the package-name rule. Add a convention here whenever this document gains a rule a machine
-can check.
+`pnpm structure` checks source filenames, package directories, module responsibilities, and server import layering through `scripts/structure.mjs`. The gate's policy stage runs it on every push. The filesystem check owns package names. An Oxlint JavaScript plugin reads the parser's AST for value imports, so type-only imports remain legal. `scripts/structure.json` enables only these structural rules.
 
 ## The tree
 

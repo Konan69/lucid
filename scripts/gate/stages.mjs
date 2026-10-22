@@ -17,6 +17,7 @@ export const stages = [
     name: 'policy',
     commands: [
       ['node', 'scripts/package-manager.mjs'],
+      ['node', 'scripts/compiler-policy.mjs'],
       ['node', 'scripts/versions.mjs'],
       ['node', 'scripts/instructions.mjs'],
       ['node', 'scripts/references.mjs'],
@@ -26,7 +27,7 @@ export const stages = [
       ['node', 'scripts/migrations.mjs', 'check'],
       ['node', 'scripts/owners.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
-      ['pnpm', 'exec', 'konsistent'],
+      ['node', 'scripts/structure.mjs'],
     ],
   },
   { name: 'lint', lane: 'checks', tasks: ['lint', 'lint:root'] },

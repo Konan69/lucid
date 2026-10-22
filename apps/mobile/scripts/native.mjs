@@ -12,6 +12,7 @@ function run(command, args, cwd = root) {
   const result = NodeChildProcess.spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
+    env: { ...process.env, EXPO_NO_TYPESCRIPT_SETUP: '1' },
     shell: NodeProcess.platform === 'win32',
   })
   if (result.error) throw result.error

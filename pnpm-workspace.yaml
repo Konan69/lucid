@@ -31,7 +31,7 @@ verifyDepsBeforeRun: false
 pmOnFail: error
 
 # Every repeated stack pin has one owner. Manifests reference these entries with
-# catalog: so Effect/Drizzle/Flue/native TypeScript cannot drift by package.
+# catalog: so Effect/Drizzle/Flue cannot drift by package.
 catalog:
   '@alchemy.run/frontend-frameworks': 2.0.0-beta.81
   '@earendil-works/pi-ai': 0.87.1
@@ -68,7 +68,6 @@ catalog:
   '@types/react-dom': 19.2.3
   '@typeonce/effect-machine': 0.40.0
   '@typeonce/effect-machine-react': 0.40.0
-  '@typescript/native': 'npm:typescript@7.0.2'
   '@vitejs/plugin-react': 6.1.1
   alchemy: 2.0.0-beta.81
   better-auth: 1.7.5
@@ -93,7 +92,6 @@ catalog:
   expo-system-ui: 57.0.4
   expo-updates: 57.0.24
   hono: 4.13.8
-  konsistent: 1.0.0-beta.9
   kysely: 0.29.5
   lucide-react: 1.47.0
   lucide-react-native: 1.47.0
@@ -107,7 +105,6 @@ catalog:
   react-native-worklets: 0.10.1
   tailwindcss: 4.3.3
   tsx: 4.23.13
-  typescript: 6.0.3
   valibot: 1.5.0
   vite: 8.3.0
   vitest: 5.0.1
@@ -116,6 +113,7 @@ catalog:
 # Root-only convergence keeps transitive peers on the same RCs as the direct
 # stack. Catalog references keep the override and direct declaration identical.
 overrides:
+  typescript: '-'
   '@effect/platform-node': 'catalog:'
   # Drizzle's optional Effect adapters. Nothing here imports them, but a copy left on the release
   # candidate would import module paths stable Effect no longer has.
@@ -184,14 +182,6 @@ minimumReleaseAgeExclude:
   - effect@4.0.2
   - turbo@2.11.2
   - '@earendil-works/pi-codemode@1.0.0'
-  - '@effect/tsgo-darwin-arm64@0.51.0'
-  - '@effect/tsgo-darwin-x64@0.51.0'
-  - '@effect/tsgo-linux-arm64@0.51.0'
-  - '@effect/tsgo-linux-arm@0.51.0'
-  - '@effect/tsgo-linux-x64@0.51.0'
-  - '@effect/tsgo-win32-arm64@0.51.0'
-  - '@effect/tsgo-win32-x64@0.51.0'
-  - '@effect/tsgo@0.51.0'
   - '@tsc-rs/darwin-arm64@0.8.0'
   - '@tsc-rs/linux-x64@0.8.0'
   - tsc-rs@0.8.0

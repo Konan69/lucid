@@ -7,10 +7,6 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
-/**
- * tsc-rs bundles the native TypeScript checker and Effect diagnostics.
- * `@typescript/native` and its Effect patch stay for editors; the web build is Vite-only.
- */
 export const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
 
 /**

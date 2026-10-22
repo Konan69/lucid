@@ -6,10 +6,10 @@
   "main": "index.ts",
   "exports": {},
   "scripts": {
-    "dev": "expo start",
+    "dev": "node scripts/expo.mjs",
     "android": "node scripts/native.mjs android",
     "ios": "node scripts/native.mjs ios",
-    "web": "expo start --web",
+    "web": "node scripts/expo.mjs --web",
     "build": "expo export --platform all",
     "updates": "node scripts/publish.mjs",
     "build:updates": "node scripts/export.mjs",
@@ -67,8 +67,6 @@
   "devDependencies": {
     "@react-native/metro-config": "catalog:",
     "@types/react": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
     "@types/react-dom": "catalog:"
   },
   "enriched-markdown": {

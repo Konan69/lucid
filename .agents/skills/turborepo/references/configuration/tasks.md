@@ -94,7 +94,7 @@ Glob patterns for files to cache. **If omitted, nothing is cached.**
 // Vite
 "outputs": ["dist/**"]
 
-// TypeScript (tsc)
+// TypeScript build
 "outputs": ["dist/**", "*.tsbuildinfo"]
 
 // No file outputs (lint, typecheck)

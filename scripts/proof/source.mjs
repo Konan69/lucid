@@ -1,33 +1,30 @@
-import ts from 'typescript'
+import { parseSource, sourcePositions, walk } from '../syntax.mjs'
 
-/** Reporter locations identify cases even when a project aliases or wraps its test import. */
 export function testBodies(path, source) {
-  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
   const bodies = []
-  const line = (position) => file.getLineAndCharacterOfPosition(position).line + 1
-  // Callback spans let the receipt distinguish a case assertion from enclosing fixture code.
-  const visit = (node) => {
-    if (ts.isCallExpression(node)) {
-      const body = node.arguments.find(
-        (argument) => ts.isArrowFunction(argument) || ts.isFunctionExpression(argument),
-      )
-      if (body !== undefined)
-        bodies.push({
-          namedTest: /\b(?:it|test)\b/u.test(node.expression.getText(file)),
-          start: line(node.getStart(file)),
-          end: line(node.end),
-          startColumn: file.getLineAndCharacterOfPosition(node.getStart(file)).character + 1,
-          endColumn: file.getLineAndCharacterOfPosition(node.end).character + 1,
-          bodyStart: line(body.body.getStart(file)),
-          bodyEnd: line(body.body.end),
-          bodyStartColumn:
-            file.getLineAndCharacterOfPosition(body.body.getStart(file)).character + 1,
-          bodyEndColumn: file.getLineAndCharacterOfPosition(body.body.end).character + 1,
-        })
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(file)
+  const position = sourcePositions(source)
+  walk(parseSource(path, source), (node) => {
+    if (node.type !== 'CallExpression') return
+    const callback = node.arguments.find((argument) =>
+      ['ArrowFunctionExpression', 'FunctionExpression'].includes(argument.type),
+    )
+    if (callback === undefined) return
+    const start = position(node.start)
+    const end = position(node.end)
+    const bodyStart = position(callback.body.start)
+    const bodyEnd = position(callback.body.end)
+    bodies.push({
+      namedTest: /\b(?:it|test)\b/u.test(source.slice(node.callee.start, node.callee.end)),
+      start: start.line,
+      end: end.line,
+      startColumn: start.column,
+      endColumn: end.column,
+      bodyStart: bodyStart.line,
+      bodyEnd: bodyEnd.line,
+      bodyStartColumn: bodyStart.column,
+      bodyEndColumn: bodyEnd.column,
+    })
+  })
   return bodies
 }
 

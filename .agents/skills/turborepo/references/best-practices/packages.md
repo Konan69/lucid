@@ -27,7 +27,7 @@ Export TypeScript directly. The consuming app's bundler compiles it.
   },
   "scripts": {
     "lint": "eslint .",
-    "check-types": "tsc --noEmit"
+    "check-types": "node ./scripts/check.mjs"
   }
 }
 ```
@@ -59,8 +59,8 @@ Package handles its own compilation.
     }
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch"
+    "build": "node ./scripts/build.mjs",
+    "dev": "node ./scripts/watch.mjs"
   }
 }
 ```
@@ -300,9 +300,9 @@ import { MY_STRING } from "#utils.ts"; // Uses .ts extension
 import { MY_STRING } from "#utils.js"; // Uses .js extension
 ```
 
-### Use `tsc` for Internal Packages
+### Keep Internal Package Builds Predictable
 
-For internal packages, prefer `tsc` over bundlers. Bundlers can mangle code before it reaches your app's bundler, causing hard-to-debug issues.
+Choose the build tool in the package-owned script. Preserve module boundaries and JSX when the consuming app bundles them later.
 
 ### Enable Go-to-Definition
 

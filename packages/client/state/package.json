@@ -16,9 +16,5 @@
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:"
   }
 }

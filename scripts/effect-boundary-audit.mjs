@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
-import ts from 'typescript'
+import { isStringLiteral, parseSource, sourcePositions, walk } from './syntax.mjs'
 import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
@@ -84,155 +84,160 @@ export function productionFiles(root = repositoryRoot) {
 }
 
 const propertyName = (node) => {
-  if (ts.isPropertyAccessExpression(node)) return node.name.text
-  if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) {
-    return node.argumentExpression.text
-  }
+  if (node.type !== 'MemberExpression') return undefined
+  if (!node.computed && node.property.type === 'Identifier') return node.property.name
+  if (node.computed && isStringLiteral(node.property)) return node.property.value
   return undefined
 }
 
-const expressionOwner = (node) => {
-  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression))
-    return node.expression.text
-  if (
-    ts.isElementAccessExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    ts.isStringLiteral(node.argumentExpression)
-  ) {
-    return node.expression.text
-  }
-  return undefined
+const expressionOwner = (node) =>
+  propertyName(node) !== undefined && node.object.type === 'Identifier'
+    ? node.object.name
+    : undefined
+
+const functions = new Set([
+  'ArrowFunctionExpression',
+  'FunctionExpression',
+  'FunctionDeclaration',
+  'TSDeclareFunction',
+  'TSFunctionType',
+  'TSConstructorType',
+  'TSMethodSignature',
+  'TSIndexSignature',
+  'TSCallSignatureDeclaration',
+  'TSConstructSignatureDeclaration',
+])
+const methods = new Set(['MethodDefinition', 'TSAbstractMethodDefinition'])
+const properties = new Set(['Property', ...methods])
+
+function isMethod(node) {
+  if (node === undefined) return false
+  return (
+    methods.has(node.type) || (node.type === 'Property' && (node.method || node.kind !== 'init'))
+  )
 }
 
-const declaredFunctionName = (node) => {
-  if (node.name !== undefined && ts.isIdentifier(node.name)) return node.name.text
-  const parent = node.parent
-  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text
-  if (
-    ts.isPropertyAssignment(parent) &&
-    (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name))
-  ) {
-    return parent.name.text
-  }
-  if (ts.isCallExpression(parent)) {
-    const routeArgument = parent.arguments.find(ts.isStringLiteral)
-    const operation = propertyName(parent.expression)
-    if (routeArgument !== undefined && operation !== undefined)
-      return `${operation}:${routeArgument.text}`
-  }
-  return undefined
+function isFunction(node) {
+  return functions.has(node.type) || isMethod(node)
 }
 
-/** Find the nearest stable function, method, route, or class used by exact allowlist entries. */
-function owningSymbol(node) {
+function identifierName(node) {
+  if (node === null || node === undefined) return undefined
+  return node.type === 'Identifier' ? node.name : undefined
+}
+
+function keyName(node) {
+  if (node.computed) return undefined
+  if (node.key.type === 'Identifier') return node.key.name
+  return node.type === 'Property' && !isMethod(node) && isStringLiteral(node.key)
+    ? node.key.value
+    : undefined
+}
+
+function routeName(node) {
+  const route = node.arguments.find(isStringLiteral)
+  const operation = propertyName(node.callee)
+  return route !== undefined && operation !== undefined ? `${operation}:${route.value}` : undefined
+}
+
+function declaredFunctionName(node, parents) {
+  const name = identifierName(node.id)
+  if (name !== undefined) return name
+  const parent = parents.get(node)
+  if (parent === undefined) return undefined
+  if (parent.type === 'VariableDeclarator') return identifierName(parent.id)
+  if (properties.has(parent.type)) return keyName(parent)
+  if (isMethod(node) || node.type === 'TSMethodSignature') return keyName(node)
+  return parent.type === 'CallExpression' ? routeName(parent) : undefined
+}
+
+function owningSymbol(node, parents) {
   let current = node
   let moduleBinding
   while (current !== undefined) {
-    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) {
-      moduleBinding = current.name.text
-    }
-    if (ts.isFunctionLike(current)) {
-      const name = declaredFunctionName(current)
+    if (current.type === 'VariableDeclarator' && current.id.type === 'Identifier')
+      moduleBinding = current.id.name
+    if (isFunction(current)) {
+      const name = declaredFunctionName(current, parents)
       if (name !== undefined) return name
     }
-    if (ts.isConstructorDeclaration(current)) return 'constructor'
-    if (ts.isClassDeclaration(current) && current.name !== undefined) return current.name.text
-    current = current.parent
+    if (current.type === 'ClassDeclaration' && current.id !== null) return current.id.name
+    current = parents.get(current)
   }
   return moduleBinding ?? '<module>'
 }
 
-const importBoundaryKinds = (node) =>
-  ts.isImportDeclaration(node) &&
-  ts.isStringLiteral(node.moduleSpecifier) &&
-  node.moduleSpecifier.text === 'better-result'
-    ? ['better-result-import']
-    : []
+function promiseReturn(node) {
+  const annotation = node.returnType ?? node.typeAnnotation
+  if (annotation === null || annotation === undefined) return false
+  const result = annotation.typeAnnotation
+  return result.type === 'TSTypeReference' && identifierName(result.typeName) === 'Promise'
+}
 
-const functionBoundaryKinds = (node) => {
-  if (!ts.isFunctionLike(node)) return []
+function functionBoundaryKinds(node, parents) {
+  if (!isFunction(node) || isMethod(parents.get(node))) return []
+  const value = isMethod(node) ? node.value : node
   const kinds = []
-  if (
-    node.modifiers !== undefined &&
-    node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-  ) {
-    kinds.push('async-function')
-  }
-  if (
-    node.type !== undefined &&
-    ts.isTypeReferenceNode(node.type) &&
-    ts.isIdentifier(node.type.typeName) &&
-    node.type.typeName.text === 'Promise'
-  ) {
-    kinds.push('promise-return')
-  }
+  if (value.async) kinds.push('async-function')
+  if (promiseReturn(value)) kinds.push('promise-return')
   return kinds
 }
 
-const syntaxBoundaryKinds = (node) => {
-  if (ts.isAwaitExpression(node)) return ['await']
-  if (ts.isTryStatement(node) && node.catchClause !== undefined) return ['try-catch']
-  if (
-    ts.isNewExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === 'Promise'
-  ) {
-    return ['promise-constructor']
-  }
-  return []
-}
-
-const callBoundaryKinds = (node) => {
-  if (!ts.isCallExpression(node)) return []
-  const owner = expressionOwner(node.expression)
-  const operation = propertyName(node.expression)
+function callBoundaryKinds(node) {
+  if (node.type !== 'CallExpression') return []
+  const owner = expressionOwner(node.callee)
+  const operation = propertyName(node.callee)
   const promiseKind = owner === 'Promise' ? promiseOperationKinds.get(operation) : undefined
   if (promiseKind !== undefined) return [promiseKind]
-  if (
-    (ts.isIdentifier(node.expression) && node.expression.text === 'fetch') ||
-    (owner === 'globalThis' && operation === 'fetch')
-  ) {
+  if (identifierName(node.callee) === 'fetch' || (owner === 'globalThis' && operation === 'fetch'))
     return ['raw-fetch']
-  }
   const effectKind = owner === 'Effect' ? effectOperationKinds.get(operation) : undefined
   return effectKind === undefined ? [] : [effectKind]
 }
 
-const boundaryKinds = (node) => [
-  ...importBoundaryKinds(node),
-  ...functionBoundaryKinds(node),
-  ...syntaxBoundaryKinds(node),
-  ...callBoundaryKinds(node),
-]
+function syntaxBoundaryKinds(node) {
+  if (node.type === 'AwaitExpression') return ['await']
+  if (node.type === 'TryStatement' && node.handler !== null) return ['try-catch']
+  if (node.type === 'NewExpression' && identifierName(node.callee) === 'Promise')
+    return ['promise-constructor']
+  return []
+}
 
-/**
- * Inventory raw async and Effect runtime boundaries using the file's language. Parsing plain
- * TypeScript as TSX treats a single-parameter generic arrow as JSX and hides subsequent calls.
- */
+function findingPosition(node, parent, position) {
+  const declaration = ['FunctionDeclaration', 'TSDeclareFunction'].includes(node.type)
+  const exported =
+    parent !== undefined &&
+    ['ExportNamedDeclaration', 'ExportDefaultDeclaration'].includes(parent.type)
+  return position(declaration && exported ? parent.start : node.start)
+}
+
 export function scanSource(file, source) {
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  )
+  const tree = parseSource(file, source)
+  const position = sourcePositions(source)
+  const parents = new WeakMap()
   const findings = []
-  const add = (kind, node) => {
-    const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-    findings.push({
-      file,
-      symbol: owningSymbol(node),
-      kind,
-      line: position.line + 1,
-      column: position.character + 1,
-    })
-  }
-  const visit = (node) => {
-    for (const kind of boundaryKinds(node)) add(kind, node)
-    ts.forEachChild(node, visit)
-  }
-  visit(sourceFile)
+  walk(tree, (node, parent) => {
+    if (parent !== undefined) parents.set(node, parent)
+    const imported =
+      node.type === 'ImportDeclaration' && node.source.value === 'better-result'
+        ? ['better-result-import']
+        : []
+    for (const kind of [
+      ...imported,
+      ...functionBoundaryKinds(node, parents),
+      ...syntaxBoundaryKinds(node),
+      ...callBoundaryKinds(node),
+    ]) {
+      const location = findingPosition(node, parent, position)
+      findings.push({
+        file,
+        symbol: owningSymbol(node, parents),
+        kind,
+        line: location.line,
+        column: location.column,
+      })
+    }
+  })
   return findings
 }
 

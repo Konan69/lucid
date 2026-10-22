@@ -25,8 +25,6 @@
     "@effect/vitest": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"
   }
