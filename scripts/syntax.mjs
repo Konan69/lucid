@@ -7,7 +7,7 @@ export function parseSource(file, source) {
   const result = parseSync(file, source, { astType: 'ts', range: true })
   if (result.errors.length > 0)
     throw new Error(`${file}: ${result.errors.map((error) => error.message).join('; ')}`)
-  return result.program
+  return Object.assign(result.program, { comments: result.comments })
 }
 
 export function walk(node, visit, parent) {

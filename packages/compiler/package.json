@@ -1,0 +1,10 @@
+{
+  "name": "@vivid/compiler",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "tsc": "./disabled.mjs",
+    "tsgo": "./disabled.mjs",
+    "tsserver": "./disabled.mjs"
+  }
+}

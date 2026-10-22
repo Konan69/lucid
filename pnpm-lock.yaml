@@ -407,6 +407,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
+      '@vivid/compiler':
+        specifier: workspace:*
+        version: link:packages/compiler
       alchemy:
         specifier: 'catalog:'
         version: 2.0.0-beta.81(b783a81c262234596d11a99c4a063c52)
@@ -1009,6 +1012,8 @@ importers:
         specifier: 4.0.2
         version: 4.0.2
     devDependencies: {}
+
+  packages/compiler: {}
 
   packages/computer/state:
     dependencies:

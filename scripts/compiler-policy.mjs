@@ -4,8 +4,9 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as YAML from 'yaml'
 import * as Schema from 'effect/Schema'
+import { blockedCommands, isCompilerBlocker } from './bins.mjs'
 
-const forbidden = /(?<![\w.-])(?:tsc|tsgo)(?:\.(?:[cm]?js|cmd))?(?![\w/-])/u
+const forbidden = /(?<![\w.-])(?:tsc|tsgo|tsserver)(?:\.(?:[cm]?js|cmd))?(?![\w/-])/u
 const compilerPackages = new Set([
   'typescript',
   '@typescript/native',
@@ -46,9 +47,14 @@ export function commandErrors(file, source) {
   if (NodePath.basename(file) === 'package.json') return packageErrors(file, decodeManifest(source))
   if (file.startsWith('.husky/'))
     return forbidden.test(source) ? [`${file}: compiler commands must use scripts/types.mjs`] : []
-  const prose = source.replace(/,\s*not\s+(`+)(?:tsc|tsgo)\1/giu, '')
+  const prose = source
+    .replace(
+      /\b(?:never|do not|don't)\s+(?:run|use|execute|invoke)\s+(`+)(?:tsc|tsgo|tsserver)\1/giu,
+      '',
+    )
+    .replace(/(?:,\s*not\s+|\binstead of\s+)(`+)(?:tsc|tsgo|tsserver)\1/giu, '')
   const commands = [...prose.matchAll(/(`+)([^`]+)\1/gu)].flatMap((match) =>
-    match[1].length >= 3 || !/^(?:tsc|tsgo)$/u.test(match[2]) ? [match[2]] : [],
+    match[1].length >= 3 || !/^(?:tsc|tsgo|tsserver)$/u.test(match[2]) ? [match[2]] : [],
   )
   const instructions = prose
     .split('\n')
@@ -56,7 +62,8 @@ export function commandErrors(file, source) {
       (line) =>
         /\b(?:run|use|execute|invoke)\b/iu.test(line) ||
         /^(?: {4}|\t)/u.test(line) ||
-        /^\s*(?:[$>]\s*|[-*]\s+)?(?:tsc|tsgo)(?:\s+-|$)/u.test(line),
+        /(?<![\w.-])(?:tsc|tsgo|tsserver)\s+-/u.test(line) ||
+        /^\s*(?:[$>]\s*|[-*]\s+|\d+[.)]\s+)?(?:tsc|tsgo|tsserver)(?:\s+-|$)/u.test(line),
     )
   return [...commands, ...instructions].some((command) => forbidden.test(command))
     ? [`${file}: document pnpm check with a project path`]
@@ -89,11 +96,13 @@ export function compilerPolicy(root) {
     if (/^(?:typescript|@typescript\/native|@effect\/tsgo|@effect\/language-service)@/u.test(name))
       failures.push(`pnpm-lock.yaml: remove ${name}; compiler peers must stay uninstalled`)
   for (const file of files.filter((candidate) => NodePath.basename(candidate) === 'package.json'))
-    for (const name of ['tsc', 'tsgo'])
-      if (NodeFS.existsSync(NodePath.join(root, NodePath.dirname(file), 'node_modules/.bin', name)))
+    for (const name of blockedCommands) {
+      const bin = NodePath.join(root, NodePath.dirname(file), 'node_modules/.bin', name)
+      if (NodeFS.existsSync(bin) && !isCompilerBlocker(root, bin))
         failures.push(
           `${file}: ${name} bin is reachable; reinstall without legacy compiler packages`,
         )
+    }
   return failures
 }
 

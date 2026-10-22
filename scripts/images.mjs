@@ -17,7 +17,10 @@ const Manifest = Schema.Struct({
   peerDependencies: Schema.optionalKey(Dependencies),
   devDependencies: Schema.optionalKey(Dependencies),
 })
-const Workspace = Schema.Struct({ packages: Schema.Array(Schema.String) })
+const Workspace = Schema.Struct({
+  packages: Schema.Array(Schema.String),
+  pnpmfile: Schema.optionalKey(Schema.String),
+})
 const Config = Schema.Struct({
   extends: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   files: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -280,11 +283,28 @@ function requireBuild(context, graph, roots) {
 
 /** Root pnpm configuration and workspace manifests must exist before each install. */
 function requireInstall(context, line, graph) {
+  const workspace = decode(
+    Workspace,
+    YAML.parse(NodeFS.readFileSync(NodePath.join(context.root, 'pnpm-workspace.yaml'), 'utf8')),
+    'pnpm-workspace.yaml',
+  )
+  const pnpmfiles =
+    workspace.pnpmfile === undefined
+      ? ['.pnpmfile.cjs', '.pnpmfile.mjs']
+      : [NodePath.posix.normalize(workspace.pnpmfile)]
+  const documents = YAML.parseAllDocuments(
+    NodeFS.readFileSync(NodePath.join(context.root, 'pnpm-lock.yaml'), 'utf8'),
+  )
+  if (documents.some((document) => document.has('pnpmfileChecksum')))
+    assert.ok(
+      pnpmfiles.some((file) => NodeFS.existsSync(NodePath.join(context.root, file))),
+      `${context.label}: pnpmfileChecksum requires an active pnpmfile copied before install`,
+    )
   for (const file of [
     'package.json',
     'pnpm-lock.yaml',
     'pnpm-workspace.yaml',
-    '.pnpmfile.cjs',
+    ...pnpmfiles,
     '.npmrc',
     'patches',
   ]) {

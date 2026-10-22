@@ -24,6 +24,7 @@ COPY packages/design/tokens/package.json packages/design/tokens/package.json
 COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
 COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
+COPY packages/compiler packages/compiler
 RUN pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/agent-runtime...
 # Vite follows shared packages' root Hermes profile while bundling their source.
 COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./

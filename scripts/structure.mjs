@@ -2,8 +2,7 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import { parseSync } from 'oxc-parser'
-import { walk } from './syntax.mjs'
+import { parseSource, walk } from './syntax.mjs'
 
 const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
 const multipleWords = /[-_]|[a-z][A-Z]/u
@@ -68,8 +67,8 @@ export function directoryErrors(repository) {
 }
 
 export function directiveErrors(file, source) {
-  const { comments, program } = parseSync(file, source, { astType: 'ts' })
-  const suppressed = comments.some(({ value }) => {
+  const program = parseSource(file, source)
+  const suppressed = program.comments.some(({ value }) => {
     const directive = /^\s*(?:oxlint|eslint)-disable(?:-next-line|-line)?(?=\s|$)(.*)$/su.exec(
       value,
     )

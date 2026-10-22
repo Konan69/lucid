@@ -3,6 +3,7 @@ packages:
   - 'apps/mobile'
   - 'apps/server'
   - 'apps/web'
+  - 'packages/compiler'
   - 'packages/contracts'
   - 'packages/client/rpc'
   - 'packages/computer/state'
@@ -193,3 +194,5 @@ minimumReleaseAgeExclude:
   - '@maschwenk/tsrslint-linux-x64@0.1.5'
   - '@maschwenk/tsrslint-linux-arm64@0.1.5'
   - '@maschwenk/tsrslint-darwin-arm64@0.1.5'
+
+preferSymlinkedExecutables: true

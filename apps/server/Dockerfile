@@ -24,6 +24,7 @@ COPY packages/design/tokens/package.json packages/design/tokens/package.json
 COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
 COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
+COPY packages/compiler packages/compiler
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
 # The server takes `@vivid/agent-runtime` only as a devDependency, for tests that import the
 # runtime's tools by name; the runtime ships in its own image (`packages/agent/runtime/Dockerfile`).

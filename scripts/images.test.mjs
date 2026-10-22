@@ -91,31 +91,44 @@ NodeTest.test('optional root inputs are required only when present', (context) =
   NodeAssert.deepEqual(verify(root, copies(inputs.slice(0, 3))), [])
 })
 
-for (const file of ['.pnpmfile.mjs', 'scripts/install.mjs']) {
+for (const file of ['.pnpmfile.cjs', '.pnpmfile.mjs', 'scripts/install.mjs']) {
   NodeTest.test(`image install requires the active pnpmfile ${file} before install`, (context) => {
     const root = fixture(context)
     NodeFS.rmSync(NodePath.join(root, '.pnpmfile.cjs'))
+    NodeFS.writeFileSync(NodePath.join(root, 'pnpm-lock.yaml'), 'pnpmfileChecksum: fixture\n')
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true })
     NodeFS.writeFileSync(NodePath.join(root, file), '')
     if (file.startsWith('scripts/'))
-      NodeFS.writeFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), `packages: []\npnpmfile: ${file}\n`)
+      NodeFS.writeFileSync(
+        NodePath.join(root, 'pnpm-workspace.yaml'),
+        `packages: []\npnpmfile: ${file}\n`,
+      )
     const before = copies(inputs.filter((input) => input !== '.pnpmfile.cjs'))
     for (const after of ['', `COPY ${file} ${file}`])
-      NodeAssert.throws(() => verify(root, before, after), /before pnpm install reads root configuration/u)
+      NodeAssert.throws(
+        () => verify(root, before, after),
+        /before pnpm install reads root configuration/u,
+      )
     NodeAssert.deepEqual(verify(root, `${before}\nCOPY ${file} ${file}`), [])
   })
 }
 
-NodeTest.test('a lockfile checksum requires a copied active pnpmfile even when the file is missing', (context) => {
-  const root = fixture(context)
-  NodeFS.rmSync(NodePath.join(root, '.pnpmfile.cjs'))
-  NodeFS.writeFileSync(NodePath.join(root, 'pnpm-lock.yaml'), 'pnpmfileChecksum: stale\n')
-  NodeAssert.throws(() => verify(root, copies(inputs.slice(0, 3))), /pnpmfileChecksum/u)
-})
+NodeTest.test(
+  'a lockfile checksum requires a copied active pnpmfile even when the file is missing',
+  (context) => {
+    const root = fixture(context)
+    NodeFS.rmSync(NodePath.join(root, '.pnpmfile.cjs'))
+    NodeFS.writeFileSync(NodePath.join(root, 'pnpm-lock.yaml'), 'pnpmfileChecksum: stale\n')
+    NodeAssert.throws(() => verify(root, copies(inputs.slice(0, 3))), /pnpmfileChecksum/u)
+  },
+)
 
 NodeTest.test('a checksum cannot be satisfied by an inactive default pnpmfile', (context) => {
   const root = fixture(context)
-  NodeFS.writeFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'packages: []\npnpmfile: scripts/missing.cjs\n')
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'pnpm-workspace.yaml'),
+    'packages: []\npnpmfile: scripts/missing.cjs\n',
+  )
   NodeFS.writeFileSync(NodePath.join(root, 'pnpm-lock.yaml'), 'pnpmfileChecksum: stale\n')
   NodeAssert.throws(() => verify(root, copies(inputs)), /pnpmfile/u)
 })
