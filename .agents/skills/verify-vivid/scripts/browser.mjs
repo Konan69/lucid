@@ -31,7 +31,7 @@ function normaliseReply(text) {
   return text
     .replace(/\s+/gu, ' ')
     .trim()
-    .replace(/\p{P}+$/gu, '')
+    .replace(/[\p{P}\s]+$/gu, '')
     .trim()
 }
 
