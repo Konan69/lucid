@@ -1,14 +1,5 @@
 import type { HomePath } from './manifest.ts'
 
-/**
- * State the archive must never hold, because a fresh machine regenerates it and it dwarfs what a
- * Person actually made: package stores, compiler caches, build output, trash, and browser caches.
- * Archiving it would make every capture slow and every restore slower, for bytes nobody can tell
- * apart.
- *
- * `anywhere` matches a directory name at any depth; `fromHome` matches a path prefix from the home
- * directory.
- */
 const anywhere: ReadonlySet<string> = new Set([
   'node_modules',
   '.cache',
@@ -38,41 +29,37 @@ const fromHome: ReadonlyArray<string> = [
   '.config/google-chrome/BrowserMetrics',
 ]
 
-/**
- * Files that belong to a running browser, not to the Person: restoring them makes the next
- * machine's Chrome think an instance is already up.
- */
 const browserLocks: ReadonlySet<string> = new Set([
   '.config/google-chrome/SingletonLock',
   '.config/google-chrome/SingletonSocket',
   '.config/google-chrome/SingletonCookie',
 ])
 
-/** Per-profile directories inside `.config/google-chrome/<profile>/` that Chrome rebuilds itself. */
 const browserProfileCaches: ReadonlySet<string> = new Set([
   'Cache',
   'Code Cache',
   'GPUCache',
   'DawnGraphiteCache',
   'DawnWebGPUCache',
-  'Service Worker',
 ])
+
+const isChromeProfileCache = (path: HomePath): boolean => {
+  if (!path.startsWith('.config/google-chrome/')) return false
+  const segments = path.split('/')
+  const profileCache = segments[3]
+  if (profileCache === undefined) return false
+  if (browserProfileCaches.has(profileCache)) return true
+  // Chromium stores registration metadata in Service Worker/Database separately from these caches.
+  // https://chromium.googlesource.com/chromium/src/+/master/content/browser/service_worker/README.md#storage
+  return (
+    profileCache === 'Service Worker' &&
+    (segments[4] === 'CacheStorage' || segments[4] === 'ScriptCache')
+  )
+}
 
 /** True when `path`, or a directory above it, is state a new machine rebuilds by itself. */
 export const isRegenerable = (path: HomePath): boolean => {
-  if (browserLocks.has(path)) return true
-  const segments = path.split('/')
-  if (segments.some((segment) => anywhere.has(segment))) return true
-  // Chrome's own rebuildable caches sit one level below a profile directory, so the segment after
-  // `.config/google-chrome/<profile>` decides. A project directory that happens to be named
-  // `Cache` is never matched, because the path must start under the Chrome profile.
-  const profileCache = segments[3]
-  if (
-    path.startsWith('.config/google-chrome/') &&
-    profileCache !== undefined &&
-    browserProfileCaches.has(profileCache)
-  ) {
-    return true
-  }
+  if (browserLocks.has(path) || isChromeProfileCache(path)) return true
+  if (path.split('/').some((segment) => anywhere.has(segment))) return true
   return fromHome.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
 }
