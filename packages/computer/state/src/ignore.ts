@@ -1,13 +1,5 @@
 import type { HomePath } from './manifest.ts'
 
-/**
- * State the archive must never hold, because a fresh machine regenerates it and it dwarfs what a
- * Person actually made: package stores, compiler caches, build output, trash. Archiving it would
- * make every capture slow and every restore slower, for bytes nobody can tell apart.
- *
- * `anywhere` matches a directory name at any depth; `fromHome` matches a path prefix from the home
- * directory. Both are directory rules: a plain file is never regenerable by name alone.
- */
 const anywhere: ReadonlySet<string> = new Set([
   'node_modules',
   '.cache',
@@ -33,11 +25,50 @@ const fromHome: ReadonlyArray<string> = [
   '.local/share/Trash',
   '.local/state',
   '.docker/buildx',
+  '.config/google-chrome/Crashpad',
+  '.config/google-chrome/BrowserMetrics',
 ]
+
+/**
+ * Chrome's socket, cookie and hostname/PID lock identify a running process on this machine.
+ * A restored machine creates its own, so carrying them over can block startup.
+ * https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/process_singleton_posix.cc
+ */
+const browserLocks: ReadonlySet<string> = new Set([
+  '.config/google-chrome/SingletonLock',
+  '.config/google-chrome/SingletonSocket',
+  '.config/google-chrome/SingletonCookie',
+])
+
+/**
+ * Chrome rebuilds cached responses, compiled code and GPU shaders. Its cache deletion clears
+ * these without removing site data, so the archive can omit them.
+ * https://chromium.googlesource.com/chromium/src/+/main/content/browser/browsing_data/browsing_data_remover_impl.cc
+ */
+const browserProfileCaches: ReadonlySet<string> = new Set([
+  'Cache',
+  'Code Cache',
+  'GPUCache',
+  'DawnGraphiteCache',
+  'DawnWebGPUCache',
+])
+
+/** Restrict cache pruning to Chrome profiles so a Person's equally named project files survive. */
+const isChromeProfileCache = (path: HomePath): boolean => {
+  if (!path.startsWith('.config/google-chrome/')) return false
+  const segments = path.split('/')
+  const profileCache = segments[3]
+  if (profileCache === undefined) return false
+  if (browserProfileCaches.has(profileCache)) return true
+  // Chromium's service worker README, Storage section, says Database registrations reference
+  // scripts in ScriptCache. Keep both together; omit only the separate CacheStorage response cache.
+  // https://chromium.googlesource.com/chromium/src/+/master/content/browser/service_worker/README.md#storage
+  return profileCache === 'Service Worker' && segments[4] === 'CacheStorage'
+}
 
 /** True when `path`, or a directory above it, is state a new machine rebuilds by itself. */
 export const isRegenerable = (path: HomePath): boolean => {
-  const segments = path.split('/')
-  if (segments.some((segment) => anywhere.has(segment))) return true
+  if (browserLocks.has(path) || isChromeProfileCache(path)) return true
+  if (path.split('/').some((segment) => anywhere.has(segment))) return true
   return fromHome.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
 }
