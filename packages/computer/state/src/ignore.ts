@@ -29,12 +29,22 @@ const fromHome: ReadonlyArray<string> = [
   '.config/google-chrome/BrowserMetrics',
 ]
 
+/**
+ * Chrome's socket, cookie and hostname/PID lock identify a running process on this machine.
+ * A restored machine creates its own, so carrying them over can block startup.
+ * https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/process_singleton_posix.cc
+ */
 const browserLocks: ReadonlySet<string> = new Set([
   '.config/google-chrome/SingletonLock',
   '.config/google-chrome/SingletonSocket',
   '.config/google-chrome/SingletonCookie',
 ])
 
+/**
+ * Chrome rebuilds cached responses, compiled code and GPU shaders. Its cache deletion clears
+ * these without removing site data, so the archive can omit them.
+ * https://chromium.googlesource.com/chromium/src/+/main/content/browser/browsing_data/browsing_data_remover_impl.cc
+ */
 const browserProfileCaches: ReadonlySet<string> = new Set([
   'Cache',
   'Code Cache',
@@ -43,18 +53,17 @@ const browserProfileCaches: ReadonlySet<string> = new Set([
   'DawnWebGPUCache',
 ])
 
+/** Restrict cache pruning to Chrome profiles so a Person's equally named project files survive. */
 const isChromeProfileCache = (path: HomePath): boolean => {
   if (!path.startsWith('.config/google-chrome/')) return false
   const segments = path.split('/')
   const profileCache = segments[3]
   if (profileCache === undefined) return false
   if (browserProfileCaches.has(profileCache)) return true
-  // Chromium stores registration metadata in Service Worker/Database separately from these caches.
+  // Chromium's service worker README, Storage section, says Database registrations reference
+  // scripts in ScriptCache. Keep both together; omit only the separate CacheStorage response cache.
   // https://chromium.googlesource.com/chromium/src/+/master/content/browser/service_worker/README.md#storage
-  return (
-    profileCache === 'Service Worker' &&
-    (segments[4] === 'CacheStorage' || segments[4] === 'ScriptCache')
-  )
+  return profileCache === 'Service Worker' && segments[4] === 'CacheStorage'
 }
 
 /** True when `path`, or a directory above it, is state a new machine rebuilds by itself. */

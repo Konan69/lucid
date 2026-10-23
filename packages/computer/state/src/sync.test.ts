@@ -22,7 +22,6 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const first = path.join(root, 'first')
   const second = path.join(root, 'second')
   yield* fs.makeDirectory(first)
-  yield* fs.makeDirectory(second)
   const archive = yield* Layer.build(directoryArchive(path.join(root, 'archive')))
   const firstHome = yield* Layer.build(localHome(first))
   const secondHome = yield* Layer.build(localHome(second))

@@ -21,7 +21,7 @@ export class HomeAccessFailed extends Schema.TaggedError<HomeAccessFailed>()(
 
 /**
  * One path inspected on the machine. `File` carries its bytes and permission bits from a single
- * read so capture hashes and uploads without a second round-trip over SFTP.
+ * read so capture hashes and uploads without reading the file again.
  */
 export const HomeEntry = Schema.TaggedUnion({
   Directory: {},
@@ -44,15 +44,15 @@ export const Found = Schema.TaggedUnion({
 })
 export type Found = typeof Found.Type
 
-/** Maps a low-level filesystem or SFTP failure to the path and operation that caused it. */
 export const failedAt = (operation: string, path: string) => () =>
   new HomeAccessFailed({ operation, path })
-/**
- * The Computer's home directory, whether on the local filesystem (tests, single-host dev) or
- * reached over SFTP on a running machine. Capture and restore depend only on this seam.
- */
+/** The Computer's home directory. Capture and restore depend only on this seam. */
 export interface HomeFilesService {
   readonly list: (directory: string) => Effect.Effect<ReadonlyArray<string>, HomeAccessFailed>
+  /**
+   * Return `Link` for a symlink without following it. `stat` would archive the target's bytes
+   * under the link's name.
+   */
   readonly inspect: (path: HomePath) => Effect.Effect<HomeEntry, HomeAccessFailed>
   readonly readTextOption: (path: string) => Effect.Effect<Option.Option<string>>
   readonly write: (
@@ -70,7 +70,8 @@ export class HomeFiles extends Context.Service<HomeFiles, HomeFilesService>()('v
 export const digestOf = (bytes: Uint8Array): Digest =>
   Digest.make(NodeCrypto.createHash('sha256').update(bytes).digest('hex'))
 /**
- * Walks the home directory through `HomeFiles` and describes every path the archive should hold.
+ * Prune regenerable paths before descent so a large package store costs one name check, not a walk.
+ * Every retained file is read and hashed on each capture or restore verification walk.
  */
 export const describeHome = Effect.fn('ComputerHome.describe')(function* () {
   const files = yield* HomeFiles
@@ -95,7 +96,7 @@ export const describeHome = Effect.fn('ComputerHome.describe')(function* () {
             entry: Entry.cases.File.make({
               digest: digestOf(bytes),
               size: bytes.byteLength,
-              mode: mode & 0o777,
+              mode,
             }),
             bytes,
           }),
@@ -120,6 +121,7 @@ export const describeHome = Effect.fn('ComputerHome.describe')(function* () {
 })
 /**
  * Local-directory implementation of `HomeFiles` for tests and single-host development.
+ * Creates the home during layer acquisition so capture and restore can list a fresh machine.
  * Writes stage to a sibling temp file and rename into place so a crash never leaves a half-written file.
  */
 export const localHome = (home: string) =>
@@ -128,6 +130,9 @@ export const localHome = (home: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
+      yield* fs
+        .makeDirectory(home, { recursive: true })
+        .pipe(Effect.mapError(failedAt('makeDirectory', '')))
 
       return {
         list: (directory) =>
