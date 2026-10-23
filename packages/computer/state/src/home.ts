@@ -9,7 +9,6 @@ import * as Schema from 'effect/Schema'
 import { isRegenerable } from './ignore.ts'
 import { Digest, Entry, HomePath } from './manifest.ts'
 
-
 /** The home directory could not be read or written at `path`. */
 export class HomeAccessFailed extends Schema.TaggedError<HomeAccessFailed>()(
   'HomeAccessFailed',
@@ -35,7 +34,6 @@ export const HomeEntry = Schema.TaggedUnion({
 })
 export type HomeEntry = typeof HomeEntry.Type
 
-
 /**
  * One thing found under the home directory. A file keeps its bytes so capture hashes and uploads
  * from a single read; a link has no bytes to keep.
@@ -60,7 +58,7 @@ export interface HomeFilesService {
   readonly write: (
     path: string,
     bytes: Uint8Array,
-    mode?: number,
+    mode: Option.Option<number>,
   ) => Effect.Effect<void, HomeAccessFailed>
   readonly link: (target: string, path: HomePath) => Effect.Effect<void, HomeAccessFailed>
   readonly remove: (path: HomePath) => Effect.Effect<void, HomeAccessFailed>
@@ -164,12 +162,24 @@ export const localHome = (home: string) =>
               .pipe(Effect.mapError(failedAt('makeDirectory', relative)))
             const staged = `${absolute}.${NodeCrypto.randomUUID()}.tmp`
             yield* fs.writeFile(staged, bytes).pipe(Effect.mapError(failedAt('write', relative)))
-            if (mode !== undefined) {
-              yield* fs.chmod(staged, mode).pipe(Effect.mapError(failedAt('chmod', relative)))
+            if (Option.isSome(mode)) {
+              yield* fs.chmod(staged, mode.value).pipe(Effect.mapError(failedAt('chmod', relative)))
             }
-            yield* fs
-              .rename(staged, absolute)
-              .pipe(Effect.mapError(failedAt('rename', relative)))
+            const exists = yield* fs
+              .exists(absolute)
+              .pipe(Effect.mapError(failedAt('exists', relative)))
+            if (exists) {
+              const info = yield* fs
+                .stat(absolute)
+                .pipe(Effect.mapError(failedAt('stat', relative)))
+              // Rename replaces files atomically, but cannot replace a directory with a staged file.
+              if (info.type === 'Directory') {
+                yield* fs
+                  .remove(absolute, { recursive: true })
+                  .pipe(Effect.mapError(failedAt('replace', relative)))
+              }
+            }
+            yield* fs.rename(staged, absolute).pipe(Effect.mapError(failedAt('rename', relative)))
           }),
 
         link: (target, relative) =>
@@ -191,5 +201,3 @@ export const localHome = (home: string) =>
       }
     }),
   )
-
-

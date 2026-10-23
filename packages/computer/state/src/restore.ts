@@ -2,7 +2,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { ComputerArchive } from './archive.ts'
-import { HomeAccessFailed, HomeFiles, describeHome, digestOf, failedAt } from './home.ts'
+import { HomeFiles, describeHome, digestOf, failedAt } from './home.ts'
 import {
   ComputerId,
   Digest,
@@ -92,7 +92,7 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
         path: relative,
       })
     }
-    yield* files.write(relative, bytes, entry.mode)
+    yield* files.write(relative, bytes, Option.some(entry.mode))
     return undefined
   })
 
@@ -113,7 +113,7 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
     computerId: input.computerId,
     revision: manifest.revision,
   }).pipe(Effect.mapError(failedAt('encodeMarker', markerPath)))
-  yield* files.write(markerPath, new TextEncoder().encode(marker))
+  yield* files.write(markerPath, new TextEncoder().encode(marker), Option.none())
   return {
     revision: manifest.revision,
     written: change.write.length,
