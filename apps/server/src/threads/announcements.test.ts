@@ -455,7 +455,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         yield* silent(notifications)
       }),
     )
-    it.effect('case14 ensure announces creation only and refuses another owner', () =>
+    it.effect('case14 ensureBackground announces creation only and refuses another owner', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
         const store = yield* ThreadStore
@@ -467,13 +467,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           companyId: null,
         }
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        const first = yield* store.ensure(input)
+        const first = yield* store.ensureBackground(input)
         yield* payload(notifications, [Topic.thread(test.id), Topic.person(test.creator.id)])
-        expect(yield* store.ensure(input)).toEqual(first)
+        expect(yield* store.ensureBackground(input)).toEqual(first)
         yield* silent(notifications)
-        expect(yield* store.ensure({ ...input, personId: test.ben.id }).pipe(Effect.flip)).toEqual(
-          new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
-        )
+        expect(
+          yield* store.ensureBackground({ ...input, personId: test.ben.id }).pipe(Effect.flip),
+        ).toEqual(new DatabaseConstraintViolation({ message: 'Database constraint was violated' }))
         yield* silent(notifications)
       }),
     )

@@ -3,7 +3,7 @@ import {
   type AgentConversationObservation,
   type AgentConversationObservationSnapshot,
   type FlueClient,
-  type FlueConversationMessage,
+  type FlueConversationState,
 } from '@flue/sdk'
 import type { ThreadId } from '@vivid/contracts'
 import { Option } from 'effect'
@@ -21,7 +21,7 @@ import { Option } from 'effect'
  * Here each Thread has one client whose `observe()` hands out one observation that is already
  * running. The router begins it when a pointer rests on a link to the Thread and when the Person
  * goes there (`routes/thread.tsx`), so the history is usually here before the screen is; and it
- * is not ended when the screen goes, so coming back shows the conversation at once and current.
+ * is kept when the screen goes, so coming back shows the conversation at once (`Idle` says how).
  *
  * Everything is Flue's public client (`createFlueClient`, `observe`, and the observation's own
  * `subscribe`, `refresh` and `close`): the client handed out is the real one with `observe`
@@ -30,38 +30,105 @@ import { Option } from 'effect'
 /** What this module uses of a Flue client: the one call it answers itself. */
 type Observable = Pick<FlueClient, 'observe'>
 
+/**
+ * What a conversation had said and which of its submissions had ended, both from one reading.
+ * They are kept and handed out together: words drawn beside an older or emptier list of endings
+ * would show a reply that has ended as one still arriving, and its displays would wait again.
+ */
+export type Heard = Pick<FlueConversationState, 'messages' | 'settlements'>
+
+/**
+ * Whether what was heard has a reply under way, by `@flue/react`'s own rule for a conversation it
+ * observed (`converge`, 2.2.2 `dist/index.mjs`): an assistant's text or reasoning still streaming,
+ * or a message of a submission that has not settled. The hook reports `idle` until it has read the
+ * history, so a screen drawn from what was heard asks this of the same reading instead.
+ */
+export const answeringIn = (heard: Heard): boolean => {
+  const settled = new Set(heard.settlements.map((settlement) => settlement.submissionId))
+  return heard.messages.some(
+    (message) =>
+      (message.submissionId !== undefined && !settled.has(message.submissionId)) ||
+      (message.role === 'assistant' &&
+        message.parts.some(
+          (part) =>
+            (part.type === 'text' || part.type === 'reasoning') && part.state === 'streaming',
+        )),
+  )
+}
+
 interface Held<Client> {
   readonly client: Client
   /** The conversation as the held observation has it now. */
   readonly snapshot: () => AgentConversationObservationSnapshot
   /** Ends the real observation. Called once, when this conversation is let go. */
   readonly end: () => void
+  /** Opens the real observation's stream again, from the history it has missed. */
+  readonly catchUp: () => void
   /** How many screens are reading it now. One being read is never let go. */
   readers: number
 }
 
 /**
+ * What a kept conversation that nobody is reading costs this page.
+ *
+ * - `streaming`: it stays open, its stream running, so coming back to it asks the server nothing.
+ *   For a page whose connection carries many requests at once (HTTP/2 or later).
+ * - `parked`: its stream is ended and what it had said is kept. Coming back draws those words at
+ *   once and opens the conversation again behind them, one history request. For a page where each
+ *   stream holds a connection of its own (HTTP/1.1): a browser gives one origin six connections
+ *   across every tab, and six open streams leave none for anything else. Measured on the
+ *   development server on 20 October 2026 with Flue's own client: with five conversations
+ *   streaming a request was answered in about 350 ms, with six, seven or nine the next requests
+ *   had no answer in 4 s (`artifacts/pending/proofs/snappy` in the coordinator's checkout).
+ */
+export type Idle = 'streaming' | 'parked'
+
+/**
  * The open conversations of one page.
  *
- * `kept` is how many conversations nobody is reading stay open besides the one used last, which
- * always does: it is the one a screen is about to read (a screen asks for its client while it
- * renders and begins reading a moment later, in an effect), or the one the Person just left and
- * is likeliest to come back to. `connect` makes a Thread's real client.
+ * `kept` is how many conversations nobody is reading are kept besides the one used last, which
+ * always stays open: it is the one a screen is about to read (a screen asks for its client while
+ * it renders and begins reading a moment later, in an effect), or the one the Person just left and
+ * is likeliest to come back to. `idle` is how the others are kept. `connect` makes a Thread's real
+ * client.
  */
 export const makeConversations = <Client extends Observable>(
   kept: number,
+  idle: Idle,
   connect: (id: ThreadId) => Client,
 ) => {
   /** Open conversations, the most recently used last: a `Map` keeps the order they were set in. */
   const open = new Map<ThreadId, Held<Client>>()
+  /**
+   * What parked conversations had said, and which submissions had ended, when their streams were
+   * ended, the most recently parked last. A Thread opened again keeps its entry until its new
+   * observation has read the conversation (`heard`), and is parked afresh when it is next let go.
+   */
+  const parked = new Map<ThreadId, Heard>()
 
-  /** Lets go of the conversations used longest ago that nobody is reading, down to `kept`. */
+  /** Keeps what a conversation being let go had said and ended, when it had been read. */
+  const park = (id: ThreadId, held: Held<Client>) => {
+    const conversation = held.snapshot().conversation
+    if (conversation === undefined) return
+    parked.delete(id)
+    parked.set(id, conversation)
+  }
+
+  /**
+   * Lets go of the conversations used longest ago that nobody is reading: down to `kept` of them
+   * open when they stream, and none when they are parked; then forgets the oldest parked words
+   * down to `kept`.
+   */
   const trim = () => {
-    const idle = [...open].slice(0, -1).filter(([, held]) => held.readers === 0)
-    for (const [id, held] of idle.slice(0, Math.max(0, idle.length - kept))) {
+    const resting = [...open].slice(0, -1).filter(([, held]) => held.readers === 0)
+    const streams = idle === 'streaming' ? kept : 0
+    for (const [id, held] of resting.slice(0, Math.max(0, resting.length - streams))) {
       open.delete(id)
+      if (idle === 'parked') park(id, held)
       held.end()
     }
+    const away = [...parked.keys()].filter((id) => !open.has(id))
+    for (const id of away.slice(0, Math.max(0, away.length - kept))) parked.delete(id)
   }
 
   const hold = (id: ThreadId): Held<Client> => {
@@ -77,6 +144,7 @@ export const makeConversations = <Client extends Observable>(
         stop()
         observation.close()
       },
+      catchUp: () => observation.refresh(),
       client: {
         ...real,
         observe: (): AgentConversationObservation => {
@@ -150,27 +218,38 @@ export const makeConversations = <Client extends Observable>(
      */
     of: (id: ThreadId): Client => touch(id).client,
     /**
-     * What has been said in a Thread, when its conversation is open here and has been read. A
-     * screen's own reading of the conversation begins a moment after it is drawn (the hook that
-     * reads it starts in an effect), so for that first frame it has nothing; this is what is
-     * already known, for the screen to draw until its own reading catches up. It does not open
-     * anything or mark the conversation as used.
+     * What has been said in a Thread and which submissions have ended (`Heard`), when its
+     * conversation is open here and has been read, or was parked. A screen's own reading of the
+     * conversation begins a moment after it is drawn (the hook that reads it starts in an effect),
+     * and a parked one is read again from the server; so for that first frame, or that round trip,
+     * it has nothing, endings included. This is what is already known, for the screen to draw until
+     * its own reading catches up. It does not open anything or mark the conversation as used.
      */
-    heard: (id: ThreadId): Option.Option<ReadonlyArray<FlueConversationMessage>> =>
-      Option.map(
+    heard: (id: ThreadId): Option.Option<Heard> =>
+      Option.orElse(
         Option.flatMap(Option.fromUndefinedOr(open.get(id)), (held) =>
           Option.fromUndefinedOr(held.snapshot().conversation),
         ),
-        (conversation) => conversation.messages,
+        () => Option.fromUndefinedOr(parked.get(id)),
       ),
     /** Opens a Thread's conversation ahead of its screen. One already open is marked as used. */
     warm: (id: ThreadId): void => {
       touch(id)
     },
+    /**
+     * Has every open conversation catch up: its stream is opened again and what was said while it
+     * was cut arrives as history. Called when the page's socket opens again after a loss
+     * (`link.reopened`), which a deploy or a changed network causes as surely as it cuts these
+     * streams; left alone, a cut stream waits out Flue's ninety-second timer first.
+     */
+    catchUp: (): void => {
+      for (const held of open.values()) held.catchUp()
+    },
     /** Ends every conversation and lets it go. */
     forget: (): void => {
       for (const held of open.values()) held.end()
       open.clear()
+      parked.clear()
     },
   }
 }
@@ -179,8 +258,9 @@ export const makeConversations = <Client extends Observable>(
  * Whether this page reached its server over a connection that carries many requests at once
  * (HTTP/2 or later), as production does. Over HTTP/1.1, which is what the development proxy
  * speaks, a browser allows six connections to one origin across every tab, and each open
- * conversation is a stream that holds one: two tabs keeping a few conversations open each would
- * leave none for a send or a history request. Outside a browser there is no page to ask.
+ * conversation is a stream that holds one (`Idle`). A page that cannot say is taken to be the
+ * costly kind: parking costs one history request, streaming on a capped connection stalls every
+ * request after it.
  */
 const multiplexed = (): boolean => {
   if (!('PerformanceNavigationTiming' in globalThis)) return false
@@ -189,14 +269,15 @@ const multiplexed = (): boolean => {
 }
 
 /**
- * This page's conversations: three kept open besides the last used where connections are shared,
- * and only the last used where each is a connection of its own.
+ * This page's conversations: three kept besides the last used, streaming where connections are
+ * shared and parked where each stream is a connection of its own.
  */
-const conversations = makeConversations(multiplexed() ? 3 : 0, (id) =>
+const conversations = makeConversations(3, multiplexed() ? 'streaming' : 'parked', (id) =>
   createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` }),
 )
 
 export const conversationOf = conversations.of
+export const catchUpConversations = conversations.catchUp
 export const warmConversation = conversations.warm
 export const heardIn = conversations.heard
 

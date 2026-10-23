@@ -9,8 +9,9 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
-import type { LibraryFolderId, RunFailure, RunId } from '@vivid/contracts'
+import type { RunFailure, RunId } from '@vivid/contracts'
 import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
+import type { ThreadPlace } from './place.ts'
 import { TitleSource } from './title.ts'
 import { projectTable } from '../projects/tables.ts'
 
@@ -39,6 +40,8 @@ export const threads = pgTable(
     companyId: companyColumn(),
     audience: text('audience').notNull().default('private'),
     projectId: text('project_id').references(() => projectTable.id, { onDelete: 'set null' }),
+    // Where the Thread lives for its Person (`place.ts`): every Thread before Watches is a Conversation.
+    place: text('place').$type<ThreadPlace>().notNull().default('Conversation'),
   },
   (table) => [
     index('vivid_conversations_updated_at').on(table.updatedAt),
@@ -103,7 +106,6 @@ export const runs = pgTable(
       .references(() => threads.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),
     turn: integer('turn').notNull(),
-    libraryFolder: text('library_folder').$type<LibraryFolderId>(),
     origin: jsonb('origin').notNull(),
     state: text('state').notNull(),
     startedAt: epoch('started_at').notNull(),

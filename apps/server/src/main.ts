@@ -1,4 +1,6 @@
 import * as NodeHttp from 'node:http'
+import { migrationLayer } from './connections/migration.ts'
+import { refusedLayer } from './connections/refused.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
@@ -29,15 +31,18 @@ import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
 import { codeComputerLayer } from './code/computer.ts'
 import { codeProcessLayer } from './code/process.ts'
+import { codeSourceLayer } from './code/source.ts'
 import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
+import { egressLayer } from './computers/egress/relay.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
+import { authLayer } from './auth/provider.ts'
 import { databaseLayer } from './database/client.ts'
 import { routerLayer } from './http/router.ts'
 import { staticRoutes } from './http/static.ts'
@@ -63,8 +68,6 @@ import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
 import { pushTargetsLayer } from './push/targets.ts'
-import { routineSchedulerLayer, routineSchedulerServiceLayer } from './routines/scheduler.ts'
-import { routineStoreLayer } from './routines/store.ts'
 import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
@@ -76,6 +79,10 @@ import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
 import { threadStoreLayer } from './threads/store.ts'
 import { updateRoutes } from './updates/routes.ts'
+import { watchedAppsLayer } from './watches/apps.ts'
+import { executorEventsLayer } from './watches/events.ts'
+import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { watchStoreLayer } from './watches/store.ts'
 
 /**
  * Memory is part of every Vivid. `VIVID_HELIX_URL` and the model gateway key are required while
@@ -110,7 +117,9 @@ const serverProgram = Effect.gen(function* () {
     observabilityLayer(config.OBSERVABILITY).pipe(Layer.provide(NodeHttpClient.layerUndici)),
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
-  const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
+  const durable = Layer.mergeAll(workLayer, decisionModelLayer, authLayer).pipe(
+    Layer.provideMerge(data),
+  )
   const foundation = Layer.mergeAll(
     changesLayer,
     tallyLayer,
@@ -151,9 +160,12 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
-  const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
-    Layer.provideMerge(conversation),
-  )
+  const accounts = Layer.mergeAll(
+    connectionStoreLayer,
+    toolEffectsLayer,
+    computerStoreLayer,
+    egressLayer,
+  ).pipe(Layer.provideMerge(conversation))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
@@ -161,14 +173,20 @@ const serverProgram = Effect.gen(function* () {
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
-    routineStoreLayer,
+    watchStoreLayer,
+    executorEventsLayer,
+    watchedAppsLayer,
     codeCallsLayer,
+    codeSourceLayer,
     codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
   ).pipe(Layer.provideMerge(decisions))
-  const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
-  const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
+  const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(
+    Layer.provideMerge(work),
+  )
   const background = Layer.mergeAll(
-    routineSchedulerLayer,
+    migrationLayer,
+    refusedLayer,
+    watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
@@ -187,7 +205,7 @@ const serverProgram = Effect.gen(function* () {
       staticRoutes(config.VIVID_WEB_DIST),
       background,
     ),
-  ).pipe(Layer.provide(schedules), Layer.provide(server))
+  ).pipe(Layer.provide(channelHandling), Layer.provide(server))
   return yield* Layer.launch(application)
 }).pipe(Effect.withSpan('Server.launch'))
 

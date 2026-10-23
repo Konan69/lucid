@@ -1,5 +1,5 @@
 import { SwitchWorkspaceRequest, Workspace, type MeResponse } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { Building2, Check, Plus } from 'lucide-react-native'
@@ -11,6 +11,7 @@ import { Row, Section } from '../../ui/List'
 import { NameSheet, Sheet } from '../../ui/Sheet'
 import { Notice } from '../../ui/ui'
 import { ROLE_NAME } from '../../workspace'
+import { start } from '../../data/app'
 
 /** The mark beside the workspace the session is working in. */
 function Here({ active }: { active: boolean }) {
@@ -39,11 +40,15 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const activeCompany = Workspace.guards.Company(me.workspace) ? me.workspace.company.id : null
 
-  async function enter(to: SwitchWorkspaceRequest) {
-    tick()
-    const result = await data.change((client) => client.SwitchWorkspace({ to }))
-    if (Result.isFailure(result)) setRefused(Option.some(result.failure.message))
-    else onClose()
+  function enter(to: SwitchWorkspaceRequest) {
+    return start(
+      Effect.gen(function* () {
+        tick()
+        const result = yield* data.changing((client) => client.SwitchWorkspace({ to }))
+        if (Result.isFailure(result)) setRefused(Option.some(result.failure.message))
+        else onClose()
+      }),
+    )
   }
 
   if (creating) {
@@ -57,14 +62,16 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
         action="Create company"
         maxLength={80}
         onClose={onClose}
-        onSave={async (name) => {
-          const result = await data.change((client) => client.CreateCompany({ name }))
-          if (Result.isFailure(result)) {
-            return Option.some('The company could not be created. Try again.')
-          }
-          confirm()
-          return Option.none()
-        }}
+        onSave={(name) =>
+          Effect.gen(function* () {
+            const result = yield* data.changing((client) => client.CreateCompany({ name }))
+            if (Result.isFailure(result)) {
+              return Option.some('The company could not be created. Try again.')
+            }
+            confirm()
+            return Option.none()
+          })
+        }
       />
     )
   }

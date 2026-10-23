@@ -13,6 +13,9 @@ import { Machine, MachineNotRunning, type MachineKey } from './machine.ts'
 export const absentMachineLayer = Layer.succeed(
   Machine,
   Machine.of({
+    copySignIn: Effect.fn('Machine.absent.copySignIn')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
     ensure: Effect.fn('Machine.absent.ensure')((key: MachineKey) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
@@ -34,6 +37,9 @@ export const absentMachineLayer = Layer.succeed(
       Effect.fail(new MachineNotRunning({ key })),
     ),
     converse: Effect.fn('Machine.absent.converse')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    tunnel: Effect.fn('Machine.absent.tunnel')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
     run: Effect.fn('Machine.absent.run')(({ key }: { readonly key: MachineKey }) =>

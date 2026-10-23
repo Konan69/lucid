@@ -1,3 +1,4 @@
+import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
@@ -286,6 +287,7 @@ const providerLayer = Layer.effect(
         Effect.fail(new MachineOperationFailed({ operation })),
       )
     return Machine.of({
+      copySignIn: unused('copySignIn'),
       status,
       inspect,
       ensure,
@@ -295,6 +297,7 @@ const providerLayer = Layer.effect(
       write,
       run,
       converse: unused('converse'),
+      tunnel: unused('tunnel'),
       read: unused('read'),
       put: unused('put'),
       browse,
@@ -418,7 +421,7 @@ const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () 
     const ready = yield* Deferred.make<void>()
     const fiber = yield* Effect.gen(function* () {
       const stream = yield* registry.watch({
-        ability: { pages: true, apps: false },
+        ability: { pages: true, apps: false, egress: false, signins: false },
         personId: test.personal.person.id,
         sessionId: session.sessionId,
         device: device.id,
@@ -584,20 +587,6 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
   yield* Deferred.await(publishedRunning)
   yield* Ref.set(evidence.onPublish, Effect.void)
 })
-
-/** Keep provider evidence, change subscriptions and lifecycle workers within one case, with a fresh clock installed before their Layer is acquired. The suite shares only its PostgreSQL authority. */
-function scopedCase<Services, LayerError, Dependencies, A, E, R>(
-  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
-  program: Effect.Effect<A, E, R>,
-  clock: 'fresh' | 'inherited',
-) {
-  const acquired = Layer.build(caseLayer).pipe(
-    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-    Effect.scoped,
-  )
-  if (clock === 'inherited') return acquired
-  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
-}
 
 describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
@@ -1718,7 +1707,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           const device = yield* registry.enrol(first.id, { installation, name: 'Test computer' })
           yield* registry.allow(first.id, device.id)
           const listening = yield* registry.watch({
-            ability: { pages: true, apps: false },
+            ability: { pages: true, apps: false, egress: false, signins: false },
             personId: first.id,
             sessionId: SessionId.make(NodeCrypto.randomUUID()),
             device: device.id,

@@ -309,7 +309,7 @@ layer(stores)((it) => {
           type: 'first-conversation',
           attributes: { from: 'Vivid', turn: '1' },
           attachments: [],
-          scope: { acting: test.actor.person.id, libraryFolder: null },
+          scope: { acting: test.actor.person.id },
         })
         const [delivery] = sent
         if (delivery === undefined) expect.fail('Expected runtime admission')

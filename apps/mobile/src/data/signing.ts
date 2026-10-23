@@ -41,15 +41,15 @@ const phone: Phone = {
     Effect.asVoid(Effect.tryPromise({ try: () => Linking.openURL(address), catch: unable })),
   post: (address, body) =>
     Effect.tryPromise({
-      try: async (signal) => {
-        const response = await request(address, {
+      // The body is read inside the same attempt as the request, so the one abort signal covers
+      // both: an interrupted call (a timeout) stops a body still arriving, not only the headers.
+      try: (signal) =>
+        request(address, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body,
           signal,
-        })
-        return { ok: response.ok, body: await response.text() }
-      },
+        }).then((response) => response.text().then((text) => ({ ok: response.ok, body: text }))),
       catch: () => new TradeUnanswered({}),
     }),
 }

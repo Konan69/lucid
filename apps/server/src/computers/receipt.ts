@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { DeviceAnswer, DeviceRefusal, WindowRefusal } from '@vivid/contracts'
+import { DeviceAnswer, DeviceRefusal, SignInRead, WindowRefusal } from '@vivid/contracts'
 
 /**
  * What the ledger knows about one dispatch to a Person's computer.
@@ -30,6 +30,11 @@ export const receiptOf = (answer: DeviceAnswer): DeviceReceipt =>
     Did: (): DeviceReceipt => DeviceReceipt.cases.Did.make({}),
     Declined: ({ reason }): DeviceReceipt => DeviceReceipt.cases.Declined.make({ reason }),
     Failed: (): DeviceReceipt => DeviceReceipt.cases.Failed.make({}),
+    // Only a collection completed the read. Source refusals are failures, without private data.
+    SignIn: ({ read }): DeviceReceipt =>
+      SignInRead.guards.Collected(read)
+        ? DeviceReceipt.cases.Done.make({})
+        : DeviceReceipt.cases.Failed.make({}),
   })
 
 /**

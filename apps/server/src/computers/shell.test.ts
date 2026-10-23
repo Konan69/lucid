@@ -22,22 +22,22 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Ref, Schema, Stream } fr
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
-import {
-  Scope as ToolScope,
-  scopedRunner,
-} from '../../../../packages/agent/runtime/src/tools/scope.ts'
-import {
-  computerSandbox,
-  machineTools,
-} from '../../../../packages/agent/runtime/src/tools/sandbox.ts'
+import { computerSandbox, machineTools } from '@vivid/agent-runtime/sandbox'
+import { Scope as ToolScope, scopedRunner } from '@vivid/agent-runtime/scope'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import { Machine, MachineNotRunning, MachineState, computerScreenAddress } from './machine.ts'
+import {
+  Machine,
+  MachineNotRunning,
+  MachinePortClosed,
+  MachineState,
+  computerScreenAddress,
+} from './machine.ts'
 import { linkFailure } from './boat/shell.ts'
-import { openLink } from './ssh/link.ts'
+import { LinkPortClosed, openLink } from './ssh/link.ts'
 import { peer, peerAvailable } from './ssh/peer.ts'
 import {
   type ComputerStore,
@@ -69,6 +69,7 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
   )
   const unused = (operation: string) => () => Effect.die(`The stand-in does not ${operation}`)
   const machine = Machine.of({
+    copySignIn: unused('copy a sign-in'),
     ensure: Effect.fn('StandIn.ensure')(function* () {
       yield* Ref.update(wakes, (count) => count + 1)
       yield* Ref.set(awake, true)
@@ -93,6 +94,16 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
     write: unused('write through the provider'),
     browse: unused('browse'),
     desktop: unused('use the desktop'),
+    tunnel: (input) =>
+      link
+        .tunnel(input.port)
+        .pipe(
+          Effect.mapError((failure) =>
+            failure instanceof LinkPortClosed
+              ? new MachinePortClosed({ port: input.port })
+              : linkFailure(failure),
+          ),
+        ),
     run: (input) =>
       link.run(input).pipe(
         Effect.catchTag('LinkRunLost', () => Effect.die('The stand-in lost a command')),
@@ -196,7 +207,6 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
             ToolScope.of({
               acting: { personId: actor.person.id, threadId: ThreadId.make('shell-thread') },
               client: rpc.client,
-              folder: Option.none(),
             }),
           )
           // The stand-in's home is its own fresh directory; on a Computer it is the user's home.

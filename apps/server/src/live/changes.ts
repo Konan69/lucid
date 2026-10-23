@@ -30,7 +30,7 @@ import { LiveTally, type Moved } from './tally.ts'
  * turn reloading each of a Person's twenty open queries three times, and their session twenty
  * times each, for three queries that had anything new to send.
  */
-export const Part = Schema.Literals(['activity', 'notifications', 'drafts'])
+export const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed'])
 export type Part = typeof Part.Type
 
 type Owner = `p:${string}` | `c:${string}` | `t:${string}`
@@ -120,7 +120,7 @@ export interface ChangesService {
  * The change bus behind every live query.
  *
  * PostgreSQL `LISTEN`/`NOTIFY` carries it, on one channel, because the writers are not all in this
- * process: the Routine scheduler, a second server instance and a migration all
+ * process: background workers, a second server instance and a migration all
  * change data that an open client must hear about. Each process holds one listening connection
  * and fans notifications out to its own subscribers through an in-memory hub.
  *

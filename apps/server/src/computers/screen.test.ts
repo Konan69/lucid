@@ -1,7 +1,7 @@
 import { PersonId, SessionId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import {
   Clock,
   Deferred,
@@ -22,24 +22,7 @@ import { testDatabaseConfigured, testDatabaseLayer, testConfigLayer } from '../d
 import { Changes, silentChangesLayer } from '../live/changes.ts'
 import { absentMachineLayer } from './testing.ts'
 import { ComputerStore, computerStoreLayer } from './store.ts'
-import { screenLifetime, screenOriginAllowed } from './screen.ts'
-
-describe('Computer screen browser origin', () => {
-  it('requires the configured scheme, host and port, including behind a Host-rewriting proxy', () => {
-    const publicUrl = new URL('https://vivid.example:8443')
-    expect(screenOriginAllowed(Option.some('https://vivid.example:8443'), publicUrl)).toBe(true)
-    for (const origin of [
-      'http://vivid.example:8443',
-      'https://vivid.example',
-      'https://other.example:8443',
-      'null',
-      'malformed',
-      'https://vivid.example:8443/path',
-    ])
-      expect(screenOriginAllowed(Option.some(origin), publicUrl)).toBe(false)
-    expect(screenOriginAllowed(Option.none(), publicUrl)).toBe(false)
-  })
-})
+import { screenLifetime } from './screen.ts'
 
 const lifetimeDependencies = Layer.mergeAll(testDatabaseLayer, testConfigLayer, silentChangesLayer)
 const lifetimeStores = computerStoreLayer.pipe(

@@ -1,5 +1,3 @@
-import * as NodeOS from 'node:os'
-import * as NodePath from 'node:path'
 import { flue } from '@flue/vite'
 import { defineProject } from 'vitest/config'
 
@@ -11,10 +9,6 @@ export default defineProject({
   test: {
     name: '@vivid/skills',
     environment: 'node',
-    // These suites import the runtime's Vivid, and the runtime does not load without its notes
-    // directory (`packages/agent/runtime/src/notes.ts`). Nothing is written there unless a case
-    // writes a note; the directory is the system's temporary one, never a developer's notes.
-    env: { VIVID_MEMORY_DIR: NodePath.join(NodeOS.tmpdir(), 'vivid-skills-test-notes') },
     include: ['src/**/*.test.ts'],
   },
 })

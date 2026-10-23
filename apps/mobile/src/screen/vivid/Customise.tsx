@@ -8,7 +8,7 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import type { FaceMood } from '@vivid/marks'
-import { Option, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { commit, tick } from '../../data/haptics'
@@ -18,6 +18,7 @@ import { useTheme } from '../../theme'
 import { Face } from '../../ui/Face'
 import { Sheet } from '../../ui/Sheet'
 import { Button, EDGE, Field, GUTTER, Label, Notice, Press, radius } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /** Every look there is to choose, in the order they are shown: the theme's own colour first. */
 const LOOKS: ReadonlyArray<Look> = [
@@ -95,22 +96,26 @@ export function Customise({ onClose }: { onClose: () => void }) {
     },
   )
 
-  async function save() {
-    if (busy || unchanged) return
-    const valid = decodeName(text)
-    if (Option.isNone(valid)) {
-      setRefused(Option.some(`Use 1 to ${VIVID_NAME_MAX} characters, without backslashes.`))
-      return
-    }
-    setBusy(true)
-    setRefused(Option.none())
-    commit()
-    const refusal = refusalOf(
-      await saveAppearance(data, new Appearance({ name: valid.value, look, outline })),
+  function save() {
+    return start(
+      Effect.gen(function* () {
+        if (busy || unchanged) return
+        const valid = decodeName(text)
+        if (Option.isNone(valid)) {
+          setRefused(Option.some(`Use 1 to ${VIVID_NAME_MAX} characters, without backslashes.`))
+          return
+        }
+        setBusy(true)
+        setRefused(Option.none())
+        commit()
+        const refusal = refusalOf(
+          yield* saveAppearance(data, new Appearance({ name: valid.value, look, outline })),
+        )
+        setBusy(false)
+        if (Option.isNone(refusal)) onClose()
+        else setRefused(refusal)
+      }),
     )
-    setBusy(false)
-    if (Option.isNone(refusal)) onClose()
-    else setRefused(refusal)
   }
 
   return (

@@ -29,17 +29,17 @@ Package tasks enable parallelization, individual caching, and filtering. Define 
     "build": "next build",
     "lint": "eslint .",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ./scripts/check.mjs"
   }
 }
 
 // packages/api/package.json
 {
   "scripts": {
-    "build": "tsc",
+    "build": "node ./scripts/build.mjs",
     "lint": "eslint .",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ./scripts/check.mjs"
   }
 }
 ```

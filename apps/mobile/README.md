@@ -72,10 +72,12 @@ or account is involved.
   VIVID_MOBILE_UPDATES=/path/to/updates  # in the server's environment, then restart it
   ```
 
-- An update only reaches a binary with the same runtime version, which is `version` in
-  `app.json`. JavaScript and assets travel over the air; anything native does not. After adding
-  a native module, changing a config plugin or moving to a new Expo SDK, raise `version` and
-  install a new binary. An update is only taken when it is newer than the JavaScript built into
+- An update only reaches a binary with the same runtime version, which is `runtimeVersion` in
+  `app.json` (older installs listed in `ALSO_RUNS_ON` in `scripts/publish.mjs` get it too).
+  `version` is separate: it is the number Settings shows, and it is raised with every change
+  that ships. JavaScript and assets travel over the air; anything native does not. After adding
+  a native module, changing a config plugin or moving to a new Expo SDK, raise `runtimeVersion`
+  and install a new binary. An update is only taken when it is newer than the JavaScript built into
   the binary.
 
 ### Windows Android Studio emulator with WSL
@@ -109,7 +111,6 @@ This table describes code present today, not native end-to-end proof.
 | Threads                 | Create, rename, archive/restore, delete, title search, attention lanes, durable history, streaming, stop, foreground reconnection, saved drafts. |
 | Shared work             | Personal and Company spaces, Memberships, shared/private Threads, attributed deliveries, People and invitations.                                 |
 | Questions and Approvals | Thread cards use shared server contracts for answers and decisions.                                                                              |
-| Routines                | Live definitions and Occurrences, creation/editing, pause/resume, delete, run now and run history.                                               |
 | Library                 | File picker for PDF/text/Markdown, 10 MiB limit, folders, indexing status, search, authenticated original sharing.                               |
 | Projects                | Persisted recursive Projects and their Threads, read through the same live RPCs as web.                                                          |
 | Integrations            | Thread request cards and Settings management; Executor handles sign-in or key entry. Code calls these `Connection`.                              |

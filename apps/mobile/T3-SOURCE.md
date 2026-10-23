@@ -47,7 +47,7 @@ instead of `undefined`. RN 0.85's Fabric command bridge rejects the latter as
   React Native SVG without substituting generated service imagery.
 - The six project covers are direct `require` references to
   `apps/web/public/covers/*.png`; no generated replacements or remote imagery.
-- Projects and routine ideas import the existing web fixtures. Projects remain
+- Projects import the existing web fixtures. Projects remain
   explicitly labeled sample content, matching the web persistence boundary.
 - All native semantic colors are generated from
   `packages/design/tokens/src/tokens.css`. `face-eye` records the existing web

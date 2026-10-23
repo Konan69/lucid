@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 
 /**
  * Vivid working in the apps on a Person's own computer: any window, not only the pages of the
@@ -209,6 +209,16 @@ export type WindowOutcome = typeof WindowOutcome.Type
 /**
  * What the desktop app on a computer can do, said by the app when it starts listening and never
  * stored as truth: `apps` is true only where Vivid's helper is present and started (Windows).
+ * `egress` is true where the app can carry the Computer's browsing out through this computer
+ * (`egress.ts`). An installed app from before egress does not say it, and an installed app
+ * cannot be rewritten, so a missing word is read as "cannot".
  */
-export const DeviceAbility = Schema.Struct({ pages: Schema.Boolean, apps: Schema.Boolean })
+export const DeviceAbility = Schema.Struct({
+  pages: Schema.Boolean,
+  apps: Schema.Boolean,
+  egress: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  /** An already-installed desktop binary has no sign-in reader. Decoding its older capability
+   * envelope must preserve that absence instead of granting the new work or dropping its link. */
+  signins: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+})
 export interface DeviceAbility extends Schema.Schema.Type<typeof DeviceAbility> {}

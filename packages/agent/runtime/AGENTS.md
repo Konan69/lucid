@@ -16,7 +16,9 @@ schema-derived `VividRpcClient`.
   skills it can use, their time zone.
 - `src/db.ts` — Flue's database composition root: configuration and pool construction.
 - `src/storage.ts` — pure `flueStorage(pool)`, the production PostgreSQL runner; Flue owns pool close.
-- `tests/schema.ts` — a disposable schema on explicit test authority, with a separate surviving cleanup connection.
+- `src/index.ts` — what another package may import by name (`@vivid/agent-runtime`, plus
+  `@vivid/agent-runtime/sandbox`, `@vivid/agent-runtime/scope` and `@vivid/agent-runtime/signins`): only the server's and the desktop app's tests read it. Nothing outside this package reaches a file here by path.
+- `tests/schema.ts` — a disposable schema on explicit test authority, with a separate surviving cleanup connection, and `testDatabaseConfigured` for gating suites; the runtime never imports the server's test database.
 - `tests/routes.ts` — production Hono/Flue route fixture using public start/stop and a controlled faux provider.
 - `tests/setup.ts` — Vitest worker authority, settled before any import because Effect copies the environment once: only the explicit test URL reaches runtime tests and unconfigured workers have no `DATABASE_URL`; no inherited `VIVID_SERVER_URL`; a worker-owned `VIVID_RUNTIME_TOKEN`.
 - `src/providers/` — model-provider registration and adapter setup.
@@ -37,19 +39,28 @@ schema-derived `VividRpcClient`.
 
 ## Patched Flue
 
-`patches/@flue__runtime@2.2.2.patch` changes one constant in Flue's conversation writer
-(`src/conversation-writer.ts`, shipped as `dist/sql-agent-execution-store-*.mjs`):
-`CANONICAL_FLUSH_DELAY_MS` from 1,000 to 100.
+`patches/@flue__runtime@2.2.2.patch` holds three independent fixes. When upgrading Flue or
+removing any fix, read [Live reply reconciliation](README.md#live-reply-reconciliation).
 
-- **Why.** Every word a client sees is first appended to Flue's durable stream, and the writer
-  holds streamed text for that long before each append. At one second a reply reached the screen
-  in lumps a second apart (measured on production, 11 October 2026: 158 text updates delivered in
-  four lumps). Flue 2.2.2 has no setting for it.
-- **Cost.** About ten appends a second for each reply being written, where there was one, and so
-  ten times the batches in a conversation's stream.
-- **Removing it.** When Flue makes the delay a setting, set it there and delete the patch and its
-  `patchedDependencies` line. The file name carries a build hash, so a Flue upgrade fails the
-  install until the patch is made again or dropped.
+- **Flush cadence.** The conversation writer's `CANONICAL_FLUSH_DELAY_MS` changes from 1,000
+  to 100. Production measured 158 text updates arriving in four lumps on 11 October 2026.
+  The lower delay costs about ten durable append batches per second of streaming, instead of one.
+  When Flue exposes the delay as a setting, configure it and remove only the writer hunk.
+- **Settled replies.** The dispatch projector replaces the response through the SDK's
+  `message-appended` upsert before its first resolved settlement. This repairs text parts split
+  by interleaved thinking while preserving distinct canonical blocks. Each response is projected
+  and sent once, including its tool outputs. Joined deliveries resolve to the host response, so their later
+  settlements do not resend it. Untracked steps reconcile at completion because they have no
+  settlement or accumulated response. Remove these dispatch hunks only when Flue preserves live
+  block identity or reconciles settlement itself, and the runtime transport tests still pass.
+- **Cancelled partial replies.** The model recovery loop checks its halt condition before returning
+  a completed turn. A provider can close normally after its request was aborted; returning first
+  made the coordinator settle that partial reply as completed. Remove this hunk when upstream
+  propagates cancellation on that path and the partial-reply abort test still passes.
+
+The dist filenames carry build hashes, so an upgrade fails installation until the patch is
+updated. Delete the patch file and its `patchedDependencies` entry only after all three fixes have
+upstream replacements.
 
 ## Runtime contract
 
@@ -74,4 +85,4 @@ schema-derived `VividRpcClient`.
   this gap requires Flue to support signal attachments through validation, durable storage,
   conversation projection and model input, while preserving signal attribution.
 
-The opt-in rehearsal model uses pi’s faux provider to exercise real Vivid tools and display cards without a model provider key. It reconstructs deterministic scenes from conversation context and reports real tool receipts and failures; it is for product rehearsal and is never a default. Set `VIVID_MODEL=rehearsal/script` before starting the runtime to register it, then send a supported phrase such as “show a table” or “run a program”; an unrecognized message lists all phrases. The date-based reminder scene schedules tomorrow at 09:00 in the context’s timezone using the real one-off Routine tool. It fires once and retains its Occurrence and Thread.
+The opt-in rehearsal model uses pi’s faux provider to exercise real Vivid tools and display cards without a model provider key. It reconstructs deterministic scenes from conversation context and reports real tool receipts and failures; it is for product rehearsal and is never a default. Set `VIVID_MODEL=rehearsal/script` before starting the runtime to register it, then send a supported phrase such as “show a table” or “run a program”; an unrecognized message lists all phrases.

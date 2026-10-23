@@ -5,7 +5,6 @@ import {
   MessageAttachment,
   SignalType,
   type Conflict,
-  type LibraryFolderId,
   type NotFound,
   PersonId,
   type Run,
@@ -19,7 +18,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  * What is being put in front of Vivid.
  *
  * `Said` is a Person writing in the Thread. `Signal` is everything else the server delivers: a
- * Routine coming due, the outcome of an Approval, the answer to a question. Its
+ * Watch receiving an event, the outcome of an Approval, the answer to a question. Its
  * `type` is one of the fixed `SignalType`s every client knows how to draw.
  */
 export const DeliveryMessage = Schema.TaggedUnion({
@@ -44,10 +43,9 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
   FirstConversation: {},
-  Routine: { routineName: Schema.String },
-  Standing: { routineName: Schema.String },
-  Attention: { routineName: Schema.String },
   Decision: {},
+  /** An Integration event a Watch subscribed to woke Vivid in a background Thread. */
+  Watch: { watchName: Schema.String },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 
@@ -64,8 +62,6 @@ export interface Delivery {
   /** The Person Vivid acts for in the Run this starts. They must be able to see the Thread. */
   readonly personId: PersonId
   readonly speaker: DeliverySpeaker
-  /** Only Routine deliveries carry a Library confinement; ordinary deliveries have none. */
-  readonly libraryFolder?: LibraryFolderId | null
   readonly message: DeliveryMessage
   readonly origin: StoredRunOrigin
   /** Repeating a delivery with the same key starts nothing new and returns the same Run. */
@@ -103,7 +99,7 @@ export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 
 export interface ConversationService {
   /**
-   * Delivers a server signal and records its Run. Routines, Approval outcomes and
+   * Delivers a server signal and records its Run. Watch events, Approval outcomes and
    * answers share the admission policy used by Person messages, so every Run records whose
    * authority it carries. Busy returns a typed Conflict immediately; producers retain their
    * durable receipt and retry its original key on their own schedule.

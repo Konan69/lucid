@@ -34,10 +34,10 @@ const TurboRun = Schema.Struct({
 const decodeTurboRun = Schema.decodeUnknownSync(Schema.fromJsonString(TurboRun))
 
 /** Run the pinned real Turbo binary; probes replace only expensive check commands. */
-function runTurbo(root, args) {
+function runTurbo(root, args, environment = {}) {
   const result = NodeChildProcess.spawnSync(process.execPath, [turbo, 'run', ...args], {
     cwd: root,
-    env: { ...process.env, CI: '1', TURBO_TELEMETRY_DISABLED: '1' },
+    env: { ...process.env, ...environment, CI: '1', TURBO_TELEMETRY_DISABLED: '1' },
     encoding: 'utf8',
     maxBuffer: 4 * 1024 * 1024,
   })
@@ -90,6 +90,7 @@ function fixture(t) {
     'scripts/lint.mjs',
     'scripts/types.mjs',
     'scripts/oxlint-plugin-vivid.mjs',
+    'scripts/boundary.mjs',
     'tools/oxlint/probe.ts',
     'apps/web/src/styles/probe.css',
   ]) {
@@ -112,6 +113,7 @@ if (task === 'types') {
   fs.writeFileSync('.cache/typescript/types.tsbuildinfo', 'cached declaration build info')
 }
 console.log('typescript(no-explicit-any): probe diagnostic')
+console.log('backend=' + process.env.OXLINT_TSGOLINT_PATH)
 `,
   )
   for (const args of [
@@ -156,17 +158,25 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
   const plugin = hashes(root)
   assert.notEqual(compiler.get('@vivid/web#lint').hash, plugin.get('@vivid/web#lint').hash)
   assert.equal(compiler.get('@vivid/web#typecheck').hash, plugin.get('@vivid/web#typecheck').hash)
+  // The plugin imports its cross-package rule from boundary.mjs, so that module is a lint input too.
+  NodeFS.appendFileSync(NodePath.join(root, 'scripts/boundary.mjs'), '// boundary change\n')
+  const boundary = hashes(root)
+  assert.notEqual(plugin.get('@vivid/web#lint').hash, boundary.get('@vivid/web#lint').hash)
+  assert.equal(plugin.get('@vivid/web#typecheck').hash, boundary.get('@vivid/web#typecheck').hash)
   NodeFS.appendFileSync(NodePath.join(root, 'scripts/types.mjs'), '// compiler runner change\n')
   const runner = hashes(root)
   assert.notEqual(
-    plugin.get('@vivid/contracts#types').hash,
+    boundary.get('@vivid/contracts#types').hash,
     runner.get('@vivid/contracts#types').hash,
   )
-  assert.notEqual(plugin.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
-  assert.equal(plugin.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
+  assert.notEqual(
+    boundary.get('@vivid/web#typecheck').hash,
+    runner.get('@vivid/web#typecheck').hash,
+  )
+  assert.equal(boundary.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
 })
 
-/** tsgolint reopens referenced source, so declaration emission must not delay lint. */
+/** tsrslint reopens referenced source, so declaration emission must not delay lint. */
 void test('lint checks every workspace without executing declaration producers', (t) => {
   const root = fixture(t)
   runTurbo(root, ['lint', 'lint:root', '--concurrency=1', '--ui=stream'])
@@ -241,8 +251,13 @@ void test('shared tests do not invalidate production declarations or ordinary co
   }
 })
 
-/** Relative integration imports are real dependencies despite absent manifest edges. */
-void test('integration source invalidates importing checks without cycling production tasks', (t) => {
+/**
+ * A package's source invalidates the checks of the packages that declare it and no others. Since
+ * `vivid/no-cross-package-import` no package reaches another by path, so the manifest edges are the
+ * whole graph: the server takes the runtime as a devDependency, and the skills package, which the
+ * runtime depends on, does not depend on the runtime.
+ */
+void test('runtime source invalidates its dependents and no other package', (t) => {
   const root = fixture(t)
   const initial = hashes(root)
   NodeFS.appendFileSync(
@@ -251,16 +266,16 @@ void test('integration source invalidates importing checks without cycling produ
   )
   const changed = hashes(root)
   for (const task of ['lint', 'typecheck']) {
-    for (const consumer of ['server', 'skills']) {
-      assert.notEqual(
-        initial.get(`@vivid/${consumer}#${task}`).hash,
-        changed.get(`@vivid/${consumer}#${task}`).hash,
+    assert.notEqual(
+      initial.get(`@vivid/server#${task}`).hash,
+      changed.get(`@vivid/server#${task}`).hash,
+    )
+    for (const unrelated of ['skills', 'computer']) {
+      assert.equal(
+        initial.get(`@vivid/${unrelated}#${task}`).hash,
+        changed.get(`@vivid/${unrelated}#${task}`).hash,
       )
     }
-    assert.equal(
-      initial.get(`@vivid/computer#${task}`).hash,
-      changed.get(`@vivid/computer#${task}`).hash,
-    )
   }
 })
 
@@ -342,4 +357,18 @@ void test('root checks ignore generated workspace files and reuse successful res
   const executions = NodeFS.readFileSync(NodePath.join(root, '.cache/executions'), 'utf8')
   runTurbo(root, args)
   assert.equal(NodeFS.readFileSync(NodePath.join(root, '.cache/executions'), 'utf8'), executions)
+})
+
+void test('backend overrides reach lint tasks and invalidate cached diagnostics', (t) => {
+  const root = fixture(t)
+  const args = ['lint', 'lint:root', '--dry=json']
+  const before = decodeTurboRun(runTurbo(root, args, { OXLINT_TSGOLINT_PATH: '/backend/a' }).stdout)
+  const after = decodeTurboRun(runTurbo(root, args, { OXLINT_TSGOLINT_PATH: '/backend/b' }).stdout)
+  for (const task of before.tasks.filter((entry) => entry.command !== '<NONEXISTENT>')) {
+    assert.notEqual(task.hash, after.tasks.find((entry) => entry.taskId === task.taskId).hash)
+  }
+  const result = runTurbo(root, ['lint', '--filter=@vivid/computer', '--ui=stream'], {
+    OXLINT_TSGOLINT_PATH: '/backend/a',
+  })
+  assert.match(result.stdout, /backend=\/backend\/a/u)
 })

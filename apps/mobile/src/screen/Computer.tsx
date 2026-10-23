@@ -12,13 +12,14 @@ import { NO_ACTIONS, StandingBar } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { drawsScreen, Live } from './computer/Live'
 import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
+import { start } from '../data/app'
 
 /**
  * Turning the computer on. The screen shows it starting at once, and puts it back with the reason
  * if the server refuses; when it does start, the server's own record replaces the guess.
  */
-const start = (data: LiveData) =>
-  data.change(
+const turnOn = (data: LiveData) =>
+  data.changing(
     (client) => client.StartComputer(),
     () =>
       data.live.computer.expect((current) => ({
@@ -30,8 +31,8 @@ const start = (data: LiveData) =>
   )
 
 /** Turning it off. Its files and sign-ins outlive the machine, which is why nothing is asked. */
-const stop = (data: LiveData) =>
-  data.change(
+const turnOff = (data: LiveData) =>
+  data.changing(
     (client) => client.StopComputer(),
     () =>
       data.live.computer.expect((current) => ({
@@ -44,7 +45,7 @@ const stop = (data: LiveData) =>
 
 /** Taking the keyboard and pointer, or handing them back. Vivid cannot act while a Person holds them. */
 const hold = (data: LiveData, held: boolean) =>
-  data.change(
+  data.changing(
     (client) => client.HoldComputer({ held }),
     () =>
       data.live.computer.expect((current) => ({
@@ -260,14 +261,18 @@ function Machine({ computer }: { computer: ComputerRecord }) {
   const [refused, setRefused] = useState<Option.Option<keyof typeof REFUSED>>(Option.none())
 
   /** Makes one change, felt as it is pressed, and says so here if the server refuses it. */
-  async function press(
+  function press(
     what: keyof typeof REFUSED,
-    change: () => Promise<Result.Result<unknown, unknown>>,
+    change: Effect.Effect<Result.Result<unknown, unknown>>,
   ) {
-    commit()
-    setRefused(Option.none())
-    const result = await change()
-    if (Result.isFailure(result)) setRefused(Option.some(what))
+    return start(
+      Effect.gen(function* () {
+        commit()
+        setRefused(Option.none())
+        const result = yield* change
+        if (Result.isFailure(result)) setRefused(Option.some(what))
+      }),
+    )
   }
 
   return (
@@ -302,14 +307,14 @@ function Machine({ computer }: { computer: ComputerRecord }) {
             kind="primary"
             icon={MonitorPlay}
             label={standing.start.value}
-            onPress={() => void press('start', () => start(data))}
+            onPress={() => void press('start', turnOn(data))}
           />
         )}
         {watchable && (
           <Watch
             drawn={Option.isSome(live)}
             held={computer.heldByPerson}
-            onPress={() => void press('watch', () => data.run(watch()))}
+            onPress={() => void press('watch', data.running(watch()))}
           />
         )}
         {running && (
@@ -319,7 +324,8 @@ function Machine({ computer }: { computer: ComputerRecord }) {
               icon={Hand}
               label={computer.heldByPerson ? 'Hand back' : 'Take over'}
               onPress={() =>
-                void press(computer.heldByPerson ? 'hand' : 'take', () =>
+                void press(
+                  computer.heldByPerson ? 'hand' : 'take',
                   hold(data, !computer.heldByPerson),
                 )
               }
@@ -328,7 +334,7 @@ function Machine({ computer }: { computer: ComputerRecord }) {
               kind="ghost"
               icon={Power}
               label="Turn off"
-              onPress={() => void press('stop', () => stop(data))}
+              onPress={() => void press('stop', turnOff(data))}
             />
           </>
         )}

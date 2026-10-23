@@ -1,8 +1,11 @@
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  DEVICE_ASKING_MILLIS,
+  DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
+  type CopySignInRequest,
   DeviceListResponse,
   DeviceResponse,
   type AnswerDeviceRequest,
@@ -20,7 +23,9 @@ import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/a
 import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { computerWindow } from './windows.ts'
+import { copySignIn } from './signins/copy.ts'
 import { DeviceRegistry } from './device.ts'
+import { Egress } from './egress/relay.ts'
 import {
   ComputerStore,
   computerBrowse,
@@ -44,7 +49,9 @@ const load = Effect.fn('Computer.load')(function* (actor: Actor) {
  * requests can be routed to the replica holding the socket (device.ts#DeviceRegistry).
  */
 const loadDevices = Effect.fn('Computer.loadDevices')(function* (actor: Pick<Actor, 'person'>) {
-  return DeviceListResponse.make({ devices: yield* (yield* DeviceRegistry).list(actor.person.id) })
+  const registry = yield* DeviceRegistry
+  const devices = yield* registry.list(actor.person.id)
+  return DeviceListResponse.make({ devices, asking: yield* registry.asking(devices) })
 })
 
 /** The calling Person's computers, wrapped for the wire. */
@@ -79,16 +86,38 @@ const admitted = Effect.fn('Computer.admitted')(function* (
  * A Person's call is always about their own Computer and their own computers: none of these takes
  * a Person to act on, and Vivid's tools get the same owner from the identity they act with.
  */
+/** Read again whenever anything of the Person's moves: the relay says so when the status does. */
+const egressStatus = Effect.fn('Computers.egressStatus')(function* (actor: Pick<Actor, 'person'>) {
+  return yield* (yield* Egress).status(actor.person.id)
+})
+
 export const computerHandlers = {
+  /** Public receipt contains only the outcome and count; cookies never cross the runtime RPC. */
+  CopySignIn: Effect.fn('Rpc.CopySignIn')(function* (request: CopySignInRequest) {
+    yield* requireVivid()
+    return yield* copySignIn(yield* requireActor(), request)
+  }),
   /** Metadata uses the same authenticated owner as every other Computer operation. */
   GetComputerApps: Effect.fn('Rpc.GetComputerApps')(function* () {
     const auth = yield* requireActor()
     return yield* computerInventory(auth.person.id)
   }),
+  /**
+   * A waiting computer's app enrolling is it asking to be allowed (`DeviceListResponse.asking`),
+   * which lasts `DEVICE_ASKING_MILLIS`. Nothing else changes when that runs out, so the lists are
+   * told once more just after it: an app that was closed stops being asked about everywhere. An
+   * open app enrols again before then, and the extra word only repeats what the list says.
+   */
   EnrolDevice: Effect.fn('Rpc.EnrolDevice')(function* (request: EnrolDeviceRequest) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).enrol(auth.person.id, request)
-    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
+    const changes = yield* Changes
+    const topics = [Topic.person(auth.person.id)]
+    yield* changes.publish(topics)
+    if (DeviceAccess.guards.Pending(device.access))
+      yield* Effect.forkDetach(
+        Effect.sleep(DEVICE_ASKING_MILLIS + 1_000).pipe(Effect.andThen(changes.publish(topics))),
+      )
     return one(device)
   }),
   /** Installation and Run ownership are checked by the registry before the shared Stop path. */
@@ -142,6 +171,12 @@ export const computerHandlers = {
     const auth = yield* requirePerson()
     return yield* (yield* DeviceRegistry).answer(auth.person.id, auth.sessionId, input)
   }),
+  /** What egress is doing for the caller; whether it is on is their own setting. */
+  GetEgress: Effect.fn('Rpc.GetEgress')(function* () {
+    const auth = yield* requirePerson()
+    return yield* (yield* Egress).status(auth.person.id)
+  }),
+  WatchEgress: () => live('WatchEgress', [], egressStatus),
   GetComputer: Effect.fn('Rpc.GetComputer')(function* () {
     const auth = yield* requirePerson()
     const store = yield* ComputerStore

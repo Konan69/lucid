@@ -6,17 +6,21 @@ import {
   ArtifactChanged,
   ReadDocumentOutcome,
   CompanyId,
+  DocumentToolCallId,
   Person,
   PersonId,
   RunId,
   ThreadId,
 } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Ref, Result, Schema, Stream } from 'effect'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
+import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threadParticipants, threads } from '../threads/tables.ts'
 import { ArtifactStore, artifactStoreLayer } from './store.ts'
@@ -25,6 +29,58 @@ import { artifactVersions, artifacts } from './tables.ts'
 class Published extends Context.Service<Published, Ref.Ref<ReadonlyArray<Topic>>>()(
   'artifacts/test/Published',
 ) {}
+const documentCall = DocumentToolCallId.make('write-document')
+interface ResponseRecord {
+  readonly threadId: ThreadId
+  readonly runId: RunId
+  readonly toolCallId: DocumentToolCallId
+  readonly settled: boolean
+}
+class Responses extends Context.Service<Responses, Ref.Ref<ReadonlyArray<ResponseRecord>>>()(
+  'artifacts/test/Responses',
+) {}
+/** The public Flue history seam varies independently from product Run settlement. */
+const runtimeHistoryLayer = Layer.effectContext(
+  Effect.gen(function* () {
+    const responses = yield* Ref.make<ReadonlyArray<ResponseRecord>>([])
+    const runtime = Runtime.of({
+      admit: () => Effect.die('Artifact tests do not admit deliveries'),
+      settled: () => Effect.never,
+      stop: () => Effect.die('Artifact tests do not stop responses'),
+      read: Effect.fn('Artifacts.test.history')(function* ({ threadId }) {
+        const history = (yield* Ref.get(responses)).filter((entry) => entry.threadId === threadId)
+        return HttpClientResponse.fromWeb(
+          HttpClientRequest.get('https://runtime.example.test'),
+          new Response(
+            JSON.stringify({
+              messages: history.map((entry) => ({
+                role: 'assistant',
+                submissionId: entry.runId,
+                parts: [
+                  {
+                    type: 'dynamic-tool',
+                    toolName: 'write_document',
+                    toolCallId: entry.toolCallId,
+                    state: 'input-available',
+                    input: {},
+                  },
+                ],
+              })),
+              settlements: history
+                .filter((entry) => entry.settled)
+                .map((entry) => ({
+                  submissionId: entry.runId,
+                  outcome: 'completed',
+                })),
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }),
+    })
+    return Context.make(Runtime, runtime).pipe(Context.add(Responses, responses))
+  }),
+)
 /** Observe committed invalidations without depending on LISTEN/NOTIFY timing. */
 const changesLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -39,7 +95,7 @@ const changesLayer = Layer.effectContext(
   }),
 )
 const testLayer = artifactStoreLayer.pipe(
-  Layer.provideMerge(Layer.merge(testDatabaseLayer, changesLayer)),
+  Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, changesLayer, runtimeHistoryLayer)),
 )
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 
@@ -112,8 +168,13 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
       state: 'working',
       origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
       startedAt: yield* Clock.currentTimeMillis,
+      admittedAt: yield* Clock.currentTimeMillis,
     }),
   )
+  yield* Ref.update(yield* Responses, (entries) => [
+    ...entries,
+    { threadId, runId, toolCallId: documentCall, settled: false },
+  ])
   return { database, person, member, admin, outsider, threadId, runId, companyId }
 })
 
@@ -127,12 +188,14 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const { person, threadId, runId } = yield* fixture()
           const store = yield* ArtifactStore
           const first = yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
             title: 'Launch plan',
             body: '# Plan\n\nFirst.',
             note: 'Ignored on creation',
           })
           expect(first).toEqual({ title: 'Launch plan', version: 1, created: true, changed: true })
           const revised = yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
             title: 'LAUNCH PLAN',
             body: '# Plan\n\nSecond.',
             note: 'Changed scope',
@@ -146,6 +209,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const published = yield* Ref.get(yield* Published)
           expect(
             yield* store.write(person.id, threadId, {
+              toolCallId: documentCall,
               title: 'launch plan',
               body: '# Plan\n\nSecond.',
               note: 'Do not save',
@@ -193,7 +257,11 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           database.update(runs).set({ personId: member.id }).where(eq(runs.id, runId)),
         )
         expect(
-          yield* store.write(member.id, threadId, { title: 'Shared plan', body: '# Shared' }),
+          yield* store.write(member.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Shared plan',
+            body: '# Shared',
+          }),
         ).toMatchObject({ version: 1, created: true, changed: true })
         const [artifact] = yield* store.list(person.id, threadId)
         if (artifact === undefined) return yield* Effect.die('Document missing')
@@ -211,13 +279,47 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
       }),
     )
 
+    it.effect('only admitted Runs can author a document, ignoring earlier reservations', () =>
+      Effect.gen(function* () {
+        const { database, person, threadId, runId } = yield* fixture()
+        const store = yield* ArtifactStore
+        yield* database.run(
+          database.update(runs).set({ turn: 2, admittedAt: null }).where(eq(runs.id, runId)),
+        )
+        const request = { toolCallId: documentCall, title: 'Packing', body: 'Pack a coat.' }
+        expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
+          'NotFound',
+        )
+        expect(yield* store.list(person.id, threadId)).toEqual([])
+        yield* database.run(database.update(runs).set({ admittedAt: 2 }).where(eq(runs.id, runId)))
+        // A reservation left behind before acceptance has no response that could write this.
+        yield* database.run(
+          database.insert(runs).values({
+            id: RunId.make(NodeCrypto.randomUUID()),
+            threadId,
+            personId: person.id,
+            turn: 1,
+            state: 'working',
+            origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
+            startedAt: 1,
+          }),
+        )
+        yield* store.write(person.id, threadId, request)
+        const [written] = yield* store.list(person.id, threadId)
+        if (written === undefined) return yield* Effect.sync(() => expect.fail('Not written'))
+        expect((yield* store.get(person.id, { id: written.id })).shown.madeBy).toEqual(
+          ArtifactAuthor.cases.Vivid.make({ runId }),
+        )
+      }),
+    )
+
     it.effect(
-      'refuses ended, wrong-Person and ambiguous working Runs without saving anything',
+      "refuses ended and other-Person Runs, and gives a joined delivery's write to its host Run",
       () =>
         Effect.gen(function* () {
           const { database, person, member, threadId, runId } = yield* fixture()
           const store = yield* ArtifactStore
-          const request = { title: 'Not saved', body: 'Never saved' }
+          const request = { toolCallId: documentCall, title: 'Not saved', body: 'Never saved' }
           yield* database.run(
             database.update(threads).set({ audience: 'company' }).where(eq(threads.id, threadId)),
           )
@@ -239,23 +341,131 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               .set({ state: 'working', finishedAt: null })
               .where(eq(runs.id, runId)),
           )
+          // A visible Thread does not let the caller author another Person's exact response.
+          const theirs = RunId.make(NodeCrypto.randomUUID())
+          const theirCall = DocumentToolCallId.make('other-person-call')
+          yield* database.run(
+            database.insert(runs).values({
+              id: theirs,
+              threadId,
+              personId: member.id,
+              turn: 2,
+              state: 'working',
+              origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
+              startedAt: 2,
+              admittedAt: 2,
+            }),
+          )
+          yield* Ref.update(yield* Responses, (entries) => [
+            ...entries,
+            { threadId, runId: theirs, toolCallId: theirCall, settled: false },
+          ])
+          expect(
+            (yield* Effect.flip(
+              store.write(person.id, threadId, { ...request, toolCallId: theirCall }),
+            ))._tag,
+          ).toBe('NotFound')
+          expect(yield* store.list(person.id, threadId)).toEqual([])
+          expect(yield* Ref.get(yield* Published)).not.toContain(Topic.thread(threadId))
+          // The same Person's delivery joining the response (an answer to a question Vivid asked)
+          // is a second working Run; the write belongs to the response's host, the earlier Run.
+          yield* database.run(database.delete(runs).where(eq(runs.id, theirs)))
           yield* database.run(
             database.insert(runs).values({
               id: RunId.make(NodeCrypto.randomUUID()),
               threadId,
               personId: person.id,
-              turn: 2,
+              turn: 3,
               state: 'working',
-              origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
-              startedAt: 2,
+              origin: encodeOrigin(StoredRunOrigin.cases.Decision.make({})),
+              startedAt: 3,
+              admittedAt: 3,
             }),
           )
-          expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
-            'Conflict',
+          expect(yield* store.write(person.id, threadId, request)).toMatchObject({ created: true })
+          const [written] = yield* store.list(person.id, threadId)
+          if (written === undefined) return yield* Effect.sync(() => expect.fail('Not written'))
+          expect((yield* store.get(person.id, { id: written.id })).shown.madeBy).toEqual(
+            ArtifactAuthor.cases.Vivid.make({ runId }),
           )
-          expect(yield* store.list(person.id, threadId)).toEqual([])
-          expect(yield* Ref.get(yield* Published)).not.toContain(Topic.thread(threadId))
         }),
+    )
+
+    it.effect('attributes a late answer to response B while A product settlement stays stale', () =>
+      Effect.gen(function* () {
+        const { database, person, threadId, runId: earlier } = yield* fixture()
+        const store = yield* ArtifactStore
+        const later = RunId.make(NodeCrypto.randomUUID())
+        const laterCall = DocumentToolCallId.make('late-answer-document')
+        // Flue completed A and started B from the late answer; the product observer has not
+        // settled A yet. Both admitted product rows intentionally remain working throughout.
+        yield* database.run(
+          database.insert(runs).values({
+            id: later,
+            threadId,
+            personId: person.id,
+            turn: 2,
+            state: 'working',
+            origin: encodeOrigin(StoredRunOrigin.cases.Decision.make({})),
+            startedAt: 2,
+            admittedAt: 2,
+          }),
+        )
+        yield* Ref.update(yield* Responses, (entries) => [
+          ...entries.map((entry) =>
+            entry.runId === earlier ? { ...entry, settled: true } : entry,
+          ),
+          { threadId, runId: later, toolCallId: laterCall, settled: false },
+        ])
+        yield* store.write(person.id, threadId, {
+          toolCallId: laterCall,
+          title: 'The late answer',
+          body: 'Written by response B.',
+        })
+        const [artifact] = yield* store.list(person.id, threadId)
+        if (artifact === undefined) return yield* Effect.die('Document missing')
+        expect((yield* store.get(person.id, { id: artifact.id })).shown.madeBy).toEqual(
+          ArtifactAuthor.cases.Vivid.make({ runId: later }),
+        )
+        const working = yield* database.run(
+          database
+            .select({ id: runs.id, state: runs.state })
+            .from(runs)
+            .where(eq(runs.threadId, threadId)),
+        )
+        expect(working).toEqual(
+          expect.arrayContaining([
+            { id: earlier, state: 'working' },
+            { id: later, state: 'working' },
+          ]),
+        )
+      }),
+    )
+
+    it.effect('refuses a response Run from another Thread even when its Person matches', () =>
+      Effect.gen(function* () {
+        const { database, person, threadId } = yield* fixture()
+        const other = yield* fixture()
+        yield* database.run(
+          database.update(runs).set({ personId: person.id }).where(eq(runs.id, other.runId)),
+        )
+        yield* Ref.update(yield* Responses, (entries) =>
+          entries.map((entry) =>
+            entry.threadId === threadId ? { ...entry, runId: other.runId } : entry,
+          ),
+        )
+        const store = yield* ArtifactStore
+        const result = yield* store
+          .write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Wrong Thread',
+            body: 'Must not be saved.',
+          })
+          .pipe(Effect.result)
+        expect(Result.isFailure(result) && result.failure._tag).toBe('NotFound')
+        expect(yield* store.list(person.id, threadId)).toEqual([])
+        expect(yield* Ref.get(yield* Published)).not.toContain(Topic.thread(threadId))
+      }),
     )
 
     it.effect(
@@ -266,8 +476,16 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const store = yield* ArtifactStore
           const writes = yield* Effect.all(
             [
-              store.write(person.id, threadId, { title: 'Plan', body: 'First' }),
-              store.write(person.id, threadId, { title: 'PLAN', body: 'Second' }),
+              store.write(person.id, threadId, {
+                toolCallId: documentCall,
+                title: 'Plan',
+                body: 'First',
+              }),
+              store.write(person.id, threadId, {
+                toolCallId: documentCall,
+                title: 'PLAN',
+                body: 'Second',
+              }),
             ],
             { concurrency: 2 },
           )
@@ -305,7 +523,12 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           )
           yield* Effect.forEach(
             [1, 2, 3],
-            () => store.write(person.id, threadId, { title: 'plan', body: detail.body }),
+            () =>
+              store.write(person.id, threadId, {
+                toolCallId: documentCall,
+                title: 'plan',
+                body: detail.body,
+              }),
             { concurrency: 3 },
           )
           expect((yield* store.get(person.id, { id: artifact.id })).versions).toHaveLength(3)
@@ -321,6 +544,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             yield* fixture()
           const store = yield* ArtifactStore
           yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
             title: 'Private',
             body: 'Private content',
           })
@@ -383,12 +607,24 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         Effect.gen(function* () {
           const { database, person, threadId } = yield* fixture()
           const store = yield* ArtifactStore
-          yield* store.write(person.id, threadId, { title: 'Remove me', body: 'First' })
+          yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Remove me',
+            body: 'First',
+          })
           const [first] = yield* store.list(person.id, threadId)
           if (first === undefined) return yield* Effect.die('Document missing')
           yield* store.remove(person.id, first.id)
-          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'First' })
-          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'Second' })
+          yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Cascaded',
+            body: 'First',
+          })
+          yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Cascaded',
+            body: 'Second',
+          })
           const [second] = yield* store.list(person.id, threadId)
           if (second === undefined) return yield* Effect.die('Document missing')
           yield* database.run(database.delete(threads).where(eq(threads.id, threadId)))

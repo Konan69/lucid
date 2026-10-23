@@ -5,6 +5,7 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Logger from 'effect/Logger'
 import * as Queue from 'effect/Queue'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
@@ -20,6 +21,7 @@ import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { rpcAuthMiddlewareLayer } from './middleware.ts'
 import { personTable, sessionTable } from './tables.ts'
+import { Auth, authLayer } from './provider.ts'
 
 const applicationName = `vivid-auth-${NodeCrypto.randomBytes(8).toString('hex')}`
 const Caller = Schema.TaggedUnion({ Person: { personId: PersonId }, Vivid: {}, Runtime: {} })
@@ -35,10 +37,16 @@ const decodeBackends = decodeStored(
   'Better Auth backend list',
 )
 
+/** A positive termination receipt proves server exit before the next activity snapshot. */
+const decodeTermination = decodeStored(
+  Schema.Struct({ rows: Schema.Tuple([Schema.Struct({ gone: Schema.Boolean })]) }),
+  'Better Auth backend termination',
+)
+
 /** A receipt observes the real RPC request's last finalizer, without replacing authentication. */
 class Receipts extends Context.Service<Receipts, Queue.Queue<void>>()('AuthScopeTest/Receipts') {}
 
-/** Added last to the RPC so its finalizer registers first and runs after the SDK pool finalizer. */
+/** Added last to the RPC so its finalizer registers first and runs after the call's own. */
 class Closed extends RpcMiddleware.Service<Closed>()('AuthScopeTest/Closed') {}
 
 const probes = RpcGroup.make(
@@ -95,11 +103,31 @@ const closedLayer = Layer.effect(
   }),
 )
 
+/** Each warning auth logs, as it is logged: the receipt that a lost connection was heard. */
+class Warnings extends Context.Service<Warnings, Queue.Queue<string>>()('AuthScopeTest/Warnings') {}
+
+const warningsLayer = Layer.effect(Warnings, Queue.unbounded<string>())
+
+/** Auth with its log going to `Warnings` as well as the usual output. */
+const watchedAuthLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const warnings = yield* Warnings
+    const heard = Logger.make(({ message }) => {
+      Queue.offerUnsafe(warnings, String(message))
+    })
+    return authLayer.pipe(
+      Layer.provide(Logger.layer([heard], { mergeWithExisting: true })),
+      Layer.provide(authConfigLayer),
+    )
+  }),
+)
+
 const dependencies = Layer.mergeAll(
+  watchedAuthLayer,
   testDatabaseLayer,
   authConfigLayer,
   Layer.effect(Receipts, Queue.unbounded<void>()),
-)
+).pipe(Layer.provideMerge(warningsLayer))
 const testLayer = Layer.mergeAll(handlers, closedLayer, rpcAuthMiddlewareLayer).pipe(
   Layer.provideMerge(dependencies),
 )
@@ -142,6 +170,28 @@ describe.skipIf(!testDatabaseConfigured)('RPC authentication resource ownership'
         const config = yield* ServerConfig
         const receipts = yield* Receipts
         const client = yield* RpcTest.makeClient(probes)
+        // Better Auth 1.7.5 starts checkSchema without awaiting it in auth/base.mjs.
+        // Await its cached receipt before emptying the pool so startup cannot race the probe.
+        const auth = yield* Auth
+        yield* Effect.promise(() =>
+          auth.$context.then((context) => {
+            if (context.checkSchema === undefined) expect.fail('Expected the Kysely schema check')
+            return context.checkSchema()
+          }),
+        )
+        // An idle connection would hide a wrong Better Auth call through pool reuse.
+        // PostgreSQL's timeout waits for server exit; pg-pool's warning acknowledges client removal.
+        const database = yield* Database
+        const warnings = yield* Warnings
+        for (const pid of yield* authBackends()) {
+          const termination = yield* database.run(
+            database.execute(sql`SELECT pg_terminate_backend(${pid}, 5000) AS gone`),
+          )
+          expect((yield* decodeTermination(termination)).rows[0].gone).toBe(true)
+          expect(yield* Queue.take(warnings)).toContain('lost an idle connection')
+        }
+        const before = yield* authBackends()
+        expect(before).toEqual([])
         const result = yield* client.Probe(undefined, {
           headers: { authorization: `Bearer ${Redacted.value(config.RUNTIME_TOKEN)}` },
         })
@@ -150,8 +200,12 @@ describe.skipIf(!testDatabaseConfigured)('RPC authentication resource ownership'
       }),
     )
 
-    /** Request closure must end the SDK pool while the middleware Layer remains available for the next call. */
-    it.effect('a Person call releases its auth connection and the middleware keeps serving', () =>
+    /**
+     * Better Auth has one pool for the server's life (`provider.ts`): a call that ends leaves its
+     * connection open in that pool, and the next call is answered on the same one instead of a
+     * connection of its own.
+     */
+    it.effect('Person calls share the server’s one auth pool across requests', () =>
       Effect.gen(function* () {
         const person = yield* personSession()
         const receipts = yield* Receipts
@@ -162,12 +216,37 @@ describe.skipIf(!testDatabaseConfigured)('RPC authentication resource ownership'
         expect(first.caller).toEqual(expected)
         expect(first.pids.length).toBeGreaterThan(0)
         yield* Queue.take(receipts)
-        expect(yield* authBackends()).toEqual([])
+        expect(yield* authBackends()).toEqual(first.pids)
         const second = yield* client.Probe(undefined, options)
         expect(second.caller).toEqual(expected)
-        expect(second.pids.length).toBeGreaterThan(0)
+        expect(second.pids).toEqual(first.pids)
         yield* Queue.take(receipts)
-        expect(yield* authBackends()).toEqual([])
+      }),
+    )
+
+    /**
+     * PostgreSQL ending an idle auth connection (a restart, a failover, an administrator) makes
+     * the pool emit `error`; unheard, Node throws it and the server stops. It is heard, said, and
+     * the next call opens a new connection.
+     */
+    it.effect('a lost idle auth connection is heard and the next call is answered', () =>
+      Effect.gen(function* () {
+        const person = yield* personSession()
+        const receipts = yield* Receipts
+        const warnings = yield* Warnings
+        const client = yield* RpcTest.makeClient(probes)
+        const options = { headers: { authorization: `Bearer ${person.token}` } }
+        const first = yield* client.Probe(undefined, options)
+        yield* Queue.take(receipts)
+        const database = yield* Database
+        for (const pid of first.pids) {
+          yield* database.run(database.execute(sql`SELECT pg_terminate_backend(${pid})`))
+        }
+        expect(yield* Queue.take(warnings)).toContain('lost an idle connection')
+        const second = yield* client.Probe(undefined, options)
+        expect(second.caller).toEqual(Caller.cases.Person.make({ personId: person.personId }))
+        expect(second.pids).not.toEqual(first.pids)
+        yield* Queue.take(receipts)
       }),
     )
   })

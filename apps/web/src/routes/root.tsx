@@ -13,7 +13,7 @@ import { warm } from '../data/warm'
  *   given to their routes by `main.tsx`, which imports them, so they ship in the app's first
  *   file. Naming them here through `import()` was measured: it cut the first load into 62 files
  *   where there had been 32.
- * - Routines, the Library and Projects are named by their routes through `lazyRouteComponent`,
+ * - The Library and Projects are named by their routes through `lazyRouteComponent`,
  *   each in its own file, fetched on intent and when the browser is idle (`App.tsx`).
  *
  * Ported from T3 Code web (`apps/web/src/routes/__root.tsx`, `src/router.ts`): file routes, no

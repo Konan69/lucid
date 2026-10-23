@@ -1,11 +1,11 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm'
+import { and, asc, inArray, lte, sql, type SQL } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { PersonId, ThreadId } from '@vivid/contracts'
-import { Database, decodeStored } from '../database/client.ts'
+import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import type { inputRequests } from '../inputs/tables.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { Conversation, DeliverySpeaker, StoredRunOrigin } from '../threads/conversation.ts'
@@ -13,6 +13,26 @@ import { Signal, encodeSignal } from './signal.ts'
 import type { approvals } from './tables.ts'
 
 type SignalTable = typeof approvals | typeof inputRequests
+/** Owners execute each complete query on the current database; builders never leave the domain. */
+export interface SignalWriter {
+  readonly table: SignalTable
+  readonly claim: (
+    database: Database['Service'],
+    update: { readonly where: SQL; readonly leaseUntil: number; readonly token: string },
+  ) => Effect.Effect<
+    ReadonlyArray<Pick<SignalTable['$inferSelect'], 'id' | 'threadId' | 'personId' | 'signal'>>,
+    DatabaseInfrastructureError
+  >
+  readonly settle: (
+    database: Database['Service'],
+    update: {
+      readonly id: string
+      readonly token: string
+      readonly signal: Effect.Success<ReturnType<typeof encodeSignal>>
+      readonly dueAt: number
+    },
+  ) => Effect.Effect<void, DatabaseInfrastructureError>
+}
 const Claimed = Schema.Struct({
   id: Schema.String,
   threadId: ThreadId,
@@ -24,14 +44,16 @@ const decodeClaimed = decodeStored(Claimed, 'owed signal')
 /**
  * Claim at most 16 rows under SKIP LOCKED, then admit outside the transaction. All claims run
  * concurrently: admission has 30 seconds and each complete attempt has 60, inside a two-minute
- * lease. The token fences stale writes.
+ * lease. The token fences stale writes. Each domain executes its own complete queries.
+ * Claim and acknowledgement run on the replay's own Database, never a caller's transaction.
  * A dead process leaves an owed row, reclaimable after its lease. Runtime keys cover the crash
  * after admission but before acknowledgement, including a late response from an expired owner.
  */
 export const replaySignals = Effect.fn('Signals.replay')(function* (
-  table: SignalTable,
+  write: SignalWriter,
   ids: Option.Option<ReadonlyArray<string>>,
 ) {
+  const { table } = write
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
   const token = NodeCrypto.randomUUID()
@@ -46,22 +68,15 @@ export const replaySignals = Effect.fn('Signals.replay')(function* (
     .orderBy(asc(table.signalDueAt), asc(table.id))
     .limit(16)
     .for('update', { skipLocked: true })
-  const rows = yield* database.run(
-    database
-      .update(table)
-      .set({ signalDueAt: now + 120_000, signalClaim: token })
-      .where(inArray(table.id, due))
-      .returning({
-        id: table.id,
-        threadId: table.threadId,
-        personId: table.personId,
-        signal: table.signal,
-      }),
-  )
+  const rows = yield* write.claim(database, {
+    where: inArray(table.id, due),
+    leaseUntil: now + 120_000,
+    token,
+  })
   yield* Effect.forEach(
     rows,
     (value) =>
-      replayOne(table, token, value).pipe(
+      replayOne(write, token, value).pipe(
         Effect.interruptible,
         Effect.timeoutOption('60 seconds'),
         // A corrupt debt or unexpected infrastructure/authority failure stays leased for retry.
@@ -81,7 +96,7 @@ export const replaySignals = Effect.fn('Signals.replay')(function* (
 
 /** Terminal reach loss is recorded once; outages and busy Threads retain their original key. */
 const replayOne = Effect.fn('Signals.replayOne')(function* (
-  table: SignalTable,
+  write: SignalWriter,
   token: string,
   value: Pick<SignalTable['$inferSelect'], 'id' | 'threadId' | 'personId' | 'signal'>,
 ) {
@@ -128,10 +143,10 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
         })
       : row.signal
   }
-  yield* database.run(
-    database
-      .update(table)
-      .set({ signal: yield* encodeSignal(ending), signalDueAt: now + 30_000, signalClaim: null })
-      .where(and(eq(table.id, row.id), eq(table.signalClaim, token))),
-  )
+  yield* write.settle(database, {
+    id: row.id,
+    token,
+    signal: yield* encodeSignal(ending),
+    dueAt: now + 30_000,
+  })
 })

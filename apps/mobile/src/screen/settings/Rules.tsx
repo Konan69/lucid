@@ -1,5 +1,5 @@
 import { RuleScope, Workspace, type Rule, type RuleDecision } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
+import { Data, Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { Trash2 } from 'lucide-react-native'
@@ -18,6 +18,7 @@ import {
   Skeleton,
 } from '../../ui/ui'
 import { useMe } from '../../workspace'
+import { start } from '../../data/app'
 
 /** The three things a rule can decide, in the words the choice is offered in. */
 const DECISIONS = [
@@ -95,20 +96,22 @@ export function Rules({ onClose }: { onClose: () => void }) {
    * Removes a rule. It leaves the list at once and comes back if the server refuses, with the
    * sentence that says so above the list.
    */
-  async function remove(rule: Rule) {
-    warn()
-    setUnremoved(Option.none())
-    const result = await data.change(
-      (client) => client.DeleteRule({ id: rule.id }),
-      () =>
-        data.live.rules.expect((current) => ({
-          ...current,
-          rules: current.rules.filter((kept) => kept.id !== rule.id),
-        })),
+  function remove(rule: Rule) {
+    const removed = () =>
+      data.live.rules.expect((current) => ({
+        ...current,
+        rules: current.rules.filter((kept) => kept.id !== rule.id),
+      }))
+    return start(
+      Effect.gen(function* () {
+        warn()
+        setUnremoved(Option.none())
+        const result = yield* data.changing((client) => client.DeleteRule({ id: rule.id }), removed)
+        if (Result.isFailure(result)) {
+          setUnremoved(Option.some('That rule could not be removed. Try again.'))
+        }
+      }),
     )
-    if (Result.isFailure(result)) {
-      setUnremoved(Option.some('That rule could not be removed. Try again.'))
-    }
   }
 
   const askToRemove = (rule: Rule) =>
@@ -236,21 +239,25 @@ function NewRule({ manages }: { manages: boolean }) {
   const text = action.trim()
   const asking = Adding.$is('Asking')(adding)
 
-  async function add() {
-    if (text.length === 0 || asking) return
-    setAdding(Adding.Asking())
-    const result = await data.change((client) =>
-      client.CreateRule({ action: text, decision, scope: WHOSE[whose].scope }),
+  function add() {
+    return start(
+      Effect.gen(function* () {
+        if (text.length === 0 || asking) return
+        setAdding(Adding.Asking())
+        const result = yield* data.changing((client) =>
+          client.CreateRule({ action: text, decision, scope: WHOSE[whose].scope }),
+        )
+        if (Result.isFailure(result)) {
+          setAdding(Adding.Refused())
+          return
+        }
+        commit()
+        // Only the words that were saved leave the field. It stays editable while the rule is on
+        // its way, so by now it can hold the start of another rule, which is still the Person's.
+        setAction((now) => (now.trim() === text ? '' : now))
+        setAdding(Adding.Idle())
+      }),
     )
-    if (Result.isFailure(result)) {
-      setAdding(Adding.Refused())
-      return
-    }
-    commit()
-    // Only the words that were saved leave the field. It stays editable while the rule is on its
-    // way, so by now it can hold the start of another rule, which is still the Person's.
-    setAction((now) => (now.trim() === text ? '' : now))
-    setAdding(Adding.Idle())
   }
 
   return (

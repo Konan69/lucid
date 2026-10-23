@@ -69,7 +69,7 @@ emulator in front: a covered window can produce a misleading blank capture.
 
 Task mutations and Library upload/search/delete passed supplemental API/browser
 checks. Full native task save/completion, document picker/upload/sharing,
-SecureStore persistence, connector authorization, routine scheduling and Android
+SecureStore persistence, connector authorization and Android
 lifecycle coverage remain to be verified end to end. Opening a native form is
 not evidence that every action inside it works.
 

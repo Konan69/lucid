@@ -51,6 +51,9 @@ jobs:
     if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # A push to main must compare with its previous tip, even when origin/main is already HEAD.
+      CEILINGS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,9 +64,23 @@ jobs:
             stages: lint
           - name: Typecheck
             stages: typecheck
+          - name: Production builds
+            stages: build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Checkout has depth 1. Fetch the comparison object explicitly so lint needs no merge history.
+      - name: Fetch the ceiling comparison commit
+        if: matrix.stages == 'lint'
+        run: |
+          case "$CEILINGS_BASE" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::error::ceilings: this event has no comparison commit. A new branch needs an existing base for --ceilings-base."
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$CEILINGS_BASE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -89,7 +106,7 @@ jobs:
             turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the gate stages
-        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }}
+        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
 
   test:
     name: Test
@@ -153,6 +170,40 @@ jobs:
 
       - name: Run the test stage
         run: node scripts/gate.mjs full --here --only test
+
+  proof:
+    name: Regression proof
+    # CI proves only pull requests from fix/ branches. Direct pushes to main are proved only
+    # by the push hook when the local branch name starts with fix/.
+    if: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'fix/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROOF_BRANCH: ${{ github.head_ref }}
+      PROOF_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      # Proof compares the actual fix branch, not GitHub's synthetic merge commit.
+      - name: Checkout branch history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The stage creates disposable databases on its own Docker PostgreSQL server.
+      - name: Prove each changed regression test
+        run: node scripts/gate.mjs full --here --only proof --proof-branch "$PROOF_BRANCH" --proof-base "$(git merge-base HEAD "$PROOF_BASE")"
 
   gitleaks:
     name: Secret scan

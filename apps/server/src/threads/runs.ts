@@ -11,7 +11,6 @@ import {
   DeliveryScope,
   NotFound,
   type DeliveryScopeRequest,
-  type LibraryFolderId,
   Run,
   RunFailure,
   RunOrigin,
@@ -136,9 +135,8 @@ export interface RequestRun {
 /**
  * The newest Runs in a Thread that act for one Person, oldest first, with the stored origin.
  *
- * `list` cannot serve the reviewer of a proposed action (`approvals/request.ts`): it folds
- * `Standing` and `Attention` into `Routine`, and those two start from text the server or Vivid
- * wrote, which must never be read as the Person's instruction. Filtering by Person here, not
+ * The review needs the stored origin so a server-written body never counts as the Person's
+ * instruction. Filtering by Person here, not
  * after a Thread-wide limit, keeps attribution exact in a long shared Thread. Only admitted Runs
  * count, as in `actingRun`: a reserved turn the runtime has not accepted has no words in history.
  */
@@ -173,7 +171,6 @@ export interface RunStoreService {
     readonly threadId: ThreadId
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
-    readonly libraryFolder: LibraryFolderId | null
   }) => Effect.Effect<TurnReservation, Conflict | DatabaseInfrastructureError>
   /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
   readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
@@ -206,7 +203,7 @@ const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 const encodeReceipt = encodeStored(Admitted, 'Run admission receipt')
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
 
-/** Standing checks choose attention through notify_person; completing a quiet check stays quiet. */
+/** Watch work reaches the Person through the Feed; completing a quiet check stays quiet. */
 export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')(function* (
   id: RunId,
 ) {
@@ -219,10 +216,9 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
   return StoredRunOrigin.match(yield* decodeOrigin(row.origin), {
     Message: () => true,
     FirstConversation: () => false,
-    Routine: () => true,
-    Standing: () => false,
-    Attention: () => false,
     Decision: () => true,
+    // A background wake for the Feed: the Person hears about it only when Vivid posts there.
+    Watch: () => false,
   })
 })
 const decodeState = decodeStored(
@@ -237,11 +233,8 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
   StoredRunOrigin.match(origin, {
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
     FirstConversation: (): RunOrigin => RunOrigin.cases.FirstConversation.make({ person }),
-    Routine: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
-    Standing: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
-    Attention: ({ routineName }): RunOrigin =>
-      RunOrigin.cases.Routine.make({ person, routineName }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
+    Watch: ({ watchName }): RunOrigin => RunOrigin.cases.Watch.make({ person, watchName }),
   })
 
 const ENDED = {
@@ -308,13 +301,12 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
  * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
  * before calling Flue is mandatory. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
- * Same-Person Routine deliveries still join. An admitted replay returns its original receipt before Busy;
+ * Same-Person server deliveries still join. An admitted replay returns its original receipt before Busy;
  * unadmitted reservations remain subject to the current working authority.
  */
 const makeStart = (database: DatabaseService): RunStoreService['start'] =>
   Effect.fn('RunStore.start')(function* (input) {
     const now = yield* Clock.currentTimeMillis
-    const folder = input.libraryFolder
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         yield* tx
@@ -352,7 +344,6 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
             id: input.id,
             threadId: input.threadId,
             personId: input.personId,
-            libraryFolder: folder,
             turn: sql`(select coalesce(max("turn"), 0) + 1 from "vivid_runs" where "thread_id" = ${input.threadId})`,
             origin: yield* encodeOrigin(input.origin),
             state: 'working',
@@ -368,7 +359,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
     )
   })
 
-/** The actor and optional confinement survive runtime restarts without entering Flue history. */
+/** The acting Person survives runtime restarts without entering Flue history. */
 const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
   Effect.fn('RunStore.scope')(function* ({ threadId, turn }) {
     const [row] = yield* database.run(
@@ -378,7 +369,7 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
         .where(and(eq(runs.threadId, threadId), eq(runs.turn, turn))),
     )
     if (row === undefined) return yield* new NotFound({ message: 'Delivery not found' })
-    return DeliveryScope.make({ acting: row.personId, libraryFolder: row.libraryFolder })
+    return DeliveryScope.make({ acting: row.personId })
   })
 
 /** A failed admission is replayable with its original turn; acceptance starts its observation. */

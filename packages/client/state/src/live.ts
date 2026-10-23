@@ -12,7 +12,6 @@ import {
   Result,
   Schedule,
   Stream,
-  type Duration,
 } from 'effect'
 import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
@@ -330,7 +329,7 @@ function familyOf<Argument, Value>(
  * Who hears that the server no longer accepts this session.
  *
  * `gone` is run on that failure from the four places every call and every subscription
- * passes through (`subscription`, `ask`, `beat`, `run`), so an `Unauthenticated` is heard
+ * passes through (`subscription`, `ask`, `hold`, `run`), so an `Unauthenticated` is heard
  * whichever call it answers, not only the one that asks who is signed in: a session revoked from
  * another device is refused on whatever is asked next.
  */
@@ -353,7 +352,7 @@ function makeLeaving() {
 
 /**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
- * moving between Threads, Routines and the Library in the course of a piece of work is instant
+ * moving between Threads, Projects and the Library in the course of a piece of work is instant
  * and current. It costs the server an open subscription, not a refetch.
  */
 const IDLE_FOR_MS = 5 * 60_000
@@ -446,30 +445,32 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   }
 
   /**
-   * Something said to the server again and again for as long as a screen is open: "I am here".
+   * Something held open on the server for as long as a screen reads it: "I am here".
    *
-   * The atom says it when something first reads it, says it again every `every`, and says it at
-   * once whenever `argument` changes, so what the server hears follows what is true now. It stops
-   * the moment nothing reads it (no idle time: a Person who left a Thread is not kept present in
-   * it). A call that fails is skipped; the next beat is the retry.
+   * The atom opens `open`'s call when something first reads it, and closes it the moment nothing
+   * does (no idle time: a Person who left a Thread is not kept present in it). It says nothing on
+   * a timer: the server hears the call being open, and hears the client on the socket's own
+   * pings. When `argument` changes the call is closed and opened again with the new value, so what
+   * the server holds follows what is true now; a dropped connection opens it again as every
+   * subscription does.
    */
-  const beat = <Argument>(
+  const hold = <Argument>(
     argument: Atom.Atom<Argument>,
-    call: (client: Client, argument: Argument) => Effect.Effect<unknown, ProductFailure>,
-    every: Duration.Input,
+    open: (client: Client, argument: Argument) => Stream.Stream<void, ProductFailure>,
   ): Atom.Atom<LiveResult<void>> =>
     Atom.setIdleTTL(
       runtime.atom((get) => {
         const said = get(argument)
-        return Effect.gen(function* () {
-          yield* call(yield* VividRpcClient, said)
-        }).pipe(
-          Effect.tapError((failure) =>
+        return resilient(() =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              return open(yield* VividRpcClient, said)
+            }),
+          ),
+        ).pipe(
+          Stream.tapError((failure) =>
             Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
           ),
-          Effect.ignore,
-          Effect.repeat(Schedule.spaced(every)),
-          Effect.asVoid,
         )
       }),
       0,
@@ -523,5 +524,5 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
 
   const reopen = () => reopenEnded(registry, sources)
 
-  return { registry, query, kept, family, ask, beat, run, change, reopen, whenSessionGone }
+  return { registry, query, kept, family, ask, hold, run, change, reopen, whenSessionGone }
 }

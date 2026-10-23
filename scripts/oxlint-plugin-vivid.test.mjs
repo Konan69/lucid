@@ -1,6 +1,7 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeModule from 'node:module'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
@@ -157,7 +158,7 @@ const cases = [
     'better-auth-secure-options',
     'const options = { migrate: true }',
     'const options = { migrate: false }',
-    'auth.ts',
+    'apps/server/src/auth/provider.ts',
   ],
   [
     'require-drizzle-config-paths',
@@ -202,6 +203,7 @@ function lint(ruleName, source, filename = 'module.ts') {
   try {
     const sourcePath = path.join(directory, filename)
     const configPath = path.join(directory, 'oxlint.json')
+    NodeFS.mkdirSync(path.dirname(sourcePath), { recursive: true })
     writeFileSync(sourcePath, source)
     writeFileSync(
       configPath,
@@ -520,7 +522,7 @@ const decodeExhaustiveOutput = Schema.decodeUnknownSync(
 
 /**
  * Runs the native type-aware rule over the checked-in fixtures and returns the fixture file names
- * it reports. The rule needs real types, so this is the one test that starts tsgolint; the fixture
+ * it reports. The rule needs real types, so this is the one test that starts tsrslint; the fixture
  * project is four files with no imports outside its directory. `--no-ignore` is required because
  * the root config ignores `scripts/__fixtures__`, which holds deliberately wrong code.
  */
@@ -551,7 +553,16 @@ function exhaustiveFindings(setting) {
             '--no-ignore',
             exhaustiveFixtures,
           ],
-          { cwd: repositoryRoot, encoding: 'utf8' },
+          {
+            cwd: repositoryRoot,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              OXLINT_TSGOLINT_PATH: NodeModule.createRequire(import.meta.url)(
+                '@maschwenk/tsrslint',
+              ).binaryPath(),
+            },
+          },
         )
       } catch (cause) {
         const failure = decodeProcessFailure(cause)

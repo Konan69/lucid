@@ -10,14 +10,17 @@ import { keepCurrent, UpdateStepFailed, type UpdateClient } from './update'
  * restart, the app state for when the Person leaves and returns.
  */
 const client: UpdateClient = {
-  download: Effect.tryPromise({
-    try: async () => {
-      const check = await Updates.checkForUpdateAsync()
-      if (!check.isAvailable) return false
-      const fetched = await Updates.fetchUpdateAsync()
-      return fetched.isNew
-    },
-    catch: () => new UpdateStepFailed({ step: 'download' }),
+  download: Effect.gen(function* () {
+    const check = yield* Effect.tryPromise({
+      try: () => Updates.checkForUpdateAsync(),
+      catch: () => new UpdateStepFailed({ step: 'download' }),
+    })
+    if (!check.isAvailable) return false
+    const fetched = yield* Effect.tryPromise({
+      try: () => Updates.fetchUpdateAsync(),
+      catch: () => new UpdateStepFailed({ step: 'download' }),
+    })
+    return fetched.isNew
   }),
   restart: Effect.tryPromise({
     try: () => Updates.reloadAsync(),

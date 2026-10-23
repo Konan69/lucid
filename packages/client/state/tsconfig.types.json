@@ -1,7 +1,6 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": ["../../../tsconfig.base.json", "../../../tsconfig.hermes.json"],
   "compilerOptions": {
-    "lib": ["ES2024", "DOM"],
     "noEmit": false,
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo",
@@ -9,7 +8,9 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "rootDir": "src",
-    "outDir": ".cache/typescript/types"
+    "outDir": ".cache/typescript/types",
+    // Sign-in parses URLs shared by browser and phone adapters.
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],

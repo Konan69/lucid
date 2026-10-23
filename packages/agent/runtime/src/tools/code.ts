@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { BrowserAction, CodeFailure, CodeOutcome, ReadPageOutcome } from '@vivid/contracts'
+import { Tool, BrowserAction, CodeFailure, CodeOutcome, ReadPageOutcome } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { CodeTiming, CodeToolTimeout } from '@vivid/contracts/code'
 import * as v from 'valibot'
@@ -30,6 +30,7 @@ function failureView(failure: CodeFailure): Schema.Json {
     TimedOut: () => failure,
     OverLimit: () => failure,
     Unavailable: () => failure,
+    Busy: () => failure,
   })
 }
 
@@ -86,7 +87,7 @@ export function pageOutcome(outcome: ReadPageOutcome): ToolResult {
 export function codeTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'run_code',
+      name: Tool.run_code,
       // The shared timing contract leaves room for transport and log collection.
       timeoutMs: CodeToolTimeout,
       description: PROGRAM,
@@ -109,7 +110,7 @@ export function codeTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'read_page',
+      name: Tool.read_page,
       description:
         'Read any public web page as text, without a Computer or signed-in browser. Returns title, headings, paragraphs, lists and links.',
       input: v.object({ summary, address: text('The public http or https page address.', 4000) }),

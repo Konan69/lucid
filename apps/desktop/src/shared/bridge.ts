@@ -123,6 +123,12 @@ export const BridgeRequest = Schema.TaggedUnion({
   GetDeviceLink: {},
   /** The Person changed this computer's access: ask the server again now. */
   RefreshDeviceLink: {},
+  /**
+   * The look the Person chose in Vivid: light, dark, or the system's. The shell makes it the
+   * window's own scheme, so what the operating system draws for the window (its buttons, its
+   * menus, the colour behind a page that has not loaded) matches the page inside it.
+   */
+  ShowColorScheme: { preference: ColorSchemePreference },
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
@@ -140,6 +146,7 @@ export const BridgeResponse = Schema.TaggedUnion({
   GoogleSignInBegun: { browser: SignInBrowser },
   GoogleSignInEnded: { value: SignInEnding },
   GoogleSignInCancelled: {},
+  ColorSchemeShown: {},
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -238,6 +245,8 @@ export interface VividDesktopBridge {
   readonly getAppVersion: () => Promise<string>
   readonly openExternal: (url: string) => Promise<void>
   readonly signIn: VividSignInBridge
+  /** Tells the shell the look the Person chose, so the window's own chrome is drawn to match. */
+  readonly colorScheme: { readonly show: (preference: ColorSchemePreference) => Promise<void> }
 }
 
 export { ServerSettings, ServerChoice } from './settings.ts'
@@ -269,5 +278,5 @@ export {
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
 export type VividAppBridge = Pick<
   VividDesktopBridge,
-  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting'
+  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting' | 'colorScheme'
 >

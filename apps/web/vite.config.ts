@@ -97,7 +97,13 @@ export default defineConfig(({ mode }) => {
   const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN
 
   return {
-    define: { __VIVID_RELEASE__: JSON.stringify(release) },
+    // Which build this page is, as Settings says it (`src/data/build.ts`): the commit, empty when
+    // the build was given none, and the moment this config was read, which is when the build ran.
+    define: {
+      __VIVID_RELEASE__: JSON.stringify(release),
+      __VIVID_COMMIT__: JSON.stringify(commit === undefined ? '' : commit),
+      __VIVID_BUILT__: JSON.stringify(new Date().toISOString()),
+    },
     plugins: [
       // The route tree (`src/tree.gen.ts`) is generated from this list, before React's plugin
       // sees the files. The list is written out, not read from file names: the router's own
@@ -111,8 +117,8 @@ export default defineConfig(({ mode }) => {
         virtualRouteConfig: rootRoute('root.tsx', [
           index('first.tsx'),
           route('/t/$id', 'thread.tsx'),
-          route('/routines', 'routines.tsx'),
           route('/library', 'library.tsx'),
+          route('/feed', 'feed.tsx'),
           route('/projects/{-$id}', 'projects.tsx'),
           route('/invite/$id', 'invite.tsx'),
         ]),

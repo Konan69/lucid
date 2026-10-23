@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Match, Option, Schema } from 'effect'
 import { ActionEffect } from './approvals.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
@@ -85,10 +85,10 @@ export const Connection = Schema.Struct({
   account: Schema.String,
   /**
    * Where the service came from. One from the `Catalogue` can be connected again for one more
-   * account. A server someone added by its `Address` cannot yet: adding it a second time is not
-   * something the Connection layer has been shown to do, so no screen offers it.
+   * account. An `Address` import or a `Made` app owns one dedicated connection, so screens
+   * cannot offer another account for it.
    */
-  origin: Schema.Literals(['Catalogue', 'Address']),
+  origin: Schema.Literals(['Catalogue', 'Address', 'Made']),
   ownership: ConnectionOwnership,
   state: ConnectionState,
   createdAt: Schema.Finite,
@@ -225,6 +225,46 @@ export const ConnectionStep = Schema.TaggedUnion({
 })
 export type ConnectionStep = typeof ConnectionStep.Type
 
+/** Source paths are canonical relative files; aliases cannot replace Vivid's pinned manifest. */
+export const MadeFile = Schema.Struct({
+  path: Schema.NonEmptyString.check(
+    Schema.isMaxLength(200),
+    Schema.makeFilter(
+      (path) =>
+        !path.includes('\\') &&
+        !path.includes('\0') &&
+        path !== 'package.json' &&
+        path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..'),
+    ),
+  ),
+  content: Schema.String.check(Schema.isMaxLength(200_000)),
+})
+export interface MadeFile extends Schema.Schema.Type<typeof MadeFile> {}
+
+/** Vivid supplies the framework manifest, while the author supplies bounded, distinct files. */
+export const MakeIntegrationRequest = Schema.Struct({
+  name: Schema.NonEmptyString.check(Schema.isMaxLength(40)),
+  files: Schema.Array(MadeFile).check(
+    Schema.isBetweenLength(1, 30),
+    Schema.makeFilter((files) => new Set(files.map((file) => file.path)).size === files.length),
+    // Executor builds an app from its root `index.ts` default export.
+    Schema.makeFilter((files) => files.some((file) => file.path === 'index.ts')),
+  ),
+})
+export interface MakeIntegrationRequest extends Schema.Schema.Type<typeof MakeIntegrationRequest> {}
+
+/** Repeated names reuse add's existing-account outcomes instead of allocating another app. */
+export const MakeIntegrationOutcome = Schema.TaggedUnion({
+  Made: { account: Schema.String },
+  PendingAuthorization: { account: Schema.String, step: ConnectionStep },
+  BuildFailed: { message: Schema.String },
+  NotAnIntegration: { reason: Schema.String },
+  Unreachable: { reason: Schema.String },
+  AlreadyConnected: { account: Schema.String, name: Schema.String },
+  Failed: { account: Schema.String, name: Schema.String },
+})
+export type MakeIntegrationOutcome = typeof MakeIntegrationOutcome.Type
+
 /**
  * Key fields for a Connection that takes them. They travel from the Person's client to the server
  * and on to the credential store; they are never written to a Thread, a log or model context.
@@ -293,6 +333,65 @@ export const UseToolRequest = Schema.Struct({
   rationale: Schema.String.check(Schema.isMaxLength(400)),
 })
 export interface UseToolRequest extends Schema.Schema.Type<typeof UseToolRequest> {}
+
+/**
+ * A display's own call into one of the Person's Integrations: OpenUI's `Query` (read when it is
+ * drawn and again when what it reads changes) and `Mutation` (run only when the Person presses the
+ * button that names it). A display names the tool as `tool@account`, with the tool and account
+ * exactly as `find_tools` showed them to Vivid, so the name stays words and never an identifier.
+ */
+export const DisplayToolKind = Schema.Literals(['Query', 'Mutation'] as const)
+export type DisplayToolKind = typeof DisplayToolKind.Type
+
+/** Automatic programs run on draw, with no Integration writes, browser actions or page reads.
+ * They still run real JavaScript on the Computer and are not a read-only sandbox. */
+export const DisplayCallPolicy = Schema.TaggedUnion({
+  Draw: {},
+  Press: {},
+})
+export type DisplayCallPolicy = typeof DisplayCallPolicy.Type
+
+/** Convert OpenUI's invocation vocabulary once, before admitting individual tool calls. */
+export const displayCallPolicy = (kind: DisplayToolKind): DisplayCallPolicy =>
+  Match.value(kind).pipe(
+    Match.when('Query', () => DisplayCallPolicy.cases.Draw.make({})),
+    Match.when('Mutation', () => DisplayCallPolicy.cases.Press.make({})),
+    Match.exhaustive,
+  )
+
+type DisplayCapability = ActionEffect | 'browser' | 'page'
+
+/** Both discovery and final admission consult this one capability policy. */
+export const displayCallRefusal = (
+  policy: DisplayCallPolicy,
+  capability: DisplayCapability,
+): Option.Option<string> =>
+  DisplayCallPolicy.match(policy, {
+    Draw: () => automaticRefusals[capability],
+    Press: () => Option.none(),
+  })
+
+const automaticRefusals: Readonly<Record<DisplayCapability, Option.Option<string>>> = {
+  read: Option.none(),
+  write: Option.some('This display runs automatically. Use a button to make changes.'),
+  destructive: Option.some('This display runs automatically. Use a button to make changes.'),
+  browser: Option.some('This display runs automatically. Use a button to use the browser.'),
+  page: Option.some('This display runs automatically. Use a button to read a page.'),
+}
+
+export const UseDisplayToolRequest = Schema.Struct({
+  name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(600)),
+  input: Schema.Json,
+  kind: DisplayToolKind,
+})
+export interface UseDisplayToolRequest extends Schema.Schema.Type<typeof UseDisplayToolRequest> {}
+
+/** A provider's separate approval step cannot be supplied by pressing a display button. */
+export class DisplayApprovalUnsupported extends Schema.TaggedError<DisplayApprovalUnsupported>()(
+  'DisplayApprovalUnsupported',
+  {},
+  { title: 'Display approval unsupported' },
+) {}
 
 /**
  * What came of the request. Every variant is something Vivid can act on truthfully: use the
@@ -428,6 +527,7 @@ export const ConnectionAddressRefusal = Schema.Literals([
   'documentation page has no OpenAPI specification link',
   'not an MCP server or OpenAPI specification',
   'unsupported integration authorization or specification',
+  'Vivid does not offer this service',
 ])
 
 /** Existing authorization steps remain the single source of truth for client card payloads. */

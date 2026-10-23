@@ -20,11 +20,14 @@ import {
   DeviceWork,
   DeviceAbility,
   WindowOutcome,
+  CopySignInRequest,
+  SignInDelivery,
   WindowAction,
   type ReportDeviceStopRequest,
   RunState,
   DatabaseFailure,
   Device,
+  DEVICE_ASKING_MILLIS,
   DeviceAccess,
   DeviceAnswer,
   DeviceId,
@@ -65,6 +68,8 @@ import { deviceRequests, devices } from './tables.ts'
  * (artifacts/night/reviews/chatgpt-latest.md, section 2, "Routing").
  */
 const REQUEST_BUDGET_MILLIS = 30_000
+// Consent and an OS key prompt take human time; other device actions keep their existing budget.
+const SIGN_IN_BUDGET_MILLIS = 300_000
 
 /**
  * How long a request waits for the computer to finish an earlier one before giving up. Shorter
@@ -121,6 +126,8 @@ export interface DeviceService {
   readonly list: (
     personId: PersonId,
   ) => Effect.Effect<ReadonlyArray<Device>, DatabaseInfrastructureError>
+  /** Which of these computers are waiting to be allowed with their desktop app open now. */
+  readonly asking: (list: ReadonlyArray<Device>) => Effect.Effect<ReadonlyArray<DeviceId>>
   /** Lets Vivid use this computer and, in the same write, no other computer of this Person. */
   readonly allow: (
     personId: PersonId,
@@ -165,6 +172,14 @@ export interface DeviceService {
     runId: RunId
     action: WindowAction
   }) => Effect.Effect<WindowOutcome, DatabaseInfrastructureError>
+  /** Site consent is asked on the desktop before any cookies are read. Secrets are returned
+   * only to the server's injection program, never to a model or a persisted ledger row. */
+  readonly signIn: (input: {
+    personId: PersonId
+    threadId: ThreadId
+    runId: RunId
+    request: CopySignInRequest
+  }) => Effect.Effect<SignInDelivery, DatabaseInfrastructureError>
   /** Ends a native turn once on its original Device link; offline Devices use their own idle timeout. */
   readonly ended: (runId: RunId) => Effect.Effect<void>
   /** Desktop Stop must prove Device, installation and Run ownership before runtime abort. */
@@ -246,6 +261,7 @@ const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
       ),
     Did: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
     Declined: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
+    SignIn: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -257,7 +273,7 @@ const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
  * first one ends, so a connection that died without saying so cannot shadow the app that came
  * back, and a request never has two places it might go.
  */
-const makePresence = (links: Map<DeviceId, Subscription>) => {
+const makePresence = (links: Map<DeviceId, Subscription>, knocks: Map<DeviceId, number>) => {
   /** Ending a link is one signal. Its stream stops and every request waiting on it settles. */
   const close = (subscription: Subscription) => Deferred.succeed(subscription.closed, undefined)
 
@@ -302,7 +318,28 @@ const makePresence = (links: Map<DeviceId, Subscription>) => {
       : DevicePresence.cases.Connected.make({ ability: link.ability })
   }
 
-  return { open, release, end, presenceOf }
+  /** A waiting computer's desktop app enrolled just now: it is open and asking to be allowed. */
+  const knock = (device: DeviceId, at: number) => {
+    knocks.set(device, at)
+  }
+
+  /**
+   * Which of these computers are asking to be allowed at `now` (`DeviceListResponse.asking`):
+   * still waiting, and enrolled within `DEVICE_ASKING_MILLIS`. A knock that has run out is
+   * forgotten here, so the map holds only computers whose app was open in the last minute.
+   */
+  const askingOf = (list: ReadonlyArray<Device>, now: number): ReadonlyArray<DeviceId> =>
+    list.flatMap((device) => {
+      const at = knocks.get(device.id)
+      if (at === undefined) return []
+      if (now - at >= DEVICE_ASKING_MILLIS) {
+        knocks.delete(device.id)
+        return []
+      }
+      return DeviceAccess.guards.Pending(device.access) ? [device.id] : []
+    })
+
+  return { open, release, end, presenceOf, knock, askingOf }
 }
 
 type Presence = ReturnType<typeof makePresence>
@@ -366,7 +403,9 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
     )
     if (row === undefined)
       return yield* new DatabaseFailure({ message: 'Enrolled computer not found' })
-    return yield* toDevice(row)
+    const device = yield* toDevice(row)
+    if (DeviceAccess.guards.Pending(device.access)) presence.knock(device.id, now)
+    return device
   })
 
   const list = Effect.fn('Device.list')(function* (personId: PersonId) {
@@ -520,6 +559,7 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     const matches = DeviceWork.match(ticket.request.work, {
       Page: () => DeviceAnswer.isAnyOf(['Done', 'Refused', 'Failed'])(input.answer),
       Window: () => DeviceAnswer.isAnyOf(['Did', 'Declined', 'Failed'])(input.answer),
+      SignIn: () => DeviceAnswer.isAnyOf(['SignIn', 'Failed'])(input.answer),
     })
     const receipt = matches ? receiptOf(input.answer) : DeviceReceipt.cases.OutcomeUnknown.make({})
     return yield* Effect.uninterruptible(
@@ -692,7 +732,11 @@ const makeSend = (
         subscriptionId: subscription.id,
         threadId: request.threadId,
         runId: request.runId,
-        action: request.work.action._tag,
+        action: DeviceWork.match(request.work, {
+          Page: ({ action }) => action._tag,
+          Window: ({ action }) => action._tag,
+          SignIn: () => 'SignIn',
+        }),
         receipt: yield* encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
         dispatchedAt: yield* Clock.currentTimeMillis,
         expiresAt: request.expiresAt,
@@ -788,7 +832,10 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
       if (link === undefined) return yield* new NoDeviceConnected({})
       if (!link.ability.apps) return yield* new WindowUnavailable({})
     }
-    const expiresAt = (yield* Clock.currentTimeMillis) + REQUEST_BUDGET_MILLIS
+    const budget = DeviceWork.guards.SignIn(input.work)
+      ? SIGN_IN_BUDGET_MILLIS
+      : REQUEST_BUDGET_MILLIS
+    const expiresAt = (yield* Clock.currentTimeMillis) + budget
     return yield* inTurn(
       turnOf(id),
       id,
@@ -802,6 +849,8 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
         // Read after the turn is taken: the link that was there when the wait began may be gone.
         const subscription = links.get(id)
         if (subscription === undefined) return yield* new NoDeviceConnected({})
+        if (DeviceWork.guards.SignIn(input.work) && !subscription.ability.signins)
+          return Option.some(DeviceAnswer.cases.Failed.make({}))
         const request = DeviceRequest.cases.Act.make({
           id: DeviceRequestId.make(NodeCrypto.randomUUID()),
           threadId: input.threadId,
@@ -824,6 +873,7 @@ const windowOutcome = (answer: DeviceAnswer): WindowOutcome =>
     Declined: ({ reason }) => WindowOutcome.cases.Refused.make({ reason }),
     Done: () => WindowOutcome.cases.OutcomeUnknown.make({}),
     Refused: () => WindowOutcome.cases.OutcomeUnknown.make({}),
+    SignIn: () => WindowOutcome.cases.OutcomeUnknown.make({}),
     Failed: () =>
       WindowOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -855,7 +905,7 @@ const makeWindows = ({
   const ended = Effect.fn('Device.runEnded')(function* (runId: RunId) {
     yield* Effect.forEach(
       links.values(),
-      Effect.fn('Device.endTurn')(function* (link) {
+      Effect.fn('Device.endTurn')(function* (link: Subscription) {
         if (link.windowRuns.delete(runId) && !(yield* Deferred.isDone(link.closed)))
           yield* Queue.offer(link.requests, DeviceRequest.cases.RunEnded.make({ runId }))
       }),
@@ -890,6 +940,49 @@ const makeWindows = ({
   })
   return { window, ended }
 }
+
+/** Cookie work shares the device ledger, queue and Run admission, while keeping its private
+ * receipt and actionable source refusals separate from page and window vocabularies. */
+const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
+  Effect.fn('Device.signIn')(function* (input: Parameters<DeviceService['signIn']>[0]) {
+    return yield* dispatch({
+      personId: input.personId,
+      threadId: input.threadId,
+      runId: input.runId,
+      work: DeviceWork.cases.SignIn.make(input.request),
+      authority: BrowseAuthority.cases.Acting.make({}),
+    }).pipe(
+      Effect.map((answer) =>
+        Option.match(answer, {
+          onNone: (): SignInDelivery => SignInDelivery.cases.NotAnswered.make({}),
+          onSome: (value): SignInDelivery =>
+            DeviceAnswer.match<SignInDelivery>(value, {
+              SignIn: ({ read }) => read,
+              Failed: () =>
+                SignInDelivery.cases.Unavailable.make({
+                  reason: 'Sign-in copying is unavailable on this connected device.',
+                }),
+              Done: () => SignInDelivery.cases.NotAnswered.make({}),
+              Refused: () => SignInDelivery.cases.NotAnswered.make({}),
+              Did: () => SignInDelivery.cases.NotAnswered.make({}),
+              Declined: () => SignInDelivery.cases.NotAnswered.make({}),
+            }),
+        }),
+      ),
+      Effect.catchTags({
+        NoDeviceConnected: () => Effect.succeed(SignInDelivery.cases.NotConnected.make({})),
+        NoActingRun: () => Effect.succeed(SignInDelivery.cases.RunRequired.make({})),
+        RunNotWorking: () => Effect.succeed(SignInDelivery.cases.RunRequired.make({})),
+        DeviceBusy: () => Effect.succeed(SignInDelivery.cases.Busy.make({})),
+        WindowUnavailable: () =>
+          Effect.succeed(
+            SignInDelivery.cases.Unavailable.make({
+              reason: 'The device cannot complete this request.',
+            }),
+          ),
+      }),
+    )
+  })
 
 /**
  * The database does not have the tables this code was written for: product migrations have not
@@ -953,23 +1046,29 @@ export const deviceLayer = Layer.effect(
     const database = yield* Database
     const links = new Map<DeviceId, Subscription>()
     const pending = new Map<DeviceRequestId, Pending>()
-    const presence = makePresence(links)
+    const presence = makePresence(links, new Map())
     const registry = makeRegistry(database, presence)
     const ledger = makeLedger(database, pending)
 
     // The first thing this service does is write to its ledger, so it is also the first thing
     // to meet a database whose migrations are behind. That is said by name before anything runs.
     yield* requireLedger(database)
-    // Once now, for what a previous process left behind and whose deadline has passed; once more
-    // when every deadline that process could have issued has passed too.
+    // Reconcile abandoned work now, after the ordinary budget and after the longer consent
+    // budget. Page/window recovery keeps its existing timing while sign-in work stays bounded.
     yield* ledger.reconcile()
-    yield* Effect.sleep(REQUEST_BUDGET_MILLIS).pipe(
-      Effect.andThen(ledger.reconcile()),
-      Effect.catch((failure) =>
-        Effect.logError('Abandoned device requests could not be closed', failure._tag),
-      ),
-      Effect.forkScoped,
-    )
+    const reconcile = ledger
+      .reconcile()
+      .pipe(
+        Effect.catch((failure) =>
+          Effect.logError('Abandoned device requests could not be closed', failure._tag),
+        ),
+      )
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep(REQUEST_BUDGET_MILLIS)
+      yield* reconcile
+      yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS - REQUEST_BUDGET_MILLIS)
+      yield* reconcile
+    }).pipe(Effect.forkScoped)
 
     const dispatch = makeDispatch({
       database,
@@ -989,11 +1088,15 @@ export const deviceLayer = Layer.effect(
     return DeviceRegistry.of({
       enrol: registry.enrol,
       list: registry.list,
+      asking: Effect.fn('Device.asking')(function* (list) {
+        return presence.askingOf(list, yield* Clock.currentTimeMillis)
+      }),
       allow: registry.allow,
       revoke: registry.revoke,
       requireConnected,
       watch: makeWatch(database, presence),
       ...windows,
+      signIn: makeSignIns(dispatch),
       reportStop: Effect.fn('Device.reportStop')(function* (personId, input) {
         const row = yield* registry.find(personId, input.device)
         if (row.installationId !== input.installation)

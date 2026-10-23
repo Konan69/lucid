@@ -1,4 +1,5 @@
 import * as NodeEvents from 'node:events'
+import { noCrossPackageImport } from './boundary.mjs'
 
 // Each runner has a `With` form that takes a Context first (`Effect.runPromiseWith(context)(program)`).
 // It starts an Effect exactly as the plain form does, so every rule about runners covers both.
@@ -900,9 +901,8 @@ const noConfigProviderFromEnvInLibrary = memberCallRule({
 const betterAuthSecureOptions = rule(
   'Keep Better Auth schema ownership and secrets explicit.',
   'Better Auth must disable implicit migrations and must not embed a literal secret.',
-  (report, context) => ({
+  (report) => ({
     Property(node) {
-      if (!/(?:^|[/\\])auth\.[cm]?[jt]s$/u.test(context.filename)) return
       const name = node.key?.type === 'Identifier' ? node.key.name : node.key?.value
       if (name === 'migrate' && node.value?.value !== false) report(node)
       if (name === 'secret' && isStringLiteral(node.value)) report(node)
@@ -1236,6 +1236,7 @@ export default {
     'effect-require-effect-fn': effectRequireEffectFn,
     'no-async-callback-api': noAsyncCallbackApi,
     'no-config-provider-from-env-in-library': noConfigProviderFromEnvInLibrary,
+    'no-cross-package-import': noCrossPackageImport,
     'no-direct-process-env': noDirectProcessEnv,
     'no-direct-schema-safeparse': noDirectSchemaSafeParse,
     'no-effect-catch-raw-error': noEffectCatchRawError,

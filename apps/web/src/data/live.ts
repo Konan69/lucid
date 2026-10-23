@@ -1,6 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
 import {
-  ServiceCatalog,
   Workspace,
   type LibraryShelf,
   type MeResponse,
@@ -8,7 +7,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option, Result, Schedule } from 'effect'
+import { Effect, Option, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -35,6 +34,8 @@ const family = engine.family
 export const live = {
   me: kept((client) => client.WatchMe()),
   settings: kept((client) => client.WatchSettings()),
+  /** The build of the server answering, for Settings beside the page's own (`build.ts`). */
+  build: one((client) => client.WatchBuild()),
   people: one((client) => client.WatchPeople()),
   threads: kept((client) => client.WatchThreads()),
   thread: family(
@@ -43,7 +44,6 @@ export const live = {
   ),
   inbox: one((client) => client.WatchInbox()),
   notifications: kept((client) => client.WatchNotifications()),
-  routines: one((client) => client.WatchRoutines()),
   projects: kept((client) => client.WatchProjects()),
   library: family(
     (shelf: LibraryShelf) => shelf,
@@ -56,9 +56,13 @@ export const live = {
   audit: one((client) => client.WatchAudit()),
   memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
+  /** What egress is doing for the Person right now (`screen/settings/Egress.tsx`). */
+  egress: one((client) => client.WatchEgress()),
   suggestions: one((client) => client.WatchSuggestions()),
   /** The Person's own computers, each with its access and whether its desktop app is listening. */
   devices: one((client) => client.WatchDevices()),
+  /** What Vivid's own work in background Threads brings the Person: the Feed (`screen/Feed.tsx`). */
+  feed: one((client) => client.WatchFeed()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }
@@ -67,26 +71,13 @@ export const live = {
 export const serviceSearch = Atom.make('')
 
 /**
- * One reading of the catalog for one question. The catalog is thousands of services nobody owns,
- * so it is searched on the server and never held here; see `ServiceCatalog` for why it can be
- * `Unavailable` while every Connection still lists.
+ * The part of the catalog that matches what is typed in Settings. The catalog is thousands of
+ * services nobody owns, so it is searched on the server and never held here; see `ServiceCatalog`
+ * for why it can be `Unavailable` while every Connection still lists. It is asked once for each
+ * question: the server answers when its copy of the catalog is ready, waiting for its first
+ * download after a start (`connections/catalog.ts` `retainCatalog`).
  */
-const catalogFor = (query: Atom.Atom<string>) =>
-  engine.ask(query, (client, asked) =>
-    // The catalog is read in the background by the server and is out of reach for a few seconds
-    // after it starts. That is not an answer to show for good, so it is asked again for a short
-    // while; only if it is still out of reach after that does the screen say so.
-    client.FindServices({ query: asked }).pipe(
-      Effect.repeat({
-        until: ServiceCatalog.guards.Ready,
-        schedule: Schedule.spaced('2 seconds'),
-        times: 6,
-      }),
-    ),
-  )
-
-/** The part of the catalog that matches what is typed in Settings. */
-export const services = catalogFor(serviceSearch)
+export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
 
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')
@@ -135,7 +126,7 @@ const told = new Map<string, ReadonlySet<string>>()
 /**
  * Says so when something finishes or needs the Person while they are somewhere else in the app.
  *
- * A Routine that ran, a reply that landed in another Thread, an Approval waiting: these only moved
+ * A reply that landed in another Thread, an Approval waiting: these only moved
  * a number on the bell. Each new one now says its title at the foot of the window with a way to
  * open it. What was already waiting when the page opened is not announced, it is in the bell; and
  * nothing is announced about the Thread that is on screen, which the Person is already reading.
@@ -236,20 +227,19 @@ const looking = Atom.make((get) => {
 export const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
 
 /**
- * "I am here" for one Thread, said for as long as its screen is open and this window is in front.
+ * "I am here" for one Thread, held for as long as its screen is open and this window is in front.
  *
- * The server keeps a Person present for fifteen seconds after they last said so, and decides from
- * that who is shown at the top of a shared Thread and who needs a notification instead. It used
- * to be said only when the Thread moved, so someone reading a quiet Thread, or writing a long
- * message, dropped out of it after fifteen seconds. A window in the background says nothing, so
- * its Person is told about what they are not looking at.
+ * The server shows who holds it at the top of a shared Thread, and does not notify someone about
+ * what they are looking at. It is one call kept open, not something said on a timer: the server
+ * hears this window leave when the call closes, when the socket closes, or when the socket goes
+ * quiet (`apps/server/src/rpc/link.ts`). A window in the background holds nothing, so its Person
+ * is told about what they are not looking at.
  */
 export const presentIn = Atom.family((id: ThreadId) =>
-  engine.beat(
+  engine.hold(
     Atom.make((get) => ({ typing: get(typingIn(id)), looking: get(looking) })),
     (client, now) =>
-      now.looking ? client.ReportPresence({ threadId: id, typing: now.typing }) : Effect.void,
-    '5 seconds',
+      now.looking ? client.BePresent({ threadId: id, typing: now.typing }) : Stream.never,
   ),
 )
 

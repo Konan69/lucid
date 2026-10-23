@@ -1,3 +1,4 @@
+import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Schema from 'effect/Schema'
 import { RunId } from '@vivid/contracts'
@@ -5,7 +6,6 @@ import * as Logger from 'effect/Logger'
 import { Message } from '../observability/messages.ts'
 import { runs } from '../threads/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
-import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
@@ -64,14 +64,14 @@ const always = ApprovalDecision.cases.AlwaysAllow.make({})
 
 /** A1-A3 use addressed owner-role cards and real rows; reach loss must never settle pending work. */
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
-layer(testDatabaseLayer)((it) => {
+layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
   describe.skipIf(!testDatabaseConfigured)('Approval inbox Thread privacy', () => {
     it.effect(
       'A1 making a Company Thread private hides its addressed Approval even from an owner',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const elsewhere = yield* fixture()
             const database = yield* Database
@@ -119,14 +119,15 @@ layer(testDatabaseLayer)((it) => {
                 database.select().from(approvals).where(eq(approvals.id, approval.id)),
               ),
             ).toEqual(before)
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
 
     it.effect('A3 Membership removal hides an Approval from the same stale Company Actor', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const database = yield* Database
           yield* database.run(
@@ -155,17 +156,18 @@ layer(testDatabaseLayer)((it) => {
               database.select().from(approvals).where(eq(approvals.id, approval.id)),
             ),
           ).toEqual(before)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
   })
 
   /** All writes use production stores against the isolated database; disabled without its explicit URL. */
   describe.skipIf(!testDatabaseConfigured)('Approval claims and outcomes', () => {
     it.effect('a Desktop decision records capability metadata without private action input', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const action = ProposedAction.make({
@@ -185,14 +187,15 @@ layer(testDatabaseLayer)((it) => {
             { event: AuditEvent.cases.ActionDenied.make({ service: 'Computer', tool: 'desktop' }) },
           ])
           expect(JSON.stringify(audit)).not.toContain('Private content')
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('two concurrent decisions execute once and the loser gets Conflict', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const approval = yield* store.raise(test.vivid, connectionAction)
@@ -226,14 +229,15 @@ layer(testDatabaseLayer)((it) => {
               }),
             }),
           ])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('a changed digest fails without executing', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const approval = yield* store.raise(test.vivid, connectionAction)
@@ -243,16 +247,17 @@ layer(testDatabaseLayer)((it) => {
           expect(Result.isFailure(result)).toBe(true)
           if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(Conflict)
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect(
       'an expired Approval cannot be decided and the sweeper publishes its settled state',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ApprovalStore
             const approval = yield* store.raise(test.vivid, connectionAction)
@@ -296,14 +301,15 @@ layer(testDatabaseLayer)((it) => {
             ])
             yield* store.expire
             expect(yield* Ref.get((yield* Observation).deliveries)).toHaveLength(1)
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
 
     it.effect('another Person including the Company owner gets NotFound', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const approval = yield* store.raise(test.companyVivid, connectionAction)
@@ -314,14 +320,15 @@ layer(testDatabaseLayer)((it) => {
           if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(NotFound)
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
           expect(yield* store.inbox(test.owner)).toEqual([])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('Unknown is stored and a later decision never runs the action again', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const observed = yield* Observation
@@ -343,16 +350,17 @@ layer(testDatabaseLayer)((it) => {
               }),
             }),
           ])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect(
       'AlwaysAllow writes personal policy, executes stored input, and settles despite delivery failure',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ApprovalStore
             const observed = yield* Observation
@@ -375,14 +383,15 @@ layer(testDatabaseLayer)((it) => {
               decision: 'Allow',
               scope: RuleScope.cases.Personal.make({}),
             })
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
 
     it.effect('simultaneous identical proposals share one pending Approval and notification', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const results = yield* Effect.all(
@@ -392,14 +401,15 @@ layer(testDatabaseLayer)((it) => {
           expect(results[0]).toEqual(results[1])
           expect(yield* store.inThread(test.personalId)).toHaveLength(1)
           expect(yield* Ref.get((yield* Observation).notices)).toHaveLength(1)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('denial and withdrawal leave actions untouched and preserve the terminal cards', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const denied = yield* store.raise(test.vivid, connectionAction)
@@ -445,14 +455,15 @@ layer(testDatabaseLayer)((it) => {
             expect.arrayContaining(['Denied', 'Withdrawn']),
           )
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('inconsistent stored columns fail as DatabaseFailure', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const approval = yield* store.raise(test.vivid, connectionAction)
@@ -466,82 +477,82 @@ layer(testDatabaseLayer)((it) => {
           const result = yield* Effect.result(store.inThread(test.personalId))
           expect(Result.isFailure(result)).toBe(true)
           if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(DatabaseFailure)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
   })
 
   /** Recovery shares this sequential suite with claims so a global sweep cannot steal an in-flight fixture. */
   describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permission', () => {
-    layer(testDatabaseLayer)('Clock case 1', (it) => {
-      it.effect(
-        'abandoned executions settle unknown after ten minutes, signal once, and never retry',
-        () =>
+    it.effect(
+      'abandoned executions settle unknown after ten minutes, signal once, and never retry',
+      () =>
+        scopedCase(
+          trustTestServices,
           Effect.gen(function* () {
-            const context = yield* Layer.build(trustTestServices)
-            return yield* Effect.gen(function* () {
-              const test = yield* fixture()
-              const store = yield* ApprovalStore
-              const observed = yield* Observation
-              const approval = yield* store.raise(test.companyVivid, connectionAction)
-              const request = { id: approval.id, digest: approval.digest, decision: once }
-              yield* Ref.set(observed.runnerDefect, true)
-              expect(Exit.isFailure(yield* Effect.exit(store.decide(test.member, request)))).toBe(
-                true,
-              )
-              const started = yield* Clock.currentTimeMillis
-              yield* TestClock.setTime(started + 10 * 60 * 1000)
-              yield* store.expire
-              expect((yield* store.inThread(test.companyId)).map((row) => row.state._tag)).toEqual([
-                'Executing',
-              ])
-              expect(yield* Ref.get(observed.deliveries)).toEqual([])
-              yield* TestClock.setTime(started + 10 * 60 * 1000 + 1)
-              yield* Effect.all([store.expire, store.expire], { concurrency: 2 })
-              const records = yield* store.inThread(test.companyId)
-              expect(records.map((row) => row.state._tag)).toEqual(['OutcomeUnknown'])
-              expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
-              expect(yield* Ref.get(observed.deliveries)).toEqual([
-                expect.objectContaining({
-                  threadId: approval.threadId,
-                  personId: test.member.person.id,
-                  idempotencyKey: `approval-${approval.id}`,
-                  message: expect.objectContaining({
-                    type: 'approval',
-                    attributes: { approval: approval.id, outcome: 'OutcomeUnknown' },
-                  }),
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const observed = yield* Observation
+            const approval = yield* store.raise(test.companyVivid, connectionAction)
+            const request = { id: approval.id, digest: approval.digest, decision: once }
+            yield* Ref.set(observed.runnerDefect, true)
+            expect(Exit.isFailure(yield* Effect.exit(store.decide(test.member, request)))).toBe(
+              true,
+            )
+            const started = yield* Clock.currentTimeMillis
+            yield* TestClock.setTime(started + 10 * 60 * 1000)
+            yield* store.expire
+            expect((yield* store.inThread(test.companyId)).map((row) => row.state._tag)).toEqual([
+              'Executing',
+            ])
+            expect(yield* Ref.get(observed.deliveries)).toEqual([])
+            yield* TestClock.setTime(started + 10 * 60 * 1000 + 1)
+            yield* Effect.all([store.expire, store.expire], { concurrency: 2 })
+            const records = yield* store.inThread(test.companyId)
+            expect(records.map((row) => row.state._tag)).toEqual(['OutcomeUnknown'])
+            expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+            expect(yield* Ref.get(observed.deliveries)).toEqual([
+              expect.objectContaining({
+                threadId: approval.threadId,
+                personId: test.member.person.id,
+                idempotencyKey: `approval-${approval.id}`,
+                message: expect.objectContaining({
+                  type: 'approval',
+                  attributes: { approval: approval.id, outcome: 'OutcomeUnknown' },
                 }),
-              ])
-              expect((yield* loadAudit(test.owner)).entries).toEqual([
-                expect.objectContaining({
-                  threadId: approval.threadId,
-                  by: 'person',
-                  actor: test.summary,
-                  event: AuditEvent.cases.ActionOutcomeUnknown.make({
-                    service: 'Work account',
-                    tool: 'update_project',
-                  }),
+              }),
+            ])
+            expect((yield* loadAudit(test.owner)).entries).toEqual([
+              expect.objectContaining({
+                threadId: approval.threadId,
+                by: 'person',
+                actor: test.summary,
+                event: AuditEvent.cases.ActionOutcomeUnknown.make({
+                  service: 'Work account',
+                  tool: 'update_project',
                 }),
-              ])
-              expect(
-                (yield* Ref.get(observed.topics)).some((topic) => topic.startsWith('c:')),
-              ).toBe(true)
-              yield* Ref.set(observed.runnerDefect, false)
-              const again = yield* Effect.result(store.decide(test.member, request))
-              expect(Result.isFailure(again)).toBe(true)
-              if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(Conflict)
-              yield* store.expire
-              expect(yield* Ref.get(observed.actions)).toHaveLength(1)
-              expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
-            }).pipe(Effect.scoped, Effect.provide(context))
+              }),
+            ])
+            expect((yield* Ref.get(observed.topics)).some((topic) => topic.startsWith('c:'))).toBe(
+              true,
+            )
+            yield* Ref.set(observed.runnerDefect, false)
+            const again = yield* Effect.result(store.decide(test.member, request))
+            expect(Result.isFailure(again)).toBe(true)
+            if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(Conflict)
+            yield* store.expire
+            expect(yield* Ref.get(observed.actions)).toHaveLength(1)
+            expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
           }),
-      )
-    })
+          'fresh',
+        ),
+    )
 
     it.effect('an approved action that fails records ActionFailed with its stored Thread', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const observed = yield* Observation
@@ -570,14 +581,15 @@ layer(testDatabaseLayer)((it) => {
               }),
             }),
           ])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect('AlwaysAllow refuses destructive work before claiming or inserting a rule', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
+      scopedCase(
+        trustTestServices,
+        Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const action = ProposedAction.make({ ...desktopAction, effect: 'destructive' })
@@ -606,16 +618,17 @@ layer(testDatabaseLayer)((it) => {
             decision: once,
           })
           expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        }),
+        'fresh',
+      ),
     )
 
     it.effect(
       'AlwaysAllow refuses personal Connection exposure in a shared Thread before claiming',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const database = yield* Database
             yield* database.run(
@@ -645,8 +658,9 @@ layer(testDatabaseLayer)((it) => {
             expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
             expect((yield* loadAudit(test.owner)).entries).toEqual([])
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
 
     // Owner decision, 4 October 2026: a write on the Person's own browser follows the same table
@@ -654,9 +668,9 @@ layer(testDatabaseLayer)((it) => {
     it.effect(
       'AlwaysAllow on the Person’s own browser writes the rule in a private Thread and runs the action',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ApprovalStore
             const approval = yield* store.raise(test.vivid, browserWrite)
@@ -670,16 +684,17 @@ layer(testDatabaseLayer)((it) => {
               (yield* (yield* RuleStore).list(test.personal)).map((rule) => rule.decision),
             ).toEqual(['Allow'])
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([browserWrite])
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
 
     it.effect(
       'AlwaysAllow on the Person’s own browser is refused in a Thread others can see, before claiming',
       () =>
-        Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
             const test = yield* fixture()
             const database = yield* Database
             yield* database.run(
@@ -708,69 +723,69 @@ layer(testDatabaseLayer)((it) => {
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
             expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
             expect((yield* loadAudit(test.owner)).entries).toEqual([])
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }),
+          }),
+          'fresh',
+        ),
     )
   })
 
   /** Separate turns proposing the same capability share the first pending card and execute once. */
   describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => {
-    layer(testDatabaseLayer)('Clock case 2', (it) => {
-      it.effect('keeps the first origin and returns one pending Approval to both Runs', () =>
+    it.effect('keeps the first origin and returns one pending Approval to both Runs', () =>
+      scopedCase(
+        trustTestServices,
         Effect.gen(function* () {
-          const context = yield* Layer.build(trustTestServices)
-          return yield* Effect.gen(function* () {
-            const test = yield* fixture()
-            const database = yield* Database
-            const store = yield* ApprovalStore
-            const first = RunId.make(NodeCrypto.randomUUID())
-            const second = RunId.make(NodeCrypto.randomUUID())
-            const origin = encodeCrossRunOrigin(StoredRunOrigin.cases.Message.make({}))
-            yield* database.run(
-              database.insert(runs).values({
-                id: first,
-                threadId: test.personalId,
-                personId: test.personal.person.id,
-                turn: 1,
-                state: 'working',
-                origin,
-                startedAt: 0,
-                admittedAt: 0,
-              }),
-            )
-            const initial = yield* store.raise(test.vivid, desktopAction)
-            yield* database.run(
-              database
-                .update(runs)
-                .set({ state: 'completed', finishedAt: 1 })
-                .where(eq(runs.id, first)),
-            )
-            yield* database.run(
-              database.insert(runs).values({
-                id: second,
-                threadId: test.personalId,
-                personId: test.personal.person.id,
-                turn: 2,
-                state: 'working',
-                origin,
-                startedAt: 1,
-                admittedAt: 1,
-              }),
-            )
-            const repeated = yield* store.raise(test.vivid, desktopAction)
-            expect(repeated.id).toBe(initial.id)
-            expect(repeated.runId).toBe(first)
-            expect(yield* store.inThread(test.personalId)).toHaveLength(1)
-            const request = { id: initial.id, digest: initial.digest, decision: once }
-            expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
-            expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe(
-              'Conflict',
-            )
-            expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
-          }).pipe(Effect.scoped, Effect.provide(context))
+          const test = yield* fixture()
+          const database = yield* Database
+          const store = yield* ApprovalStore
+          const first = RunId.make(NodeCrypto.randomUUID())
+          const second = RunId.make(NodeCrypto.randomUUID())
+          const origin = encodeCrossRunOrigin(StoredRunOrigin.cases.Message.make({}))
+          yield* database.run(
+            database.insert(runs).values({
+              id: first,
+              threadId: test.personalId,
+              personId: test.personal.person.id,
+              turn: 1,
+              state: 'working',
+              origin,
+              startedAt: 0,
+              admittedAt: 0,
+            }),
+          )
+          const initial = yield* store.raise(test.vivid, desktopAction)
+          yield* database.run(
+            database
+              .update(runs)
+              .set({ state: 'completed', finishedAt: 1 })
+              .where(eq(runs.id, first)),
+          )
+          yield* database.run(
+            database.insert(runs).values({
+              id: second,
+              threadId: test.personalId,
+              personId: test.personal.person.id,
+              turn: 2,
+              state: 'working',
+              origin,
+              startedAt: 1,
+              admittedAt: 1,
+            }),
+          )
+          const repeated = yield* store.raise(test.vivid, desktopAction)
+          expect(repeated.id).toBe(initial.id)
+          expect(repeated.runId).toBe(first)
+          expect(yield* store.inThread(test.personalId)).toHaveLength(1)
+          const request = { id: initial.id, digest: initial.digest, decision: once }
+          expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
+          expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe(
+            'Conflict',
+          )
+          expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
         }),
-      )
-    })
+        'fresh',
+      ),
+    )
   })
 
   const encodeCrossRunOrigin = Schema.encodeSync(StoredRunOrigin)

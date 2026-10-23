@@ -4,13 +4,13 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   InputRequestId,
+  textOf,
   type PersonId,
   type Run,
 } from '@vivid/contracts'
 import {
   awaitedOf,
   describeToolCall,
-  drawn,
   inThread,
   readAnswered,
   readAsked,
@@ -52,7 +52,7 @@ export interface Around {
  *   that arrived without a name is drawn without one, never with an invented one.
  * - `Vivid`: Vivid's reply. `answering` names the Person it acted for, in a shared Thread where
  *   that is not obvious.
- * - `Wake`: a Routine coming due or a follow-up falling due: a quiet line saying why Vivid spoke.
+ * - `Wake`: a follow-up falling due: a quiet line saying why Vivid spoke.
  * - `Notice`: the runtime's word that a reply was not finished. It is the only thing the runtime
  *   says that is drawn, so `failed` is always true.
  * - `Silent`: not drawn. An Approval's outcome and an answer are told by their cards, and the
@@ -62,7 +62,7 @@ export type Speaker = Data.TaggedEnum<{
   Me: {}
   Member: { readonly name: Option.Option<string> }
   Vivid: { readonly answering: Option.Option<string> }
-  Wake: { readonly reason: 'routine' | 'follow-up'; readonly name: Option.Option<string> }
+  Wake: { readonly reason: 'follow-up'; readonly name: Option.Option<string> }
   Notice: { readonly failed: boolean }
   Silent: {}
 }>
@@ -103,10 +103,6 @@ export function speakerOf(message: FlueConversationMessage, around: Around): Spe
 
 /** Whether a message belongs in the Thread at all, by the rule every surface shares. */
 export const isShown: (message: FlueConversationMessage) => boolean = inThread
-
-/** A message's words, each text part its own paragraph. */
-export const textOf = (message: FlueConversationMessage): string =>
-  message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')
 
 /**
  * The SDK supplies hosted URLs for durable images and data URLs for local previews. Unresolved
@@ -154,8 +150,8 @@ export const isStreaming = (message: FlueConversationMessage): boolean =>
   message.parts.some((part) => 'state' in part && part.state === 'streaming')
 
 const Metadata = Schema.Struct({
-  finishedAt: Schema.optionalKey(Schema.Number),
-  startedAt: Schema.optionalKey(Schema.Number),
+  finishedAt: Schema.optionalKey(Schema.Finite),
+  startedAt: Schema.optionalKey(Schema.Finite),
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
@@ -200,7 +196,7 @@ const ON_COMPUTER = new Set([
 /**
  * Each tool call as a line in the product's words, never the tool's own name or payload.
  *
- * One pass with the array's own `flatMap`: a call that is drawn elsewhere gives no step. It was
+ * One pass with the array's own `flatMap`. It was
  * `tools.values().filter().map().toArray()`, which are methods of the iterator, not of the
  * array. Every Vivid message is drawn through here, and the phone's engine does not promise
  * them: Hermes 250829098.0.17, the one this app is built with, lists iterator helpers as not
@@ -208,7 +204,6 @@ const ON_COMPUTER = new Set([
  */
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
   tools.flatMap((tool) => {
-    if (drawn(tool)) return []
     const standing = STANDING[tool.state]
     const described = describeToolCall(
       tool.toolName,

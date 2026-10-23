@@ -1,5 +1,5 @@
 import { ThreadId, type Thread } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
@@ -21,6 +21,7 @@ import { useGo, useOpenThread, type Routes } from '../workspace'
 import { CreateProject } from './project/Create'
 import { Mark } from './project/Mark'
 import { scope } from './project/scope'
+import { start } from '../data/app'
 
 /** A Project as the server describes it; the screen below is also called `Project`. */
 type ProjectRecord = projects.Project
@@ -258,18 +259,24 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
   const people = project.companyId === null ? [] : projects.peopleIn(filed)
 
   /** Opens an empty Thread filed here; its first message gives it its name. */
-  async function begin() {
-    commit()
-    scope.enter(project.id)
-    const id = ThreadId.make(randomUUID())
-    const result = await data.change((client) =>
-      client.CreateThread({ id, title: UNTITLED, projectId: project.id }),
+  function begin() {
+    return start(
+      Effect.gen(function* () {
+        commit()
+        scope.enter(project.id)
+        const id = ThreadId.make(randomUUID())
+        const result = yield* data.changing((client) =>
+          client.CreateThread({ id, title: UNTITLED, projectId: project.id }),
+        )
+        if (Result.isFailure(result)) {
+          setRefused(
+            Option.some('Unable to start a thread here. Check your connection and try again.'),
+          )
+          return
+        }
+        openThread(id)
+      }),
     )
-    if (Result.isFailure(result)) {
-      setRefused(Option.some('Unable to start a thread here. Check your connection and try again.'))
-      return
-    }
-    openThread(id)
   }
 
   return (

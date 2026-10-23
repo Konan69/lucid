@@ -31,9 +31,6 @@ const fileOf = (name: string) =>
     .replaceAll(/[^a-z0-9]+/gu, '-')
     .replaceAll(/^-|-$/gu, '')
 
-/** The one size asked of the icon service; see `artOf`. */
-const ICON_SIZE = 128
-
 /** How a service is drawn: a whole icon, a mark on a ground, or its initial on a colour. */
 type Art =
   | { readonly kind: 'icon'; readonly address: string }
@@ -54,10 +51,8 @@ const artOf = (service: { readonly name: string; readonly mark?: string | null }
   const logo = Option.fromUndefinedOr(LOGOS[`./logos/${file}.svg`])
   if (Option.isSome(logo)) return { kind: 'logo', address: logo.value }
   const sent = Option.fromNullishOr(service.mark)
-  // The icon service answers only at its own sizes and falls to the 16-pixel favicon for any
-  // other (asking for 88 returned 15x16 on production). 128 is the size it has that covers every
-  // tile here at twice its drawn size.
-  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${ICON_SIZE}` }
+  // The server sends a whole address, sized where it is made (`connections/logo.ts`).
+  if (Option.isSome(sent)) return { kind: 'icon', address: sent.value }
   return { kind: 'initial' }
 }
 

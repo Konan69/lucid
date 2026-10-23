@@ -16,7 +16,7 @@ export const tick = () => {
   if (onDevice) void Haptics.selectionAsync()
 }
 
-/** Something was sent or committed: a message, a Routine run, a swipe that lands. */
+/** Something was sent or committed: a message, a choice, a swipe that lands. */
 export const commit = () => {
   if (onDevice) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
 }

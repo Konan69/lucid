@@ -1,6 +1,6 @@
 # Helix Query Authoring — TypeScript Examples
 
-Each numbered scenario corresponds 1:1 with `../helix-query-rust/EXAMPLES.md`.
+Each numbered scenario corresponds 1:1 with [the JSON examples](../helix-query-json-dynamic/EXAMPLES.md).
 When moving between TypeScript and Rust, open the same scenario in each file, then
 serialize either builder for the canonical direct JSON request.
 

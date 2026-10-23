@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Option, Redacted, Result } from 'effect'
+import { Effect, Option, Redacted, Result } from 'effect'
 import { useMemo, useState } from 'react'
 import { View } from 'react-native'
 import { commit } from '../../data/haptics'
@@ -7,6 +7,7 @@ import { useLiveData } from '../../data/live'
 import { FittedSheet } from '../../ui/Sheet'
 import { Button, Field, Labelled, Notice } from '../../ui/ui'
 import type { Routes } from '../../workspace'
+import { start } from '../../data/app'
 
 /**
  * What has been typed, by the name the service gave each field. A value is wrapped the moment it
@@ -75,26 +76,31 @@ export function Key({ route, navigation }: NativeStackScreenProps<Routes, 'Key'>
   const sheet = useMemo(() => data.connecting.keySheet(attempt), [data, attempt])
   const closing = useMemo(() => () => sheet.closed, [sheet])
 
-  async function submit() {
-    if (!complete || busy) return
-    // Felt as the Person commits, not when the answer comes back.
-    commit()
-    setBusy(true)
-    setRefused(Option.none())
-    const result = await data.change((client) =>
-      client.CompleteConnection({ id, fields: Object.fromEntries(typed) }),
+  function submit() {
+    return start(
+      Effect.gen(function* () {
+        if (!complete || busy) return
+        // Felt as the Person commits, not when the answer comes back.
+        commit()
+        setBusy(true)
+        setRefused(Option.none())
+        const result = yield* data.changing((client) =>
+          client.CompleteConnection({ id, fields: Object.fromEntries(typed) }),
+        )
+        setBusy(false)
+        // The call itself did not get through: nothing was completed, so the sheet stays up with
+        // what was typed still in it, to be sent again.
+        if (Result.isFailure(result)) {
+          setRefused(Option.some(NOT_ACCEPTED))
+          return
+        }
+        // Every answer that holds an account is this sheet's ending, whether or not the service
+        // took the key: the machine decides, and the row or card that asked says which. A sheet
+        // that was closed while the call was out has already ended, and there is nothing left to go
+        // back from.
+        if (sheet.answered(result.success.connection)) navigation.goBack()
+      }),
     )
-    setBusy(false)
-    // The call itself did not get through: nothing was completed, so the sheet stays up with
-    // what was typed still in it, to be sent again.
-    if (Result.isFailure(result)) {
-      setRefused(Option.some(NOT_ACCEPTED))
-      return
-    }
-    // Every answer that holds an account is this sheet's ending, whether or not the service took
-    // the key: the machine decides, and the row or card that asked says which. A sheet that was
-    // closed while the call was out has already ended, and there is nothing left to go back from.
-    if (sheet.answered(result.success.connection)) navigation.goBack()
   }
 
   return (

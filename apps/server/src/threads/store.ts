@@ -82,16 +82,10 @@ export interface ThreadStoreService {
     personId: PersonId,
   ) => Effect.Effect<Thread, ThreadStoreError>
   /**
-   * The private Thread with this id, owned by this Person in this workspace, created if it does not
-   * exist. Callers state provenance: only placeholders and Person-message excerpts are Seed.
+   * A private Background Thread Vivid works in on its own (`place.ts`), created if absent.
+   * It is never listed; an existing id must belong to the same Person and workspace.
    */
-  readonly ensure: (input: {
-    readonly id: ThreadId
-    readonly title: string
-    readonly titleSource: TitleSource
-    readonly personId: PersonId
-    readonly companyId: CompanyId | null
-  }) => Effect.Effect<StoredThread, ThreadStoreError>
+  readonly ensureBackground: (input: Ensured) => Effect.Effect<StoredThread, ThreadStoreError>
   readonly create: (
     actor: Actor,
     request: CreateThreadRequest,
@@ -124,6 +118,15 @@ export interface ThreadStoreService {
   readonly participants: (id: ThreadId) => Effect.Effect<ReadonlyArray<PersonId>, ThreadStoreError>
 }
 
+/** A server-opened Thread: its id, the name it starts with and whose it is. */
+export interface Ensured {
+  readonly id: ThreadId
+  readonly title: string
+  readonly titleSource: TitleSource
+  readonly personId: PersonId
+  readonly companyId: CompanyId | null
+}
+
 export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreService>()(
   'vivid/ThreadStore',
 ) {}
@@ -131,9 +134,12 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreService
 /**
  * Workspace limits navigation; current Membership and audience limit reach even for a stale Actor.
  * Rows are decoded next, so reachedBy retains the creator's DatabaseFailure for corrupt audiences.
+ * Only Conversations are listed: a Background Thread is reached through the Feed, by id (`place.ts`).
+ * The list is what search, unread attention and recent Threads all read, so this one clause keeps
+ * Background Threads out of each of them.
  */
 const visibleTo = (actor: Actor): SQL =>
-  sql`(${inWorkspace(threads, actor)} and ${reachedBy(actor.person.id)})`
+  sql`(${inWorkspace(threads, actor)} and ${reachedBy(actor.person.id)} and ${eq(threads.place, 'Conversation')})`
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('ThreadStore.list')(function* (actor: Actor) {
@@ -157,16 +163,10 @@ const makeView = (database: DatabaseService) =>
 /**
  * The inserted row owns its private audience. Announce in the insert transaction so failed Flue
  * admission cannot leave an unannounced Thread; an existing ownership receipt writes nothing.
- * A Routine id is predictable, so its presence never proves which Person may receive the work.
+ * A Watch id is predictable, so its presence never proves which Person may receive the work.
  */
-const makeEnsure = (database: DatabaseService) =>
-  Effect.fn('ThreadStore.ensure')(function* (input: {
-    readonly id: ThreadId
-    readonly title: string
-    readonly titleSource: TitleSource
-    readonly personId: PersonId
-    readonly companyId: CompanyId | null
-  }) {
+const makeEnsureBackground = (database: DatabaseService) =>
+  Effect.fn('ThreadStore.ensureBackground')(function* (input: Ensured) {
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
@@ -179,6 +179,7 @@ const makeEnsure = (database: DatabaseService) =>
             updatedAt: now,
             personId: input.personId,
             companyId: input.companyId,
+            place: 'Background',
           })
           .onConflictDoNothing({ target: threads.id })
           .returning()
@@ -192,8 +193,12 @@ const makeEnsure = (database: DatabaseService) =>
           database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
         )
         const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
-        // A predictable Routine id proves no ownership; sharing changes reach, never ownership.
-        const theirs = stored.personId === input.personId && stored.companyId === input.companyId
+        // A predictable Watch id proves no ownership; sharing changes reach, never ownership.
+        // A Conversation is never reused as a Background Thread.
+        const theirs =
+          stored.personId === input.personId &&
+          stored.companyId === input.companyId &&
+          stored.place === 'Background'
         return theirs
           ? stored
           : yield* new DatabaseConstraintViolation({ message: 'Database constraint was violated' })
@@ -270,8 +275,8 @@ const makeMarkRead = (database: DatabaseService) =>
 
 const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is taken' }))
 
-/** Ids the server mints for the Threads it opens itself. A client may not claim one. */
-const RESERVED = /^routine-/u
+/** Ids the server mints for the Threads it opens itself (Watch arrivals). A client may not claim one. */
+const RESERVED = /^watch-/u
 
 /**
  * Insert, Membership check, creator read receipt and notice commit together. The inserted row
@@ -484,10 +489,10 @@ const makeShare = (database: DatabaseService) =>
             message: 'A Thread in your own space has nobody to be shared with',
           })
         }
-        // Routine reporting belongs to one Person even when its Thread id is predictable.
+        // Watch work belongs to one Person even when its Thread id is predictable.
         if (RESERVED.test(thread.id)) {
           return yield* new InvalidRequest({
-            message: 'This thread belongs to a Routine and stays private',
+            message: 'Vivid opened this thread for its own work, so it stays private',
           })
         }
         const sharing = sharingOf(audience, personId)
@@ -574,7 +579,7 @@ export const threadStoreLayer = Layer.effect(
         releaseFirstThread(personId, threadId).pipe(Effect.provideService(Database, database)),
       list: makeList(database),
       view: makeView(database),
-      ensure: makeEnsure(database),
+      ensureBackground: makeEnsureBackground(database),
       create: makeCreate(database),
       patch: makePatch(database),
       share: makeShare(database),

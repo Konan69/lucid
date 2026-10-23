@@ -23,11 +23,8 @@ const PANEL = 'rounded-row'
  * card beside the conversation, screenshots of 5 Oct 2026): "Details", "Library" and "Computer"
  * as text, centred in a row; the chosen one a soft filled pill, the others plain muted words.
  *
- * They are Base UI's `Tabs`, the primitive under shadcn's `ui/tabs.tsx`: one tab stop, the arrow
- * keys move along the row, and each panel is named by its tab. They are drawn here and not with
- * `ui/tabs.tsx` because that component has two looks (a raised segment in a track, and an
- * underline) and its contract does not let a screen recolour it; a text-and-pill look belongs
- * there as a variant once the UI owner has agreed it, and this then becomes that variant.
+ * Base UI's `Tabs` provides one tab stop, arrow-key navigation along the row, and panels named
+ * by their tabs. The screen draws the text-and-pill treatment to match the identity card.
  *
  * The choice is the component's own state, so it lasts as long as the card is open and starts at
  * Details each time it opens. Only the chosen panel is in the document, so the Library and the

@@ -4,20 +4,23 @@
   "private": true,
   "type": "module",
   "main": "index.ts",
+  "exports": {},
   "scripts": {
-    "dev": "expo start",
+    "dev": "node scripts/expo.mjs",
     "android": "node scripts/native.mjs android",
     "ios": "node scripts/native.mjs ios",
-    "web": "expo start --web",
+    "web": "node scripts/expo.mjs --web",
     "build": "expo export --platform all",
     "updates": "node scripts/publish.mjs",
-    "typecheck": "node ../../scripts/types.mjs",
-    "lint": "node ../../scripts/lint.mjs",
-    "test": "node ../../scripts/test.mjs"
+    "build:updates": "node scripts/export.mjs",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.types.json tsconfig.tests.json",
+    "lint": "node ../../scripts/lint.mjs"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
     "@flue/react": "catalog:",
+    "@openuidev/react-lang": "catalog:",
+    "zod": "catalog:",
     "@flue/sdk": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
@@ -49,7 +52,7 @@
     "react-dom": "catalog:",
     "react-native": "catalog:",
     "react-native-gesture-handler": "catalog:",
-    "react-native-markdown-display": "7.0.2",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.11.tgz",
     "react-native-reanimated": "catalog:",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.26.2",
@@ -62,11 +65,20 @@
     "@sentry/core": "10.75.2"
   },
   "devDependencies": {
-    "@effect/vitest": "catalog:",
     "@react-native/metro-config": "catalog:",
     "@types/react": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "@types/react-dom": "catalog:"
+  },
+  "enriched-markdown": {
+    "enableMath": false,
+    "enableVideo": false,
+    "enableCodeHighlight": false
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "react-native-enriched-markdown"
+      ]
+    }
   }
 }

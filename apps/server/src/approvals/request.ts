@@ -53,22 +53,16 @@ const signalOf = (message: Message) =>
  *   this Person as the one who answered (`inputs/answers.ts`). An `approval` signal is a decision
  *   about another action; it is never a request and never revives an earlier one, because the
  *   Approval does not record which request its action belonged to.
- * - `Routine`: not trusted. Vivid can create a Routine itself and write its instruction, with no
- *   Person confirming it (`routines/handlers.ts`), so a Routine's instruction is not proof of
- *   what the Person wants. docs/22 intends the instruction to be trusted context; that needs the
- *   Routine to record who wrote it first. Until then a Routine acts on the Person's own
- *   Integrations through an Allow rule or an Approval.
- * - `Standing`, `Attention`, `FirstConversation`: the server or Vivid wrote the body. Never.
+ * - `Watch`: not trusted: Vivid can create a Watch and write its instruction, and
+ *   the event it carries is an outside app's text.
  */
 const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>) => {
   const tag = signalOf(message)
   return StoredRunOrigin.match(run.origin, {
     Message: () => message.purpose === 'user' || Option.contains(tag, 'message'),
     Decision: () => Option.contains(tag, 'answer') && answered.has(run.id),
-    Routine: () => false,
-    Standing: () => false,
-    Attention: () => false,
     FirstConversation: () => false,
+    Watch: () => false,
   })
 }
 

@@ -10,6 +10,9 @@ FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
+# The phone app's Markdown renderer is a packed tarball beside its package.json (`file:deps/...`);
+# an install that reads the lockfile needs it there before any of `apps/mobile` is copied.
+COPY apps/mobile/deps apps/mobile/deps
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
@@ -21,53 +24,13 @@ COPY packages/design/tokens/package.json packages/design/tokens/package.json
 COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
 COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
+COPY packages/compiler packages/compiler
 RUN pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/agent-runtime...
-COPY tsconfig.base.json ./
+# Vite follows shared packages' root Hermes profile while bundling their source.
+COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
-# @flue/vite/dist/index.mjs:flue uses getUserExternals from
-# dist/markdown-import-plugin-D-fQ3auE.mjs to externalize direct workspace dependencies.
-# Their TypeScript exports contain .js specifiers that plain Node cannot resolve to .ts files.
-# vite/dist/node/index.d.ts:Plugin.config permits this public post-config mutation; bundle only
-# Vivid workspace sources for the image, retaining Flue's external third-party dependencies.
-RUN pnpm --filter @vivid/agent-runtime exec node --input-type=module <<'JS'
-import { build } from 'vite'
-
-await build({
-  plugins: [{
-    name: 'vivid-workspace',
-    enforce: 'post',
-    config(config) {
-      const options = config.build.rolldownOptions
-      // Flue lists the runtime's dependencies by exact name, so `effect` stays external while a
-      // subpath such as `effect/Schema` (used by the bundled workspace sources) was inlined. That
-      // put two copies of Effect in one process: a schema built by one copy and checked by the
-      // other crashed at startup (`s.trim is not a function`). Keep every Effect subpath external.
-      options.external = [
-        ...options.external.filter((name) => !name.startsWith('@vivid/')),
-        /^effect\//u,
-      ]
-      return { ssr: { noExternal: [/^@vivid\//] } }
-    },
-    // Rollup-compatible generateBundle sees the actual output imports, including dynamic ones.
-    // Fail the build instead of shipping another image that asks bare Node to load workspace TS.
-    generateBundle(_options, bundle) {
-      for (const output of Object.values(bundle)) {
-        if (output.type !== 'chunk') continue
-        for (const name of [...output.imports, ...output.dynamicImports]) {
-          if (name.startsWith('@vivid/') || /\.(?:[cm]?ts|tsx)$/u.test(name))
-            this.error(`Production dependency was not compiled: ${name}`)
-        }
-        // A second, inlined copy of Effect is the failure the external rule above prevents.
-        for (const id of output.moduleIds) {
-          if (/node_modules\/effect\//u.test(id))
-            this.error(`Effect was bundled beside its external copy: ${id}`)
-        }
-      }
-      console.log('Vivid workspace bundle verified for bare Node')
-    },
-  }],
-})
-JS
+# Gate and image use the same workspace bundling and bare-Node output checks.
+RUN pnpm --filter @vivid/agent-runtime build
 
 FROM base AS production
 ENV NODE_ENV=production

@@ -10,8 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/root'
 import { Route as firstRouteImport } from './routes/first'
+import { Route as feedRouteImport } from './routes/feed'
 import { Route as libraryRouteImport } from './routes/library'
-import { Route as routinesRouteImport } from './routes/routines'
 import { Route as inviteRouteImport } from './routes/invite'
 import { Route as projectsRouteImport } from './routes/projects'
 import { Route as threadRouteImport } from './routes/thread'
@@ -21,14 +21,14 @@ const firstRoute = firstRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const feedRoute = feedRouteImport.update({
+  id: '/feed',
+  path: '/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const libraryRoute = libraryRouteImport.update({
   id: '/library',
   path: '/library',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const routinesRoute = routinesRouteImport.update({
-  id: '/routines',
-  path: '/routines',
   getParentRoute: () => rootRouteImport,
 } as any)
 const inviteRoute = inviteRouteImport.update({
@@ -49,16 +49,16 @@ const threadRoute = threadRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof firstRoute
+  '/feed': typeof feedRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof firstRoute
+  '/feed': typeof feedRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
@@ -66,8 +66,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof firstRoute
+  '/feed': typeof feedRoute
   '/library': typeof libraryRoute
-  '/routines': typeof routinesRoute
   '/invite/$id': typeof inviteRoute
   '/projects/{-$id}': typeof projectsRoute
   '/t/$id': typeof threadRoute
@@ -75,25 +75,14 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
-    | '/library'
-    | '/routines'
-    | '/invite/$id'
-    | '/projects/{-$id}'
-    | '/t/$id'
+    '/' | '/feed' | '/library' | '/invite/$id' | '/projects/{-$id}' | '/t/$id'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/library'
-    | '/routines'
-    | '/invite/$id'
-    | '/projects/{-$id}'
-    | '/t/$id'
+  to: '/' | '/feed' | '/library' | '/invite/$id' | '/projects/{-$id}' | '/t/$id'
   id:
     | '__root__'
     | '/'
+    | '/feed'
     | '/library'
-    | '/routines'
     | '/invite/$id'
     | '/projects/{-$id}'
     | '/t/$id'
@@ -101,8 +90,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   firstRoute: typeof firstRoute
+  feedRoute: typeof feedRoute
   libraryRoute: typeof libraryRoute
-  routinesRoute: typeof routinesRoute
   inviteRoute: typeof inviteRoute
   projectsRoute: typeof projectsRoute
   threadRoute: typeof threadRoute
@@ -117,18 +106,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof firstRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/feed': {
+      id: '/feed'
+      path: '/feed'
+      fullPath: '/feed'
+      preLoaderRoute: typeof feedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/library': {
       id: '/library'
       path: '/library'
       fullPath: '/library'
       preLoaderRoute: typeof libraryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/routines': {
-      id: '/routines'
-      path: '/routines'
-      fullPath: '/routines'
-      preLoaderRoute: typeof routinesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invite/$id': {
@@ -157,8 +146,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   firstRoute: firstRoute,
+  feedRoute: feedRoute,
   libraryRoute: libraryRoute,
-  routinesRoute: routinesRoute,
   inviteRoute: inviteRoute,
   projectsRoute: projectsRoute,
   threadRoute: threadRoute,

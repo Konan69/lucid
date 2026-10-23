@@ -4,6 +4,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
+import { Commit, ServerBuild } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { databaseLayer } from './client.ts'
 
@@ -31,6 +32,7 @@ export const testConfigLayer = Layer.unwrap(
           clientSecret: Redacted.make('test-google-secret'),
           redirectUri: new URL('http://127.0.0.1:8787/api/auth/callback/google'),
         },
+        BUILD: ServerBuild.cases.Named.make({ commit: Commit.make('c9607b33') }),
       }),
     ),
   ),

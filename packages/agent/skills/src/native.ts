@@ -1,6 +1,6 @@
 import type { SkillReference } from '@flue/runtime'
-import watchWhatNeedsMe from '../watch-what-needs-me/SKILL.md'
 import { manifest, type BuiltinRuntimeName } from './manifest.ts'
+import makeAnIntegration from '../make-an-integration/SKILL.md'
 import connectAService from '../connect-a-service/SKILL.md'
 import workInASignedInBrowser from '../work-in-a-signed-in-browser/SKILL.md'
 import deepResearch from '../deep-research/SKILL.md'
@@ -10,7 +10,6 @@ import morningBrief from '../morning-brief/SKILL.md'
 import findTimeAndSchedule from '../find-time-and-schedule/SKILL.md'
 import prepareForAMeeting from '../prepare-for-a-meeting/SKILL.md'
 import chaseAnOutcome from '../chase-an-outcome/SKILL.md'
-import watchAUsefulSignal from '../watch-a-useful-signal/SKILL.md'
 import rememberAndCorrectPreferences from '../remember-and-correct-preferences/SKILL.md'
 import learnHowWeDoThis from '../learn-how-we-do-this/SKILL.md'
 import writeADocument from '../write-a-document/SKILL.md'
@@ -27,7 +26,7 @@ import findPictures from '../find-pictures/SKILL.md'
 
 /** Static imports let Flue validate and bundle each folder. Total key coverage follows the manifest. */
 export const nativeSkills = {
-  'watch-what-needs-me': watchWhatNeedsMe,
+  'make-an-integration': makeAnIntegration,
   'connect-a-service': connectAService,
   'work-in-a-signed-in-browser': workInASignedInBrowser,
   'deep-research': deepResearch,
@@ -37,7 +36,6 @@ export const nativeSkills = {
   'find-time-and-schedule': findTimeAndSchedule,
   'prepare-for-a-meeting': prepareForAMeeting,
   'chase-an-outcome': chaseAnOutcome,
-  'watch-a-useful-signal': watchAUsefulSignal,
   'remember-and-correct-preferences': rememberAndCorrectPreferences,
   'learn-how-we-do-this': learnHowWeDoThis,
   'write-a-document': writeADocument,

@@ -1,0 +1,1052 @@
+{
+  "root": "Col",
+  "components": {
+    "Col": {
+      "signature": "Col(children: Node[], gap?: number, align?: \"start\" | \"center\" | \"end\" | \"stretch\")",
+      "description": "Vertical layout. Without gap it spaces blocks like an article."
+    },
+    "Row": {
+      "signature": "Row(children: Node[], gap?: number, align?: \"start\" | \"center\" | \"end\" | \"stretch\", justify?: \"start\" | \"center\" | \"end\" | \"between\", wrap?: boolean)",
+      "description": "Horizontal layout; items are vertically centered."
+    },
+    "Box": {
+      "signature": "Box(children?: Node[], direction?: \"row\" | \"col\", gap?: number, padding?: number, background?: Color, radius?: Radius, border?: boolean, width?: Length, height?: Length, flex?: number, align?: \"start\" | \"center\" | \"end\" | \"stretch\", justify?: \"start\" | \"center\" | \"end\" | \"between\", wrap?: boolean)",
+      "description": "Flex container, a column by default. radius also clips the content."
+    },
+    "Grid": {
+      "signature": "Grid(children: Node[], columns?: number, minChildWidth?: number, gap?: number)",
+      "description": "Equal columns (default 2). With minChildWidth (px), columns drop on narrow screens."
+    },
+    "Card": {
+      "signature": "Card(children: Node[], variant?: \"outline\" | \"soft\", padding?: number, gap?: number)",
+      "description": "Panel with a border; soft is a filled panel for summaries."
+    },
+    "Carousel": {
+      "signature": "Carousel(children: Node[], itemWidth?: number, gap?: number)",
+      "description": "Horizontal row that scrolls and snaps, each child an item itemWidth px wide (default 240): photos, cards, options, days."
+    },
+    "Divider": {
+      "signature": "Divider()",
+      "description": ""
+    },
+    "Spacer": {
+      "signature": "Spacer()",
+      "description": "Fills the free space in a Row."
+    },
+    "Title": {
+      "signature": "Title(text: string, size?: \"sm\" | \"md\" | \"lg\" | \"xl\" | \"2xl\" | \"3xl\", color?: Color)",
+      "description": "Heading; lg for a card title, 2xl for a big number."
+    },
+    "Text": {
+      "signature": "Text(text: string | Node[], size?: \"xs\" | \"sm\" | \"md\" | \"lg\", color?: Color, weight?: \"normal\" | \"medium\" | \"semibold\", italic?: boolean, lineThrough?: boolean, tabularNums?: boolean, maxLines?: number)",
+      "description": "Paragraph; supports **bold**, *italic*, `code` and [links](https://…). text may be a list mixing strings and inline components: [Icon(\"clock\", \"sm\"), \" 25 min · \", Badge(\"Easy\")]."
+    },
+    "Caption": {
+      "signature": "Caption(text: string, color?: Color)",
+      "description": "Small secondary text."
+    },
+    "Label": {
+      "signature": "Label(text: string)",
+      "description": "Field or group label."
+    },
+    "Badge": {
+      "signature": "Badge(text: string, color?: \"neutral\" | \"info\" | \"success\" | \"warning\" | \"danger\" | \"purple\" | \"pink\")",
+      "description": ""
+    },
+    "Link": {
+      "signature": "Link(text: string, url: string)",
+      "description": "Opens an http(s) URL in a new tab."
+    },
+    "List": {
+      "signature": "List(items: (string | ListItem)[], marker?: \"bullet\" | \"number\" | \"none\", timeline?: boolean)",
+      "description": "timeline joins the markers with a line."
+    },
+    "ListItem": {
+      "signature": "ListItem(title: string, description?: string, marker?: string, children?: Node[])",
+      "description": "marker replaces the bullet or number, e.g. a time or an emoji."
+    },
+    "Icon": {
+      "signature": "Icon(name: string, size?: \"sm\" | \"md\" | \"lg\" | \"xl\", color?: Color)",
+      "description": "Lucide icon by name, e.g. \"map-pin\"."
+    },
+    "Image": {
+      "signature": "Image(src: string, alt: string, aspectRatio?: number, radius?: Radius, fit?: \"cover\" | \"contain\", width?: number)",
+      "description": "Photo from an http(s) URL the user or a tool gave. alt says what it shows."
+    },
+    "Table": {
+      "signature": "Table(columns: string[], rows: any[][])",
+      "description": "Each row lists its cells in column order; a cell may be a component. Number columns align right."
+    },
+    "Chart": {
+      "signature": "Chart(type: \"bar\" | \"line\" | \"area\" | \"pie\" | \"donut\" | \"scatter\", data: Record<string, string | number>[], x?: string, series?: string[], format?: \"number\" | \"currency\" | \"percent\", currency?: string, stacked?: boolean, height?: number)",
+      "description": "Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like \"EUR\"."
+    },
+    "Button": {
+      "signature": "Button(label: string, action?: ActionExpression, variant?: \"solid\" | \"outline\" | \"soft\" | \"ghost\", color?: \"primary\" | \"danger\" | \"success\", size?: \"sm\" | \"md\" | \"lg\", icon?: string, disabled?: boolean, block?: boolean)",
+      "description": "icon is a lucide name."
+    },
+    "Pressable": {
+      "signature": "Pressable(children: Node[], action?: ActionExpression, selected?: boolean, padding?: number, background?: Color, radius?: Radius)",
+      "description": "Makes any content clickable, such as a tile or a swatch."
+    },
+    "Input": {
+      "signature": "Input(value: $binding<string | number>, label?: string, type?: \"text\" | \"number\", placeholder?: string)",
+      "description": "Text or number field; a number field stores numbers."
+    },
+    "TextArea": {
+      "signature": "TextArea(value: $binding<string>, label?: string, placeholder?: string, rows?: number)",
+      "description": ""
+    },
+    "Select": {
+      "signature": "Select(value: $binding<string>, options: (string | {value: string, label: string})[], label?: string, placeholder?: string)",
+      "description": "Dropdown, for long option lists."
+    },
+    "SegmentedControl": {
+      "signature": "SegmentedControl(value: $binding<string>, options: (string | {value: string, label: string})[], block?: boolean)",
+      "description": "2 to 4 short choices in a row."
+    },
+    "Checkbox": {
+      "signature": "Checkbox(checked: $binding<boolean>, label: string, lineThrough?: boolean)",
+      "description": "lineThrough strikes the label when checked, for to-do lists."
+    },
+    "RadioGroup": {
+      "signature": "RadioGroup(value: $binding<string>, options: (string | {value: string, label: string, description?: string})[], label?: string, variant?: \"list\" | \"pills\" | \"cards\")",
+      "description": "pills for short choices; cards for choices that need a description line."
+    },
+    "Form": {
+      "signature": "Form(children: Node[])",
+      "description": "Groups fields; their values go with any @ToAssistant inside."
+    }
+  },
+  "componentGroups": [
+    {
+      "name": "Layout",
+      "components": ["Col", "Row", "Box", "Grid", "Card", "Carousel", "Divider", "Spacer"]
+    },
+    {
+      "name": "Text",
+      "components": [
+        "Title",
+        "Text",
+        "Caption",
+        "Label",
+        "Badge",
+        "Link",
+        "List",
+        "ListItem",
+        "Icon"
+      ]
+    },
+    {
+      "name": "Data and pictures",
+      "components": ["Table", "Chart", "Image"]
+    },
+    {
+      "name": "Inputs",
+      "components": [
+        "Button",
+        "Pressable",
+        "Input",
+        "TextArea",
+        "Select",
+        "SegmentedControl",
+        "Checkbox",
+        "RadioGroup",
+        "Form"
+      ]
+    }
+  ],
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "Col": {
+        "$ref": "#/$defs/Col"
+      },
+      "Row": {
+        "$ref": "#/$defs/Row"
+      },
+      "Box": {
+        "$ref": "#/$defs/Box"
+      },
+      "Grid": {
+        "$ref": "#/$defs/Grid"
+      },
+      "Card": {
+        "$ref": "#/$defs/Card"
+      },
+      "Carousel": {
+        "$ref": "#/$defs/Carousel"
+      },
+      "Divider": {
+        "$ref": "#/$defs/Divider"
+      },
+      "Spacer": {
+        "$ref": "#/$defs/Spacer"
+      },
+      "Title": {
+        "$ref": "#/$defs/Title"
+      },
+      "Text": {
+        "$ref": "#/$defs/Text"
+      },
+      "Caption": {
+        "$ref": "#/$defs/Caption"
+      },
+      "Label": {
+        "$ref": "#/$defs/Label"
+      },
+      "Badge": {
+        "$ref": "#/$defs/Badge"
+      },
+      "Link": {
+        "$ref": "#/$defs/Link"
+      },
+      "List": {
+        "$ref": "#/$defs/List"
+      },
+      "ListItem": {
+        "$ref": "#/$defs/ListItem"
+      },
+      "Icon": {
+        "$ref": "#/$defs/Icon"
+      },
+      "Image": {
+        "$ref": "#/$defs/Image"
+      },
+      "Table": {
+        "$ref": "#/$defs/Table"
+      },
+      "Chart": {
+        "$ref": "#/$defs/Chart"
+      },
+      "Button": {
+        "$ref": "#/$defs/Button"
+      },
+      "Pressable": {
+        "$ref": "#/$defs/Pressable"
+      },
+      "Input": {
+        "$ref": "#/$defs/Input"
+      },
+      "TextArea": {
+        "$ref": "#/$defs/TextArea"
+      },
+      "Select": {
+        "$ref": "#/$defs/Select"
+      },
+      "SegmentedControl": {
+        "$ref": "#/$defs/SegmentedControl"
+      },
+      "Checkbox": {
+        "$ref": "#/$defs/Checkbox"
+      },
+      "RadioGroup": {
+        "$ref": "#/$defs/RadioGroup"
+      },
+      "Form": {
+        "$ref": "#/$defs/Form"
+      }
+    },
+    "required": [
+      "Col",
+      "Row",
+      "Box",
+      "Grid",
+      "Card",
+      "Carousel",
+      "Divider",
+      "Spacer",
+      "Title",
+      "Text",
+      "Caption",
+      "Label",
+      "Badge",
+      "Link",
+      "List",
+      "ListItem",
+      "Icon",
+      "Image",
+      "Table",
+      "Chart",
+      "Button",
+      "Pressable",
+      "Input",
+      "TextArea",
+      "Select",
+      "SegmentedControl",
+      "Checkbox",
+      "RadioGroup",
+      "Form"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+      "Col": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "gap": {
+            "type": "number"
+          },
+          "align": {
+            "type": "string",
+            "enum": ["start", "center", "end", "stretch"]
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Vertical layout. Without gap it spaces blocks like an article."
+      },
+      "Row": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "gap": {
+            "type": "number"
+          },
+          "align": {
+            "type": "string",
+            "enum": ["start", "center", "end", "stretch"]
+          },
+          "justify": {
+            "type": "string",
+            "enum": ["start", "center", "end", "between"]
+          },
+          "wrap": {
+            "type": "boolean"
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Horizontal layout; items are vertically centered."
+      },
+      "Box": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["row", "col"]
+          },
+          "gap": {
+            "type": "number"
+          },
+          "padding": {
+            "type": "number"
+          },
+          "background": {
+            "type": "string"
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["sm", "md", "lg", "xl", "full"]
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "border": {
+            "type": "boolean"
+          },
+          "width": {
+            "type": ["number", "string"]
+          },
+          "height": {
+            "type": ["number", "string"]
+          },
+          "flex": {
+            "type": "number"
+          },
+          "align": {
+            "type": "string",
+            "enum": ["start", "center", "end", "stretch"]
+          },
+          "justify": {
+            "type": "string",
+            "enum": ["start", "center", "end", "between"]
+          },
+          "wrap": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Flex container, a column by default. radius also clips the content."
+      },
+      "Grid": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "columns": {
+            "type": "number"
+          },
+          "minChildWidth": {
+            "type": "number"
+          },
+          "gap": {
+            "type": "number"
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Equal columns (default 2). With minChildWidth (px), columns drop on narrow screens."
+      },
+      "Card": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["outline", "soft"]
+          },
+          "padding": {
+            "type": "number"
+          },
+          "gap": {
+            "type": "number"
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Panel with a border; soft is a filled panel for summaries."
+      },
+      "Carousel": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "itemWidth": {
+            "type": "number"
+          },
+          "gap": {
+            "type": "number"
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Horizontal row that scrolls and snaps, each child an item itemWidth px wide (default 240): photos, cards, options, days."
+      },
+      "Divider": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "Spacer": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "description": "Fills the free space in a Row."
+      },
+      "Title": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["sm", "md", "lg", "xl", "2xl", "3xl"]
+          },
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Heading; lg for a card title, 2xl for a big number."
+      },
+      "Text": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "size": {
+            "type": "string",
+            "enum": ["xs", "sm", "md", "lg"]
+          },
+          "color": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "string",
+            "enum": ["normal", "medium", "semibold"]
+          },
+          "italic": {
+            "type": "boolean"
+          },
+          "lineThrough": {
+            "type": "boolean"
+          },
+          "tabularNums": {
+            "type": "boolean"
+          },
+          "maxLines": {
+            "type": "number"
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Paragraph; supports **bold**, *italic*, `code` and [links](https://…). text may be a list mixing strings and inline components: [Icon(\"clock\", \"sm\"), \" 25 min · \", Badge(\"Easy\")]."
+      },
+      "Caption": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Small secondary text."
+      },
+      "Label": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Field or group label."
+      },
+      "Badge": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string",
+            "enum": ["neutral", "info", "success", "warning", "danger", "purple", "pink"]
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": ["text", "url"],
+        "additionalProperties": false,
+        "description": "Opens an http(s) URL in a new tab."
+      },
+      "List": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/ListItem"
+                }
+              ]
+            }
+          },
+          "marker": {
+            "type": "string",
+            "enum": ["bullet", "number", "none"]
+          },
+          "timeline": {
+            "type": "boolean"
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false,
+        "description": "timeline joins the markers with a line."
+      },
+      "ListItem": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "marker": {
+            "type": "string"
+          },
+          "children": {
+            "type": "array",
+            "items": {}
+          }
+        },
+        "required": ["title"],
+        "additionalProperties": false,
+        "description": "marker replaces the bullet or number, e.g. a time or an emoji."
+      },
+      "Icon": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["sm", "md", "lg", "xl"]
+          },
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false,
+        "description": "Lucide icon by name, e.g. \"map-pin\"."
+      },
+      "Image": {
+        "type": "object",
+        "properties": {
+          "src": {
+            "type": "string"
+          },
+          "alt": {
+            "type": "string"
+          },
+          "aspectRatio": {
+            "type": "number"
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["sm", "md", "lg", "xl", "full"]
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "fit": {
+            "type": "string",
+            "enum": ["cover", "contain"]
+          },
+          "width": {
+            "type": "number"
+          }
+        },
+        "required": ["src", "alt"],
+        "additionalProperties": false,
+        "description": "Photo from an http(s) URL the user or a tool gave. alt says what it shows."
+      },
+      "Table": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {}
+            }
+          }
+        },
+        "required": ["columns", "rows"],
+        "additionalProperties": false,
+        "description": "Each row lists its cells in column order; a cell may be a component. Number columns align right."
+      },
+      "Chart": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["bar", "line", "area", "pie", "donut", "scatter"]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": ["string", "number"]
+              }
+            }
+          },
+          "x": {
+            "type": "string"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "format": {
+            "type": "string",
+            "enum": ["number", "currency", "percent"]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "stacked": {
+            "type": "boolean"
+          },
+          "height": {
+            "type": "number"
+          }
+        },
+        "required": ["type", "data"],
+        "additionalProperties": false,
+        "description": "Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like \"EUR\"."
+      },
+      "Button": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["solid", "outline", "soft", "ghost"]
+          },
+          "color": {
+            "type": "string",
+            "enum": ["primary", "danger", "success"]
+          },
+          "size": {
+            "type": "string",
+            "enum": ["sm", "md", "lg"]
+          },
+          "icon": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "block": {
+            "type": "boolean"
+          }
+        },
+        "required": ["label"],
+        "additionalProperties": false,
+        "description": "icon is a lucide name."
+      },
+      "ActionExpression": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "open_url"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "url"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "continue_conversation"
+              },
+              "context": {
+                "type": "string"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Pressable": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "padding": {
+            "type": "number"
+          },
+          "background": {
+            "type": "string"
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["sm", "md", "lg", "xl", "full"]
+              },
+              {
+                "type": "number"
+              }
+            ]
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Makes any content clickable, such as a tile or a swatch."
+      },
+      "Input": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": ["string", "number"]
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["text", "number"]
+          },
+          "placeholder": {
+            "type": "string"
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false,
+        "description": "Text or number field; a number field stores numbers."
+      },
+      "TextArea": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "number"
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "Select": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["value", "label"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          }
+        },
+        "required": ["value", "options"],
+        "additionalProperties": false,
+        "description": "Dropdown, for long option lists."
+      },
+      "SegmentedControl": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["value", "label"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "block": {
+            "type": "boolean"
+          }
+        },
+        "required": ["value", "options"],
+        "additionalProperties": false,
+        "description": "2 to 4 short choices in a row."
+      },
+      "Checkbox": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "lineThrough": {
+            "type": "boolean"
+          }
+        },
+        "required": ["checked", "label"],
+        "additionalProperties": false,
+        "description": "lineThrough strikes the label when checked, for to-do lists."
+      },
+      "RadioGroup": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["value", "label"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["list", "pills", "cards"]
+          }
+        },
+        "required": ["value", "options"],
+        "additionalProperties": false,
+        "description": "pills for short choices; cards for choices that need a description line."
+      },
+      "Form": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {}
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Groups fields; their values go with any @ToAssistant inside."
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import * as NodeHttp from 'node:http'
-import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import * as FetchHttpClient from 'effect/http/FetchHttpClient'
+import { expect } from '@effect/vitest'
+import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as NetAddress from 'effect/net/NetAddress'
@@ -32,14 +32,16 @@ import { Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import {
+  ExecutorAppOwnership,
   executorLayer,
   type AccountIdentity,
   type ExecutorService,
+  type ExecutorActiveReferences,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
   ExecutorAccountId,
-  ExecutorProfileId,
+  ExecutorBinding,
   ExecutorReferences,
   ExecutorServiceEntry,
   ExecutorStatus,
@@ -49,6 +51,7 @@ import {
 } from './executor.ts'
 import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { googleService } from './google.ts'
+import { keyedService } from './curation.ts'
 import { toolEffectsLayer } from './effects.ts'
 import { connectionStoreLayer } from './store.ts'
 
@@ -90,20 +93,39 @@ export class ConnectionProbe extends Context.Service<ConnectionProbe, Connection
   'vivid/ConnectionProbe',
 ) {}
 
+/** Fixtures requiring a live app refuse migration-only states before building protocol values. */
+export function activeReferences(references: ExecutorReferences): ExecutorActiveReferences {
+  if (
+    ExecutorReferences.guards.ReconnectRequired(references) ||
+    ExecutorReferences.guards.MigrationPending(references)
+  )
+    expect.fail('An active app reference is required by this fixture')
+  return references
+}
+
 /** Completion retains provider identity and supplies only an opaque account reference. */
-const authorized = (references: ExecutorReferences) =>
-  ExecutorReferences.cases.Authorized.make({
+const authorized = (input: ExecutorReferences) => {
+  const references = activeReferences(input)
+  return ExecutorReferences.cases.Authorized.make({
+    appOwnership: references.appOwnership,
     service: references.service,
     app: references.app,
-    profile: references.profile,
+    binding: references.binding,
     owner: references.owner,
-    appOwnership: references.appOwnership,
+
     account: ExecutorAccountId.make(crypto.randomUUID()),
   })
+}
 
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
+    inventory: Effect.succeed({ apps: [], accounts: [], links: [] }),
+    reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
+    prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
+      Effect.succeed(resources),
+    ),
+    retire: Effect.fn('Executor.Test.retire')(() => Effect.void),
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),
@@ -120,14 +142,16 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       ]
     }).pipe(Effect.withSpan('Executor.Test.catalog')),
     add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
+    make: Effect.fn('Executor.Test.make')((input) => makeExecutor(probe).begin(input)),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
       const identity = {
+        appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
         service: input.service,
         owner: input.owner,
-        appOwnership: 'Shared' as const,
+
         app: ExecutorAppId.make(crypto.randomUUID()),
-        profile: ExecutorProfileId.make(crypto.randomUUID()),
+        binding: ExecutorBinding.cases.Public.make({}),
       }
       const step = yield* Ref.get(probe.step)
       if (step === 'OpenSignIn')
@@ -155,11 +179,12 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
     /** Renewal deliberately retains the provider target while returning a fresh next step. */
     reauthorize: Effect.fn('Executor.Test.reauthorize')(function* (input) {
       const identity = {
+        appOwnership: activeReferences(input.references).appOwnership,
         service: input.references.service,
         owner: input.references.owner,
-        appOwnership: input.references.appOwnership,
-        app: input.references.app,
-        profile: input.references.profile,
+
+        app: activeReferences(input.references).app,
+        binding: activeReferences(input.references).binding,
       }
       const step = yield* Ref.get(probe.step)
       if (step === 'OpenSignIn')
@@ -380,12 +405,19 @@ export const toolRequest = (connectionId: ConnectionId, tool: string) => ({
 
 const HostedInstall = Schema.Struct({ name: Schema.NonEmptyString })
 const HostedImport = Schema.Struct({ source: HostedInstall })
-const HostedTargetInput = Schema.Struct({ profile: Schema.NonEmptyString })
-const decodeHostedTarget = Schema.decodeUnknownEffect(HostedTargetInput)
-const HostedProfileInput = Schema.Struct({ idempotencyKey: Schema.NonEmptyString })
+const HostedRequirements = Schema.Record(
+  Schema.String,
+  Schema.Struct({ provider: Schema.String, definition: Schema.Json }),
+)
+const decodeHostedRequirements = Schema.decodeUnknownEffect(HostedRequirements)
+const decodeHostedTarget = Schema.decodeUnknownEffect(
+  Schema.Struct({ app: Schema.String, requirement: Schema.String }),
+)
+const decodeHostedSelections = Schema.decodeUnknownEffect(
+  Schema.Record(Schema.String, Schema.Array(Schema.String)),
+)
 const decodeHostedInstall = Schema.decodeUnknownEffect(HostedInstall)
 const decodeHostedImport = Schema.decodeUnknownEffect(HostedImport)
-const decodeHostedProfileInput = Schema.decodeUnknownEffect(HostedProfileInput)
 const decodeHostedJson = Schema.decodeUnknownEffect(Schema.Json)
 
 /**
@@ -393,14 +425,16 @@ const decodeHostedJson = Schema.decodeUnknownEffect(Schema.Json)
  * and come from the server itself, so a test about the remote catalogue reads past them.
  */
 export function remoteEntries<Entry extends { readonly id: ServiceId }>(entries: readonly Entry[]) {
-  return entries.filter((entry) => Option.isNone(googleService(entry.id)))
+  return entries.filter(
+    (entry) => Option.isNone(googleService(entry.id)) && keyedService(entry.id) === undefined,
+  )
 }
 
 export const hostedOrganization = 'test-organization'
 export const hostedPrefix = `/api/organizations/${hostedOrganization}`
 export const hostedService = ServiceId.make('test/service')
 export const hostedReturnAddress = 'https://vivid.example.test/api/connections/return'
-const hostedProfile = { id: 'profile', status: 'ready', failure: null }
+const hostedRemoved = { removed: true }
 export const hostedTools = [
   { name: 'read', description: 'Read records', inputSchema: {}, readOnly: true },
 ]
@@ -422,10 +456,14 @@ interface HostedReply {
 interface HostedState {
   readonly target: Ref.Ref<Schema.Json>
   readonly intercept: Ref.Ref<(request: HostedRequest) => Effect.Effect<void>>
+  /** Drop or hold an answer after the fixture has committed the write. */
+  readonly afterWrite: Ref.Ref<
+    (request: HostedRequest) => Effect.Effect<void, never, HttpServerRequest.HttpServerRequest>
+  >
   readonly requests: Ref.Ref<readonly HostedRequest[]>
   readonly replies: Ref.Ref<ReadonlyMap<string, HostedReply>>
   readonly apps: Ref.Ref<readonly { readonly id: string; readonly name: string }[]>
-  readonly profiles: Ref.Ref<ReadonlyMap<string, string>>
+  readonly selections: Ref.Ref<ReadonlyMap<string, Schema.Json>>
   readonly accounts: Ref.Ref<Schema.Json>
   readonly catalog: Ref.Ref<readonly Schema.Json[]>
   readonly paginated: Ref.Ref<boolean>
@@ -441,7 +479,20 @@ const hostedApp = Effect.fn('Executor.HostedTest.app')(function* (
   state: HostedState,
   app: { readonly id: string; readonly name: string },
 ) {
-  return { id: app.id, name: app.name, requirements: { accounts: yield* Ref.get(state.accounts) } }
+  const requirements = yield* decodeHostedRequirements(yield* Ref.get(state.accounts))
+  const accounts = Object.fromEntries(
+    Object.entries(requirements).map(([name, value]) => [
+      name,
+      { ...value, scope: 'user', cardinality: 'one' },
+    ]),
+  )
+  return {
+    id: app.id,
+    name: app.name,
+    activeVersion: 'version',
+    copiedFrom: null,
+    requirements: { accounts },
+  }
 })
 
 /** The name a request creates an app under: install and deploy name it at the top of the body,
@@ -454,7 +505,47 @@ const hostedAppName = Effect.fn('Executor.HostedTest.appName')(function* (reques
   return Option.none<string>()
 })
 
-/** Simulate create-only app installation plus ConnectionId profile deduplication on the remote
+/** A removed app takes its account selections with it; an unlinked account leaves its app's
+ * selection without it. Anything else is not a removal. */
+const hostedRemoval = Effect.fn('Executor.HostedTest.removal')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  const removedApp = request.path.match(/^DELETE \/apps\/([^/]+)$/u)
+  if (removedApp !== null) {
+    const id = removedApp[1]
+    yield* Ref.update(state.apps, (apps) => apps.filter((app) => app.id !== id))
+    yield* Ref.update(state.selections, (selections) => {
+      const retained = new Map(selections)
+      if (id !== undefined) retained.delete(id)
+      return retained
+    })
+    return Option.some(hostedRemoved)
+  }
+  const unlinked = request.path.match(
+    /^DELETE \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/([^/]+)$/u,
+  )
+  if (unlinked !== null) {
+    const [, app, requirement, account] = unlinked
+    if (app === undefined || requirement === undefined || account === undefined)
+      return yield* Effect.die('Malformed fixture unlink target')
+    const selection = (yield* Ref.get(state.selections)).get(app)
+    if (selection === undefined) return Option.some(hostedRemoved)
+    const decoded = yield* decodeHostedSelections(selection)
+    const accounts = decoded[requirement]
+    if (accounts === undefined) return Option.some(hostedRemoved)
+    yield* Ref.update(state.selections, (selections) =>
+      new Map(selections).set(app, {
+        ...decoded,
+        [requirement]: accounts.filter((selected) => selected !== account),
+      }),
+    )
+    return Option.some(hostedRemoved)
+  }
+  return Option.none<typeof hostedRemoved>()
+})
+
+/** Simulate create-only app installation plus ConnectionId app deduplication on the remote
  * side. Tests observe the real Executor Layer's requests rather than a fake Executor service.
  */
 const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
@@ -472,22 +563,17 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
     })
     return yield* hostedApp(state, app)
   }
-  if (/^POST \/apps\/[^/]+\/profiles$/u.test(request.path)) {
-    const { idempotencyKey } = yield* decodeHostedProfileInput(request.body)
-    const id = yield* Ref.modify(state.profiles, (profiles) => {
-      const existing = profiles.get(idempotencyKey)
-      if (existing !== undefined) return [existing, profiles]
-      const created = `profile-${idempotencyKey}`
-      return [created, new Map([...profiles, [idempotencyKey, created]])]
-    })
-    return { ...hostedProfile, id }
-  }
-  const connectionPath = request.path.match(/^POST \/apps\/([^/]+)\/connections$/u)
+  const removal = yield* hostedRemoval(state, request)
+  if (Option.isSome(removal)) return removal.value
+  const connectionPath = request.path.match(
+    /^POST \/apps\/([^/]+)\/accounts\/(?:app|user)\/([^/]+)\/connections$/u,
+  )
   if (connectionPath !== null) {
     const app = connectionPath[1]
-    if (app === undefined) return yield* Effect.die('Hosted fixture connection app is absent')
-    const { profile } = yield* decodeHostedTarget(request.body)
-    const target = { app, profile }
+    const requirement = connectionPath[2]
+    if (app === undefined || requirement === undefined)
+      return yield* Effect.die('Malformed test account target')
+    const target = { app, requirement }
     yield* Ref.set(state.target, target)
     return {
       id: 'authorization',
@@ -497,18 +583,16 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
       url: 'https://executor.example.test/form',
     }
   }
-  if (request.path === 'POST /accounts/account/connections')
-    return {
-      id: 'authorization',
-      reconnectAccount: { id: 'account' },
-      target: null,
-      state: { status: 'pending' },
-    }
   if (
     request.path === 'POST /connections/authorization/submit' ||
     request.path === 'POST /connections/authorization/oauth/complete'
-  )
+  ) {
+    const target = yield* Ref.get(state.target).pipe(Effect.flatMap(decodeHostedTarget))
+    yield* Ref.update(state.selections, (all) =>
+      new Map(all).set(target.app, { [target.requirement]: ['account'] }),
+    )
     return { id: 'account' }
+  }
   if (request.path === 'POST /connections/authorization/oauth/start')
     return {
       status: 'redirect',
@@ -526,10 +610,34 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
       infoCheckedAt: null,
       apps: [],
     }
-  return hostedProfile
+  return hostedRemoved
 })
 
-/** Both pages carry the same profile/deployment snapshot; the cursor intentionally needs URL
+/** Tool pages retain a version and exact selections while the fixture router stays independent. */
+const hostedPage = Effect.fn('Executor.HostedTest.page')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  const search = new URLSearchParams(request.search)
+  const appId = request.path.split('/')[2]
+  if (appId === undefined) return yield* Effect.die('Missing fixture app')
+  const selection = (yield* Ref.get(state.selections)).get(appId)
+  const page = {
+    accounts: { app: {}, user: selection === undefined ? {} : selection },
+    version: 'version',
+    items: hostedTools,
+    routers: [],
+  }
+  if (!(yield* Ref.get(state.paginated))) return page
+  if (search.has('cursor'))
+    return {
+      ...page,
+      items: [{ name: 'write', description: 'Write records', inputSchema: {}, readOnly: false }],
+    }
+  return { ...page, next: 'next/with+&symbols' }
+})
+
+/** Both pages carry the same account/version snapshot; the cursor intentionally needs URL
  * encoding so a broken query builder cannot accidentally turn it into another search parameter.
  */
 const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
@@ -539,7 +647,7 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
   if (request.path === 'GET /catalog') return yield* Ref.get(state.catalog)
   if (request.path === 'GET /inventory') {
     const apps = yield* Effect.forEach(yield* Ref.get(state.apps), (app) => hostedApp(state, app))
-    return { apps, accounts: [{ id: 'unrelated-account', label: 'Same label' }] }
+    return { apps, links: [], accounts: [{ id: 'unrelated-account', label: 'Same label' }] }
   }
   const appPath = request.path.match(/^GET \/apps\/([^/]+)$/u)
   if (appPath !== null) {
@@ -547,26 +655,20 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
     if (app === undefined) return yield* Effect.die('Hosted fixture app was not installed')
     return yield* hostedApp(state, app)
   }
-  if (/^GET \/apps\/[^/]+\/tools$/u.test(request.path)) {
-    const search = new URLSearchParams(request.search)
-    const profile = search.get('profile')
-    const page = {
-      profile,
-      profileRevision: 1,
-      deployment: 'deployment',
-      items: hostedTools,
-      routers: [],
-    }
-    if (!(yield* Ref.get(state.paginated))) return page
-    if (search.has('cursor'))
-      return {
-        ...page,
-        items: [{ name: 'write', description: 'Write records', inputSchema: {}, readOnly: false }],
-      }
-    return { ...page, next: 'next/with+&symbols' }
+  if (/^GET \/apps\/[^/]+\/tools$/u.test(request.path)) return yield* hostedPage(state, request)
+  const links = request.path.match(/^GET \/apps\/([^/]+)\/accounts\/(?:app|user)$/u)
+  if (links !== null) {
+    const app = links[1]
+    if (app === undefined) return yield* Effect.die('Missing link app')
+    const selection = (yield* Ref.get(state.selections)).get(app)
+    if (selection === undefined) return []
+    const decoded = yield* decodeHostedSelections(selection)
+    return Object.entries(decoded).flatMap(([requirement, accounts]) =>
+      accounts.map((id) => ({ requirement, account: { id } })),
+    )
   }
   if (request.path.startsWith('GET /providers/'))
-    return { mode: 'automatic', grant: 'authorization_code', scopes: [] }
+    return { mode: 'automatic', clients: [], grant: 'authorization_code', scopes: [] }
   if (request.path === 'GET /connections/authorization')
     return {
       id: 'authorization',
@@ -574,7 +676,7 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
       target: yield* Ref.get(state.target),
       state: { status: 'pending' },
     }
-  return hostedProfile
+  return hostedRemoved
 })
 
 /** This scoped HTTP fixture reuses the old transport suite's loopback-server mechanism. No
@@ -583,17 +685,22 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
  */
 export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(function* () {
   const state: HostedState = {
-    target: yield* Ref.make<Schema.Json>({ app: 'app', profile: 'profile' }),
+    target: yield* Ref.make<Schema.Json>({ app: 'app', requirement: 'slot' }),
     intercept: yield* Ref.make<(request: HostedRequest) => Effect.Effect<void>>(() => Effect.void),
+    afterWrite: yield* Ref.make<
+      (request: HostedRequest) => Effect.Effect<void, never, HttpServerRequest.HttpServerRequest>
+    >(() => Effect.void),
     requests: yield* Ref.make<readonly HostedRequest[]>([]),
     replies: yield* Ref.make<ReadonlyMap<string, HostedReply>>(new Map()),
     apps: yield* Ref.make<readonly { readonly id: string; readonly name: string }[]>([]),
-    profiles: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
+    selections: yield* Ref.make<ReadonlyMap<string, Schema.Json>>(new Map()),
     accounts: yield* Ref.make<Schema.Json>({}),
     catalog: yield* Ref.make<readonly Schema.Json[]>([
       {
         id: hostedService,
-        kind: 'mcp',
+        package: '@test/service',
+        auth: [],
+        icons: [],
         name: 'Test Integration',
         description: 'Test service',
         connectUrl: 'https://example.test',
@@ -648,13 +755,17 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
       return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
     const result =
       request.method === 'GET' ? yield* hostedRead(state, local) : yield* hostedWrite(state, local)
+    if (request.method !== 'GET') yield* (yield* Ref.get(state.afterWrite))(received)
     return HttpServerResponse.jsonUnsafe(result)
   })
   yield* server.serve(handler())
   if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('Expected TCP fixture')
   const url = yield* Effect.fromResult(NetAddress.toUrl(server.address))
+  // Match production's scoped dispatcher: destroy this fixture's keep-alive connections before
+  // its listener closes, rather than waiting for a global fetch pool's real-time idle expiry.
+  // A fresh layer keeps a suite memo map from lending another fixture a closed dispatcher.
   const configured = executorLayer.pipe(
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.fresh(NodeHttpClient.layerUndici)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
@@ -671,7 +782,7 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
   return { ...state, configured }
 })
 
-/** Profile IDs are dynamic because the remote host, rather than Vivid, allocates them. */
+/** Requirement-scoped account connections and app removal are the beta.23 public routes. */
 function hostedRoute(path: string) {
   return (
     [
@@ -682,16 +793,15 @@ function hostedRoute(path: string) {
       'POST /apps/install',
       'POST /apps/deploy',
       'POST /apps/import',
-      'POST /accounts/account/connections',
       'POST /accounts/account/health',
       'POST /connections/authorization/submit',
       'POST /connections/authorization/oauth/start',
       'POST /connections/authorization/oauth/complete',
       'DELETE /accounts/account',
     ].includes(path) ||
-    /^GET \/apps\/[^/]+(?:\/tools)?$/u.test(path) ||
-    /^POST \/apps\/[^/]+\/(?:profiles|connections|tools\/call)$/u.test(path) ||
-    /^(?:GET|DELETE) \/apps\/[^/]+\/profiles\/[^/]+$/u.test(path) ||
-    /^POST \/apps\/[^/]+\/profiles\/[^/]+\/reconcile$/u.test(path)
+    /^GET \/apps\/[^/]+(?:\/tools|\/accounts\/(?:app|user))?$/u.test(path) ||
+    /^POST \/apps\/[^/]+\/tools\/call$/u.test(path) ||
+    /^POST \/apps\/[^/]+\/accounts\/(?:app|user)\/[^/]+\/connections$/u.test(path) ||
+    /^DELETE \/apps\/[^/]+(?:\/accounts\/(?:app|user)\/[^/]+\/[^/]+)?$/u.test(path)
   )
 }

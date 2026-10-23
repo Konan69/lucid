@@ -3,11 +3,17 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandbox": "./src/tools/sandbox.ts",
+    "./scope": "./src/tools/scope.ts",
+    "./signins": "./src/tools/signins.ts"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/build.mjs",
     "check:types": "pnpm typecheck",
     "dev": "vite dev",
     "docs": "flue docs",
@@ -24,6 +30,7 @@
     "@effect/platform-node": "catalog:",
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
+    "@openuidev/lang-core": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
@@ -32,16 +39,16 @@
     "effect": "catalog:",
     "hono": "catalog:",
     "pg": "catalog:",
-    "valibot": "catalog:"
+    "valibot": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@flue/cli": "catalog:",
+    "@flue/sdk": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"
   }

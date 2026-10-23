@@ -1,8 +1,8 @@
-import { describe, expect, it, layer } from '@effect/vitest'
+import { ExecutorAppOwnership } from './executor.ts'
+import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
-  AccountName,
   ActionTarget,
   AnotherAccountMessage,
   ConnectionId,
@@ -10,8 +10,6 @@ import {
   ConnectionState,
   ConnectionStep,
   Forbidden,
-  PersonId,
-  ServiceId,
   SessionId,
   ToolOutcome,
 } from '@vivid/contracts'
@@ -24,13 +22,11 @@ import {
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorOwnerId,
-  ExecutorProfileId,
+  ExecutorBinding,
   ExecutorReferences,
   ExecutorTransportFailure,
 } from './executor.ts'
 import { connectionHandlers } from './handlers.ts'
-import { namedAccounts } from './names.ts'
-import type { ConnectionRecord } from './records.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
   ConnectionProbe,
@@ -75,7 +71,6 @@ const connect = Effect.fn('AccountsTest.connect')(function* (
 })
 
 const identityOf = Schema.decodeUnknownSync(AccountIdentity)
-const accountName = Schema.decodeUnknownSync(AccountName)
 
 describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', () => {
   layer(connectionTestLayer)(
@@ -415,11 +410,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
   layer(connectionTestLayer)((test) => {
     const references = (account: Option.Option<string>) => {
       const identity = {
+        appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
         service: hostedService,
         app: ExecutorAppId.make('app'),
-        profile: ExecutorProfileId.make('profile'),
+        binding: ExecutorBinding.cases.Public.make({}),
         owner: ExecutorOwnerId.make('p-test'),
-        appOwnership: 'Shared' as const,
       }
       return Option.match(account, {
         onNone: () => ExecutorReferences.cases.Public.make(identity),
@@ -448,11 +443,9 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           email: 'ada@work.example',
           avatarUrl: 'https://images.example/ada.png',
         })
-        const executor = yield* Effect.gen(function* () {
-          // This HTTP recorder observes the app check for this signed-in account.
-          const context = yield* Layer.build(remote.configured)
-          return yield* Executor.pipe(Effect.provide(context))
-        }).pipe(Effect.scoped)
+        // The client's scope must stay open until the account check finishes.
+        const context = yield* Layer.build(remote.configured)
+        const executor = yield* Executor.pipe(Effect.provide(context))
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada@work.example'),
         )
@@ -464,11 +457,8 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       Effect.gen(function* () {
         const remote = yield* hostedExecutorFixture()
         yield* Ref.set(remote.identity, { email: `${'a'.repeat(200)}@x.example`, username: 'ada' })
-        const executor = yield* Effect.gen(function* () {
-          // The candidate identity payloads and their requests belong to this validation case.
-          const context = yield* Layer.build(remote.configured)
-          return yield* Executor.pipe(Effect.provide(context))
-        }).pipe(Effect.scoped)
+        const context = yield* Layer.build(remote.configured)
+        const executor = yield* Executor.pipe(Effect.provide(context))
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada'),
         )
@@ -480,11 +470,8 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       () =>
         Effect.gen(function* () {
           const remote = yield* hostedExecutorFixture()
-          const executor = yield* Effect.gen(function* () {
-            // Keep the no-check and public-account request receipts local to this assertion.
-            const context = yield* Layer.build(remote.configured)
-            return yield* Executor.pipe(Effect.provide(context))
-          }).pipe(Effect.scoped)
+          const context = yield* Layer.build(remote.configured)
+          const executor = yield* Executor.pipe(Effect.provide(context))
           expect(yield* executor.identity(references(Option.some('account')))).toEqual(
             Option.none(),
           )
@@ -494,79 +481,5 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           expect(yield* asked(remote)).toBe(1)
         }).pipe(Effect.scoped),
     )
-  })
-})
-
-describe('the name an account has among a Person’s accounts', () => {
-  /** One stored Connection on Gmail; only what a test is about is said. */
-  const row = (
-    id: string,
-    createdAt: number,
-    said: Partial<Pick<ConnectionRecord, 'service' | 'serviceName' | 'name' | 'identity'>>,
-  ): ConnectionRecord => ({
-    id: ConnectionId.make(id),
-    service: ServiceId.make('google/gmail'),
-    serviceName: 'Gmail',
-    name: null,
-    identity: null,
-    personId: PersonId.make('ada'),
-    companyId: null,
-    references: ExecutorReferences.cases.Public.make({
-      service: ServiceId.make('google/gmail'),
-      app: ExecutorAppId.make('app'),
-      profile: ExecutorProfileId.make(`profile-${id}`),
-      owner: ExecutorOwnerId.make('p-ada'),
-      appOwnership: 'Shared',
-    }),
-    status: 'ready',
-    returnsTo: 'Web',
-    reason: null,
-    createdAt,
-    updatedAt: createdAt,
-    ...said,
-  })
-
-  const wiki = { service: ServiceId.make('curated/deepwiki'), serviceName: 'DeepWiki' }
-
-  it('leads with the service, then what the Person called it, else who the service says it is', () => {
-    const named = namedAccounts([
-      row('a', 1, { name: accountName('Work'), identity: identityOf('ada@work.example') }),
-      row('b', 2, { identity: identityOf('ada@home.example') }),
-      row('c', 3, wiki),
-    ])
-    expect(named.map((entry) => entry.account)).toEqual([
-      'Gmail (Work)',
-      'Gmail (ada@home.example)',
-      'DeepWiki',
-    ])
-  })
-
-  it('counts an unnamed account’s place over every account on its service', () => {
-    const named = namedAccounts([
-      row('first', 1, { name: accountName('Work') }),
-      row('second', 2, {}),
-      row('other', 3, wiki),
-    ])
-    // The second Gmail account is the second whatever the first is called; the account on
-    // another service is the first there.
-    expect(named.map((entry) => entry.account)).toEqual(['Gmail (Work)', 'Gmail (2)', 'DeepWiki'])
-  })
-
-  it('numbers the later of two names that read the same, without colliding with a real name', () => {
-    const named = namedAccounts([
-      row('later', 5, {}),
-      row('first', 1, {}),
-      row('literal', 3, { name: accountName('2') }),
-      row('same', 7, { identity: identityOf('ada@work.example') }),
-      row('again', 9, { identity: identityOf('ada@work.example') }),
-    ])
-    expect(named.map((entry) => [entry.row.id, entry.account])).toEqual([
-      ['first', 'Gmail'],
-      // A Person really called an account "2", so the number moves on to 3.
-      ['literal', 'Gmail (2)'],
-      ['later', 'Gmail (3)'],
-      ['same', 'Gmail (ada@work.example)'],
-      ['again', 'Gmail (ada@work.example) (2)'],
-    ])
   })
 })

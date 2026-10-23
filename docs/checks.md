@@ -11,11 +11,11 @@ workspace source + shared rules/configs → Turbo task hash
 ## Design
 
 - Keep full type-aware lint as the default. Run one cached lint task per workspace, plus a root task for tooling and infrastructure outside workspaces. Package lint runs from the repository root so root-relative overrides, plugin paths, and Tailwind inputs keep the same meaning. Lint every workspace directory, including scripts and tests, instead of only `src`.
-- Typed lint has no declaration prerequisite. The pinned tsgolint program constructor sets `UseSourceOfProjectReference: true`, but still honors `disableSourceOfProjectReferenceRedirect`. Leave source redirects enabled so a fresh checkout resolves shared imports before any declaration emission. Native CLI consumers still use referenced declarations; a real compiler file-list regression verifies that boundary. Emitting five declaration projects before lint therefore adds work without reducing its programs. Keep source-input cache edges for ordinary dependencies and relative integration imports; declaration tasks remain prerequisites of native typechecking.
+- Typed lint has no declaration prerequisite. The pinned tsrslint backend follows referenced source and honors `disableSourceOfProjectReferenceRedirect`. Leave source redirects enabled so a fresh checkout resolves shared imports before any declaration emission. Native CLI consumers still use referenced declarations; a real compiler file-list regression verifies that boundary. Emitting five declaration projects before lint therefore adds work without reducing its programs. Keep source-input cache edges for ordinary dependencies and relative integration imports; declaration tasks remain prerequisites of native typechecking.
 - Keep dependency source in downstream hashes through transit tasks. Include the shared TypeScript config in check inputs, and root rules, plugin implementation, TypeScript configs, and design-style inputs in lint hashes. Successful logs must be replayed because the pre-push warning ratchets consume them.
 - Separate full owner inputs (`checkinputs`) from dependency production inputs (`typeinputs`). Only the five composite declaration owners exclude `src/**/*.test.ts`, `src/**/*.test.tsx`, and `tests/**` from production hashes; their typechecks and lints still hash those files. Other packages retain full dependency inputs, and explicit integration edges retain fixture/test inputs. A shared test edit must rerun its owner without rebuilding declarations and every application consumer.
 - Cache the root TypeScript graph alongside package graphs. Retain incremental build info as outputs, including the RPC client's explicit cache location. Include shared root configuration in build hashes. Explicit root source globs must exclude dependency shims, task logs, build info, native output, and local state; otherwise running a check changes its own next hash.
-- Serialize checks through Turbo. Native TypeScript uses `--checkers 1`; build-mode typechecks also use `--builders 1`. Oxlint uses one Rust worker and defaults Go lint workers to one. These settings reduce concurrent checker state without disabling diagnostics or imposing a speculative heap limit. An explicit Go worker environment setting remains available for a deliberate comparison.
+- Serialize checks through Turbo. Native TypeScript uses `--checkers 1`; build-mode typechecks also use `--builders 1`. Oxlint defaults to one worker, and tsrslint owns its internal worker count. The gate can raise Oxlint's worker count through `VIVID_LINT_THREADS` while keeping package checks serialized.
 - Run cached declaration and typecheck tasks in project mode through `scripts/types.mjs`. Turbo prepares referenced declarations first; project mode compares file contents against incremental data on a cache miss. Build mode can wrongly skip a changed source file whose timestamp predates restored output. Direct package commands use a forced, serialized build so their references are prepared without Turbo. Split packages check production through `types` and tests through `typecheck`; RPC has no test project and rechecks its declaration project.
 - Keep automatic Turbo worktree cache sharing. Do not add a cacheDir that would disable it. Persist `.turbo/cache` in CI; no remote cache provider is configured.
 - Fix commands always execute and are never cached.
@@ -26,10 +26,12 @@ workspace source + shared rules/configs → Turbo task hash
 
 ```text
 policy (5 checks, together, always run)
-checks lane: lint, format, typecheck, tooling tests   one Turbo task at a time
-tests lane:  test per package                         beside the checks lane
+checks lane: lint, format, typecheck, build          one Turbo task at a time
+tests lane:  tooling, test per package               beside the checks lane
 ```
 
+- The `build` stage selects `@vivid/web#build`, `@vivid/agent-runtime#build`, and `@vivid/mobile#build:updates`. The first is the server image's `vite build`. The runtime image and gate call the same `packages/agent/runtime/scripts/build.mjs`, including its checks for uncompiled workspace imports and a bundled second copy of Effect. The phone task clears its private `.cache/updates` output and calls the image's existing `updates` publisher through `apps/mobile/scripts/export.mjs`. It exports both native platforms with metadata and public Expo config. It does not use the generic phone build.
+- Build tasks hash shared production source through `checkinputs`, the root TypeScript config, patches, source-map upload script, and build environment. Their outputs include the web and runtime `dist` directories and the phone's `.cache/updates`. The web's package-local Turbo override repeats the root inputs, outputs, and environment. `scripts/build.test.mjs` runs the actual gate and Turbo against small artifact writers to verify restoration, shared-source invalidation, exact package selection, and failure reporting.
 - Tests run through Turbo, one task per package. A test task hashes its package, its dependencies' production source (`checkinputs`), the explicit integration edges, and every test setting except the database address; it needs no build. A package nothing reached is replayed with its counts, so the verdict always reports the whole suite.
 - A task for one package replaces the generic task, and so does a package's own `turbo.json`; Turbo merges neither. Each such task repeats the generic inputs, outputs and environment, and `scripts/gate.test.mjs` fails when one drifts. Before this, the server, runtime, skills and mobile lint did not rerun when the lint configuration changed.
 - Every run creates one empty database and gives it to the suites. The server's migrated template is named by a digest of the migrations and kept on the test server; each test file clones it under the run's prefix, and the run drops everything with its prefix at the end. Without a database server the gate fails.
@@ -64,31 +66,46 @@ A tree with a deliberate lint finding, type error, format error and failing test
 
 ## Effect language service
 
-Typecheck runs the native TypeScript 7 compiler. `effect-language-service patch` patches the JavaScript `typescript` package, which typecheck does not run, so from the move to TypeScript 7 until 7 October 2026 no Effect diagnostic reached the gate: a floating Effect and a `new Promise` in a contracts file passed typecheck. `@effect/tsgo` is the service for the native compiler (its README: "If you are using TypeScript 7.0 or newer, use `@effect/tsgo`"); `prepare` now runs `effect-tsgo patch --typescript` as well, and the plugin block in `tsconfig.base.json` is read by both.
+Type checks run the pinned tsc-rs 0.8.0 through `scripts/types.mjs`. Run `pnpm check packages/contracts/tsconfig.types.json` for a leaf and its references. The root and every package use that runner. The web build runs Vite, and Expo uses Babel and Metro. Neither requires the TypeScript JavaScript API on Node 24. Mobile startup sets `EXPO_NO_TYPESCRIPT_SETUP=1` so Expo's doctor leaves compiler installation and configuration to the repository.
 
-The first patched run reported 1,677 findings that had gathered meanwhile, none of them a plain TypeScript error: 741 `strictEffectProvide` (most are tests that give a Layer to each case with `Effect.provide` where `layer(...)` builds it once for the file), 406 `unnecessaryFailYieldableError`, 188 `schemaNumber`, 84 `asyncFunction`, 52 `multipleEffectProvide`, and 29 smaller rules. All of them were fixed on 7 October 2026, in the code and not by lowering a rule; a line where a rule is wrong by design carries a `@effect-diagnostics-next-line <rule>:off -- <reason>` comment. Since then the three `ignoreEffect...InTscExitCode` options are `false`, so an Effect error, warning or suggestion fails typecheck, `scripts/versions.mjs` refuses any other value, and the gate's typecheck line still says how many findings there are.
+The shared plugin entry stays in `tsconfig.base.json` because tsc-rs reads its Effect settings directly. No Effect patch or language-service package is installed. `unstableApiUsage` stays off. Other Effect findings still fail the gate.
 
-## The type checker is ts-rust
+For an editor that accepts an LSP command, run `node node_modules/tsc-rs/bin/tsc-rs --lsp --stdio`. In VS Code, install the TypeScript 7 extension and use `{"js/ts.tsdk.path": "node_modules/.pnpm/node_modules/@tsc-rs/linux-x64/lib"}` on Linux x64. Select the corresponding platform package on other hosts. Confirm the server path in the extension output. See the [tsc-rs editor setup](https://github.com/pingdotgg/ts-rust/blob/main/npm/tsc-rs/README.md#vs-code).
 
-Since 7 October 2026 `scripts/types.mjs` runs `tsc-rs` 0.1.0 (pingdotgg/ts-rust), a Rust port of the native TypeScript compiler with the same command line, declarations and build info, and the Effect language service rules built in. `@typescript/native` 7.0.2 stays installed: typed lint and editors use it, `@effect/tsgo` patches it, and `apps/web`'s build compiles with it. `tsc-rs` runs on Linux x64 and macOS arm64 only.
+Standalone source scanners use pinned `oxc-parser` 0.154.0. JSONC-only inputs use `jsonc-parser` 3.3.1. Ownership requires local symbol resolution, alias types, and Effect service signatures, so it uses the pinned tsc-rs synchronous API and its immutable virtual filesystem. Hermes checks use that API's config inheritance and loaded-library graph. Database proof discovery parses syntax with OXC and resolves module specifiers with tsc-rs. Every native API session is disposed after its scan.
+
+The former structural tool required the TypeScript 5 JavaScript API. Its five configured rules now run in the filesystem check and Oxlint JS plugin, so it leaves no compiler dependency. The dependency override removes legacy compiler edges; optional peers remain uninstalled. `autoInstallPeers` stays false. The compiler policy checks the lockfile and workspace bins as well as commands. Within pnpm commands, a preload rejects Node launchers from legacy compiler packages, including a global launcher selected from PATH. The shared host's global tools remain outside the workspace install.
+
+Version 0.8.0 reports Effect 4 `@stability` tags through `unstableApiUsage` (TS377136). At main, its 2,232 warnings match the patched native compiler exactly; 0.1.0 under-reported them. Konan uses unstable Effect APIs intentionally, so `tsconfig.base.json` sets only this rule's severity to `off`. There is no allowance list, diagnostic baseline, or changed warning exit policy. All other Effect rules retain their settings. The required comment makes this config JSONC; version validation uses the JSONC parser before its existing schema validation.
+
+The full cold typecheck graph, including declarations and both mobile and desktop selections, was measured on the eight-core Konan devbox with one warm-up and five alternating runs per side. Build info was removed before every run, Turbo cache hits were disabled, and both sides completed all 18 tasks with exit 0 and zero diagnostics.
+
+| Compiler                                                    | Median wall time | Median sampled process-tree peak RSS |
+| ----------------------------------------------------------- | ---------------: | -----------------------------------: |
+| `tsc-rs` 0.1.0 on main                                      |          12.79 s |                            1,822 MiB |
+| `tsc-rs` 0.8.0 with intentional unstable API usage disabled |           8.33 s |                            1,520 MiB |
+
+Wall-time ranges were 11.49 to 14.73 s and 7.72 to 8.90 s. RSS sums descendants sampled every 100 ms and can count shared pages more than once. Other verification workloads were running on the box. These timings compare the shipped configurations, including the intentional rule setting.
+
+The throwaway Effect canary still reports codes 377001, 377080, 377081, and 377130 and exits 2. An unstable CLI API exits 0 without TS377136 under the intentional setting. Both canaries are removed. The fresh runs, process samples, canary logs, and scripts are at `cloudbox-konan:/tmp/vivid-tooling-evidence`. Earlier raw comparisons are at `cloudbox-konan:/tmp/tsrs-bench-logs`; their 7.86 s figure for 0.8.0 ended on warnings before checking the second mobile and desktop selections and is not an equivalent-work speedup. The older typecheck figures below are historical measurements from 7 October 2026.
 
 Measured on the PC over the gate's whole typecheck graph (17 projects, in dependency order, declarations included, Effect rules on, cold):
 
-| Compiler                                             |   Time | Peak memory, largest process | Diagnostics                               |
-| ---------------------------------------------------- | -----: | ---------------------------: | ----------------------------------------- |
-| native `tsc` 7.0.2, one checker (the gate until now) | 28.3 s |                      1.97 GB | 1,677 Effect findings, 0 errors           |
-| native `tsc` 7.0.2, default checkers                 | 19.1 s |                      3.08 GB | the same                                  |
-| `tsc-rs` 0.1.0                                       | 11.1 s |                      2.07 GB | the same 1,677, and 3 errors more (below) |
+| Compiler                                      |   Time | Peak memory, largest process | Diagnostics                               |
+| --------------------------------------------- | -----: | ---------------------------: | ----------------------------------------- |
+| `tsc` 7.0.2, one checker (the gate until now) | 28.3 s |                      1.97 GB | 1,677 Effect findings, 0 errors           |
+| `tsc` 7.0.2, default checkers                 | 19.1 s |                      3.08 GB | the same                                  |
+| `tsc-rs` 0.1.0                                | 11.1 s |                      2.07 GB | the same 1,677, and 3 errors more (below) |
 
 The server project alone: 14.2 s, 8.1 s and 5.2 s. Warm, with build info kept: 8.8 s native, 4.1 s `tsc-rs`.
 
 The 3 extra errors were TS7031 (implicit any) on `packages/agent/runtime/src/tools/sandbox.ts`, for `(path, { recursive } = {}) =>` in an object typed by an SDK interface. They are not a fault of the port: TypeScript 6.0.3, 7.0.2 and the 7.1 nightly of 22 September accept the code, and the nightly of 23 September and later report the same error, since microsoft/TypeScript pull request 64043 ("Align object binding defaults with arrays"). The compiler says the element is implicitly `any` while its own next diagnostic gives its type as `boolean | undefined`. The two parameters are annotated in `sandbox.ts` until a release has the fix.
 
-The fix is ours and is open in both places: microsoft/TypeScript pull request 64671 (their issue 64431) and pingdotgg/ts-rust pull request 17 (its issue 16). The upstream change pads every element missing from the default with the element's own type, which is implicitly `any`; for a typed parameter that both reports the error and, in nested patterns, replaces the real type. The fix resolves the type the pattern destructures from the parameter's annotation or contextual signature, through nested patterns, and leaves out of the padding each element that type has. A build of ts-rust with it gives this repository the same diagnostics as `tsc` 7.0.2 with the annotations removed.
+The fix is ours and is open in both places: microsoft/TypeScript pull request 64671 (their issue 64431) and pingdotgg/ts-rust pull request 17 (its issue 16). The upstream change pads every element missing from the default with the element's own type, which is implicitly `any`; for a typed parameter that both reports the error and, in nested patterns, replaces the real type. The fix resolves the type the pattern destructures from the parameter's annotation or contextual signature, through nested patterns, and leaves out of the padding each element that type has. A build of ts-rust with it gives this repository the same diagnostics as the native compiler 7.0.2 with the annotations removed.
 
 ### Next: Bun's type checker
 
-The plan is to move to `bun check` later. ts-rust's published benchmark on T3 Code (an Effect codebase) has it at 4.1 s against 7.3 s for `tsc-rs` and 16.1 s for `tsc` 7 without Effect diagnostics; with them, `bun check` followed by `effect-tsgo diagnostics` takes 37.6 s against 11.1 s for `tsc-rs`, because Bun's checker has no Effect rules of its own. Those are their numbers, not measured here. Switch when Bun reports the Effect findings itself: change `typeChecker` in `scripts/types.mjs`, then repeat this section's comparison on this repository (same diagnostics, time and peak memory over the whole graph) before merging.
+The plan is to move to `bun check` later. ts-rust's published benchmark on T3 Code (an Effect codebase) has it at 4.1 s against 7.3 s for `tsc-rs` and 16.1 s for the native compiler 7 without Effect diagnostics; with them, `bun check` followed by a separate Effect diagnostics pass takes 37.6 s against 11.1 s for `tsc-rs`, because Bun's checker has no Effect rules of its own. Those are their numbers, not measured here. Switch when Bun reports the Effect findings itself: change `typeChecker` in `scripts/types.mjs`, then repeat this section's comparison on this repository (same diagnostics, time and peak memory over the whole graph) before merging.
 
 ## Reference and limits
 
@@ -110,9 +127,24 @@ A whole-server declaration prototype exposed Better Auth portability errors and 
 
 VCOS also has a machine-wide queue for heavy work. Turbo concurrency limits apply to one invocation, not to every session on a machine. Vivid's existing Cloudbox policy still applies to heavy gates. This change does not control unrelated jobs.
 
-The observed tsgolint allocation was approximately 3.6 GiB of private resident memory. The installed engine creates four compiler checker instances by default. Its lint-worker setting is independent of Oxlint's Rust worker count. Lowering Go lint workers limits active semantic work but does not remove the four-instance compiler pool. Worker limits retain the full compiler pool; measured savings come from limiting active semantic work and resetting each package process.
+The former tsgolint backend used approximately 3.6 GiB of private resident memory. That engine created four compiler checker instances by default. Its lint-worker setting was independent of Oxlint's Rust worker count. Lowering Go lint workers limited active semantic work but did not remove the four-instance compiler pool. Worker limits retained the full compiler pool; measured savings came from limiting active semantic work and resetting each package process.
 
 ## Measurements
+
+### Rust typed lint
+
+The runner selects `@maschwenk/tsrslint` 0.1.5 through Oxlint's `OXLINT_TSGOLINT_PATH`. A caller's explicit path wins and participates in Turbo's lint cache key. The native binary supports Linux x64, Linux arm64, and macOS arm64. The Go backend and its platform packages are no longer dependencies.
+
+On 22 October 2026, the eight-core Konan devbox ran the whole lint graph with forced cache misses, one warm-up and five alternating measured runs per side. Both sides exited 0 and ran all 13 scopes.
+
+| Backend                     | Median wall time | Median sampled process-tree peak RSS |
+| --------------------------- | ---------------: | -----------------------------------: |
+| `oxlint-tsgolint` 7.0.2002  |          26.96 s |                            2,593 MiB |
+| `@maschwenk/tsrslint` 0.1.5 |           9.66 s |                            1,717 MiB |
+
+Wall-time ranges were 25.28 to 28.22 s and 9.18 to 10.54 s. RSS is the sum of descendants sampled every 100 ms and can count shared pages more than once. It is not GNU time's largest individual-process RSS. These are shipped configurations: one Oxlint worker and the default Go worker, with tsrslint's internal worker count unchanged. CPU samples show semantic analysis as the active work. Part of the 64% wall-time reduction comes from using more cores: total CPU time fell from 30.2 s to 22.3 s (26%), while CPU utilization rose from about 114% for Go to 231% for tsrslint. Other verification workloads were running on the box. A contended warm-up took 187.99 s and is excluded from the medians.
+
+A fresh comparison of JSON diagnostics against main matched all 224 findings across all 13 scopes, with 0 missing and 0 extra. Earlier measurements at the same main commit were 25.96 s and 2,572 MiB for Go, versus 8.69 s and 1,737 MiB for Rust, with the same diagnostic parity. Their raw logs remain at `cloudbox-konan:/tmp/tsrs-bench-logs`. The fresh runs, process samples, per-scope JSON, comparison script, and summaries are at `cloudbox-konan:/tmp/vivid-tooling-evidence`.
 
 On the same 4-core, 8-GiB idle Cloudbox and source snapshot (base `133644c3`), GNU time measured:
 
@@ -154,7 +186,23 @@ All three runs passed with zero Turbo cache hits. The split initially regressed 
 
 Server checking remains the largest native program. Initial splitting reduced its file count from 3,623 to 3,607 but increased parsed lines from 915,090 to 941,467 and type instantiations from 4,761,039 to 4,876,371. Larger generated declarations explain why a smaller source-file count did not establish a smaller semantic heap. Production/test boundaries reduce repeated implementation checking in several consumers, but the server graph still determines the overall peak.
 
-A real dry-run probe changed only `contracts/src/signin.test.ts`. Previously it invalidated 15 native tasks, including all five declaration producers and application consumers. Production/test input separation reduces this to the contracts test check and the conservative root check: two tasks. An actual check after appending a comment to that test completed in 0.74 seconds with 16 of 18 cache hits; all declaration producers and application checks were reused. An unchanged run hit all 18 entries in 0.32 seconds with approximately 111 MiB sampled largest-child RSS. Real compiler regressions also require an invalid test to fail while its production declarations replay from cache. Production edits and explicit relative integration inputs still invalidate consumers.
+Before the 21 October 2026 unit-test removal, a dry-run probe changed only the contracts sign-in test. That test and the contracts test project are now removed. Previously it invalidated 15 native tasks, including all five declaration producers and application consumers. At that revision, production/test input separation reduced this to the contracts test check and the conservative root check: two tasks. An actual check after appending a comment to that test completed in 0.74 seconds with 16 of 18 cache hits; all declaration producers and application checks were reused. An unchanged run hit all 18 entries in 0.32 seconds with approximately 111 MiB sampled largest-child RSS. Real compiler regressions also require an invalid test to fail while its production declarations replay from cache. Production edits and explicit relative integration inputs still invalidate consumers.
+
+### Production builds
+
+On 20 October 2026, U4 ran the shipping tasks on the eight-core, 15-GiB `cloudbox-konan`. These are single observations on a shared machine. The cold sample ran the phone publisher directly; the final task adds a small wrapper that clears its private output before calling that same publisher. Its subsequent uncached phone export took 105.1 seconds. No speed comparison is claimed because the snapshots and machine load differed.
+
+| `pnpm gate --only build --host cloudbox-konan` | Uncached task time | Gate wall time | Cached shipping tasks | Run              |
+| ---------------------------------------------- | -----------------: | -------------: | --------------------: | ---------------- |
+| First execution                                |            137.8 s |        138.3 s |                   0/3 | `mvh19j8z9670cf` |
+| Unchanged final implementation                 |              0.0 s |          0.2 s |                   3/3 | `mvh1puvmd1b98a` |
+| Comment added only to the runtime build script |              1.1 s |          1.4 s |                   2/3 | `mvh1qbqx7d9a84` |
+
+Task time sums executed shipping tasks, as the gate reports it. A cache hit restores outputs and replays logs. Gate wall time excludes the client connection and upload, which took total command time to 147.9, 2.9, and 4.6 seconds respectively. The changed-input probe appended `// U4 cache invalidation proof.` to `packages/agent/runtime/scripts/build.mjs`, ran the command above, and restored the file. Only the runtime task missed. The regression in `scripts/build.test.mjs` also deletes the fixture artifacts before a cache hit and requires their contents to be restored.
+
+The historical proof used an archive of `6be77f79^` with its own frozen dependencies on the same host. After `pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/web...`, `pnpm --filter @vivid/web build` exited 1 and printed 275 `unstableApiUsage` warnings. `pnpm --filter @vivid/web typecheck` exited 0. This reproduces the production failure that the former typecheck-only gate missed. The new stage runs that actual web build command, and its regression requires a failed bundler to fail the stage and name its package.
+
+The final implementation passed `pnpm gate affected --only lint,typecheck,build,tooling,format --host cloudbox-konan` in run `mvh1me5x61e3ed`. Typecheck reported zero Effect findings. The runtime extraction also matched the former Dockerfile program's JavaScript AST, ignoring comments and formatting. No Docker image was built or pushed. A separate attempt on `cloudbox-konan3` was stopped using its captured run process group after load reached 31 on eight cores with swap in use. It produced no verdict and is excluded from these results.
 
 ## Verification
 

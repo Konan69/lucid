@@ -1,10 +1,4 @@
-import {
-  DeviceAccess,
-  DevicePresence,
-  type Device,
-  type DeviceId,
-  type DeviceListResponse,
-} from '@vivid/contracts'
+import { DeviceAccess, DevicePresence, type Device } from '@vivid/contracts'
 import { DeviceLink } from '@vivid/desktop/bridge'
 import { Effect, Option } from 'effect'
 
@@ -13,50 +7,12 @@ import { Effect, Option } from 'effect'
  * once their Person allows it. The server keeps the list and the decision, and the list is live
  * (`live.devices`): a computer whose desktop app signs in appears, waiting, in a Settings that is
  * already open on another device. This module knows what a decision does to the list before the
- * server confirms it, what a computer's state is called, and the one thing only the desktop app
- * can say: which of them is the computer this window is running on.
+ * server confirms it (`allowing`, `stopping`, `@vivid/state`), what a computer's state is called,
+ * and the one thing only the desktop app can say: which of them is the computer this window is
+ * running on.
  */
 
 const bridge = 'vivid' in globalThis ? Option.some(globalThis.vivid.device) : Option.none()
-
-export type DeviceList = typeof DeviceListResponse.Type
-
-/** One computer with its access changed. Every field is named, so none is dropped unseen. */
-const withAccess = (device: Device, access: DeviceAccess): Device => ({
-  id: device.id,
-  name: device.name,
-  access,
-  presence: device.presence,
-})
-
-/**
- * What the list looks like once a computer is allowed, for showing the press at once: that one
- * is allowed, and any other that was is not, because Vivid acts on one computer at a time and
- * the server stops allowing the rest in the same step.
- */
-export const allowing =
-  (id: DeviceId, at: number) =>
-  (current: DeviceList): DeviceList => ({
-    devices: current.devices.map((device) => {
-      if (device.id === id) {
-        return withAccess(device, DeviceAccess.cases.Allowed.make({ since: at }))
-      }
-      return allowed(device)
-        ? withAccess(device, DeviceAccess.cases.Revoked.make({ since: at }))
-        : device
-    }),
-  })
-
-/** What the list looks like once a computer stops being allowed. */
-export const stopping =
-  (id: DeviceId, at: number) =>
-  (current: DeviceList): DeviceList => ({
-    devices: current.devices.map((device) =>
-      device.id === id
-        ? withAccess(device, DeviceAccess.cases.Revoked.make({ since: at }))
-        : device,
-    ),
-  })
 
 /**
  * Which Device this window's computer is, when it is one. In a browser tab there is no desktop
@@ -105,6 +61,3 @@ export const standing = (device: Device): string =>
     Revoked: () => 'Not allowed.',
     Allowed: () => reach(device.presence),
   })
-
-/** Whether Vivid may use this computer, which decides the one action its row offers. */
-export const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)

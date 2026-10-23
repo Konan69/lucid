@@ -1,10 +1,10 @@
 import type { NavigationHelpers } from '@react-navigation/native'
 import type { Thread } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
+import { Data, Effect, Option } from 'effect'
 import { useState } from 'react'
 import { useWindowDimensions } from 'react-native'
 import { closeDrawer } from '../../data/drawer'
-import { useLiveData } from '../../data/live'
+import { refusalOf, useLiveData } from '../../data/live'
 import { patchThread } from '../../data/threads'
 import { drawerWidth } from '../../ui/Drawer'
 import { NameSheet } from '../../ui/Sheet'
@@ -87,11 +87,11 @@ function Rename({ thread, onClose }: { thread: Thread; onClose: () => void }) {
       action="Save"
       maxLength={120}
       onClose={onClose}
-      onSave={async (title) => {
-        if (title === thread.title) return Option.none()
-        const result = await patchThread(data, thread.id, { title })
-        return Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
-      }}
+      onSave={(title) =>
+        title === thread.title
+          ? Effect.succeedNone
+          : patchThread(data, thread.id, { title }).pipe(Effect.map(refusalOf))
+      }
     />
   )
 }

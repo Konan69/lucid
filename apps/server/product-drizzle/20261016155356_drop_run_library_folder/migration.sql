@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_runs" DROP COLUMN "library_folder";

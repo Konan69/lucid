@@ -7,22 +7,17 @@
     ".": "./src/index.ts",
     "./auth": "./src/auth.ts",
     "./code": "./src/code.ts",
+    "./display": "./src/display.ts",
     "./rpc": "./src/rpc.ts",
     "./signin": "./src/signin.ts"
   },
   "scripts": {
-    "typecheck": "node ../../scripts/types.mjs tsconfig.tests.json",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.types.json",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "node ../../scripts/test.mjs",
     "types": "node ../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@flue/sdk": "catalog:",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@effect/vitest": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
   }
 }

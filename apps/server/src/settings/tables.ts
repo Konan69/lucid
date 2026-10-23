@@ -7,10 +7,15 @@ export const settingsTable = pgTable('settings', {
     .primaryKey()
     .references(() => personTable.id, { onDelete: 'cascade' }),
   theme: text().notNull().default('system'),
-  /** An IANA zone name. Routines and "tomorrow at 9" are resolved in it. */
+  /** An IANA zone name. Local dates and times are resolved in it. */
   timezone: text().notNull().default('UTC'),
   /** Whether this Person wants to be told when something needs them or finishes. */
   notify: boolean().notNull().default(true),
+  /**
+   * Whether the Computer's browser sends its traffic out through this Person's own computer
+   * (`computers/egress/`). Off until the Person turns it on. Issue 61 removes the choice.
+   */
+  egress: boolean().notNull().default(false),
   /**
    * What this Person calls Vivid in their personal space, and how its face is drawn there: an
    * `Appearance` (`packages/contracts/src/appearance.ts`). The defaults are Vivid as it ships, so

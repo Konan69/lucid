@@ -83,10 +83,10 @@ const post = Effect.fn('Account.post')(function* (posting: Posting) {
 const enter = Effect.fn('Account.enter')(function* (posting: Omit<Posting, 'headers'>) {
   const answer = yield* post({ ...posting, headers: {} })
   if (!answer.ok) {
-    return yield* Effect.fail(refusalFor(answer.status, answer.body))
+    return yield* refusalFor(answer.status, answer.body)
   }
   if (Option.isNone(answer.token))
-    return yield* Effect.fail(new AccountRefused({ reason: 'NoSession', message: NO_SESSION }))
+    return yield* new AccountRefused({ reason: 'NoSession', message: NO_SESSION })
   return Redacted.make(answer.token.value)
 })
 
@@ -133,14 +133,16 @@ const decodeEnding = Schema.decodeUnknownOption(Ending)
  */
 export const sessionExpiry = (session: SignedIn): Effect.Effect<Option.Option<number>> =>
   Effect.tryPromise({
-    try: async (signal) => {
-      const response = await request(accountAddress(session.server, 'get-session'), {
+    // The body is read inside the same attempt as the request, so the one abort signal covers
+    // both: an interrupted call stops a body still arriving, not only the headers.
+    try: (signal) =>
+      request(accountAddress(session.server, 'get-session'), {
         method: 'GET',
         headers: bearer(session.token),
         signal,
-      })
-      return response.ok ? Option.some(await response.text()) : Option.none<string>()
-    },
+      }).then((response) =>
+        response.ok ? response.text().then(Option.some) : Option.none<string>(),
+      ),
     catch: () => new AccountUnreachable({ message: UNREACHABLE }),
   }).pipe(
     Effect.map((body) =>

@@ -3,8 +3,9 @@ import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { ThreadId } from '@vivid/contracts'
 import { randomUUID } from 'expo-crypto'
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
+import { useSharedValue } from 'react-native-reanimated'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
 import { again, begin, startedWith } from '../data/first'
@@ -17,8 +18,10 @@ import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
+import { DeviceAsk } from './chat/Device'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
+import { start } from '../data/app'
 
 /**
  * The first screen, and the root of the app: somewhere to start a new Thread, or one Thread, in
@@ -58,7 +61,7 @@ function Fresh() {
   const me = useMe()
   const data = useLiveData()
   const threads = useLive(data.live.threads)
-  const start = useStart()
+  const starting = useStart()
   const showing = homeShows(useArrival(), threads)
   const working =
     LiveState.$is('Ready')(threads) &&
@@ -76,7 +79,7 @@ function Fresh() {
         showing={showing}
         me={me}
         mood={mood}
-        start={start}
+        starting={starting}
         placeholder={`Message ${vivid.name}`}
       />
     </AboveKeyboardBelowBar>
@@ -111,7 +114,7 @@ function useArrival() {
 interface WritingProps {
   me: ReturnType<typeof useMe>
   mood: 'happy' | 'thinking'
-  start: ReturnType<typeof useStart>
+  starting: ReturnType<typeof useStart>
   placeholder: string
 }
 
@@ -132,9 +135,12 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
  * For someone Vivid has met: the greeting in the middle of the page, and the composer. The words
  * and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
  */
-function Writing({ me, mood, start, placeholder }: WritingProps) {
+function Writing({ me, mood, starting, placeholder }: WritingProps) {
+  // The composer's dock, measured, which a banner over it stands on (`chat/Banner.tsx`).
+  const [dock, setDock] = useState<Option.Option<number>>(Option.none())
+  const covered = useSharedValue(0)
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -142,17 +148,26 @@ function Writing({ me, mood, start, placeholder }: WritingProps) {
       >
         <First me={me} mood={mood} />
       </ScrollView>
-      <Composer
-        value={start.draft}
-        autoFocus={false}
-        placeholder={placeholder}
-        working={false}
-        disabled={false}
-        onChange={start.setDraft}
-        onSend={start.send}
-        onStop={() => undefined}
-      />
-    </>
+      {/* A computer waiting to be allowed is asked about where the Person starts. */}
+      {Option.isSome(dock) && <DeviceAsk free dock={dock.value} covered={covered} />}
+      <View
+        onLayout={(event) => {
+          const height = event.nativeEvent.layout.height
+          setDock((now) => (Option.contains(now, height) ? now : Option.some(height)))
+        }}
+      >
+        <Composer
+          value={starting.draft}
+          autoFocus={false}
+          placeholder={placeholder}
+          working={false}
+          disabled={false}
+          onChange={starting.setDraft}
+          onSend={starting.send}
+          onStop={() => undefined}
+        />
+      </View>
+    </View>
   )
 }
 
@@ -175,7 +190,7 @@ function Writing({ me, mood, start, placeholder }: WritingProps) {
  * place for a new Thread, so they are still in the composer after visiting another screen and
  * after the app is closed.
  */
-function useStart() {
+export function useStart() {
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
@@ -195,7 +210,7 @@ function useStart() {
     // sending them again from here must not start a second one.
     const begun = startedWith(front.firsts.all(), words, place)
     if (Option.isSome(begun)) {
-      void again(way, front.firsts, begun.value)
+      void start(again(way, front.firsts, begun.value))
       front.open(begun.value, Keyboard.isVisible())
       return
     }
@@ -203,13 +218,15 @@ function useStart() {
     // stay kept on the phone until they are with Vivid (`taken`), so closing the app before then
     // does not lose them; the composer they were typed in is not on screen meanwhile.
     const id = ThreadId.make(randomUUID())
-    void begin(way, front.firsts, id, {
-      words,
-      // A Thread started while the drawer is scoped to a Project is filed in that Project.
-      projectId: Option.getOrNull(Option.map(scoped, (project) => project.id)),
-      at: Date.now(),
-      place,
-    })
+    void start(
+      begin(way, front.firsts, id, {
+        words,
+        // A Thread started while the drawer is scoped to a Project is filed in that Project.
+        projectId: Option.getOrNull(Option.map(scoped, (project) => project.id)),
+        at: Date.now(),
+        place,
+      }),
+    )
     front.open(id, Keyboard.isVisible())
   }
 

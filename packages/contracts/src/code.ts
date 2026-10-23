@@ -1,6 +1,10 @@
 import * as Schema from 'effect/Schema'
-import { ACCOUNT_HANDLE_MAX } from './connections.js'
-import { ApprovalId } from './identity.js'
+import { ACCOUNT_HANDLE_MAX, DisplayToolKind } from './connections.js'
+import { ApprovalId, ThreadId } from './identity.js'
+import { FeedCardId } from './feed.js'
+import { CodeCallKind } from './tools.js'
+
+export { CodeCallKind } from './tools.js'
 
 /**
  * One timing contract keeps the server deadline, the waits that follow it and the client timeout
@@ -47,14 +51,36 @@ export const RunCodeRequest = Schema.Struct({
 })
 export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest> {}
 
-/** The tools a program can call. A closed list: a program cannot reach anything else. */
-export const CodeCallKind = Schema.Literals([
-  'find_tools',
-  'use_tool',
-  'browse',
-  'read_page',
-] as const)
-export type CodeCallKind = typeof CodeCallKind.Type
+/** The stored Vivid content the reader is rendering, never client-supplied evidence of authorship. */
+export const DisplaySource = Schema.TaggedUnion({
+  ThreadMessage: { thread: ThreadId, message: Schema.NonEmptyString },
+  FeedPost: { post: FeedCardId },
+})
+export type DisplaySource = typeof DisplaySource.Type
+
+/** A reader may execute only exact code and summary from a stored run_code declaration. */
+export class DisplayProgramRefused extends Schema.TaggedError<DisplayProgramRefused>()(
+  'DisplayProgramRefused',
+  {
+    message: Schema.Literal(
+      "This display's program is not one Vivid wrote. Ask Vivid to draw it again.",
+    ),
+  },
+  { title: 'Display program refused' },
+) {}
+
+/** A display runs for its signed-in reader, within the Thread its stored source belongs to. */
+export const RunDisplayCodeRequest = Schema.Struct({
+  ...RunCodeRequest.fields,
+  source: DisplaySource,
+  /** Untrusted client intent hint. The server derives policy only from its stored declaration. */
+  kind: DisplayToolKind,
+})
+export interface RunDisplayCodeRequest extends Schema.Schema.Type<typeof RunDisplayCodeRequest> {}
+
+/** The stored reply has not settled yet. No program ran and a final draw may ask again. */
+export const DisplayProgramWaiting = Schema.TaggedStruct('DisplayProgramWaiting', {})
+export interface DisplayProgramWaiting extends Schema.Schema.Type<typeof DisplayProgramWaiting> {}
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
 export const CodeCallEnd = Schema.Literals([
@@ -85,6 +111,8 @@ export const CodeFailure = Schema.TaggedUnion({
    * the Person is using it, or its provider stopped answering. When no call is listed, nothing
    * was done for the Person; the program itself may have run for a while on the Computer. */
   Unavailable: {},
+  /** Server admission is exhausted; no Computer was opened and nothing ran. */
+  Busy: { message: Schema.Literal('Vivid is busy with other work. Try again in a moment.') },
 })
 export type CodeFailure = typeof CodeFailure.Type
 
@@ -118,6 +146,10 @@ export const CodeOutcome = Schema.TaggedUnion({
   OutcomeUnknown: { calls: Schema.Array(CodeCall) },
 })
 export type CodeOutcome = typeof CodeOutcome.Type
+
+/** Waiting is distinct from a failed execution and carries no completed result to cache. */
+export const DisplayCodeOutcome = Schema.Union([CodeOutcome, DisplayProgramWaiting])
+export type DisplayCodeOutcome = typeof DisplayCodeOutcome.Type
 
 /** Reading one public page without a Computer: the address in, its readable text out. */
 export const ReadPageRequest = Schema.Struct({

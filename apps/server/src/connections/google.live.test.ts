@@ -48,9 +48,8 @@ const liveLayer = executorLayer.pipe(
   ),
 )
 
-/** Begin one Connection for a separate owner and always remove what it created on Executor: the
- * profile and its pending request. The app is shared code and stays, which is what the second
- * Begin then has to find. */
+/** Begin one Connection for a separate owner and remove its dedicated app and pending request
+ * even if inspection fails. A second Connection must receive another app. */
 const begun = Effect.fn('GoogleProof.begin')(function* <A>(
   google: GoogleService,
   inspect: (
@@ -97,10 +96,10 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
 /**
  * The real adapter against a disposable hosted Executor, with nothing installed on it beforehand:
  * no product database and no Google token exchange. For each of the six services the first Begin
- * deploys Vivid's own source and the second finds that app, and both return Google's own consent
+ * deploys Vivid's own source and the second deploys a distinct app. Both return Google's consent
  * address carrying the client, the return address and the state Vivid stored.
  *
- * Run on the hosted Executor's own image (`executor-selfhost:src-304bf60`), which must be started
+ * Run on the published `executor-selfhost:2.0.0-beta.23` image, which must be started
  * with `EXECUTOR_OAUTH_CALLBACK_URL` set to `returnAddress` above. Assertions compare to booleans
  * so a failure prints neither a client value nor a consent address.
  */
@@ -109,7 +108,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
   () => {
     layer(liveLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
       it.effect(
-        'offers the six services, installs each once, and returns Google consent addresses',
+        'offers six services with dedicated apps per Connection and Google consent addresses',
         () =>
           Effect.gen(function* () {
             const catalog = yield* (yield* Executor).catalog
@@ -143,7 +142,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
                 return references.app
               })
               const second = yield* begun(google, (_step, references) => references.app)
-              expect(second === first).toBe(true)
+              expect(second === first).toBe(false)
             }
           }),
         { timeout: 240_000 },

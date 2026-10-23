@@ -1,4 +1,4 @@
-import { Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Modal, Platform, ScrollView, useWindowDimensions, View } from 'react-native'
 import { X } from 'lucide-react-native'
@@ -8,6 +8,7 @@ import { useTheme } from '../theme'
 import { useKeyboardShowing } from '../data/keyboard'
 import { AboveKeyboard } from './Keyboard'
 import { Button, Field, GUTTER, IconButton, Label, Labelled, Notice } from './ui'
+import { start } from '../data/app'
 
 /**
  * Something asked or shown over the screen the Person was on: a form, a choice, a detail. It is
@@ -228,21 +229,25 @@ export function NameSheet({
   action: string
   maxLength: number
   onClose: () => void
-  onSave: (value: string) => Promise<Option.Option<string>>
+  onSave: (value: string) => Effect.Effect<Option.Option<string>>
 }) {
   const [value, setValue] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const text = value.trim()
 
-  async function save() {
-    if (text.length === 0 || busy) return
-    setBusy(true)
-    setRefused(Option.none())
-    const refusal = await onSave(text)
-    setBusy(false)
-    if (Option.isNone(refusal)) onClose()
-    else setRefused(refusal)
+  function save() {
+    return start(
+      Effect.gen(function* () {
+        if (text.length === 0 || busy) return
+        setBusy(true)
+        setRefused(Option.none())
+        const refusal = yield* onSave(text)
+        setBusy(false)
+        if (Option.isNone(refusal)) onClose()
+        else setRefused(refusal)
+      }),
+    )
   }
 
   return (

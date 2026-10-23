@@ -1,10 +1,12 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeModule from 'node:module'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
+import * as Schema from 'effect/Schema'
 
 const assert = NodeAssert
 const test = NodeTest.default
@@ -14,6 +16,12 @@ const repositoryRoot = NodePath.resolve(
 )
 const turbo = NodePath.join(repositoryRoot, 'node_modules/turbo/bin/turbo')
 const oxlint = NodePath.join(repositoryRoot, 'node_modules/oxlint/bin/oxlint')
+
+const Manifest = Schema.StructWithRest(
+  Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) }),
+  [Schema.Record(Schema.String, Schema.Json)],
+)
+const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(Manifest))
 
 /** Exercise the real pinned compiler and repository configs with small owned source files. */
 function fixture(t) {
@@ -27,10 +35,11 @@ function fixture(t) {
     'turbo.json',
     'scripts/types.mjs',
     'tsconfig.base.json',
+    'tsconfig.hermes.json',
+    'hermes.d.ts',
     'packages/contracts/package.json',
     'packages/contracts/tsconfig.json',
     'packages/contracts/tsconfig.types.json',
-    'packages/contracts/tsconfig.tests.json',
     'packages/client/rpc/package.json',
     'packages/client/rpc/tsconfig.json',
     'packages/client/rpc/tsconfig.types.json',
@@ -38,6 +47,24 @@ function fixture(t) {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true })
     NodeFS.copyFileSync(NodePath.join(repositoryRoot, file), NodePath.join(root, file))
   }
+  // This compiler integration fixture owns a test project even though contracts has no tests.
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/contracts/tsconfig.tests.json'),
+    JSON.stringify({
+      extends: './tsconfig.types.json',
+      compilerOptions: {
+        composite: false,
+        noEmit: true,
+        declaration: false,
+        emitDeclarationOnly: false,
+        rootDir: '.',
+        tsBuildInfoFile: '.cache/typescript/tests.tsbuildinfo',
+      },
+      include: ['src/**/*.test.ts'],
+      exclude: [],
+      references: [{ path: './tsconfig.types.json' }],
+    }),
+  )
   // Turbo validates named package edges, even when this probe runs only two packages.
   const workspaces = NodeFS.readFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'utf8')
     .split('\n\n')[0]
@@ -51,15 +78,21 @@ function fixture(t) {
       NodePath.join(root, workspace, 'package.json'),
     )
   }
-  NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@typescript'), { recursive: true })
-  NodeFS.symlinkSync(
-    NodePath.join(repositoryRoot, 'node_modules/@typescript/native'),
-    NodePath.join(root, 'node_modules/@typescript/native'),
-  )
+  const contractManifest = NodePath.join(root, 'packages/contracts/package.json')
+  const manifest = decodeManifest(NodeFS.readFileSync(contractManifest, 'utf8'))
+  manifest.scripts.typecheck += ' tsconfig.tests.json'
+  NodeFS.writeFileSync(contractManifest, JSON.stringify(manifest))
+  NodeFS.mkdirSync(NodePath.join(root, 'node_modules'), { recursive: true })
   // The checker scripts/types.mjs runs; its platform package resolves through the real path.
   NodeFS.symlinkSync(
     NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/tsc-rs')),
     NodePath.join(root, 'node_modules/tsc-rs'),
+  )
+  // The Node test project names its ambient types explicitly; the production project excludes them.
+  NodeFS.mkdirSync(NodePath.join(root, 'node_modules/@types'), { recursive: true })
+  NodeFS.symlinkSync(
+    NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/@types/node')),
+    NodePath.join(root, 'node_modules/@types/node'),
   )
   for (const directory of ['packages/contracts/src', 'packages/client/rpc/src']) {
     NodeFS.mkdirSync(NodePath.join(root, directory), { recursive: true })
@@ -272,8 +305,9 @@ void test('typed lint diagnoses production, tests, and consumers before declarat
         cwd: root,
         env: {
           ...process.env,
-          GOMAXPROCS: '1',
-          OXLINT_TSGOLINT_PATH: NodePath.join(repositoryRoot, 'node_modules/.bin/tsgolint'),
+          OXLINT_TSGOLINT_PATH: NodeModule.createRequire(import.meta.url)(
+            '@maschwenk/tsrslint',
+          ).binaryPath(),
         },
         encoding: 'utf8',
       },

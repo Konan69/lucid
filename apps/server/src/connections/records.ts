@@ -19,28 +19,73 @@ import {
 import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
-import { AccountIdentity, ExecutorReferences } from './executor.ts'
+import {
+  AccountIdentity,
+  ExecutorReferences,
+  ExecutorAppId,
+  LegacyExecutorReferences,
+  migrationPending,
+  executorMigrationMessage,
+} from './executor.ts'
 import { connectionLogo, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
+import { MADE } from './made.ts'
 import { connections } from './tables.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
-const rowSchema = createSelectSchema(connections, {
+export const storedRowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,
   name: Schema.NullOr(AccountName),
   identity: Schema.NullOr(AccountIdentity),
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
-  references: ExecutorReferences,
+  executorApp: Schema.NullOr(ExecutorAppId),
+  references: Schema.Union([ExecutorReferences, LegacyExecutorReferences]),
   returnsTo: SignInSurface,
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 }).mapFields(({ label: _retired, ...fields }) => fields)
+const rowSchema = storedRowSchema.mapFields((fields) => ({
+  ...fields,
+  references: ExecutorReferences,
+}))
 export type ConnectionRecord = typeof rowSchema.Type
 const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
-export const decodeRow = decodeStored(rowSchema, 'Connection')
+export const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
+const isLegacy = Schema.is(LegacyExecutorReferences)
+
+/** An active Connection selects exactly one app. This unique selection grants no deletion
+ * authority; ExecutorAppOwnership separately decides whether its app may be reclaimed.
+ */
+export function claimedApp(references: ExecutorReferences) {
+  if (
+    ExecutorReferences.guards.ReconnectRequired(references) ||
+    ExecutorReferences.guards.MigrationPending(references)
+  )
+    return null
+  return references.app
+}
+
+/** Database decoding performs no I/O or reconciliation. Unprocessed legacy selections project
+ * an explicit unavailable state; only the migration pass writes outcomes or asks Executor.
+ */
+export const decodeRow = Effect.fn('Connections.decodeRow')(function* (
+  input: typeof connections.$inferSelect,
+) {
+  const row = yield* decodeStoredRow(input)
+  const references = isLegacy(row.references)
+    ? migrationPending(row.references, 'Unattempted')
+    : row.references
+  if (row.executorApp !== claimedApp(references))
+    return yield* new DatabaseFailure({
+      message: 'Connection app claim does not match its references',
+    })
+  if (ExecutorReferences.guards.MigrationPending(references))
+    return { ...row, references, status: 'failed' as const, reason: executorMigrationMessage }
+  return { ...row, references }
+})
 export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')
 
 /** Personal accounts follow their Person across workspaces; Company accounts stay in their Company. */
@@ -151,7 +196,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
     name: row.name,
     identity: row.identity,
     account,
-    origin: row.service.startsWith(IMPORTED) ? 'Address' : 'Catalogue',
+    origin: connectionOrigin(row.service),
     ownership:
       row.companyId === null
         ? ConnectionOwnership.cases.Personal.make({ owner: summaryOf(actor.person) })
@@ -160,6 +205,13 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
     createdAt: row.createdAt,
   })
 })
+
+/** Only catalogue services support allocating another account from Settings. */
+function connectionOrigin(service: ServiceId): Connection['origin'] {
+  if (service.startsWith(MADE)) return 'Made'
+  if (service.startsWith(IMPORTED)) return 'Address'
+  return 'Catalogue'
+}
 
 /**
  * One Connection for an answer that carries only it (a step, a rename). Its name is decided among
@@ -206,6 +258,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       .update(connections)
       .set({
         references: yield* encodeReferences(references),
+        executorApp: claimedApp(references),
         status,
         reason,
         updatedAt: yield* Clock.currentTimeMillis,

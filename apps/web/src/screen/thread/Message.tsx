@@ -1,12 +1,14 @@
 import type { FlueConversationMessage } from '@flue/react'
 import {
+  DisplaySource,
   InputRequestId,
   InputRequestState,
-  ShowRequest,
+  textOf,
   type Approval,
   type InputRequest,
   type PersonId,
   type Run,
+  type ThreadId,
 } from '@vivid/contracts'
 import {
   asking,
@@ -15,20 +17,22 @@ import {
   Source,
   sourceOf,
   speakerOfTurn,
+  stretches,
   thisReader,
 } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
+import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
 import { memo, useState } from 'react'
+import { Display } from '../../parts/Display'
 import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
+import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
-import { Display } from './Shown'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
 const Metadata = Schema.Struct({
@@ -39,6 +43,7 @@ const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
+  readonly thread: ThreadId
   readonly me: PersonId
   readonly shared: boolean
   readonly runs: ReadonlyArray<Run>
@@ -113,13 +118,6 @@ export function spokenOf(message: FlueConversationMessage): asking.Spoken {
   return read
 }
 
-/** A message's words, without what Vivid did or asked beside them. */
-export const textOf = (message: FlueConversationMessage) =>
-  message.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n\n')
-
 /**
  * A Vivid message with nothing a Person can read in it: no words, no step, no card. The runtime
  * writes one when a model call ends without producing anything. The Run's own state says what
@@ -157,6 +155,15 @@ interface MessageProps {
   readonly working: boolean
   /** Whether this is the newest message in the Thread, the one a Person can still answer. */
   readonly latest: boolean
+  /**
+   * Whether Flue has settled the submission this reply answers (its `submissionId` is among the
+   * conversation's settlements). Neither `latest`, `working` nor a part's streaming state says so:
+   * Flue closes every streaming part between steps and folds a delivery written while the reply
+   * arrives into the same submission (`appendToolInput` in `@flue/sdk` 2.2.2,
+   * `projectConversationUi` in `@flue/runtime` 2.2.2), so the reply can look finished while its
+   * submission is not. The server runs a display's program only from a settled reply.
+   */
+  readonly settled: boolean
   readonly onContinue: (text: string) => void
 }
 
@@ -176,6 +183,7 @@ export const Message = memo(function Message({
   context,
   working,
   latest,
+  settled,
   onContinue,
 }: MessageProps) {
   if (message.role === 'user') {
@@ -188,6 +196,7 @@ export const Message = memo(function Message({
       context={context}
       working={working}
       latest={latest}
+      settled={settled}
       onContinue={onContinue}
     />
   )
@@ -199,6 +208,7 @@ function sameRow(was: MessageProps, now: MessageProps) {
     was.context === now.context &&
     was.working === now.working &&
     was.latest === now.latest &&
+    was.settled === now.settled &&
     was.onContinue === now.onContinue &&
     sameMessage(was.message, now.message)
   )
@@ -329,14 +339,13 @@ function picturesOf(message: FlueConversationMessage) {
 
 /** The quiet line each wake is drawn as, by why Vivid woke (`Source.Wake` in `@vivid/state`). */
 const SIGNAL_LINE = {
-  routine: { Icon: Repeat2, label: 'A routine came due' },
   'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
 } as const
 
 /**
  * Something the server or the runtime put in front of Vivid, drawn by where it came from
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
- * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
+ * Thread is drawn as their bubble. A follow-up is a quiet line. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
  * Approval's outcome is told under its own words (`AskedFirst`) and an answer by its own row
  * (`Replied`), and what the runtime says to itself and the model (its instructions were
@@ -386,10 +395,59 @@ function Signal({
   })
 }
 
-const readShown = Schema.decodeUnknownOption(ShowRequest)
-
-/** A step that draws something is not a step to list: the thing drawn is the record of it. */
-const drawn = (tool: ToolPart) => tool.toolName === 'show'
+/**
+ * What Vivid said: its words, with each display it wrote drawn where it stands in them. A display
+ * is drawn from the first of its lines to arrive, so it fills in as the reply does. Each stretch is
+ * keyed by where it starts in the reply, which never moves, so a display is not remounted (and
+ * keeps what the Person picked in it) while the words after it are still coming.
+ */
+function Written({
+  source,
+  text,
+  fresh,
+  making,
+  streaming,
+  settled,
+  live,
+  onSay,
+}: {
+  /** The reply as Flue stored it, which every program drawn from it names. */
+  source: DisplaySource
+  text: string
+  fresh: boolean
+  /**
+   * Whether Vivid is still making the newest reply and this is it. A display whose own end has
+   * arrived still waits for the reply's: the server runs a program only from a reply it has stored
+   * whole.
+   */
+  making: boolean
+  /**
+   * Whether this reply's own parts are still streaming. It is checked beside `making` because a
+   * reply can still be streaming after it stops being the newest thing in the Thread (the Person
+   * writes while it arrives), and then `making` alone would let its Queries run early.
+   */
+  streaming: boolean
+  /** Whether the submission this reply answers is settled; see `MessageProps.settled`. */
+  settled: boolean
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
+  onSay: (words: string) => void
+}) {
+  return stretches(text).map((stretch) =>
+    stretch.kind === 'words' ? (
+      <Markdown key={stretch.from} content={stretch.text} fresh={fresh} />
+    ) : (
+      <Display
+        source={source}
+        key={stretch.from}
+        text={stretch.text}
+        arriving={making || streaming || !settled || !stretch.whole}
+        live={live}
+        onSay={onSay}
+      />
+    ),
+  )
+}
 
 /** The cards a response's tool results ask for, in the order Vivid produced them. */
 function ToolCards({
@@ -405,13 +463,6 @@ function ToolCards({
   onContinue: (text: string) => void
 }) {
   return tools.map((tool) => {
-    if (drawn(tool)) {
-      // What Vivid asked to show is the tool's own input, complete once the call was made.
-      const shown = readShown(tool.input)
-      return Option.isNone(shown) ? null : (
-        <Display key={tool.toolCallId} shown={shown.value.show} live={live} onSay={onContinue} />
-      )
-    }
     if (tool.state !== 'output-available') return null
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
@@ -458,19 +509,6 @@ const COPY = {
   copied: 'Copied',
   refused: 'Could not copy. Select the text instead.',
 } satisfies Record<'idle' | 'copied' | 'refused', string>
-
-/** Past this, a reply reads as a document, not a line said to someone. */
-const BUBBLE_MOST = 700
-
-/**
- * Whether a reply is a few plain words: no steps or displays with it, no Markdown block (heading,
- * quote, list, code, table), and short. Those get a bubble the size of the words; everything else
- * keeps the reading column, which blocks and long text need.
- */
-const simpleWords = (text: string, tools: ReadonlyArray<ToolPart>) =>
-  tools.length === 0 &&
-  text.length <= BUBBLE_MOST &&
-  !/^(#{1,6} |>|[-*+] |\d+\. |```|~~~)|\|.*\|/mu.test(text)
 
 /**
  * Copies a reply's words in one press. It is always there, quietly, beside the time: a control
@@ -526,29 +564,31 @@ function Stamp({ message }: { message: FlueConversationMessage }) {
 }
 
 /**
- * Vivid's reply. A few plain words sit in a bubble beside its face, shaped like the other
- * people's in a shared Thread (soft, with the corner nearest the face squared); steps, displays and
- * longer or structured text keep the open column.
+ * Vivid's reply, in the open reading column beside its face. It has no bubble: a short reply used
+ * to get one and lose it mid-sentence when it grew a list or a second paragraph, and the owner
+ * asked for it gone (13 October 2026).
  */
 function FromVivid({
   message,
   context,
   working,
   latest,
+  settled,
   onContinue,
 }: {
   message: FlueConversationMessage
   context: ThreadContext
   working: boolean
   latest: boolean
+  settled: boolean
   onContinue: (text: string) => void
 }) {
   const text = textOf(message)
   const tools = message.parts.filter((part) => part.type === 'dynamic-tool')
   const forWhom = answering(message, context)
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
-  const simple = simpleWords(text, tools)
-  const steps = tools.filter((tool) => !drawn(tool))
+  // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
+  const { drawn: drawnText, fresh } = useRevealed(text, streaming)
   // Only the newest reply can still be in the making; an older one's steps are its record.
   const making = working && latest
   return (
@@ -560,23 +600,27 @@ function FromVivid({
             Answering {forWhom.value}
           </span>
         )}
-        {making && <Doing tools={steps} wordless={text.length === 0} />}
-        <div className={cn(simple && 'flex items-end gap-2')}>
-          {text.length > 0 && (
-            <div
-              className={cn(
-                simple &&
-                  'w-fit max-w-bubble min-w-0 rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5',
-              )}
-            >
-              <Markdown content={text} />
-            </div>
-          )}
-          {!streaming && text.length > 0 && (
-            <Settled message={message} text={text} beside={simple} latest={latest} />
-          )}
-        </div>
-        {!making && <Trail tools={steps} />}
+        {making && <Doing tools={tools} wordless={text.length === 0} />}
+        {text.length > 0 && (
+          <Written
+            // Flue streams every step of a reply under the id of its first step, the id its history
+            // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so
+            // a display drawn while the reply arrives already names the reply the server reads.
+            source={DisplaySource.cases.ThreadMessage.make({
+              thread: context.thread,
+              message: message.id,
+            })}
+            text={drawnText}
+            fresh={fresh}
+            making={making}
+            streaming={streaming}
+            settled={settled}
+            live={latest && !working}
+            onSay={onContinue}
+          />
+        )}
+        {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
+        {!making && <Trail tools={tools} />}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
             the layout. */}
@@ -623,20 +667,17 @@ function ReplyFace({
 function Settled({
   message,
   text,
-  beside,
   latest,
 }: {
   message: FlueConversationMessage
   text: string
-  /** Whether it sits beside a short bubble instead of under an open column. */
-  beside: boolean
   latest: boolean
 }) {
   return (
     <div
       className={cn(
         'flex h-6 items-center gap-1.5 text-meta text-ink-3',
-        beside ? 'shrink-0' : 'mt-1',
+        'mt-1',
         latest && 'motion-fade',
       )}
     >

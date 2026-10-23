@@ -1,5 +1,5 @@
 import { getTableName, isTable } from 'drizzle-orm'
-import { ModelFailureReason } from '@vivid/contracts'
+import { Commit, ModelFailureReason } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
@@ -9,6 +9,7 @@ import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
+import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import * as Tracer from 'effect/Tracer'
 import * as HttpBody from 'effect/http/HttpBody'
@@ -21,7 +22,7 @@ import * as OtlpSerialization from 'effect/observability/OtlpSerialization'
 import * as OtlpTracer from 'effect/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
-import { LiveAttribute, MovedAttribute, QUERY, watchedNames } from '../live/tally.ts'
+import { CallAttribute, LiveAttribute, MovedAttribute, QUERY, watchedNames } from '../live/tally.ts'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
 import {
@@ -140,10 +141,10 @@ const sqlState = (admit: (candidate: string) => boolean) =>
   text((candidate) => /^[0-9A-Z]{5}$/.test(candidate) && admit(candidate))
 
 /**
- * A git commit as the host names it: 7 to 40 lowercase hexadecimal digits, the abbreviated and
- * the full form of a SHA-1. Anything else in `VIVID_COMMIT` is not a commit and is not sent.
+ * A git commit as the host names it, by the one rule for a commit (`@vivid/contracts` `Commit`).
+ * Anything else given as the server's commit (`VIVID_BUILD_COMMIT`) is not one and is not sent.
  */
-const commitHash = text((candidate) => /^[0-9a-f]{7,40}$/.test(candidate))
+const commitHash = text(Schema.is(Commit))
 
 /**
  * The deployment's environment name: letters, digits and `_ . / -`, at most 40 characters. This
@@ -201,8 +202,9 @@ const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TR
  *   (`typeName`).
  * - `rpc.system.name` and `rpc.method` are written by Effect 4.0.2 `RpcServer` on each call's span
  *   (`rpc/internal/tracing.ts` `spanAttributes`): the fixed `effect_rpc`, and the call's tag, which
- *   is only ever a tag found in the contract's group. `rpc.system` and `rpc.service` are written by
- *   nothing today; they are listed for a recorder that names the call from the contract.
+ *   is only ever a tag found in the contract's group. `live/tally.ts` writes `rpc.method` on its
+ *   call counts too, from the same group (`isCalled`). `rpc.system` and `rpc.service` are written
+ *   by nothing today; they are listed for a recorder that names the call from the contract.
  *
  * The rules are built once for each serialization layer, because two of them keep state: the
  * names and the database codes admitted so far (`admitting`).
@@ -224,7 +226,7 @@ const rulesOf = (): Rules => {
     [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],
     // `live/tally.ts`: the name is one of the contract's `Watch…` tags and every other value a count.
     [QUERY, oneOf(watchedNames)],
-    ...[...Object.values(LiveAttribute), ...Object.values(MovedAttribute)].map(
+    ...[...Object.values(LiveAttribute), ...Object.values(MovedAttribute), CallAttribute.calls].map(
       (key) => [key, integer(0, Number.MAX_SAFE_INTEGER)] as const,
     ),
     // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its
@@ -444,7 +446,7 @@ const allowLogs =
 
 /**
  * The resource every post names: the service, and the commit and environment when the host
- * supplies them, each through the allowlist like any other attribute, so a `VIVID_COMMIT` that
+ * supplies them, each through the allowlist like any other attribute, so a commit setting that
  * is not a commit is left off.
  *
  * It is built here and put in place of the exporter's own at serialization, because the

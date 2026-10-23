@@ -11,8 +11,10 @@ import { bytesRoutes } from '../http/bytes.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { fixture } from './fixtures.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
+import { authLayer } from '../auth/provider.ts'
 
 const testLayer = Layer.mergeAll(
+  authLayer.pipe(Layer.provide(testConfigLayer)),
   libraryStoreLayer.pipe(Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer)))),
   testConfigLayer,
   silentChangesLayer,

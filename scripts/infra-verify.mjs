@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import { verifyImage } from './images.mjs'
 
 const assert = NodeAssert
 const scriptDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))
@@ -107,6 +108,43 @@ const walkTypeScript = (directory) =>
 const extractEnvironmentNames = (text) =>
   new Set([...text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((match) => match[1]))
 
+/**
+ * The settings an image sets for itself with `ENV NAME=value`, one per line, in the stage the
+ * image is (its last) and the stages that one is built `FROM`. A setting only the image can know,
+ * such as the commit it was built from (`VIVID_BUILD_COMMIT`), is wired by the image and not by
+ * the deploy graph: a host variable of the same name would replace it. A stage the last one does
+ * not descend from (a build stage it only copies files out of) sets nothing in the image.
+ */
+export const imageSettings = (dockerfile) => {
+  const stages = []
+  for (const line of dockerfile.split('\n')) {
+    const from = /^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i.exec(line)
+    if (from !== null) stages.push({ base: from[1], name: from[2], settings: [] })
+    const set = /^ENV\s+([A-Z][A-Z0-9_]*)=/.exec(line)
+    if (set !== null && stages.length > 0) stages[stages.length - 1].settings.push(set[1])
+  }
+  const settings = new Set()
+  // Each stage can only name one before it, so the walk back ends.
+  for (let index = stages.length - 1; index >= 0;) {
+    const stage = stages[index]
+    for (const name of stage.settings) settings.add(name)
+    index = stages.slice(0, index).findLastIndex((earlier) => earlier.name === stage.base)
+  }
+  return settings
+}
+
+/**
+ * The names an app reads that nothing sets. The local process graph and the Railway graph wire a
+ * name when either sets it. The server image wires a name only the server reads: the runtime is
+ * another image, so a name it reads too must still be sent to it by a graph.
+ */
+export const unwiredNames = ({ serverNames, runtimeNames, wiringSource, serverImage }) =>
+  [...new Set([...serverNames, ...runtimeNames])].filter(
+    (name) =>
+      !(serverImage.has(name) && !runtimeNames.has(name)) &&
+      !new RegExp(`\\b${name}\\s*:`).test(wiringSource),
+  )
+
 const assertEnvironmentWiring = (root, stackSource) => {
   const serverConfig = source(root, 'apps/server/src/config.ts')
   const serverNames = new Set(
@@ -138,16 +176,14 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
-  // A name is wired when either graph sets it: the local process graph or the Railway graph.
   // `VIVID_WEB_DIST` exists only where the server serves the built web app, which is hosted only.
-  const wiringSource = `${stackSource}\n${source(root, 'infra/railway.ts')}`
-  for (const name of new Set([...serverNames, ...runtimeNames])) {
-    assert.match(
-      wiringSource,
-      new RegExp(`\\b${name}\\s*:`),
-      `${name} is read by an app but not wired by Alchemy`,
-    )
-  }
+  const unwired = unwiredNames({
+    serverNames,
+    runtimeNames,
+    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}`,
+    serverImage: imageSettings(source(root, 'apps/server/Dockerfile')),
+  })
+  for (const name of unwired) assert.fail(`${name} is read by an app but not wired by Alchemy`)
 }
 
 const assertPackagePolicy = (packageDocument) => {
@@ -227,7 +263,19 @@ const assertStackPolicy = (stackSource, infrastructureSources) => {
     /Command\.Dev\(target\.runtimeProcessId/,
     'runtime must be an Alchemy-managed process',
   )
-  assert.match(stackSource, /Alchemy\.localState\(\)/, 'stack state must remain local')
+  // The local stack's resources are the machine's own Docker and processes, so its state stays in
+  // that checkout. Production's state lives in the hosted store (`infra/state.ts`): read from a
+  // checkout's `.alchemy`, every other machine would plan to create production again.
+  assert.equal(
+    [...stackSource.matchAll(/Alchemy\.localState\(\)/g)].length,
+    1,
+    'only the local stack may keep its state in the checkout',
+  )
+  assert.match(
+    stackSource,
+    /state: hostedState\(deployTarget\.stackName\)/,
+    'the hosted stack must read the hosted state store',
+  )
   assert.match(
     stackSource,
     /requireRunnableTarget\(deployTarget\)/,
@@ -313,10 +361,10 @@ const watches = (pattern, path) => {
  * inputs without production ever being rebuilt. The Dockerfile and `.dockerignore` are inputs
  * too, though no `COPY` names them.
  */
-export const unwatchedPaths = (dockerfile, dockerfilePath, patterns) =>
-  [...copiedPaths(dockerfile), dockerfilePath, '.dockerignore'].filter(
-    (path) => !patterns.some((pattern) => watches(pattern, path)),
-  )
+export const unwatchedPaths = (dockerfile, dockerfilePath, patterns, configInputs) =>
+  [
+    ...new Set([...copiedPaths(dockerfile), ...configInputs, dockerfilePath, '.dockerignore']),
+  ].filter((path) => !patterns.some((pattern) => watches(pattern, path)))
 
 /**
  * Railway startCommand overrides image CMD. Verify their parity so the offline image proof
@@ -330,9 +378,17 @@ const assertContainerPolicy = (root) => {
   assert.notEqual(trigger, null, 'the repository source must be declared once')
   assert.ok(trigger[1].includes("branch: 'main'"), 'production is built from main')
   assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
-  for (const [name, dockerfilePath] of [
-    ['Runtime', 'packages/agent/runtime/Dockerfile'],
-    ['Server', 'apps/server/Dockerfile'],
+  for (const { name, dockerfilePath, stages } of [
+    {
+      name: 'Runtime',
+      dockerfilePath: 'packages/agent/runtime/Dockerfile',
+      stages: { build: ['@vivid/agent-runtime'] },
+    },
+    {
+      name: 'Server',
+      dockerfilePath: 'apps/server/Dockerfile',
+      stages: { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
+    },
   ]) {
     const declaration = railwaySource.match(
       new RegExp(`Railway\\.Service\\('${name}', \\{([\\s\\S]*?)^  \\}\\)`, 'm'),
@@ -346,8 +402,9 @@ const assertContainerPolicy = (root) => {
     const listed = railwaySource.match(new RegExp(`^const ${named[1]} = \\[([\\s\\S]*?)^\\]`, 'm'))
     assert.notEqual(listed, null, `${name} must list its watched paths in infra/railway.ts`)
     const patterns = [...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1])
+    const configInputs = verifyImage({ root, dockerfile: source(root, dockerfilePath), stages })
     assert.deepEqual(
-      unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns),
+      unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns, configInputs),
       [],
       `${name} copies paths that would not rebuild it`,
     )

@@ -1,10 +1,10 @@
 import type { FlueConversationMessage } from '@flue/sdk'
-import type { ThreadDetail } from '@vivid/contracts'
+import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
+import { AlarmClock, ChevronDown, ChevronRight, Monitor } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
 import { arrive } from '../../data/computer'
@@ -18,7 +18,6 @@ import {
   speakerOf,
   stepsOf,
   stepsSummary,
-  textOf,
   toolsOf,
   type Around,
   type Step,
@@ -32,17 +31,18 @@ import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 import { Said, Voice } from './Said'
-import { Words } from './Words'
+import { Reply } from './Words'
 
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
  * words are a bubble: the reader's own on the right, anyone else's on the left under their name.
- * Vivid's are plain text with what it did and what it is asking. A Routine or a follow-up that
- * woke Vivid is a quiet line saying why it spoke. The answer to a question of Vivid's is not a
+ * Vivid's are plain text with what it did and what it is asking. A follow-up that woke Vivid is
+ * a quiet line saying why it spoke. The answer to a question of Vivid's is not a
  * message of the conversation; the Thread draws it as a row of its own (`Replied`,
  * `Question.tsx`).
  */
 export function Message({
+  thread,
   message,
   around,
   detail,
@@ -50,8 +50,10 @@ export function Message({
   fresh,
   latest,
   unsent,
+  settled,
   onContinue,
 }: {
+  thread: ThreadId
   message: FlueConversationMessage
   around: Around
   detail: Option.Option<ThreadDetail>
@@ -66,6 +68,14 @@ export function Message({
   latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
   unsent: ReadonlySet<string>
+  /**
+   * Whether Flue has settled the submission this reply answers. Neither `latest`, `working` nor a
+   * part's streaming state says so: Flue closes every streaming part between steps and folds a
+   * delivery written while the reply arrives into the same submission (`appendToolInput` in
+   * `@flue/sdk` 2.2.2, `projectConversationUi` in `@flue/runtime` 2.2.2). The server runs a
+   * display's program only from a settled reply.
+   */
+  settled: boolean
   onContinue: Say
 }) {
   return Speaker.$match(speakerOf(message, around), {
@@ -84,12 +94,14 @@ export function Message({
     Vivid: ({ answering }) => (
       <Arriving arrival={fresh ? 'answered' : 'there'}>
         <FromVivid
+          thread={thread}
           message={message}
           answering={answering}
           detail={detail}
           around={around}
           working={working}
           latest={latest}
+          settled={settled}
           onContinue={onContinue}
         />
       </Arriving>
@@ -117,11 +129,10 @@ function Arriving({ arrival, children }: { arrival: keyof typeof ARRIVAL; childr
 }
 
 const WAKE = {
-  routine: { Icon: Repeat2, label: 'A routine came due' },
   'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
 } as const
 
-/** Why Vivid spoke when nobody had: a Routine came due, or a follow-up fell due. */
+/** Why Vivid spoke when nobody had: a follow-up fell due. */
 function Wake({ reason, name }: { reason: keyof typeof WAKE; name: Option.Option<string> }) {
   const { colors: c } = useTheme()
   const { Icon, label } = WAKE[reason]
@@ -273,22 +284,39 @@ function Stamp({ moment }: { moment: number }) {
   )
 }
 
+/** What Vivid said, once it has said anything: its words and the displays among them. */
+function Spoken(props: {
+  source: DisplaySource
+  text: string
+  streaming: boolean
+  making: boolean
+  settled: boolean
+  live: boolean
+  onSay: Say
+}) {
+  return props.text.length === 0 ? null : <Reply {...props} />
+}
+
 /** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
+  thread,
   message,
   answering,
   detail,
   around,
   working,
   latest,
+  settled,
   onContinue,
 }: {
+  thread: ThreadId
   message: FlueConversationMessage
   answering: Option.Option<string>
   detail: Option.Option<ThreadDetail>
   around: Around
   working: boolean
   latest: boolean
+  settled: boolean
   onContinue: Say
 }) {
   const text = textOf(message)
@@ -297,7 +325,9 @@ function FromVivid({
   // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
   // Vivid is about to speak, where the row was a face beside nothing.
   const silent = text.length === 0 && tools.length === 0
-  const awaited = silent && (isStreaming(message) || (latest && working))
+  // Only the newest reply can still be in the making; an older one is whole.
+  const making = latest && working
+  const awaited = silent && (isStreaming(message) || making)
   return (
     <View style={{ flexDirection: 'row', gap: 10 }}>
       <View style={{ marginTop: 1 }}>
@@ -311,7 +341,18 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {awaited && <Dots />}
-        {text.length > 0 && <Words text={text} />}
+        <Spoken
+          // Flue streams every step of a reply under the id of its first step, the id its history
+          // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a
+          // display drawn while the reply arrives already names the reply the server reads.
+          source={DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })}
+          text={text}
+          streaming={isStreaming(message)}
+          making={making}
+          settled={settled}
+          live={latest && !working}
+          onSay={onContinue}
+        />
         <Cards
           tools={tools}
           detail={detail}

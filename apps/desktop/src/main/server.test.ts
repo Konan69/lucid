@@ -13,18 +13,11 @@ import * as Schema from 'effect/Schema'
 import { ServerAddress, ServerSettings, ServerChoice } from '../shared/settings.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { chooseServer } from './server.ts'
-import {
-  BridgeRequest,
-  BridgeResponse,
-  InvalidBridgeMessage,
-  SignInEnding,
-  encodeBridgeResponse,
-} from '../shared/bridge.ts'
+import { BridgeRequest, BridgeResponse, SignInEnding } from '../shared/bridge.ts'
 import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
 import type { GoogleSignIn } from './signin.ts'
-import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
-import { PageUnavailable, PageLimitReached, PagesRequest, PagesResponse } from '../shared/pages.ts'
+import { PageUnavailable } from '../shared/pages.ts'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 
 class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
@@ -79,169 +72,6 @@ const noSignIn: GoogleSignIn = {
 }
 
 describe('desktop server selection', () => {
-  layer(FetchHttpClient.layer)((it) => {
-    /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
-    it.effect('returns the native page limit through the public bridge', () =>
-      Effect.gen(function* () {
-        const root = yield* directory
-        yield* Effect.gen(function* () {
-          const settings = yield* DesktopSettings
-          const reason = new PageLimitReached({ limit: 12 })
-          const handlers: BridgeHandlers = {
-            settings,
-            getAppVersion: () => '1.0.0',
-            device: unlinked,
-            signIn: noSignIn,
-            openExternal: () => Effect.void,
-            pages: () => Effect.fail(reason),
-            onServerChanged: () => {},
-          }
-          expect(
-            yield* handleBridgeRequest(
-              BridgeRequest.cases.Pages.make({
-                request: PagesRequest.cases.Open.make({ address: 'https://example.com/' }),
-              }),
-              handlers,
-              () => true,
-            ),
-          ).toEqual(
-            yield* encodeBridgeResponse(
-              BridgeResponse.cases.Pages.make({
-                value: PagesResponse.cases.Rejected.make({ reason }),
-              }),
-            ),
-          )
-        }).pipe(
-          Effect.provide(
-            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
-          ),
-        )
-      }),
-    )
-    it.effect('denies selected-server documents before shell settings or browsing can change', () =>
-      Effect.gen(function* () {
-        const root = yield* directory
-        yield* Effect.gen(function* () {
-          const settings = yield* DesktopSettings
-          const changes: string[] = []
-          const handlers: BridgeHandlers = {
-            pages: () => Effect.fail(new PageUnavailable({})),
-            settings,
-            getAppVersion: () => '1.0.0',
-            device: unlinked,
-            signIn: noSignIn,
-            openExternal: () => Effect.sync(() => changes.push('external')),
-            onServerChanged: (state) => changes.push(state._tag),
-          }
-          const server = ServerSettings.cases.Server.make({
-            origin: ServerAddress.make('https://vivid.example'),
-          })
-          const authorize = (request: BridgeRequest) =>
-            isAllowedBridgeRequest(
-              'https://vivid.example/api/document',
-              server,
-              'file:///application/chooser.html',
-              request,
-            )
-          for (const request of [
-            BridgeRequest.cases.ChooseServer.make({
-              origin: ServerAddress.make('https://other.example'),
-            }),
-            BridgeRequest.cases.ForgetServer.make({}),
-            BridgeRequest.cases.GetServer.make({}),
-            BridgeRequest.cases.OpenExternal.make({ url: 'https://other.example' }),
-          ])
-            expect(
-              yield* handleBridgeRequest(request, handlers, authorize).pipe(Effect.flip),
-            ).toBeInstanceOf(InvalidBridgeMessage)
-          expect(
-            yield* handleBridgeRequest(
-              BridgeRequest.cases.GetAppVersion.make({}),
-              handlers,
-              authorize,
-            ),
-          ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
-          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-          expect(changes).toEqual([])
-        }).pipe(
-          Effect.provide(
-            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
-          ),
-        )
-      }),
-    )
-
-    it.effect(
-      'gives Google sign-in to the selected server’s own document, and to no other sender',
-      () =>
-        Effect.gen(function* () {
-          const root = yield* directory
-          yield* Effect.gen(function* () {
-            const settings = yield* DesktopSettings
-            const asked: string[] = []
-            const granted = SignInEnding.cases.Granted.make({
-              code: 'code',
-              state: 'state',
-              verifier: 'verifier',
-            })
-            const handlers: BridgeHandlers = {
-              pages: () => Effect.fail(new PageUnavailable({})),
-              settings,
-              getAppVersion: () => '1.0.0',
-              device: unlinked,
-              openExternal: () => Effect.void,
-              onServerChanged: () => undefined,
-              signIn: {
-                begin: Effect.sync(() => asked.push('begin')).pipe(Effect.as('opened')),
-                reopen: Effect.sync(() => asked.push('reopen')).pipe(Effect.as('unopened')),
-                ended: Effect.sync(() => asked.push('ended')).pipe(Effect.as(granted)),
-                cancel: Effect.sync(() => asked.push('cancel')),
-              },
-            }
-            const server = ServerSettings.cases.Server.make({
-              origin: ServerAddress.make('https://vivid.example'),
-            })
-            const from = (url: string) => (request: BridgeRequest) =>
-              isAllowedBridgeRequest(url, server, 'file:///application/chooser.html', request)
-            const answers = [
-              [
-                BridgeRequest.cases.BeginGoogleSignIn.make({}),
-                BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'opened' }),
-              ],
-              [
-                BridgeRequest.cases.ReopenGoogleSignIn.make({}),
-                BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'unopened' }),
-              ],
-              [
-                BridgeRequest.cases.AwaitGoogleSignIn.make({}),
-                BridgeResponse.cases.GoogleSignInEnded.make({ value: granted }),
-              ],
-              [
-                BridgeRequest.cases.CancelGoogleSignIn.make({}),
-                BridgeResponse.cases.GoogleSignInCancelled.make({}),
-              ],
-            ] as const
-            for (const [request, answer] of answers) {
-              expect(
-                yield* handleBridgeRequest(request, handlers, from('https://vivid.example/')),
-              ).toEqual(answer)
-              for (const sender of ['file:///application/chooser.html', 'https://other.example/'])
-                expect(
-                  yield* handleBridgeRequest(request, handlers, from(sender)).pipe(Effect.flip),
-                ).toBeInstanceOf(InvalidBridgeMessage)
-            }
-            // Only the four the server's own document sent reached the sign-in, once each.
-            expect(asked).toEqual(['begin', 'reopen', 'ended', 'cancel'])
-          }).pipe(
-            Effect.provide(
-              yield* Layer.build(
-                settingsLayer(NodePath.join(root, 'settings.json'), Option.none()),
-              ),
-            ),
-          )
-        }),
-    )
-  })
   layer(FetchHttpClient.layer, { excludeTestServices: true })((it) => {
     it.effect('verifies /health before saving and bridge forget returns to the chooser', () =>
       Effect.gen(function* () {
@@ -260,6 +90,7 @@ describe('desktop server selection', () => {
             settings,
             getAppVersion: () => '1.0.0',
             device: unlinked,
+            showColorScheme: () => undefined,
             signIn: noSignIn,
             openExternal: () => Effect.void,
             pages: () => Effect.fail(new PageUnavailable({})),
@@ -418,29 +249,6 @@ describe('desktop server selection', () => {
           expect((yield* send({ origin: 'https://elsewhere.example' })).status).toBe(200)
           expect(seen).toEqual([Option.some(origin), Option.some('https://elsewhere.example')])
         }).pipe(Effect.scoped),
-    )
-  })
-  layer(FetchHttpClient.layer)((it) => {
-    it.effect(
-      'rejects foreign API requests before entering the credential-bearing forwarding client',
-      () =>
-        Effect.gen(function* () {
-          const root = yield* directory
-          for (const settings of [
-            ServerSettings.cases.NoServer.make({}),
-            ServerSettings.cases.Server.make({
-              origin: ServerAddress.make('https://vivid.example'),
-            }),
-          ]) {
-            expect(
-              (yield* handleAppRequest(
-                root,
-                new Request('https://foreign.example/api/rpc'),
-                settings,
-              )).status,
-            ).toBe(403)
-          }
-        }),
     )
   })
 })

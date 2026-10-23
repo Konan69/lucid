@@ -1,6 +1,9 @@
 import * as NodeChildProcess from 'node:child_process'
+import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
+
+const require = NodeModule.createRequire(import.meta.url)
 
 const repositoryRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -14,10 +17,9 @@ const workersFrom = (setting) => (setting === undefined ? '1' : setting)
  * Keep package checks in the root config's coordinate system: overrides and
  * design-plugin paths are root-relative. Each package owns its whole directory;
  * the root task covers only the remainder. Fixes explicitly select the whole
- * workspace and always bypass Turbo. One Rust worker and one default Go worker
- * limit active checker state without dropping type-aware rules or capping heap.
- * The gate, which runs one lint process at a time, names more of each through
- * VIVID_LINT_THREADS and GOMAXPROCS.
+ * workspace and always bypass Turbo. Oxlint defaults to one worker; tsrslint
+ * owns its internal worker count. The gate runs one lint process at a time and
+ * names more Oxlint workers through VIVID_LINT_THREADS.
  */
 export function runLint(root, cwd, args, environment) {
   const scope = NodePath.relative(root, cwd).split(NodePath.sep).join('/')
@@ -39,11 +41,15 @@ export function runLint(root, cwd, args, environment) {
     flags.push('--ignore-pattern', 'apps/**', '--ignore-pattern', 'packages/**')
   }
   flags.push(scope === '' ? '.' : scope)
-  const goWorkers = workersFrom(environment.GOMAXPROCS)
+  const backend = environment.OXLINT_TSGOLINT_PATH || require('@maschwenk/tsrslint').binaryPath()
   const result = NodeChildProcess.spawnSync(
     process.execPath,
     [NodePath.join(root, 'node_modules', 'oxlint', 'bin', 'oxlint'), ...flags],
-    { cwd: root, env: { ...environment, GOMAXPROCS: goWorkers }, stdio: 'inherit' },
+    {
+      cwd: root,
+      env: { ...environment, OXLINT_TSGOLINT_PATH: backend },
+      stdio: 'inherit',
+    },
   )
   if (result.error !== undefined) {
     process.stderr.write(`could not start oxlint: ${result.error.message}\n`)

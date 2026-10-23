@@ -74,6 +74,10 @@ layer(NodeHttpServer.layerTest)((it) => {
       yield* publish(root, path.join('1.0.0', '100'), 'older')
       yield* publish(root, path.join('1.0.0', '200'), bundle)
       yield* fs.makeDirectory(path.join(root, '2.0.0'))
+      // `apps/mobile/scripts/publish.mjs` publishes one export for every binary it runs on by
+      // linking the older runtime versions to it.
+      yield* fs.makeDirectory(path.join(root, '0.9.0'))
+      yield* fs.symlink(path.join('..', '1.0.0', '200'), path.join(root, '0.9.0', '200'))
       yield* Layer.build(
         HttpRouter.serve(updateRoutes(Option.some(root), publicUrl), { disableLogger: true }),
       )
@@ -136,6 +140,20 @@ layer(NodeHttpServer.layerTest)((it) => {
       const directive = yield* current.text
       expect(partBody(directive, 'directive')).toEqual(Option.some('{"type":"noUpdateAvailable"}'))
       expect(partBody(directive, 'manifest')).toEqual(Option.none())
+
+      // An older binary the export was linked for is answered as itself: it would refuse an
+      // update that names another runtime version, and its files are the same files.
+      const linked = yield* check({ ...binary, 'expo-runtime-version': '0.9.0' })
+      expect(linked.status).toBe(200)
+      const older = yield* decodeManifest(
+        Option.getOrThrow(partBody(yield* linked.text, 'manifest')),
+      )
+      expect(older.runtimeVersion).toBe('0.9.0')
+      expect(older.id).toBe(manifest.id)
+      const olderBundle = yield* client.get(
+        `/api/updates/assets${new URL(older.launchAsset.url).search}`,
+      )
+      expect(yield* olderBundle.text).toBe(bundle)
 
       // A binary nothing was published for, and requests that cannot be read.
       for (const headers of [

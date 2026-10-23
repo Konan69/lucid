@@ -6,6 +6,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  Appearance,
   AuditEvent,
   Company,
   CompanyId,
@@ -29,7 +30,8 @@ import {
 import { appendAudit, AuditAttribution } from '../audit/record.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { loadSummaries } from '../auth/access.ts'
-import { personTable, sessionTable } from '../auth/tables.ts'
+import { personTable } from '../auth/tables.ts'
+import { moveSession, leaveCompanySessions } from '../auth/workspace.ts'
 import {
   Database,
   decodeStored,
@@ -45,6 +47,7 @@ type CompanyStoreError = DatabaseInfrastructureError | Conflict | Forbidden | No
 const INVITATION_LASTS_MS = 7 * 24 * 60 * 60 * 1000
 
 const decodeCompany = decodeStored(Company, 'Company')
+const decodeAppearance = decodeStored(Appearance, 'Appearance')
 const decodeMembership = decodeStored(CompanyMembership, 'Membership')
 const decodeMember = decodeStored(Member, 'Member')
 const decodePreview = decodeStored(InvitationPreview, 'invitation')
@@ -60,7 +63,6 @@ const decodeStoredMembership = decodeStored(StoredMembership, 'Membership')
 
 /** Transaction row owners are decoded at ingress, independent of the session's workspace. */
 const decodePersonId = decodeStored(PersonId, 'Person id')
-const decodeSessionOwner = decodeStored(Schema.Struct({ personId: PersonId }), 'session owner')
 const decodeOwnedMember = decodeStored(
   Schema.Struct({ companyId: CompanyId, member: Member }),
   'Member',
@@ -89,6 +91,11 @@ export interface MemberChange {
 }
 
 export interface CompanyStoreService {
+  /** Replaces only the Company's appearance, joining the caller's SQL transaction. */
+  readonly setAppearance: (
+    companyId: CompanyId,
+    appearance: Appearance,
+  ) => Effect.Effect<Appearance, DatabaseInfrastructureError>
   /** Every Company a Person belongs to, with their role in each, newest first. */
   readonly memberships: (
     personId: PersonId,
@@ -259,16 +266,10 @@ const makeEnter = (database: DatabaseService) =>
         ) {
           return yield* new NotFound({ message: 'Company not found' })
         }
-        const rows = yield* tx
-          .update(sessionTable)
-          .set({ activeCompanyId: Option.getOrNull(companyId) })
-          .where(and(eq(sessionTable.id, sessionId), eq(sessionTable.userId, personId)))
-          .returning({ personId: sessionTable.userId })
+        const owner = yield* moveSession(tx, personId, sessionId, companyId)
         // A missing session changes nothing, so there is nobody to announce a movement for.
-        if (rows.length === 0) return undefined
-        const row = yield* returned(rows, 'session')
-        const owner = yield* decodeSessionOwner(row)
-        return yield* announce(tx, [Topic.person(owner.personId)])
+        if (Option.isNone(owner)) return undefined
+        return yield* announce(tx, [Topic.person(owner.value)])
       }),
     )
   })
@@ -719,15 +720,7 @@ const makeRemove = (database: DatabaseService) =>
         const current = yield* memberById(tx, companyId, membershipId)
         const member = yield* refuseOwner(current.member)
         yield* tx.delete(membershipTable).where(eq(membershipTable.id, member.membershipId))
-        yield* tx
-          .update(sessionTable)
-          .set({ activeCompanyId: null })
-          .where(
-            and(
-              eq(sessionTable.userId, member.person.id),
-              eq(sessionTable.activeCompanyId, current.companyId),
-            ),
-          )
+        yield* leaveCompanySessions(tx, member.person.id, current.companyId)
         yield* appendAudit(
           tx,
           AuditAttribution.make({
@@ -745,11 +738,33 @@ const makeRemove = (database: DatabaseService) =>
     )
   })
 
+/** All appearance columns are replaced together, with decoding before the caller announces. */
+const makeSetAppearance = (database: DatabaseService) =>
+  Effect.fn('CompanyStore.setAppearance')(function* (companyId: CompanyId, appearance: Appearance) {
+    const rows = yield* database.run(
+      database
+        .update(companyTable)
+        .set({
+          vividName: appearance.name,
+          vividLook: appearance.look,
+          vividOutline: appearance.outline,
+        })
+        .where(eq(companyTable.id, companyId))
+        .returning({
+          name: companyTable.vividName,
+          look: companyTable.vividLook,
+          outline: companyTable.vividOutline,
+        }),
+    )
+    return yield* decodeAppearance(yield* returned(rows, 'Appearance'))
+  })
+
 export const companyStoreLayer = Layer.effect(
   CompanyStore,
   Effect.gen(function* () {
     const database = yield* Database
     return CompanyStore.of({
+      setAppearance: makeSetAppearance(database),
       memberships: makeMemberships(database),
       create: makeCreate(database),
       enter: makeEnter(database),

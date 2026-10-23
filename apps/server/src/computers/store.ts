@@ -44,6 +44,7 @@ import {
   BrowserPicture,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
@@ -449,6 +450,11 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
 })
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
+  /** The takeover and idle-stop permit is held until the private cookie import ends. */
+  readonly copySignIn: (
+    person: PersonId,
+    cookies: ReadonlyArray<import('@vivid/contracts').SignInCookie>,
+  ) => Effect.Effect<number, StoreError | MachineFailure | ReadinessFailure>
   readonly get: (person: PersonId) => Effect.Effect<Computer, StoreError>
   readonly start: (person: PersonId) => Effect.Effect<Computer, StoreError>
   readonly stop: (person: PersonId) => Effect.Effect<Computer, StoreError>
@@ -1025,9 +1031,11 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   machine: Machine['Service'],
   key: MachineKey,
   action: BrowserAction,
+  egress: boolean,
 ) {
-  if (!BrowserAction.guards.Screenshot(action)) return yield* machine.browse({ key, action })
-  const result = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+  if (!BrowserAction.guards.Screenshot(action))
+    return yield* machine.browse({ key, action, egress })
+  const result = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}), egress })
   const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
   const picture = yield* decodeBrowserPicture(view.picture).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'browser screenshot' })),
@@ -1078,6 +1086,7 @@ export const computerStoreLayer = Layer.effect(
   ComputerStore,
   Effect.gen(function* () {
     const state = yield* lifecycle()
+    const database = yield* Database
     const inactivity = state.rows.inactivity
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
@@ -1151,10 +1160,17 @@ export const computerStoreLayer = Layer.effect(
       },
       (effect, person) => state.lock(person).withPermit(effect),
     )
-    /** Both outline and image run under the same takeover permit. */
-    const browse = Effect.fn('ComputerStore.browse')((person: PersonId, action: BrowserAction) =>
-      execute(person, (key) => browserReceipt(state.machine, key, action)),
-    )
+    /**
+     * Both outline and image run under the same takeover permit. Whether the Person chose egress
+     * is read first and handed to the machine, which uses it only if this step starts the browser.
+     */
+    const browse = Effect.fn('ComputerStore.browse')(function* (
+      person: PersonId,
+      action: BrowserAction,
+    ) {
+      const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
+      return yield* execute(person, (key) => browserReceipt(state.machine, key, action, egress))
+    })
     const desktop = Effect.fn('ComputerStore.desktop')((person: PersonId, action: DesktopAction) =>
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
@@ -1183,6 +1199,11 @@ export const computerStoreLayer = Layer.effect(
       return yield* state.stop(person)
     })
     return ComputerStore.of({
+      // A sign-in can start Chrome too; it must choose the same way out as a browse action.
+      copySignIn: Effect.fn('ComputerStore.copySignIn')(function* (person, cookies) {
+        const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
+        return yield* execute(person, (key) => state.machine.copySignIn({ key, cookies, egress }))
+      }),
       get: state.get,
       start,
       stop,
@@ -1202,7 +1223,7 @@ export const computerStoreLayer = Layer.effect(
 type ExecutionFailure = MachineFailure | ReadinessFailure | DatabaseInfrastructureError
 
 /** Domain refusals keep useful sentences; database and provider details never reach a tool response. */
-const executionReason = (failure: ExecutionFailure): string =>
+export const executionReason = (failure: ExecutionFailure): string =>
   Match.value(failure).pipe(
     Match.tags({
       DatabaseFailure: () => 'The Computer record could not be read or updated.',
@@ -1232,7 +1253,7 @@ const ordinaryRefusals: ReadonlySet<(MachineFailure | ReadinessFailure)['_tag']>
  * name only. It is a successful answer to the caller, so nothing else records it: on 6 October
  * 2026 every action on a Person's Computer was refused for seven hours and the log was silent.
  */
-const executionRefusals = <A>(
+export const executionRefusals = <A>(
   answer: (failure: MachineFailure | ReadinessFailure) => Effect.Effect<A>,
 ) => {
   const handle = (failure: MachineFailure | ReadinessFailure) =>

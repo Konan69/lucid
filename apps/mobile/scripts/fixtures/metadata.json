@@ -1,0 +1,19 @@
+{
+  "version": 0,
+  "bundler": "metro",
+  "fileMetadata": {
+    "ios": {
+      "bundle": "_expo/static/js/ios/launch.hbc",
+      "assets": [
+        {
+          "path": "assets/0123456789abcdef",
+          "ext": "png"
+        }
+      ]
+    },
+    "android": {
+      "bundle": "_expo/static/js/android/launch.hbc",
+      "assets": []
+    }
+  }
+}

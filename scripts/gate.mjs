@@ -4,11 +4,13 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
+import { ceilingBase } from './ceilings.mjs'
 import { runCloud } from './gate/cloud.mjs'
 import { runFocused } from './gate/focused.mjs'
 import { runLocal } from './gate/local.mjs'
 import { signable, signoff } from './gate/signoff.mjs'
 import { stageNames } from './gate/stages.mjs'
+import { proofSelection } from './proof.mjs'
 
 const repositoryRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -24,6 +26,11 @@ const usage = `usage: pnpm gate [full|affected|focused <test files...>] [options
   --only <a,b>         full, affected: run only these stages
   --base <commit>      affected: what the change is measured from (default: where the
                        branch left origin/main)
+  --ceilings-base <commit>
+                       lint: compare ceilings with this fetched commit (default: merge base
+                       with origin/main). CI uses the pull request base or pre-push commit.
+  --proof-base <commit> --proof-branch <name>
+                       proof: caller's merge base and branch for detached CI/remote trees
   --host <ssh host>    run in a warm tree on that machine (default: $VIVID_GATE_HOST)
   --here               run in this checkout even when a host is set
   --name <tree>        the warm tree's name on the host (default: the branch name)
@@ -68,6 +75,10 @@ export function parse(argv) {
       committed: { type: 'boolean', default: false },
       sha: { type: 'string' },
       base: { type: 'string' },
+      // The local caller forwards the resolved lint baseline to a ref-less warm tree.
+      'ceilings-base': { type: 'string' },
+      'proof-base': { type: 'string' },
+      'proof-branch': { type: 'string' },
       help: { type: 'boolean', default: false },
     },
   })
@@ -155,16 +166,29 @@ async function main(argv, environment) {
   const env = withoutRepositoryEnvironment(environment)
   const host = options.host === undefined ? env.VIVID_GATE_HOST : options.host
   const remote = host !== undefined && host !== '' && !options.here
+  const ceilingsBase = lintCeilingBase(repositoryRoot, options, env)
+  const proof =
+    options.mode !== 'focused' && selectStages(options.only).includes('proof')
+      ? proofSelection(repositoryRoot, options)
+      : undefined
+  const prepared = { ...options, ceilingsBase, proof }
   const code = remote
     ? runCloud(
         repositoryRoot,
-        { ...options, host, base: changeBase(repositoryRoot, options, env) },
+        { ...prepared, host, base: changeBase(repositoryRoot, options, env) },
         env,
       )
-    : await runHere(options, env)
+    : await runHere(prepared, env)
   if (code === 0 && signable(options))
     process.stdout.write(signoff(repositoryRoot, env, remote ? host : 'the pushing machine'))
   return code
+}
+
+/** The lint baseline is independent of affected-test filtering and survives remote transport. */
+export function lintCeilingBase(root, options, environment) {
+  if (options.mode === 'focused' || !selectStages(options.only).includes('lint')) return undefined
+  if (options['ceilings-base'] !== undefined) return options['ceilings-base']
+  return ceilingBase(root, environment)
 }
 
 /** Every stage in this checkout. */
@@ -180,7 +204,16 @@ async function runHere(options, env) {
   const outcome =
     options.mode === 'focused'
       ? await runFocused(repositoryRoot, options.files, env)
-      : await runLocal(repositoryRoot, { stages: selectStages(options.only), base }, env)
+      : await runLocal(
+          repositoryRoot,
+          {
+            stages: selectStages(options.only),
+            base,
+            ceilingsBase: options.ceilingsBase,
+            proof: options.proof,
+          },
+          env,
+        )
   const { text, passed } = report(outcome, label)
   // A remote run's logs are on the remote machine, so a failure brings its evidence with it.
   for (const result of outcome.results.filter((entry) => entry.failed.length > 0))

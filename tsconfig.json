@@ -13,10 +13,7 @@
     "infra/**/*.ts",
     "vitest.config.ts",
     "apps/*/drizzle.config.ts",
-    "packages/*/drizzle.config.ts",
-    "packages/*/*/drizzle.config.ts",
     "apps/*/vitest.config.ts",
-    "packages/*/vitest.config.ts",
     "packages/*/*/vitest.config.ts"
   ]
 }

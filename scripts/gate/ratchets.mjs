@@ -156,7 +156,7 @@ export const ratchets = [
     label: 'state set after a wait',
     plugin: 'vivid',
     rule: 'react-no-state-after-wait',
-    ceiling: 116,
+    ceiling: 103,
   },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
@@ -197,7 +197,7 @@ export const ratchets = [
 export function countFindings(lintOutput, ratchet) {
   const named = `${ratchet.plugin}(${ratchet.rule})`
   const path = `${ratchet.plugin}/${ratchet.rule}`
-  // Every occurrence is tried: a file path earlier in the line may hold the same words
+  // Every match is tried: a file path earlier in the line may hold the same words
   // followed by more of a name, and must not hide the rule field after it.
   const ends = (line) =>
     line
@@ -211,7 +211,14 @@ export function countFindings(lintOutput, ratchet) {
 export function checkRatchets(lintOutput) {
   return ratchets.map((ratchet) => {
     const count = countFindings(lintOutput, ratchet)
-    return { label: ratchet.label, ceiling: ratchet.ceiling, count, held: count <= ratchet.ceiling }
+    return {
+      label: ratchet.label,
+      plugin: ratchet.plugin,
+      rule: ratchet.rule,
+      ceiling: ratchet.ceiling,
+      count,
+      held: count <= ratchet.ceiling,
+    }
   })
 }
 

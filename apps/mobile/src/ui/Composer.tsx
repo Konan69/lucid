@@ -158,7 +158,12 @@ export function Composer({
   const [reported, setReported] = useState(ONE_LINE)
   // What the same words need when measured here (`Measure`), which is what an iPhone goes by.
   const [measured, setMeasured] = useState(ONE_LINE)
-  const needed = Math.max(reported, measured)
+  // One of the two, never the larger of both. An iPhone's editor reports the height it was given
+  // (see `Measure`), so once the composer had grown, that report stayed at the grown height and
+  // the larger of the two never came down again: a line added with Return stayed after the line
+  // was deleted and after the message was sent (seen on an iPhone, 13 October 2026). Android's
+  // editor reports what its text needs and nothing is measured there.
+  const needed = Platform.OS === 'ios' ? measured : reported
   const empty = value.trim().length === 0
   // With words written, the button sends them, while Vivid is working too: they join the answer
   // in progress at its next step (Flue's durability contract: a message that arrives while a
@@ -170,7 +175,7 @@ export function Composer({
   const sends = !empty && !disabled
   // While a question is up the trailing end moves on from it: with nothing written, and also
   // with words when the question is answered by writing, since the words are then its answer.
-  // That comes before stopping, because a Run that asked is waiting on the Person, not working.
+  // Vivid keeps working after it asks, so while it does a small stop sits beside (`Halt`).
   // Until 12 October 2026 a question answered by writing kept the round arrow, so the last
   // question never said "Submit" (seen on the emulator).
   const moving = movingOf(Option.fromUndefinedOr(asked), empty)
@@ -251,7 +256,13 @@ export function Composer({
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
             </View>
-            <Trailing moving={moving} empty={empty} sends={sends} onSend={act}>
+            <Trailing
+              moving={moving}
+              empty={empty}
+              sends={sends}
+              onSend={act}
+              onStop={working && asked !== undefined ? Option.some(onStop) : Option.none()}
+            >
               <Act working={working} stops={stops} idle={idle} onPress={act} />
             </Trailing>
           </View>
@@ -312,30 +323,40 @@ function Measure({ value, onHeight }: { value: string; onHeight: (height: number
  * The composer's trailing end. Ordinarily it is the one button (`children`). While a question
  * is being moved on from (`moving`) it is the pill: with nothing written it moves on with what
  * was picked, and with words under a question answered by writing it sends them as its answer.
+ * Stop belongs to the open question, independently of that selection: typing switches to Send
+ * under an options question, but must not take away the way to stop the running response.
  */
 function Trailing({
   moving,
   empty,
   sends,
   onSend,
+  onStop,
   children,
 }: {
   moving: Option.Option<Onward>
   empty: boolean
   sends: boolean
   onSend: () => void
+  /** How to stop Vivid, while it is working. */
+  onStop: Option.Option<() => void>
   children: ReactNode
 }) {
-  return Option.match(moving, {
-    onNone: () => children,
-    onSome: (asked) => (
-      <Moving
-        asked={asked}
-        ready={empty ? asked.ready : sends}
-        onPress={empty ? asked.onNext : onSend}
-      />
-    ),
-  })
+  return (
+    <>
+      {Option.match(onStop, { onNone: () => null, onSome: (stop) => <Halt onStop={stop} /> })}
+      {Option.match(moving, {
+        onNone: () => children,
+        onSome: (asked) => (
+          <Moving
+            asked={asked}
+            ready={empty ? asked.ready : sends}
+            onPress={empty ? asked.onNext : onSend}
+          />
+        ),
+      })}
+    </>
+  )
 }
 
 /**
@@ -373,6 +394,44 @@ function Back({ asked }: { asked: Onward }) {
         })}
       >
         <ChevronLeft pointerEvents="none" size={16} strokeWidth={2.2} color={c.ink} />
+      </Press>
+    </View>
+  )
+}
+
+/**
+ * The way to stop Vivid while a question of its is up and it goes on working: the pill then moves
+ * on from the question, so stopping gets a 32-point round of its own before the way back, as
+ * T3 Code puts its stop beside a pending question while the turn runs
+ * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch: `renderStopGenerationButton(true)`
+ * before Previous). It is the quiet disc with the square in ink that `Act` shows when it stops,
+ * pressed 44 points tall, its slop stopping halfway to the control after it.
+ */
+function Halt({ onStop }: { onStop: () => void }) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ height: TARGET, justifyContent: 'center', marginLeft: PILL.gap }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel="Stop Vivid"
+        depth={0.96}
+        hitSlop={{
+          top: (TARGET - BACK) / 2,
+          bottom: (TARGET - BACK) / 2,
+          left: PILL.gap,
+          right: PILL.gap / 2,
+        }}
+        onPress={onStop}
+        style={({ pressed }) => ({
+          width: BACK,
+          height: BACK,
+          borderRadius: BACK / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
+        })}
+      >
+        <Square pointerEvents="none" size={11} color={c.foreground} fill={c.foreground} />
       </Press>
     </View>
   )

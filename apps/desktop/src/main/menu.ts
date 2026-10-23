@@ -82,26 +82,41 @@ export function focusMainWindow(window: Option.Option<BrowserWindow>): void {
 }
 
 /**
- * Put the window in front of another application's windows, for the one moment the Person is
- * somewhere else and Vivid has something for them: their browser has just signed them in.
+ * Put the window in front of another application's windows and give it the keyboard, for the one
+ * moment the Person is somewhere else and Vivid has something for them: their browser has just
+ * signed them in.
  *
  * `focusMainWindow` is not enough there. It is right when the operating system has handed this
  * app the front, as it does for a second launch or a menu command. Here the browser holds the
  * front, and Windows refuses it to any process that does not (the rules of
- * `SetForegroundWindow`): `focus()` only makes the taskbar button flash, and the browser stays
- * on top of a window that has just signed in. This was seen on Windows 11 with the packaged app.
+ * `SetForegroundWindow`): `focus()` only makes the taskbar button flash.
  *
- * A window may always change its own place in the stacking order, whoever holds the front. So it
- * is made topmost for an instant, which puts it above the browser, and let go at once so it does
- * not stay above everything else. `focus()` is still asked for, and is granted wherever the
- * system allows it. On macOS `app.focus({ steal: true })` is the system's own way to come
- * forward from behind another app; it does nothing more elsewhere.
+ * On Windows the window is minimized and restored. Restoring a minimized window is the one
+ * activation Windows grants a process that does not hold the front. Measured on Windows 11 on
+ * 13 October 2026 with the packaged app, a real browser in front and this run in the main
+ * process: after minimize, restore and focus, Vivid's window was the foreground window within
+ * 60 ms, six times of six, maximized or not, and a maximized window came back maximized. Before
+ * that this only made the window topmost for an instant: it came above the browser, but the
+ * browser stayed the foreground window and kept the keyboard, so the Person was looking at Vivid
+ * and typing into the tab behind it. A window that already has the front is left alone, so one
+ * that is being used never blinks.
+ *
+ * The instant of being topmost is kept after it. A window may always change its own place in the
+ * stacking order, whoever holds the front, so if the system ever refuses the activation the
+ * window is still the one on top. On macOS `app.focus({ steal: true })` is the system's own way
+ * to come forward from behind another app; it does nothing more elsewhere.
  */
-export function raiseMainWindow(window: Option.Option<BrowserWindow>): void {
+export function raiseMainWindow(
+  platform: DesktopPlatform,
+  window: Option.Option<BrowserWindow>,
+): void {
   Option.match(window, {
     onNone: () => undefined,
     onSome: (available) => {
       if (available.isDestroyed()) return
+      if (platform === 'win32' && !available.isFocused() && !available.isMinimized()) {
+        available.minimize()
+      }
       if (available.isMinimized()) available.restore()
       available.setAlwaysOnTop(true)
       available.show()

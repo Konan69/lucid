@@ -1,6 +1,7 @@
 import { useSandbox, type SandboxFactory } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
+  Tool,
   BrowserAction,
   BrowseTarget,
   BrowseRequest,
@@ -16,6 +17,7 @@ import * as Result from 'effect/Result'
 import * as Match from 'effect/Match'
 import { pictureResult } from './picture.ts'
 import { personComputerModelTool } from './windows.ts'
+import { signInModelTool } from './signins.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunScoped, type RunTool } from './scope.ts'
@@ -179,7 +181,7 @@ const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
 /** Browse uses the same Flue native image path as use_desktop; screenshots never enter bounded JSON. */
 export function browseModelTool(runTool: RunTool) {
   return {
-    name: 'browse',
+    name: Tool.browse,
     label: 'Browse',
     description: browseDescription,
     parameters: browserParameters,
@@ -214,7 +216,7 @@ export function browseModelTool(runTool: RunTool) {
  * Flue 2.1 docs reference/sandbox-api; conversation-stream-store persistToolResultContent. */
 export function desktopModelTool(runTool: RunTool) {
   return {
-    name: 'use_desktop',
+    name: Tool.use_desktop,
     label: 'Use the Computer desktop',
     description:
       'Look at the Computer or use its pointer and keyboard. Every completed action returns a picture. If approval is requested, stop and wait.',
@@ -267,5 +269,10 @@ export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
 
 /** The tools whose results carry a picture. */
 export function pictureTools(runTool: RunTool) {
-  return [desktopModelTool(runTool), browseModelTool(runTool), personComputerModelTool(runTool)]
+  return [
+    desktopModelTool(runTool),
+    browseModelTool(runTool),
+    personComputerModelTool(runTool),
+    signInModelTool(runTool),
+  ]
 }

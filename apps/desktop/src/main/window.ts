@@ -37,6 +37,14 @@ export class ExternalUrlOpenFailed extends Schema.TaggedError<ExternalUrlOpenFai
 
 const decodeExternal = Schema.decodeUnknownOption(ExternalUrl)
 
+/**
+ * What Windows paints behind the window's own buttons: nothing, so the page shows through and the
+ * strip can never be a block of another colour than the page under it. T3 Code's value
+ * (`TITLEBAR_COLOR` in `apps/desktop/src/window/DesktopWindow.ts`): one step off fully clear,
+ * because fully clear is not drawn correctly everywhere.
+ */
+const OVERLAY_CLEAR = '#01000000'
+
 /** Platform chrome is selected from an injected host value so cross-platform branches stay pure. */
 function chromeOptions(
   platform: DesktopPlatform,
@@ -53,7 +61,7 @@ function chromeOptions(
     return {
       titleBarStyle: 'hidden',
       titleBarOverlay: {
-        color: colorScheme.background(),
+        color: OVERLAY_CLEAR,
         symbolColor: colorScheme.overlaySymbolColor(),
         height: 36,
       },
@@ -197,7 +205,7 @@ export function createMainWindow(dependencies: MainWindowDependencies): BrowserW
     window.setBackgroundColor(dependencies.colorScheme.background())
     if (dependencies.platform === 'win32') {
       window.setTitleBarOverlay({
-        color: dependencies.colorScheme.background(),
+        color: OVERLAY_CLEAR,
         symbolColor: dependencies.colorScheme.overlaySymbolColor(),
       })
     }

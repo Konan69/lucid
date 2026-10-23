@@ -1,5 +1,5 @@
 /**
- * The motion Integrations, Routines, Library, Notifications and Settings share, in one place so
+ * The motion Integrations, Library, Notifications and Settings share, in one place so
  * the numbers cannot drift between them. Everything here is built from the motion tokens
  * (`--dur-fast` 120ms, `--dur-enter` 240ms, `--ease-out-expo`); nothing loops, and the global
  * `prefers-reduced-motion` rule in `styles/index.css` shortens every one of them to nothing.

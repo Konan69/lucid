@@ -1,14 +1,19 @@
 import { defineTool } from '@flue/runtime'
 import {
+  Tool,
+  DocumentToolCallId,
   ReadDocumentOutcome,
   WriteDocumentRequest,
   type WriteDocumentOutcome,
 } from '@vivid/contracts'
+import { InvalidRequest } from '@vivid/contracts/rpc'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { modelText } from './views.ts'
+
+const decodeDocumentCallId = Schema.decodeUnknownEffect(DocumentToolCallId)
 
 /** No-op writes confirm the saved body without claiming that a new version exists. */
 function writeWords(outcome: typeof WriteDocumentOutcome.Type) {
@@ -50,7 +55,7 @@ export function read(outcome: ReadDocumentOutcome) {
 export function documentTools(runTool: RunTool) {
   return [
     defineTool({
-      name: 'write_document',
+      name: Tool.write_document,
       description:
         'Write a Markdown document the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Do not use it for an answer read once. Writing the same title again revises that document; send the whole revised body.',
       input: v.strictObject({
@@ -59,15 +64,18 @@ export function documentTools(runTool: RunTool) {
         body: text('The whole document as Markdown.', 200_000),
         note: v.optional(text('One sentence saying what changed.', 200)),
       }),
-      /** Display words stay in the call input; only document content crosses the product boundary. */
-      run({ data, signal }) {
-        const request: Schema.Struct.Mutable<WriteDocumentRequest> = {
-          title: data.title,
-          body: data.body,
-        }
-        if (data.note !== undefined) request.note = data.note
+      /** Flue supplies the call identity outside the model input, even when deliveries join a response. */
+      run({ data, signal, toolCallId }) {
         return runTool(
           Effect.gen(function* () {
+            const request: Schema.Struct.Mutable<WriteDocumentRequest> = {
+              toolCallId: yield* decodeDocumentCallId(toolCallId).pipe(
+                Effect.mapError(() => new InvalidRequest({ message: 'Document call is invalid' })),
+              ),
+              title: data.title,
+              body: data.body,
+            }
+            if (data.note !== undefined) request.note = data.note
             const outcome = yield* (yield* Scope).client.WriteDocument(request)
             return { output: written(outcome) }
           }),
@@ -76,7 +84,7 @@ export function documentTools(runTool: RunTool) {
       },
     }),
     defineTool({
-      name: 'read_document',
+      name: Tool.read_document,
       description:
         'Read a Markdown document of this Thread by title to work on it in a later turn. A missing title returns the titles available here.',
       input: v.strictObject({ summary, title: text('The title of the document to read.', 120) }),

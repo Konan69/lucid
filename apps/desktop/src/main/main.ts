@@ -24,7 +24,8 @@ import { locateComputer } from './computer.ts'
 import { createNotice } from './notice.ts'
 import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
-import { vividMayOpen } from './reach.ts'
+import { resolveHost, vividMayOpen } from './reach.ts'
+import { dialTarget, egressAddress, exitLink, isSessionCookie, type ExitSocket } from './egress.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -49,20 +50,29 @@ import { DesktopSettings, settingsLayer } from './settings.ts'
 import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
 import { APP_PARTITION, secureSession } from './session.ts'
+import { copyDeviceSignIn } from './cookies/copy.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { googleSignIn } from './signin.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import { startTelemetry } from './telemetry.ts'
 
-// First, before anything that can fail and before any scheme is registered (`telemetry.ts`).
+// The app's name, before anything asks where its data is. Electron makes the data folder from the
+// name the first time the folder is asked for and keeps that answer, and the workspace package is
+// named `@vivid/desktop`. Error reporting asks for the folder as it starts, so while this line
+// came after it the app of 12 October 2026 kept its data in `@vivid/desktop`, not `Vivid`: a
+// Person who installed it over the one before opened it signed out, with a new identity and none
+// of their settings, though nothing of theirs had been deleted. `productName` in `package.json`
+// gives Electron the same name before any of this file runs; this line is the same statement
+// where it can be read beside what depends on it.
+app.setName('Vivid')
+
+// Next, before anything that can fail and before any scheme is registered (`telemetry.ts`).
 startTelemetry()
 
 const PLACEMENT_FILE = 'window-placement.json'
 const INSTALLATION_FILE = 'installation.json'
 /** The host name as the Person's list of computers shows it, cut to what the contract allows. */
 const deviceName = Schema.decodeUnknownOption(DeviceName)
-// The workspace package name is scoped; native application identity and userData must use Vivid.
-app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
   Schema.Literals(['darwin', 'win32', 'linux'] as const),
 )
@@ -182,6 +192,23 @@ function createBrowser(
   })
 }
 
+/** Session and origin are captured together when each egress socket is opened. A signed-out
+ * desktop has no authority to connect, even if the app still has a chosen server. */
+const egressSocket = (
+  session: Session,
+  server: ServerSettings,
+  signedIn: boolean,
+): Option.Option<ExitSocket> => {
+  if (ServerSettings.guards.NoServer(server) || !signedIn) return Option.none()
+  return Option.some(
+    new net.WebSocket(egressAddress(server.origin), {
+      session,
+      useSessionCookies: true,
+      origin: server.origin,
+    }),
+  )
+}
+
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
  * turn keeper works in the Person's apps through Vivid's Computer and owns the notice; the link
@@ -259,12 +286,18 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
           identity: known,
         }),
     }),
-    ability: () => ({ pages: true, apps: windows.apps }),
+    ability: () => ({ pages: true, apps: windows.apps, egress: true, signins: true }),
     execute: (request) =>
       DeviceWork.match(request.work, {
         Page: ({ action }) => control.execute({ action, expiresAt: request.expiresAt }),
         Window: ({ action }) =>
           windows.execute({ runId: request.runId, action, expiresAt: request.expiresAt }),
+        SignIn: (work) =>
+          copyDeviceSignIn({
+            request: work,
+            expiresAt: request.expiresAt,
+            parent: mainWindow,
+          }),
       }),
     ended: windows.ended,
     // The notice window belongs to one server's origin and one session; it goes with the link.
@@ -274,6 +307,23 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   // Signing in or out changes the app session's cookies. A different session ends a link opened
   // as the old one at once, action in progress included; anything else is a cue to look again.
   const changed = sessionChanges(new Map())
+  // The way out for the Computer's browser (`egress.ts`). It dials the same server as the same
+  // session, on a socket of its own, and only while a session cookie is in the app's jar: an
+  // app nobody is signed in to would otherwise ask a server that can only refuse it, for ever.
+  // The jar is read once here, and the changes below keep `sessions` current after that.
+  const sessions = new Set(
+    (yield* Effect.promise(() => input.session.cookies.get({})))
+      .map((cookie) => cookie.name)
+      .filter(isSessionCookie),
+  )
+  const exit = yield* exitLink({
+    socket: () => egressSocket(input.session, input.server(), sessions.size > 0),
+    resolve: resolveHost,
+    dial: dialTarget,
+    // Never from the app: a page on the Computer must not reach into this computer's network.
+    allowPrivateTargets: false,
+    onStatus: () => undefined,
+  })
   input.session.cookies.on('changed', (_event, cookie, cause, removed) => {
     const change = changed({
       name: cookie.name,
@@ -281,14 +331,22 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       removed,
       overwritten: cause === 'overwrite',
     })
-    if (change === 'Restart') computer.restart()
-    else computer.wake()
+    if (isSessionCookie(cookie.name)) {
+      if (removed && cause !== 'overwrite') sessions.delete(cookie.name)
+      else sessions.add(cookie.name)
+    }
+    if (change === 'Restart') {
+      computer.restart()
+      // A socket opened as the old session must not go on carrying for the new one.
+      exit.restart()
+    } else computer.wake()
   })
+  yield* Effect.forkDetach(exit.run.pipe(Effect.setContext(context)), { startImmediately: true })
   // The detached link outlives boot; settings and startup spans must not become its context.
   yield* Effect.forkDetach(computer.run.pipe(Effect.setContext(context)), {
     startImmediately: true,
   })
-  return { computer, control }
+  return { computer, control, exit }
 })
 
 /**
@@ -326,7 +384,7 @@ const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
     server: input.server,
     open: openExternalUrl,
     random: (size) => NodeCrypto.randomBytes(size),
-    focus: () => raiseMainWindow(mainWindow),
+    focus: () => raiseMainWindow(platform, mainWindow),
     surfaces: input.surfaces,
   }).pipe(Scope.provide(untilQuit))
 })
@@ -400,7 +458,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
 
-  const { computer, control } = yield* linkThisComputer({
+  const { computer, control, exit } = yield* linkThisComputer({
     session: desktopSession,
     server: () => serverSettings,
     browser: () => browser,
@@ -417,6 +475,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     serverSettings = value
     // A link belongs to one server: drop it and start over on the new one, or on none.
     computer.restart()
+    exit.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
       runNonFatal(
@@ -447,6 +506,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
         }),
       getAppVersion: () => information.appVersion,
       device: computer,
+      showColorScheme: (preference) => colorScheme.show(preference),
       settings,
       openExternal: openExternalUrl,
       signIn,

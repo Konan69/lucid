@@ -171,10 +171,22 @@ export function updateRoutes(directory: Option.Option<string>, publicUrl: URL) {
             SignatureUnavailable: () =>
               refuse(400, 'Code signing requested but this server has no signing key.'),
             // Nothing to give is 404; the sentence names the binary so one request shows a mismatch.
+            // The log names the binary as well. The failure record above keeps a failure's tag
+            // and none of its fields, so a phone left behind by a version nobody publishes for
+            // showed only as a 404 with no way to tell which app it had. The version is the
+            // caller's own header, so it is cut to a length a version can have.
             UpdateNotPublished: (failure) =>
-              refuse(
-                404,
-                `No update is published for ${failure.platform} runtime version ${failure.runtimeVersion}.`,
+              Effect.logWarning('No update is published for this binary').pipe(
+                Effect.annotateLogs({
+                  'update.platform': failure.platform,
+                  'update.runtime': failure.runtimeVersion.slice(0, 32),
+                }),
+                Effect.andThen(
+                  refuse(
+                    404,
+                    `No update is published for ${failure.platform} runtime version ${failure.runtimeVersion}.`,
+                  ),
+                ),
               ),
           }),
         ),

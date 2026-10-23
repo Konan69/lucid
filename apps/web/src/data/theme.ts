@@ -49,6 +49,26 @@ const apply = (state: Look) => {
 }
 apply(useTheme.getState())
 useTheme.subscribe(apply)
+
+/**
+ * In the desktop app, the shell is told the choice as well, so what the operating system draws for
+ * the window (its minimise, maximise and close buttons, its menus) is in the same look as the
+ * page. Without it the window kept the system's look: a Person who chose light on a dark system
+ * had dark window buttons on a black strip over a light page.
+ *
+ * It is the choice that is sent, not what is drawn: given "system" the shell follows the system by
+ * itself. A shell installed before this existed has no `colorScheme` on its bridge, though the
+ * type says every shell does; that shell is simply not told. An answer that fails is left to
+ * reject, so it is reported like any other fault and nothing here pretends it worked.
+ */
+const tell = (preference: Theme) => {
+  if ('vivid' in globalThis && 'colorScheme' in globalThis.vivid)
+    void globalThis.vivid.colorScheme.show(preference)
+}
+tell(useTheme.getState().preference)
+useTheme.subscribe((state, before) => {
+  if (state.preference !== before.preference) tell(state.preference)
+})
 dark.addEventListener('change', () => useTheme.setState({ systemDark: dark.matches }))
 
 export const theme = {

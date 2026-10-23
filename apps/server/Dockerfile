@@ -10,6 +10,9 @@ FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
+# The phone app's Markdown renderer is a packed tarball beside its package.json (`file:deps/...`);
+# an install that reads the lockfile needs it there before any of `apps/mobile` is copied.
+COPY apps/mobile/deps apps/mobile/deps
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
@@ -21,14 +24,24 @@ COPY packages/design/tokens/package.json packages/design/tokens/package.json
 COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
 COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
+COPY packages/compiler packages/compiler
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
-RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter @vivid/web...
-COPY tsconfig.base.json ./
+# The server takes `@vivid/agent-runtime` only as a devDependency, for tests that import the
+# runtime's tools by name; the runtime ships in its own image (`packages/agent/runtime/Dockerfile`).
+# Excluding it keeps its dependency closure (Flue CLI, AgentFS) out of the store this image copies,
+# while the server's own devDependencies, `tsx` among them, stay installed for its start command.
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter '!@vivid/agent-runtime' --filter @vivid/web...
+# Shared phone packages extend the root Hermes profile; Vite and tsx resolve it too.
+COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
 COPY apps/server apps/server
 COPY apps/web apps/web
 COPY apps/desktop/src/shared apps/desktop/src/shared
-RUN pnpm --filter @vivid/web build
+# Which commit this build is, for Settings and error reports (`@vivid/contracts` build.ts). Railway
+# names the commit to a build started by a push; a build it did not start from one is unnamed.
+# Declared here, after the slow steps, because its value changes with every commit.
+ARG RAILWAY_GIT_COMMIT_SHA=""
+RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm --filter @vivid/web build
 
 # The mobile app's JavaScript, exported as an over-the-air update beside the web build, so every
 # deploy carries the app that matches its contracts (`apps/server/src/updates`). A stage of its
@@ -38,6 +51,7 @@ ENV CI=1
 ENV EXPO_NO_TELEMETRY=1
 RUN pnpm install --frozen-lockfile --filter @vivid/mobile...
 COPY apps/mobile apps/mobile
+COPY scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 RUN pnpm --filter @vivid/mobile run updates /app/apps/mobile/updates
 
 FROM base AS production
@@ -51,7 +65,7 @@ ENV VIVID_MOBILE_UPDATES=/app/apps/mobile/updates
 COPY --from=build --chown=node:node /opt/corepack /opt/corepack
 # Retain pnpm's virtual store and package-local symlinks, including tsx and contract sources.
 COPY --from=build --chmod=0644 /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
-COPY --from=build --chmod=0644 /app/tsconfig.base.json ./
+COPY --from=build --chmod=0644 /app/tsconfig.base.json /app/tsconfig.hermes.json /app/hermes.d.ts ./
 COPY --from=build --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/packages packages
 COPY --from=build --chown=node:node /app/apps/server apps/server
@@ -59,6 +73,10 @@ COPY --from=build --chown=node:node /app/apps/web/dist apps/web/dist
 COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updates
 # Preserve the existing ordered migration entry for deployment pre-start jobs.
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
+# The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`),
+# under a name the host does not set at run time, so the image's own value is the one read.
+ARG RAILWAY_GIT_COMMIT_SHA=""
+ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

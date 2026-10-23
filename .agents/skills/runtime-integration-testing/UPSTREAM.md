@@ -10,7 +10,7 @@
 
 ## What is kept from the owner
 
-The owner rule is preserved: test a real runtime seam, and do not use a mock to prove runtime behavior. Pure state-machine logic stays in direct tests.
+The owner rule is preserved: test a real runtime seam, and do not use a mock to prove runtime behavior. The 21 October 2026 policy puts state invariants in the Effect Machine or the type model and removes pure unit tests.
 
 Everything specific to the owner's platform was replaced. The owner skill is written for Cloudflare Workers, workerd and Durable Objects. Vivid's skill is written for PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Flue runtime boundary, and Integrations transport. It is a deliberate adaptation, not a vendor copy, so there is no owner conflict to resolve on refresh.
 
@@ -18,11 +18,11 @@ Everything specific to the owner's platform was replaced. The owner skill is wri
 
 `SKILL.md` is the authority; this is the short list of what the 2026-10-04 rewrite verified by reading source. Version numbers are not repeated here: `AGENTS.md` owns the pins and `SKILL.md` lists what was verified.
 
-- **Pins.** The workspace catalog, the lockfile and the installed packages agree for Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest`, Vitest, Better Auth, Flue, pi-ai and Drizzle. `@effect/vitest` is a direct dev dependency of the server, the runtime and the contracts packages.
+- **Pins.** The workspace catalog, the lockfile and the installed packages agree for Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest`, Vitest, Better Auth, Flue, pi-ai and Drizzle. `@effect/vitest` remains a direct dev dependency of packages with retained Effect integration tests, including the server and runtime.
 - **Database.** `apps/server/tests/template.ts` (one migrated template per Vitest invocation, through Drizzle Kit) and `apps/server/tests/setup.ts` (one clone per test file). `apps/server/src/database/testdb.ts` exports `testDatabaseConfigured`, `testConfigLayer` and `testDatabaseLayer`. Only `VIVID_TEST_DATABASE_URL` is read as input; `DATABASE_URL` is written from it by the template's migration child, the runtime worker setup and `testConfigLayer`, and never read back. The supplied database is administration-only for the server project; the runtime's `desktopDatabase` fixture creates and drops its own schema inside it.
 - **Server.** There is no `HttpApi` in the repository. Product calls are `VividRpc` over `RpcServer`; `apps/server/src/http/router.ts` exports `routerLayer`. Tests use `RpcTest.makeClient`, `HttpRouter.toHttpEffect`, or `NodeHttpServer.layerTest` with `HttpRouter.serve`. All four symbols exist in the installed Effect source.
 - **Better Auth.** `authEffect` in `apps/server/src/auth/provider.ts` reads `ServerConfig` from context, so it follows the test configuration.
-- **Runtime.** `packages/agent/runtime/tests/setup.ts`, registered by the runtime Vitest config as `setupFiles`, maps a non-empty test URL to `DATABASE_URL` before test imports. It deletes inherited `DATABASE_URL` when the test variable is absent and rejects an empty test variable. `src/db.test.ts` exercises project wiring and the unconfigured import refusal. `src/tools/computer.test.ts` holds the one `Effect.runPromise` in a Vitest file: the Promise-returning `transaction` callback of Flue's public `PostgresRunner`, exempted by an inline lint disable on that line. Tools are tested against the generated `VividRpc` client with a controlled transport. The deterministic model is pi-ai's faux provider from `@earendil-works/pi-ai/providers/faux`, registered at import by `src/providers/rehearsal.ts`.
+- **Runtime.** `packages/agent/runtime/tests/setup.ts`, registered by the runtime Vitest config as `setupFiles`, maps a non-empty test URL to `DATABASE_URL` before test imports. It deletes inherited `DATABASE_URL` when the test variable is absent and rejects an empty test variable. `src/tools/computer.test.ts` holds the one `Effect.runPromise` in a Vitest file: the Promise-returning `transaction` callback of Flue's public `PostgresRunner`, exempted by an inline lint disable on that line. Prove tools through the real runtime and a real HTTP RPC server, as in `src/routes.test.ts` and `src/tools/scope.test.ts`. The deterministic model is pi-ai's faux provider from `@earendil-works/pi-ai/providers/faux`, registered at import by `src/providers/rehearsal.ts`.
 - **Commands.** Both packages run `vitest run`; root `pnpm test` is `turbo run test`.
 
 ## Corrections to the earlier notes

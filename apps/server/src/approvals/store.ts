@@ -42,6 +42,7 @@ import { changed, Topic, Changes } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
+import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import {
@@ -54,7 +55,42 @@ import {
 import { actionDigest, auditAction } from './action.ts'
 import { approvals } from './tables.ts'
 import { Signal, encodeSignal } from './signal.ts'
-import { replaySignals } from './replay.ts'
+import { replaySignals, type SignalWriter } from './replay.ts'
+
+/** Replay supplies the selection and fences; this domain owns both complete signal writes. */
+const signalWriter: SignalWriter = {
+  table: approvals,
+  /** Claim and return the same bounded row set in one statement under the replay lease. */
+  claim: Effect.fn('Approvals.claimSignals')(function* (
+    database: Database['Service'],
+    update: Parameters<SignalWriter['claim']>[1],
+  ) {
+    return yield* database.run(
+      database
+        .update(approvals)
+        .set({ signalDueAt: update.leaseUntil, signalClaim: update.token })
+        .where(update.where)
+        .returning({
+          id: approvals.id,
+          threadId: approvals.threadId,
+          personId: approvals.personId,
+          signal: approvals.signal,
+        }),
+    )
+  }),
+  /** The row id and lease token prevent an expired claimant from acknowledging. */
+  settle: Effect.fn('Approvals.settleSignal')(function* (
+    database: Database['Service'],
+    update: Parameters<SignalWriter['settle']>[1],
+  ) {
+    yield* database.run(
+      database
+        .update(approvals)
+        .set({ signal: update.signal, signalDueAt: update.dueAt, signalClaim: null })
+        .where(and(eq(approvals.id, update.id), eq(approvals.signalClaim, update.token))),
+    )
+  }),
+}
 
 const fields = createSelectSchema(approvals, {
   id: ApprovalId,
@@ -358,7 +394,7 @@ const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, decide
 
 /** Request delivery is only an optimization; all failures leave the SQL debt for the sweeper. */
 const deliver = Effect.fn('Approvals.deliver')(function* (id: ApprovalId) {
-  yield* replaySignals(approvals, Option.some([id])).pipe(
+  yield* replaySignals(signalWriter, Option.some([id])).pipe(
     Effect.catch(() => Effect.logError('Approval outcome replay failed', { approvalId: id })),
   )
 })
@@ -502,17 +538,18 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
     }),
   )
   const approval = yield* returned(yield* view([result.row]), 'Approval')
-  if (result.inserted) {
-    yield* changed(actor, Topic.thread(threadId))
-    yield* (yield* Notifier).notify({
-      personId: actor.person.id,
-      companyId: companyColumnOf(actor.workspace),
-      kind: 'needs-you',
-      title: 'Vivid needs your approval',
-      body: action.summary,
-      threadId,
-    })
-  }
+  if (!result.inserted) return approval
+  yield* changed(actor, Topic.thread(threadId))
+  // An approval raised in a Background Thread is shown by the Feed, never as a notification.
+  if (!notifiesFrom(thread.place)) return approval
+  yield* (yield* Notifier).notify({
+    personId: actor.person.id,
+    companyId: companyColumnOf(actor.workspace),
+    kind: 'needs-you',
+    title: 'Vivid needs your approval',
+    body: action.summary,
+    threadId,
+  })
   return approval
 })
 
@@ -679,7 +716,7 @@ export const approvalStoreLayer = Layer.effect(
         return row.threadId
       }),
       expire: run(expire()),
-      replay: run(replaySignals(approvals, Option.none())),
+      replay: run(replaySignals(signalWriter, Option.none())),
     })
   }),
 )

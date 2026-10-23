@@ -1,36 +1,46 @@
-import { useAtomMount, useAtomSet } from '@effect/atom-react'
+import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
-import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { asking, draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
+import {
+  textOf,
+  ThreadAudience,
+  type MeResponse,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
+import {
+  asking,
+  draftPlace,
+  inThread,
+  lasting,
+  QUIET_MS,
+  readingOf,
+  streamSaid,
+  titleFromMessage,
+  workspaceKey,
+} from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
-import { conversationOf, heardIn } from '../data/conversation'
+import { answeringIn, conversationOf, heardIn, type Heard } from '../data/conversation'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { router } from '../router'
+import { link } from '../data/runtime'
 import { orSay } from '../data/said'
-import { FirstWords, firstWords, landedFor, useFirstWords, wordsFor } from '../data/threads'
+import { FirstWords, firstWords, saidWith, useFirstWords, wordsFor } from '../data/threads'
 import { Button } from '../ui/button'
 import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { Asks, useAsks } from './thread/Allow'
+import { Asks, Hold, useAsks } from './thread/Allow'
+import { DeviceAsk } from './thread/Device'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
-import {
-  isBlank,
-  Message,
-  Replied,
-  Said,
-  spokenOf,
-  textOf,
-  type ThreadContext,
-} from './thread/Message'
+import { isBlank, Message, Replied, Said, spokenOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
@@ -62,15 +72,14 @@ export function Thread({
   const record = LiveState.$is('Ready')(detail) ? detail.value : undefined
   const known = useMemo(() => Option.fromUndefinedOr(record), [record])
   const first = useFirstWords(wordsFor(id))
-  const landed = useFirstWords(landedFor(id))
   // A Thread whose first words are still on their way may not exist on the server yet. It is not
   // gone, it is arriving, and what the Person just wrote is already on screen.
-  if (LiveState.$is('Failed')(detail) && FirstWords.$is('Settled')(first)) return <Gone />
+  if (LiveState.$is('Failed')(detail) && !travelling(first)) return <Gone />
   return (
     <Conversation
       // The conversation is observed afresh once a new Thread's first words have landed: the
       // observer that opened with the screen was told there was no conversation yet.
-      key={landed ? `${id}:landed` : id}
+      key={FirstWords.$is('Said')(first) ? `${id}:landed` : id}
       id={id}
       me={me}
       first={first}
@@ -80,6 +89,10 @@ export function Thread({
     />
   )
 }
+
+/** Whether first words are still on their way and so the Thread may not exist on the server yet. */
+const travelling = (first: FirstWords): boolean =>
+  FirstWords.$is('Sending')(first) || FirstWords.$is('Unsent')(first)
 
 /** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
 function Gone() {
@@ -124,22 +137,80 @@ const arrivingTitle = (first: FirstWords): Option.Option<string> =>
     Settled: () => Option.none(),
     Sending: ({ words }) => Option.some(titleFromMessage(words)),
     Unsent: ({ words }) => Option.some(titleFromMessage(words)),
+    Said: ({ words }) => Option.some(titleFromMessage(words)),
   })
 
 /** Keeps card attribution and pending questions tied to the same live Thread snapshot. */
-function contextFor(
-  detail: Option.Option<ThreadDetail>,
-  me: MeResponse['person']['id'],
-  shared: boolean,
-  runs: ThreadContext['runs'],
-): ThreadContext {
+function contextFor({
+  thread,
+  detail,
+  me,
+  shared,
+  runs,
+}: {
+  thread: ThreadId
+  detail: Option.Option<ThreadDetail>
+  me: MeResponse['person']['id']
+  shared: boolean
+  runs: ThreadContext['runs']
+}): ThreadContext {
   return {
+    thread,
     me,
     shared,
     runs,
     approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
   }
+}
+
+/**
+ * The ids of the submissions Flue has settled, in whatever way they ended (completed, failed or
+ * aborted). They come from the same reading as the words drawn beside them (`heardIn` until the
+ * hook has read the history), so a reply that had ended is drawn as ended from the first frame,
+ * and one that had not still waits. Kept the same until one settles.
+ */
+const settledIn = (settlements: Heard['settlements']) => {
+  // Flue hands back the same list until a submission settles, so the set made for it is kept and
+  // the rows are not drawn again for a set that only looks new.
+  const known = settledSets.get(settlements)
+  if (known !== undefined) return known
+  const made: ReadonlySet<string> = new Set(
+    settlements.map((settlement) => settlement.submissionId),
+  )
+  settledSets.set(settlements, made)
+  return made
+}
+const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
+
+/**
+ * The conversation as this screen reads it (`standingOf`). `answering` says whether a reply is
+ * under way; `historyReady` and `error` are the hook's own, whether it has read the history yet
+ * and why it could not.
+ */
+type Standing = Heard &
+  Pick<ReturnType<typeof useFlueAgent>, 'historyReady' | 'error'> & { readonly answering: boolean }
+
+/**
+ * What the conversation says now: the hook's own reading once it has read the history, and until
+ * then what was already known (`heardIn`). The words, the submissions that had ended and whether a
+ * reply is under way are taken from one reading, never one from each: cached words beside the
+ * hook's still empty endings drew every reply that had ended as one still arriving, and beside
+ * its still `idle` status drew a reply under way as ended, then as working a frame later. Before
+ * the history is read the hook's status still counts what it sent itself.
+ */
+const standingOf = (
+  agent: ReturnType<typeof useFlueAgent>,
+  heard: Option.Option<Heard>,
+): Standing => {
+  const { messages, settlements } = agent.historyReady
+    ? agent
+    : Option.getOrElse(heard, () => agent)
+  const answering =
+    agent.status === 'submitted' ||
+    agent.status === 'streaming' ||
+    (!agent.historyReady && Option.exists(heard, answeringIn))
+  return { messages, settlements, answering, historyReady: agent.historyReady, error: agent.error }
 }
 
 /**
@@ -162,12 +233,15 @@ const Rows = memo(function Rows({
   visible,
   context,
   working,
+  settled,
   onContinue,
 }: {
   said: ReadonlyArray<FlueConversationMessage>
   visible: ReadonlyArray<FlueConversationMessage>
   context: ThreadContext
   working: boolean
+  /** The submissions Flue has settled (`settledIn`); a reply's displays wait for its own. */
+  settled: ReadonlySet<string>
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
   const newest = visible.at(-1)
@@ -194,6 +268,8 @@ const Rows = memo(function Rows({
               // not told when work starts and stops, and are not drawn again for it.
               working={working && latest}
               latest={latest}
+              // A reply that names no submission was never part of one, so nothing is pending.
+              settled={message.submissionId === undefined || settled.has(message.submissionId)}
               onContinue={onContinue}
             />
           </li>
@@ -223,8 +299,10 @@ function ConversationMessages({
   ended,
   onSay,
   hero,
+  settled,
 }: {
   hero: React.ReactNode
+  settled: ReadonlySet<string>
   ready: boolean
   empty: boolean
   working: boolean
@@ -260,6 +338,7 @@ function ConversationMessages({
         visible={visible}
         context={context}
         working={working}
+        settled={settled}
         onContinue={onContinue}
       />
       <OnTheirWay first={first} onAgain={onFirstAgain} />
@@ -309,12 +388,19 @@ function Conversation({
   const client = conversationOf(id)
   const agent = useFlueAgent({ client })
   // The hook begins reading in an effect, so on the first frame of every visit it has no words
-  // even when the conversation is open and known. For that frame the words are taken from the
-  // conversation itself (`heardIn`), and the Thread is drawn with them instead of as one that
-  // is still opening. From the next frame on the hook has them and is what is drawn.
+  // even when the conversation is open and known, and a conversation that was parked is read again
+  // (`data/conversation.ts`). Until then the words are taken from the conversation itself
+  // (`heardIn`, with the endings and the activity of the same reading), and the Thread is drawn
+  // with them.
   const heard = heardIn(id)
   const ready = agent.historyReady || Option.isSome(heard)
-  const said = agent.historyReady ? agent.messages : Option.getOrElse(heard, () => agent.messages)
+  const standing = standingOf(agent, heard)
+  // A new Thread's first words are drawn from the moment they were sent (`saidWith`). The same
+  // list until the conversation or the words move.
+  const said = useMemo(
+    () => saidWith(id, first, standing.messages, agent.historyReady),
+    [id, first, standing.messages, agent.historyReady],
+  )
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
   // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
@@ -336,19 +422,14 @@ function Conversation({
   // the Thread's own record arrives to say so, that is known from having opened it, so the page
   // shows Vivid thinking from its first frame and never an empty Thread.
   const opening = useArrival(openedFor(id)) && Option.isNone(thread)
-  const working =
-    opening ||
-    agent.status === 'submitted' ||
-    agent.status === 'streaming' ||
-    FirstWords.$is('Sending')(first) ||
-    Option.exists(thread, (value) => value.attention === 'Working')
+  const working = workingIn(opening, standing, first, detail)
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
   const visible = useMemo(() => shownIn(said), [said])
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
   const context = useMemo(
-    () => contextFor(detail, me.person.id, shared, runs),
-    [detail, me.person.id, shared, runs],
+    () => contextFor({ thread: id, detail, me: me.person.id, shared, runs }),
+    [id, detail, me.person.id, shared, runs],
   )
   // The hook answers with a new object on every streamed token, so `send` cannot depend on
   // `agent`; it depends on this, which is bound once, when the screen is first drawn. Flue types
@@ -396,6 +477,7 @@ function Conversation({
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
+  const cut = useCut(agent)
   return (
     <Layout
       id={id}
@@ -407,7 +489,7 @@ function Conversation({
       doing={working ? Option.flatMap(replyIn(visible), doingIn) : Option.none()}
       // What Vivid's face answers for: words that did not arrive, a server that cannot be
       // reached, a Run that ended without an answer.
-      failed={agent.error !== undefined || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
+      failed={cut || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
@@ -431,14 +513,15 @@ function Conversation({
           <ConversationMessages
             hero={hero}
             ready={ready}
-            empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
+            empty={visible.length === 0 && !FirstWords.$is('Unsent')(first)}
             working={working}
             waiting={isWaiting(working, visible)}
-            failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
+            failure={cut ? 'Vivid can’t be reached right now.' : null}
             onRetry={() => agent.refresh()}
             said={said}
             visible={visible}
             context={context}
+            settled={settledIn(standing.settlements)}
             onContinue={say}
             first={first}
             onFirstAgain={() => firstWords.again(id)}
@@ -514,6 +597,8 @@ function Column({
     <>
       {children}
       <Asks allowing={allowing} asked={asked} />
+      {/* A computer waiting to be allowed is asked about here too, once nothing else is up. */}
+      <DeviceAsk free={Hold.$is('Free')(allowing.hold) && asking.Hold.$is('Free')(asked.hold)} />
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.
@@ -564,20 +649,57 @@ function lastWords(messages: ReadonlyArray<FlueConversationMessage>, me: MeRespo
   return Option.map(Option.fromUndefinedOr(mine.at(-1)), textOf)
 }
 
-/** A new Thread's first words, drawn from the hand-off until the conversation has them. */
+/**
+ * A new Thread's first words that did not arrive, with the way to send them again. Words that are
+ * on their way or arrived are in the conversation itself (`withFirst`).
+ */
 function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void }) {
-  return FirstWords.$match(first, {
-    Settled: () => null,
-    Sending: ({ words }) => (
-      <li>
-        <Said text={words} mine pictures={[]} />
-      </li>
-    ),
-    Unsent: ({ words }) => (
-      <NotSent words={words} pictures={[]} shown={false} why={Option.none()} onAgain={onAgain} />
-    ),
-  })
+  return FirstWords.$is('Unsent')(first) ? (
+    <NotSent
+      words={first.words}
+      pictures={[]}
+      shown={false}
+      why={Option.none()}
+      onAgain={onAgain}
+    />
+  ) : null
 }
+
+/**
+ * Whether a new Thread's first words still count as on their way to Vivid. They do from the send
+ * until the Thread's own two sources, its conversation and its record, have both spoken: after
+ * that, whether Vivid is working is theirs to say. Without the second half the Thread stopped
+ * saying Vivid is thinking for the moment between the server taking the words and the Thread's
+ * record arriving. A conversation that could not be read has spoken too: it will not become
+ * ready. The phone's reading of the same (`isOnItsWay`, `apps/mobile/src/data/first.ts`).
+ */
+/**
+ * Whether Vivid is working in the Thread: it was just opened for Vivid to speak first (`opening`),
+ * the conversation says a reply is under way, the first words are still on their way, or the
+ * Thread's record says so.
+ */
+const workingIn = (
+  opening: boolean,
+  standing: Pick<Standing, 'answering' | 'historyReady' | 'error'>,
+  first: FirstWords,
+  detail: Option.Option<ThreadDetail>,
+): boolean =>
+  opening ||
+  standing.answering ||
+  onItsWay(first, standing, detail) ||
+  Option.exists(detail, (value) => value.thread.attention === 'Working')
+
+const onItsWay = (
+  first: FirstWords,
+  agent: Pick<ReturnType<typeof useFlueAgent>, 'historyReady' | 'error'>,
+  detail: Option.Option<ThreadDetail>,
+): boolean =>
+  FirstWords.$match(first, {
+    Settled: () => false,
+    Unsent: () => false,
+    Sending: () => true,
+    Said: () => !((agent.historyReady || agent.error !== undefined) && Option.isSome(detail)),
+  })
 
 /** Words that were sent from here and refused, and the reason when the server gave one. */
 interface Unsent {
@@ -599,6 +721,25 @@ const Busy = Schema.Struct({
   status: Schema.Literal(409),
   body: Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
 })
+/**
+ * Whether the conversation's stream is broken in a way worth saying. A stream Flue is already
+ * reopening is not said while this page's own socket still reaches the server: a deploy or a
+ * sleeping laptop cuts it for a second and it resumes from where it stopped.
+ */
+const useCut = (
+  agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error' | 'settlements'>,
+) => {
+  const reach = useAtomValue(link.atom)
+  const reading = readingOf({
+    status: agent.status,
+    broken: agent.error !== undefined,
+    settledBadly: agent.settlements.slice(-1).some((settled) => settled.outcome === 'failed'),
+  })
+  const held = useMemo(() => lasting(reading === 'CatchingUp', QUIET_MS), [reading])
+  const late = useSyncExternalStore(held.subscribe, held.read, held.read)
+  return streamSaid(reading, { socketLost: reach === 'lost', late })
+}
+
 const whyNot = (refusal: Parameters<typeof readBusy>[0]) =>
   Option.map(readBusy(refusal), (busy) => busy.body.error.message)
 const readBusy = Schema.decodeUnknownOption(Busy)

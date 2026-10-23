@@ -1,5 +1,5 @@
 import type { ProjectId, Thread } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { Check, Plus } from 'lucide-react-native'
@@ -14,6 +14,7 @@ import { Sheet } from '../../ui/Sheet'
 import { Notice, Skeleton } from '../../ui/ui'
 import { CreateProject } from '../project/Create'
 import { Mark } from '../project/Mark'
+import { start } from '../../data/app'
 
 /**
  * "Move to a project", from the Thread's own menu: pick one of the Person's Projects, make a new
@@ -28,14 +29,18 @@ export function Filing({ thread, onClose }: { thread: Thread; onClose: () => voi
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const [creating, setCreating] = useState(false)
 
-  async function file(projectId: ProjectId | null) {
-    const result = await patchThread(data, thread.id, { projectId })
-    if (Result.isFailure(result)) {
-      setRefused(Option.some('That thread could not be moved just now. Try again.'))
-      return
-    }
-    confirm()
-    onClose()
+  function file(projectId: ProjectId | null) {
+    return start(
+      Effect.gen(function* () {
+        const result = yield* patchThread(data, thread.id, { projectId })
+        if (Result.isFailure(result)) {
+          setRefused(Option.some('That thread could not be moved just now. Try again.'))
+          return
+        }
+        confirm()
+        onClose()
+      }),
+    )
   }
 
   if (creating) {
@@ -43,7 +48,7 @@ export function Filing({ thread, onClose }: { thread: Thread; onClose: () => voi
     return (
       <CreateProject
         inside={null}
-        onMade={(project) => void patchThread(data, thread.id, { projectId: project.id })}
+        onMade={(project) => void start(patchThread(data, thread.id, { projectId: project.id }))}
         onClose={onClose}
       />
     )

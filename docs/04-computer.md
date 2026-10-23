@@ -616,7 +616,7 @@ recovered. The exploratory Electron proof opened/read a page, then its CDP click
 The guessed matcher/driver was removed. The public Person route fails closed even with a live
 subscriber; neither `on: 'yours'` nor expanded runtime abilities ship.
 
-`packages/contracts/src/browsers.ts` reserves access-request scopes, control status and Run Stop.
+`packages/contracts/src/computers.ts` reserves access-request scopes, control status and Run Stop.
 These are not implemented grants or working Stop handlers. App/site access remains separate from
 an action Approval. Setup/execute, native budgets, grant persistence and Run stop markers still
 need their reference ports. Existing `pages.stop(tab)` stops loading only.

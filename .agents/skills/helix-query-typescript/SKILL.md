@@ -57,7 +57,7 @@ Before writing any query code:
 
 If the local repo is thin on examples, use the companion files:
 
-1. `EXAMPLES.md` — working end-to-end TypeScript queries (reads, writes, search, repeat, branching, upsert, `forEachParam`, index management). Scenarios are numbered to match `../helix-query-rust/EXAMPLES.md` and `../helix-query-json-dynamic/EXAMPLES.md` 1:1.
+1. `EXAMPLES.md` — working end-to-end TypeScript queries (reads, writes, search, repeat, branching, upsert, `forEachParam`, index management). Scenarios are numbered to match `../helix-query-json-dynamic/EXAMPLES.md` 1:1.
 2. `REFERENCE.md` — full builder catalog organized by category, with typestate
    notes and future `HelixDB/helix-db` `main` source links.
 
@@ -299,4 +299,4 @@ Before finishing:
 ## Reference Files
 
 - `REFERENCE.md` — full builder catalog (entry points, scalars, refs, expressions, predicates, projections, branching, repeat, mutations, indexes, batches, parameters, direct requests), with a Rust↔TS naming map.
-- `EXAMPLES.md` — end-to-end TypeScript queries mirroring the scenarios in `../helix-query-rust/EXAMPLES.md` and `../helix-query-json-dynamic/EXAMPLES.md`, so you can move fluently between the Rust DSL, TypeScript DSL, and JSON forms.
+- `EXAMPLES.md` — end-to-end TypeScript queries mirroring the scenarios in `../helix-query-json-dynamic/EXAMPLES.md`, so you can move fluently between the Rust DSL, TypeScript DSL, and JSON forms.

@@ -1,6 +1,7 @@
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
+import { checkRaises, checkTightCeilings } from '../ceilings.mjs'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
@@ -57,7 +58,9 @@ function newSummary(root, before, tasks) {
   return NodeFS.readdirSync(directory)
     .filter((file) => file.endsWith('.json') && !before.has(file))
     .map((file) => decodeTurboSummary(NodeFS.readFileSync(NodePath.join(directory, file), 'utf8')))
-    .find((summary) => summary.tasks.some((task) => tasks.includes(task.task)))
+    .find((summary) =>
+      summary.tasks.some((task) => tasks.includes(task.task) || tasks.includes(task.taskId)),
+    )
 }
 
 function existingSummaries(root) {
@@ -66,7 +69,7 @@ function existingSummaries(root) {
 }
 
 /** A stage's line from the tasks Turbo ran or replayed for it. */
-function stageResult(stage, tasks, run) {
+export function stageResult(stage, tasks, run) {
   const real = tasks
   const executed = real.filter((task) => task.cache.status !== 'HIT')
   const failed = real.filter((task) => task.execution.exitCode !== 0).map((task) => task.taskId)
@@ -77,6 +80,13 @@ function stageResult(stage, tasks, run) {
     .filter((file) => NodeFS.existsSync(file))
     .map((file) => NodeFS.readFileSync(file, 'utf8'))
     .join('\n')
+  // A partial log cannot prove a lower count. Keep missing lint receipts as failures.
+  if (stage.name === 'lint') {
+    for (const task of real) {
+      if (!NodeFS.existsSync(NodePath.join(run.root, task.logFile)))
+        failed.push(`missing lint log for ${task.taskId}`)
+    }
+  }
   NodeFS.writeFileSync(log, output)
   // The time the stage's own tasks ran: a lane interleaves stages, so a span would count others.
   const seconds =
@@ -173,13 +183,20 @@ async function runLane(lane, laneStages, run) {
   return results
 }
 
-/** Lint passes with warnings; the ratchets are what turn a new warning into a failure. */
-function applyRatchets(results) {
+/**
+ * Reject raised ceilings and compare them with the combined fresh and cached lint counts.
+ * Reusing the task logs enforces exact ceilings without running the linter a second time.
+ */
+export function applyRatchets(results, run) {
   const lint = results.find((result) => result.name === 'lint')
   if (lint === undefined || lint.output === undefined) return
-  const broken = checkRatchets(lint.output).filter((ratchet) => !ratchet.held)
-  for (const ratchet of broken)
+  const complete = lint.failed.length === 0
+  const measurements = checkRatchets(lint.output)
+  lint.failed.push(...checkRaises(run.root, run.ceilingsBase, run.env))
+  for (const ratchet of measurements.filter((entry) => !entry.held))
     lint.failed.push(`${ratchet.label} ratchet: ${ratchet.count} exceed ${ratchet.ceiling}`)
+  // A failed linter may have stopped early. It cannot justify lowering a ceiling.
+  if (complete) lint.failed.push(...checkTightCeilings(measurements))
 }
 
 /**
@@ -251,16 +268,12 @@ export async function runLocal(root, selection, environment) {
 }
 
 /**
- * Lint stays one package at a time, but that one process may use several cores: up to four of
- * each kind of worker, never more than half the machine. docs/checks.md measured one worker of
- * each as the safe default for a developer's own run; a second Go worker cost 0.3 GiB and the
- * whole-workspace run with eight threads was 1.7 times faster than with one. A value already
- * in the environment wins.
+ * Lint stays one package at a time. Oxlint uses up to four workers, never more than half
+ * the machine; tsrslint owns its internal worker count. An explicit VIVID_LINT_THREADS wins.
  */
 function lintWorkers(environment) {
   const workers = String(Math.max(1, Math.min(4, Math.floor(NodeOS.availableParallelism() / 2))))
   return {
-    GOMAXPROCS: environment.GOMAXPROCS === undefined ? workers : environment.GOMAXPROCS,
     VIVID_LINT_THREADS:
       environment.VIVID_LINT_THREADS === undefined ? workers : environment.VIVID_LINT_THREADS,
   }
@@ -277,7 +290,15 @@ async function runStages(root, selection, environment, { runId, directory }) {
     TURBO_TELEMETRY_DISABLED: '1',
     ...lintWorkers(environment),
   }
+  // The gate also builds uncommitted snapshots. No task or prerequisite may upload their maps.
+  delete env.SENTRY_AUTH_TOKEN
   delete env.VIVID_TEST_DATABASE_URL
+  // Remote trees are detached; the local caller resolved the branch and its comparison commit.
+  if (selection.proof !== undefined) {
+    env.VIVID_PROOF_BRANCH = selection.proof.branch
+    env.VIVID_PROOF_ENABLED = selection.proof.enabled ? '1' : '0'
+    if (selection.proof.enabled) env.VIVID_PROOF_BASE = selection.proof.base
+  }
   if (database !== undefined) {
     env.VIVID_TEST_DATABASE_URL = database.url
     // The address differs on every run, so it stays out of the task hash; this marker is what
@@ -296,6 +317,7 @@ async function runStages(root, selection, environment, { runId, directory }) {
     env,
     cache,
     base: selection.base,
+    ceilingsBase: selection.ceilingsBase,
     testTasks: Math.max(2, Math.floor(NodeOS.availableParallelism() / 2)),
   }
   const started = Date.now()
@@ -309,7 +331,7 @@ async function runStages(root, selection, environment, { runId, directory }) {
       ...lanes.map(([lane, laneStages]) => runLane(lane, laneStages, run)),
     ])
     const results = groups.flat()
-    applyRatchets(results)
+    applyRatchets(results, run)
     reportEffectFindings(results)
     const order = stages.map((stage) => stage.name)
     results.sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name))

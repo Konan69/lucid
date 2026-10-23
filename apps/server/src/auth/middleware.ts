@@ -9,6 +9,7 @@ import { RpcAuthMiddleware } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { observeFailures } from '../observability/failure.ts'
+import { Auth } from './provider.ts'
 import { authenticate, authenticateVivid } from './session.ts'
 
 /**
@@ -26,13 +27,13 @@ export const rpcAuthMiddlewareLayer = Layer.effect(
   RpcAuthMiddleware,
   Effect.gen(function* () {
     // Effect.context returns the entire build context, including Layer.effect's Scope (rc.116
-    // Layer.ts effectContext). Providing that Scope over RpcServer's request Scope retained each
-    // Alchemy BetterAuth instance and pool until shutdown (ExecutionMemo.ts makeExecutionMemo).
-    // Keep only stable authorities so auth resources close when this call or subscription ends.
+    // Layer.ts effectContext). Keep only the authorities a call needs, so nothing the call
+    // acquires is tied to this Layer's scope instead of the call's own.
     const services = Context.pick(
+      Auth,
       Database,
       ServerConfig,
-    )(yield* Effect.context<Database | ServerConfig>())
+    )(yield* Effect.context<Auth | Database | ServerConfig>())
     const config = Context.get(services, ServerConfig)
     const runtimeAuthorization = `Bearer ${Redacted.value(config.RUNTIME_TOKEN)}`
     const identify = Effect.fn('Auth.identify')(function* (headers: Headers.Headers) {

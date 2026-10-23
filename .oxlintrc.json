@@ -48,6 +48,7 @@
     "scripts/oxlint-plugin-vivid.mjs",
     "apps/mobile/android/**",
     "apps/mobile/vendor/**",
+    "apps/web/vendor/**",
     "apps/mobile/ios/**",
     "**/drizzle/**/snapshot.json"
   ],
@@ -88,17 +89,6 @@
         "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
       }
     ],
-    "eslint/no-restricted-imports": [
-      "error",
-      {
-        "patterns": [
-          {
-            "regex": "^\\.\\.?/(?:.*?/)*(?:packages/)?(?:client-runtime|contracts)(?:/|$)",
-            "message": "Import from @vivid/client-runtime or @vivid/contracts instead of crossing a package boundary with a relative path."
-          }
-        ]
-      }
-    ],
     "eslint/no-await-in-loop": "off",
     "eslint/no-underscore-dangle": "off",
     "react/capitalized-calls": "off",
@@ -109,7 +99,9 @@
     "typescript/no-unsafe-type-assertion": "off",
     "typescript/switch-exhaustiveness-check": [
       "error",
-      { "considerDefaultExhaustiveForUnions": false }
+      {
+        "considerDefaultExhaustiveForUnions": false
+      }
     ],
     "unicorn/consistent-function-scoping": "off",
     "anti-slop/no-chained-type-assertions": "warn",
@@ -142,6 +134,7 @@
     "vivid/effect-require-effect-fn": "warn",
     "vivid/no-async-callback-api": "warn",
     "vivid/no-config-provider-from-env-in-library": "error",
+    "vivid/no-cross-package-import": "error",
     "vivid/no-direct-process-env": "warn",
     "vivid/no-direct-schema-safeparse": "error",
     "vivid/no-effect-catch-raw-error": "error",
@@ -254,7 +247,7 @@
       }
     },
     {
-      "files": ["apps/server/src/auth.ts"],
+      "files": ["apps/server/src/auth/provider.ts"],
       "rules": {
         "vivid/better-auth-secure-options": "error"
       }
@@ -274,7 +267,7 @@
       }
     },
     {
-      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/test/**", "**/tests/**"],
+      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
@@ -334,6 +327,86 @@
         "complexity": "off",
         "max-lines-per-function": "off",
         "max-nested-callbacks": "off"
+      }
+    },
+    {
+      "files": ["apps/mobile/src/parts/**/*.{ts,tsx}"],
+      "rules": {
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/require-safety-comment-for-type-assertion": "off",
+        "react/no-array-index-key": "off",
+        "vivid/no-undefined-in-union": "off",
+        "anti-slop/no-unknown-parameters": "off",
+        "vivid/no-optional-chaining": "off",
+        "typescript/no-unnecessary-type-conversion": "off",
+        "complexity": "off",
+        "anti-slop-effect/prefer-effect-match": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off",
+        "anti-slop/no-chained-type-assertions": "off",
+        "unicorn/no-array-reverse": "off",
+        "typescript/no-unnecessary-type-assertion": "off",
+        "typescript/no-unnecessary-boolean-literal-compare": "off",
+        "no-shadow": "off",
+        "max-lines-per-function": "off",
+        "anti-slop/no-conditional-empty-object-spread": "off"
+      }
+    },
+    {
+      "files": [
+        "apps/mobile/index.ts",
+        "apps/mobile/src/**/*.{ts,tsx}",
+        "packages/client/{state,rpc}/src/**/*.{ts,tsx}",
+        "packages/contracts/src/**/*.{ts,tsx}",
+        "packages/design/{marks,tokens}/src/**/*.{ts,tsx}",
+        "apps/web/src/data/library.ts"
+      ],
+      "excludeFiles": ["**/*.test.{ts,tsx}", "**/tests/**"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Option",
+            "message": "Bare `Option` is the DOM <option> constructor. Import Option from effect/Option."
+          },
+          {
+            "name": "FinalizationRegistry",
+            "message": "Hermes on the phone has no FinalizationRegistry. Own the cache with its subscription or guard it as in packages/client/state/src/live.ts."
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "Effect",
+            "property": "orDie",
+            "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+          },
+          {
+            "object": "Effect",
+            "property": "orDieWith",
+            "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+          },
+          {
+            "object": "Intl",
+            "property": "RelativeTimeFormat",
+            "message": "Hermes on the phone has no Intl.RelativeTimeFormat. Use packages/client/state/src/when.ts."
+          },
+          {
+            "property": "toSorted",
+            "message": "Hermes on the phone has no Array.prototype.toSorted. Use Array.sort from effect/Array instead of raising lib."
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/client/state/src/live.ts"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Option",
+            "message": "Bare `Option` is the DOM <option> constructor. Import Option from effect/Option."
+          }
+        ]
       }
     }
   ]

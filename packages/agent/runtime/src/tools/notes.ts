@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { MemoryKind } from '@vivid/contracts'
+import { Tool, MemoryKind } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
 import { deleteNote, Note, NoteFile, NOTE_BODY_LIMIT, readNote, writeNote } from '../notes.ts'
@@ -35,7 +35,7 @@ const file = v.pipe(
 export function noteTools(runTool: RunTool, directory: string) {
   return [
     defineTool({
-      name: 'read_note',
+      name: Tool.read_note,
       description:
         'Open one of your notes, by its file name from the list of what you remember, to read the whole fact before you use it.',
       input: v.object({ summary, file }),
@@ -54,7 +54,7 @@ export function noteTools(runTool: RunTool, directory: string) {
       },
     }),
     defineTool({
-      name: 'write_note',
+      name: Tool.write_note,
       description:
         'Keep one thing you learned as a note, or change a note you already have by writing it again under the same file name. One note per thing.',
       input: v.object({
@@ -90,7 +90,7 @@ export function noteTools(runTool: RunTool, directory: string) {
       },
     }),
     defineTool({
-      name: 'delete_note',
+      name: Tool.delete_note,
       description:
         'Delete one of your notes when the person asks you to forget it, or when it is wrong and nothing in it should be kept.',
       input: v.object({ summary, file }),

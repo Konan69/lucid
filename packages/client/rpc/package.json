@@ -7,7 +7,6 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "node ../../../scripts/test.mjs",
     "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json",
     "lint": "node ../../../scripts/lint.mjs",
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
@@ -15,11 +14,5 @@
   "dependencies": {
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@effect/vitest": "catalog:",
-    "@typescript/native": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
   }
 }

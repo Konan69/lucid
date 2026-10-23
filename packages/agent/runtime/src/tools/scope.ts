@@ -1,6 +1,6 @@
 import type { DeliveredMessage, ToolContext } from '@flue/runtime'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { LibraryFolderId, ThreadOrigin } from '@vivid/contracts'
+import type { ThreadOrigin } from '@vivid/contracts'
 import { Context, Effect, Layer, Option, Predicate } from 'effect'
 import { actingLayer, runtimeClientLayer, type Acting } from '../client.ts'
 import { recoverAuthority, resolveAuthority } from '../delivery.ts'
@@ -10,10 +10,9 @@ import type { ComputerSaid } from './sandbox.ts'
 export interface ScopeService {
   readonly acting: Acting
   readonly client: VividRpcClient['Service']
-  readonly folder: Option.Option<LibraryFolderId>
 }
 
-/** Authority is server-bound per render; neither actor nor folder can be chosen by model input. */
+/** Authority is server-bound per render; the actor cannot be chosen by model input. */
 export class Scope extends Context.Service<Scope, ScopeService>()('vivid/Tools/Scope') {}
 
 /** Tool-time recovery is lazy; the attributed client shares the tool Layer's lifetime.
@@ -41,7 +40,6 @@ export function scopeLayer(
           return Scope.of({
             acting: authority.acting,
             client: yield* VividRpcClient,
-            folder: authority.folder,
           })
         }),
       ).pipe(Layer.provide(actingLayer(authority.acting)))

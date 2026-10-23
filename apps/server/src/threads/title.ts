@@ -1,7 +1,7 @@
 import { Array as Arr, Match, Option, Schema, String as Str } from 'effect'
 
 /** Seed is a placeholder or first Person-message excerpt; Generated is the title model's output; Person is an explicit rename
- * (or legacy protected name); Assigned is a durable server-supplied name inherited from a Routine or standing finding. */
+ * (or legacy protected name); Assigned is a durable server-supplied name inherited from a Watch. */
 export const TitleSource = Schema.Literals(['Seed', 'Generated', 'Person', 'Assigned'])
 export type TitleSource = typeof TitleSource.Type
 

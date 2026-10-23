@@ -1,5 +1,5 @@
 import { type BrowseResult } from '@vivid/contracts'
-import { Effect, Layer, Option, Stream } from 'effect'
+import { Effect, Layer, Option, Semaphore, Stream } from 'effect'
 import {
   Machine,
   MachineCapabilityUnavailable,
@@ -9,6 +9,7 @@ import {
   MachineOperationFailed,
   type MachineFailure,
   type MachineKey,
+  type MachineOperations,
 } from './machine.ts'
 import { bindings } from './boat/bindings.ts'
 import type { CommandFrame, ProviderId } from './boat/protocol.ts'
@@ -16,10 +17,41 @@ import { transport, type Transport } from './boat/transport.ts'
 import type { Driver } from './boat/driver.ts'
 import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
-import { browse } from './boat/browser.ts'
+import { browse, signInTarget } from './boat/browser.ts'
+import { injectSignInCookies } from './signins/inject.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { machineLinks } from './boat/shell.ts'
 import { holding, wake } from './boat/holder.ts'
+import { browserProxy, startProxy } from './egress/guest.ts'
+
+/** Cookie input belongs to the provider's existing browser and machine permit. The accepted
+ * binding's SSH operation owns the private input and ends with the injection scope. */
+const makeCookieCopy = (input: {
+  readonly native: (key: MachineKey) => Effect.Effect<Driver, MachineFailure>
+  readonly operations: Pick<MachineOperations, 'converse' | 'run'>
+  readonly permit: (key: MachineKey) => Semaphore.Semaphore
+}) =>
+  Effect.fn('Machine.boat.copySignIn')(
+    function* (request: Parameters<MachineOperations['copySignIn']>[0]) {
+      const window = yield* signInTarget(
+        yield* input.native(request.key),
+        browserProxy(request.egress, startProxy(input.operations, request.key)),
+      )
+      return yield* injectSignInCookies({
+        pid: window.pid,
+        windowId: window.window_id,
+        cookies: request.cookies,
+        converse: (command) =>
+          input.operations.converse({
+            key: request.key,
+            command,
+            directory: '.',
+            timeoutSeconds: 30,
+          }),
+      })
+    },
+    (effect, request) => input.permit(request.key).withPermit(effect),
+  )
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
@@ -107,7 +139,13 @@ export const boatMachineLayer = Layer.effect(
       drivers.set(key, current)
       return current.native
     })
+    const shell = connections.operations(accepted)
     return Machine.of({
+      copySignIn: makeCookieCopy({
+        native: nativeDriver,
+        operations: connections.operations(accepted),
+        permit,
+      }),
       /** The prepared payload opens the native launcher once per desktop session. This is
        * presentation setup only; expensive installation happened before template capture.
        *
@@ -165,7 +203,7 @@ export const boatMachineLayer = Layer.effect(
         const identity = yield* accepted(input.key)
         yield* api.write(identity.id, input.path, input.content)
       }),
-      ...connections.operations(accepted),
+      ...shell,
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* accepted(input.key)
@@ -181,6 +219,8 @@ export const boatMachineLayer = Layer.effect(
             yield* nativeDriver(input.key),
             input.action,
             Option.fromUndefinedOr(tabs.get(input.key)),
+            // What a browser this step starts is given as its way out (`browserProxy`).
+            browserProxy(input.egress, startProxy(shell, input.key)),
           )
           tabs.set(input.key, result.tabs)
           return result

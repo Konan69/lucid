@@ -7,6 +7,7 @@ import { useLiveData, type LiveData } from '../../data/live'
 import { Avatar } from '../../ui/Avatar'
 import { Sheet } from '../../ui/Sheet'
 import { Button, Card, Label, Notice, Skeleton } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /**
  * What asking the server about an invitation came to.
@@ -270,34 +271,38 @@ function Join({
   const [joining, setJoining] = useState<Joining>(Joining.Idle())
   const asking = Joining.$is('Asking')(joining)
 
-  async function join() {
-    setJoining(Joining.Asking())
-    // The invitation's own answers are taken out of the failure channel by tag, inside the
-    // operation, and never guessed from a message. What is left in the channel is then only
-    // infrastructure and the unexpected, which must not be reported as a bad invitation.
-    const result = await data.change((client) =>
-      client.AcceptInvitation({ invitationId: id }).pipe(
-        Effect.as('joined' as const),
-        Effect.catchTags({
-          MailboxUnconfirmed: () => Effect.succeed('unconfirmed' as const),
-          Forbidden: () => Effect.succeed('refused' as const),
-          Conflict: () => Effect.succeed('refused' as const),
-          NotFound: () => Effect.succeed('refused' as const),
-        }),
-      ),
+  function join() {
+    return start(
+      Effect.gen(function* () {
+        setJoining(Joining.Asking())
+        // The invitation's own answers are taken out of the failure channel by tag, inside the
+        // operation, and never guessed from a message. What is left in the channel is then only
+        // infrastructure and the unexpected, which must not be reported as a bad invitation.
+        const result = yield* data.changing((client) =>
+          client.AcceptInvitation({ invitationId: id }).pipe(
+            Effect.as('joined' as const),
+            Effect.catchTags({
+              MailboxUnconfirmed: () => Effect.succeed('unconfirmed' as const),
+              Forbidden: () => Effect.succeed('refused' as const),
+              Conflict: () => Effect.succeed('refused' as const),
+              NotFound: () => Effect.succeed('refused' as const),
+            }),
+          ),
+        )
+        if (Result.isFailure(result)) {
+          setJoining(Joining.Refused({ why: 'failed' }))
+          return
+        }
+        if (result.success !== 'joined') {
+          setJoining(Joining.Refused({ why: result.success }))
+          return
+        }
+        // Joined. The live `me` query moves the Person into the Company; the sheet only gets out of
+        // the way.
+        confirm()
+        onClose()
+      }),
     )
-    if (Result.isFailure(result)) {
-      setJoining(Joining.Refused({ why: 'failed' }))
-      return
-    }
-    if (result.success !== 'joined') {
-      setJoining(Joining.Refused({ why: result.success }))
-      return
-    }
-    // Joined. The live `me` query moves the Person into the Company; the sheet only gets out of
-    // the way.
-    confirm()
-    onClose()
   }
 
   return (

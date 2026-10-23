@@ -36,6 +36,7 @@ import {
 } from './conversation.ts'
 import { serializeAdmissions } from './admissions.ts'
 import { flueMessage } from './message.ts'
+import { notifiesFrom } from './place.ts'
 import { Presence } from './presence.ts'
 import {
   RunStore,
@@ -92,13 +93,17 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const devices = yield* DeviceRegistry
   const scope = yield* Effect.scope
 
-  /** Tells the Person Vivid worked for that it is done, unless they are watching it happen. */
+  /**
+   * Tells the Person Vivid worked for that it is done, unless they are watching it happen or it
+   * happened in a Background Thread, which speaks to them only through the Feed (`place.ts`).
+   */
   const announce = Effect.fn('Conversation.announce')(function* (
     thread: StoredThread,
     personId: PersonId,
     settlement: Settlement,
   ) {
     if (Settlement.guards.Stopped(settlement)) return
+    if (!notifiesFrom(thread.place)) return
     if (yield* presence.watching(thread.id, personId)) return
     // A Run can outlast its Person's place in the Thread. The notice quotes the title and the
     // reply, so it is only written for someone who may still read them.
@@ -287,7 +292,6 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         threadId: thread.id,
         personId: speaker.id,
         origin: delivery.origin,
-        libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
       })
       const said = previewOf(delivery.message)
       // Replay completes inside the reservation match; only a new reserved turn reaches Flue.

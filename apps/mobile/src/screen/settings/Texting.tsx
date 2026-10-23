@@ -11,7 +11,7 @@ import {
   textingUnreached,
   type Composer,
 } from '@vivid/state'
-import { Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Linking, Platform, ScrollView, View } from 'react-native'
 import { useNow } from '../../data/foreground'
@@ -36,6 +36,7 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /**
  * Which form of `sms:` link this phone's messaging app reads: Apple's Messages takes the body
@@ -58,17 +59,18 @@ type Standing<Tag extends ChannelStanding['_tag']> = Extract<ChannelStanding, { 
  */
 export interface TextingActs {
   /** Gives the Person's number to a channel, or asks for a new code for the same number. */
-  readonly connect: (channel: Channel, written: string) => Promise<Option.Option<string>>
+  readonly connect: (channel: Channel, written: string) => Effect.Effect<Option.Option<string>>
   /** Takes the Person's number off a channel. */
-  readonly disconnect: (channel: Channel) => Promise<Option.Option<string>>
+  readonly disconnect: (channel: Channel) => Effect.Effect<Option.Option<string>>
 }
 
 /** The shared programs, run on this session's socket, each answer laid over its live list. */
 const actsOf = (data: LiveData): TextingActs => {
   const settled = textingSettled(data.live.channels)
   return {
-    connect: (channel, written) => data.run(connectChannel(channel, written)).then(settled),
-    disconnect: (channel) => data.run(disconnectChannel(channel)).then(settled),
+    connect: (channel, written) =>
+      data.running(connectChannel(channel, written)).pipe(Effect.map(settled)),
+    disconnect: (channel) => data.running(disconnectChannel(channel)).pipe(Effect.map(settled)),
   }
 }
 
@@ -134,15 +136,19 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
   /** Asks once, holds the buttons until the answer, then says the refusal if there was one. */
-  async function ask(what: Exclude<Asking, 'nothing'>, made: Promise<Option.Option<string>>) {
-    setAsking(what)
-    setRefused(Option.none())
-    // A call that dies instead of answering is still Vivid not being reached.
-    const said = await made.catch(() => Option.some(textingUnreached))
-    // A code arriving is the one answer here worth feeling: the next thing to do has appeared.
-    if (Option.isNone(said) && what === 'connecting') confirm()
-    setRefused(said)
-    setAsking('nothing')
+  function ask(what: Exclude<Asking, 'nothing'>, made: Effect.Effect<Option.Option<string>>) {
+    return start(
+      Effect.gen(function* () {
+        setAsking(what)
+        setRefused(Option.none())
+        // A call that dies instead of answering is still Vivid not being reached.
+        const said = yield* Effect.catchCause(made, () => Effect.succeedSome(textingUnreached))
+        // A code arriving is the one answer here worth feeling: the next thing to do has appeared.
+        if (Option.isNone(said) && what === 'connecting') confirm()
+        setRefused(said)
+        setAsking('nothing')
+      }),
+    )
   }
 
   const connect = (written: string) => void ask('connecting', acts.connect(channel, written))

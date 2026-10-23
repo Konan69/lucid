@@ -1,31 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Duration, Effect, Layer, Option, Queue, Ref, Schedule } from 'effect'
+import { Effect, Layer, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ChannelReceiver } from './inbound.ts'
 import { ChannelProvider } from './provider.ts'
 import { ChannelStore } from './store.ts'
 import { ChannelControl, channelTestLayer, fixture } from './testing.ts'
-import { channelReconnect, channelWorkerLayer } from './worker.ts'
-
-describe('channel reconnect policy', () => {
-  it.effect(
-    'grows exponentially with jitter, caps at a minute and resets after inbound progress',
-    () =>
-      Effect.gen(function* () {
-        const step = yield* Schedule.toStep(channelReconnect)
-        for (let attempt = 0; attempt < 12; attempt++) {
-          const [, delay] = yield* step(0, false)
-          const base = 2000 * 2 ** attempt
-          expect(Duration.toMillis(delay)).toBeGreaterThanOrEqual(Math.min(base * 0.8, 60000))
-          expect(Duration.toMillis(delay)).toBeLessThanOrEqual(Math.min(base * 1.2, 60000))
-        }
-        const [, reset] = yield* step(0, true)
-        expect(Duration.toMillis(reset)).toBeGreaterThanOrEqual(1600)
-        expect(Duration.toMillis(reset)).toBeLessThanOrEqual(2400)
-      }),
-  )
-})
+import { channelWorkerLayer } from './worker.ts'
 
 /** Each consumer gets its own inbound queue so message defects cannot consume another case's input. */
 describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {

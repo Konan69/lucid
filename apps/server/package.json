@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {},
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
@@ -15,7 +16,6 @@
     "db:migrate:product": "drizzle-kit migrate --config product-drizzle.config.ts"
   },
   "dependencies": {
-    "@alchemy.run/better-auth": "catalog:",
     "@earendil-works/pi-codemode": "1.0.0",
     "@effect/ai-openrouter": "catalog:",
     "@effect/ai-typesafe": "catalog:",
@@ -23,6 +23,7 @@
     "@effect/sql-pg": "catalog:",
     "@flue/sdk": "catalog:",
     "@helix-db/helix-db": "3.0.4",
+    "@openuidev/lang-core": "1.0.0",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
     "alchemy": "catalog:",
@@ -48,11 +49,10 @@
     "@types/pg": "catalog:",
     "@types/ssh2": "1.15.6",
     "@types/web-push": "^3.6.4",
-    "@typescript/native": "catalog:",
+    "@vivid/agent-runtime": "workspace:*",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-kit": "catalog:",
     "tsx": "catalog:",
-    "typescript": "catalog:",
     "vitest": "catalog:"
   }
 }

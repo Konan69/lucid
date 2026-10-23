@@ -5,7 +5,7 @@ import {
   type PeopleResponse,
   type Role,
 } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
+import { Data, Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { ScrollView, Share as SystemShare, View } from 'react-native'
 import { UserPlus, Users } from 'lucide-react-native'
@@ -32,6 +32,7 @@ import {
   styles,
 } from '../../ui/ui'
 import { ROLE_NAME, useGo, useMe } from '../../workspace'
+import { start } from '../../data/app'
 
 /** The two roles an admin can give. Ownership is not handed over here. */
 const ROLES = [
@@ -220,14 +221,18 @@ function MemberSheet({ member, onClose }: { member: Member; onClose: () => void 
   // The sheet shows the role it was opened with until the server confirms another.
   const [role, setRole] = useState<'admin' | 'member'>(member.role === 'admin' ? 'admin' : 'member')
 
-  async function change(next: 'admin' | 'member') {
-    setRole(next)
-    const result = await data.change((client) =>
-      client.ChangeRole({ membershipId: member.membershipId, role: next }),
+  function change(next: 'admin' | 'member') {
+    return start(
+      Effect.gen(function* () {
+        setRole(next)
+        const result = yield* data.changing((client) =>
+          client.ChangeRole({ membershipId: member.membershipId, role: next }),
+        )
+        if (Result.isSuccess(result)) return
+        setRole(role)
+        setRefused(Option.some('That role could not be changed.'))
+      }),
     )
-    if (Result.isSuccess(result)) return
-    setRole(role)
-    setRefused(Option.some('That role could not be changed.'))
   }
 
   const remove = () =>
@@ -292,11 +297,18 @@ function InvitationSheet({ invitation, onClose }: { invitation: Invitation; onCl
   const data = useLiveData()
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function withdraw() {
-    warn()
-    const result = await data.change((client) => client.RevokeInvitation({ id: invitation.id }))
-    if (Result.isFailure(result)) setRefused(Option.some('That invitation could not be withdrawn.'))
-    else onClose()
+  function withdraw() {
+    return start(
+      Effect.gen(function* () {
+        warn()
+        const result = yield* data.changing((client) =>
+          client.RevokeInvitation({ id: invitation.id }),
+        )
+        if (Result.isFailure(result))
+          setRefused(Option.some('That invitation could not be withdrawn.'))
+        else onClose()
+      }),
+    )
   }
 
   return (
@@ -324,19 +336,25 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
   const [sent, setSent] = useState<Option.Option<Invitation>>(Option.none())
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function invite() {
-    setBusy(true)
-    const result = await data.change((client) => client.InviteMember({ email: email.trim(), role }))
-    setBusy(false)
-    setRefused(
-      Option.map(
-        refusalOf(result),
-        () => 'That invitation could not be made. They may already be a member.',
-      ),
+  function invite() {
+    return start(
+      Effect.gen(function* () {
+        setBusy(true)
+        const result = yield* data.changing((client) =>
+          client.InviteMember({ email: email.trim(), role }),
+        )
+        setBusy(false)
+        setRefused(
+          Option.map(
+            refusalOf(result),
+            () => 'That invitation could not be made. They may already be a member.',
+          ),
+        )
+        if (Result.isFailure(result)) return
+        commit()
+        setSent(Option.some(result.success))
+      }),
     )
-    if (Result.isFailure(result)) return
-    commit()
-    setSent(Option.some(result.success))
   }
 
   if (Option.isSome(sent)) {

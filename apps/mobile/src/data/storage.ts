@@ -96,9 +96,9 @@ export const recallFile = Effect.fn('Storage.recallFile')((name: string) => {
       const file = new File(Paths.document, name)
       return file.exists ? file.textSync() : null
     },
-    async () => {
+    () => {
       const file = new File(Paths.document, name)
-      return file.exists ? await file.text() : null
+      return file.exists ? file.text() : Promise.resolve(null)
     },
   )
 })
@@ -149,12 +149,12 @@ export const keepFileAside = Effect.fn('Storage.keepFileAside')(function* (
   value: string,
 ) {
   yield* Effect.tryPromise({
-    try: async () => {
+    try: () => {
       if (!onDevice) {
         localStorage.setItem(name, value)
-        return
+        return Promise.resolve()
       }
-      await writeAsStringAsync(new File(Paths.document, name).uri, value)
+      return writeAsStringAsync(new File(Paths.document, name).uri, value)
     },
     catch: () => new StorageUnavailable({ message: UNWRITABLE }),
   })

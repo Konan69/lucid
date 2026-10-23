@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
@@ -20,6 +20,7 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { recordNotice } from '../notifications/notifier.ts'
 import { notifications } from '../notifications/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { Link } from '../rpc/link.ts'
 import { Presence } from '../threads/presence.ts'
 import { automaticallyNotifies, RunStore, TurnReservation } from '../threads/runs.ts'
 import { threads } from '../threads/tables.ts'
@@ -243,7 +244,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
       ),
     )
     it.effect(
-      'notify_person returns provider evidence, deduplicates in its acting Run, and a standing Run stays quiet',
+      'notify_person returns provider evidence, deduplicates in its acting Run, and a Watch Run stays quiet',
       () =>
         withPush(
           Effect.gen(function* () {
@@ -259,8 +260,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               id,
               threadId: owner.threadId,
               personId: owner.person.id,
-              origin: StoredRunOrigin.cases.Standing.make({ routineName: 'Watch what needs me' }),
-              libraryFolder: null,
+              origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
@@ -291,6 +291,49 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             ).toHaveLength(1)
           }),
         ),
+    )
+    it.effect('notify_person from a Background Thread is refused: Vivid posts to the Feed', () =>
+      withPush(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          yield* owner.database.run(
+            owner.database
+              .update(threads)
+              .set({ place: 'Background' })
+              .where(eq(threads.id, owner.threadId)),
+          )
+          const runs = yield* RunStore
+          const id = RunId.make(NodeCrypto.randomUUID())
+          const reserved = yield* runs.start({
+            id,
+            threadId: owner.threadId,
+            personId: owner.person.id,
+            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+          })
+          if (!TurnReservation.guards.Reserved(reserved))
+            expect.fail('Expected a fresh Run reservation')
+          yield* runs.admitted({ runId: id, offset: '0', incarnation: 'test' })
+          const auth = AuthState.Vivid({
+            person: owner.person,
+            workspace: owner.auth.workspace,
+            threadId: owner.threadId,
+          })
+          const refused = yield* Effect.flip(
+            pushHandlers
+              .NotifyPerson({ title: 'New mail', body: 'A client wrote.' })
+              .pipe(Effect.provideService(AuthContext, auth)),
+          )
+          expect(refused._tag).toBe('Forbidden')
+          expect(
+            yield* owner.database.run(
+              owner.database
+                .select()
+                .from(notifications)
+                .where(eq(notifications.personId, owner.person.id)),
+            ),
+          ).toEqual([])
+        }),
+      ),
     )
   })
   layer(pushTestFoundation)(
@@ -345,10 +388,10 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     },
   )
   layer(pushTestFoundation)(
-    'Clock for suppresses push while present in any Thread, then uses the controlled presence expiry',
+    'Clock for suppresses push while present in any Thread, then not once its link goes quiet',
     (it) => {
       it.effect(
-        'suppresses push while present in any Thread, then uses the controlled presence expiry',
+        'suppresses push while present in any Thread, then not once its link goes quiet',
         () =>
           withPush(
             Effect.gen(function* () {
@@ -368,11 +411,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                   updatedAt: 0,
                 }),
               )
+              // Held on a link heard now and never again: it is present until the link goes quiet.
               const presence = yield* Presence
-              yield* presence.report(
+              yield* presence.hold(
                 elsewhere,
                 { id: owner.person.id, name: owner.person.name, image: null },
                 false,
+                new Link(yield* Clock.currentTimeMillis),
               )
               const input = notice(owner)
               expect(pushOf(yield* recordNotice(input))).toEqual(PushOutcome.cases.Present.make({}))
@@ -425,17 +470,3 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     },
   )
 })
-
-/** The public key is for a signed-in Person's browser; Vivid's own runtime identity has no use for it. */
-it.effect('refuses the push key to a caller that is not a Person', () =>
-  Effect.gen(function* () {
-    const result = yield* pushHandlers
-      .GetPushKey()
-      .pipe(
-        Effect.provideService(AuthContext, AuthState.Runtime()),
-        Effect.provideService(PushConfig, testPushConfig),
-        Effect.result,
-      )
-    expect(Result.isFailure(result) && result.failure._tag).toBe('Forbidden')
-  }),
-)

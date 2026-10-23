@@ -4,6 +4,7 @@ import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { Data, Option } from 'effect'
 import {
   Check,
+  ChevronRight,
   CircleCheck,
   FolderInput,
   Pencil,
@@ -13,7 +14,7 @@ import {
   Undo2,
   Users,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { type MouseEvent, type ReactNode, useRef, useState } from 'react'
 import { act, running } from '../../data/app'
 import { changing, live } from '../../data/live'
 import { Link } from '@tanstack/react-router'
@@ -40,9 +41,10 @@ import {
 } from '../../ui/contextmenu'
 import { Count } from '../../ui/Count'
 import { useSurface } from '../../ui/Layer'
-import { byKeyboard, leave } from '../../ui/motion'
+import { byKeyboard, instantly, leave } from '../../ui/motion'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { MoveThread } from '../project/Move'
+import { BANDS, type Band, band, daysAgo, toggleBand, useBandFolded } from './bands'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /**
@@ -113,27 +115,6 @@ function useRetitling() {
 /** A title Vivid is thinking of a replacement for: quieter, and still, until the new one lands. */
 const IN_FLUX = 'transition-opacity duration-(--dur-fast) aria-busy:opacity-50'
 
-const DAY = 86_400_000
-
-/** Midnight at the start of the day a moment falls in, in the Person's own clock. */
-const startOfDay = (moment: number) => {
-  const date = new Date(moment)
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-}
-
-const daysAgo = (updatedAt: number, now: number) =>
-  Math.round((startOfDay(now) - startOfDay(updatedAt)) / DAY)
-
-const BANDS = ['Today', 'Yesterday', 'This week', 'Earlier'] as const
-
-/** Which quiet band a Thread belongs in, by when it last moved. */
-function band(updatedAt: number, now: number): (typeof BANDS)[number] {
-  const days = daysAgo(updatedAt, now)
-  if (days <= 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  return days < 7 ? 'This week' : 'Earlier'
-}
-
 /** When a Thread last moved, as short as it can be said: the time today, the day this week. */
 export function relativeTime(updatedAt: number, now: number) {
   const days = daysAgo(updatedAt, now)
@@ -148,8 +129,8 @@ export function relativeTime(updatedAt: number, now: number) {
 
 /**
  * Every Thread, in the order a busy Person should look at them: what is waiting on them, what
- * Vivid is working on, then everything else by day, then what they are done with. The first two
- * are cards because they are few and they matter; the rest are single lines.
+ * Vivid is working on, then everything else by day, then what they are done with. Every row is
+ * one line; the first two groups say where each Thread stands in the colour of its mark.
  *
  * A row is quiet. At rest it shows its title and when it last moved. Under the pointer the time
  * gives its place to the one thing most often done to a Thread: marking it done. Renaming is a
@@ -205,23 +186,30 @@ export function Threads({
       {needsYou.length > 0 && (
         <section>
           <Caption label="Needs you" count={needsYou.length} />
-          <ul className="flex flex-col gap-px">{needsYou.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">
+            {needsYou.map((thread) => row(thread, 'standing'))}
+          </ul>
         </section>
       )}
       {working.length > 0 && (
         <section>
           <Caption label="Working" count={working.length} />
-          <ul className="flex flex-col gap-px">{working.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">
+            {working.map((thread) => row(thread, 'standing'))}
+          </ul>
         </section>
       )}
       {BANDS.map((name) => {
         const inBand = rest.filter((thread) => band(thread.updatedAt, now) === name)
         if (inBand.length === 0) return null
         return (
-          <section key={name}>
-            <Caption label={name} />
-            <ul className="flex flex-col gap-px">{inBand.map((thread) => row(thread, 'line'))}</ul>
-          </section>
+          <DayBand
+            key={name}
+            name={name}
+            threads={inBand}
+            active={active}
+            row={(thread) => row(thread, 'line')}
+          />
         )
       })}
       {done.length > 0 && (
@@ -253,7 +241,44 @@ export function Threads({
   )
 }
 
-type Variant = 'card' | 'line'
+/**
+ * One day's band: its caption and the Threads under it. Folded, it keeps only the Thread on
+ * screen, when that Thread is one of its own: where the Person is must never be hidden by a
+ * choice they made about the list (T3 Code web keeps the open thread out of a collapsed shelf
+ * the same way, `refs/t3code/apps/web/src/components/Sidebar.tsx`).
+ *
+ * The list is always drawn, even with nothing in it, and says which way it is in `data-folds`:
+ * that is how the list's `settling` knows the rows came or went because the Person folded it,
+ * and plays them as a fold (`ui/settle.ts`, "Folding").
+ */
+function DayBand({
+  name,
+  threads,
+  active,
+  row,
+}: {
+  name: Band
+  threads: ReadonlyArray<Thread>
+  active: ThreadId | null
+  row: (thread: Thread) => ReactNode
+}) {
+  const folded = useBandFolded(name)
+  const shown = folded ? threads.filter((thread) => thread.id === active) : threads
+  return (
+    <section>
+      <BandCaption name={name} folded={folded} />
+      <ul data-folds={folded ? 'folded' : 'open'} className="flex flex-col gap-px">
+        {shown.map(row)}
+      </ul>
+    </section>
+  )
+}
+
+/**
+ * What a row's mark says: where the Thread stands (`standing`, under "Needs you" and "Working"),
+ * or only whether it has something unread (`line`, everywhere else).
+ */
+type Variant = 'standing' | 'line'
 
 interface RowProps {
   readonly thread: Thread
@@ -281,13 +306,13 @@ const AT_REST =
  * that fades the list's edges cannot cut it, and its choices exist only while it is open.
  */
 function ThreadRow(props: RowProps) {
-  const { thread, variant, renaming, onDo, onRetitle } = props
+  const { thread, renaming, onDo, onRetitle } = props
   return (
     <ContextMenu>
       <ContextMenuTrigger render={<div className="group/thread relative" />}>
-        {variant === 'card' ? <CardFace {...props} /> : <LineFace {...props} />}
+        <Face {...props} />
         {renaming ? (
-          <RenameField thread={thread} variant={variant} onClose={() => onDo(Doing.Nothing())} />
+          <RenameField thread={thread} onClose={() => onDo(Doing.Nothing())} />
         ) : (
           <DoneAction thread={thread} />
         )}
@@ -300,56 +325,18 @@ function ThreadRow(props: RowProps) {
 }
 
 /**
- * A Thread that needs someone or is being worked on. It is the same row as every other Thread,
- * with one more line under the title: the last thing said in it.
+ * A Thread as one line: its mark, its title, who else is in it, and when it last moved. Under
+ * "Needs you" and "Working" the mark says which in its colour and the title is strong; anywhere
+ * else the mark says only whether the Thread has something unread.
  *
- * It used to be a bordered card with its own left edge, a "Needs you" badge and an empty first
- * line. Under a caption that already says "Needs you", the badge said it twice, and the card's
- * words started 12px to the left of the titles in the rows below it, so the list read as two
- * unrelated lists stacked. Now the mark, the title and the time sit on the same three edges in
- * every row; what sets these apart is the colour of the mark, the weight of the title and the
- * second line.
+ * Rows under "Needs you" and "Working" had a second line, the last thing said in the Thread, and
+ * before that were bordered cards. The developer, 5 October 2026: "We don't need the chat
+ * transcripts on the left, just the titles." The phone's rows are the same one line
+ * (`apps/mobile/src/screen/home/Row.tsx`).
  */
-function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
-  const needsYou = thread.attention === 'NeedsYou'
-  return (
-    <Link
-      to="/t/$id"
-      params={{ id: thread.id }}
-      // A row is pressed, not dragged: an anchor is draggable unless it says otherwise.
-      draggable={false}
-      onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
-      className={cn(ROW, 'items-start py-1.5', active ? 'bg-wash-selected' : HOVER)}
-    >
-      <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <i
-          aria-label={needsYou ? 'Needs you' : 'Working'}
-          role="img"
-          className={cn('size-1.5 rounded-full', needsYou ? 'bg-attention' : 'bg-working')}
-        />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex h-5.5 items-center gap-2.5">
-          <span
-            aria-busy={retitling}
-            className={cn('min-w-0 flex-1 truncate text-label font-strong text-ink', IN_FLUX)}
-          >
-            {thread.title}
-          </span>
-          <Audience thread={thread} />
-          <time className={cn('shrink-0 text-meta font-meta text-ink-3 tabular-nums', AT_REST)}>
-            {relativeTime(thread.updatedAt, now)}
-          </time>
-        </span>
-        <span className="block truncate text-meta font-meta text-ink-3">{thread.preview}</span>
-      </span>
-    </Link>
-  )
-}
-
-/** Any other Thread: a mark that says whether it has something unread, its title, and when. */
-function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
+function Face({ thread, variant, active, now, retitling, onDo }: RowProps) {
   const unread = thread.attention === 'Unread' && !active
+  const strong = variant === 'standing' || unread
   return (
     <Link
       to="/t/$id"
@@ -360,15 +347,19 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
       className={cn(ROW, FULL, active ? 'bg-wash-selected' : HOVER)}
     >
       <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <i className={cn('size-1.5 rounded-full', unread ? 'bg-primary' : 'bg-line-4')} />
+        {variant === 'standing' ? (
+          <Standing thread={thread} />
+        ) : (
+          <i className={cn('size-1.5 rounded-full', unread ? 'bg-primary' : 'bg-line-4')} />
+        )}
       </span>
       <span
         aria-busy={retitling}
         className={cn(
           'min-w-0 flex-1 truncate text-label',
           IN_FLUX,
-          unread && 'font-strong',
-          unread || active ? 'text-ink' : 'text-ink-2 group-hover/row:text-ink',
+          strong && 'font-strong',
+          strong || active ? 'text-ink' : 'text-ink-2 group-hover/row:text-ink',
         )}
       >
         {thread.title}
@@ -378,6 +369,18 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
         {relativeTime(thread.updatedAt, now)}
       </time>
     </Link>
+  )
+}
+
+/** The mark of a Thread that needs the Person or that Vivid is working on, named for a reader. */
+function Standing({ thread }: { thread: Thread }) {
+  const needsYou = thread.attention === 'NeedsYou'
+  return (
+    <i
+      aria-label={needsYou ? 'Needs you' : 'Working'}
+      role="img"
+      className={cn('size-1.5 rounded-full', needsYou ? 'bg-attention' : 'bg-working')}
+    />
   )
 }
 
@@ -426,26 +429,12 @@ function DoneAction({ thread }: { thread: Thread }) {
   )
 }
 
-/** Where the title sits in each kind of row, so the field lands exactly on the words it edits. */
-const FIELD_PLACE = {
-  card: 'top-1.5 right-1.5 left-9.5 h-5.5 text-label',
-  line: 'inset-y-1.5 right-1.5 left-9.5 text-label',
-} satisfies Record<Variant, string>
-
 /**
  * A Thread's title, being edited where it is. Enter or clicking away keeps the new title, Escape
  * keeps the old one. `settled` is what stops the blur that follows Enter or Escape from being read
  * as a second answer.
  */
-function RenameField({
-  thread,
-  variant,
-  onClose,
-}: {
-  thread: Thread
-  variant: Variant
-  onClose: () => void
-}) {
+function RenameField({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   const settled = useRef(false)
   const finish = (title: string | null) => {
     if (settled.current) return
@@ -466,10 +455,8 @@ function RenameField({
         if (event.key === 'Enter') finish(event.currentTarget.value)
         if (event.key === 'Escape') finish(null)
       }}
-      className={cn(
-        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-primary',
-        FIELD_PLACE[variant],
-      )}
+      // Over the row's title, so the field lands exactly on the words it edits.
+      className="absolute inset-y-1.5 right-1.5 left-9.5 rounded-xs bg-surface-3 px-1 text-label text-ink edge outline-none edge-primary"
     />
   )
 }
@@ -562,41 +549,111 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
 }
 
 /**
- * The line over each part of the list, with the way to start a Thread at its far end. A Person
- * reading down the list is looking at these lines, so "new" is where the eye already is, on
- * every one of them, not only at the top of the sidebar.
+ * The line over the Threads that need the Person or are being worked on: what they are, and how
+ * many. It does nothing when pressed. These are the Threads the list exists to show, so they
+ * cannot be folded away.
  */
-function Caption({ label, count }: { label: string; count?: number }) {
+function Caption({ label, count }: { label: string; count: number }) {
   return (
     <div
       // A caption moves with the rows under it when the list above it grows or closes up.
       data-moves={`caption:${label}`}
-      className={cn('mt-1 flex items-center gap-1.5 ps-2.5 pe-1', CAPTION)}
+      className={cn('mt-1 flex items-center ps-2.5', CAPTION)}
     >
       <h3 className="flex min-w-0 flex-1 items-center gap-1.5 text-meta font-title text-ink-3">
         {label}
-        {count !== undefined && (
-          <span className="font-meta">
-            <Count value={count} />
-          </span>
-        )}
+        <span className="font-meta">
+          <Count value={count} />
+        </span>
       </h3>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="New thread"
-              onClick={() => void router.navigate({ to: '/' })}
-              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
-            />
-          }
-        >
-          <Plus className="size-3.5" strokeWidth={1.8} />
-        </TooltipTrigger>
-        <TooltipContent>New thread</TooltipContent>
-      </Tooltip>
     </div>
+  )
+}
+
+/**
+ * The line over one day's band. Pressing it folds the band away or opens it again.
+ *
+ * - The chevron is not drawn while the band is open and nobody is near it: a column of four
+ *   chevrons down the list said "these fold" louder than the Threads said anything. It comes in
+ *   under the pointer or the keyboard's focus, and on a screen that is touched, which has no
+ *   pointer to come near with, it is always there. Folded, it stays and points across.
+ * - Every chevron is in one column at the far end of its line, where the rows keep their times.
+ *   Today's way to start a Thread sits just inside it. With the plus at the end and the chevron
+ *   beside it, today's chevron stood a step to the left of all the others.
+ * - The chevron and the plus are drawn alike: the same size, the same weight of line, the same
+ *   box. Two marks side by side that differ in either read as a mistake.
+ * - It says no number. The two lanes that need the Person count; a day does not.
+ * - Only today's band has the way to start a Thread. It used to be on every caption, and under
+ *   "Earlier" it read as adding a Thread to last month. It is a button beside the caption's own,
+ *   laid over it and not inside it, so there is never a button within a button.
+ * - From the keyboard the band is open or folded at once (`instantly`): nothing done from the
+ *   keys animates.
+ */
+function BandCaption({ name, folded }: { name: Band; folded: boolean }) {
+  const toggle = (event: MouseEvent) => {
+    if (byKeyboard(event)) instantly(() => toggleBand(name))
+    else toggleBand(name)
+  }
+  return (
+    <div
+      // A caption moves with the rows under it when the list above it grows or closes up.
+      data-moves={`caption:${name}`}
+      className={cn('group/caption relative mt-1', CAPTION)}
+    >
+      <h3 className="size-full">
+        <button
+          type="button"
+          aria-expanded={!folded}
+          onClick={toggle}
+          className="flex size-full cursor-pointer items-center rounded-row ps-2.5 pe-1 text-left text-meta font-title text-ink-3 transition-colors duration-(--dur-fast) select-none group-hover/caption:text-ink focus-visible:-outline-offset-2"
+        >
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          <span
+            aria-hidden
+            className={cn(
+              'inline-flex size-6 shrink-0 items-center justify-center transition-opacity duration-(--dur-fast) ease-out',
+              !folded &&
+                'opacity-0 group-hover/caption:opacity-100 group-has-focus-visible/caption:opacity-100 pointer-coarse:opacity-100',
+            )}
+          >
+            <ChevronRight
+              strokeWidth={1.8}
+              className={cn(
+                'size-3.5 transition-transform duration-(--dur-fast) ease-out',
+                !folded && 'rotate-90',
+              )}
+            />
+          </span>
+        </button>
+      </h3>
+      {/* One box in from the chevron's: the caption's 4px, then the chevron's 24. */}
+      {name === 'Today' && (
+        <span className="absolute inset-y-0 inset-e-7 flex items-center">
+          <NewThread />
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** The way to start a Thread, at the far end of today's caption: where today's work is read. */
+function NewThread() {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="New thread"
+            onClick={() => void router.navigate({ to: '/' })}
+            className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
+          />
+        }
+      >
+        <Plus className="size-3.5" strokeWidth={1.8} />
+      </TooltipTrigger>
+      <TooltipContent>New thread</TooltipContent>
+    </Tooltip>
   )
 }
 

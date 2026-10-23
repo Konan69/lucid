@@ -38,13 +38,6 @@ const describe = (result: Found) =>
       ),
       go: () => void router.navigate({ to: '/library' }),
     }),
-    Routine: ({ routine }) => ({
-      key: `routine:${routine.id}`,
-      title: routine.name,
-      detail: 'Routine',
-      icon: <PlaceMark place="routines" />,
-      go: () => void router.navigate({ to: '/routines' }),
-    }),
   })
 
 /** One thing the palette can do or go to. */
@@ -68,15 +61,6 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     icon: <PlaceMark place="compose" />,
     keys: Option.some(shortcut('⇧O')),
     go: () => void router.navigate({ to: '/' }),
-  },
-  {
-    key: 'do:routines',
-    title: 'Routines',
-    detail: 'Work Vivid does on a schedule or when called',
-    words: 'schedule recurring cron automatic',
-    icon: <PlaceMark place="routines" />,
-    keys: Option.none(),
-    go: () => void router.navigate({ to: '/routines' }),
   },
   {
     key: 'do:projects',
@@ -213,8 +197,8 @@ const nothingSaid = (answer: LiveState<SearchResponse>) =>
 
 /**
  * Find anything, do anything (⌘K). With nothing typed it lists what can be done and the Threads
- * last worked in. Typing narrows the actions and searches Threads, Tasks, Library items and
- * Routines on the server, so the answer respects exactly what the Person may see. The arrow keys
+ * last worked in. Typing narrows the actions and searches Threads, Tasks and Library items on
+ * the server, so the answer respects exactly what the Person may see. The arrow keys
  * and Enter choose. The last answer stays up while the next is on its way.
  */
 export function Palette({ onClose }: { onClose: () => void }) {

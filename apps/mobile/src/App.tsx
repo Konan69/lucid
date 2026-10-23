@@ -34,9 +34,9 @@ import { Key } from './screen/integration/Key'
 import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
+import { Feed } from './screen/Feed'
 import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
-import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
 import { Integrations } from './screen/settings/Integrations'
 import { Memory } from './screen/settings/Memory'
@@ -391,8 +391,8 @@ function Shell() {
               name is never what the bar says before the screen has spoken. */}
             <Stack.Screen name="Home" component={Home} options={{ title: '' }} />
             <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
-            <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
             <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
+            <Stack.Screen name="Feed" component={Feed} options={{ title: '' }} />
             <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
             <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
             {/* The bar is only the way back: the Project's name is the page's own first line. */}

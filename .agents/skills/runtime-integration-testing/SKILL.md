@@ -13,7 +13,7 @@ Keep pure state-machine and domain tests fast. A test of an Effect combinator, a
 
 **Use the seams that exist.** Everything below names a file on disk. Before adding a harness, factory, or `make…Target` helper, read those files; a second database bootstrap or server factory is almost always a duplicate. Where a capability is missing, this skill says so under "Missing capabilities" — do not paper over it with a sketch.
 
-Re-verify against installed source when a pin moves. Verified here: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.0-rc.116`; Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
+Re-verify against installed source when a pin moves. Pinned now: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.2`; the Effect seams below were verified on `4.0.0-rc.116` and are not yet re-read on `4.0.2`. Verified here: Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
 
 ## Database boundary (non-negotiable)
 
@@ -44,7 +44,7 @@ This is **per-file database isolation plus per-case row cleanup**. It is not per
 Consequences:
 
 - Cases in one file share one database. Global scans (scheduler claims, replay sweeps, pending-work queries) see every row the file has left behind, so each fixture uses fresh UUIDs and removes its rows, and a case that asserts on a global scan checks for older obligations first (`pendingWork` in `apps/server/src/library/fixtures.ts`).
-- A fixture's cleanup failure must fail the test, not log: see `cleanupFailed` in `apps/server/src/runtime/testing.ts`.
+- A fixture's cleanup failure must fail the test, not log: see `cleanupFailed` in `apps/server/src/drafts/testing.ts`.
 - `layer(testLayer)` from `@effect/vitest` builds its Layer once per `describe` block. The SQL pool is shared by that block's cases and closed by the Layer scope before `afterAll` drops the clone.
 - The server project runs with `maxWorkers: 2` (`apps/server/vitest.config.ts`); files are parallel, cases inside a file are not isolated from each other.
 
@@ -59,8 +59,8 @@ If a claim truly needs a database per case, that is a missing capability; state 
 Compose the store under test over it, flat:
 
 ```ts
-// apps/server/src/runtime/testing.ts
-export const productLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
+// apps/server/src/threads/runs.test.ts
+const testLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 ```
 
 ## Pick the seam first
@@ -75,12 +75,10 @@ export const productLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLa
 | Session lookup for a Person                                                             | Real Better Auth via the bearer plugin against a session row                                          | `auth/middleware.test.ts`, `library/fixtures.ts`                                  |
 | Scheduler admission, due time, expiry                                                   | The real store/scheduler with `TestClock`                                                             | `routines/store.test.ts`, `connections/transport.test.ts`                         |
 | Durable replay after a failure                                                          | Real PostgreSQL with explicit failure injection                                                       | `inputs/replay.test.ts`, `approvals/replay.test.ts`, `library/durability.test.ts` |
-| Server-to-runtime request shape                                                         | Real `runtimeLayer` with a substituted `HttpClient`                                                   | `runtime/client.test.ts`                                                          |
 | Integration transport: mapping, retries, cursors, caches                                | Real transport code against a local `NodeHttpServer.layer(…, { port: 0 })` standing in for the remote | `connections/transport.test.ts`                                                   |
-| Runtime tool behavior                                                                   | The tool against the generated `VividRpc` client with a controlled transport                          | `packages/agent/runtime/src/delivery.test.ts`, `src/tools/*.test.ts`              |
+| Runtime tool behavior                                                                   | The real Flue runtime and an HTTP RPC server                          | `packages/agent/runtime/src/routes.test.ts`, `src/tools/scope.test.ts`              |
 | Signup, cookies, gateway, a real Run end to end                                         | The **running** stack on a disposable database                                                        | `runtime/chains.ts` + `*/thread.live.test.ts`                                     |
 | Model quality or tool choice                                                            | Gated `.live.test.ts`                                                                                 | `memory/*.live.test.ts`                                                           |
-| Pure validation or state transition                                                     | Direct unit test; no Layer                                                                            | `runtime/settlement.test.ts`                                                      |
 
 ## Server: Effect RPC and HTTP routes
 
@@ -112,14 +110,14 @@ Read `packages/agent/runtime/AGENTS.md` first. The runtime owns no product store
 
 - `src/app.ts` is a Hono app whose default export mounts `createAgentRouter(Vivid)` behind the runtime token. Importing it imports the agent definition and `providers/rehearsal.ts`.
 - `src/db.ts` is Flue's database composition root. It reads `DATABASE_URL` synchronously at import and creates a module-level `pg.Pool`. Flue owns its own schema migrations (`db:migrate` in that package is a no-op echo).
-- `packages/agent/runtime/tests/setup.ts` is the sole runtime test-URL adapter. Vitest `setupFiles` runs it before importing each test: a supplied non-empty URL becomes `DATABASE_URL`; an absent test variable removes inherited `DATABASE_URL`; an empty test variable fails setup. An accidental unconfigured import of `db.ts` therefore fails before building a pool. Runtime tests must not import `db.ts`, except `src/db.test.ts`'s gated unconfigured-refusal proof. Database cases use `describe.skipIf(!testDatabaseConfigured)`. That project has **no** per-file clone: a runtime test that needs tables creates a uniquely named schema on the supplied URL and registers `DROP SCHEMA … CASCADE` first (`disposableStorage` in `tests/schema.ts`, shared by routes and `src/tools/computer.test.ts`).
+- `packages/agent/runtime/tests/setup.ts` is the sole runtime test-URL adapter. Vitest `setupFiles` runs it before importing each test: a supplied non-empty URL becomes `DATABASE_URL`; an absent test variable removes inherited `DATABASE_URL`; an empty test variable fails setup. An accidental unconfigured import of `db.ts` therefore fails before building a pool. Runtime tests must not import `db.ts`. Database cases use `describe.skipIf(!testDatabaseConfigured)`. That project has **no** per-file clone: a runtime test that needs tables creates a uniquely named schema on the supplied URL and registers `DROP SCHEMA … CASCADE` first (`disposableStorage` in `tests/schema.ts`, shared by routes and `src/tools/computer.test.ts`).
 - **Runtime authority is worker configuration, not a per-case change.** The same setup removes inherited `VIVID_SERVER_URL` and gives the worker its own random `VIVID_RUNTIME_TOKEN`. Effect rc.116 `ConfigProvider.fromEnv` copies `process.env` once and the `ConfigProvider` reference caches that default for the process (`src/ConfigProvider.ts` `fromEnv`; `src/Context.ts` `getDefaultValue`). `src/providers/rehearsal.ts` reads `Config` at import, and `src/app.ts` and `src/client.ts` read it inside their own `Effect.runPromise`, so neither a later `process.env` change nor a `ConfigProvider` Layer around the test reaches them. Fixtures read the token back with `Config.Redacted('VIVID_RUNTIME_TOKEN')`. Never reset the cached default and never add an application seam to carry test configuration. Only `VIVID_MODEL` is scoped by a fixture, because `src/agents/vivid.ts` reads `process.env` at each render.
 - **Scope of the setup guarantee:** runtime test modules under the current Node project only. Config evaluation, `globalSetup`, custom environment modules and other projects can still see the shell's environment; the setup does not validate disposability or prevent later test mutation.
 - **Promise callbacks owned by an SDK.** Flue's public `PostgresRunner` (`@flue/postgres`) declares `transaction` as a callback that must return a Promise. Production `flueStorage(pool)` in `src/storage.ts` implements that existing transaction bridge; tests use it rather than duplicating the runner. Its exact `query` and `transaction` symbols are classified in `scripts/effect-boundary-allowlist.json`. The route fixture's held response uses one `Effect.runPromise` inside pi's public `FauxResponseFactory` callback, which also requires a Promise. It runs only test-owned `Deferred` coordination, no program under test or application Layer. The inline exemption names `vivid/no-manual-effect-runtime-in-tests` and `vivid/no-runpromise-in-library`. A new bridge needs the same proof: a public SDK type that demands a Promise, and no Effect-native alternative. Otherwise use `it.effect`.
 - **Production route seam.** `tests/routes.ts` uses the real `src/app.ts`, `Vivid`, production `flueStorage`, and explicit PostgreSQL through public `start()`/`stop()`. It reads the worker's runtime token through `Config`, refuses to start (`ProductServerConfigured`) when the worker's configuration names a product server, so optional context fails at configuration before any product RPC, and sets `VIVID_MODEL` to its faux model before start, restoring it only after stop. Held faux factories register release before being queued and are released before stop because the installed faux factory awaits independently of abort. Cases serialize within a module graph; stop alone resets Flue. Route tests must use Flue's official `flue-markdown-imports` Vitest transform for Vivid's real skill imports, as the skills project's config does; without it route collection fails. Responses decode at ingress and `init(Vivid, { id }).read(submissionId)` waits for durable settlement without polling.
-- Runtime tools are tested against the generated client with a controlled transport: `RpcClient.makeNoSerialization(VividRpc, { onFromClient })`, then `rpc.write` an `Exit` for the captured request (`src/delivery.test.ts`). No server, no database.
+- Prove runtime tools through the real Flue runtime and a real HTTP RPC server. Use `src/routes.test.ts` and `src/tools/scope.test.ts`. State invariants belong in the Effect Machine or the type model; do not add pure unit, property or sequence tests.
 - The deterministic model is pi-ai's faux provider: `fauxProvider` from `@earendil-works/pi-ai/providers/faux`, registered with `setProvider` from `@flue/runtime` (`src/providers/rehearsal.ts`). Registration is global, happens at import, and only when `VIVID_MODEL` starts with `rehearsal/`. It is a product-rehearsal provider selected by environment, not a per-test fixture. Use `pnpm exec flue docs search <query>` before relying on any other Flue API.
-- The server's view of the runtime is the `Runtime` service (`apps/server/src/runtime/client.ts`). Test it with the real `runtimeLayer` and a substituted `HttpClient`.
+- The server's view of the runtime is the `Runtime` service (`apps/server/src/runtime/client.ts`). Prove it through a real runtime in the disposable stack.
 
 ## Time
 

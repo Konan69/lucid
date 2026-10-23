@@ -16,6 +16,8 @@ import {
   WriteDocumentRequest,
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
+import { ServerBuild } from './build.js'
+import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
@@ -26,7 +28,23 @@ import {
   RegisterPushTargetRequest,
 } from './push.js'
 import type { AuthContext } from './auth.js'
-import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
+import {
+  CreateWatchRequest,
+  FindAppEventsRequest,
+  FindAppEventsResponse,
+  StopWatchRequest,
+  WatchListResponse,
+  WatchResponse,
+} from './watches.js'
+import {
+  CodeOutcome,
+  ReadPageOutcome,
+  ReadPageRequest,
+  RunCodeRequest,
+  RunDisplayCodeRequest,
+  DisplayProgramRefused,
+  DisplayCodeOutcome,
+} from './code.js'
 import {
   AcceptMembershipRequest,
   ChangeRoleRequest,
@@ -70,11 +88,14 @@ import {
   ConnectChannelRequest,
 } from './channels.js'
 import { UseWindowRequest, WindowOutcome } from './windows.js'
+import { CopySignInRequest, CopySignInOutcome } from './signins.js'
 import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
   ACCOUNT_HANDLE_MAX,
   AddIntegrationRequest,
   AddIntegrationOutcome,
+  MakeIntegrationRequest,
+  MakeIntegrationOutcome,
   FindIntegrationsRequest,
   FindIntegrationsResponse,
   TestIntegrationRequest,
@@ -94,6 +115,8 @@ import {
   RenameConnectionRequest,
   ServiceCatalog,
   ToolOutcome,
+  UseDisplayToolRequest,
+  DisplayApprovalUnsupported,
   UseToolRequest,
 } from './connections.js'
 import {
@@ -119,7 +142,6 @@ import {
   LibraryItemId,
   MembershipId,
   MemoryId,
-  RoutineId,
   RuleId,
   SkillId,
   ThreadId,
@@ -153,20 +175,10 @@ import {
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
 import { ComputerInventory } from './applications.js'
-import {
-  CreateRoutineRequest,
-  CreateOnceRoutineRequest,
-  FindEventsRequest,
-  FindEventsResponse,
-  OccurrenceResponse,
-  PatchRoutineRequest,
-  RoutineListResponse,
-  RoutineResponse,
-  RoutineWebhook,
-} from './routines.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { Appearance } from './appearance.js'
+import { EgressStatus } from './egress.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
   SkillReadOnly,
@@ -179,7 +191,6 @@ import {
 import {
   CreateThreadRequest,
   OpenFirstThreadResult,
-  OpenThreadRequest,
   Inbox,
   PatchThreadRequest,
   PresenceRequest,
@@ -256,6 +267,13 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
   success: NotifyPersonOutcome,
 })
 
+// ── The Feed ───────────────────────────────────────────────────────────────
+/** A Person's own Feed; Post is runtime-only at the handler boundary, like NotifyPerson. */
+const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
+const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
+const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
+const Post = Rpc.make('Post', { ...call, payload: PostRequest, success: PostOutcome })
+
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
 const WatchMe = Rpc.make('WatchMe', { ...live, success: MeResponse })
@@ -270,6 +288,9 @@ const SwitchWorkspace = Rpc.make('SwitchWorkspace', {
   payload: { to: SwitchWorkspaceRequest },
   success: MeResponse,
 })
+/** The build of the server that is answering (`build.ts`), for Settings to say beside its own. */
+const GetBuild = Rpc.make('GetBuild', { ...call, success: ServerBuild })
+const WatchBuild = Rpc.make('WatchBuild', { ...live, success: ServerBuild })
 const GetSettings = Rpc.make('GetSettings', { ...call, success: Settings })
 const WatchSettings = Rpc.make('WatchSettings', { ...live, success: Settings })
 const PatchSettings = Rpc.make('PatchSettings', {
@@ -345,11 +366,6 @@ const OpenFirstThread = Rpc.make('OpenFirstThread', {
   ...call,
   success: OpenFirstThreadResult,
 })
-const OpenThread = Rpc.make('OpenThread', {
-  ...call,
-  payload: OpenThreadRequest,
-  success: Schema.Struct({ title: Schema.String }),
-})
 const PatchThread = Rpc.make('PatchThread', {
   ...call,
   payload: { id: ThreadId, patch: PatchThreadRequest },
@@ -377,7 +393,11 @@ const DeleteThread = Rpc.make('DeleteThread', { ...call, payload: { id: ThreadId
 const MarkThreadRead = Rpc.make('MarkThreadRead', { ...call, payload: { id: ThreadId } })
 /** Stops the Run in progress. Work already done is not undone. */
 const StopThread = Rpc.make('StopThread', { ...call, payload: { id: ThreadId } })
-const ReportPresence = Rpc.make('ReportPresence', { ...call, payload: PresenceRequest })
+/**
+ * Holds the Person present in a Thread for as long as the call stays open on the live socket. It
+ * answers nothing; closing it is how a client says the Person left.
+ */
+const BePresent = Rpc.make('BePresent', { ...live, payload: PresenceRequest })
 /**
  * The runtime asking who a delivery is for, by the turn the conversation names. Only the runtime
  * may ask, and it asks only when it no longer holds the scope it was handed with the delivery (it
@@ -538,41 +558,24 @@ const ReadNotifications = Rpc.make('ReadNotifications', {
   success: NotificationReadResponse,
 })
 
-// ── Routines ───────────────────────────────────────────────────────────────
-const FindEvents = Rpc.make('FindEvents', {
+// ── Watches ────────────────────────────────────────────────────────────────
+/** The events an Integration's app declares, named by the account the Person was shown. */
+const FindAppEvents = Rpc.make('FindAppEvents', {
   ...call,
-  payload: FindEventsRequest,
-  success: FindEventsResponse,
+  payload: FindAppEventsRequest,
+  success: FindAppEventsResponse,
 })
-const ListRoutines = Rpc.make('ListRoutines', { ...call, success: RoutineListResponse })
-const WatchRoutines = Rpc.make('WatchRoutines', { ...live, success: RoutineListResponse })
-const CreateRoutine = Rpc.make('CreateRoutine', {
+/** Subscribe to one of those events for the acting Person; each event wakes Vivid. */
+const CreateWatch = Rpc.make('CreateWatch', {
   ...call,
-  payload: CreateRoutineRequest,
-  success: RoutineResponse,
+  payload: CreateWatchRequest,
+  success: WatchResponse,
 })
-const CreateOnceRoutine = Rpc.make('CreateOnceRoutine', {
+const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
+const StopWatch = Rpc.make('StopWatch', {
   ...call,
-  payload: CreateOnceRoutineRequest,
-  success: RoutineResponse,
-})
-const PatchRoutine = Rpc.make('PatchRoutine', {
-  ...call,
-  payload: { id: RoutineId, patch: PatchRoutineRequest },
-  success: RoutineResponse,
-})
-const DeleteRoutine = Rpc.make('DeleteRoutine', { ...call, payload: { id: RoutineId } })
-/** Start one Occurrence now, outside the Routine's trigger. */
-const RunRoutine = Rpc.make('RunRoutine', {
-  ...call,
-  payload: { id: RoutineId },
-  success: OccurrenceResponse,
-})
-/** The address and key for a webhook Routine. Asking again issues a new key and ends the old one. */
-const IssueRoutineWebhook = Rpc.make('IssueRoutineWebhook', {
-  ...call,
-  payload: { id: RoutineId },
-  success: RoutineWebhook,
+  payload: StopWatchRequest,
+  success: WatchResponse,
 })
 
 // ── Projects ───────────────────────────────────────────────────────────────
@@ -649,6 +652,11 @@ const TestIntegration = Rpc.make('TestIntegration', {
   payload: TestIntegrationRequest,
   success: TestIntegrationOutcome,
 })
+const MakeIntegration = Rpc.make('MakeIntegration', {
+  ...call,
+  payload: MakeIntegrationRequest,
+  success: MakeIntegrationOutcome,
+})
 
 // ── Connections (a provider's sign-in redirect returns over plain HTTP) ────
 const ListConnections = Rpc.make('ListConnections', { ...call, success: ConnectionListResponse })
@@ -715,6 +723,13 @@ const ResolveTool = Rpc.make('ResolveTool', {
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
 const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+/** A display's Query or Mutation, run for the Person who is looking at it. */
+const UseDisplayTool = Rpc.make('UseDisplayTool', {
+  ...call,
+  error: Schema.Union([RpcFailure, DisplayApprovalUnsupported]),
+  payload: UseDisplayToolRequest,
+  success: ToolOutcome,
+})
 /** Vivid offering a service in the Thread, with the acting Person's real state for it. */
 const OfferConnection = Rpc.make('OfferConnection', {
   ...call,
@@ -774,6 +789,12 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
+/**
+ * What egress is doing for the caller right now (`egress.ts`). Whether it is on is the Person's
+ * own setting (`Settings.egress`); this is what came of it.
+ */
+const GetEgress = Rpc.make('GetEgress', { ...call, success: EgressStatus })
+const WatchEgress = Rpc.make('WatchEgress', { ...live, success: EgressStatus })
 const StartComputer = Rpc.make('StartComputer', { ...call, success: ComputerResponse })
 const StopComputer = Rpc.make('StopComputer', { ...call, success: ComputerResponse })
 /** A Person taking the keyboard and pointer, or handing them back. Vivid cannot act while held. */
@@ -868,6 +889,12 @@ const UseWindow = Rpc.make('UseWindow', {
   payload: UseWindowRequest,
   success: WindowOutcome,
 })
+/** One explicit site's sign-in. Cookies stay inside the device and Computer channel. */
+const CopySignIn = Rpc.make('CopySignIn', {
+  ...call,
+  payload: CopySignInRequest,
+  success: CopySignInOutcome,
+})
 /**
  * The desktop app listening for work. Holding this open is what makes its Device `Connected`;
  * only the installation that enrolled an allowed Device may hold it, and nothing sent while it
@@ -892,6 +919,12 @@ const UseDesktop = Rpc.make('UseDesktop', {
 // ── What Vivid can do without a Computer ───────────────────────────────────
 /** Runs a program Vivid wrote over the tools it already has. See `RunCodeRequest`. */
 const RunCode = Rpc.make('RunCode', { ...call, payload: RunCodeRequest, success: CodeOutcome })
+/** A Person may run a reply's program only inside a Thread they can currently read. */
+const RunDisplayCode = Rpc.make('RunDisplayCode', {
+  error: Schema.Union([RpcFailure, DisplayProgramRefused]),
+  payload: RunDisplayCodeRequest,
+  success: DisplayCodeOutcome,
+})
 /** Reads one public page. Private and local addresses are refused before anything is fetched. */
 const ReadPage = Rpc.make('ReadPage', {
   ...call,
@@ -907,6 +940,8 @@ const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: Sugges
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
+  GetBuild,
+  WatchBuild,
   CreateCompany,
   SwitchWorkspace,
   GetSettings,
@@ -930,14 +965,13 @@ export const VividRpc = RpcGroup.make(
   WatchThread,
   CreateThread,
   OpenFirstThread,
-  OpenThread,
   PatchThread,
   RegenerateThreadTitle,
   ShareThread,
   DeleteThread,
   MarkThreadRead,
   StopThread,
-  ReportPresence,
+  BePresent,
   GetDeliveryScope,
   ListArtifacts,
   WatchArtifacts,
@@ -965,17 +999,16 @@ export const VividRpc = RpcGroup.make(
   RemovePushTarget,
   GetPushKey,
   NotifyPerson,
+  ListFeed,
+  WatchFeed,
+  MarkFeedCard,
+  Post,
   WatchNotifications,
   ReadNotifications,
-  FindEvents,
-  ListRoutines,
-  WatchRoutines,
-  CreateRoutine,
-  CreateOnceRoutine,
-  PatchRoutine,
-  DeleteRoutine,
-  RunRoutine,
-  IssueRoutineWebhook,
+  FindAppEvents,
+  CreateWatch,
+  ListWatches,
+  StopWatch,
   ListProjects,
   WatchProjects,
   CreateProject,
@@ -991,6 +1024,7 @@ export const VividRpc = RpcGroup.make(
   DeleteLibraryFolder,
   FindIntegrations,
   AddIntegration,
+  MakeIntegration,
   TestIntegration,
   ListConnections,
   WatchConnections,
@@ -1003,6 +1037,7 @@ export const VividRpc = RpcGroup.make(
   FindTools,
   ResolveTool,
   UseTool,
+  UseDisplayTool,
   OfferConnection,
   ListMemory,
   WatchMemory,
@@ -1019,6 +1054,8 @@ export const VividRpc = RpcGroup.make(
   PatchSkill,
   DeleteSkill,
   GetComputer,
+  GetEgress,
+  WatchEgress,
   GetComputerApps,
   WatchComputer,
   StartComputer,
@@ -1040,10 +1077,12 @@ export const VividRpc = RpcGroup.make(
   RevokeDevice,
   ReportDeviceStop,
   UseWindow,
+  CopySignIn,
   WatchDeviceRequests,
   AnswerDeviceRequestRpc,
   UseDesktop,
   RunCode,
+  RunDisplayCode,
   ReadPage,
   Search,
   ListSuggestions,

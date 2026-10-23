@@ -132,10 +132,10 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
 ## What exists today
 
 - Facts are `Memory` records in Helix: one sentence, a kind, and a scope (Person, Company, Thread).
-- Before each response the runtime loads the **page**: the stored facts themselves, newest first,
-  one per line, bounded to about 2,000 tokens, with a note when older facts exist. No model runs on
-  that path (`apps/server/src/memory/page.ts`, `MemoryAccess.page`, `GetMemoryPage`). It replaced a
-  model-written brief of at most 300 words that was rebuilt whenever a fact changed.
+- The runtime reads a memory brief through `MemoryAccess.brief` in
+  `apps/server/src/memory/store.ts`. Its cache key includes the authorized memories and Person.
+  A cache miss asks the extraction model to summarize those memories; successful summaries are
+  cached for ten minutes.
 - The model's knowledge-base tools are `recall` and `remember`. It changes and removes what it
   knows on its notes (`read_note`, `write_note`, `delete_note`); a Person corrects and removes
   knowledge-base facts in Settings.

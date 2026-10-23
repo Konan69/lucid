@@ -37,7 +37,8 @@ export const claimFirstThread = Effect.fn('Threads.claimFirst')(function* (actor
       const earlier = yield* tx
         .select({ id: threads.id })
         .from(threads)
-        .where(eq(threads.personId, personId))
+        // Background Threads (`place.ts`) are Vivid's own work, never a conversation with them.
+        .where(and(eq(threads.personId, personId), eq(threads.place, 'Conversation')))
         .limit(1)
       if (earlier.length > 0) return OpenFirstThreadResult.cases.NotFirst.make({})
       const thread = ThreadId.make(NodeCrypto.randomUUID())

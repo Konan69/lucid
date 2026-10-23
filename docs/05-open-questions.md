@@ -18,4 +18,4 @@ Undecided as of 2026-09-02.
 6. **Project inheritance.** Child projects inherit members, permissions, context, and connections.
    Can a child narrow that inherited access, or may it only add to it?
 7. **Project contents.** Threads may live in projects. Whether projects also directly own goals,
-   files, routines, memory, and milestones—and whether threads may remain unfiled—is undecided.
+   files, memory, and milestones—and whether threads may remain unfiled—is undecided.

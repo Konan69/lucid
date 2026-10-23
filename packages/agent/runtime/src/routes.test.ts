@@ -11,8 +11,7 @@ import {
 } from '@vivid/contracts'
 import { Config, Effect, Option, Redacted, Result, Schema } from 'effect'
 import { Client } from 'pg'
-import { testDatabaseConfigured } from '../../../../apps/server/src/database/testdb.ts'
-import { disposableStorage } from '../tests/schema.ts'
+import { disposableStorage, testDatabaseConfigured } from '../tests/schema.ts'
 import { routes, Settled, RouteRequestFailed, type Routes } from '../tests/routes.ts'
 import app from './app.ts'
 import { Vivid } from './agents/vivid.ts'
@@ -116,7 +115,7 @@ const delivery = (threadId: ThreadId, turn: number, body: string) => {
     body,
     attributes: { speaker: 'Fixture Person' },
     turn,
-    scope: { acting: personId, libraryFolder: null },
+    scope: { acting: personId },
   })
   const initialData = ThreadOrigin.make({ creator: personId, creatorName: 'Fixture Person' })
   return Admission.make({ ...request, initialData })

@@ -1,9 +1,8 @@
-import { Database, type DatabaseInput } from '@alchemy.run/better-auth/Database'
 import { openPostgresPool } from 'alchemy/SQL/PostgresDriver'
 import { getTableName } from 'drizzle-orm'
 import * as Array from 'effect/Array'
 import * as Effect from 'effect/Effect'
-import * as Layer from 'effect/Layer'
+import * as Queue from 'effect/Queue'
 import type * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import {
@@ -383,8 +382,7 @@ class AnnouncingConnection implements DatabaseConnection {
    * of Kysely's transaction (`kysely.js:668-692`): any failure after begin rolls back and then
    * fails with the first failure, and a failed rollback is the failure reported. PostgreSQL sends
    * a notification only at commit and drops it on rollback, so the notice and the removal cannot
-   * part. Only this connection is used: the pool has one client (`max: 1`) and is never asked for
-   * a second.
+   * part. Only this connection is used, never another one from the pool.
    */
   #remove<R>(statement: CompiledQuery) {
     const removal = attempt('remove', () => this.#inner.executeQuery<R>(statement)).pipe(
@@ -490,30 +488,53 @@ const announcingDialect = (pool: Pool, removal: Removal): Dialect => {
 }
 
 /**
- * The `BetterAuth.Database` Layer for Vivid's PostgreSQL.
- *
- * It opens the pool with the same public call as `@alchemy.run/better-auth/Postgres`
- * (`openPostgresPool`, `Postgres.ts:88-97`): one `pg.Pool` with one client on the ambient scope,
- * ended when that scope closes. It registers no finalizer of its own. Better Auth is given the
- * dialect form, for which `transaction` must be passed explicitly: only the bare-pool form sets it
- * (`@better-auth/kysely-adapter` `dist/index.mjs:66-69`).
- *
- * There is no `migrate`: Vivid's schema is owned by Drizzle (`migrate: false` on `BetterAuth`).
+ * How many connections Better Auth may hold at once: node-postgres's own default (`pg-pool`
+ * `index.js`, `max: 10`), the same as the server's own pool. Every request that names a session
+ * asks Better Auth, so one connection would queue them all behind each other.
  */
-export const authDatabaseLayer = (url: Redacted.Redacted) =>
-  Layer.effect(
-    Database,
-    Effect.gen(function* () {
-      const removal = yield* sessionRemoval()
-      return Database.of({
-        provider: 'postgres',
-        runtime: openPostgresPool(Effect.succeed(url)).pipe(
-          Effect.map((pool): DatabaseInput => ({
-            dialect: announcingDialect(pool, removal),
-            type: 'postgres',
-            transaction: true,
-          })),
-        ),
-      })
-    }),
+const AUTH_CONNECTIONS = 10
+
+/**
+ * Keeps a lost idle connection from ending the server. The pool lives as long as the server, so
+ * its idle connections meet PostgreSQL restarting, a failover or a dropped socket. node-postgres
+ * then removes the broken client and emits `error` on the pool (`pg-pool` `index.js`,
+ * `idleListener`); an `error` event nobody listens to is thrown by Node's `EventEmitter` and ends
+ * the process. Neither alchemy's `openPostgresPool` nor Kysely's driver listens. The next query
+ * opens a fresh connection, so all there is to do is say it happened. Only the error's code is
+ * logged: its message can name the connection.
+ */
+const heedIdleFailures = Effect.fn('AuthDialect.heedIdleFailures')(function* (pool: Pool) {
+  const lost = yield* Queue.unbounded<Error & { readonly code?: string }>()
+  const heard = (error: Error & { readonly code?: string }) => {
+    Queue.offerUnsafe(lost, error)
+  }
+  yield* Effect.acquireRelease(
+    Effect.sync(() => pool.on('error', heard)),
+    () => Effect.sync(() => pool.off('error', heard)),
   )
+  yield* Queue.take(lost).pipe(
+    Effect.flatMap((error) =>
+      Effect.logWarning('Auth database lost an idle connection; the pool opens another', {
+        code: error.code,
+      }),
+    ),
+    Effect.forever,
+    Effect.forkScoped,
+  )
+})
+
+/**
+ * Better Auth's database for Vivid's PostgreSQL: one `pg.Pool`, opened on the caller's scope and
+ * ended when that scope closes (`openPostgresPool`, alchemy `SQL/PostgresDriver.ts`). The caller is
+ * the server's auth Layer, so the pool lives as long as the server (`provider.ts`).
+ *
+ * Better Auth is given the dialect form, for which `transaction` must be passed explicitly: only
+ * the bare-pool form sets it (`@better-auth/kysely-adapter` `dist/index.mjs:66-69`). Vivid's schema
+ * is owned by Drizzle, so nothing here migrates.
+ */
+export const authDatabase = Effect.fn('AuthDialect.database')(function* (url: Redacted.Redacted) {
+  const removal = yield* sessionRemoval()
+  const pool = yield* openPostgresPool(Effect.succeed(url), { max: AUTH_CONNECTIONS })
+  yield* heedIdleFailures(pool)
+  return { dialect: announcingDialect(pool, removal), type: 'postgres', transaction: true } as const
+})

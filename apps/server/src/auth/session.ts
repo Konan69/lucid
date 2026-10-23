@@ -18,7 +18,7 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { findPerson } from './access.ts'
-import { authEffect, localAuthRuntimeLayer } from './provider.ts'
+import { Auth } from './provider.ts'
 import { sessionTable } from './tables.ts'
 
 const decodeCompany = decodeStored(Company, 'Company')
@@ -61,12 +61,11 @@ export const workspaceIn = Effect.fn('Auth.workspaceIn')(function* (
 
 /** Resolves a Better Auth session, cookie or bearer, into the Person and where they are working. */
 export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: Headers) {
-  const auth = yield* authEffect
-  const session = yield* auth.getSession(headers).pipe(
-    // @effect-diagnostics-next-line strictEffectProvide:off -- The Layer is Alchemy's type-only `RuntimeContext.phantom` (`Layer.empty`): it acquires nothing and owns no scope, so there is no lifetime for an entry point to hold.
-    Effect.provide(localAuthRuntimeLayer),
-    Effect.mapError(() => new Unauthenticated({ message: 'Invalid session' })),
-  )
+  const auth = yield* Auth
+  const session = yield* Effect.tryPromise({
+    try: () => auth.api.getSession({ headers }),
+    catch: () => new Unauthenticated({ message: 'Invalid session' }),
+  })
   if (session === null) return yield* new Unauthenticated({ message: 'Authentication required' })
   const person = yield* findPerson(session.user.id)
   if (Option.isNone(person))

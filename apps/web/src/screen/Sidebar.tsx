@@ -7,9 +7,9 @@ import {
   ChevronsUpDown,
   FolderClosed,
   Library,
+  Newspaper,
   PanelLeft,
   Plus,
-  Repeat2,
   Search,
   Settings as SettingsIcon,
 } from 'lucide-react'
@@ -91,8 +91,8 @@ function Edge() {
 }
 
 /**
- * The rail: where the Person is working, the way to start a Thread, the two places beside Threads
- * (Routines and the Library), every Thread they can see ordered by what needs them, and the Person
+ * The rail: where the Person is working, the way to start a Thread, the places beside Threads
+ * (Projects and the Library), every Thread they can see ordered by what needs them, and the Person
  * with their Settings at the foot, under what is left of getting started while any of it is. Projects are a group of rows above the Threads, each a piece of
  * work with its own colour; choosing one narrows the Threads under it to that Project, and the
  * chip beside the workspace's name says so and leads back to everything. Integrations is reached
@@ -157,16 +157,16 @@ export function Sidebar({
           />
           <ToolRow icon={<Plus className="size-4" strokeWidth={1.6} />} label="New thread" to="/" />
           <ToolRow
+            icon={<Newspaper className="size-4" strokeWidth={1.6} />}
+            label="Feed"
+            to="/feed"
+          />
+          <ToolRow
             icon={<FolderClosed className="size-4" strokeWidth={1.6} />}
             label="Projects"
             to="/projects/{-$id}"
             // The shelf itself: without this the link would keep whichever Project is open.
             params={{ id: undefined }}
-          />
-          <ToolRow
-            icon={<Repeat2 className="size-4" strokeWidth={1.6} />}
-            label="Routines"
-            to="/routines"
           />
           <ToolRow
             icon={<Library className="size-4" strokeWidth={1.6} />}
@@ -176,10 +176,11 @@ export function Sidebar({
         </div>
 
         {/* `settling` keeps the list in one piece as Threads arrive, move and are marked done:
-            a row with a new place glides to it and the rows under a gap close up. */}
+            a row with a new place glides to it and the rows under a gap close up. It is
+            positioned because a folded band's rows fade as copies placed from its corner. */}
         <nav
           ref={settling}
-          className="mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
+          className="relative mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
         >
           <Work scoped={scoped} />
         </nav>

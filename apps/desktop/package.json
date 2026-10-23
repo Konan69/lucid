@@ -1,6 +1,7 @@
 {
   "name": "@vivid/desktop",
-  "version": "0.1.0",
+  "productName": "Vivid",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Electron host for the Vivid web renderer: window chrome, deep links, and the desktop bridge.",
@@ -31,12 +32,11 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native": "catalog:",
+    "@vivid/agent-runtime": "workspace:*",
     "electron": "catalog:",
     "electron-builder": "catalog:",
     "electron-builder-squirrel-windows": "catalog:",
     "esbuild": "catalog:",
-    "typescript": "catalog:",
     "vitest": "catalog:"
   }
 }

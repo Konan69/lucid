@@ -25,11 +25,26 @@ export const watchedNames: ReadonlyArray<string> = [
   'Session',
 ]
 
+/** A call a client made on the live socket: any tag of the contract. */
+export type Called = RpcGroup.Rpcs<typeof VividRpc>['_tag']
+
+/** Whether a tag a client sent is one of the contract's calls, so only those are counted. */
+export const isCalled = (tag: string): tag is Called => VividRpc.requests.has(tag)
+
 /** Whose data a change notification said had moved. `everything` is the listener reconnecting. */
 export type Moved = 'person' | 'company' | 'thread' | 'everything'
 
 /** The attribute that names the query a line is about: one of `watchedNames`. */
 export const QUERY = 'vivid.live.query'
+
+/**
+ * The attributes of a call's line: which call, under the name Effect's own call spans give it
+ * (`rpc.method`, Effect 4.0.2 `rpc/internal/tracing.ts`), and how many times it was made.
+ */
+export const CallAttribute = {
+  method: 'rpc.method',
+  calls: 'vivid.rpc.calls',
+} as const
 
 /** The counts on one query's line. Each is a whole number; times are milliseconds. */
 export const LiveAttribute = {
@@ -89,6 +104,7 @@ const still = (): Record<Moved, number> => ({ person: 0, company: 0, thread: 0, 
 export interface Report {
   readonly queries: ReadonlyArray<readonly [Watched, Readonly<Counts>]>
   readonly moved: Readonly<Record<Moved, number>>
+  readonly calls: ReadonlyArray<readonly [Called, number]>
 }
 
 /**
@@ -100,6 +116,10 @@ export interface Report {
  * are the numbers that decide whether a change topic is too wide, so they are counted here and
  * written as one line a minute for each query that did anything (`tallyLayer`).
  *
+ * Calls are counted beside them, one line a minute for each call clients made on the live socket
+ * (`rpc/link.ts`): a client that asks for the same thing on a timer shows up there as a steady
+ * number, which no query's line would show.
+ *
  * The counts are plain numbers changed in place. Every update is synchronous and JavaScript runs
  * one at a time, so there is nothing to lock.
  */
@@ -109,6 +129,7 @@ export interface Tally {
   readonly loaded: (name: Watched, millis: number, exit: Exit.Exit<unknown, unknown>) => void
   readonly sent: (name: Watched) => void
   readonly moved: (kind: Moved) => void
+  readonly called: (name: Called) => void
   /** Reads the counts and starts them again. A query with nothing open and nothing counted is left out. */
   readonly drain: () => Report
 }
@@ -116,6 +137,7 @@ export interface Tally {
 export const makeTally = (): Tally => {
   const queries = new Map<Watched, Counts>()
   let moved = still()
+  let calls = new Map<Called, number>()
   const of = (name: Watched) => {
     const found = queries.get(name)
     if (found !== undefined) return found
@@ -145,18 +167,23 @@ export const makeTally = (): Tally => {
     moved: (kind) => {
       moved[kind] += 1
     },
+    called: (name) => {
+      calls.set(name, (calls.get(name) ?? 0) + 1)
+    },
     drain: () => {
       const report = {
         queries: [...queries].filter(
           ([, counts]) => counts.loads + counts.interrupted + counts.failed + counts.sent > 0,
         ),
         moved,
+        calls: [...calls],
       }
       for (const [name, counts] of queries) {
         if (counts.open === 0) queries.delete(name)
         else queries.set(name, fresh(counts.open))
       }
       moved = still()
+      calls = new Map()
       return report
     },
   }
@@ -171,9 +198,12 @@ export const LiveTally = Context.Reference<Tally>('vivid/LiveTally', { defaultVa
 
 const REPORT_EVERY = '1 minute'
 
-/** Writes what was counted, one line for each query and one for the bus, and nothing when idle. */
+/**
+ * Writes what was counted, one line for each query, one for the bus and one for each call, and
+ * nothing when idle.
+ */
 export const report = Effect.fn('LiveTally.report')(function* () {
-  const { queries, moved } = (yield* LiveTally).drain()
+  const { queries, moved, calls } = (yield* LiveTally).drain()
   yield* Effect.forEach(
     queries,
     ([name, counts]) =>
@@ -196,6 +226,15 @@ export const report = Effect.fn('LiveTally.report')(function* () {
       [MovedAttribute.thread]: moved.thread,
       [MovedAttribute.everything]: moved.everything,
     })
+  yield* Effect.forEach(
+    calls,
+    ([name, count]) =>
+      Effect.annotateLogs(Effect.logInfo(Message.called), {
+        [CallAttribute.method]: name,
+        [CallAttribute.calls]: count,
+      }),
+    { discard: true },
+  )
 })
 
 /** Reports once a minute for the life of the server. An idle server writes no line. */

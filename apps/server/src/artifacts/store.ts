@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import {
   Artifact,
@@ -13,7 +13,6 @@ import {
   ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
-  Conflict,
   Forbidden,
   NotFound,
   ReadDocumentOutcome,
@@ -29,6 +28,7 @@ import {
   type WriteDocumentRequest,
 } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Option, Schema } from 'effect'
+import type { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { isAdmin, summaryOf } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import {
@@ -38,6 +38,7 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
+import { documentRun, Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
@@ -83,7 +84,7 @@ export interface ArtifactStoreService {
     personId: PersonId,
     threadId: ThreadId,
     request: WriteDocumentRequest,
-  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | Conflict>
+  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | RuntimeUnavailable>
   readonly read: (
     personId: PersonId,
     threadId: ThreadId,
@@ -190,23 +191,25 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/** Working attribution comes from the Thread alone; joining deliveries must never make us guess a Run. */
+/** Lock the exact Flue response's admitted Run; unrelated working rows cannot change authorship. */
 const workingRun = Effect.fn('Artifacts.workingRun')(function* (
   tx: Transaction,
-  threadId: ThreadId,
-  personId: PersonId,
+  author: { readonly threadId: ThreadId; readonly personId: PersonId; readonly runId: RunId },
 ) {
-  const working = yield* tx
-    .select({ id: runs.id, personId: runs.personId })
+  const [run] = yield* tx
+    .select({ id: runs.id })
     .from(runs)
-    .where(and(eq(runs.threadId, threadId), eq(runs.state, 'working')))
-    .limit(2)
+    .where(
+      and(
+        eq(runs.id, author.runId),
+        eq(runs.threadId, author.threadId),
+        eq(runs.personId, author.personId),
+        eq(runs.state, 'working'),
+        isNotNull(runs.admittedAt),
+      ),
+    )
     .for('update')
-  if (working.length > 1)
-    return yield* new Conflict({ message: 'The Thread has more than one working Run' })
-  const [run] = working
-  if (run === undefined || run.personId !== personId)
-    return yield* new NotFound({ message: 'Working Run not found' })
+  if (run === undefined) return yield* new NotFound({ message: 'Working Run not found' })
   return (yield* decodeRun(run)).id
 })
 
@@ -218,11 +221,15 @@ const write = Effect.fn('Artifacts.write')(function* (
 ) {
   const database = yield* Database
   const changes = yield* Changes
+  // Check access before reading runtime history; repeat it under the lock before any write.
+  yield* requireThread(threadId, personId)
+  // Network lookup precedes the transaction and must still cancel if the tool leaves its response.
+  const runId = yield* documentRun(threadId, request.toolCallId).pipe(Effect.interruptible)
   const result = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* lock(tx, threadId, personId)
       const author = ArtifactAuthor.cases.Vivid.make({
-        runId: yield* workingRun(tx, threadId, personId),
+        runId: yield* workingRun(tx, { threadId, personId, runId }),
       })
       const [row] = yield* tx.select().from(artifacts).where(named(threadId, request.title))
       if (row === undefined) {
@@ -370,8 +377,8 @@ export const artifactStoreLayer = Layer.effect(
   ArtifactStore,
   Effect.gen(function* () {
     const database = yield* Database
-    const context = yield* Effect.context<Database | Changes>()
-    const provide = <A, E>(program: Effect.Effect<A, E, Database | Changes>) =>
+    const context = yield* Effect.context<Database | Changes | Runtime>()
+    const provide = <A, E>(program: Effect.Effect<A, E, Database | Changes | Runtime>) =>
       Effect.provide(program, context)
     const list = Effect.fn('ArtifactStore.list')(function* (
       personId: PersonId,

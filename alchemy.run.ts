@@ -5,10 +5,12 @@ import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
+import { hostedState } from './infra/state.ts'
 import { deploymentTargetFromConfig, requireRunnableTarget } from './infra/targets.ts'
 
 /**
@@ -80,6 +82,10 @@ const localStack = () =>
           DATABASE_URL: databaseUrl,
           PORT: '5173',
           OPENCODE_API_KEY: environment.openCodeKey,
+          ...Option.match(environment.openRouterKey, {
+            onNone: () => ({}),
+            onSome: (key) => ({ OPENROUTER_API_KEY: key }),
+          }),
           EXPLABS_API_KEY: environment.modelGatewayKey,
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
           VIVID_SERVER_URL: target.serverUrl,
@@ -159,7 +165,8 @@ const railwayStack = () =>
     deployTarget.stackName,
     {
       providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
-      state: Alchemy.localState(),
+      /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
+      state: hostedState(deployTarget.stackName),
     },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)

@@ -1,7 +1,6 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": ["../../../tsconfig.base.json", "../../../tsconfig.hermes.json"],
   "compilerOptions": {
-    "lib": ["ES2022", "DOM"],
     "noEmit": false,
     "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo",
     "composite": true,

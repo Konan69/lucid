@@ -2,7 +2,6 @@ import type { DeliveredMessage } from '@flue/runtime'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
   DeliveryScope,
-  LibraryFolderId,
   ThreadId,
   type RuntimeRunRequest,
   type ThreadOrigin,
@@ -12,7 +11,6 @@ import { NobodyToActFor, type Acting } from './client.ts'
 
 export interface DeliveryAuthority {
   readonly acting: Acting
-  readonly folder: Option.Option<LibraryFolderId>
 }
 
 const scopes = new Map<string, DeliveryAuthority>()
@@ -22,13 +20,8 @@ const decodeThread = Schema.decodeUnknownOption(ThreadId)
 const decodeTurn = Schema.decodeUnknownOption(
   Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0)),
 )
-const decodeFolder = Schema.decodeUnknownOption(
-  LibraryFolderId.check(
-    Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu),
-  ),
-)
 
-/** Scope arrives outside conversation text; malformed confinement is absent, never an invalid search filter. */
+/** The acting Person arrives outside conversation text and remains bound to this delivery. */
 export function recordScope(
   threadId: ThreadId,
   turn: number,
@@ -36,7 +29,6 @@ export function recordScope(
 ): DeliveryAuthority {
   const authority = {
     acting: { threadId, personId: scope.acting },
-    folder: decodeFolder(scope.libraryFolder),
   }
   scopes.set(keyOf(threadId, turn), authority)
   // Flue renders synchronously, so this projection needs a synchronous, oldest-out bound.
@@ -64,7 +56,6 @@ export function cachedAuthority(
     if (delivery.kind === 'user')
       return Option.map(origin, ({ creator }) => ({
         acting: { threadId, personId: creator },
-        folder: Option.none<LibraryFolderId>(),
       }))
     return Option.flatMap(turnOf(delivery), (turn) =>
       Option.fromUndefinedOr(scopes.get(keyOf(threadId, turn))),

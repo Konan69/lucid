@@ -2,7 +2,7 @@ import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { PersonId, RunId, RunState, ThreadId } from '@vivid/contracts'
+import { Person, PersonId, RunId, RunState, ThreadId, Workspace } from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
   ThreadTitleModelUnavailable,
@@ -72,7 +72,22 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       .insert(personTable)
       .values({ id: personId, name: 'Ada', email: `${personId}@example.test` }),
   )
-  yield* store.ensure({ id: threadId, title, titleSource, personId, companyId: null })
+  yield* store.create(
+    {
+      person: Person.make({
+        id: personId,
+        name: 'Ada',
+        email: `${personId}@example.test`,
+        image: null,
+      }),
+      workspace: Workspace.cases.Personal.make({}),
+      by: 'person',
+      threadId: Option.none(),
+    },
+    { id: threadId, title, projectId: null },
+  )
+  // Assigned-title cases need their original provenance before the generation under test starts.
+  yield* database.run(database.update(threads).set({ titleSource }).where(eq(threads.id, threadId)))
   const settlement = yield* Deferred.make<Settlement>()
   const completion = yield* Deferred.make<Completion, ProviderMalformed>()
   const requests = yield* Queue.unbounded<Parameters<MemoryModel['Service']['complete']>[0]>()

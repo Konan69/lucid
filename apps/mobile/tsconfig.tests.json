@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo",
+    "types": ["react", "node"]
+  },
+  "files": [],
+  "include": ["app.config.ts", "design-reference/**/*.ts"],
+  "exclude": [],
+  "references": [
+    {
+      "path": "../../packages/client/state/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/client/rpc/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.types.json"
+    }
+  ]
+}

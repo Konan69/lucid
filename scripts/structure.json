@@ -1,0 +1,15 @@
+{
+  "plugins": [],
+  "categories": {
+    "correctness": "off"
+  },
+  "jsPlugins": [
+    {
+      "name": "vivid-structure",
+      "specifier": "./structure.mjs"
+    }
+  ],
+  "rules": {
+    "vivid-structure/source": "error"
+  }
+}

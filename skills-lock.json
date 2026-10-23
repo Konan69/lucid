@@ -265,6 +265,14 @@
       "mergedCommit": "8cff207d4e27a55eca0689722d06b278d70646f1",
       "mergedAt": "2026-09-19",
       "computedHash": "dc308e3a59c17587f2765e23065c4fa35fe8e736e4d695f82308b368624ecba2"
+    },
+    "verify-vivid": {
+      "source": "Vivid owner verification workflow",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/verify-vivid",
+      "mergedCommit": "local-2026-10-21",
+      "mergedAt": "2026-10-21",
+      "computedHash": "ed51313d93064a4d559bbd4933bef7c82ffd2376a1e6046caf4e153faff81b5c"
     }
   }
 }

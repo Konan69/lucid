@@ -33,14 +33,6 @@ export type RunId = typeof RunId.Type
 export const NotificationId = Schema.String.pipe(Schema.brand('NotificationId'))
 /** Decoded notification identifier. */
 export type NotificationId = typeof NotificationId.Type
-/** Durable Routine identifier. */
-export const RoutineId = Schema.String.pipe(Schema.brand('RoutineId'))
-/** Decoded Routine identifier. */
-export type RoutineId = typeof RoutineId.Type
-/** Durable Routine occurrence identifier. */
-export const OccurrenceId = Schema.String.pipe(Schema.brand('OccurrenceId'))
-/** Decoded Routine occurrence identifier. */
-export type OccurrenceId = typeof OccurrenceId.Type
 /** Durable Library item identifier. */
 export const LibraryItemId = Schema.String.pipe(Schema.brand('LibraryItemId'))
 /** Decoded Library item identifier. */

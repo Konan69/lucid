@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
-import { LibraryFolderId, PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
+import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
@@ -86,8 +86,8 @@ export type ThreadAudience = typeof ThreadAudience.Type
 /**
  * What a Thread needs from the Person looking at it, computed from its Runs and never set by hand.
  *
- * - `NeedsYou`: a question or an Approval addressed to this Person is waiting.
- * - `Working`: a Run is in progress.
+ * - `Working`: a Run is in progress, even with a question open: Vivid keeps working after it asks.
+ * - `NeedsYou`: nothing is running and a question or an Approval addressed to this Person waits.
  * - `Unread`: something happened since this Person last opened it.
  * - `Quiet`: nothing to do.
  */
@@ -125,12 +125,6 @@ export const OpenFirstThreadResult = Schema.TaggedUnion({
 })
 export type OpenFirstThreadResult = typeof OpenFirstThreadResult.Type
 
-/** A standing check can open private work using words, never ownership or runtime identifiers. */
-export const OpenThreadRequest = Schema.Struct({
-  title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
-  context: Schema.NonEmptyString.check(Schema.isMaxLength(4000)),
-})
-
 /** Partial Thread fields a participant may change. */
 export const PatchThreadRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
@@ -161,15 +155,16 @@ export const ThreadResponse = Schema.Struct({ thread: Thread })
 export interface ThreadResponse extends Schema.Schema.Type<typeof ThreadResponse> {}
 
 /**
- * What started a Run. A Person's Message, a Routine that came due, or a returning decision.
+ * What started a Run. A Person's Message, an Integration event, or a returning decision.
  * Each names the Person on whose behalf Vivid acts for the length of the Run.
  */
 export const RunOrigin = Schema.TaggedUnion({
   Message: { person: PersonSummary },
   FirstConversation: { person: PersonSummary },
-  Routine: { person: PersonSummary, routineName: Schema.String },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
+  /** An Integration event a Watch subscribed to, named by the Watch. */
+  Watch: { person: PersonSummary, watchName: Schema.String },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -248,7 +243,10 @@ export const ThreadDetail = Schema.Struct({
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
-/** A client saying it has a Thread open. Sent on a short interval; silence ends the presence. */
+/**
+ * A client saying it has a Thread open and in front, and whether something is typed in it. It is
+ * held open as `BePresent`, and a change of `typing` is a new hold in place of the old one.
+ */
 export const PresenceRequest = Schema.Struct({
   threadId: ThreadId,
   typing: Schema.Boolean,
@@ -261,16 +259,16 @@ export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceReque
  */
 export const SignalType = Schema.Literals([
   'message',
-  'schedule',
   'approval',
   'answer',
   'first-conversation',
+  // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
+  'event',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
 /**
- * Who a delivery is for and what it may reach: the Person Vivid acts for, and the Library folder
- * the work is confined to when there is one (a Routine's own folder).
+ * Who a delivery is for: the Person Vivid acts for.
  *
  * This is never written into the conversation. Flue shows a delivery's attributes to the model as
  * text, so anything put there is something the model can read, repeat to the people in a shared
@@ -279,7 +277,6 @@ export type SignalType = typeof SignalType.Type
  */
 export const DeliveryScope = Schema.Struct({
   acting: PersonId,
-  libraryFolder: Schema.NullOr(LibraryFolderId),
 }).annotate({ identifier: 'DeliveryScope', title: 'Delivery scope' })
 export interface DeliveryScope extends Schema.Schema.Type<typeof DeliveryScope> {}
 

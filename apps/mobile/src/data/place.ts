@@ -1,5 +1,5 @@
 import { LibraryFolderId, LibraryShelf, ProjectId, ThreadId } from '@vivid/contracts'
-import { Option, Schema } from 'effect'
+import { Array as Arr, Option, Record, Schema } from 'effect'
 
 /**
  * Where the Person was: which Thread the first screen showed and which pages were open over it,
@@ -24,7 +24,7 @@ const Page = Schema.Union([
   Schema.Struct({
     name: Schema.Literals([
       'Computer',
-      'Routines',
+      'Feed',
       'Library',
       'Projects',
       'Settings',
@@ -66,8 +66,38 @@ export const Places = Schema.Record(Schema.String, Schema.Record(Schema.String, 
 export type Places = typeof Places.Type
 
 const PlacesText = Schema.fromJsonString(Places)
-/** Reads the file's text. Text in a shape this build does not know is nothing kept. */
-export const decodePlaces = Schema.decodeUnknownOption(PlacesText)
+
+/**
+ * A place as the file holds it, before its pages are read. The pages are left unread here so that
+ * each is read on its own (`pageOf`) in `decodePlaces`.
+ */
+const KeptPlace = Schema.Struct({
+  thread: Schema.OptionFromNullOr(ThreadId),
+  pages: Schema.Array(Schema.Unknown),
+})
+const KeptText = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.Record(Schema.String, KeptPlace)),
+)
+const readKept = Schema.decodeUnknownOption(KeptText)
+
+/** One kept place with each of its pages read on its own; a page that does not read is dropped. */
+const placeOfKept = (kept: typeof KeptPlace.Type): Place => ({
+  thread: kept.thread,
+  pages: Arr.getSomes(kept.pages.map((page) => pageOf(page))),
+})
+
+/**
+ * Reads the file's text. Text in a shape this build does not know is nothing kept, but a page this
+ * build no longer draws is only that page: it is dropped, and the Thread in front, the other
+ * pages and every other workspace are kept as they were. The file is written by older builds too,
+ * and a page can be retired (Routines went on 16 October 2026); read as one schema, a single
+ * retired page made the whole file unreadable, every workspace opened on the greeting, and the
+ * next write put that empty record over what had been kept.
+ */
+export const decodePlaces = (text: string): Option.Option<Places> =>
+  Option.map(readKept(text), (kept) =>
+    Record.map(kept, (workspaces) => Record.map(workspaces, placeOfKept)),
+  )
 /** The file's text for what is kept. */
 export const encodePlaces = Schema.encodeOption(PlacesText)
 

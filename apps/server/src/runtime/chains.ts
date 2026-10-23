@@ -135,6 +135,34 @@ export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: s
 export type ChainFixture = Effect.Success<ReturnType<typeof chainFixture>>
 
 /**
+ * A Person who is already signed in somewhere else, by the session cookie the proof was given,
+ * with one new private Thread. For proofs that need something only a real Person has, such as a
+ * desktop app attached to the server as them (`computers/egress/address.live.test.ts`).
+ *
+ * Nobody is signed up and nothing is cleaned up: the Thread stays in that Person's account. No
+ * database is named, so this can be pointed at any running server the cookie belongs to.
+ */
+export const chainSession = Effect.fn('ThreadProof.session')(function* (
+  cookie: Redacted.Redacted,
+  title: string,
+) {
+  const server = yield* Config.URL('VIVID_SERVER_URL')
+  const origin = yield* Config.URL('PUBLIC_URL')
+  const session = Redacted.value(cookie)
+  const rpcContext = yield* Layer.build(
+    VividRpcClient.layer({
+      url: new URL('/api/rpc', server).href,
+      headers: { cookie: session, origin: origin.origin },
+    }).pipe(Layer.provide(NodeHttpClient.layerUndici)),
+  )
+  const rpc = yield* VividRpcClient.pipe(Effect.provideContext(rpcContext))
+  const { personId } = yield* rpc.GetSettings()
+  const threadId = ThreadId.make(NodeCrypto.randomUUID())
+  yield* rpc.CreateThread({ id: threadId, title, projectId: null })
+  return yield* chainThread({ personId, rpc, server, origin, cookie: session }, threadId)
+})
+
+/**
  * A Person who has just arrived. They start nothing: the server opens their first Thread and
  * admits the Run in which Vivid speaks first (`threads/arrival.ts`), exactly as a client's first
  * launch asks it to. The Thread is the server's, so its id comes from the answer.

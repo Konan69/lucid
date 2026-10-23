@@ -6,6 +6,7 @@ import {
   type RunCodeRequest,
   type ThreadId,
   ApprovalId,
+  type DisplayToolKind,
 } from '@vivid/contracts'
 import {
   Cause,
@@ -28,6 +29,7 @@ import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { CodeComputer, type CodeComputerService, type Guest } from './computer.ts'
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
+import { DisplayPool, displayPoolLayer } from './pool.ts'
 
 /** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
@@ -50,11 +52,19 @@ const CallStep = Schema.TaggedUnion({
 })
 type CallStep = typeof CallStep.Type
 
+interface Program {
+  readonly request: RunCodeRequest
+  readonly boundary: CodeBoundary
+}
+
+export interface DisplayProgram extends Program {
+  readonly kind: DisplayToolKind
+}
+
 export interface CodeProcessService {
-  readonly run: (
-    input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
-    dispatch: Dispatch,
-  ) => Effect.Effect<CodeOutcome>
+  readonly run: (input: Program, dispatch: Dispatch) => Effect.Effect<CodeOutcome>
+  /** Display readers share only identical in-flight work, outside Vivid's Thread and process permits. */
+  readonly runDisplay: (input: DisplayProgram, dispatch: Dispatch) => Effect.Effect<CodeOutcome>
 }
 
 /** A supervised program is an authority seam, not a reusable guest session. */
@@ -462,7 +472,7 @@ const exchange = Effect.fn('Code.exchange')(function* (
  */
 const execute = Effect.fn('Code.supervise')(function* (
   computer: CodeComputerService,
-  input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
+  input: Program,
   dispatch: Dispatch,
 ) {
   const state = new Execution()
@@ -507,36 +517,47 @@ const execute = Effect.fn('Code.supervise')(function* (
   return yield* Effect.raceFirst(state.supervise(program), deadline)
 })
 
-/** Fail-fast capacity avoids running stale requests after another program has finished. */
+/** Admission refusals have no receipts because the Computer was never asked to run anything. */
+function notAdmitted(failure: CodeFailure) {
+  return CodeOutcome.cases.Failed.make({
+    failure,
+    calls: [],
+    logs: [],
+    logsTruncated: false,
+  })
+}
+
+/** Fail-fast pools avoid running stale requests; display fan-out cannot take Vivid's own capacity. */
 export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
     const computer = yield* CodeComputer
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
+    const busy = notAdmitted(
+      CodeFailure.cases.Busy.make({
+        message: 'Vivid is busy with other work. Try again in a moment.',
+      }),
+    )
+    const oversized = notAdmitted(
+      CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
+    )
+    const displays = yield* DisplayPool
     return CodeProcess.of({
       run: Effect.fn('Code.run')(function* (input, dispatch) {
-        const unavailable = CodeOutcome.cases.Failed.make({
-          failure: CodeFailure.cases.Unavailable.make({}),
-          calls: [],
-          logs: [],
-          logsTruncated: false,
-        })
-        if (bytes(input.request.code) > budgets.source)
-          return CodeOutcome.cases.Failed.make({
-            failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
-            calls: [],
-            logs: [],
-            logsTruncated: false,
-          })
+        if (bytes(input.request.code) > budgets.source) return oversized
         const thread = input.boundary.thread
-        if (active.has(thread)) return unavailable
+        if (active.has(thread)) return busy
         active.add(thread)
         const admitted = yield* capacity
           .withPermitsIfAvailable(1)(execute(computer, input, dispatch))
           .pipe(Effect.ensuring(Effect.sync(() => active.delete(thread))))
-        return Option.getOrElse(admitted, () => unavailable)
+        return Option.getOrElse(admitted, () => busy)
+      }),
+      runDisplay: Effect.fn('Code.runDisplay')(function* (input, dispatch) {
+        if (bytes(input.request.code) > budgets.source) return oversized
+        return yield* displays.run(input, execute(computer, input, dispatch))
       }),
     })
   }),
-)
+).pipe(Layer.provide(displayPoolLayer))

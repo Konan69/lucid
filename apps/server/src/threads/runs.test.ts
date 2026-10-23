@@ -1,15 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import {
-  LibraryFolderId,
-  Person,
-  PersonId,
-  RunId,
-  RunState,
-  SessionId,
-  ThreadId,
-  Workspace,
-} from '@vivid/contracts'
+import { Person, PersonId, RunId, RunState, SessionId, ThreadId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Array as Arr, Effect, Layer, Option, Order, Result } from 'effect'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -77,7 +68,6 @@ layer(testLayer)((it) => {
             id,
             personId,
             threadId,
-            libraryFolder: null,
             origin: StoredRunOrigin.cases.Message.make({}),
           })
           expect(yield* store.end(id, RunEnding.cases.Failed.make({ reason: 'TimedOut' }))).toBe(
@@ -126,7 +116,6 @@ layer(testLayer)((it) => {
               id,
               personId,
               threadId,
-              libraryFolder: null,
               origin: StoredRunOrigin.cases.Message.make({}),
             })
             yield* store.admitted({ runId: id, offset: '0', incarnation: 'test' })
@@ -139,7 +128,6 @@ layer(testLayer)((it) => {
             id: foreign,
             personId,
             threadId,
-            libraryFolder: null,
             origin: StoredRunOrigin.cases.Message.make({}),
           })
           yield* store.admitted({ runId: foreign, offset: '0', incarnation: 'test' })
@@ -159,30 +147,25 @@ layer(testLayer)((it) => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('allocates racing turns once and retains confinement on replay', () =>
+    it.effect('allocates racing turns once and retains acting authority on replay', () =>
       Effect.gen(function* () {
         const { personId, threadId } = yield* fixture()
         const store = yield* RunStore
-        const folder = LibraryFolderId.make(NodeCrypto.randomUUID())
         const inputs = Array.from({ length: 8 }, () => ({
           id: RunId.make(NodeCrypto.randomUUID()),
           threadId,
           personId,
           origin: StoredRunOrigin.cases.Message.make({}),
-          libraryFolder: folder,
         }))
         const turns = yield* Effect.forEach(inputs, (input) => reserve(input), {
           concurrency: 'unbounded',
         })
         expect(Arr.sort(turns, Order.Number)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
-        const replayed = yield* Effect.forEach(inputs, (input) =>
-          reserve({ ...input, libraryFolder: LibraryFolderId.make(NodeCrypto.randomUUID()) }),
-        )
+        const replayed = yield* Effect.forEach(inputs, reserve)
         expect(replayed).toEqual(turns)
         for (const turn of turns)
           expect(yield* store.scope({ threadId, turn })).toEqual({
             acting: personId,
-            libraryFolder: folder,
           })
         expect(
           Arr.sort(
@@ -199,7 +182,6 @@ layer(testLayer)((it) => {
         Effect.gen(function* () {
           const { personId, threadId } = yield* fixture()
           const turn = yield* reserve({
-            libraryFolder: null,
             id: RunId.make(NodeCrypto.randomUUID()),
             threadId,
             personId,
@@ -221,7 +203,7 @@ layer(testLayer)((it) => {
           const scope = yield* threadHandlers
             .GetDeliveryScope({ threadId, turn })
             .pipe(Effect.provideService(AuthContext, AuthState.Runtime()))
-          expect(scope).toEqual({ acting: personId, libraryFolder: null })
+          expect(scope).toEqual({ acting: personId })
         }).pipe(Effect.scoped),
     )
   })

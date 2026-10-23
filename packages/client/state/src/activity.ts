@@ -1,3 +1,4 @@
+import { ToolName } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 
 /**
@@ -30,9 +31,7 @@ const Asked = Schema.Struct({
   content: text,
   title: text,
   question: text,
-  /** `forget` says what to forget; `correct` says what is true now. */
-  what: text,
-  now: text,
+  site: text,
 })
 type Asked = typeof Asked.Type
 
@@ -49,7 +48,8 @@ const Answered = Schema.Struct({
   results: list,
   tools: list,
   memories: list,
-  routines: list,
+  watches: list,
+  message: text,
 })
 type Answered = typeof Answered.Type
 
@@ -90,7 +90,26 @@ const counted = (items: Option.Option<ReadonlyArray<unknown>>, one: string, many
 
 const nothing = (): ReadonlyArray<Option.Option<string>> => []
 
+/** Tools without authored step wording share the historical unknown-step behavior. A purpose
+ * becomes the running/done label, while failure keeps the existing plain failure line. */
+const UNKNOWN: Step = {
+  said: { running: 'Working', done: 'Did something', failed: 'Something did not work' },
+  named: (asked) =>
+    Option.map(said(asked.summary), (words) => ({
+      ...UNKNOWN.said,
+      running: words,
+      done: words,
+    })),
+  detail: nothing,
+}
+
 const STEPS = {
+  // These tools already render as unknown steps. Total coverage must preserve those words.
+  read_note: UNKNOWN,
+  write_note: UNKNOWN,
+  delete_note: UNKNOWN,
+  make_integration: UNKNOWN,
+  task: UNKNOWN,
   search_library: {
     said: {
       running: 'Searching the Library',
@@ -155,22 +174,6 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.content)],
   },
-  forget: {
-    said: {
-      running: 'Forgetting',
-      done: 'Forgot something',
-      failed: 'Could not forget that',
-    },
-    detail: (asked) => [said(asked.what)],
-  },
-  correct: {
-    said: {
-      running: 'Correcting what it knows',
-      done: 'Corrected what it knows',
-      failed: 'Could not correct that',
-    },
-    detail: (asked) => [said(asked.now)],
-  },
   read_skill: {
     said: {
       running: 'Reading how it does this',
@@ -197,22 +200,6 @@ const STEPS = {
       failed: 'Could not save the steps',
     },
     detail: (asked) => [said(asked.name)],
-  },
-  create_routine: {
-    said: {
-      running: 'Setting up a routine',
-      done: 'Set up a routine',
-      failed: 'Could not set up the routine',
-    },
-    detail: (asked) => [said(asked.name)],
-  },
-  list_routines: {
-    said: {
-      running: 'Checking the routines',
-      done: 'Checked the routines',
-      failed: 'Could not read the routines',
-    },
-    detail: (_asked, answered) => [counted(answered.routines, 'routine', 'routines')],
   },
   bash: {
     said: {
@@ -288,6 +275,14 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.summary)],
   },
+  copy_signin: {
+    said: {
+      running: 'Copying your sign-in',
+      done: 'Copied your sign-in',
+      failed: 'Sign-in not copied',
+    },
+    detail: (asked, answered) => [said(asked.site), said(answered.message)],
+  },
   run_code: {
     said: {
       running: 'Writing a program',
@@ -360,14 +355,6 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
-  find_events: {
-    said: {
-      running: 'Looking at what can start a routine',
-      done: 'Looked at what can start a routine',
-      failed: 'Could not look at what can start a routine',
-    },
-    detail: (asked) => [said(asked.account)],
-  },
   notify_person: {
     said: {
       running: 'Sending you a notification',
@@ -376,42 +363,50 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
-  open_thread: {
+  find_events: {
     said: {
-      running: 'Opening a thread for this',
-      done: 'Opened a thread for this',
-      failed: 'Could not open the thread',
+      running: 'Looking at what can be watched',
+      done: 'Looked at what can be watched',
+      failed: 'Could not look at what can be watched',
+    },
+    detail: (asked) => [said(asked.account)],
+  },
+  watch: {
+    said: {
+      running: 'Starting a watch',
+      done: 'Started a watch',
+      failed: 'Could not start the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  list_watches: {
+    said: {
+      running: 'Checking what is watched',
+      done: 'Checked what is watched',
+      failed: 'Could not read what is watched',
+    },
+    detail: (_asked, answered) => [counted(answered.watches, 'watch', 'watches')],
+  },
+  stop_watching: {
+    said: {
+      running: 'Stopping a watch',
+      done: 'Stopped a watch',
+      failed: 'Could not stop the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  post: {
+    said: {
+      running: 'Putting it on your Feed',
+      done: 'Put it on your Feed',
+      failed: 'Could not put it on your Feed',
     },
     detail: (asked) => [said(asked.title)],
   },
-  show: {
-    said: {
-      running: 'Putting it on screen',
-      done: 'Put it on screen',
-      failed: 'Could not show it',
-    },
-    detail: nothing,
-  },
-} satisfies Record<string, Step>
+} satisfies Record<ToolName, Step>
 
-/** A tool this client has not heard of: still a true line, with nothing made up about it. */
-const UNKNOWN: Step = {
-  said: { running: 'Working', done: 'Did something', failed: 'Something did not work' },
-  detail: nothing,
-}
-
-/**
- * The line for a tool this client has no words for. When Vivid said what the step is for, that is
- * the line while it runs and once it is done; "Did something" above a sentence saying what was
- * done would be noise.
- */
-const unheardOf = (purpose: Option.Option<string>): Step =>
-  Option.match(purpose, {
-    onNone: () => UNKNOWN,
-    onSome: (words) => ({ ...UNKNOWN, said: { ...UNKNOWN.said, running: words, done: words } }),
-  })
-
-const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
+/** Old histories and newer runtimes can name tools this client no longer describes. */
+const readToolName = Schema.decodeUnknownOption(ToolName)
 
 const NOTHING_ASKED: Asked = {
   query: Option.none(),
@@ -427,18 +422,18 @@ const NOTHING_ASKED: Asked = {
   content: Option.none(),
   title: Option.none(),
   question: Option.none(),
-  what: Option.none(),
-  now: Option.none(),
+  site: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {
   results: Option.none(),
   tools: Option.none(),
   memories: Option.none(),
-  routines: Option.none(),
+  watches: Option.none(),
   ok: Option.none(),
   created: Option.none(),
   changed: Option.none(),
+  message: Option.none(),
 }
 
 /**
@@ -502,8 +497,9 @@ export function describeToolCall(
   // input in the runtime). Those are the words that tell this call from any other, so they lead
   // the detail of every step; before, only the Computer's steps showed them.
   const purpose = said(read.summary)
-  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () =>
-    unheardOf(purpose),
+  const known: Step = Option.getOrElse(
+    Option.map(readToolName(toolName), (name) => STEPS[name]),
+    () => UNKNOWN,
   )
   // A call that names its subject is said with it; the detail function is the step's own.
   const step: Step =

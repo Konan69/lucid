@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect'
 import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
 import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
+import { CopySignInRequest, SignInRead } from './signins.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -266,7 +267,27 @@ export const Device = Schema.Struct({
 export interface Device extends Schema.Schema.Type<typeof Device> {}
 
 export const DeviceResponse = Schema.Struct({ device: Device })
-export const DeviceListResponse = Schema.Struct({ devices: Schema.Array(Device) })
+/**
+ * How long a waiting computer counts as asking after its desktop app last enrolled. A desktop app
+ * waiting to be allowed enrols again at least every thirty seconds (`apps/desktop/src/main/device.ts`,
+ * its retry schedule), so two of those are a minute: an app that is open is never missed, and
+ * one that was closed stops being asked about within a minute.
+ */
+export const DEVICE_ASKING_MILLIS = 60_000
+
+/**
+ * The Person's computers, and which of the waiting ones are asking to be allowed right now: their
+ * desktop app is open and enrolled within `DEVICE_ASKING_MILLIS`. A computer waiting to be
+ * allowed may not listen (only an allowed one is `Connected`), so this is the only way a surface
+ * can tell an app that is open and waiting from a row left by an app that was closed or removed.
+ *
+ * It is beside the list and not a case of `DevicePresence` on purpose: the desktop app decodes
+ * its own `Device` when it enrols, and an installed app would refuse a case it does not know.
+ */
+export const DeviceListResponse = Schema.Struct({
+  devices: Schema.Array(Device),
+  asking: Schema.Array(DeviceId),
+})
 
 /** What the desktop app sends once it is signed in. Repeating it changes nothing. */
 export const EnrolDeviceRequest = Schema.Struct({ installation: InstallationId, name: DeviceName })
@@ -296,6 +317,7 @@ export type DeviceRequestId = typeof DeviceRequestId.Type
 export const DeviceWork = Schema.TaggedUnion({
   Page: { action: BrowserAction },
   Window: { action: WindowAction },
+  SignIn: CopySignInRequest.fields,
 })
 export type DeviceWork = typeof DeviceWork.Type
 
@@ -337,6 +359,7 @@ export const DeviceAnswer = Schema.TaggedUnion({
   Did: { result: WindowResult },
   Declined: { reason: WindowRefusal },
   Failed: {},
+  SignIn: { read: SignInRead },
 })
 export type DeviceAnswer = typeof DeviceAnswer.Type
 

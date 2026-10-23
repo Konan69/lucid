@@ -1,0 +1,113 @@
+diff --git a/dist/WithPreviewRenderer-DT8MjE5L.cjs b/dist/WithPreviewRenderer-DT8MjE5L.cjs
+index d92ea63bb9b7539decab2d028fffc2d559a1103f..07cb903ad053ce0e42005c2320197e7b36800684 100644
+--- a/dist/WithPreviewRenderer-DT8MjE5L.cjs
++++ b/dist/WithPreviewRenderer-DT8MjE5L.cjs
+@@ -1289,6 +1289,8 @@ Object.defineProperty(exports, "FormValidationContext", {
+ 		return FormValidationContext;
+ 	}
+ });
++exports.RendererContext$native = RendererContext;
++exports.RenderNode$native = RenderNode;
+ Object.defineProperty(exports, "Renderer", {
+ 	enumerable: true,
+ 	get: function() {
+diff --git a/dist/exports-CLfR509v.mjs b/dist/exports-CLfR509v.mjs
+index 91977624c791794c1c63bb9e2f604ad967b07e5a..2c62da7858fe9464bf0a16eff342a5b38e731c34 100644
+--- a/dist/exports-CLfR509v.mjs
++++ b/dist/exports-CLfR509v.mjs
+@@ -1256,4 +1256,5 @@ const WithPreviewRenderer = Object.assign(DefaultWithPreviewRenderer, {
+ //#endregion
+ export { useRendererQuery as A, createLibrary$1 as B, useRendererPreview as C, useStateField as D, useFormValidation as E, useIsStreaming as F, useRenderNode as I, useSetDefaultValue as L, useFormName as M, useGetFieldValue as N, reactive as O, useIsQueryLoading as P, useSetFieldValue as R, WithPreviewRenderer as S, useCreateFormValidation as T, defineComponent$1 as V, parseRules as _, buildMessage as a, tagSchemaId as b, createStreamingParser$1 as c, extractToolResult$1 as d, generatePrompt as f, parseMessage$1 as g, mergeStatements as h, action as i, FormNameContext as j, Renderer as k, defineAction as l, isReactiveAssign as m, BuiltinActionType$1 as n, builtInValidators as o, generateSystemPrompt as p, ToolNotFoundError$1 as r, createParser as s, ACTION_STEPS$1 as t, defineFunction as u, parseStructuredRules as v, FormValidationContext as w, validate$1 as x, steps as y, useTriggerAction as z };
+ 
++export { RendererContext as RendererContext$native, RenderNode as RenderNode$native };
+ //# sourceMappingURL=exports-CLfR509v.mjs.map
+\ No newline at end of file
+diff --git a/dist/index.native.cjs b/dist/index.native.cjs
+index a03293d470124948159676f1dfc7142e8daa4dfe..fcb5e0459a384a5df006cdfb911568d2b03bb431 100644
+--- a/dist/index.native.cjs
++++ b/dist/index.native.cjs
+@@ -1,6 +1,38 @@
+ Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+ const require_WithPreviewRenderer = require("./WithPreviewRenderer-DT8MjE5L.cjs");
+ let _openuidev_lang_core = require("@openuidev/lang-core");
++const { useContext } = require("react");
++const { jsx, jsxs } = require("react/jsx-runtime");
++const { View } = require("react-native");
++const BaseRenderer = require_WithPreviewRenderer.Renderer;
++const RendererContext$native = require_WithPreviewRenderer.RendererContext$native;
++const RenderNode$native = require_WithPreviewRenderer.RenderNode$native;
++
++// Vivid patch: 1.0.0's default Renderer content is two HTML <div>s (Renderer.tsx
++// DefaultRendererContent / RendererContent), which React Native cannot draw ("View config getter
++// callback for component `div`"). The documented React Native path (docs/integrations/react-native)
++// uses plain <Renderer>, so the native entry draws the same content in a View instead.
++function NativeRendererContent({ style, ...props }) {
++	const context = useContext(RendererContext$native);
++	if (!context) throw new Error("Renderer slots must be used within Renderer.Root or Renderer.");
++	const { root, query, queryLoader } = context;
++	if (!root) return null;
++	return jsxs(View, {
++		...props,
++		style: [{ position: "relative" }, style],
++		children: [query.isLoading && queryLoader != null ? queryLoader : null, jsx(View, {
++			style: { opacity: query.isLoading ? .7 : 1 },
++			children: jsx(RenderNode$native, { node: root })
++		})]
++	});
++}
++function NativeRenderer({ children, ...props }) {
++	return jsx(BaseRenderer.Root, {
++		...props,
++		children: children === void 0 ? jsx(NativeRendererContent, {}) : children
++	});
++}
++const Renderer = Object.assign(NativeRenderer, { ...BaseRenderer, Content: NativeRendererContent });
+ Object.defineProperty(exports, "ACTION_STEPS", {
+ 	enumerable: true,
+ 	get: function() {
+@@ -15,7 +47,7 @@ Object.defineProperty(exports, "BuiltinActionType", {
+ });
+ exports.FormNameContext = require_WithPreviewRenderer.FormNameContext;
+ exports.FormValidationContext = require_WithPreviewRenderer.FormValidationContext;
+-exports.Renderer = require_WithPreviewRenderer.Renderer;
++exports.Renderer = Renderer;
+ Object.defineProperty(exports, "ToolNotFoundError", {
+ 	enumerable: true,
+ 	get: function() {
+diff --git a/dist/index.native.mjs b/dist/index.native.mjs
+index 85e4ebb65693efe5b828e0d065e42957cfdbbd01..a3c6054a6317c91bc6491496e680591b81abf24e 100644
+--- a/dist/index.native.mjs
++++ b/dist/index.native.mjs
+@@ -1,2 +1,31 @@
+-import { A as useRendererQuery, B as createLibrary, C as useRendererPreview, D as useStateField, E as useFormValidation, F as useIsStreaming, I as useRenderNode, L as useSetDefaultValue, M as useFormName, N as useGetFieldValue, O as reactive, P as useIsQueryLoading, R as useSetFieldValue, S as WithPreviewRenderer, T as useCreateFormValidation, V as defineComponent, _ as parseRules, a as buildMessage, b as tagSchemaId, c as createStreamingParser, d as extractToolResult, f as generatePrompt, g as parseMessage, h as mergeStatements, i as action, j as FormNameContext, k as Renderer, l as defineAction, m as isReactiveAssign, n as BuiltinActionType, o as builtInValidators, p as generateSystemPrompt, r as ToolNotFoundError, s as createParser, t as ACTION_STEPS, u as defineFunction, v as parseStructuredRules, w as FormValidationContext, x as validate, y as steps, z as useTriggerAction } from "./exports-CLfR509v.mjs";
++import { A as useRendererQuery, B as createLibrary, C as useRendererPreview, D as useStateField, E as useFormValidation, F as useIsStreaming, I as useRenderNode, L as useSetDefaultValue, M as useFormName, N as useGetFieldValue, O as reactive, P as useIsQueryLoading, R as useSetFieldValue, S as WithPreviewRenderer, T as useCreateFormValidation, V as defineComponent, _ as parseRules, a as buildMessage, b as tagSchemaId, c as createStreamingParser, d as extractToolResult, f as generatePrompt, g as parseMessage, h as mergeStatements, i as action, j as FormNameContext, k as BaseRenderer, RendererContext$native, RenderNode$native, l as defineAction, m as isReactiveAssign, n as BuiltinActionType, o as builtInValidators, p as generateSystemPrompt, r as ToolNotFoundError, s as createParser, t as ACTION_STEPS, u as defineFunction, v as parseStructuredRules, w as FormValidationContext, x as validate, y as steps, z as useTriggerAction } from "./exports-CLfR509v.mjs";
++import { useContext } from "react";
++import { jsx, jsxs } from "react/jsx-runtime";
++import { View } from "react-native";
++
++// Vivid patch: 1.0.0's default Renderer content is two HTML <div>s (Renderer.tsx
++// DefaultRendererContent / RendererContent), which React Native cannot draw ("View config getter
++// callback for component `div`"). The documented React Native path (docs/integrations/react-native)
++// uses plain <Renderer>, so the native entry draws the same content in a View instead.
++function NativeRendererContent({ style, ...props }) {
++	const context = useContext(RendererContext$native);
++	if (!context) throw new Error("Renderer slots must be used within Renderer.Root or Renderer.");
++	const { root, query, queryLoader } = context;
++	if (!root) return null;
++	return jsxs(View, {
++		...props,
++		style: [{ position: "relative" }, style],
++		children: [query.isLoading && queryLoader != null ? queryLoader : null, jsx(View, {
++			style: { opacity: query.isLoading ? .7 : 1 },
++			children: jsx(RenderNode$native, { node: root })
++		})]
++	});
++}
++function NativeRenderer({ children, ...props }) {
++	return jsx(BaseRenderer.Root, {
++		...props,
++		children: children === void 0 ? jsx(NativeRendererContent, {}) : children
++	});
++}
++const Renderer = Object.assign(NativeRenderer, { ...BaseRenderer, Content: NativeRendererContent });
+ export { ACTION_STEPS, BuiltinActionType, FormNameContext, FormValidationContext, Renderer, ToolNotFoundError, WithPreviewRenderer, action, buildMessage, builtInValidators, createLibrary, createParser, createStreamingParser, defineAction, defineComponent, defineFunction, extractToolResult, generatePrompt, generateSystemPrompt, isReactiveAssign, mergeStatements, parseMessage, parseRules, parseStructuredRules, reactive, steps, tagSchemaId, useCreateFormValidation, useFormName, useFormValidation, useGetFieldValue, useIsQueryLoading, useIsStreaming, useRenderNode, useRendererPreview, useRendererQuery, useSetDefaultValue, useSetFieldValue, useStateField, useTriggerAction, validate };

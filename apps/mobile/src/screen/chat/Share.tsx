@@ -5,7 +5,7 @@ import {
   type PersonId,
   type Thread,
 } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { Building2, Check, Lock, Users, type LucideIcon } from 'lucide-react-native'
@@ -15,6 +15,7 @@ import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
 import { Sheet } from '../../ui/Sheet'
 import { Button, HAIRLINE, Label, Notice, Press, radius } from '../../ui/ui'
+import { start } from '../../data/app'
 
 /** How far a Thread reaches, as the three choices the sheet offers. */
 type Reach = ThreadAudience['_tag']
@@ -58,15 +59,21 @@ export function Share({
     onSome: (value) => value.members.filter((member) => member.person.id !== me),
   })
 
-  async function save() {
-    setSaving(true)
-    const audience = audienceFor(reach, chosen)
-    const result = await data.change((client) => client.ShareThread({ id: thread.id, audience }))
-    setSaving(false)
-    setRefused(Result.isFailure(result))
-    if (Result.isFailure(result)) return
-    confirm()
-    onClose()
+  function save() {
+    return start(
+      Effect.gen(function* () {
+        setSaving(true)
+        const audience = audienceFor(reach, chosen)
+        const result = yield* data.changing((client) =>
+          client.ShareThread({ id: thread.id, audience }),
+        )
+        setSaving(false)
+        setRefused(Result.isFailure(result))
+        if (Result.isFailure(result)) return
+        confirm()
+        onClose()
+      }),
+    )
   }
 
   const toggle = (id: PersonId) => {

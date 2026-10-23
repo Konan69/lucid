@@ -5,8 +5,8 @@ import {
   type LibraryItem,
   type LibraryShelf,
 } from '@vivid/contracts'
-import type { LiveQuery } from '@vivid/state'
-import { Data, Option, Result } from 'effect'
+import { library, type LiveQuery } from '@vivid/state'
+import { Data, Effect, Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
@@ -18,7 +18,6 @@ import {
   Library as LibraryIcon,
   Upload,
 } from 'lucide-react-native'
-import * as library from '../../../web/src/data/library'
 import { addDocument, openDocument } from '../data/documents'
 import { commit, warn } from '../data/haptics'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
@@ -40,6 +39,7 @@ import {
   styles,
 } from '../ui/ui'
 import { useGo, useOpenThread, useMe, type Routes } from '../workspace'
+import { start } from '../data/app'
 
 /** One level of one shelf: which shelf, which folder on it (or its top), and the query read. */
 interface Level {
@@ -121,20 +121,24 @@ function useAdd(level: Level) {
   const data = useLiveData()
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<Option.Option<string>>(Option.none())
-  async function add() {
-    setBusy(true)
-    setSaid(Option.none())
-    const result = await data.run(
-      addDocument(data.session, { shelf: level.shelf, folderId: level.folderId }),
+  function add() {
+    return start(
+      Effect.gen(function* () {
+        setBusy(true)
+        setSaid(Option.none())
+        const result = yield* data.running(
+          addDocument(data.session, { shelf: level.shelf, folderId: level.folderId }),
+        )
+        setBusy(false)
+        if (Result.isFailure(result)) {
+          setSaid(Option.some(result.failure.message))
+          return
+        }
+        if (Option.exists(result.success, (uploaded) => uploaded.duplicate)) {
+          setSaid(Option.some('That file is already on this shelf.'))
+        } else if (Option.isSome(result.success)) commit()
+      }),
     )
-    setBusy(false)
-    if (Result.isFailure(result)) {
-      setSaid(Option.some(result.failure.message))
-      return
-    }
-    if (Option.exists(result.success, (uploaded) => uploaded.duplicate)) {
-      setSaid(Option.some('That file is already on this shelf.'))
-    } else if (Option.isSome(result.success)) commit()
   }
   return { busy, said, add }
 }
@@ -322,12 +326,12 @@ function NewFolder({ level, onClose }: { level: Level; onClose: () => void }) {
       action="Create folder"
       maxLength={120}
       onClose={onClose}
-      onSave={async (name) =>
-        refusalOf(
-          await data.change((client) =>
+      onSave={(name) =>
+        data
+          .changing((client) =>
             client.CreateLibraryFolder({ name, shelf: level.shelf, parentId: level.folderId }),
-          ),
-        )
+          )
+          .pipe(Effect.map(refusalOf))
       }
     />
   )
@@ -372,14 +376,16 @@ function FolderActions({ id, name }: { id: LibraryFolderId; name: string }) {
           action="Save"
           maxLength={120}
           onClose={() => setRenaming(false)}
-          onSave={async (next) => {
-            const result = await data.change((client) =>
-              client.PatchLibraryFolder({ id, patch: { name: next } }),
-            )
-            // The page was opened under the old name, which travelled with the route.
-            if (Result.isSuccess(result)) go.setParams({ name: next })
-            return refusalOf(result)
-          }}
+          onSave={(next) =>
+            Effect.gen(function* () {
+              const result = yield* data.changing((client) =>
+                client.PatchLibraryFolder({ id, patch: { name: next } }),
+              )
+              // The page was opened under the old name, which travelled with the route.
+              if (Result.isSuccess(result)) go.setParams({ name: next })
+              return refusalOf(result)
+            })
+          }
         />
       )}
     </>
@@ -408,26 +414,36 @@ function ItemSheet({
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function ask() {
-    setBusy(true)
-    const outcome = await startThread(data, {
-      message: `Read “${item.name}” in the Library and tell me what matters in it.`,
-      projectId: null,
-    })
-    setBusy(false)
-    if (Start.$is('Started')(outcome)) {
-      onClose()
-      openThread(outcome.id)
-      return
-    }
-    setRefused(Option.some(outcome.message))
+  function ask() {
+    return start(
+      Effect.gen(function* () {
+        setBusy(true)
+        const outcome = yield* startThread(data, {
+          message: `Read “${item.name}” in the Library and tell me what matters in it.`,
+          projectId: null,
+        })
+        setBusy(false)
+        if (Start.$is('Started')(outcome)) {
+          onClose()
+          openThread(outcome.id)
+          return
+        }
+        setRefused(Option.some(outcome.message))
+      }),
+    )
   }
 
-  async function open() {
-    setBusy(true)
-    const result = await data.run(openDocument(data.session, `/${item.id}/content`, item.name))
-    setBusy(false)
-    setRefused(refusalOf(result))
+  function open() {
+    return start(
+      Effect.gen(function* () {
+        setBusy(true)
+        const result = yield* data.running(
+          openDocument(data.session, `/${item.id}/content`, item.name),
+        )
+        setBusy(false)
+        setRefused(refusalOf(result))
+      }),
+    )
   }
 
   /**
@@ -435,13 +451,17 @@ function ItemSheet({
    * the file is put back, and the level says so: a file that silently reappears reads as a delete
    * that did nothing.
    */
-  async function discard() {
-    const result = await data.change(
-      (client) => client.DeleteLibraryItem({ id: item.id }),
-      () => level.query.expect(library.itemRemoved(item.id)),
+  function discard() {
+    return start(
+      Effect.gen(function* () {
+        const result = yield* data.changing(
+          (client) => client.DeleteLibraryItem({ id: item.id }),
+          () => level.query.expect(library.itemRemoved(item.id)),
+        )
+        if (Result.isFailure(result))
+          onUndeleted(`“${item.name}” could not be deleted, so it is back in the Library.`)
+      }),
     )
-    if (Result.isFailure(result))
-      onUndeleted(`“${item.name}” could not be deleted, so it is back in the Library.`)
   }
 
   /** Asks first, then leaves the sheet at once; the level shows what came of it. */
@@ -467,13 +487,13 @@ function ItemSheet({
         action="Save"
         maxLength={200}
         onClose={onClose}
-        onSave={async (name) =>
-          refusalOf(
-            await data.change(
+        onSave={(name) =>
+          data
+            .changing(
               (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
               () => level.query.expect(library.itemRenamed(item.id, name)),
-            ),
-          )
+            )
+            .pipe(Effect.map(refusalOf))
         }
       />
     )

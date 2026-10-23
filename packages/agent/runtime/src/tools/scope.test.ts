@@ -2,14 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import * as NodeHttp from 'node:http'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { ConfigProvider, Effect, Layer, Option } from 'effect'
-import {
-  DeliveryScope,
-  LibraryFolderId,
-  PersonId,
-  ReadPageOutcome,
-  ReadPageRequest,
-  ThreadId,
-} from '@vivid/contracts'
+import { PersonId, ReadPageOutcome, ReadPageRequest, ThreadId } from '@vivid/contracts'
 import { AuthContext, AuthState, runtimeHeaders } from '@vivid/contracts/auth'
 import { RpcAuthMiddleware, RpcFailure } from '@vivid/contracts/rpc'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -18,18 +11,13 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
-import { scopeLayer, Scope } from './scope.ts'
-import { cachedAuthority, recordScope } from '../delivery.ts'
-import { searchRequest } from './library.ts'
-import { settle } from './result.ts'
+import { scopeLayer } from './scope.ts'
 import { codeTools } from './code.ts'
 import { toolRunner } from './scope.ts'
 import { asActing } from '../client.ts'
 
-const folder = '3a1c68db-241e-4b59-a0aa-4b18867d6da1'
-
-/** Server scope is decoded independently of model input, with absent and malformed deliveries safe. */
-describe('Routine Library authority', () => {
+/** Tool authority comes from the server or the private Thread creator, independently of model input. */
+describe('Tool authority', () => {
   it.live('keeps the attributed HTTP RPC client alive until the Flue tool finishes', () =>
     Effect.gen(function* () {
       const headers: Record<string, string>[] = []
@@ -127,64 +115,6 @@ describe('Routine Library authority', () => {
           ),
         )
       }).pipe(Effect.provide(yield* Layer.build(server)))
-    }),
-  )
-  it('uses only a valid server signal folder and puts it in the search request', () => {
-    const threadId = ThreadId.make('scope-test-thread')
-    recordScope(
-      threadId,
-      1,
-      DeliveryScope.make({
-        acting: PersonId.make('MARK-person'),
-        libraryFolder: LibraryFolderId.make(folder),
-      }),
-    )
-    const delivery = {
-      kind: 'signal' as const,
-      type: 'schedule',
-      body: 'Search.',
-      attributes: { turn: '1' },
-    }
-    const decoded = Option.map(
-      cachedAuthority(threadId, delivery, Option.none()),
-      (scope) => scope.folder,
-    )
-    expect(decoded).toEqual(Option.some(Option.some(LibraryFolderId.make(folder))))
-    expect(searchRequest({ query: 'Sources', limit: 6 }, Option.flatten(decoded))).toEqual({
-      query: 'Sources',
-      limit: 6,
-      folderId: folder,
-    })
-    for (const libraryFolder of [null, LibraryFolderId.make('malformed')]) {
-      expect(
-        recordScope(
-          threadId,
-          2,
-          DeliveryScope.make({ acting: PersonId.make('MARK-person'), libraryFolder }),
-        ).folder,
-      ).toEqual(Option.none())
-    }
-    expect(searchRequest({ query: 'Sources', limit: 6 }, Option.none())).toEqual({
-      query: 'Sources',
-      limit: 6,
-    })
-  })
-  it.effect('settles missing attribution before tools can access the RPC client', () =>
-    Effect.gen(function* () {
-      const program = Effect.gen(function* () {
-        // Acquisition failure remains inside settle, just like the tool boundary.
-        const context = yield* Layer.build(
-          scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none()),
-        )
-        return yield* Effect.gen(function* () {
-          yield* Scope
-          return { output: { ok: true } }
-        }).pipe(Effect.provide(context))
-      }).pipe(Effect.scoped)
-      expect((yield* settle(program, 'test-tool')).output).toEqual({
-        ok: false,
-        message: 'There is no person behind this message to act for.',
-      })
     }),
   )
 })

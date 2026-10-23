@@ -1,10 +1,8 @@
 {
-  "extends": "../../../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2024"],
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
-  },
-  "include": ["src"]
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.types.json"
+    }
+  ]
 }

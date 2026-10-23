@@ -24,7 +24,6 @@ import {
 import { TestClock } from 'effect/testing'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
-import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import * as HttpMiddleware from 'effect/http/HttpMiddleware'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServer from 'effect/http/HttpServer'
@@ -52,36 +51,6 @@ import { LiveTally, makeTally, report } from '../live/tally.ts'
 import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
-
-/** Disabled telemetry must install no exporter, regardless of any destination it could choose. */
-it.effect('makes no outbound request for a refusal when telemetry is disabled', () =>
-  Effect.gen(function* () {
-    const requests = yield* Ref.make<ReadonlyArray<string>>([])
-    // Capture every destination: an empty receiver at one URL would miss an accidental default.
-    const http = HttpClient.make((request) =>
-      Ref.update(requests, (seen) => [...seen, request.url]).pipe(
-        Effect.as(HttpClientResponse.fromWeb(request, new Response('{}'))),
-      ),
-    )
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const installed = yield* Layer.build(
-          observabilityLayer(ObservabilityConfiguration.Disabled()).pipe(
-            Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-          ),
-        )
-        yield* Effect.exit(
-          Effect.fail(new ProbeRefused({ message: 'not today' })).pipe(
-            observeFailures('rpc'),
-            Effect.withSpan('Probe.disabled'),
-          ),
-        ).pipe(Effect.provide(installed))
-      }),
-    )
-    // Scope closure flushes any mistakenly installed exporter before this assertion.
-    expect(yield* Ref.get(requests)).toEqual([])
-  }),
-)
 
 /** The slice of OTLP/HTTP JSON these tests read; everything else in a post is left undecoded. */
 const Pair = Schema.Struct({

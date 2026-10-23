@@ -31,6 +31,38 @@ that graph; local development keeps the Command/Docker graph above. Railway Post
 Helix were reported healthy on 3 October 2026; application deployment still needs the container
 fixes and remote verification described below.
 
+### Optional server settings and required capabilities
+
+Inventory of optional capability settings in `apps/server/src`.
+This records decisions only. It does not change configuration or deployment behavior.
+Recheck with `rg -n 'optionalSetting|Config\.option|Config\.withDefault' apps/server/src`.
+Test and live-proof settings are excluded from product capability requirements.
+
+| Setting                                               | Owner                                  | Decision and reason                                                                                                                                                                                                           |
+| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                                          | `config.ts`                            | Make required. Auth callbacks and update asset addresses require the real public origin. A loopback default conceals a missing deployment value.                                                                              |
+| `VIVID_WEB_DIST`                                      | `config.ts`, `http/static.ts`          | Genuinely optional for a server behind Vite, which serves the web app. Require it in the production composition that owns the web files. Absence currently installs no static routes.                                         |
+| `VIVID_MOBILE_UPDATES`                                | `config.ts`, `updates/routes.ts`       | Make required in a production composition that serves the phone. Absence currently removes update routes and silently strands installed binaries. A development server with no published export can genuinely omit it.        |
+| `EXPLABS_API_KEY` in decisions                        | `decisions/model.ts`                   | Make required when `VIVID_DECISIONS=on`. An enabled capability must not compose as `Unconfigured`. Memory already requires this key independently. Keep the explicit off state.                                               |
+| `VIVID_OTLP_URL`, `VIVID_OTLP_HEADERS`                | `config.ts`, `observability/export.ts` | Genuinely optional as one pair. Product operations run without remote telemetry. A partial pair is already a startup error.                                                                                                   |
+| `VIVID_ENVIRONMENT`                                   | `config.ts`                            | Genuinely optional. Labels telemetry without enabling a capability.                                                                                                                                                           |
+| `VIVID_BUILD_COMMIT`                                  | `config.ts`                            | Genuinely optional. Settings can honestly show an unnamed build. The Docker image supplies a commit for releases.                                                                                                             |
+| `PORT`, `HOST`                                        | `config.ts`                            | Genuinely optional overrides. The local listener still exists at the defined default address and port. Deployment must supply its reachable listener.                                                                         |
+| `VIVID_BOAT_ORG`                                      | `computers/boat/transport.ts`          | Genuinely optional. Personal Boat accounts use their own wallet. Organization billing supplies the organization explicitly.                                                                                                   |
+| `VIVID_BOAT_SIZE`                                     | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects Boat's default size and preserves Computer creation.                                                                                                                               |
+| `VIVID_BOAT_LIFETIME_SECONDS`                         | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects the defined 3600-second lifetime. Zero explicitly requests no expiry.                                                                                                              |
+| `VIVID_BOAT_MACHINE`                                  | `computers/boat/transport.ts`          | Genuinely optional adoption. Absence creates a Computer from the required template. Presence binds an existing machine for the single-owner installation.                                                                     |
+| `VIVID_EMBEDDING_DIMENSIONS`, `VIVID_EMBEDDING_MODEL` | `memory/embeddings.ts`                 | Genuinely optional overrides for a defined embedding recipe. They do not guard availability. `main.ts` currently composes `parkedEmbeddingsLayer`, so vector memory is deliberately unavailable regardless of these settings. |
+| `VIVID_MEMORY_MODEL`                                  | `memory/model.ts`                      | Genuinely optional model override. The required gateway key and default model preserve background completion.                                                                                                                 |
+
+The other defaulted controls are `VIVID_DECISIONS`, `VIVID_DECISION_MODEL`,
+`VIVID_EXECUTOR_PUBLIC_ONLY`, and `VIVID_RUN_FIRST_TOKEN_TIMEOUT_MS`.
+They do not retain an `Option` in the composed service. The decisions flag deliberately
+switches an experimental capability off. The remaining controls select a model, restrict
+an Integration catalogue, or tune a deadline. Their absence preserves their defined behavior.
+`computers/tests/proof.ts` also accepts optional live machine and organization selectors.
+Those select a proof target and do not configure a running product.
+
 ### Deploying to production
 
 Keep the server at one Railway replica until desktop presence is shared and browse requests route to the replica holding the socket.
@@ -45,6 +77,19 @@ nothing, and a push to the server, the web app or the phone app alone leaves the
 Nothing in the stack sees a push before Railway builds it, so the gate that `git push` runs is the
 only thing that keeps a failing tree out of production. Judge a deploy by Railway's deployment
 status and `/health`.
+
+`node scripts/infra-verify.mjs` checks the server and runtime images against their workspace
+dependency closures. It requires install-time manifests before `pnpm install` and production
+workspace trees before the build uses them. It follows local tsconfig `extends`, project
+references, explicit `files`, and literal module imports from copied packages' build configs.
+It checks those inputs against Dockerfile `COPY`, `.dockerignore`, and the Railway watch lists
+in `infra/railway.ts`.
+
+The verifier does not execute configs or follow computed filesystem reads. Examples include
+`path.resolve(__dirname, '..', '..')` in `apps/mobile/metro.config.cjs` and the paths built with
+`NodePath.join` for `copyFileSync` in `apps/mobile/app.config.ts`. When a config reads a computed
+path, keep its target inside a copied tree or add the target to the Dockerfile `COPY` and the
+image's Railway watch list by hand. A passing verifier cannot prove that such a target is present.
 
 `pnpm infra:deploy --yes` is now only for a change to the stack itself: a service, a variable, a
 volume, a watch path. It needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
@@ -75,10 +120,10 @@ from the developer's PC in eighteen seconds. Before that it uploaded each servic
 which a home connection reset part-way, and was run from the developer's Boat machine for that
 reason; that route is no longer needed.
 
-1. Fast-forward the deploy checkout to `main`. Its `.alchemy/` is the state: copy it aside first.
-   The state files hold the settings' values, so the copy is a secret too.
-2. Give the run `RAILWAY_API_TOKEN` and `GITHUB_TOKEN` in its environment. They are never typed
-   into a command line and never printed.
+1. Fast-forward a clean checkout to `main`. Any checkout serves: none holds the state (see
+   [Where the stack's state lives](#where-the-stacks-state-lives)).
+2. Give the run `RAILWAY_API_TOKEN`, `GITHUB_TOKEN`, `ALCHEMY_STATE_URL` and `ALCHEMY_STATE_TOKEN`
+   in its environment. They are never typed into a command line and never printed.
 3. Run `alchemy plan --stage production --env-file <file>` and read it, as "Before a production
    deploy" says. Then the same with `deploy ... --yes`. That run was made from an export of the
    committed tree (`git archive HEAD`) with the checkout's `node_modules` one directory above it
@@ -88,6 +133,43 @@ reason; that route is no longer needed.
    answers 200 even while `PUBLIC_URL` holds the wrong domain and every new sign-in is refused; a
    deployment reads that variable when it starts, so if the sign-in is refused, redeploy the
    server after the domain is gone.
+
+### Where the stack's state lives
+
+Since 16 October 2026 the production stack's Alchemy state is in Alchemy's own Cloudflare state
+store, not in a checkout. The store is the `alchemy-state-store` Worker and its `Store` Durable
+Object in the personal Cloudflare account, at `https://alchemy-state-store.<subdomain>.workers.dev`.
+The Worker encrypts each record with a key it keeps in the account's Secrets Store.
+`infra/state.ts` opens it for the hosted stack. The local stack keeps its state in the checkout,
+because its resources are that machine's own Docker containers and processes.
+
+A run reads two settings from its environment, like the Railway token:
+
+- `ALCHEMY_STATE_URL`: the store's address.
+- `ALCHEMY_STATE_TOKEN`: its bearer token. It is a secret: never type it into a command line or
+  print it.
+
+On the machine that deployed the store, Alchemy wrote both to
+`~/.alchemy/credentials/<profile>/cloudflare-state-store.json`. A second machine is given them the
+same way as `RAILWAY_API_TOKEN` (over `ssh` standard input into a file only its user can read, and
+removed after the run). With these two, `RAILWAY_API_TOKEN`, `GITHUB_TOKEN` and `.env.production`,
+any machine plans and deploys against the same state. It needs no Cloudflare login. A run that
+cannot reach the store, or finds nothing for `vivid-production/production`, stops before it plans.
+
+The store has no lock. Two runs at once can still overwrite each other's records, so one session
+deploys at a time, as [Before a production deploy](#before-a-production-deploy) says.
+
+After an Alchemy upgrade, run `alchemy provider cloudflare bootstrap --profile <profile>` once
+before the next plan. `Cloudflare.state()` upgrades the Worker by itself, but `infra/state.ts`
+talks to it directly and does not. The bootstrap needs a Cloudflare login for the personal account:
+refresh the Alchemy profile (`alchemy profile refresh --profile <profile> --provider Cloudflare`),
+or give it `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+The state was copied in from the old deploy checkout's `.alchemy/` with `infra/copy/main.ts`, run
+from an extracted backup of it. That directory is now a stale copy that nothing reads. The copy
+refuses to overwrite state the store already holds differently, so a second run cannot roll a
+later deploy back. Dated backups of the old state are kept beside the worktrees as
+`alchemy-before-*.tgz`; they hold the settings' values, so they are secrets too.
 
 ### Before a production deploy
 
@@ -105,8 +187,9 @@ Executor answered `502` for 55 minutes. No data was lost. The rules that came ou
   command prints (`Plan: …` and the `[Resource] update | replace | create` lines). If it touches
   a resource your change does not, find whose change that is (`git log -- infra/railway.ts`)
   before going on.
-- Deploys run only from the one clean checkout that holds the Alchemy state (`.alchemy/`). A
-  second checkout has no state and would create every resource again.
+- Every checkout reads the same state from the hosted store, so a deploy can run from any clean
+  checkout of current `main`. The store does not lock: the one-deployer rule above is what keeps
+  two runs apart.
 - The Railway CLI's session token lasts about an hour, and a deploy that outlives it fails with
   `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
   personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
@@ -153,28 +236,142 @@ and the region.
 
 ### Executor's image
 
-Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
-choice to move to current upstream source, not a requirement: adding an Integration by a
-personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
-data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
-and going back to the tag is safe.
+The Executor service configuration pins the published image
+`ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
+`executor@2.0.0-beta.23` at commit `26d03a48953c948c794c5cd9d22eb3f6253c1482`.
+No fork build is needed. This configuration change does not deploy the service.
 
-### Executor's tracing is off
+Beta.23 replaces profiles with app and user account links. Vivid allocates one app per new
+Connection. Migrated references distinguish dedicated allocations, proven copies (with original
+app provenance), and unproven shared-original access. Every active app selection is unique;
+selection grants no deletion authority. A
+shared original is never deleted; copy reclamation checks provenance and other stored holders.
+A scoped background worker reconciles legacy rows using copy provenance and exact account links.
+Boot, `/health`, Integration reads and tool discovery never wait for this pass. Each pass probes
+`/inventory` once before touching rows. An old, malformed or unreachable inventory leaves every
+row untouched; the decoder presents legacy rows as `MigrationPending`. After a compatible probe,
+per-row transient failures retry with backoff from five seconds to one minute. Identical JSON is
+not rewritten; counter-only bookkeeping preserves `updatedAt`, so it cannot invalidate a concurrent
+removal. Meaningful outcome changes advance that revision. A missing, undeployed or unreachable
+per-row target has a persisted budget of
+1,440 compatible unsuccessful attempts, roughly 24 hours at the worker's one-minute backoff cap.
+Only compatible attempts advance that counter; an outage after migration has started consumes
+none of it, and recovery cannot expire rows merely because wall-clock time passed. Permanent refusals retain the exact credential and copy identities for removal.
+Executor migrates its own storage from 4.0.5 through 4.0.15; the old image cannot open that volume.
 
-Executor's image traces itself into a collector bundled in the same process, and has no setting
-to stop. Idle, it produced about 48,000 spans an hour; the collector's store filled its 1 GiB
-limit in 14 hours and the process grew about 80 MB an hour until Railway killed it at 8 GB. That
-memory was 84% of the project's Railway usage on 9 October 2026. Upstream issues 2194 and 2216
-describe both and were open, with no fix in `2.0.0-beta.12`. `infra/railway.ts` sets
-`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` on the Executor, which leaves the image with no tracer; the
-comment there names the source lines. To check it, read the service's memory in Railway's
-metrics: it should stay near its starting value for days, not climb.
+**Production cutover.** The supported order is server first, then image. Merging updates the server
+through Railway's repository trigger; infrastructure deployment requires clean current `main`.
+The new server against `src-304bf60` boots and serves health, but Integrations are unavailable and
+legacy rows remain pending without writes. The old server against beta.23 breaks Integration
+routes because profiles were removed. Neither mixed pairing can perform Integration work.
+
+1. Announce a maintenance window and let admitted Runs settle. Avoid Integration work during the mixed-version interval.
+   Use Railway's [deployment Remove action](https://docs.railway.com/deployments/deployment-actions#remove)
+   to stop Server and Runtime, then Executor, for the paired backups. Do not accept product writes
+   while taking the backups. These stops are temporary; the merge can deploy Server again.
+2. Create Railway **volume backups** of both the entire Executor volume (including encrypted
+   keys) and the Vivid PostgreSQL volume (all auth, product and runtime data). The GraphQL create
+   mutation is `volumeInstanceBackupCreate(volumeInstanceId, name)`; give the two backups one
+   cutover name and record both backup IDs, volume-instance IDs, server SHA, old image digest
+   and configuration. Wait for both backups to finish before continuing. Use each service's
+   Backups tab to verify the pair completed. Before the window, rehearse
+   `volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)` on a disposable backup
+   pair in its own environment; verify PostgreSQL recovery and the old image's access to its
+   restored encrypted store. Railway restores within the original environment; this rehearsal
+   proves the procedure, not the production backups. Never rehearse against production volumes.
+   Railway's [GraphQL schema](https://github.com/railwayapp/cli/blob/master/src/gql/schema.json),
+   [API cookbook](https://docs.railway.com/integrations/api/api-cookbook#volumes) and
+   [backup restore procedure](https://docs.railway.com/volumes/backups) describe these operations.
+3. Merge the reviewed upgrade to `main`. Railway deploys the new server against the **old**
+   Executor image. Always use Railway's Redeploy action on the recorded old Executor deployment
+   to restart `src-304bf60`; the merge does not restart this image-backed service. Confirm the
+   new server's `/health` succeeds. Its log should show `Integration migration waiting for compatible inventory` with
+   a failure tag. Legacy selections must stay pending; do not ask Persons to reconnect during
+   this interval. Avoid Integration actions until verification.
+4. Use a clean checkout of current `main`, with the settings
+   [Running the stack's own deploy](#running-the-stacks-own-deploy) lists. Then run `pnpm infra:deploy --yes` (the authorized
+   `alchemy deploy --stage production --env-file .env.production` entry point). This changes the
+   Executor image to `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`. Wait for its health
+   check and storage migration. The server keeps retrying in its own scope; the next pass starts
+   within one minute after the current attempt finishes. No screen read is needed to trigger it.
+   Verify **both Server and Runtime** have active deployments from the merged main revision and
+   passing health checks. Do not assume Alchemy recreated deployments removed for backup. If one
+   is still removed, use Railway's Redeploy action for the recorded main deployment, then verify
+   its revision and health again. Runtime deliberately returns before step-5 verification;
+   Integration readiness and tool selection fail closed while legacy rows remain pending.
+   Verify Run outcomes after both services return; admission cannot finish while Runtime is Removed.
+5. Check `Integration app reconciliation` log entries: each has `connectionId` and `result`
+   (`Authorized`, `Public`, a pending authorization variant, `MigrationPending`, or
+   `ReconnectRequired`). Check the read-only SQL below. Pending rows mean the upstream copy
+   plan or deployment has not finished; inspect exact `copiedFrom.reference`, account links and
+   active versions rather than assuming `/health` alone proves every copy ready. Confirm two
+   Persons keep distinct account/app identities, perform a safe authenticated read for each,
+   and add/remove a disposable keyed/public Connection. Verify removal preserves the other
+   Person's access. Check Run outcomes from the window. Resume
+   ordinary use only after these checks pass.
+
+```sql
+-- Raw legacy JSON is projected as pending until its first successful compatible-protocol pass.
+SELECT CASE WHEN "references" ? 'profile' THEN 'LegacyPending'
+            ELSE "references"->>'_tag' END AS outcome,
+       "references"->>'reason' AS reason, count(*)
+FROM vivid_connections GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Must return zero rows: every active selection agrees with its unique app column.
+SELECT id, executor_app, "references"->>'_tag' AS outcome
+FROM vivid_connections
+WHERE executor_app IS DISTINCT FROM
+  CASE WHEN NOT ("references" ? 'profile')
+         AND "references"->>'_tag' NOT IN ('MigrationPending', 'ReconnectRequired')
+       THEN "references"->>'app' ELSE NULL END;
+```
+
+Allow 10–15 minutes for backups, build, image startup and verification; this is an operational
+allowance, not a measured production duration. Backup stops briefly affect all Vivid requests.
+Integrations are unavailable from the server cutover until the image is healthy and the worker
+finishes reconciling each selection. Provider outages or large copy plans extend that interval;
+server health stays independent. Rows with permanent ambiguity require the Person to reconnect.
+
+**Rollback.** Quiesce writes and remove the Server, Runtime and Executor deployments again.
+Do not push the server revert yet. Stage **both** recorded volume restorations with
+`volumeInstanceBackupRestore(volumeInstanceId, volumeInstanceBackupId)`. Before applying the
+Executor volume replacement, set its staged service image to the recorded old tag
+`ghcr.io/konan69/executor-selfhost:src-304bf60`; review the image and volume together in Railway's
+Details panel. Never restart beta.23 against the restored old store, since it would migrate it
+again. Apply the PostgreSQL and Executor restorations while Server and Runtime remain stopped;
+the previous volumes remain unmounted. Verify the old image opens its restored store.
+
+Only after both stores are restored, publish the reviewed revert of the server upgrade and
+infrastructure image pin to `main`. The old server's automatic deploy now sees the old protocol
+and original Connection JSON. The emergency image selection and the reverted Alchemy declaration
+must agree before any subsequent clean-main `infra:deploy`. Keep Runtime stopped until both
+services and the original Connection/profile behavior are verified, then resume Runtime. A server-only, image-only or single-volume rollback is invalid. The old image
+cannot open the migrated volume; the old server cannot decode reconciled JSON. Writes since the
+backup pair are lost on restoration and must be accounted for before reopening service.
+
+A narrow duplicate-selection race remains during removal: two legacy Connections can reference
+one account, and a retirement clears its app claim before taking the reclamation lock. A migration
+pass starting in that gap can select the same copy before retirement deletes it. The resulting
+Connection has missing resources; its removal tolerates missing apps/accounts and finishes cleanup.
+This limitation does not permit selecting a different account. Avoid concurrent removal/reconciliation
+of duplicate legacy selections during cutover; inspect both rows if this occurs.
+
+### Executor's trace exporter is off
+
+`infra/railway.ts` supplies only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, without a trace or base
+endpoint. Beta.23's `apps/hosted/self-host/src/worker.ts:136-146` then skips the bundled telemetry
+fallback, and `packages/telemetry/src/layer.ts:40-60` installs no trace exporter. Idle scheduler
+spans still exist in upstream code.
+
+The setting does not stop the bundled collector. Beta.23's `apps/hosted/self-host/native/main.go:709-719`
+starts Motel as a separate supervised process on a private Unix socket. The configured TCP logs
+address does not reach it; console logs remain while OTLP log exports fail and retry. A real
+external logs destination can replace that address while retaining logs-only trace suppression.
 
 ### Telemetry volume
 
 The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
-repeats with nobody asking is not traced at all: timer passes (approvals, routines, push,
+repeats with nobody asking is not traced at all: timer passes (approvals, push,
 presence), live query reloads and session watchers run under `untraced`
 (`apps/server/src/observability/quiet.ts`), and functions called once per item of a large list
 are `Effect.fnUntraced`. Before those rules, one Person produced 119,000 spans an hour: 95,000
@@ -311,9 +508,11 @@ before the failure and during that minute never reaches the backend and is not s
 is accepted, because the product must not depend on the backend. The server's stdout log on the
 host keeps every line, and each gap is marked there by a `Telemetry batches dropped` line that
 names the signal (`vivid.export.signal`) and the pause (`vivid.export.paused_seconds=60`). The
-resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_COMMIT` when they
-are set; on Railway they are filled from `RAILWAY_ENVIRONMENT_NAME` and `RAILWAY_GIT_COMMIT_SHA`,
-and an empty value counts as unset. The code is
+resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_BUILD_COMMIT` when they
+are set, and an empty value counts as unset. On Railway the environment is filled from
+`RAILWAY_ENVIRONMENT_NAME` at run time, and the commit is written into the server image by its
+build from `RAILWAY_GIT_COMMIT_SHA` (`apps/server/Dockerfile`); the run-time `VIVID_COMMIT` that
+`infra/railway.ts` still sets resolves empty and is no longer read. The code is
 `apps/server/src/observability/`.
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,

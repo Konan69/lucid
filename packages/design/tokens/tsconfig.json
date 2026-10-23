@@ -1,0 +1,9 @@
+{
+  "extends": ["../../../tsconfig.base.json", "../../../tsconfig.hermes.json"],
+  "compilerOptions": {
+    "noEmit": true,
+    "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

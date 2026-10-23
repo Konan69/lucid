@@ -40,6 +40,7 @@ const liveExecutor = executorLayer.pipe(
         GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: executorUrl,
         VIVID_EXECUTOR_KEY: executorKey,
+        VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
         VIVID_EXECUTOR_PUBLIC_ONLY: true,
       }),
     ),
@@ -54,20 +55,18 @@ const sources: readonly {
   input: Schema.Json
 }[] = [
   {
-    name: 'Public Exa',
-    address: 'https://mcp.exa.ai/mcp',
-    query: 'web_search_exa',
-    tool: 'queries.web_search_exa',
-    input: {
-      query: 'Effect TypeScript official documentation',
-      objective:
-        'Find the official Effect documentation home page, excluding third-party tutorials.',
-      numResults: 1,
-    },
+    name: 'Public Documentation',
+    address: 'https://developers.openai.com/mcp',
+    query: 'fetch_openai_doc',
+    tool: 'fetch_openai_doc',
+    input: { url: 'https://developers.openai.com/codex/cli' },
   },
 ]
 
-/** Real public inspection, SQL registration, discovery and use_tool dispatch run as a disposable
+/** The public documentation server declares fetch_openai_doc readOnlyHint=true in tools/list
+ * at https://developers.openai.com/mcp. Verify the requested page's heading and getting-started
+ * section as well as its completed envelope: a provider quota/error message is not a read.
+ * Real public inspection, SQL registration, discovery and use_tool dispatch run as a disposable
  * acting Person in a private Thread. Production Gate permits ordinary reads without consulting
  * the model judge. No address, Executor response, Gate decision or provider call is faked.
  */
@@ -125,7 +124,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 console.info(JSON.stringify({ source: source.name, added }))
                 expect(AddIntegrationOutcome.guards.Added(added)).toBe(true)
                 const rows = yield* store.records(personalActor)
-                const row = rows.find((entry) => entry.name === source.name)
+                const row = rows.find((entry) => entry.service === `url:${source.address}`)
                 if (row === undefined)
                   return yield* Effect.die('Public registration did not persist')
                 const discovery = yield* store.tools(personalActor, row)
@@ -170,7 +169,8 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
                 const response = yield* decodeRead(used.output)
                 const text = response.content.map((part) => part.text).join('\n')
-                expect(text).toMatch(/https:\/\/effect\.website(?:\/|\b)/u)
+                expect(text).toMatch(/^# Codex CLI$/mu)
+                expect(text).toMatch(/^## Getting started$/mu)
                 return yield* Effect.void
               }).pipe(
                 Effect.scoped,

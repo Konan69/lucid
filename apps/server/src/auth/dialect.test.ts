@@ -1,10 +1,9 @@
 import * as NodeCrypto from 'node:crypto'
-import { Database as AuthDatabase } from '@alchemy.run/better-auth/Database'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
-import { Cause, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from 'effect'
-import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import { Effect, Fiber, Layer, Option, Schema, Stream } from 'effect'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { Kysely } from 'kysely'
 import { DatabaseFailure, PersonId, SessionId } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
@@ -12,14 +11,14 @@ import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { announce, CHANNEL, Changes, changesLayer, Topic, everyPart } from '../live/changes.ts'
 import { sessionEnded } from '../live/query.ts'
-import { authDatabaseLayer, SessionOwnerUnreadable, UnrecognisedDelete } from './dialect.ts'
-import { authEffect, localAuthRuntimeLayer, type AuthInstance } from './provider.ts'
+import { authDatabase, SessionOwnerUnreadable, UnrecognisedDelete } from './dialect.ts'
+import { Auth, authLayer, type AuthInstance } from './provider.ts'
 import { sessionWorkspace } from './session.ts'
 import { personTable, sessionTable } from './tables.ts'
 
 /**
  * Session removal through the real seam: the public Better Auth instance that Alchemy builds over
- * `authDatabaseLayer`, real PostgreSQL, and the real change bus. Nothing is mocked. What a removal
+ * `authDatabase`, real PostgreSQL, and the real change bus. Nothing is mocked. What a removal
  * announced is read from a raw `LISTEN` on the change channel and bounded by a later committed
  * marker, so "nothing was announced" is an ordered observation, never a wait for silence.
  */
@@ -27,7 +26,7 @@ const testLayer = Layer.mergeAll(
   testDatabaseLayer,
   testConfigLayer,
   changesLayer.pipe(Layer.provide(testDatabaseLayer)),
-  localAuthRuntimeLayer,
+  authLayer.pipe(Layer.provide(testConfigLayer)),
 )
 
 const origin = 'http://127.0.0.1:8787'
@@ -43,17 +42,13 @@ class RemovalAbandoned extends Schema.TaggedError<RemovalAbandoned>()(
 
 /** One request to the production auth routes, on the instance under test. */
 const call = (auth: AuthInstance, path: string, init: RequestInit) =>
-  auth.fetch.pipe(
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(new Request(`${origin}/api/auth/${path}`, init)),
-    ),
+  Effect.promise(() => auth.handler(new Request(`${origin}/api/auth/${path}`, init))).pipe(
+    Effect.map(HttpServerResponse.fromWeb),
   )
 
 /** Better Auth's own context: the official adapter, reached through the public `$context`. */
 const adapterOf = Effect.fn('DialectTest.adapterOf')(function* (auth: AuthInstance) {
-  const instance = yield* auth.auth
-  const context = yield* Effect.promise(() => instance.$context)
+  const context = yield* Effect.promise(() => auth.$context)
   return context.adapter
 })
 
@@ -175,19 +170,10 @@ const announcedSoFar = Effect.fn('DialectTest.announcedSoFar')(function* (
   )
 })
 
-/** A Kysely over the very dialect `authDatabaseLayer` hands Better Auth, for statements it never writes. */
+/** A Kysely over the very dialect `authDatabase` hands Better Auth, for statements it never writes. */
 const dialectKysely = Effect.fn('DialectTest.dialectKysely')(function* () {
   const config = yield* ServerConfig
-  const input = yield* Effect.gen(function* () {
-    return yield* (yield* AuthDatabase).runtime
-  }).pipe(
-    Effect.provide(
-      yield* Layer.build(
-        authDatabaseLayer(config.DATABASE_URL).pipe(Layer.provide(localAuthRuntimeLayer)),
-      ),
-    ),
-  )
-  if (!('dialect' in input)) return expect.fail('The auth database must be the dialect form')
+  const input = yield* authDatabase(config.DATABASE_URL)
   return new Kysely<{ session: typeof sessionTable.$inferSelect }>({ dialect: input.dialect })
 })
 
@@ -198,7 +184,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
     /** The public sign-out deletes one row; the Person's topic moves and a session watch ends. */
     it.effect('signing out announces the Person and ends a watch on that session', () =>
       Effect.gen(function* () {
-        const auth = yield* authEffect
+        const auth = yield* Auth
         const ada = yield* signedUp(auth)
         const changes = yield* Changes
         const moved = yield* changes.subscribe([Topic.person(ada.personId)], everyPart)
@@ -218,7 +204,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
     /** Revoking the others removes them by token; the caller's own session is left and unannounced beyond its Person. */
     it.effect('revoking other sessions ends them and keeps the session that asked', () =>
       Effect.gen(function* () {
-        const auth = yield* authEffect
+        const auth = yield* Auth
         const ada = yield* signedUp(auth)
         const database = yield* Database
         const other = {
@@ -250,7 +236,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
     /** The hook this replaces read at most 100 rows; one statement here removes and announces them all. */
     it.effect('revoking every session of a Person removes more than a hundred in one notice', () =>
       Effect.gen(function* () {
-        const auth = yield* authEffect
+        const auth = yield* Auth
         const ada = yield* signedUp(auth)
         const database = yield* Database
         yield* database.run(
@@ -282,7 +268,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
         const grace = NodeCrypto.randomUUID()
         const bystander = NodeCrypto.randomUUID()
         yield* peopleWithSessions([ada, grace, bystander], 2)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const removed = yield* Effect.promise(() =>
           adapter.deleteMany({
@@ -308,7 +294,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
       Effect.gen(function* () {
         const ids = Array.from({ length: 150 }, () => NodeCrypto.randomUUID())
         yield* peopleWithSessions(ids, 1)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const removed = yield* Effect.promise(() =>
           adapter.deleteMany({
@@ -329,7 +315,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
       Effect.gen(function* () {
         const unrepresentable = 'x'.repeat(8_000)
         yield* peopleWithSessions([unrepresentable], 1)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const failure = yield* rejection(() =>
           adapter.deleteMany({
@@ -348,7 +334,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
       Effect.gen(function* () {
         const ada = NodeCrypto.randomUUID()
         yield* peopleWithSessions([ada], 1)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const failure = yield* rejection(() =>
           adapter.transaction((transaction) =>
@@ -367,7 +353,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
       Effect.gen(function* () {
         const ada = NodeCrypto.randomUUID()
         yield* peopleWithSessions([ada], 1)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const removed = yield* Effect.promise(() =>
           adapter.transaction((transaction) =>
@@ -383,7 +369,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
     /** No row, no owner, no notice; the official result is unchanged. */
     it.effect('a removal that matches nothing announces nothing', () =>
       Effect.gen(function* () {
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const removed = yield* Effect.promise(() =>
           adapter.deleteMany({
@@ -402,7 +388,7 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
         const ada = NodeCrypto.randomUUID()
         const grace = NodeCrypto.randomUUID()
         yield* peopleWithSessions([ada, grace], 1)
-        const adapter = yield* adapterOf(yield* authEffect)
+        const adapter = yield* adapterOf(yield* Auth)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         const consumed = yield* Effect.promise(() =>
           adapter.consumeOne<{ readonly id: string; readonly userId: string }>({
@@ -483,10 +469,12 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
     )
 
     /**
-     * Better Auth finds its schema check by the identity of the official adapter object, so the
-     * check still running proves that object is the one in place. The column is dropped in this
-     * file's disposable database and put back by a finalizer registered before the change. Last in
-     * the file: a changed table invalidates plans cached by earlier connections.
+     * A request that writes the missing column fails instead of storing a session without it.
+     * Better Auth's own schema check runs once per instance and the server's instance outlives
+     * this change, so what is proved is the write itself, through the official adapter on Vivid's
+     * dialect. The column is dropped in this file's disposable database and put back by a
+     * finalizer registered before the change. Last in the file: a changed table invalidates plans
+     * cached by earlier connections.
      */
     it.effect('a schema that lacks an auth column still fails the auth request', () =>
       Effect.gen(function* () {
@@ -498,14 +486,28 @@ describe.skipIf(!testDatabaseConfigured)('Session removal announces in its own c
           ),
         )
         yield* sql`ALTER TABLE "session" DROP COLUMN "ipAddress"`
-        const exit = yield* call(yield* authEffect, 'ok', {
-          method: 'GET',
-          headers: { origin },
-        }).pipe(Effect.exit)
-        if (Exit.isSuccess(exit)) return expect.fail('A mismatched schema must fail the request')
-        // Better Auth's own check rejects the request; the Alchemy bridge surfaces it as a defect.
-        expect(String(Cause.squash(exit.cause))).toContain('Database schema mismatch')
-        return undefined
+        const email = `${NodeCrypto.randomUUID()}@example.test`
+        const database = yield* Database
+        yield* Effect.addFinalizer(() =>
+          database.run(database.delete(personTable).where(eq(personTable.email, email))).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.sync(() => expect.fail('Schema fixture cleanup failed'))),
+          ),
+        )
+        const response = yield* call(yield* Auth, 'sign-up/email', {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ email, name: 'Schema test', password: 'test-Schema-0123456789' }),
+        })
+        expect(response.status).toBe(500)
+        const sessions = yield* database.run(
+          database
+            .select({ id: sessionTable.id })
+            .from(sessionTable)
+            .innerJoin(personTable, eq(personTable.id, sessionTable.userId))
+            .where(eq(personTable.email, email)),
+        )
+        expect(sessions).toEqual([])
       }).pipe(Effect.scoped),
     )
   })

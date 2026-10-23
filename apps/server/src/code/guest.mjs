@@ -276,7 +276,7 @@ function printedLines(allowance) {
 
 /** The runner's side: the messages in both directions, and the end of the program. */
 function runner() {
-  const [resultBytes, logCharacters, calls, frameBytes] = process.argv.slice(2)
+  const [resultBytes, logCharacters, calls, frameBytes, kinds] = process.argv.slice(2)
   const limits = {
     result: Number(resultBytes),
     logs: Number(logCharacters),
@@ -310,7 +310,7 @@ function runner() {
     worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
       workerData: {
         code,
-        kinds: ['find_tools', 'use_tool', 'browse', 'read_page'],
+        kinds: kinds.split(','),
         limits: { calls: limits.calls, frame: limits.frame, logs: limits.logs },
       },
       // What the program writes to its own output is not a message and must not become one.

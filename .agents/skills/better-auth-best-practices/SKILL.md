@@ -7,7 +7,7 @@ description: Configure Better Auth server and client, set up database adapters, 
 
 ## Vivid override
 
-Vivid targets Better Auth `1.7.5` through `@alchemy.run/better-auth` beta.79. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
+Vivid targets Better Auth `1.7.5` through `@alchemy.run/better-auth` beta.79. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. Drizzle generates from `apps/server/src/database/schema.ts`. Edit the tables it re-exports; auth tables are in `apps/server/src/auth/tables.ts`. Run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
 
 ## Documentation Version
 
@@ -30,7 +30,7 @@ When planning an upgrade, separate guidance for the currently installed version 
 3. Create `auth.ts` with database + config
 4. Create route handler for your framework
 5. Run migrations:
-   - **Vivid:** edit `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate.
+   - **Vivid:** edit auth tables in `apps/server/src/auth/tables.ts`, re-exported by `apps/server/src/database/schema.ts`. Run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate.
    - **Built-in adapter in another pnpm project:** `pnpm dlx auth@latest migrate`
    - **Drizzle in another pnpm project:** `pnpm dlx auth@latest generate --output src/db/auth-schema.ts`, then use reviewed generated migrations. Do not push a shared database.
    - **Prisma in another pnpm project:** `pnpm dlx auth@latest generate --output prisma/schema.prisma` then `pnpm dlx prisma migrate dev`

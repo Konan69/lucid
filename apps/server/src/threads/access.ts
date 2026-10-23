@@ -14,6 +14,7 @@ import {
 import { membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { Topic } from '../live/changes.ts'
+import { ThreadPlace } from './place.ts'
 import { TitleSource } from './title.ts'
 import { threadParticipants, threads } from './tables.ts'
 
@@ -33,6 +34,7 @@ export const StoredThread = Schema.Struct({
   companyId: Schema.NullOr(CompanyId),
   audience: StoredAudience,
   projectId: Schema.NullOr(ProjectId),
+  place: ThreadPlace,
 })
 export interface StoredThread extends Schema.Schema.Type<typeof StoredThread> {}
 

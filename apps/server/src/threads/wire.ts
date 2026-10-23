@@ -26,14 +26,20 @@ export const summaryFor = (summaries: ReadonlyMap<PersonId, PersonSummary>, id: 
     : Effect.succeed(summary)
 }
 
-/** What a Thread needs from one Person, most pressing first. */
+/**
+ * What a Thread needs from one Person, most pressing first. A Run at work outranks what waits on
+ * the Person: Vivid keeps working after it asks (`ask_person`), so a Thread with a question open
+ * and a Run going is working, and its question shows in its banner. Ranking the question first
+ * showed a working Thread as stopped, the defect T3 Code fixed for Codex's async questions
+ * (pingdotgg/t3code#15258, "Async questions make a running thread show as Awaiting Input").
+ */
 const attentionOf = (input: {
   readonly needsYou: boolean
   readonly working: boolean
   readonly unread: boolean
 }): ThreadAttention => {
-  if (input.needsYou) return 'NeedsYou'
   if (input.working) return 'Working'
+  if (input.needsYou) return 'NeedsYou'
   return input.unread ? 'Unread' : 'Quiet'
 }
 

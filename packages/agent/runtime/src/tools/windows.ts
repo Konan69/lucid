@@ -1,5 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import {
+  Tool,
   UseWindowRequest,
   WindowAction,
   WindowOutcome,
@@ -104,7 +105,7 @@ const program = Effect.fn('ComputerTool.person')(function* (
 /** Same native Flue image adapter as use_desktop; window pictures never enter bounded JSON. */
 export function personComputerModelTool(runTool: RunTool) {
   return {
-    name: 'use_person_computer',
+    name: Tool.use_person_computer,
     label: 'Use the person’s computer',
     description: personComputerDescription,
     parameters,

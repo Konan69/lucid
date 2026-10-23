@@ -43,11 +43,52 @@ checks Thread access and records the Run before forwarding a typed delivery to
 `/agents/vivid/:threadId`. Browsers, phones, and desktop renderers never receive the runtime token.
 `src/app.ts` also serves an unauthenticated `/health` response.
 
-The server owns the Library, Routines, Skills, Input requests, Approvals, Artifacts, and memory.
+The server owns the Library, Watches, Skills, Input requests, Approvals, Artifacts, and memory.
 Integrations run through Executor; the Computer's Boat adapter is server-owned and was proven
 against real Boat on 3 October 2026. See the domain READMEs and
 [current feature status](../../../docs/14-product-feature-set-and-grok-bot-parity.md) for evidence
 and remaining limits.
+
+## Live reply reconciliation
+
+The runtime patch in `patches/@flue__runtime@2.2.2.patch` reconciles each settled
+assistant response through Flue's existing `message-appended` upsert. Flue 2.2.2 keeps
+provider content indexes in canonical records but omits block identity from UI deltas.
+Its SDK splits a part whenever text and reasoning alternate. A single provider text block can
+therefore appear as several live parts, while distinct blocks must remain distinct.
+
+The first settlement resolving to a response projects only that response with history's own projector,
+retaining the first-step message ID, earlier model steps, tool outputs, anchored data, and metadata.
+It stops at the response's first entry rather than projecting older replies. Joined deliveries
+settle before their host, so the replacement precedes the first joined settlement in its own
+batch. Later settlements resolving to that response do not resend it. Model-step completions
+keep their original markers and send no replacement for a tracked response.
+
+Each tool output travels in its original chunk and once in the final replacement. Reconciliation
+bytes therefore grow with the final response, rather than with the sum of every intermediate
+response. An untracked step has no settlement and no accumulated response, so it reconciles
+at its own completion. Neither path requests a conversation reset or resends older replies.
+During streaming, delta parts still follow Flue's original kind boundaries. A failed step that
+Flue never materializes can disappear from final history; this upsert cannot delete a live
+ghost when no canonical response remains. Dangling in-progress steps are excluded from the
+replacement before joined settlement, matching the later host settlement.
+The model recovery
+loop also checks cancellation before returning a completed turn, so a provider that closes
+normally after an abort cannot turn a stopped partial reply into a completed submission.
+
+Remove this change when Flue carries block identity through live projection or reconciles
+settlement upstream. No SDK patch is required. `@flue/react` uses the SDK observer, so web,
+phone, desktop, and server observation all consume the same message upsert. The shared `textOf`
+in contracts joins canonical text blocks as paragraphs without guessing from reasoning.
+`src/stream.test.ts` exercises the public storage, HTTP router, SDK observation, and wire through
+SSE and long-poll. It covers both block sequences, tool outputs, joined deliveries, aborted
+partial replies, and terminating tools. It checks stable message IDs, one replacement before
+the first settlement, no reset, and no older replies resent.
+
+`src/payload.live.test.ts` measures a real twelve-tool-call response through the production
+OpenRouter provider and compares live output with history. It requires
+`VIVID_LIVE_RECONCILIATION=1`, `OPENROUTER_API_KEY`, and an isolated database supplied through
+`VIVID_TEST_DATABASE_URL`. It stays skipped in the ordinary gate.
 
 ## Models and rehearsal
 
@@ -60,9 +101,6 @@ three times (`maxAttempts: 3`): Flue keeps recorded tool results and never re-ru
 
 `VIVID_MODEL=rehearsal/script` opts into the deterministic rehearsal provider. It calls real
 tools with fixed inputs and reports real receipts; it proves plumbing, not model judgement.
-The reminder scene schedules tomorrow at 09:00 through the real one-off Routine tool. The server
-resolves its local date-time in the Person's saved zone; it fires once and retains its Thread and
-Occurrence. Checked-in scheduler tests cover restart recovery and refusing past times.
 
 ## Build and deployment limits
 

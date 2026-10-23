@@ -1,7 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
-  ServiceCatalog,
   type Appearance,
   type LibraryFolderId,
   type LibraryShelf,
@@ -25,7 +24,7 @@ import {
   type ProductFailure,
   type Settle,
 } from '@vivid/state'
-import { Data, Effect, Equal, Layer, Option, Predicate, Result, Schedule, Stream } from 'effect'
+import { Data, Effect, Equal, Layer, Option, Predicate, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
@@ -35,7 +34,7 @@ import { door } from './door'
 import { sessionExpiry } from './account'
 import { followDrafts, forgetDrafts } from './drafts'
 import { forgetAppearance, vividAtom } from './vivid'
-import { inFront } from './foreground'
+import { inFront, reconnected } from './foreground'
 import { liveAddress } from './server'
 import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
@@ -239,19 +238,12 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
   /**
    * The part of the catalog that matches what is typed. The catalog is thousands of services
    * nobody owns, so it is searched on the server and never held here; see `ServiceCatalog` for
-   * why it can be `Unavailable` while every Connection still lists.
+   * why it can be `Unavailable` while every Connection still lists. It is asked once for each
+   * question: the server answers when its copy of the catalog is ready, waiting for its first
+   * download after a start (`apps/server/src/connections/catalog.ts` `retainCatalog`).
    */
   const services = engine.ask(serviceSearch, (client, asked) =>
-    // The catalog is read in the background by the server and is out of reach for a few seconds
-    // after it starts. That is not an answer to show for good, so it is asked again for a short
-    // while; only if it is still out of reach after that does the sheet say so.
-    client.FindServices({ query: asked }).pipe(
-      Effect.repeat({
-        until: ServiceCatalog.guards.Ready,
-        schedule: Schedule.spaced('2 seconds'),
-        times: 6,
-      }),
-    ),
+    client.FindServices({ query: asked }),
   )
 
   return { serviceSearch, services }
@@ -297,8 +289,10 @@ function followLook(
 function makeLiveData(session: SignedIn) {
   // A new session starts from Vivid as it ships; its own appearance arrives with the socket.
   forgetAppearance()
-  // Whether the phone can reach the server; Home says so when it cannot.
+  // Whether the phone can reach the server; Home says so when it cannot. Each time the socket
+  // opens again after a loss, every open conversation catches up (`reconnected`).
   const link = makeLink()
+  link.reopened(reconnected)
   const engine = makeLive(
     VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: link.heard }).pipe(
       Layer.provide(bearerSocket(session.token)),
@@ -336,7 +330,6 @@ function makeLiveData(session: SignedIn) {
           ),
         ),
     ),
-    routines: one((client) => client.WatchRoutines()),
     projects: kept((client) => client.WatchProjects()),
     library: family(
       (shelf: LibraryShelf) => shelf,
@@ -365,6 +358,10 @@ function makeLiveData(session: SignedIn) {
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
     suggestions: one((client) => client.WatchSuggestions()),
+    /** The Person's own computers, each with its access and whether its desktop app is listening. */
+    devices: one((client) => client.WatchDevices()),
+    /** Vivid's own work, grouped into what needs the Person, what is going and what is handled. */
+    feed: one((client) => client.WatchFeed()),
     /** What the Person has typed and not sent, on any device, where they are working. */
     drafts: kept((client) => client.WatchDrafts()),
   }
@@ -399,22 +396,22 @@ function makeLiveData(session: SignedIn) {
   const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
 
   /**
-   * "I am here" for one Thread, said for as long as something holds this atom and the app is in
+   * "I am here" for one Thread, held for as long as something holds this atom and the app is in
    * front. The Thread's screen holds it only while it is the screen on top (`Present` in
    * `screen/Chat.tsx`): a screen left mounted under another is not someone looking.
    *
-   * The server keeps a Person present for fifteen seconds after they last said so, and decides
-   * from that who is shown at the top of a shared Thread and who gets a notification instead. It
-   * used to be said only when the Thread moved, so someone reading a quiet Thread, or writing a
-   * long message, dropped out of it. An app in the background says nothing, so its Person is
+   * The server shows who holds it at the top of a shared Thread, and does not notify someone
+   * about what they are looking at. It is one call kept open, not something said on a timer: the
+   * server hears the phone leave when the call closes, when the socket closes, or when the socket
+   * goes quiet because the app was suspended or lost its network
+   * (`apps/server/src/rpc/link.ts`). An app in the background holds nothing, so its Person is
    * told about what they are not looking at.
    */
   const presentIn = Atom.family((id: ThreadId) =>
-    engine.beat(
+    engine.hold(
       Atom.make((get) => ({ typing: get(typingIn(id)), looking: get(inFront) })),
       (client, now) =>
-        now.looking ? client.ReportPresence({ threadId: id, typing: now.typing }) : Effect.void,
-      '5 seconds',
+        now.looking ? client.BePresent({ threadId: id, typing: now.typing }) : Stream.never,
     ),
   )
 
@@ -458,6 +455,10 @@ function makeLiveData(session: SignedIn) {
     },
     registry: engine.registry,
     live,
+    /** `run`, described and not yet started: the step a flow yields (`running` on the web). */
+    running: engine.run,
+    /** `change`, described and not yet started (`changing` on the web). */
+    changing: engine.change,
     /** Runs one program with the session's client, on the same socket the queries use. */
     run: <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
       start(engine.run(program)),

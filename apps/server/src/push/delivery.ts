@@ -288,7 +288,7 @@ const saveReceipt = Effect.fn('Push.saveReceipt')(function* (
   )
 })
 
-/** Background lifecycle only reads Expo receipts; Routine scheduling stays with the existing worker. */
+/** Background lifecycle reads Expo receipts. */
 export const pushReceiptsLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const push = yield* Push

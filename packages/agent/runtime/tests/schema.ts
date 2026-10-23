@@ -1,8 +1,16 @@
 import * as NodeCrypto from 'node:crypto'
+import * as NodeProcess from 'node:process'
 import { expect } from '@effect/vitest'
 import { Config, Effect, Redacted, Schema } from 'effect'
 import { Client, Pool } from 'pg'
 import { flueStorage } from '../src/storage.ts'
+
+/**
+ * Synchronous suite gating reads only the isolated test variable, never `DATABASE_URL`. The
+ * runtime keeps its own copy of the server's gate (`apps/server/src/database/testdb.ts`) so its
+ * tests never reach into the server by path: the runtime does not depend on the server.
+ */
+export const testDatabaseConfigured = Object.hasOwn(NodeProcess.env, 'VIVID_TEST_DATABASE_URL')
 
 /** A failed connection cannot own schema cleanup; no schema has been created yet. */
 export class CleanupConnectionFailed extends Schema.TaggedError<CleanupConnectionFailed>()(

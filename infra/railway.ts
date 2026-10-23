@@ -61,16 +61,21 @@ const builtFromMain = {
 
 /**
  * What the runtime's image is built from (`packages/agent/runtime/Dockerfile`). A push to the
- * server, the web app or the phone app alone leaves the runtime running.
+ * server, the web app or the phone app alone leaves the runtime running. The phone's native
+ * Markdown view is the exception: it is a tarball in `apps/mobile/deps` that the lockfile names, so
+ * the runtime's install reads it.
  */
 const runtimeInputs = [
   '/packages/**',
   '/patches/**',
   '/apps/*/package.json',
+  '/apps/mobile/deps/**',
   '/package.json',
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
   '/tsconfig.base.json',
+  '/tsconfig.hermes.json',
+  '/hermes.d.ts',
   '/.dockerignore',
 ]
 
@@ -88,10 +93,13 @@ const serverInputs = [
   '/packages/**',
   '/patches/**',
   '/scripts/migrate.mjs',
+  '/scripts/sentry-upload.mjs',
   '/package.json',
   '/pnpm-lock.yaml',
   '/pnpm-workspace.yaml',
   '/tsconfig.base.json',
+  '/tsconfig.hermes.json',
+  '/hermes.d.ts',
   '/.dockerignore',
 ]
 
@@ -238,9 +246,9 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
    * volume at `/app/data` holding its database, app source, builds and generated keys, a public
    * domain because a Person's browser returns from a provider's sign-in through it, `/health` with
    * a 120-second start, and exactly one instance per volume. The image derives its own origin from
-   * `RAILWAY_PUBLIC_DOMAIN`. The image is upstream's source at commit `304bf60`, unchanged, built
-   * with upstream's own self-host Dockerfile: the last published tag (`2.0.0-beta.8`) is older and
-   * the store schema and migrations are the same in both, so the tag can go back to it.
+   * `RAILWAY_PUBLIC_DOMAIN`. Pin the published beta.23 image, whose app/user account links
+   * replace profiles. Each Vivid Connection owns a dedicated app; legacy references reconcile
+   * against upstream's explicit copy provenance and requirement links before use.
    *
    * Every sign-in returns to Vivid, not to Executor's own page, which needs an Executor browser
    * session no Person has. Railway resolves the server's domain in the reference at deploy time.
@@ -248,7 +256,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const executor = yield* Railway.Service('Executor', {
     project,
     name: serviceNames.executor,
-    image: 'ghcr.io/konan69/executor-selfhost:src-304bf60',
+    image: 'ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23',
     port: ports.executor,
     publicDomain: true,
     healthcheckPath: '/health',
@@ -268,18 +276,14 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       EXECUTOR_URL_ALLOW_HTTP_ORIGINS: '[]',
       EXECUTOR_APPS_ALLOW_PRIVATE_FETCH: 'false',
       /**
-       * Turns Executor's tracing off. Nobody reads its traces, and they were the cost of this
-       * service: with no endpoint set, the image sends every span to a collector bundled in the
-       * same process, and its idle one-second scheduler poll alone is about 48,000 spans an hour
-       * (upstream issue 2194). The collector's store reached its 1 GiB limit in 14 hours and the
-       * process grew about 80 MB an hour to Railway's 8 GB limit, where it was killed (9 October
-       * 2026; upstream issue 2216, open). The image has no switch for this. Its fallback applies
-       * only when neither traces nor logs has an endpoint
-       * (`apps/hosted/self-host/src/worker.ts`), and a signal without an endpoint gets no
-       * exporter at all (`packages/telemetry/src/layer.ts`, `Layer.empty`). Naming the logs
-       * endpoint alone therefore leaves no tracer; the address is the bundled collector's own,
-       * so the few log lines still have somewhere to go. Remove this when upstream stops
-       * tracing the idle poll or ships a switch.
+       * Suppress the product's trace exporter by configuring logs alone, with no base or trace
+       * endpoint. beta.23 apps/hosted/self-host/src/worker.ts:136-146 skips its bundled-exporter
+       * fallback when either signal is configured; packages/telemetry/src/layer.ts:40-60 installs
+       * no tracer without a trace target. The scheduler still creates idle spans upstream.
+       * This does not stop Motel: native/main.go:709-719 supervises it separately on a Unix
+       * socket. TCP 4318 is not that socket. This logs target intentionally has no receiver;
+       * console logs remain, and OTLP logs retry a refused connection. Replace it with a real
+       * external logs collector when one is provided, preserving logs-only configuration.
        */
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'http://127.0.0.1:4318/v1/logs',
     },
@@ -321,6 +325,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       PORT: String(ports.runtime),
       /** The runtime answers with OpenCode Go; the old gateway's key keeps its models selectable. */
       OPENCODE_API_KEY: environment.openCodeKey,
+      ...Option.match(environment.openRouterKey, {
+        onNone: () => ({}),
+        onSome: (key) => ({ OPENROUTER_API_KEY: key }),
+      }),
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),

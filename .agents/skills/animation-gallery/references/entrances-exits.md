@@ -11,7 +11,7 @@ Only animate an arrival the person requested or an occasional surface. Existing 
 - **Expo — Reanimated:** `entering={FadeIn.duration(200).reduceMotion(ReduceMotion.System)}` and `exiting={FadeOut.duration(120).reduceMotion(ReduceMotion.System)}`; builders live at module scope.
 - **Interruption & exit:** A transition retargets from current opacity; exit is faster. **Reduced motion:** unchanged—opacity is the fallback.
 - **Performance note:** opacity is compositor-friendly; avoid fading whole text columns during reading.
-- **Modelled on:** [Vivid tokens](../../../design-tokens/src/tokens.css), [Emil—Great Animations](https://emilkowal.ski/ui/great-animations), [Reanimated entering/exiting](https://docs.swmansion.com/react-native-reanimated/docs/layout-animations/entering-exiting-animations/).
+- **Modelled on:** [Vivid tokens](../../../../packages/design/tokens/src/tokens.css), [Emil—Great Animations](https://emilkowal.ski/ui/great-animations), [Reanimated entering/exiting](https://docs.swmansion.com/react-native-reanimated/docs/layout-animations/entering-exiting-animations/).
 
 ## **Scale in** · a compact surface grows the last few percent into place
 

@@ -1,6 +1,6 @@
 # OpenMuse reference: what to borrow
 
-2026-10-03: Historical borrowing plan; built Approvals, Input requests, Run records, Executor-owned Integration credentials, and Boat supersede its Vivid gap claims; current truth is in domain READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md), and one-off Routines supersede the retired Tasks model.
+2026-10-03: Historical borrowing plan; built Approvals, Input requests, Run records, Executor-owned Integration credentials, and Boat supersede its Vivid gap claims; current truth is in domain READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md), and Watches and the Feed own proactivity; reminders await the clock app.
 
 OpenMuse (`CopilotKit/OpenMuse`, MIT) is a single-owner personal-assistant template: Hono server,
 CopilotKit runtime over AG-UI, Expo client, PGlite/PostgreSQL, a Playwright browser worker, and an
@@ -16,26 +16,26 @@ source locations, and what must change on the way in.
 
 ## Summary
 
-| #   | Mechanism                                              | OpenMuse source                                                                                     | Vivid target                         | Priority |
-| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------ | -------- |
-| 1   | Hash-bound, expiring approval with atomic claim        | `apps/server/src/actions.ts`, `apps/server/src/db.ts:77-94`, `packages/domain/src/index.ts:117-156` | `apps/server/src/approvals` (empty)  | P0       |
-| 2   | Outcome-unknown for uncertain external writes          | `packages/integrations/src/google.ts:19-27,551-606`, `apps/server/src/db.ts:90-94`                  | Approvals + Connections              | P0       |
-| 3   | Leased background work with heartbeat and recovery     | `apps/server/src/engine/worker.ts`                                                                  | Routine Occurrences + Thread Runs    | P0       |
-| 4   | Typed input request that resumes the work              | `apps/server/src/engine/service.ts:306-330,844-864`                                                 | `apps/server/src/inputs` (empty)     | P0       |
-| 5   | Tool-result journal (replay-safe tools after re-lease) | `apps/server/src/engine/model.ts:24-95`                                                             | Flue tool adapter / Runs             | P1       |
-| 6   | Idempotent, keyed notifications + outcome publication  | `apps/server/src/engine/service.ts:73-116,578-588,749-807`                                          | `apps/server/src/notifications`      | P1       |
-| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `packages/computer` egress           | P0       |
-| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `packages/computer/desktop`          | P1       |
-| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `packages/computer/machine`          | P1       |
-| 10  | Short-lived signed file URLs                           | `apps/server/src/auth.ts:42-55`, `apps/server/src/files.ts:50-52`                                   | Artifacts                            | P1       |
-| 11  | Credential envelope encryption                         | `packages/integrations/src/vault.ts`                                                                | `apps/server/src/connections`        | P1       |
-| 12  | Google adapter: ETag-guarded calendar writes           | `packages/integrations/src/google.ts:523-548,787-816`                                               | `apps/server/src/connections/google` | P1       |
-| 13  | PDF inspect/fill with script stripping                 | `packages/integrations/src/pdf.ts:93-153`, `apps/server/src/files.ts`                               | Artifacts / Library                  | P2       |
-| 14  | Document job (attachment → form → reply for approval)  | `apps/server/src/engine/service.ts:808-899`                                                         | A Routine template, once 1–4 exist   | P2       |
-| 15  | Page watch with change dedupe                          | `apps/server/src/engine/service.ts:359-440,900-997`                                                 | `apps/server/src/routines` trigger   | P2       |
-| 16  | Client message queue that never auto-resends           | `apps/mobile/src/conversation-queue.ts`                                                             | `packages/client`                    | P2       |
-| 17  | Inline result cards linked to durable records          | `apps/mobile/src/thread-artifacts.tsx`, `browser-tool-card.tsx`, `mail-tool-card.tsx`               | Thread UI (web + mobile)             | P1       |
-| 18  | Suggestions with source evidence                       | `apps/server/src/engine/service.ts:441-577`                                                         | Today                                | P2       |
+| #   | Mechanism                                              | OpenMuse source                                                                                     | Vivid target                             | Priority |
+| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ---------------------------------------- | -------- |
+| 1   | Hash-bound, expiring approval with atomic claim        | `apps/server/src/actions.ts`, `apps/server/src/db.ts:77-94`, `packages/domain/src/index.ts:117-156` | `apps/server/src/approvals` (empty)      | P0       |
+| 2   | Outcome-unknown for uncertain external writes          | `packages/integrations/src/google.ts:19-27,551-606`, `apps/server/src/db.ts:90-94`                  | Approvals + Connections                  | P0       |
+| 3   | Leased background work with heartbeat and recovery     | `apps/server/src/engine/worker.ts`                                                                  | Watch events + Thread Runs               | P0       |
+| 4   | Typed input request that resumes the work              | `apps/server/src/engine/service.ts:306-330,844-864`                                                 | `apps/server/src/inputs` (empty)         | P0       |
+| 5   | Tool-result journal (replay-safe tools after re-lease) | `apps/server/src/engine/model.ts:24-95`                                                             | Flue tool adapter / Runs                 | P1       |
+| 6   | Idempotent, keyed notifications + outcome publication  | `apps/server/src/engine/service.ts:73-116,578-588,749-807`                                          | `apps/server/src/notifications`          | P1       |
+| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `packages/computer` egress               | P0       |
+| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `packages/computer/desktop`              | P1       |
+| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `packages/computer/machine`              | P1       |
+| 10  | Short-lived signed file URLs                           | `apps/server/src/auth.ts:42-55`, `apps/server/src/files.ts:50-52`                                   | Artifacts                                | P1       |
+| 11  | Credential envelope encryption                         | `packages/integrations/src/vault.ts`                                                                | `apps/server/src/connections`            | P1       |
+| 12  | Google adapter: ETag-guarded calendar writes           | `packages/integrations/src/google.ts:523-548,787-816`                                               | `apps/server/src/connections/google`     | P1       |
+| 13  | PDF inspect/fill with script stripping                 | `packages/integrations/src/pdf.ts:93-153`, `apps/server/src/files.ts`                               | Artifacts / Library                      | P2       |
+| 14  | Document job (attachment → form → reply for approval)  | `apps/server/src/engine/service.ts:808-899`                                                         | An event-backed workflow, once 1–4 exist | P2       |
+| 15  | Page watch with change dedupe                          | `apps/server/src/engine/service.ts:359-440,900-997`                                                 | `apps/server/src/watches` events         | P2       |
+| 16  | Client message queue that never auto-resends           | `apps/mobile/src/conversation-queue.ts`                                                             | `packages/client`                        | P2       |
+| 17  | Inline result cards linked to durable records          | `apps/mobile/src/thread-artifacts.tsx`, `browser-tool-card.tsx`, `mail-tool-card.tsx`               | Thread UI (web + mobile)                 | P1       |
+| 18  | Suggestions with source evidence                       | `apps/server/src/engine/service.ts:441-577`                                                         | Today                                    | P2       |
 
 P0 is the trust loop Vivid lacks entirely: Approval, Input request, Run lease, and honest
 uncertainty. Everything else rides on it.
@@ -66,7 +66,7 @@ both execute. Every transition writes an activity entry (`actions.ts:192-201`).
 States (`packages/domain/src/index.ts:142-150`): `awaiting_review → executing → succeeded | failed |
 outcome_unknown`, or `awaiting_review → denied | cancelled | expired`.
 
-**Vivid mapping.** `docs/10`/`CLAUDE.md` define Approval as "authorization for one consequential
+**Vivid mapping.** `docs/10-product-decisions.md`/`CLAUDE.md` define Approval as "authorization for one consequential
 action, preserving action, risk, rationale, scope, and decision". OpenMuse has action + decision but
 no risk, rationale, or scope, and no decider identity.
 
@@ -119,10 +119,8 @@ cheap, and prevents duplicate emails and events. P0.
 Task states: `queued, running, waiting_approval, waiting_input, scheduled, paused, succeeded,
 failed, cancelled` (`packages/domain/src/agent.ts:3-12`).
 
-**Vivid mapping.** This is Vivid's **Run**: one bounded attempt to advance a Thread. The
-Routine scheduler (`apps/server/src/routines/scheduler.ts`) claims scheduled Occurrences and
-recovers durable submission receipts, including one-off reminders. Product Run records live in
-`apps/server/src/threads`; Flue owns conversation execution and its durable lifecycle.
+**Vivid mapping.** This is Vivid's **Run**: one bounded attempt to advance a Thread.
+Product Run records live in `apps/server/src/threads`; Flue owns conversation execution and its durable lifecycle.
 
 **Adapt.**
 
@@ -280,7 +278,7 @@ stripping is worth taking into Library ingestion regardless of form filling.
 return an Input request listing the supported fields → fill a new copy (original kept, linked by
 `parentId`) → checkpoint → propose `email.send` with the filled file attached → `waiting_approval`.
 Each step checkpoints so a re-lease resumes at the right step. Use it as the acceptance scenario for
-Vivid's Run + Input request + Approval slice; as a product feature it fits a Routine template.
+Vivid's Run + Input request + Approval slice; as a product feature it can run in response to an app event.
 
 ## 15. Page watch with change dedupe
 
@@ -288,15 +286,14 @@ Vivid's Run + Input request + Approval slice; as a product feature it fits a Rou
 differs), `contains`, or `price_below` (a USD regex, `service.ts:993-996`). Level-triggered
 conditions notify only on the transition into matched (`service.ts:935-936`); change notifications
 are keyed by content hash (`service.ts:979`). The watch reschedules itself as a `scheduled` task.
-For Vivid this is a Routine trigger kind whose Occurrence starts a Run; the transition-only rule
-and content-hash key carry over. The USD regex does not.
+Vivid currently reacts to Executor app events through Watches. Scheduled public-page checks are unavailable.
 
 ## 16. Client message queue
 
 `apps/mobile/src/conversation-queue.ts` is an external store (`subscribe`/`getSnapshot`, suitable
 for `useSyncExternalStore`) holding messages typed while a response streams. It sends them one at a
 time; on failure it pauses and **never resends** the failed message (`conversation-queue.ts:38-41`).
-Vivid's Flue runtime already admits messages mid-response (`docs/14`), so take only the
+Vivid's Flue runtime already admits messages mid-response (`docs/14-product-feature-set-and-grok-bot-parity.md`), so take only the
 "visible pending list + pause on failure, no implicit resend" behavior into `packages/client`.
 The composer keeps the draft on stop (`apps/mobile/src/chat.tsx:307-316`).
 
@@ -306,7 +303,7 @@ Tool results render as cards in the Thread and link to the saved record rather t
 re-described in prose: `FileThreadCard` and `TaskThreadCard` (`apps/mobile/src/thread-artifacts.tsx`),
 the browser card with its live/running state (`browser-tool-card.tsx`), and mail results
 (`mail-tool-card.tsx`). Borrow the pattern — every Run output is an Artifact with a card that opens
-it — not the components; Vivid's UI is built to its own design language (`docs/08`).
+it — not the components; Vivid's UI is built to its own design language (`docs/08-design-language.md`).
 
 ## 18. Suggestions with evidence
 

@@ -338,9 +338,8 @@ The pair is vendored (`vendor/computer/`) and shipped verbatim by `electron-buil
 `scripts/packed.mjs` refuses to package a Windows app without it. On other systems the app
 reports `apps: false`.
 
-The tests run the desktop's side against a stand-in process (`main/fake.mjs`) that speaks the
-same protocol. Not proved here: the real pair, the notice window, and the packaged installer;
-they need Windows.
+Integration proofs drive real HTTP listeners and subprocesses. Native proofs run the executor
+inside Electron. The Windows pair, notice window, and packaged installer need Windows.
 
 ### The proof
 

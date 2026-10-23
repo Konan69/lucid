@@ -18,7 +18,7 @@ private. There is no personal product and no team product, and no roster.
 A session is always working in exactly one **workspace**: `Personal`, or `Company` with the role the
 Person holds there. Switching is one call and every open screen follows it.
 
-Vivid follows the nine Team Bot rules, applied to itself:
+Vivid follows these Team Bot rules, applied to itself:
 
 | Rule                      | In Vivid                                                                                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,7 +27,6 @@ Vivid follows the nine Team Bot rules, applied to itself:
 | Acts as the asker         | A personal Connection is used only for the Person who owns it. A shared Connection is read-only for everyone.                                        |
 | Two memories              | Notes with each Person are private. Company memory is shared and is written only when someone says the whole Company should know, and Vivid says so. |
 | Shared work asks first    | In a shared Thread, Vivid asks a Person before using that Person's own Connection.                                                                   |
-| Routines are personal     | A Routine belongs to the Person who set it up, runs as them and reports in their Thread.                                                             |
 | Secrets stay secret       | Credential values never enter model context, a Thread, or a log.                                                                                     |
 | Usage follows the asker   | A Run is attributed to the Person who started it.                                                                                                    |
 | Admins control reach      | Admins invite and remove people, set Company rules and shared Connections, and read the audit record. They do not read private Threads.              |
@@ -42,11 +41,10 @@ Company ── Membership(role: owner | admin | member) ── Person      (crea
 
 A workspace holds:
    ├── Thread            audience: Private | People(participants) | Company
-   │     ├── Run         one admitted delivery; startedBy: Person | Routine | Decision
+   │     ├── Run         one admitted delivery; startedBy: Person | Watch | Decision
    │     ├── InputRequest   a question a Run could not answer alone
    │     └── Approval       authorization for one exact action, addressed to one Person
    ├── Project           a work container; a Thread may be filed in one
-   ├── Routine           owned by a Person; trigger: Once | Schedule | Webhook | Integration
    ├── Library           folders and items; shelf: Mine | Company
    ├── Connection        ownership: Personal(person) | Shared(company); backed by Executor
    ├── Rule              scope: Personal(person) | Company; decision: Allow | Ask | Never
@@ -71,7 +69,6 @@ query is scoped with. Thread reach is decided in `threads/access.ts`. No handler
 
 - **Thread:** the creator, the listed participants, or every Member when the audience is Company.
 - **Library:** the owner for Personal scope; every Member for Company scope.
-- **Routine:** its owner only. Its results land in a Thread, which has its own audience.
 - **Connection use:** the owner for Personal; every Member, read actions only, for Shared.
 - **Memory read:** in a Private Thread, the Person's notes, Company memory, and the memory of every
   shared Thread that Person is in. In a shared Thread, that Thread's memory and Company memory only.
@@ -88,7 +85,7 @@ A Run has exactly one acting Person. The application server is the only path to 
   `<message person="…" from="Ada Obi">`. Flue renders it to the model as a user turn, keeps the
   attribution in its own durable history, and exposes it to tools through `useDelivery()`. Clients
   render it as that Person's Message.
-- A Routine Occurrence is delivered as a signal that names its owner.
+- A Watch event is delivered as a signal that names its owner.
 
 The runtime passes the Thread and the acting Person on every product call. The server re-checks that
 Person's live Membership and Thread access on each call; a removed Member's Run stops being able to
@@ -112,8 +109,7 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    (tool, complete arguments, summary, Integration) and what the acting Person said in the turn
    Vivid is working on, with their message before it as background only. Those words are read
    from the conversation history and attributed by the server's own record of who started each
-   Run, never by a name or by what Vivid says was asked. A Routine contributes its instruction
-   without the outside payload; a Thread Vivid opened itself contributes nothing; an answer counts
+   Run, never by a name or by what Vivid says was asked. A Watch contributes no Person-authored request; its instruction and outside payload are untrusted. An answer counts
    only in a private Thread. The reviewer returns three measurements: how likely it is that the
    Person **asked** for this (or it is a necessary step of what they asked), how likely the action
    goes **beyond** the request (a recipient, account or amount they did not name), and its
@@ -156,9 +152,8 @@ measurements, and Jev does not write text.
 An **Input request** uses the same suspension: a question with labelled options and a free answer,
 addressed to a Person, answered once, returned as a signal.
 
-Background work (a Routine with nobody present) goes through the same review. The Routine's own
-instruction is trusted context for the reviewer, so a Routine does what it was set up to do without
-asking. Nobody being present never grants anything: when the reviewer says ask, the Approval waits
+Background work started by a Watch goes through the same review. Its instruction and event
+payload are untrusted. Nobody being present grants authority: when the reviewer says ask, the Approval waits
 for the Person, and an Approval that expires unanswered is a refusal.
 
 The **Computer** is Vivid's own machine, and work on it is contained there: a command or a browser
@@ -178,11 +173,11 @@ handle on a record.
 
 - **Who and where is injected, not said.** The server sends each delivery to the runtime with its
   scope beside it: the Person Vivid acts for, and the Library folder the work is confined to when
-  there is one (a Routine's own). The conversation itself carries only the speaker's name and the
+  there is one (a scoped folder). The conversation itself carries only the speaker's name and the
   delivery's turn number. Tools receive the scope through a Layer; the model cannot read it or
   change it. After a restart the runtime asks the server for the scope of a turn, with its own
   credential and for no Person.
-- **Things are named, not numbered.** A Routine is its name, a skill its name, a Connection its
+- **Things are named, not numbered.** A Watch is its name, a skill its name, a Connection its
   account ("Gmail (Work)"), a memory its words. What the model was shown is what it can say back,
   and code resolves the name to the record under the acting Person's access. Two things with the
   same name are told apart in the list, in a stable order.
@@ -365,24 +360,21 @@ client polls.
 The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread, a settings gear.
 
 - **First run.** Sign up, then the Thread, in the Person's own space. Nothing else is asked.
-  Suggestions on the empty screen come from that Person's own Routines and Library.
+  Suggestions on the empty screen come from that Person's own Library and connected procedures.
 - **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
   the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
   link shows who invited them and to what before they accept.
-- **Sidebar.** Vivid, then Routines, Projects, Library, Skills and Integrations, then Threads
+- **Sidebar.** Vivid, then Projects, Library, Skills and Integrations, then Threads
   grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
-  search palette (⌘K) finds Threads, Messages, Library items and Routines.
+  search palette (⌘K) finds Threads, Messages and Library items.
 - **Thread.** The header carries Vivid's face, the title, a line saying how Vivid is doing ("Here
   with you", "Working on it…", "Waiting for you"), and **Share**: add people by name, or share
   with the whole Company. A button opens what is around Vivid: its computers, its integrations and
   what it lately did here. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
   Cards in the Thread: a question to answer, an action to approve, a service to connect, a draft to
-  send, a Routine created, a result to open.
-- **Reminders.** Anything to do once at a time is a one-off Routine. Its Occurrence reports in
-  its private Thread, and the Routine disables itself after firing. Commitments stay in the Thread
-  where they were agreed; anything needing the Person reaches them through notifications and
-  **Needs you**.
+  send, a result to open.
+- **Reminders.** Unavailable until the clock app lands. Vivid promises future work only when it has a Watch for it.
 - **Library.** Two shelves: **Mine** and the Company's.
 - **Skills.** What Vivid knows how to do: a starter set that ships with it, and what the Person or
   their Company has taught it. Trying one starts a Thread and asks for it in words.
@@ -433,9 +425,7 @@ Vivid is a character the Person works with, and the surface is built so that rea
 - **Read the web.** `read_page` reads one public page without a Computer.
 - **Follow procedures.** A starter set of skills ships with Vivid; a saved one of the same name
   replaces it for whoever saved it.
-- **React to events.** A Routine can start on something happening in an integration ("when a new
-  email arrives from Dami"), found by polling behind one seam until native delivery has a public
-  address to call.
+- **React to events.** A Watch subscribes to an Integration app event through Executor. Events wake Vivid in a background Thread and useful findings reach the Person through the Feed.
 
 ## Build order
 
@@ -450,8 +440,7 @@ Each step leaves a product that runs.
 4. **The trust loop.** Input requests, Approvals, rules, the audit record, and their cards.
 5. **Connections on Executor.** The adapter, ownership, `find_tools` and `use_tool`, the connect card.
 6. **Memory on HelixDB.** The store, the background pass, the brief, recall, the settings view.
-7. **Scoped work.** Personal Routines with one-off, schedule, webhook and Integration triggers, the two
-   Library shelves, Projects from real data, skills.
+7. **Scoped work.** Watches and the Feed, the two Library shelves, Projects from real data, skills.
 8. **The Computer.** A machine per Person behind a provider boundary, with commands and a browser
    that pass through the trust loop.
 9. **The surface.** Every screen on real data on web, mobile and desktop: the search palette,
@@ -469,5 +458,5 @@ Each step leaves a product that runs.
 - **To-do lists and project management.** Decided 3 October 2026: Tasks, as work Vivid tracked
   and followed up, are deleted. They will be designed again as two things. A Person gets a to-do
   list of their own. A Company or team gets product and project management: owned work with a
-  state, inside a Project. Nothing of either is built; a reminder is a one-off Routine.
+  state, inside a Project. Nothing of either is built; reminders await the clock app.
 - **Billing and usage limits.**

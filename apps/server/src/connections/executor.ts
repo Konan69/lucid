@@ -5,11 +5,13 @@ import {
   ServiceAuthorization,
   ServiceId,
   ServiceUnavailable,
+  type MadeFile,
 } from '@vivid/contracts'
 import * as Config from 'effect/Config'
 import * as Arr from 'effect/Array'
 import * as Cache from 'effect/Cache'
 import * as Clock from 'effect/Clock'
+import * as Cause from 'effect/Cause'
 import * as Exit from 'effect/Exit'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -20,7 +22,6 @@ import * as Result from 'effect/Result'
 import * as HashMap from 'effect/HashMap'
 import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
-import * as Order from 'effect/Order'
 import * as Record from 'effect/Record'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
@@ -34,7 +35,13 @@ import { retainCatalog } from './catalog.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
-import { keyedService, keyedAddress, personalKeyAuthorization } from './curation.ts'
+import {
+  keyedService,
+  keyedServices,
+  keyedAddress,
+  personalKeyAuthorization,
+  refusedService,
+} from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 import {
@@ -51,10 +58,15 @@ import {
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
-export const ExecutorDeploymentId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorDeploymentId'))
-export const ExecutorProfileId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProfileId'))
+export const ExecutorVersionId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorVersionId'))
+/** An app either needs no account or binds one exact requirement in its declared scope. */
+export const ExecutorBinding = Schema.TaggedUnion({
+  Public: {},
+  Account: { requirement: Schema.NonEmptyString, scope: Schema.Literals(['app', 'user']) },
+})
 const ExecutorOrganizationId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOrganizationId'))
 const ExecutorProviderId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProviderId'))
+export const executorReconnectMessage = 'Remove this integration and connect it again.'
 export const connectionSetupMessage = 'This integration is not set up on this Vivid yet.'
 export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOwnerId'))
 export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
@@ -75,21 +87,111 @@ export const AccountIdentity = Schema.String.check(
 export type AccountIdentity = typeof AccountIdentity.Type
 const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 
+/** Deletion authority is either a Vivid allocation, a proven migration copy, or access only. */
+export const ExecutorAppOwnership = Schema.TaggedUnion({
+  Dedicated: {},
+  Copied: { original: ExecutorAppId },
+  Unproven: {},
+})
+
 const referenceFields = {
   service: ServiceId,
   app: ExecutorAppId,
-  profile: ExecutorProfileId,
   owner: ExecutorOwnerId,
-  /** Rows stored before ownership existed all name shared catalogue/import code, so only
-   * decoding defaults. Construction must state it: a rebuilt reference that silently became
-   * Shared would leave a dedicated app on Executor after removal. */
-  appOwnership: Schema.Literals(['Shared', 'Dedicated']).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed(Schema.Literal('Shared').make('Shared'))),
-  ),
+  binding: ExecutorBinding,
+  appOwnership: ExecutorAppOwnership,
 }
+
+/** Pre-beta.23 persistence ingress only. No product operation accepts these removed selections. */
+export const LegacyExecutorReferences = Schema.TaggedUnion({
+  Public: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+  Authorized: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    account: ExecutorAccountId,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+  EnteringKey: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    authorization: ExecutorAuthorizationId,
+    method: Schema.NonEmptyString,
+    label: Schema.NonEmptyString,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+  SigningIn: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    authorization: ExecutorAuthorizationId,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+  OAuthSigningIn: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    authorization: ExecutorAuthorizationId,
+    stateHash: Schema.NonEmptyString,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+  GoogleSigningIn: {
+    service: ServiceId,
+    app: ExecutorAppId,
+    profile: Schema.NonEmptyString,
+    owner: ExecutorOwnerId,
+    authorization: ExecutorAuthorizationId,
+    googleState: GoogleState,
+    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
+  },
+})
+
+/** Exact legacy resources survive refusal until the store can prove exclusive reclamation. */
+export const ExecutorRetired = Schema.Struct({
+  original: ExecutorAppId,
+  ownership: Schema.Literals(['Dedicated', 'Unproven']),
+  account: Schema.OptionFromNullOr(ExecutorAccountId),
+  copies: Schema.Array(ExecutorAppId),
+  authorization: Schema.OptionFromNullOr(ExecutorAuthorizationId),
+})
+
 /** Pending authorization has no account identity yet; status resolves it after completion. */
 export const ExecutorReferences = Schema.TaggedUnion({
   Public: referenceFields,
+  ReconnectRequired: {
+    service: ServiceId,
+    owner: ExecutorOwnerId,
+    retired: ExecutorRetired,
+    reason: Schema.Literals([
+      'UnresolvedMigration',
+      'RemovalPending',
+      'AmbiguousMigration',
+      'SharedSelection',
+      'MigrationTargetMissing',
+      'MigrationTargetNotReady',
+      'MigrationTargetUnavailable',
+    ]),
+  },
+  MigrationPending: {
+    service: ServiceId,
+    owner: ExecutorOwnerId,
+    legacy: LegacyExecutorReferences,
+    compatibleAttempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(0)),
+    ),
+    reason: Schema.Literals(['Unattempted', 'Unavailable', 'NotReady', 'CopyPending']),
+  },
   EnteringKey: {
     ...referenceFields,
     authorization: ExecutorAuthorizationId,
@@ -113,16 +215,33 @@ export const ExecutorReferences = Schema.TaggedUnion({
 })
 export type ExecutorReferences = typeof ExecutorReferences.Type
 
+export type ExecutorActiveReferences = Exclude<
+  ExecutorReferences,
+  { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
+>
+export const executorMigrationMessage = 'Vivid is updating this integration. Try again shortly.'
+/** Deferred selections have no live app binding and expose only their recovery instruction. */
+const isMigrationOnly = ExecutorReferences.isAnyOf(['ReconnectRequired', 'MigrationPending'])
+const migrationReason = (
+  references: Extract<
+    ExecutorReferences,
+    { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
+  >,
+) =>
+  Match.value(references).pipe(
+    Match.tag('ReconnectRequired', () => executorReconnectMessage),
+    Match.tag('MigrationPending', () => executorMigrationMessage),
+    Match.exhaustive,
+  )
+
 export const ExecutorServiceEntry = Schema.Struct({
   id: ServiceId,
   name: Schema.String,
   description: Schema.String,
-  /**
-   * The service's site, as the catalog gives it ("deepwiki.com"); null when the catalog names
-   * none, or for an entry that did not come from the catalog. It is what the service's icon is
-   * found by. This field was once dropped at decode, so no catalog service had an icon.
-   */
+  /** Only authored services have a known website. Beta.23 catalog icons name image resources,
+   * not service domains, so catalog entries keep domain null and retain the image address. */
   domain: Schema.NullOr(Schema.String),
+  icon: Schema.NullOr(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed(null))),
   authorization: ServiceAuthorization,
 })
 const SignInReferences = Schema.Union([
@@ -236,6 +355,7 @@ export class ExecutorSetupRequired extends Schema.TaggedError<ExecutorSetupRequi
  * See Executor packages/sdk/src/contracts/oauth.ts OAuthSetupFailed. */
 const OAuthSetupReason = Schema.Literals([
   'service_unavailable',
+  'rate_limited',
   'discovery_missing',
   'discovery_invalid',
   'discovery_blocked',
@@ -263,7 +383,7 @@ export class ExecutorConflict extends Schema.TaggedError<ExecutorConflict>()(
   { title: 'Connection resource conflict' },
 ) {}
 /** A create-only install can lose a race to another Vivid process. Its exact name is safely
- * reread once; unrelated profile/account conflicts must never trigger inventory recovery.
+ * reread once; unrelated account conflicts must never trigger inventory recovery.
  */
 export class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTaken>()(
   'ExecutorAppNameTaken',
@@ -279,7 +399,13 @@ export class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecu
 /** A sign-in cannot start without host configuration; preserve the pending foreign references. */
 export class ExecutorSignInRequired extends Schema.TaggedError<ExecutorSignInRequired>()(
   'ExecutorSignInRequired',
-  { references: ExecutorReferences, message: Schema.String },
+  {
+    references: ExecutorReferences,
+    message: Schema.String,
+    reason: Schema.Literals(['SetupRequired', 'OAuthClientUnavailable', 'Rejected']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Rejected' as const)),
+    ),
+  },
   { title: 'Connection sign-in setup required' },
 ) {}
 
@@ -293,7 +419,7 @@ export class ExecutorAuthorizationUnavailable extends Schema.TaggedError<Executo
 /** Deleted foreign resources cannot be repaired by entering credentials again. */
 export class ExecutorResourceMissing extends Schema.TaggedError<ExecutorResourceMissing>()(
   'ExecutorResourceMissing',
-  { ...errorContext, resource: Schema.Literals(['App', 'Profile', 'Deployment', 'Account']) },
+  { ...errorContext, resource: Schema.Literals(['App', 'Version', 'Account']) },
   { title: 'Connection resource missing' },
 ) {}
 /** Every domain path explains permanent deletion consistently without upstream diagnostics. */
@@ -309,7 +435,47 @@ export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorAppr
   { title: 'Integration approval unsupported' },
 ) {}
 
+/** The app account requirement changed. No credential or link is committed on this refusal. */
+export class ExecutorRequirementChanged extends Schema.TaggedError<ExecutorRequirementChanged>()(
+  'ExecutorRequirementChanged',
+  errorContext,
+  { title: 'The app account requirement changed' },
+) {}
+
+/** The account connection was refused. No credential or link is committed on this refusal. */
+export class ExecutorConnectionRefused extends Schema.TaggedError<ExecutorConnectionRefused>()(
+  'ExecutorConnectionRefused',
+  errorContext,
+  { title: 'The account connection was refused' },
+) {}
+
+/** Account choice is unsupported. No credential or link is committed on this refusal. */
+export class ExecutorAccountChoiceUnsupported extends Schema.TaggedError<ExecutorAccountChoiceUnsupported>()(
+  'ExecutorAccountChoiceUnsupported',
+  errorContext,
+  { title: 'Account choice is unsupported' },
+) {}
+
+/** The OAuth client is unavailable. No credential or link is committed on this refusal. */
+export class ExecutorOAuthClientUnavailable extends Schema.TaggedError<ExecutorOAuthClientUnavailable>()(
+  'ExecutorOAuthClientUnavailable',
+  errorContext,
+  { title: 'The OAuth client is unavailable' },
+) {}
+
+/** Select one OAuth client. No credential or link is committed on this refusal. */
+export class ExecutorOAuthClientAmbiguous extends Schema.TaggedError<ExecutorOAuthClientAmbiguous>()(
+  'ExecutorOAuthClientAmbiguous',
+  errorContext,
+  { title: 'Select one OAuth client' },
+) {}
+
 export type ExecutorFailure =
+  | ExecutorRequirementChanged
+  | ExecutorConnectionRefused
+  | ExecutorAccountChoiceUnsupported
+  | ExecutorOAuthClientUnavailable
+  | ExecutorOAuthClientAmbiguous
   | ExecutorSourceUnsupported
   | ExecutorImportQueryUnsupported
   | ExecutorPublicAddressRequired
@@ -330,12 +496,19 @@ export type ExecutorFailure =
   | ExecutorResourceMissing
   | ExecutorApprovalUnsupported
 
+/** Only authored source deployment exposes compiler diagnostics for the author to repair. */
+export class ExecutorBuildFailed extends Schema.TaggedError<ExecutorBuildFailed>()(
+  'ExecutorBuildFailed',
+  { message: Schema.String },
+  { title: 'ExecutorBuildFailed' },
+) {}
+
 const BeginInput = Schema.Struct({
   connectionId: ConnectionId,
   service: ServiceId,
   owner: ExecutorOwnerId,
   subject: Schema.NonEmptyString,
-  /** What Executor files the profile and account under in its own records: the service's name.
+  /** What Executor files the account under in its own records: the service's name.
    * Vivid never reads it back. What a Person calls an account, and who the service says it is,
    * are Vivid's own columns (`connections/tables.ts`). */
   label: Schema.NonEmptyString.check(Schema.isMaxLength(40)),
@@ -355,11 +528,8 @@ const SignInInput = Schema.Struct({
   callbackAddress: Schema.Redacted(Schema.String),
 })
 
-/** Owner and subject remain caller inputs for the later owner-to-organization mapping, but are
- * never sent to Executor. HostedProfiles in apps/hosted/server/src/contracts/profiles.ts
- * derives both from authenticated membership.
- * Until tenancy moves there, Vivid isolates Connections by sending only their saved app/profile/
- * account references; it never discovers an account by name or selects one from inventory.
+/** Vivid owns Person attribution. Hosted account ownership comes from the authenticated Executor
+ * user, so a dedicated app and exact requirement link isolate each Connection under that user.
  */
 export interface ExecutorService {
   /** Inspect public service setup without issuing an account grant or starting sign-in. */
@@ -367,25 +537,44 @@ export interface ExecutorService {
     readonly service: ServiceId
     readonly returnAddress: string
   }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
+  /** One decoded organization snapshot is shared by all rows in a migration pass. */
+  readonly inventory: Effect.Effect<typeof ExecutorInventory.Type, ExecutorFailure>
+  readonly reconcile: (
+    legacy: typeof LegacyExecutorReferences.Type,
+    inventory: typeof ExecutorInventory.Type,
+  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
+  readonly prepareRetirement: (
+    resources: typeof ExecutorRetired.Type,
+  ) => Effect.Effect<typeof ExecutorRetired.Type, ExecutorFailure>
+  readonly retire: (input: {
+    readonly resources: typeof ExecutorRetired.Type
+    readonly retainedApps: ReadonlyArray<typeof ExecutorAppId.Type>
+    readonly retainedAccounts: ReadonlyArray<typeof ExecutorAccountId.Type>
+  }) => Effect.Effect<void, ExecutorFailure>
   readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
   readonly begin: (
     input: typeof BeginInput.Type,
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
-  /** Register a URL source, then use the same profile and authorization path as catalogue imports. */
+  /** Register a URL source, then use the same app and authorization path as catalogue imports. */
   readonly add: (
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
-  /** Renew authorization without allocating another app, profile, or account. */
+  /** Authored apps have a repairable build failure outside ordinary Connection failures. */
+  readonly make: (
+    input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
+  ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure | ExecutorBuildFailed>
+  /** Renew authorization without allocating another app or account. */
   readonly reauthorize: (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
   readonly complete: (
     input: typeof CompleteInput.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  ) => Effect.Effect<typeof ExecutorReferences.cases.Authorized.Type, ExecutorFailure>
   /** The application server hosts returnAddress and supplies the full callback URL, kept redacted. */
   readonly completeSignIn: (
     input: typeof SignInInput.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  ) => Effect.Effect<typeof ExecutorReferences.cases.Authorized.Type, ExecutorFailure>
   readonly status: (
     references: ExecutorReferences,
   ) => Effect.Effect<typeof ExecutorStatus.Type, ExecutorFailure>
@@ -417,6 +606,8 @@ const AuthorizationMethod = Schema.Union([
   Schema.Struct({ type: Schema.Literal('oauth2') }),
 ]).pipe(Schema.toTaggedUnion('type'))
 const Requirement = Schema.Struct({
+  scope: Schema.Literals(['app', 'user']),
+  cardinality: Schema.Literals(['one', 'many']),
   provider: ExecutorProviderId,
   definition: Schema.Struct({ auth: Schema.Record(Schema.String, AuthorizationMethod) }),
 })
@@ -425,13 +616,23 @@ const WireApp = Schema.Struct({
   name: Schema.NonEmptyString,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
 })
-// Inventory identifies shared code only. Unrelated apps may use requirement shapes this
+// Inventory identifies app provenance only. Unrelated apps may use requirement shapes this
 // adapter cannot authorize; decode requirements only on the selected app's detail endpoint.
-const WireInventory = Schema.Struct({
-  apps: Schema.Array(Schema.Struct({ id: ExecutorAppId, name: Schema.NonEmptyString })),
+export const ExecutorInventory = Schema.Struct({
+  apps: Schema.Array(
+    Schema.Struct({
+      id: ExecutorAppId,
+      name: Schema.NonEmptyString,
+      activeVersion: Schema.NullOr(ExecutorVersionId),
+      copiedFrom: Schema.NullOr(Schema.Struct({ reference: Schema.NonEmptyString })),
+    }),
+  ),
+  links: Schema.Array(Schema.Struct({ app: ExecutorAppId, account: ExecutorAccountId })),
+  accounts: Schema.Array(Schema.Struct({ id: ExecutorAccountId })),
 })
 const WireSetup = Schema.Struct({
-  mode: Schema.Literals(['automatic', 'saved', 'client-required']),
+  mode: Schema.Literals(['automatic', 'client-required']),
+  clients: Schema.Array(Schema.Struct({ id: Schema.NonEmptyString })),
 })
 const WireAccount = Schema.Struct({ id: ExecutorAccountId })
 /**
@@ -449,36 +650,23 @@ const WireHealth = Schema.Struct({
     }),
   ),
 })
-const WireProfile = Schema.Struct({
-  id: ExecutorProfileId,
-  status: Schema.Literals([
-    'pending',
-    'ready',
-    'needs-setup',
-    'failed',
-    'disabled',
-    'removing',
-    'removed',
-  ]),
-  failure: Schema.NullOr(
-    Schema.Literals([
-      'accounts',
-      'configuration',
-      'registration',
-      'cleanup',
-      'access',
-      'deployment',
-    ]),
-  ),
+
+const ConnectionFailure = Schema.TaggedUnion({
+  OAuthSetupFailed: { reason: OAuthSetupReason },
+  OAuthCompletionFailed: {},
+  AccountConnectionRefused: {},
+  AccountConnectionTargetChanged: {},
 })
+const savedConnectionFailure = Schema.optionalKey(Schema.Struct({ error: ConnectionFailure }))
+
 const WireConnection = Schema.Struct({
   id: ExecutorAuthorizationId,
   reconnectAccount: Schema.NullOr(WireAccount),
-  target: Schema.NullOr(Schema.Struct({ app: ExecutorAppId, profile: ExecutorProfileId })),
+  target: Schema.Struct({ app: ExecutorAppId, requirement: Schema.NonEmptyString }),
   state: Schema.Union([
-    Schema.Struct({ status: Schema.Literal('pending') }),
+    Schema.Struct({ status: Schema.Literal('pending'), failure: savedConnectionFailure }),
     Schema.Struct({ status: Schema.Literal('cancelled') }),
-    Schema.Struct({ status: Schema.Literal('expired') }),
+    Schema.Struct({ status: Schema.Literal('expired'), failure: savedConnectionFailure }),
     Schema.Struct({ status: Schema.Literal('completed'), account: WireAccount }),
   ]).pipe(Schema.toTaggedUnion('status')),
 })
@@ -495,23 +683,39 @@ const WireTool = Schema.Struct({
     }),
   ),
 })
+const AccountSelections = Schema.Record(Schema.String, Schema.Array(ExecutorAccountId))
 const WireTools = Schema.Struct({
-  profile: ExecutorProfileId,
   items: Schema.Array(WireTool),
-  deployment: ExecutorDeploymentId,
-  profileRevision: Schema.Int,
+  version: ExecutorVersionId,
+  accounts: Schema.Struct({ app: AccountSelections, user: Schema.optionalKey(AccountSelections) }),
+  routers: Schema.Array(
+    Schema.Struct({
+      path: Schema.String,
+      error: Schema.optionalKey(Schema.Struct({ _tag: Schema.NonEmptyString })),
+    }),
+  ),
   next: Schema.optionalKey(Schema.NonEmptyString),
 })
 const WireCatalogEntry = Schema.Struct({
   id: ServiceId,
-  kind: Schema.Literals(['app', 'openapi', 'mcp', 'graphql', 'cli']),
-  name: Schema.String,
+  package: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
   description: Schema.String,
-  connectUrl: Schema.optionalKey(Schema.String),
-  domain: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  auth: Schema.optionalKey(Schema.Struct({ kind: Schema.String })),
-  popularity: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  auth: Schema.Array(
+    Schema.Struct({
+      method: Schema.NonEmptyString,
+      kind: Schema.Literals(['secrets', 'oauth2']),
+    }),
+  ),
+  icons: Schema.Array(
+    Schema.Struct({
+      src: Schema.String,
+      theme: Schema.optionalKey(Schema.Literals(['light', 'dark'])),
+    }),
+  ),
+  category: Schema.optionalKey(Schema.String),
 })
+
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
 /** packages/catalog/src/contracts/imports.ts CustomAppInput accepts only MCP name and URL.
@@ -548,13 +752,18 @@ const jsonBody = HttpClientRequest.schemaBodyJson(Schema.Json)
 const FailureMode = Schema.TaggedUnion({
   NotReady: {},
   AccessDenied: {},
-  Missing: { resource: Schema.Literals(['App', 'Profile', 'Deployment', 'Account']) },
+  Missing: { resource: Schema.Literals(['App', 'Version', 'Account']) },
   Conflict: {},
   Uncertain: {},
   Rejected: { message: Schema.String },
   SetupRequired: {},
   ApprovalUnsupported: {},
   AppNameTaken: {},
+  RequirementChanged: {},
+  ConnectionRefused: {},
+  AccountChoiceUnsupported: {},
+  OAuthClientUnavailable: {},
+  OAuthClientAmbiguous: {},
 })
 const notReady = FailureMode.cases.NotReady.make({})
 const conflict = FailureMode.cases.Conflict.make({})
@@ -566,7 +775,7 @@ const denied = FailureMode.cases.AccessDenied.make({})
 const failureModes = {
   AppNotFound: FailureMode.cases.Missing.make({ resource: 'App' }),
   AppNotDeployed: notReady,
-  DeploymentNotFound: FailureMode.cases.Missing.make({ resource: 'Deployment' }),
+  VersionNotFound: FailureMode.cases.Missing.make({ resource: 'Version' }),
   AccountNotFound: FailureMode.cases.Missing.make({ resource: 'Account' }),
   // No selected account requires authorization; never select another account implicitly.
   AccountRequired: notReady,
@@ -577,7 +786,6 @@ const failureModes = {
   }),
   AccountSelectionInvalid: notReady,
   OAuthReconnectRequired: notReady,
-  ProfileNotFound: FailureMode.cases.Missing.make({ resource: 'Profile' }),
   ProviderNotFound: notReady,
   AccountConnectionNotFound: notReady,
   AccountConnectionClosed: notReady,
@@ -592,10 +800,15 @@ const failureModes = {
   Forbidden: denied,
   OrganizationForbidden: denied,
   AuthenticationUnavailable: denied,
-  ProfileConflict: conflict,
   AppNameTaken: FailureMode.cases.AppNameTaken.make({}),
   AppSlugTaken: conflict,
-  AccountConnectionTargetChanged: conflict,
+  AccountConnectionTargetChanged: FailureMode.cases.RequirementChanged.make({}),
+  RequirementMismatch: FailureMode.cases.RequirementChanged.make({}),
+  AccountConnectionRefused: FailureMode.cases.ConnectionRefused.make({}),
+  AccountChoiceUnsupported: FailureMode.cases.AccountChoiceUnsupported.make({}),
+  OAuthClientNotFound: FailureMode.cases.OAuthClientUnavailable.make({}),
+  OAuthClientUnavailable: FailureMode.cases.OAuthClientUnavailable.make({}),
+  AccountLinkedToApp: conflict,
   AppWorkflowsActive: conflict,
   AppWebhooksActive: conflict,
   AccountWebhooksActive: conflict,
@@ -642,7 +855,6 @@ const failureModes = {
   AuthMethodInvalid: FailureMode.cases.Rejected.make({
     message: 'The integration authorization method changed; start authorization again.',
   }),
-  OAuthClientUnavailable: FailureMode.cases.SetupRequired.make({}),
   OAuthSetupFailed: FailureMode.cases.Rejected.make({
     message: 'The integration could not prepare sign-in. Review its OAuth configuration.',
   }),
@@ -656,13 +868,13 @@ const failureModes = {
   CatalogImportFailed: FailureMode.cases.Rejected.make({
     message: 'This catalog entry could not be imported. Check its published configuration.',
   }),
-  DeploymentBuildFailed: FailureMode.cases.Rejected.make({
+  VersionBuildFailed: FailureMode.cases.Rejected.make({
     message: 'The imported service could not be built.',
   }),
   SourceError: FailureMode.cases.Rejected.make({
     message: 'The retained service source is unavailable or cannot be changed.',
   }),
-  AppDeploymentChanged: conflict,
+  AppVersionChanged: conflict,
   SkillDefinitionInvalid: FailureMode.cases.Rejected.make({
     message: 'The imported service declaration is invalid.',
   }),
@@ -702,6 +914,12 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
       ExecutorResourceMissing.make({ ...context, resource }),
     AccessDenied: (): ExecutorFailure => ExecutorAccessDenied.make(context),
     AppNameTaken: (): ExecutorFailure => ExecutorAppNameTaken.make(context),
+    RequirementChanged: (): ExecutorFailure => ExecutorRequirementChanged.make(context),
+    ConnectionRefused: (): ExecutorFailure => ExecutorConnectionRefused.make(context),
+    AccountChoiceUnsupported: (): ExecutorFailure => ExecutorAccountChoiceUnsupported.make(context),
+    OAuthClientUnavailable: (): ExecutorFailure => ExecutorOAuthClientUnavailable.make(context),
+    OAuthClientAmbiguous: (): ExecutorFailure => ExecutorOAuthClientAmbiguous.make(context),
+
     Conflict: (): ExecutorFailure => ExecutorConflict.make(context),
     Uncertain: (): ExecutorFailure => ExecutorExecutionUncertain.make(context),
     Rejected: ({ message }): ExecutorFailure => ExecutorRejected.make({ ...context, message }),
@@ -711,7 +929,13 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
 /** Each decoder is compiled once per response shape at layer acquisition. No automatic retry is
  * installed: an accepted write or resume may have committed before the response was lost.
  */
-function responseReader(client: HttpClient.HttpClient) {
+function responseReader<E>(
+  client: HttpClient.HttpClient,
+  beforeFailure: (response: {
+    readonly status: number
+    readonly body: unknown
+  }) => Effect.Effect<void, E>,
+) {
   // The request Scope below releases each response, including the unread 401 body.
   const scoped = HttpClient.withScope(client)
   return <A, I>(schema: Schema.Codec<A, I>) => {
@@ -743,6 +967,7 @@ function responseReader(client: HttpClient.HttpClient) {
             Effect.mapError(() => ExecutorResponseInvalid.make(context)),
           )
         }
+        yield* beforeFailure({ status: response.status, body })
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
         if (isOAuthSetupFailure(failure)) {
           const detail = yield* decodeOAuthSetupFailure(body).pipe(Effect.mapError(invalid))
@@ -782,36 +1007,34 @@ function responseReader(client: HttpClient.HttpClient) {
   }
 }
 
-/** Curation declares personal-key services; all other entries keep Executor's auth hints. */
+/** Catalog auth is a list of declared methods. Installation learns the actual secret fields. */
 function catalogAuthorization(entry: typeof WireCatalogEntry.Type) {
   if (keyedService(entry.id) !== undefined) return personalKeyAuthorization()
-  if (entry.auth === undefined) return ServiceAuthorization.cases.KnownAfterInstall.make({})
-  return Match.value(entry.auth.kind).pipe(
-    Match.when('none', () => ServiceAuthorization.cases.None.make({})),
-    Match.whenOr('oauth', 'mixed', () => ServiceAuthorization.cases.SignIn.make({})),
-    Match.when('api_key', () => ServiceAuthorization.cases.Key.make({ fields: [] })),
-    Match.orElse(() => ServiceAuthorization.cases.SetupRequired.make({})),
-  )
+  if (entry.auth.length === 0) return ServiceAuthorization.cases.None.make({})
+  if (entry.auth.some((method) => method.kind === 'oauth2'))
+    return ServiceAuthorization.cases.SignIn.make({})
+  return ServiceAuthorization.cases.KnownAfterInstall.make({})
 }
 
-/** Supported catalogue entries remain discoverable even when this installation cannot authorize them.
- * Absent auth is learned after installation; an unknown declared hint requires operator setup.
- * Hosted CatalogImport quick-add supports app/MCP only; OpenAPI/GraphQL/CLI remain excluded.
- * These are method hints; cached setup inspection selects a usable method before a service is
- * offered or a Connection begins. Mixed imports retain both methods during inspection.
- */
+/** Parse icon addresses once; invalid and non-HTTPS entries carry no rendering authority. */
+const decodeIconAddress = Schema.decodeResult(Schema.URLFromString)
+
+/** Prefer neutral/light HTTPS icons without inferring a website domain from an image URL. */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
-  if (entry.kind !== 'app' && (entry.kind !== 'mcp' || entry.connectUrl === undefined)) return []
-  const authorization = catalogAuthorization(entry)
-  return [
-    ExecutorServiceEntry.make({
-      id: entry.id,
-      name: entry.name,
-      description: entry.description,
-      domain: Option.getOrNull(Option.fromNullishOr(entry.domain)),
-      authorization,
-    }),
-  ]
+  const icons = Arr.filterMap(entry.icons, (icon) => {
+    const address = decodeIconAddress(icon.src)
+    if (Result.isFailure(address) || address.success.protocol !== 'https:') return Result.failVoid
+    return Result.succeed(icon)
+  })
+  const icon = icons.find((value) => value.theme === undefined || value.theme === 'light')
+  return ExecutorServiceEntry.make({
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    domain: null,
+    icon: icon === undefined ? null : icon.src,
+    authorization: catalogAuthorization(entry),
+  })
 }
 
 /** HostedTool.readOnly and annotations.readOnlyHint carry the host's query category;
@@ -843,33 +1066,65 @@ function completedCall(value: Schema.Json) {
   return ExecutorCallOutcome.cases.Completed.make({ value })
 }
 
-/** Hosted paths keep app/profile opaque and explicit; the authenticated organization is prefixed
- * once at client acquisition (apps/hosted/server/src/contracts/profiles.ts HostedProfiles).
- */
-const target = (references: ExecutorReferences) =>
-  `/apps/${encodeURIComponent(references.app)}/profiles/${encodeURIComponent(references.profile)}`
+/** Requirement routes carry the declared scope. A public app has no account route. */
+function bindingPath(references: Pick<ExecutorActiveReferences, 'app' | 'binding'>) {
+  return ExecutorBinding.match<Effect.Effect<string, ExecutorNotReady>>(references.binding, {
+    Public: () => Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null })),
+    Account: ({ scope, requirement }) =>
+      Effect.succeed(`/apps/${query(references.app)}/accounts/${scope}/${query(requirement)}`),
+  })
+}
+
 /** Centralized encoding leaves foreign identifiers opaque rather than interpreting their prefixes. */
 const query = (value: string) => encodeURIComponent(value)
 /** Body encoding happens before dispatch and contains no diagnostic/logging of secret fields. */
 const post = (path: string, body: Schema.Json) => jsonBody(HttpClientRequest.post(path), body)
 
 /** Carry only stable identity across state transitions; never copy another variant discriminator. */
-function referenceIdentity(references: ExecutorReferences) {
+function referenceIdentity(references: ExecutorActiveReferences) {
   return {
     service: references.service,
     app: references.app,
-    profile: references.profile,
-    owner: references.owner,
+    binding: references.binding,
     appOwnership: references.appOwnership,
+    owner: references.owner,
   }
+}
+
+const decodeBuildFailure = Schema.decodeUnknownOption(
+  Schema.TaggedStruct('VersionBuildFailed', {
+    message: Schema.String,
+  }),
+)
+
+/** A rejected first build has no retained app (Executor VersionBuildFailed at 26d03a48).
+ * Read diagnostics only here so existing keyed, Google and imported apps keep their failures. */
+function deployReader(client: HttpClient.HttpClient) {
+  const read = responseReader(client, ({ status, body }) => {
+    const build = decodeBuildFailure(body)
+    if (status === 422 && Option.isSome(build))
+      return Effect.fail(
+        ExecutorBuildFailed.make({ message: build.value.message.trim().slice(0, 4000) }),
+      )
+    return Effect.void
+  })(WireApp)
+  return (request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>) =>
+    read(request, null)
 }
 
 /** Compile the narrow foreign response schemas once for this authenticated client. */
 function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
-  const read = responseReader(client)
+  const read = responseReader(client, () => Effect.void)
   const readApp = read(WireApp)
-  const readInventory = read(WireInventory)
-  const readProfile = read(WireProfile)
+  const readInventory = read(ExecutorInventory)
+  const readLinks = read(
+    Schema.Array(
+      Schema.Struct({
+        requirement: Schema.NonEmptyString,
+        account: Schema.Struct({ id: ExecutorAccountId }),
+      }),
+    ),
+  )
   const readConnection = read(WireConnection)
   const readAccount = read(WireAccount)
   const readCatalog = read(WireCatalog)
@@ -879,10 +1134,19 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const readRemoval = read(Schema.Json)
   return {
     google,
+    readDeploy: deployReader(client),
+    readSchedules: read(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.NonEmptyString,
+          scope: Schema.optionalKey(Schema.Literal('app')),
+        }),
+      ),
+    ),
     readApp,
     readInventory,
-    readProfile,
     readConnection,
+    readLinks,
     readAccount,
     readCatalog,
     readTools,
@@ -895,46 +1159,75 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
 }
 type ExecutorHttp = ReturnType<typeof makeHttp>
 
-/** Reconciliation is a typed setup operation; pending profiles are not assumed ready. */
-function makeReconcile(http: ExecutorHttp) {
-  return Effect.fn('Executor.reconcile')(function* (references: ExecutorReferences) {
-    return yield* http.readProfile(
-      Effect.succeed(HttpClientRequest.post(`${target(references)}/reconcile`)),
-      null,
-    )
+/** Compare every scope and requirement, not just membership in a flattened account list. */
+function validateSelections(
+  references: ExecutorReferences,
+  accounts: typeof WireTools.Type.accounts,
+) {
+  const actual = [
+    ...Object.entries(accounts.app).map(([name, ids]) => ({ scope: 'app', name, ids })),
+    ...Object.entries(accounts.user === undefined ? {} : accounts.user).map(([name, ids]) => ({
+      scope: 'user',
+      name,
+      ids,
+    })),
+  ].filter((slot) => slot.ids.length > 0)
+  const matches = ExecutorReferences.match(references, {
+    Public: () => actual.length === 0,
+    Authorized: (value) =>
+      ExecutorBinding.match(value.binding, {
+        Public: () => false,
+        Account: (binding) =>
+          actual.length === 1 &&
+          actual.some(
+            (slot) =>
+              slot.scope === binding.scope &&
+              slot.name === binding.requirement &&
+              slot.ids.length === 1 &&
+              slot.ids[0] === value.account,
+          ),
+      }),
+    EnteringKey: () => false,
+    SigningIn: () => false,
+    OAuthSigningIn: () => false,
+    GoogleSigningIn: () => false,
+    ReconnectRequired: () => false,
+    MigrationPending: () => false,
   })
+  return matches
+    ? Effect.void
+    : Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
 }
 
-/** Discovery is paginated: a Connection cannot silently lose tools after the first page. */
+/** Pin all pages to the first version and refuse changed account selections or cursor cycles. */
 function makeDiscovery(http: ExecutorHttp) {
   return Effect.fn('Executor.discover')(function* (references: ExecutorReferences) {
+    if (isMigrationOnly(references))
+      return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
     const items: (typeof ExecutorTool.Type)[] = []
-    let snapshot: Option.Option<{
-      deployment: typeof ExecutorDeploymentId.Type
-      revision: number
-    }> = Option.none()
-    let cursor: Option.Option<string> = Option.none()
+    let version = Option.none<typeof ExecutorVersionId.Type>()
+    let cursor = Option.none<string>()
     const seen = new Set<string>()
     do {
-      const base = Option.match(snapshot, {
-        onNone: () => `/apps/${query(references.app)}/tools?profile=${query(references.profile)}`,
-        onSome: ({ deployment, revision }) =>
-          `/apps/${query(references.app)}/tools?profile=${query(references.profile)}&deployment=${query(deployment)}&expectedProfileRevision=${revision}`,
-      })
-      const address = Option.match(cursor, {
-        onNone: () => base,
-        onSome: (value) => `${base}&cursor=${query(value)}`,
-      })
-      const page = yield* http.readTools(Effect.succeed(HttpClientRequest.get(address)), null)
-      if (
-        page.profile !== references.profile ||
-        (Option.isSome(snapshot) &&
-          (snapshot.value.deployment !== page.deployment ||
-            snapshot.value.revision !== page.profileRevision))
-      ) {
+      const params = new URLSearchParams()
+      if (Option.isSome(version)) params.set('version', version.value)
+      if (Option.isSome(cursor)) params.set('cursor', cursor.value)
+      const page = yield* http.readTools(
+        Effect.succeed(
+          HttpClientRequest.get(`/apps/${query(references.app)}/tools?${params.toString()}`),
+        ),
+        null,
+      )
+      if (page.routers.some((router) => router.error !== undefined))
+        return yield* ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'This integration could not list every tool. Retry discovery.',
+        })
+      yield* validateSelections(references, page.accounts)
+      if (Option.isSome(version) && version.value !== page.version)
         return yield* ExecutorConflict.make({ service: 'connections', tool: null })
-      }
-      snapshot = Option.some({ deployment: page.deployment, revision: page.profileRevision })
+      version = Option.some(page.version)
       for (const tool of page.items)
         items.push(
           ExecutorTool.make({
@@ -952,9 +1245,9 @@ function makeDiscovery(http: ExecutorHttp) {
       }
       cursor = Option.fromUndefinedOr(page.next)
     } while (Option.isSome(cursor))
-    if (Option.isNone(snapshot))
+    if (Option.isNone(version))
       return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
-    return { items, deployment: snapshot.value.deployment, revision: snapshot.value.revision }
+    return { items, version: version.value }
   })
 }
 
@@ -964,6 +1257,39 @@ function makeTools(discover: ReturnType<typeof makeDiscovery>) {
     return (yield* discover(references)).items
   })
 }
+
+/** A single stored client is exact. Multiple client choices require operator selection. */
+const oauthClient = Effect.fn('Executor.oauthClient')(function* (
+  http: ExecutorHttp,
+  appId: typeof ExecutorAppId.Type,
+  method: string,
+) {
+  const app = yield* http.readApp(
+    Effect.succeed(HttpClientRequest.get(`/apps/${query(appId)}`)),
+    null,
+  )
+  const requirement = yield* accountRequirement(app)
+  const setup = yield* http.readSetup(
+    Effect.succeed(
+      HttpClientRequest.get(
+        `/providers/${query(requirement.provider)}/oauth/${query(method)}/setup`,
+      ),
+    ),
+    null,
+  )
+  if (setup.mode === 'automatic') {
+    const automatic: Schema.Json = { automatic: true }
+    return automatic
+  }
+  const client = setup.clients[0]
+  if (setup.clients.length === 1 && client !== undefined) {
+    const selected: Schema.Json = { id: client.id }
+    return selected
+  }
+  if (setup.clients.length > 1)
+    return yield* ExecutorOAuthClientAmbiguous.make({ service: 'connections', tool: null })
+  return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
+})
 
 /** Starting OAuth may allocate protocol state before responding. Retain its targeted request on
  * refusal or transport loss so management can resolve it instead of losing its identity.
@@ -991,22 +1317,26 @@ function makeSignIn(
             ),
           ),
         }
-      : submission
+      : { ...submission, client: yield* oauthClient(http, pending.app, methodName) }
+    // Both setup refusals preserve the exact pending app for Resume and removal.
+    const rejectSetup = (reason: 'SetupRequired' | 'OAuthClientUnavailable') =>
+      recordSetupRequired(input.service).pipe(
+        Effect.andThen(
+          Effect.fail(
+            ExecutorSignInRequired.make({
+              references: pending,
+              message: connectionSetupMessage,
+              reason,
+            }),
+          ),
+        ),
+      )
     const result = yield* http
       .readSignIn(post(`/connections/${query(pending.authorization)}/oauth/start`, body), null)
       .pipe(
         Effect.catchTags({
-          ExecutorSetupRequired: () =>
-            recordSetupRequired(input.service).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  ExecutorSignInRequired.make({
-                    references: pending,
-                    message: connectionSetupMessage,
-                  }),
-                ),
-              ),
-            ),
+          ExecutorSetupRequired: () => rejectSetup('SetupRequired'),
+          ExecutorOAuthClientUnavailable: () => rejectSetup('OAuthClientUnavailable'),
           ExecutorRejected: ({ message }) =>
             Effect.fail(ExecutorSignInRequired.make({ references: pending, message })),
           ExecutorTransportFailure: () =>
@@ -1056,25 +1386,21 @@ function makeSignIn(
   })
 }
 
-/** Hosted AccountConnection.target is authoritative for a pending flow. A changed profile/app
- * cannot be followed or removed through this Connection. Untargeted reconnects are legitimate
- * only when their saved reconnectAccount supplies the original account identity.
- */
+/** A pending request must still name this app's exact requirement. */
 const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')(function* (
   connection: typeof WireConnection.Type,
-  references: ExecutorReferences,
+  references: Pick<ExecutorActiveReferences, 'app' | 'binding'>,
 ) {
-  const selection = connection.target
-  if (selection === null) {
-    if (connection.reconnectAccount === null)
-      return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
-    return
-  }
-  if (selection.profile !== references.profile || selection.app !== references.app)
+  if (
+    !ExecutorBinding.guards.Account(references.binding) ||
+    connection.target.app !== references.app ||
+    connection.target.requirement !== references.binding.requirement
+  )
     return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
+  return undefined
 })
 
-/** Native targeted requests atomically select the saved account into the exact profile. */
+/** Completion atomically links the account to the dedicated app requirement. */
 function makeAuthorize(
   http: ExecutorHttp,
   recordSetupRequired: (service: ServiceId) => Effect.Effect<void>,
@@ -1083,7 +1409,7 @@ function makeAuthorize(
   return Effect.fn('Executor.authorize')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
-    references: ExecutorReferences,
+    references: ExecutorActiveReferences,
     authorization: ServiceAuthorization,
   ) {
     const requirements = Object.entries(app.requirements.accounts)
@@ -1118,28 +1444,26 @@ function makeAuthorize(
         message: 'The integration does not declare one compatible authorization method.',
       })
     const [methodName, method] = chosen
-    // HostedAccounts reconnects the exact saved account. New Connections target the exact
-    // app/profile slot; neither lists or chooses another account. See HostedAccounts in
-    // apps/hosted/server/src/contracts/accounts.ts.
+    const bound = {
+      ...referenceIdentity(references),
+      binding: ExecutorBinding.cases.Account.make({
+        requirement,
+        scope: definition.scope,
+      }),
+    }
+    const path = yield* bindingPath(bound)
+    const body: Schema.Json = ExecutorReferences.guards.Authorized(references)
+      ? { account: references.account }
+      : {}
     const connection = isPending(references)
       ? { id: references.authorization }
       : yield* http
-          .readConnection(
-            ExecutorReferences.guards.Authorized(references)
-              ? Effect.succeed(
-                  HttpClientRequest.post(`/accounts/${query(references.account)}/connections`),
-                )
-              : post(`/apps/${query(references.app)}/connections`, {
-                  requirement,
-                  profile: references.profile,
-                }),
-            null,
-          )
-          .pipe(Effect.tap((created) => validateConnectionTarget(created, references)))
+          .readConnection(post(`${path}/connections`, body), null)
+          .pipe(Effect.tap((created) => validateConnectionTarget(created, bound)))
     return yield* AuthorizationMethod.match(method, {
       secrets: ({ fields }) => {
         const pending = ExecutorReferences.cases.EnteringKey.make({
-          ...referenceIdentity(references),
+          ...bound,
           authorization: connection.id,
           method: methodName,
           label: input.label,
@@ -1151,7 +1475,7 @@ function makeAuthorize(
       },
       oauth2: Effect.fn('Executor.authorizeSignIn')(function* () {
         const pending = ExecutorReferences.cases.SigningIn.make({
-          ...referenceIdentity(references),
+          ...bound,
           authorization: connection.id,
         })
         return yield* signIn(input, pending, methodName)
@@ -1188,11 +1512,30 @@ function makeIdentity(http: ExecutorHttp) {
   })
 }
 
+/** Saved failures retain the same finite refusal vocabulary as their completion routes. */
+function connectionFailure(failure: typeof ConnectionFailure.Type) {
+  const context = { service: 'connections' as const, tool: null }
+  return ConnectionFailure.match<Effect.Effect<never, ExecutorFailure>>(failure, {
+    OAuthSetupFailed: ({ reason }) =>
+      Effect.fail(ExecutorOAuthSetupFailed.make({ ...context, reason })),
+    OAuthCompletionFailed: () =>
+      Effect.fail(
+        ExecutorRejected.make({
+          ...context,
+          message: 'Sign-in did not complete. Start authorization again.',
+        }),
+      ),
+    AccountConnectionRefused: () => Effect.fail(ExecutorConnectionRefused.make(context)),
+    AccountConnectionTargetChanged: () => Effect.fail(ExecutorRequirementChanged.make(context)),
+  })
+}
+
 /** Readiness resolves pending account IDs, reconciles setup, then probes real authorization. */
 function makeStatus(http: ExecutorHttp) {
-  const reconcile = makeReconcile(http)
   return Effect.fn('Executor.status')(
     function* (references: ExecutorReferences) {
+      if (isMigrationOnly(references))
+        return ExecutorStatus.cases.Failed.make({ reason: migrationReason(references) })
       let resolved = references
       if (isPending(references)) {
         const connection = yield* http.readConnection(
@@ -1201,8 +1544,10 @@ function makeStatus(http: ExecutorHttp) {
         )
         yield* validateConnectionTarget(connection, references)
         const state = connection.state
-        if (WireConnection.fields.state.guards.pending(state))
+        if (WireConnection.fields.state.guards.pending(state)) {
+          if (state.failure !== undefined) return yield* connectionFailure(state.failure.error)
           return ExecutorStatus.cases.NeedsAuthorization.make({ references })
+        }
         if (!WireConnection.fields.state.guards.completed(state))
           return ExecutorStatus.cases.Failed.make({ reason: `Authorization ${state.status}` })
         resolved = ExecutorReferences.cases.Authorized.make({
@@ -1210,28 +1555,11 @@ function makeStatus(http: ExecutorHttp) {
           account: state.account.id,
         })
       }
-      // HostedProfiles.get reads the saved selection without scheduling setup work on every
-      // healthy status check. Reconcile only a profile that has not reached ready yet.
-      const saved = yield* http.readProfile(
-        Effect.succeed(HttpClientRequest.get(target(resolved))),
-        null,
-      )
-      const profile = saved.status === 'ready' ? saved : yield* reconcile(resolved)
-      if (profile.status !== 'ready') {
-        if (profile.failure === 'accounts')
-          return ExecutorStatus.cases.NeedsAuthorization.make({ references: resolved })
-        return ExecutorStatus.cases.Failed.make({ reason: `Service setup is ${profile.status}` })
-      }
       const page = yield* http.readTools(
-        Effect.succeed(
-          HttpClientRequest.get(
-            `/apps/${query(resolved.app)}/tools?profile=${query(resolved.profile)}`,
-          ),
-        ),
+        Effect.succeed(HttpClientRequest.get(`/apps/${query(resolved.app)}/tools`)),
         null,
       )
-      if (page.profile !== resolved.profile)
-        return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
+      yield* validateSelections(resolved, page.accounts)
       return ExecutorStatus.cases.Ready.make({ references: resolved })
     },
     (effect, references) =>
@@ -1247,6 +1575,24 @@ function makeStatus(http: ExecutorHttp) {
             ),
           ExecutorRejected: ({ message }) =>
             Effect.succeed(ExecutorStatus.cases.Failed.make({ reason: message })),
+          ExecutorRequirementChanged: () =>
+            Effect.succeed(
+              ExecutorStatus.cases.Failed.make({
+                reason: 'Integration account setup changed. Reconnect it.',
+              }),
+            ),
+          ExecutorConnectionRefused: () =>
+            Effect.succeed(
+              ExecutorStatus.cases.Failed.make({
+                reason: 'Integration access does not allow connecting this account.',
+              }),
+            ),
+          ExecutorOAuthSetupFailed: () =>
+            Effect.succeed(
+              ExecutorStatus.cases.Failed.make({
+                reason: 'Integration sign-in setup failed. Review its configuration.',
+              }),
+            ),
           ExecutorConflict: () =>
             Effect.succeed(
               ExecutorStatus.cases.Failed.make({
@@ -1262,8 +1608,6 @@ function makeStatus(http: ExecutorHttp) {
  * A refresh emits one credential-free summary, with identities only when their schema decodes.
  */
 function makeCatalog(http: ExecutorHttp) {
-  const decodeKind = Schema.decodeUnknownEffect(Schema.Struct({ kind: Schema.String }))
-  const knownKind = Schema.is(WireCatalogEntry.fields.kind)
   const decodeIdentity = Schema.decodeUnknownOption(Schema.Struct({ id: ServiceId }))
   return Effect.fn('Executor.catalog')(function* () {
     const entries = yield* http.readCatalog(Effect.succeed(HttpClientRequest.get('/catalog')), null)
@@ -1274,13 +1618,7 @@ function makeCatalog(http: ExecutorHttp) {
       // and a span apiece was 27,000 spans an hour with one Person. `Executor.catalog` is the span.
       Effect.fnUntraced(
         function* (entry) {
-          const { kind } = yield* decodeKind(entry)
-          if (!knownKind(kind)) return []
-          const value = yield* decodeCatalogEntry(entry)
-          return catalogEntry(value).map((service) => ({
-            service,
-            popularity: Option.fromNullishOr(value.popularity),
-          }))
+          return [catalogEntry(yield* decodeCatalogEntry(entry))]
         },
         (effect, entry) =>
           effect.pipe(
@@ -1298,20 +1636,8 @@ function makeCatalog(http: ExecutorHttp) {
           serviceIds: Arr.getSomes(rejected).map((entry) => entry.id),
         }),
       )
-    return Arr.sort(decoded.flat(), comparePopularity).map((entry) => entry.service)
+    return decoded.flat()
   })
-}
-
-/** The live catalog carries numbers on curated entries, one explicit null, and omitted keys
- * elsewhere. Numeric popularity sorts first, descending; ties and absent values retain wire order.
- */
-function comparePopularity(
-  left: { readonly popularity: Option.Option<number> },
-  right: { readonly popularity: Option.Option<number> },
-) {
-  if (Option.isNone(left.popularity)) return Option.isSome(right.popularity) ? 1 : 0
-  if (Option.isNone(right.popularity)) return -1
-  return Order.Number(right.popularity.value, left.popularity.value)
 }
 
 /** Key names and labels come from the imported declaration, never a guessed catalog form. */
@@ -1346,7 +1672,8 @@ function makeInspectSetup(http: ExecutorHttp) {
         ),
         null,
       )
-      if (setup.mode !== 'client-required') return ServiceAuthorization.cases.SignIn.make({})
+      if (setup.mode === 'automatic' || setup.clients.length === 1)
+        return ServiceAuthorization.cases.SignIn.make({})
     }
     if (key !== undefined && AuthorizationMethod.guards.secrets(key[1]))
       return ServiceAuthorization.cases.Key.make({ fields: keyFields(key[1].fields) })
@@ -1499,7 +1826,6 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           message: 'Choose an integration from the current catalog.',
         })
       if (keyedService(service) !== undefined) return personalKeyAuthorization()
-      if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
       // Google signs in with the client Vivid sends on each start. Executor holds none until the
       // first one, so asking it about setup would answer `client-required` for a service that works.
       if (Option.isSome(googleService(service))) return entry.authorization
@@ -1613,15 +1939,15 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   }
 })
 
-/** packages/sdk/src/contracts/apps.ts AppName is bounded at 120 characters. Hash the Integration
- * identity so arbitrary URL lengths share a stable name across Connections without truncation.
+/** packages/sdk/src/contracts/apps.ts AppName is bounded at 120 characters. Hash the Connection
+ * identity so retries retain one dedicated app without sharing another Connection's accounts.
  */
-function integrationAppName(service: ServiceId) {
-  return `Vivid Integration ${NodeCrypto.createHash('sha256').update(service).digest('hex')}`
+function connectionAppName(connection: ConnectionId) {
+  return `Vivid Integration ${NodeCrypto.createHash('sha256').update(connection).digest('hex')}`
 }
 
-/** Inventory matches only shared app code by its deterministic name. Full requirements enter
- * through that app's detail endpoint; profiles and accounts are never selected from inventory.
+/** Inventory matches only this Connection's app by its deterministic name. Full requirements enter
+ * through that app's detail endpoint; ordinary provisioning never selects an account from inventory.
  */
 function makeFindInstalled(http: ExecutorHttp) {
   return Effect.fn('Executor.findInstalled')(function* (name: string) {
@@ -1642,7 +1968,7 @@ function makeFindInstalled(http: ExecutorHttp) {
 
 const isAppNameTaken = Schema.is(ExecutorAppNameTaken)
 
-/** A name conflict is the sole proof another process may have installed this shared app.
+/** A name conflict is the sole proof another process may have installed this Connection's app.
  * Reread once and return that exact winner; absence preserves the original conflict.
  */
 function makeProvision(http: ExecutorHttp) {
@@ -1681,8 +2007,8 @@ const makeInstall = Effect.fn('Executor.installLocks')(function* (http: Executor
 
 const isSetupRequired = Schema.is(ExecutorSetupRequired)
 
-/** HostedApps.install deploys the catalog entry directly into the organization. Shared code is
- * retained on setup failure: deleting it would break every other Connection's profile.
+/** Install or deploy one dedicated app per Connection. A retry finds only that Connection's
+ * deterministic app name; different Persons and accounts never share a provisioning lock.
  */
 function makeBegin(
   http: ExecutorHttp,
@@ -1701,22 +2027,21 @@ function makeBegin(
         tool: null,
         message: 'Choose a supported Integration from the current catalog.',
       })
-    // Hosted CatalogEntry omits auth. Explicit Begin installs first, then its real requirements
-    // establish authorization; absent catalog hints never grant unauthenticated access.
-    // A Google service is no catalogue install: Executor's catalogue only names its definition
-    // (kind `openapi`, which `/apps/install` refuses), so Vivid deploys its own source for it. The
-    // name carries the source's hash, so the first Begin on an organization deploys and every
-    // later one, from any server on the same source, finds that app.
-    const app = yield* Option.match(googleService(input.service), {
-      onNone: () =>
-        install(integrationAppName(input.service), (name) =>
-          http.readApp(post('/apps/install', { entry: entry.id, name }), null),
-        ),
-      onSome: (google) =>
-        install(googleAppName(google), (name) =>
-          http.readApp(post('/apps/deploy', { name, files: googleFiles(google) }), null),
-        ),
-    })
+    // Catalog hints cannot override the installed app's requirements. Authored Google sources
+    // retain their exact framework pin and get a different app for every Connection.
+    const app = yield* Effect.acquireRelease(
+      Option.match(googleService(input.service), {
+        onNone: () =>
+          install(connectionAppName(input.connectionId), (name) =>
+            http.readApp(post('/apps/install', { entry: entry.id, name }), null),
+          ),
+        onSome: (google) =>
+          install(`${googleAppName(google)} ${input.connectionId}`, (name) =>
+            http.readApp(post('/apps/deploy', { name, files: googleFiles(google) }), null),
+          ),
+      }),
+      compensateApp(http),
+    )
     const authorization =
       Object.keys(app.requirements.accounts).length === 0
         ? ServiceAuthorization.cases.None.make({})
@@ -1733,79 +2058,139 @@ function makeBegin(
         domain: entry.domain,
         authorization,
       }),
-      'Shared',
     )
-  })
-  return { begin, add: makeAdd(http, availability, configure, install) }
+  }, Effect.scoped)
+  return {
+    begin,
+    add: makeAdd(http, availability, configure, install),
+    make: makeAuthored(http, availability, configure),
+  }
 }
 
-/** HostedProfiles.create uses ConnectionId as its idempotency key. Each Connection holds its
- * own account selection on shared code; membership supplies owner and subject on the host.
- * Scope registers rollback before authorization. Any later failure releases only this profile;
- * cleanup failure is logged by tag and never replaces the original failure or deletes shared code.
- */
+/** A lost deploy answer may follow a committed app. Reclaim only this Connection's exact
+ * inventory name, without evaluating the app again. Preserve the original failure if cleanup
+ * itself is unavailable, matching compensateApp's logging and failure policy. */
+function makeReclaimAuthored(http: ExecutorHttp) {
+  const remove = makeRemoval(http)
+  return Effect.fn('Executor.reclaimAuthored')(
+    function* (name: string) {
+      const inventory = yield* http.readInventory(
+        Effect.succeed(HttpClientRequest.get('/inventory')),
+        null,
+      )
+      const app = inventory.apps.find((candidate) => candidate.name === name)
+      if (app !== undefined) yield* remove(`/apps/${query(app.id)}`, 'App')
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.tapError((failure) =>
+          Effect.logError('Integration deploy compensation failed', failure._tag),
+        ),
+        Effect.ignore,
+      ),
+  )
+}
+
+/** Authored sources own one app, including its schedules; failed configuration reclaims it. */
+function makeAuthored(
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+  configure: ReturnType<typeof makeConfigure>,
+) {
+  const reclaim = makeReclaimAuthored(http)
+  return Effect.fn('Executor.makeAuthored')(function* (
+    input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
+  ) {
+    const name = connectionAppName(input.connectionId)
+    const app = yield* Effect.acquireRelease(
+      http
+        .readDeploy(
+          post('/apps/deploy', {
+            name,
+            files: input.files,
+          }),
+        )
+        .pipe(
+          Effect.tapErrorTag(['ExecutorTransportFailure', 'ExecutorExecutionUncertain'], () =>
+            reclaim(name),
+          ),
+        ),
+      compensateApp(http),
+    )
+    const schedules = yield* http.readSchedules(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}/schedules/definitions`)),
+      null,
+    )
+    // User schedules would run as Vivid's Executor user, rather than the acting Person.
+    yield* Effect.forEach(
+      schedules.filter((schedule) => schedule.scope === 'app'),
+      (schedule) =>
+        http.readCall(
+          jsonBody(
+            HttpClientRequest.patch(`/apps/${query(app.id)}/schedules/${query(schedule.name)}`),
+            { enabled: true, scope: 'app' },
+          ),
+          null,
+        ),
+    )
+    const authorization =
+      Object.keys(app.requirements.accounts).length === 0
+        ? ServiceAuthorization.cases.None.make({})
+        : yield* availability.inspectApp(input, app)
+    if (ServiceAuthorization.guards.SetupRequired(authorization))
+      return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
+    return yield* configure(
+      input,
+      app,
+      ExecutorServiceEntry.make({
+        id: input.service,
+        name: input.label,
+        description: '',
+        domain: null,
+        authorization,
+      }),
+    )
+  }, Effect.scoped)
+}
+
+/** Every registration owns one app. Account completion fills that app's declared requirement. */
 function makeConfigure(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
 ) {
-  const reconcile = makeReconcile(http)
   const authorize = makeAuthorize(http, availability.recordSetupRequired)
-  return Effect.fn('Executor.configureProfile')(function* (
+  return Effect.fn('Executor.configure')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
     entry: typeof ExecutorServiceEntry.Type,
-    appOwnership: typeof ExecutorReferences.Type.appOwnership,
   ) {
-    const profile = yield* Effect.acquireRelease(
-      http.readProfile(
-        post(`/apps/${query(app.id)}/profiles`, {
-          name: input.label,
-          accounts: {},
-          idempotencyKey: input.connectionId,
-        }),
-        null,
-      ),
-      (created, exit) =>
-        Exit.isSuccess(exit)
-          ? Effect.void
-          : http
-              .readRemoval(
-                Effect.succeed(
-                  HttpClientRequest.delete(`/apps/${query(app.id)}/profiles/${query(created.id)}`),
-                ),
-                null,
-              )
-              .pipe(
-                Effect.tapError((failure) =>
-                  Effect.logError('Integration profile compensation failed', failure._tag),
-                ),
-                Effect.ignore,
-              ),
-    )
     const references = ExecutorReferences.cases.Public.make({
       service: input.service,
       app: app.id,
-      profile: profile.id,
+      appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
       owner: input.owner,
-      appOwnership,
+      binding: ExecutorBinding.cases.Public.make({}),
     })
-    if (Object.keys(app.requirements.accounts).length === 0) {
-      const state = yield* reconcile(references)
-      if (state.status !== 'ready')
-        return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
+    if (Object.keys(app.requirements.accounts).length === 0)
       return ExecutorStep.cases.Done.make({ references })
-    }
     return yield* authorize(input, app, references, entry.authorization)
-  }, Effect.scoped)
+  })
 }
 
-/** Register compensation immediately after a dedicated app is acquired. Profile rollback runs
- * inside configure first; then app rollback removes source/deployment on any registration failure.
- * See Executor packages/sdk/src/implementation/apps.ts remove: deletion cascades app profiles. */
+const isRetainedSignIn = Schema.is(
+  Schema.Union([ExecutorSignInRequired, ExecutorAuthorizationUnavailable]),
+)
+
+/** Failed installation releases only its dedicated app. A sign-in whose response was lost or
+ * needs operator setup retains the app with its saved pending reference for Resume/removal.
+ */
 function compensateApp(http: ExecutorHttp) {
   const remove = makeRemoval(http)
   return <A, E>(created: typeof WireApp.Type, exit: Exit.Exit<A, E>) =>
-    Exit.isSuccess(exit)
+    Exit.isSuccess(exit) ||
+    exit.cause.reasons.some(
+      (reason) => Cause.isFailReason(reason) && isRetainedSignIn(reason.error),
+    )
       ? Effect.void
       : remove(`/apps/${query(created.id)}`, 'App').pipe(
           Effect.tapError((failure) =>
@@ -1817,7 +2202,7 @@ function compensateApp(http: ExecutorHttp) {
 
 /** Deploy the two files proven in artifacts/research/github-token-proof.md, Route 2.
  * Code belongs to one Connection, so rollback/removal can delete it without affecting anyone
- * else's profile. Configure/authorize/complete/discovery/call stay on the ordinary adapter path. */
+ * else's app. Configure/authorize/complete/discovery/call use the ordinary adapter path. */
 function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigure>) {
   return Effect.fn('Executor.addKeyed')(function* (
     input: typeof BeginInput.Type,
@@ -1854,7 +2239,6 @@ function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigur
         domain: transport.host,
         authorization: personalKeyAuthorization(),
       }),
-      'Dedicated',
     )
     if (!ExecutorStep.guards.EnterKey(step))
       return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
@@ -1879,7 +2263,7 @@ function keyInsteadOfOAuth(reason: typeof OAuthSetupReason.Type) {
 }
 
 /** HostedApps.importCustom keeps public URL imports on the same protocol path. Probe apps
- * are dedicated so an unsatisfiable OAuth import can be deleted without cascading other profiles.
+ * are dedicated so an unsatisfiable OAuth import can be deleted without cascading other Connections.
  */
 function makeAdd(
   http: ExecutorHttp,
@@ -1917,7 +2301,7 @@ function makeAdd(
     if (policy !== undefined || input.source.authorization === 'apiKey')
       return yield* keyed(input, transport)
     const app = yield* Effect.acquireRelease(
-      install(integrationAppName(ServiceId.make(`import:${input.connectionId}`)), (name) => {
+      install(connectionAppName(input.connectionId), (name) => {
         // Executor resolves the inspected URL again; production requires public-only egress.
         const source = WireImportSource.make({ name, url: input.source.address })
         return http.readApp(post('/apps/import', { source }), null)
@@ -1937,7 +2321,7 @@ function makeAdd(
               ),
             )
     if (ServiceAuthorization.guards.SetupRequired(authorization)) {
-      // The probe is dedicated: deleting shared app code would cascade other profiles.
+      // The failed probe belongs only to this Connection; release it before deploying the key source.
       yield* remove(`/apps/${query(app.id)}`, 'App')
       return yield* keyed(input, transport)
     }
@@ -1951,7 +2335,6 @@ function makeAdd(
         domain: null,
         authorization,
       }),
-      'Dedicated',
     )
   }, Effect.scoped)
 }
@@ -1968,6 +2351,12 @@ function makeReauthorize(
   return Effect.fn('Executor.reauthorize')(function* (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) {
+    if (isMigrationOnly(input.references))
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: executorReconnectMessage,
+      })
     let references = input.references
     if (isPending(references)) {
       const pending = yield* http.readConnection(
@@ -2020,7 +2409,6 @@ function makeReauthorize(
 
 /** The response exposes account identity only; credentials are encoded once and never retained. */
 function makeComplete(http: ExecutorHttp) {
-  const reconcile = makeReconcile(http)
   return Effect.fn('Executor.complete')(function* ({
     references,
     fields,
@@ -2046,14 +2434,12 @@ function makeComplete(http: ExecutorHttp) {
       ...referenceIdentity(references),
       account: account.id,
     })
-    yield* reconcile(resolved)
     return resolved
   })
 }
 
 /** Executor checks the stored OAuth state and redirect before exchanging the callback's code. */
 function makeCompleteSignIn(http: ExecutorHttp) {
-  const reconcile = makeReconcile(http)
   return Effect.fn('Executor.completeSignIn')(function* ({
     references,
     callbackAddress,
@@ -2077,7 +2463,6 @@ function makeCompleteSignIn(http: ExecutorHttp) {
       ...referenceIdentity(references),
       account: account.id,
     })
-    yield* reconcile(resolved)
     return resolved
   })
 }
@@ -2086,50 +2471,64 @@ function makeCompleteSignIn(http: ExecutorHttp) {
  * conflicts, and authority failures remain visible and cannot authorize deleting another resource.
  */
 function makeRemoval(http: ExecutorHttp) {
-  return Effect.fn('Executor.removeResource')(
-    (path: string, resource: 'Profile' | 'Account' | 'App') =>
-      http
-        .readRemoval(Effect.succeed(HttpClientRequest.delete(path)), null)
-        .pipe(
-          Effect.catchTag('ExecutorResourceMissing', (error) =>
-            error.resource === resource ? Effect.void : Effect.fail(error),
-          ),
+  return Effect.fn('Executor.removeResource')((path: string, resource: 'Account' | 'App') =>
+    http
+      .readRemoval(Effect.succeed(HttpClientRequest.delete(path)), null)
+      .pipe(
+        Effect.catchTag('ExecutorResourceMissing', (error) =>
+          error.resource === resource ? Effect.void : Effect.fail(error),
         ),
+      ),
   )
 }
 
-/** Remove only the Connection's profile, then its dedicated account. Hosted app code is shared
- * and must remain; dedicated keyed apps are deleted last. Executor's active-resource conflicts protect other live account users.
+/** Ordinary removal shares retirement's ownership and preflight policy. A shared original is
+ * never deleted, and app/link failures cannot follow deletion of the selected credential.
  */
 function makeRemove(http: ExecutorHttp) {
-  const remove = makeRemoval(http)
+  const retire = makeRetire(http)
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
+    if (isMigrationOnly(references)) return yield* Effect.void
     const account = yield* ExecutorReferences.match(references, {
       Public: () => Effect.succeedNone,
+      ReconnectRequired: () => Effect.succeedNone,
+      MigrationPending: () => Effect.succeedNone,
       Authorized: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
       OAuthSigningIn: resolveRemovalAccount,
       GoogleSigningIn: resolveRemovalAccount,
     })
-    yield* remove(target(references), 'Profile')
-    if (Option.isSome(account)) yield* remove(`/accounts/${query(account.value)}`, 'Account')
-    if (references.appOwnership === 'Dedicated')
-      yield* remove(`/apps/${query(references.app)}`, 'App')
+    return yield* retire({
+      resources: ExecutorRetired.make({ ...retirementOf(references), account }),
+      retainedApps: [],
+      retainedAccounts: [],
+    })
   })
 }
 
 /** HostedAccounts reconnect keeps the saved account on reconnectAccount until completion.
  * Remove must revoke that exact account even while a replacement key/sign-in is pending.
- * New pending requests have no account; they expire after their target profile is removed.
+ * New pending requests have no account; they expire after their dedicated app is removed.
  */
 function makeResolveRemovalAccount(http: ExecutorHttp) {
   return Effect.fn('Executor.removalAccount')(function* (
     references: typeof ExecutorReferences.cases.EnteringKey.Type | typeof SignInReferences.Type,
   ) {
     const path = `/connections/${query(references.authorization)}`
-    const connection = yield* http.readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
+    const saved = yield* http
+      .readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
+      .pipe(
+        Effect.asSome,
+        Effect.catchTag('ExecutorResourceMissing', (error) =>
+          error.resource === 'App' ? Effect.succeedNone : Effect.fail(error),
+        ),
+      )
+    // App deletion precedes final credential revocation; a missing request on retry cannot
+    // manufacture an account identity. Authorized references keep their exact account directly.
+    if (Option.isNone(saved)) return Option.none<typeof ExecutorAccountId.Type>()
+    const connection = saved.value
     yield* validateConnectionTarget(connection, references)
     const reconnect = Option.map(
       Option.fromNullOr(connection.reconnectAccount),
@@ -2155,10 +2554,15 @@ function discoveryFailed() {
   )
 }
 
-/** Discover before dispatch to classify response loss; the named profile is always explicit. */
+/** Discover before dispatch to classify response loss; app identity and version stay explicit. */
 function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>) {
   return Effect.fn('Executor.call')(
     function* ({ references, tool, input }: typeof CallInput.Type) {
+      if (
+        ExecutorReferences.guards.ReconnectRequired(references) ||
+        ExecutorReferences.guards.MigrationPending(references)
+      )
+        return ExecutorCallOutcome.cases.NotReady.make({})
       const catalog = yield* discover(references).pipe(
         Effect.catchTags({
           ExecutorTransportFailure: discoveryFailed,
@@ -2174,9 +2578,8 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
       return yield* http
         .readCall(
           post(`/apps/${query(references.app)}/tools/call`, {
-            profile: references.profile,
-            deployment: catalog.deployment,
-            expectedProfileRevision: catalog.revision,
+            version: catalog.version,
+            kind: selected.effect === 'read' ? 'query' : 'mutation',
             tool,
             input,
           }),
@@ -2190,10 +2593,11 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
                 message: 'Input did not match the tool schema. Correct its input and retry.',
                 problems: validationProblems(problems, [
                   references.app,
-                  catalog.deployment,
-                  references.profile,
+                  catalog.version,
                   ...ExecutorReferences.match(references, {
                     Public: () => [],
+                    ReconnectRequired: () => [],
+                    MigrationPending: () => [],
                     Authorized: ({ account }) => [account],
                     EnteringKey: () => [],
                     SigningIn: () => [],
@@ -2225,6 +2629,436 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
   )
 }
 
+/** Preserve exact credentials and explicit copy identities; refusal grants no app claim. */
+export function reconnectRequired(
+  legacy: typeof LegacyExecutorReferences.Type,
+  reason: typeof ExecutorReferences.cases.ReconnectRequired.Type.reason,
+  copies: ReadonlyArray<typeof ExecutorAppId.Type>,
+) {
+  return ExecutorReferences.cases.ReconnectRequired.make({
+    service: legacy.service,
+    owner: legacy.owner,
+    retired: ExecutorRetired.make({
+      original: legacy.app,
+      ownership: legacy.appOwnership === 'Dedicated' ? 'Dedicated' : 'Unproven',
+      account: LegacyExecutorReferences.guards.Authorized(legacy)
+        ? Option.some(legacy.account)
+        : Option.none(),
+      copies,
+      authorization:
+        LegacyExecutorReferences.guards.Public(legacy) ||
+        LegacyExecutorReferences.guards.Authorized(legacy)
+          ? Option.none()
+          : Option.some(legacy.authorization),
+    }),
+    reason,
+  })
+}
+
+/** Active app access carries separate deletion authority. Pending requests preserve their exact
+ * correlation so retirement can discover a completed account without inventing a selection.
+ */
+export function retirementOf(references: ExecutorActiveReferences) {
+  const app = ExecutorAppOwnership.match<
+    Pick<typeof ExecutorRetired.Type, 'original' | 'ownership' | 'copies'>
+  >(references.appOwnership, {
+    Dedicated: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
+    Copied: ({ original }) => ({
+      original,
+      ownership: 'Unproven' as const,
+      copies: [references.app],
+    }),
+    Unproven: () => ({ original: references.app, ownership: 'Unproven' as const, copies: [] }),
+  })
+  return ExecutorRetired.make({
+    ...app,
+    account: ExecutorReferences.guards.Authorized(references)
+      ? Option.some(references.account)
+      : Option.none(),
+    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references)
+      ? Option.none()
+      : Option.some(references.authorization),
+  })
+}
+
+/** Conversion discards removed persistence fields. Only known protocol correlation survives. */
+function migratedReferences(
+  legacy: typeof LegacyExecutorReferences.Type,
+  identity: Omit<ReturnType<typeof referenceIdentity>, 'appOwnership'>,
+) {
+  let appOwnership: typeof ExecutorAppOwnership.Type = ExecutorAppOwnership.cases.Unproven.make({})
+  if (identity.app !== legacy.app)
+    appOwnership = ExecutorAppOwnership.cases.Copied.make({ original: legacy.app })
+  else if (legacy.appOwnership === 'Dedicated')
+    appOwnership = ExecutorAppOwnership.cases.Dedicated.make({})
+  const owned = { ...identity, appOwnership }
+  return LegacyExecutorReferences.match<ExecutorReferences>(legacy, {
+    Public: () => ExecutorReferences.cases.Public.make(owned),
+    Authorized: ({ account }) => ExecutorReferences.cases.Authorized.make({ ...owned, account }),
+    EnteringKey: ({ authorization, method, label }) =>
+      ExecutorReferences.cases.EnteringKey.make({ ...owned, authorization, method, label }),
+    SigningIn: ({ authorization }) =>
+      ExecutorReferences.cases.SigningIn.make({ ...owned, authorization }),
+    OAuthSigningIn: ({ authorization, stateHash }) =>
+      ExecutorReferences.cases.OAuthSigningIn.make({ ...owned, authorization, stateHash }),
+    GoogleSigningIn: ({ authorization, googleState }) =>
+      ExecutorReferences.cases.GoogleSigningIn.make({ ...owned, authorization, googleState }),
+  })
+}
+
+/** A migration copy proves provenance with copiedFrom.reference, never with a display name.
+ * beta.23 packages/sdk/src/implementation/apps.ts:611-639 records `app:<original id>` on copyAs;
+ * apps/hosted/server/src/implementation/profile-app-copies.ts:17-20 uses that exact operation.
+ */
+function migratedApps(
+  inventory: typeof ExecutorInventory.Type,
+  original: typeof ExecutorAppId.Type,
+) {
+  return inventory.apps.filter(
+    (app) =>
+      app.id === original ||
+      (app.copiedFrom !== null && app.copiedFrom.reference === `app:${original}`),
+  )
+}
+
+/** One plain requirement linked to exactly the stored account is the only recoverable selection. */
+function legacyCandidate(http: ExecutorHttp) {
+  return Effect.fn('Executor.migrationCandidate')(function* (
+    appId: typeof ExecutorAppId.Type,
+    account: typeof ExecutorAccountId.Type,
+  ) {
+    const app = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(appId)}`)),
+      null,
+    )
+    const entries = Object.entries(app.requirements.accounts)
+    const entry = entries[0]
+    if (entries.length !== 1 || entry === undefined)
+      return Option.none<ReturnType<typeof referenceIdentity>['binding']>()
+    const [requirement, definition] = entry
+    const links = yield* http.readLinks(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(appId)}/accounts/${definition.scope}`)),
+      null,
+    )
+    if (
+      links.length !== 1 ||
+      !links.some((link) => link.requirement === requirement && link.account.id === account)
+    )
+      return Option.none<ReturnType<typeof referenceIdentity>['binding']>()
+    return Option.some(ExecutorBinding.cases.Account.make({ requirement, scope: definition.scope }))
+  })
+}
+
+/** Deferred states retain the original selection so a later explicit pass can retry it. */
+export function migrationPending(
+  legacy: typeof LegacyExecutorReferences.Type,
+  reason: typeof ExecutorReferences.cases.MigrationPending.Type.reason,
+) {
+  return ExecutorReferences.cases.MigrationPending.make({
+    service: legacy.service,
+    owner: legacy.owner,
+    legacy,
+    compatibleAttempts: 0,
+    reason,
+  })
+}
+
+/** A pending shared request has no authority over an app that still selects another account. */
+function reconcilePending(http: ExecutorHttp) {
+  return Effect.fn('Executor.reconcilePending')(function* (
+    legacy: Exclude<
+      typeof LegacyExecutorReferences.Type,
+      { readonly _tag: 'Authorized' | 'Public' }
+    >,
+    inventory: typeof ExecutorInventory.Type,
+  ) {
+    const connection = yield* http.readConnection(
+      Effect.succeed(HttpClientRequest.get(`/connections/${query(legacy.authorization)}`)),
+      null,
+    )
+    const app = migratedApps(inventory, legacy.app).find(
+      (item) => item.id === connection.target.app,
+    )
+    if (app === undefined) return migrationPending(legacy, 'CopyPending')
+    const dedicated = legacy.appOwnership === 'Dedicated' && app.id === legacy.app
+    if (!dedicated && inventory.links.some((link) => link.app === app.id))
+      return reconnectRequired(legacy, 'SharedSelection', app.id === legacy.app ? [] : [app.id])
+    if (app.activeVersion === null) return migrationPending(legacy, 'NotReady')
+    const detail = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}`)),
+      null,
+    )
+    const requirement = detail.requirements.accounts[connection.target.requirement]
+    if (requirement === undefined)
+      return reconnectRequired(legacy, 'UnresolvedMigration', app.id === legacy.app ? [] : [app.id])
+    return migratedReferences(legacy, {
+      service: legacy.service,
+      owner: legacy.owner,
+      app: app.id,
+      binding: ExecutorBinding.cases.Account.make({
+        requirement: connection.target.requirement,
+        scope: requirement.scope,
+      }),
+    })
+  })
+}
+
+/** A public legacy app is recoverable only with prior dedicated ownership and no requirements. */
+function reconcilePublic(http: ExecutorHttp) {
+  return Effect.fn('Executor.reconcilePublic')(function* (
+    legacy: typeof LegacyExecutorReferences.cases.Public.Type,
+    inventory: typeof ExecutorInventory.Type,
+  ) {
+    const apps = migratedApps(inventory, legacy.app)
+    const copies: ReadonlyArray<typeof ExecutorAppId.Type> = []
+    if (legacy.appOwnership !== 'Dedicated')
+      return reconnectRequired(legacy, 'SharedSelection', copies)
+    const original = apps.find((app) => app.id === legacy.app)
+    if (original === undefined) return reconnectRequired(legacy, 'UnresolvedMigration', copies)
+    if (original.activeVersion === null) return migrationPending(legacy, 'NotReady')
+    const app = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(legacy.app)}`)),
+      null,
+    )
+    if (Object.keys(app.requirements.accounts).length !== 0)
+      return reconnectRequired(legacy, 'UnresolvedMigration', copies)
+    return migratedReferences(legacy, {
+      service: legacy.service,
+      owner: legacy.owner,
+      app: legacy.app,
+      binding: ExecutorBinding.cases.Public.make({}),
+    })
+  })
+}
+
+/** Upstream copy plans are not exposed by inventory. An existing account without an exact
+ * linked app can still have a pending plan; an undeployed copy can be repaired. Neither is a
+ * permanent refusal. Explicit copy provenance and exact links are the only successful mapping.
+ */
+function makeLegacyReconciliation(http: ExecutorHttp) {
+  const candidate = legacyCandidate(http)
+  const pending = reconcilePending(http)
+  const publicApp = reconcilePublic(http)
+  return Effect.fn('Executor.reconcileLegacy')(function* (
+    legacy: typeof LegacyExecutorReferences.Type,
+    inventory: typeof ExecutorInventory.Type,
+  ) {
+    const apps = migratedApps(inventory, legacy.app)
+    if (LegacyExecutorReferences.guards.Public(legacy)) return yield* publicApp(legacy, inventory)
+    if (!LegacyExecutorReferences.guards.Authorized(legacy))
+      return yield* pending(legacy, inventory)
+    const linked = apps.filter((app) =>
+      inventory.links.some((link) => link.app === app.id && link.account === legacy.account),
+    )
+    const copies = linked.filter((app) => app.id !== legacy.app).map((app) => app.id)
+    if (linked.some((app) => app.activeVersion === null))
+      return migrationPending(legacy, 'NotReady')
+    const matches = yield* Effect.forEach(
+      linked,
+      Effect.fnUntraced(function* (app) {
+        return Option.map(yield* candidate(app.id, legacy.account), (binding) => ({
+          app: app.id,
+          binding,
+        }))
+      }),
+    )
+    const found = Arr.getSomes(matches)
+    const match = found[0]
+    if (linked.length === 0 && inventory.accounts.some((item) => item.id === legacy.account))
+      return migrationPending(legacy, 'CopyPending')
+    if (found.length !== 1 || match === undefined)
+      return reconnectRequired(
+        legacy,
+        found.length > 1 ? 'AmbiguousMigration' : 'UnresolvedMigration',
+        copies,
+      )
+    return migratedReferences(legacy, { service: legacy.service, owner: legacy.owner, ...match })
+  })
+}
+
+/** A completed request proves account ownership only on the original or a provenance copy. */
+function retirementAccount(
+  inventory: typeof ExecutorInventory.Type,
+  resources: typeof ExecutorRetired.Type,
+  saved: typeof WireConnection.Type,
+) {
+  const ours = migratedApps(inventory, resources.original).some(
+    (app) => app.id === saved.target.app,
+  )
+  if (!ours) return Option.none<typeof ExecutorAccountId.Type>()
+  if (WireConnection.fields.state.guards.completed(saved.state))
+    return Option.some(saved.state.account.id)
+  return Option.fromNullOr(saved.reconnectAccount).pipe(Option.map((account) => account.id))
+}
+
+/** Retain every known copy before deleting credentials. Inventory exposes exact copy lineage;
+ * the selected account identifies additional copies even when the earlier refusal could not.
+ */
+function makePrepareRetirement(http: ExecutorHttp) {
+  return Effect.fn('Executor.prepareRetirement')(function* (
+    resources: typeof ExecutorRetired.Type,
+  ) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    let account = resources.account
+    if (Option.isNone(account) && Option.isSome(resources.authorization)) {
+      const saved = yield* http
+        .readConnection(
+          Effect.succeed(
+            HttpClientRequest.get(`/connections/${query(resources.authorization.value)}`),
+          ),
+          null,
+        )
+        .pipe(
+          Effect.asSome,
+          Effect.catchTags({
+            ExecutorNotReady: () => Effect.succeedNone,
+            ExecutorResourceMissing: () => Effect.succeedNone,
+          }),
+        )
+      if (Option.isSome(saved)) account = retirementAccount(inventory, resources, saved.value)
+    }
+    const copies = migratedApps(inventory, resources.original)
+      .filter(
+        (app) =>
+          app.id !== resources.original &&
+          Option.isSome(account) &&
+          inventory.links.some((link) => link.app === app.id && link.account === account.value),
+      )
+      .map((app) => app.id)
+    return ExecutorRetired.make({
+      ...resources,
+      account,
+      copies: [...new Set([...resources.copies, ...copies])],
+    })
+  })
+}
+
+/** Reclamation rereads links before unlinking exact credentials. App deletion requires a
+ * dedicated original or explicit copy provenance and no remaining account links.
+ */
+function makeRetire(http: ExecutorHttp) {
+  const remove = makeRemoval(http)
+  const links = Effect.fn('Executor.retiredLinks')(function* (app: typeof ExecutorAppId.Type) {
+    const groups = yield* Effect.forEach(
+      ['app', 'user'] as const,
+      Effect.fnUntraced(function* (scope) {
+        const values = yield* http.readLinks(
+          Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}/accounts/${scope}`)),
+          null,
+        )
+        return values.map((link) => ({
+          requirement: link.requirement,
+          account: link.account,
+          scope,
+        }))
+      }),
+    )
+    return groups.flat()
+  })
+  /** A held app/account pair still belongs to another Connection. Private copies can unlink
+   * a shared credential without revoking the credential another Connection still stores.
+   */
+  const unlink = Effect.fn('Executor.unlinkRetired')(function* (
+    app: typeof ExecutorAppId.Type,
+    input: Parameters<ExecutorService['retire']>[0],
+    selected: Effect.Success<ReturnType<typeof links>>,
+  ) {
+    const { resources, retainedApps, retainedAccounts } = input
+    if (Option.isNone(resources.account)) return
+    const account = resources.account.value
+    if (retainedApps.includes(app) && retainedAccounts.includes(account)) return
+    for (const link of selected) {
+      if (link.account.id === account)
+        yield* remove(
+          `/apps/${query(app)}/accounts/${link.scope}/${query(link.requirement)}/${query(account)}`,
+          'Account',
+        )
+    }
+  })
+  return Effect.fn('Executor.retire')(function* ({
+    resources,
+    retainedApps,
+    retainedAccounts,
+  }: Parameters<ExecutorService['retire']>[0]) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    const targets = inventory.apps.filter(
+      (app) =>
+        app.id === resources.original ||
+        (resources.copies.includes(app.id) &&
+          app.copiedFrom !== null &&
+          app.copiedFrom.reference === `app:${resources.original}`),
+    )
+    const eligible = targets.filter(
+      (app) =>
+        !retainedApps.includes(app.id) &&
+        (app.id !== resources.original || resources.ownership === 'Dedicated'),
+    )
+    // Inspect every app before revocation. A provenance copy may have acquired unrelated links;
+    // those links grant no deletion authority and are never a reason to strand the product row.
+    const inspected = yield* Effect.forEach(
+      targets,
+      Effect.fnUntraced(function* (app) {
+        return { app, selected: yield* links(app.id) }
+      }),
+    )
+    for (const { app, selected } of inspected)
+      yield* unlink(app.id, { resources, retainedApps, retainedAccounts }, selected)
+    for (const { app, selected } of inspected) {
+      if (!eligible.some((candidate) => candidate.id === app.id)) continue
+      if (
+        selected.some(
+          (link) => Option.isNone(resources.account) || link.account.id !== resources.account.value,
+        )
+      )
+        continue
+      // Protect links added outside Vivid since inspection. Retain the app instead of refusing
+      // after its credential was revoked; the exact account is deleted only after all app checks.
+      if ((yield* links(app.id)).length > 0) continue
+      yield* remove(`/apps/${query(app.id)}`, 'App')
+    }
+    if (Option.isSome(resources.account) && !retainedAccounts.includes(resources.account.value))
+      yield* remove(`/accounts/${query(resources.account.value)}`, 'Account')
+    return yield* Effect.void
+  })
+}
+
+/** Cache version-pinned schemas while validating a saved account's current link on every use.
+ * An outside link change can never turn a warm catalog into authority for another account.
+ */
+const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorHttp) {
+  const snapshots = yield* Cache.makeWith(makeDiscovery(http), {
+    capacity: 1000,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
+  })
+  const discover = Effect.fn('Executor.discoverCached')(function* (references: ExecutorReferences) {
+    if (ExecutorReferences.guards.Authorized(references)) {
+      const path = yield* bindingPath(references)
+      const links = yield* http.readLinks(
+        Effect.succeed(HttpClientRequest.get(path.slice(0, path.lastIndexOf('/')))),
+        null,
+      )
+      const binding = references.binding
+      if (
+        !ExecutorBinding.guards.Account(binding) ||
+        links.length !== 1 ||
+        !links.some(
+          (link) =>
+            link.requirement === binding.requirement && link.account.id === references.account,
+        )
+      )
+        return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
+    }
+    return yield* Cache.get(snapshots, references)
+  })
+  return { snapshots, discover }
+})
+
 /** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
 const makeExecutor = Effect.fn('Executor.make')(function* (
   url: string,
@@ -2252,10 +3086,6 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       ),
     ),
   )
-  const snapshots = yield* Cache.makeWith(makeDiscovery(http), {
-    capacity: 1000,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
-  })
   // Vivid's own Google services lead the catalogue and need nothing from Executor to be listed,
   // so they stay offered while its public catalogue feed is unavailable.
   const google = googleServices.map((service) =>
@@ -2267,20 +3097,37 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       authorization: ServiceAuthorization.cases.SignIn.make({}),
     }),
   )
+  const authoredKeys = keyedServices.map((entry) =>
+    ExecutorServiceEntry.make({
+      id: entry.id,
+      name: entry.name,
+      description: entry.policy.instruction,
+      domain: entry.policy.host,
+      authorization: personalKeyAuthorization(),
+    }),
+  )
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
     const remote = yield* remoteCatalog().pipe(
       Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),
     )
-    return [...google, ...remote.filter((entry) => Option.isNone(googleService(entry.id)))]
+    return [
+      ...google,
+      ...authoredKeys,
+      ...remote.filter(
+        // Upstream still lists refused services; their wire entries carry no address, so by id.
+        (entry) =>
+          Option.isNone(googleService(entry.id)) &&
+          keyedService(entry.id) === undefined &&
+          !refusedService(entry.id),
+      ),
+    ]
   })
   const availability = yield* makeAuthorization(http, catalog)
-  const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>
-    Cache.get(snapshots, references),
-  )
+  const toolCache = yield* makeToolCache(http)
   const complete = makeComplete(http)
   const completeSignIn = makeCompleteSignIn(http)
   const remove = makeRemove(http)
-  const call = makeCall(http, discover)
+  const call = makeCall(http, toolCache.discover)
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
   return Executor.of({
@@ -2290,30 +3137,35 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     add: Effect.fn('Executor.addPublic')((input) =>
       publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
+    make: registration.make,
     reauthorize: makeReauthorize(http, availability),
+    inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
+    reconcile: makeLegacyReconciliation(http),
+    retire: makeRetire(http),
+    prepareRetirement: makePrepareRetirement(http),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
-      yield* Cache.invalidate(snapshots, input.references)
+      yield* Cache.invalidate(toolCache.snapshots, input.references)
       return references
     }),
     completeSignIn: Effect.fn('Executor.completeSignInCached')(function* (
       input: typeof SignInInput.Type,
     ) {
       const references = yield* completeSignIn(input)
-      yield* Cache.invalidate(snapshots, input.references)
+      yield* Cache.invalidate(toolCache.snapshots, input.references)
       return references
     }),
     status: makeStatus(http),
     identity: makeIdentity(http),
     remove: Effect.fn('Executor.removeCached')(function* (references: ExecutorReferences) {
       yield* remove(references)
-      yield* Cache.invalidate(snapshots, references)
+      yield* Cache.invalidate(toolCache.snapshots, references)
     }),
-    tools: makeTools(discover),
+    tools: makeTools(toolCache.discover),
     call: Effect.fn('Executor.callCached')((input: typeof CallInput.Type) =>
       call(input).pipe(
         Effect.catchTag('ExecutorConflict', () =>
-          Cache.invalidate(snapshots, input.references).pipe(
+          Cache.invalidate(toolCache.snapshots, input.references).pipe(
             Effect.as(
               ExecutorCallOutcome.cases.Rejected.make({
                 message: 'The integration changed; discover its tools again.',
@@ -2323,10 +3175,10 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
         ),
         Effect.tap((outcome) =>
           ExecutorCallOutcome.guards.NotReady(outcome)
-            ? Cache.invalidate(snapshots, input.references)
+            ? Cache.invalidate(toolCache.snapshots, input.references)
             : Effect.void,
         ),
-        Effect.tapError(() => Cache.invalidate(snapshots, input.references)),
+        Effect.tapError(() => Cache.invalidate(toolCache.snapshots, input.references)),
       ),
     ),
   })

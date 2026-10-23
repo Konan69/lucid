@@ -1,28 +1,30 @@
 import { abortThread } from './stop.ts'
 import { ThreadTitles } from './generation.ts'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
+import * as Stream from 'effect/Stream'
 import {
   Forbidden,
+  InvalidRequest,
   type DeliveryScopeRequest,
   ThreadDetail,
   type PersonId,
   type PresenceRequest,
   type ShareThreadRequest,
-  type OpenThreadRequest,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
-import { requireActor, requirePerson, requireVivid, summaryOf, type Actor } from '../auth/access.ts'
+import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { requireThread } from './access.ts'
 import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
+import { LiveLink } from '../rpc/link.ts'
 import { ThreadStore, type Shared } from './store.ts'
-import { openAttentionThread } from './opening.ts'
 import { openFirstThread } from './arrival.ts'
 
 /**
@@ -75,15 +77,6 @@ export const threadHandlers = {
   OpenFirstThread: Effect.fn('Rpc.OpenFirstThread')(function* () {
     yield* requirePerson()
     return yield* openFirstThread(yield* requireActor())
-  }),
-  /** A standing check opens private follow-up work; the model supplies no ownership fields. */
-  OpenThread: Effect.fn('Rpc.OpenThread')(function* (request: typeof OpenThreadRequest.Type) {
-    const auth = yield* requireVivid()
-    return yield* openAttentionThread({
-      personId: auth.person.id,
-      threadId: auth.threadId,
-      request,
-    })
   }),
   /** Only the unattributed runtime token may retrieve authority; sessions/devices and acting calls cannot. */
   GetDeliveryScope: Effect.fn('Rpc.GetDeliveryScope')(function* (request: DeliveryScopeRequest) {
@@ -167,14 +160,25 @@ export const threadHandlers = {
     yield* requireThread(id, auth.person.id)
     yield* abortThread(id)
   }),
-  ReportPresence: Effect.fn('Rpc.ReportPresence')(function* (request: PresenceRequest) {
-    const auth = yield* requirePerson()
-    yield* requireThread(request.threadId, auth.person.id)
-    const moved = yield* (yield* Presence).report(
-      request.threadId,
-      summaryOf(auth.person),
-      request.typing,
-    )
-    if (moved) yield* (yield* Changes).publish([Topic.thread(request.threadId)])
-  }),
+  /**
+   * Presence is the call itself: held for as long as the client keeps it open on its live link
+   * (`threads/presence.ts`). Over `/api/rpc` there is no link to hold it on, so it is refused.
+   */
+  BePresent: (request: PresenceRequest) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const auth = yield* requirePerson()
+        yield* requireThread(request.threadId, auth.person.id)
+        const link = yield* Effect.serviceOption(LiveLink)
+        if (Option.isNone(link))
+          return yield* new InvalidRequest({ message: 'Presence is held on the live socket.' })
+        yield* (yield* Presence).hold(
+          request.threadId,
+          summaryOf(auth.person),
+          request.typing,
+          link.value,
+        )
+        return Stream.never
+      }),
+    ),
 }

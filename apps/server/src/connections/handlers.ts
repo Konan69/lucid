@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import type {
   AddIntegrationRequest,
+  MakeIntegrationRequest,
   FindIntegrationsRequest,
   TestIntegrationRequest,
   BeginConnectionRequest,
@@ -11,13 +12,19 @@ import type {
   FindToolsRequest,
   OfferConnectionRequest,
   RenameConnectionRequest,
+  UseDisplayToolRequest,
   UseToolRequest,
 } from '@vivid/contracts'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
-import { addIntegration, findIntegrations, testIntegration } from './integrations.ts'
-import { findTools, offerConnection, resolveTool, useTool } from './tools.ts'
+import {
+  addIntegration,
+  findIntegrations,
+  authorIntegration,
+  testIntegration,
+} from './integrations.ts'
+import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
 /** Both inventory calls share the persisted Connection loader. */
@@ -35,6 +42,11 @@ export const connectionHandlers = {
   AddIntegration: Effect.fn('Rpc.AddIntegration')(function* (request: AddIntegrationRequest) {
     yield* requireVivid()
     return yield* addIntegration(yield* requireActor(), request)
+  }),
+  /** Source deployment has the same attributed Run authority as importing an address. */
+  MakeIntegration: Effect.fn('Rpc.MakeIntegration')(function* (request: MakeIntegrationRequest) {
+    yield* requireVivid()
+    return yield* authorIntegration(yield* requireActor(), request)
   }),
   /** A read test is still an external account action and requires the ordinary Gate. */
   TestIntegration: Effect.fn('Rpc.TestIntegration')(function* (request: TestIntegrationRequest) {
@@ -101,6 +113,11 @@ export const connectionHandlers = {
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
     yield* requireVivid()
     return yield* useTool(yield* requireActor(), request)
+  }),
+  /** A display's Query or Mutation, for the Person looking at it; never Vivid's own call. */
+  UseDisplayTool: Effect.fn('Rpc.UseDisplayTool')(function* (request: UseDisplayToolRequest) {
+    yield* requirePerson()
+    return yield* useDisplayTool(yield* requireActor(), request)
   }),
   /** Connection requests are contributions made by Vivid in a Run. */
   OfferConnection: Effect.fn('Rpc.OfferConnection')(function* (request: OfferConnectionRequest) {

@@ -1,16 +1,22 @@
+import type { DisplaySource } from '@vivid/contracts'
 import { Option, Result } from 'effect'
-import { useState } from 'react'
+import { stretches } from '@vivid/state'
+import { memo, useState } from 'react'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useLiveData } from '../../data/live'
 import { openWebLink, Prose } from '../../ui/Prose'
+import { useRevealed } from '../../ui/reveal'
+import { Display } from '../../parts/display'
 import { Label } from '../../ui/ui'
 
 /**
  * Vivid's words as formatted text. A citation of something in the Library is a link the Thread
  * opens through the Library (the device downloads the original and hands it to the share sheet);
  * any other web link opens in the browser. A link that could not be opened says so under the text.
+ *
+ * `fresh` says the words are still arriving, which is when the ones they gain fade in (`Prose`).
  */
-export function Words({ text }: { text: string }) {
+function Formatted({ text, fresh }: { text: string; fresh: boolean }) {
   const data = useLiveData()
   const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
 
@@ -32,11 +38,87 @@ export function Words({ text }: { text: string }) {
 
   return (
     <>
-      <Prose text={linkCitations(text)} plain={text} onLink={open} />
+      <Prose text={linkCitations(text)} plain={text} fresh={fresh} onLink={open} />
       {Option.isSome(unopened) && (
         <Label size="label" tone="status-danger">
           {unopened.value}
         </Label>
+      )}
+    </>
+  )
+}
+
+/**
+ * Words that are all there: what an approval is for, a question Vivid asked. They are drawn as
+ * they are, with nothing fading in.
+ */
+export function Words({ text }: { text: string }) {
+  return <Formatted text={text} fresh={false} />
+}
+
+/**
+ * Words of a reply, formatted again only when their text or whether they are still arriving
+ * changes, so a stretch that is whole is left alone while the reply goes on.
+ */
+const Finished = memo(Formatted)
+
+/**
+ * A reply as the Person reads it: its words, with each display it wrote drawn where it stands in
+ * them (`stretches`). Each stretch is keyed by where it starts in the reply, which never moves,
+ * so a display is not remounted — and keeps what the Person picked in it — while the words after
+ * it are still coming.
+ *
+ * Words that are already whole are drawn once and left alone (`Finished`, above): the formatter rebuilds
+ * every element it draws when its text changes, so only what can still change is redrawn each
+ * step, and the cost of a step does not grow with the reply. A display that is still arriving
+ * fills itself in (`arriving`), as the web's does.
+ */
+export function Reply({
+  source,
+  text,
+  streaming,
+  making,
+  settled,
+  live,
+  onSay,
+}: {
+  /** The reply as Flue stored it, which every program drawn from it names. */
+  source: DisplaySource
+  text: string
+  /**
+   * Whether this reply's own parts are still streaming. A display waits for it beside `making`,
+   * because a reply can still be streaming after it stops being the newest thing in the Thread
+   * (the Person writes while it arrives), and then `making` alone would let its Queries run early.
+   */
+  streaming: boolean
+  /**
+   * Whether Vivid is still making the newest reply and this is it. A display whose own end has
+   * arrived still waits for the reply's: the server runs a program only from a reply it has stored
+   * whole.
+   */
+  making: boolean
+  /** Whether Flue has settled the submission this reply answers (`Message`, `settled`). */
+  settled: boolean
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
+  onSay: (words: string) => void
+}) {
+  const { drawn, fresh } = useRevealed(text, streaming)
+  return (
+    <>
+      {stretches(drawn).map((stretch) =>
+        stretch.kind === 'words' ? (
+          <Finished key={stretch.from} text={stretch.text} fresh={fresh} />
+        ) : (
+          <Display
+            source={source}
+            key={stretch.from}
+            text={stretch.text}
+            arriving={making || streaming || !settled || !stretch.whole}
+            live={live}
+            onSay={onSay}
+          />
+        ),
       )}
     </>
   )
