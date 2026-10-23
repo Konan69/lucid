@@ -15,14 +15,6 @@ import { restoreComputer, restoredRevision } from './restore.ts'
 const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)
 const computerId = ComputerId.make('computer_test')
 
-/**
- * One archive and two machines' home directories, all removed with the test scope.
- *
- * Both home roots exist before a case runs, because on a real machine the home directory is always
- * there: a capture walks it and a restore hydrates into it. What the test owns is the archive and
- * each machine's `HomeFiles` layer, so every case drives capture and restore through the same seam
- * the SFTP adapter implements later.
- */
 const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
@@ -31,7 +23,6 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const second = path.join(root, 'second')
   yield* fs.makeDirectory(first)
   yield* fs.makeDirectory(second)
-  // Each case owns its archive and directories until its test scope closes.
   const archive = yield* Layer.build(directoryArchive(path.join(root, 'archive')))
   const firstHome = yield* Layer.build(localHome(first))
   const secondHome = yield* Layer.build(localHome(second))
@@ -73,51 +64,70 @@ layer(platform)('Computer state', (it) => {
     }),
   )
 
-  it.effect('regenerable state, browser locks and caches, and the restore marker never reach the archive', () =>
-    Effect.gen(function* () {
-      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
-        yield* makeWorld()
-      yield* write(first, 'app/index.ts', 'export {}')
-      yield* write(first, 'app/node_modules/pkg/index.js', 'junk')
-      yield* write(first, '.cache/big', 'junk')
-      yield* write(first, '.vivid/restored.json', '{"computerId":"other","revision":9}')
-      // Chrome's running-instance files and rebuildable caches are the machine's, not the Person's.
-      yield* write(first, '.config/google-chrome/SingletonLock', 'invalid-host:0')
-      yield* write(first, '.config/google-chrome/Default/Cache/big', 'junk')
-      yield* write(first, '.config/google-chrome/Default/Service Worker/CacheStorage/x', 'junk')
-      yield* write(first, '.config/google-chrome/Default/GPUCache/big', 'junk')
-      yield* write(first, '.config/google-chrome/Crashpad/metrics', 'junk')
-      // The Person's identity inside the profile is kept...
-      yield* write(first, '.config/google-chrome/Default/Preferences', '{"seconds_missed":0}')
-      // ...and a project directory coincidentally named `Cache` is never touched (scoping proof).
-      yield* write(first, 'projects/app/Cache/keep', 'mine')
+  it.effect(
+    'regenerable state, browser locks and caches, and the restore marker never reach the archive',
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
+          yield* makeWorld()
+        yield* write(first, 'app/index.ts', 'export {}')
+        yield* write(first, 'app/node_modules/pkg/index.js', 'junk')
+        yield* write(first, '.cache/big', 'junk')
+        yield* write(first, '.vivid/restored.json', '{"computerId":"other","revision":9}')
+        yield* write(first, '.config/google-chrome/SingletonLock', 'invalid-host:0')
+        yield* write(first, '.config/google-chrome/Default/Cache/big', 'junk')
+        yield* write(first, '.config/google-chrome/Default/Service Worker/CacheStorage/x', 'junk')
+        yield* write(first, '.config/google-chrome/Default/Service Worker/ScriptCache/x', 'junk')
+        yield* write(
+          first,
+          '.config/google-chrome/Default/Service Worker/Database/data',
+          'registration',
+        )
+        yield* write(first, '.config/google-chrome/Default/GPUCache/big', 'junk')
+        yield* write(first, '.config/google-chrome/Crashpad/metrics', 'junk')
+        yield* write(first, '.config/google-chrome/Default/Preferences', '{"seconds_missed":0}')
+        yield* write(first, 'projects/app/Cache/keep', 'mine')
 
-      yield* captureComputer({ computerId }).pipe(
-        Effect.provide(archive),
-        Effect.provide(firstHome),
-      )
-      yield* restoreComputer({ computerId }).pipe(
-        Effect.provide(archive),
-        Effect.provide(secondHome),
-      )
+        yield* captureComputer({ computerId }).pipe(
+          Effect.provide(archive),
+          Effect.provide(firstHome),
+        )
+        yield* restoreComputer({ computerId }).pipe(
+          Effect.provide(archive),
+          Effect.provide(secondHome),
+        )
 
-      expect(yield* fs.exists(path.join(second, 'app/index.ts'))).toBe(true)
-      expect(yield* fs.exists(path.join(second, 'app/node_modules'))).toBe(false)
-      expect(yield* fs.exists(path.join(second, '.cache'))).toBe(false)
-      expect(yield* fs.exists(path.join(second, '.config/google-chrome/SingletonLock'))).toBe(false)
-      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Cache'))).toBe(false)
-      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Service Worker'))).toBe(
-        false,
-      )
-      expect(yield* fs.exists(path.join(second, '.config/google-chrome/Crashpad'))).toBe(false)
-      expect(yield* read(second, '.config/google-chrome/Default/Preferences')).toBe(
-        '{"seconds_missed":0}',
-      )
-      expect(yield* read(second, 'projects/app/Cache/keep')).toBe('mine')
-      expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
-        Option.some(1),
-      )
-    }),
+        expect(yield* fs.exists(path.join(second, 'app/index.ts'))).toBe(true)
+        expect(yield* fs.exists(path.join(second, 'app/node_modules'))).toBe(false)
+        expect(yield* fs.exists(path.join(second, '.cache'))).toBe(false)
+        expect(yield* fs.exists(path.join(second, '.config/google-chrome/SingletonLock'))).toBe(
+          false,
+        )
+        expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Cache'))).toBe(
+          false,
+        )
+        expect(
+          yield* fs.exists(
+            path.join(second, '.config/google-chrome/Default/Service Worker/CacheStorage'),
+          ),
+        ).toBe(false)
+        expect(
+          yield* fs.exists(
+            path.join(second, '.config/google-chrome/Default/Service Worker/ScriptCache'),
+          ),
+        ).toBe(false)
+        expect(
+          yield* read(second, '.config/google-chrome/Default/Service Worker/Database/data'),
+        ).toBe('registration')
+        expect(yield* fs.exists(path.join(second, '.config/google-chrome/Crashpad'))).toBe(false)
+        expect(yield* read(second, '.config/google-chrome/Default/Preferences')).toBe(
+          '{"seconds_missed":0}',
+        )
+        expect(yield* read(second, 'projects/app/Cache/keep')).toBe('mine')
+        expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
+          Option.some(1),
+        )
+      }),
   )
 
   it.effect('a later capture sends only what changed and restore removes what was deleted', () =>
@@ -158,6 +168,40 @@ layer(platform)('Computer state', (it) => {
       expect(yield* read(second, 'edit.txt')).toBe('after')
       expect(yield* read(second, 'keep.txt')).toBe('same')
       expect(yield* fs.exists(path.join(second, 'gone.txt'))).toBe(false)
+    }),
+  )
+
+  it.effect('a warm restore replaces a directory with an archived file', () =>
+    Effect.gen(function* () {
+      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
+        yield* makeWorld()
+      yield* write(first, 'notes/plan.md', 'before')
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
+      expect((yield* fs.stat(path.join(second, 'notes'))).type).toBe('Directory')
+
+      yield* fs.remove(path.join(first, 'notes'), { recursive: true })
+      yield* write(first, 'notes', 'after')
+      yield* captureComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(firstHome),
+      )
+      const restored = yield* restoreComputer({ computerId }).pipe(
+        Effect.provide(archive),
+        Effect.provide(secondHome),
+      )
+
+      expect(restored.revision).toBe(2)
+      expect(yield* read(second, 'notes')).toBe('after')
+      expect(yield* restoredRevision({ computerId }).pipe(Effect.provide(secondHome))).toEqual(
+        Option.some(2),
+      )
     }),
   )
 
