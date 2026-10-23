@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature first` after Launch and Doctor. 
 
 ## Gotchas
 
-Private Threads and an email account created through Better Auth are the default. A legitimate reply can include a waiting question card, which replaces the composer. Verify the rendered reply without requiring the composer to reappear. The first-arrival greeting is a separate entry point; use OpenFirstThread and verify its once-only receipt when changing arrival behavior.
+Private Threads and an email account created through Better Auth are the default. A legitimate reply can include waiting questions above the composer. The composer remains and its placeholder changes to Reply. Verify the rendered reply without requiring the Message Vivid label. The first-arrival greeting is a separate entry point; use OpenFirstThread and verify its once-only receipt when changing arrival behavior.

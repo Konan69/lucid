@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-One titled Artifact advances from version 1 to 2 under the same id. The third Run must contain a successful read_document tool part reporting version 2 and the added sentence Ready for review. The public version 2 body must also contain that sentence. Person ListArtifacts and SQL retain the immutable versions. Reload retains the rendered Wrote a document tool card. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
+One titled Artifact advances from version 1 to 2 under the same id. The third Run must contain a successful read_document tool part reporting version 2 and the added sentence Ready for review. The public version 2 body must also contain that sentence. Person ListArtifacts reports the latest summary; GetArtifact reads each immutable version, with SQL retaining the stored versions. Reload retains the rendered Wrote a document tool card. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
 
 ## How to get to it (user POV)
 

@@ -261,6 +261,7 @@ async function picture(state, id, directory) {
     url: url.pathname,
   })
   NodeAssert.equal(response.status, 200)
+  NodeAssert.equal(response.headers.get('content-type'), 'image/png')
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }

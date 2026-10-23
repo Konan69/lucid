@@ -12,8 +12,8 @@ Connect a disposable Integration. Ask Vivid to follow an event, then produce a r
 
 ## Driving it with verify-vivid
 
-Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor. Inspect `watch/verdict.json`, the action transcript, settlement, history and SQL. Then run `verify browser watch`. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
+Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor, then run `verify browser watch`. Both commands currently return blocked before exercising the journey. Inspect `watch/verdict.json` and `browser/watch/verdict.json`; no action transcript, settlement, history or SQL is produced. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
 
 ## Gotchas
 
-Routines were removed from main. The real Watch workers are mounted. This recipe is blocked until a disposable Integration with observable incoming events is connected. Never recreate the removed Routine fixture.
+Routines were removed from main. The real Watch workers are mounted. Both recipes are blocked. Full proof needs an implemented journey, disposable Executor authority, a connected Integration with observable incoming events and a publicly reachable callback. This launch points Executor at refused loopback port 1. Conversational list/stop and made-Integration reminders remain unproved; see packages/agent/runtime/src/tools/watches.ts and apps/server/src/watches/reminder.live.test.ts. Never recreate the removed Routine fixture.

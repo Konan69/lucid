@@ -4,11 +4,11 @@ Model requirement: real-model verification is blocked until the HTTP recipe supp
 
 ## Sub-features
 
-A Waiting Input request contains Several, One and free-text questions. A Person chooses Research and Writing, Brief, and writes Evidence and next steps. AnswerInput stores all answers and a Decision Run settles.
+A Waiting Input request contains one to four questions with single-choice, multiple-choice or written answers. AnswerInput stores the ordered answers. Delivery joins work already underway or starts a successor Decision Run. The fixed Research/Writing, Brief and Evidence and next steps answers belong only to the rehearsal recipe.
 
 ## How to get to it (user POV)
 
-Send ask me. Answer the three questions together.
+Ask Vivid for a structured question when it needs information. Answer each question above the composer, then submit the answers together. The phrase ask me produces the fixed three-question scene only in rehearsal.
 
 ## Driving it with verify-vivid
 
@@ -16,4 +16,4 @@ For a plumbing rehearsal only, launch with VIVID_VERIFY_MODEL=rehearsal/script a
 
 ## Gotchas
 
-The request now takes answers, an ordered tagged array, rather than answer, a string. Browser proof must visit all three questions and submit; HTTP proof alone does not prove the multi-question controls.
+The request now takes answers, an ordered tagged array, rather than answer, a string. Browser proof must visit every question and submit; HTTP proof alone does not prove those controls. Plain-text questions need no structured request. An ordinary message withdraws waiting questions. Selection, back navigation, written answers and withdrawal remain unproved.
