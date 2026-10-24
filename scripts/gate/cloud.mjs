@@ -4,15 +4,6 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { runIdentifier } from './process.mjs'
 
-/** Idle master retention between gate commands. Source: unmeasured. Expiry closes only an
- * unused master; active gates keep their connection and durable run identity. */
-const masterIdleSeconds = 120
-/** Peer probes detect a dead SSH connection independently of quiet gate output.
- * Source: unmeasured. Missed replies close the connection so follow can reconnect. */
-export const peerProbeSeconds = 15
-/** Rebuildable Turbo cache retention limits disk growth. Source: unmeasured.
- * Expiry causes a cache miss, never deletion of a run's completion receipt. */
-const cacheRetentionDays = 7
 /** Completed run evidence retention. Source: unmeasured. Only an exit receipt and a free
  * owner lock admit deletion, so the retention period never bounds active work. */
 const evidenceRetentionDays = 2
@@ -27,9 +18,9 @@ const sshOptions = [
   '-o',
   'ControlPath=~/.ssh/vivid-gate-%C',
   '-o',
-  `ControlPersist=${masterIdleSeconds}`,
+  'ControlPersist=120',
   '-o',
-  `ServerAliveInterval=${peerProbeSeconds}`,
+  'ServerAliveInterval=15',
   '-o',
   'ConnectTimeout=20',
 ]
@@ -99,7 +90,7 @@ while IFS= read -r receipt; do
   owner="$(dirname "$receipt")/$(basename "$receipt" .exit)"
   (flock -n 8 || exit 0; rm -f "$owner.exit" "$owner.log" "$owner.sh" "$owner.pid") 8>"$owner.lock"
 done < <(find "$home/runs" -name '*.exit' -mtime +@EVIDENCE@)
-find "$home/cache" -type f -mtime +@CACHE@ -delete
+find "$home/cache" -type f -mtime +7 -delete
 exec 8>"$home/runs/$run.lock"
 flock -x 8
 cat > "$home/runs/$run.sh" <<'RUN'
@@ -121,10 +112,7 @@ mkdir -p .cache/gate
 # while the download lands (seen after a machine woke with its cache gone). Ask twice.
 pnpm --version > /dev/null 2>&1 || pnpm --version > /dev/null 2>&1 || true
 stamp=$(git ls-tree -r "$sha" | grep -E '(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|[[:space:]]patches/' | sha256sum | cut -c1-32)
-# A stored install hash cannot prove the links survived a later interrupted install.
-# Load the actual CLI before reusing the graph, and revoke the old receipt before mutation.
-if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ] || ! node --input-type=module -e 'import "./scripts/gate.mjs"' > /dev/null 2>&1; then
-  rm -f .cache/gate/installed
+if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ]; then
   echo "installing dependencies"
   pnpm install --frozen-lockfile > .cache/gate/install.log 2>&1 || { tail -20 .cache/gate/install.log; finish 90; }
   echo "$stamp" > .cache/gate/installed
@@ -142,7 +130,6 @@ setsid nohup python3 -c @CAPACITY@ "$home" "$sha" "$run" "$label" "$@" > "$log" 
 echo $! > "$home/runs/$run.pid"
 `
   .replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
-  .replace('@CACHE@', String(cacheRetentionDays))
   .replace('@EVIDENCE@', String(evidenceRetentionDays))
   .replace('@CAPACITY@', shellWord(capacityScript))
 

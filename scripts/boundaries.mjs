@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeCrypto from 'node:crypto'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import { peerProbeSeconds, refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
+import { refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
 
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const cases = {
@@ -133,7 +133,7 @@ function runRemote(scratch, fix, test, host) {
     .join(' ')
   const result = NodeChildProcess.spawnSync(
     'ssh',
-    ['-o', 'ConnectTimeout=20', '-o', `ServerAliveInterval=${peerProbeSeconds}`, host, command],
+    ['-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=15', host, command],
     { stdio: 'inherit' },
   )
   if (result.error !== undefined) throw result.error

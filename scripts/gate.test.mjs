@@ -77,9 +77,9 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
       `import { takeLock } from ${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(repositoryRoot, 'scripts/gate/slots.mjs')).href)}
        const held = await takeLock(${JSON.stringify(name)})
        console.log(held === undefined ? 'refused' : 'held')
-       process.stdin.resume()`,
+       setInterval(() => {}, 1000)`,
     ],
-    { stdio: ['pipe', 'pipe', 'inherit'] },
+    { stdio: ['ignore', 'pipe', 'inherit'] },
   )
   t.after(async () => {
     if (holder.exitCode === null && holder.signalCode === null) {

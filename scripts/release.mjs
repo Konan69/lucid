@@ -40,10 +40,6 @@ class ArchiveTransferIdle extends Schema.TaggedError()(
   { title: 'Archive transfer idle' },
 ) {}
 
-/** Locked GETs are idempotent. Source: unmeasured. Two retries bound repeated transient
- * availability or idle failures; integrity and permanent HTTP failures fail immediately. */
-const archiveAvailabilityRetries = 2
-
 /** The registry cannot push readiness before headers or bytes. Source: unmeasured.
  * Sixty seconds without headers or another body chunk fails this read-only attempt with
  * ArchiveTransferIdle. Every chunk resets the idle bound; total transfer time is unlimited. */
@@ -472,7 +468,7 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
     if (
       yield* inspectArchive(root, snapshot.revision, key, resolution).pipe(
         Effect.retry({
-          times: archiveAvailabilityRetries,
+          times: 2,
           while: Predicate.or(
             Predicate.isTagged('ArchiveAvailabilityFailure'),
             Predicate.isTagged('ArchiveTransferIdle'),
