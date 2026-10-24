@@ -7,14 +7,11 @@ import { fixture } from '../push/testing.ts'
 import { Link } from '../rpc/link.ts'
 import { Presence, presenceLayer } from './presence.ts'
 
-const services = presenceLayer.pipe(
-  Layer.provideMerge(changesLayer),
-  Layer.provideMerge(testDatabaseLayer),
-)
+const services = changesLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 
 /** Observe actual PostgreSQL invalidations, so presence expiry must wake the same path as a live client. */
 describe.skipIf(!testDatabaseConfigured)('presence connection signals', () => {
-  it.effect('announces socket closure immediately without advancing the sweep clock', () =>
+  it.effect('announces socket closure at closure time rather than the next scan', () =>
     Effect.gen(function* () {
       const context = yield* Layer.build(services)
       return yield* Effect.gen(function* () {
@@ -26,7 +23,19 @@ describe.skipIf(!testDatabaseConfigured)('presence connection signals', () => {
           Stream.runForEach(() => Queue.offer(notices, undefined)),
           Effect.forkScoped,
         )
-        const presence = yield* Presence
+        const publishedAt = yield* Queue.unbounded<number>()
+        const observed = Changes.of({
+          publish: Effect.fn('Presence.test.publish')(function* (topics) {
+            const now = yield* Clock.currentTimeMillis
+            yield* changes.publish(topics)
+            yield* Queue.offer(publishedAt, now)
+          }),
+          subscribe: (topics, reads) => changes.subscribe(topics, reads),
+        })
+        const presenceContext = yield* Layer.build(
+          presenceLayer.pipe(Layer.provide(Layer.succeed(Changes, observed))),
+        )
+        const presence = yield* Presence.pipe(Effect.provide(presenceContext))
         const link = new Link(yield* Clock.currentTimeMillis)
         yield* presence.hold(
           owner.threadId,
@@ -40,8 +49,14 @@ describe.skipIf(!testDatabaseConfigured)('presence connection signals', () => {
         )
         yield* Queue.take(notices)
         expect(yield* presence.here(owner.threadId)).toHaveLength(1)
+        yield* Queue.take(publishedAt)
+        const closedAt = yield* Clock.currentTimeMillis
         link.close()
+        // Let the former scan run too. Its receipt is five seconds late, so reversal reaches
+        // the assertion instead of merely hitting Vitest's global stall alarm.
+        yield* TestClock.adjust('5 seconds')
         yield* Queue.take(notices)
+        expect(yield* Queue.take(publishedAt)).toBe(closedAt)
         expect(yield* presence.here(owner.threadId)).toEqual([])
         // A late frame cannot resurrect the closed connection.
         link.heard(yield* Clock.currentTimeMillis)
