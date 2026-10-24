@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { Effect, Schema } from 'effect'
+import { Duration, Effect, Schema } from 'effect'
 import {
   MachineOperationFailed,
   MachineResponseInvalid,
@@ -9,6 +9,13 @@ import {
 import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
 import { decodeTool } from './refusal.ts'
+
+/** Private-file cleanup's guest TERM deadline. Source: unmeasured. The provider receipt
+ * reports expiry and the finalizer logs cleanup failure without replacing the original result. */
+const CLEANUP_COMMAND_SECONDS = 30
+/** Includes the guest's cleanup deadline and dispatch/receipt silence. Source: unmeasured.
+ * Expiry interrupts the finalizer's wait and records cleanup failure. */
+const CLEANUP_RECEIPT_GRACE = Duration.seconds(45)
 
 const Capture = Schema.Struct({
   display: Schema.String,
@@ -63,12 +70,12 @@ export const driver = (
               id,
               key,
               `rm -f -- '${path}' '${directory}/picture.png'; rmdir -- '${directory}'`,
-              30,
+              CLEANUP_COMMAND_SECONDS,
             )
             // Finalizers inherit an uninterruptible region. Bound cleanup independently so a
             // dropped provider connection cannot hide the original receipt/refusal indefinitely.
             .pipe(
-              Effect.timeout('45 seconds'),
+              Effect.timeout(CLEANUP_RECEIPT_GRACE),
               Effect.interruptible,
               Effect.catch(() => Effect.logWarning('Computer private step cleanup failed.')),
             ),

@@ -71,7 +71,6 @@ it.live.skipIf(!peerAvailable)(
       // The connection itself is as it was.
       expect(link.alive()).toBe(true)
     }).pipe(Effect.scoped),
-  30_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -92,21 +91,17 @@ it.live.skipIf(!peerAvailable)(
       expect(run.stderr.trim()).toBe('problem')
       expect(run).toMatchObject({ exitCode: 3, timedOut: false, truncated: false })
     }).pipe(Effect.scoped),
-  30_000,
 )
 
-it.live.skipIf(!peerAvailable)(
-  'carries bytes that are not text unchanged in both directions',
-  () =>
-    Effect.gen(function* () {
-      const { server, link } = yield* connected()
-      const picture = Uint8Array.from({ length: 70_000 }, (_, index) => (index * 7) % 256)
-      const path = NodePath.join(server.home, 'picture.bin')
-      yield* link.put(path, picture)
-      expect(NodeFS.readFileSync(path).equals(Buffer.from(picture))).toBe(true)
-      expect(Buffer.from(yield* link.read(path)).equals(Buffer.from(picture))).toBe(true)
-    }).pipe(Effect.scoped),
-  30_000,
+it.live.skipIf(!peerAvailable)('carries bytes that are not text unchanged in both directions', () =>
+  Effect.gen(function* () {
+    const { server, link } = yield* connected()
+    const picture = Uint8Array.from({ length: 70_000 }, (_, index) => (index * 7) % 256)
+    const path = NodePath.join(server.home, 'picture.bin')
+    yield* link.put(path, picture)
+    expect(NodeFS.readFileSync(path).equals(Buffer.from(picture))).toBe(true)
+    expect(Buffer.from(yield* link.read(path)).equals(Buffer.from(picture))).toBe(true)
+  }).pipe(Effect.scoped),
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -123,7 +118,6 @@ it.live.skipIf(!peerAvailable)(
       NodeFS.writeFileSync(large, Buffer.alloc(FILE_BYTES + 1))
       expect(yield* Effect.flip(link.read(large))).toMatchObject({ reason: 'large' })
     }).pipe(Effect.scoped),
-  30_000,
 )
 
 /** File creation is the worker's receipt. Watch before reading so a fast writer cannot race it. */
@@ -158,27 +152,24 @@ const lifetime = Effect.fn('LinkTest.lifetime')(function* (home: string, link: L
 
 const heldCommand = `bash -c 'exec 3>alive; cat <hold & child=$!; touch started; wait "$child"' & wait`
 
-it.live.skipIf(!peerAvailable)(
-  'ends a command and its children at the deadline',
-  () =>
-    Effect.gen(function* () {
-      const { server, link } = yield* connected()
-      const ended = yield* lifetime(server.home, link)
-      const running = yield* link
-        .run({
-          command: heldCommand,
-          directory: server.home,
-          timeoutSeconds: 3,
-        })
-        .pipe(Effect.forkScoped)
-      // The child exists and the lifetime pipe is open before waiting for its deadline.
-      yield* created(NodePath.join(server.home, 'started'))
-      const run = yield* Fiber.join(running)
-      expect(run).toMatchObject({ exitCode: null, timedOut: true })
-      const after = yield* Fiber.join(ended)
-      expect(after.stdout.trim()).toBe('gone')
-    }).pipe(Effect.scoped),
-  40_000,
+it.live.skipIf(!peerAvailable)('ends a command and its children at the deadline', () =>
+  Effect.gen(function* () {
+    const { server, link } = yield* connected()
+    const ended = yield* lifetime(server.home, link)
+    const running = yield* link
+      .run({
+        command: heldCommand,
+        directory: server.home,
+        timeoutSeconds: 3,
+      })
+      .pipe(Effect.forkScoped)
+    // The child exists and the lifetime pipe is open before waiting for its deadline.
+    yield* created(NodePath.join(server.home, 'started'))
+    const run = yield* Fiber.join(running)
+    expect(run).toMatchObject({ exitCode: null, timedOut: true })
+    const after = yield* Fiber.join(ended)
+    expect(after.stdout.trim()).toBe('gone')
+  }).pipe(Effect.scoped),
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -199,24 +190,20 @@ it.live.skipIf(!peerAvailable)(
       const after = yield* Fiber.join(ended)
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
-  40_000,
 )
 
-it.live.skipIf(!peerAvailable)(
-  'keeps the end of an output that is larger than the limit',
-  () =>
-    Effect.gen(function* () {
-      const { server, link } = yield* connected()
-      const run = yield* link.run({
-        command: `head -c ${OUTPUT_BYTES * 3} /dev/zero | tr '\\0' a; echo; echo last-line`,
-        directory: server.home,
-        timeoutSeconds: null,
-      })
-      expect(run.truncated).toBe(true)
-      expect(run.stdout.length).toBeLessThanOrEqual(OUTPUT_BYTES)
-      expect(run.stdout.endsWith('last-line\n')).toBe(true)
-    }).pipe(Effect.scoped),
-  40_000,
+it.live.skipIf(!peerAvailable)('keeps the end of an output that is larger than the limit', () =>
+  Effect.gen(function* () {
+    const { server, link } = yield* connected()
+    const run = yield* link.run({
+      command: `head -c ${OUTPUT_BYTES * 3} /dev/zero | tr '\\0' a; echo; echo last-line`,
+      directory: server.home,
+      timeoutSeconds: null,
+    })
+    expect(run.truncated).toBe(true)
+    expect(run.stdout.length).toBeLessThanOrEqual(OUTPUT_BYTES)
+    expect(run.stdout.endsWith('last-line\n')).toBe(true)
+  }).pipe(Effect.scoped),
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -227,7 +214,6 @@ it.live.skipIf(!peerAvailable)(
       const failure = yield* Effect.flip(openLink({ ...server, hostKey: server.stranger }))
       expect(failure._tag).toBe('LinkHostMismatch')
     }).pipe(Effect.scoped),
-  30_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -238,7 +224,7 @@ it.live.skipIf(!peerAvailable)(
       const running = yield* Effect.forkChild(
         Effect.flip(
           link.run({
-            command: 'touch started; sleep 300',
+            command: 'touch started; read line',
             directory: server.home,
             timeoutSeconds: 600,
           }),
@@ -255,7 +241,6 @@ it.live.skipIf(!peerAvailable)(
       )
       expect(yield* Effect.flip(openLink(server))).toBeInstanceOf(LinkUnreachable)
     }).pipe(Effect.scoped),
-  40_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -288,42 +273,38 @@ it.live.skipIf(!peerAvailable)(
       const run = yield* two.run({ command: 'pwd', directory: second.home, timeoutSeconds: null })
       expect(run.stdout.trim()).toBe(second.home)
     }).pipe(Effect.scoped),
-  40_000,
 )
 
-it.live.skipIf(!peerAvailable)(
-  'opens one machine while another is still being found',
-  () =>
-    Effect.gen(function* () {
-      const server = yield* peer()
-      const held = links<string>(server.authorizedFile)
-      yield* Effect.addFinalizer(() => held.close)
-      // The first machine's provider has been asked where it is and has not answered: a machine
-      // that is still waking. `asked` says the opening is under way, so nothing here waits on time.
-      const asked = yield* Deferred.make<void>()
-      const answer = yield* Deferred.make<void>()
-      const target = server
-      const waking = yield* held
-        .get(
-          'waking',
-          Deferred.succeed(asked, undefined).pipe(
-            Effect.andThen(Deferred.await(answer)),
-            Effect.as(target),
-          ),
-        )
-        .pipe(Effect.forkChild)
-      yield* Deferred.await(asked)
-      const awake = yield* held.get('awake', Effect.succeed(target))
-      const run = yield* awake.run({
-        command: 'echo here',
-        directory: server.home,
-        timeoutSeconds: null,
-      })
-      expect(run.stdout.trim()).toBe('here')
-      yield* Deferred.succeed(answer, undefined)
-      expect((yield* Fiber.join(waking)).alive()).toBe(true)
-    }).pipe(Effect.scoped),
-  40_000,
+it.live.skipIf(!peerAvailable)('opens one machine while another is still being found', () =>
+  Effect.gen(function* () {
+    const server = yield* peer()
+    const held = links<string>(server.authorizedFile)
+    yield* Effect.addFinalizer(() => held.close)
+    // The first machine's provider has been asked where it is and has not answered: a machine
+    // that is still waking. `asked` says the opening is under way, so nothing here waits on time.
+    const asked = yield* Deferred.make<void>()
+    const answer = yield* Deferred.make<void>()
+    const target = server
+    const waking = yield* held
+      .get(
+        'waking',
+        Deferred.succeed(asked, undefined).pipe(
+          Effect.andThen(Deferred.await(answer)),
+          Effect.as(target),
+        ),
+      )
+      .pipe(Effect.forkChild)
+    yield* Deferred.await(asked)
+    const awake = yield* held.get('awake', Effect.succeed(target))
+    const run = yield* awake.run({
+      command: 'echo here',
+      directory: server.home,
+      timeoutSeconds: null,
+    })
+    expect(run.stdout.trim()).toBe('here')
+    yield* Deferred.succeed(answer, undefined)
+    expect((yield* Fiber.join(waking)).alive()).toBe(true)
+  }).pipe(Effect.scoped),
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -357,7 +338,6 @@ it.live.skipIf(!peerAvailable)(
       expect(yield* Ref.get(located)).toBe(2)
       expect(link.alive()).toBe(true)
     }).pipe(Effect.scoped),
-  40_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -380,48 +360,41 @@ it.live.skipIf(!peerAvailable)(
       expect(fresh.alive()).toBe(true)
       expect(yield* Ref.get(located)).toBe(2)
     }).pipe(Effect.scoped),
-  40_000,
 )
 
-it.live.skipIf(!peerAvailable)(
-  'keeps nothing from an opening the owner closed over',
-  () =>
-    Effect.gen(function* () {
-      const server = yield* peer()
-      const held = links<string>(server.authorizedFile)
-      const located = yield* Ref.make(0)
-      const asked = yield* Deferred.make<void>()
-      const answer = yield* Deferred.make<void>()
-      const locate = Ref.update(located, (count) => count + 1).pipe(
-        Effect.andThen(Deferred.succeed(asked, undefined)),
-        Effect.andThen(Deferred.await(answer)),
-        Effect.as(server),
-      )
-      const opening = yield* held.get('machine', locate).pipe(Effect.flip, Effect.forkChild)
-      yield* Deferred.await(asked)
-      yield* held.close
-      yield* Deferred.succeed(answer, undefined)
-      expect(yield* Fiber.join(opening)).toBeInstanceOf(LinkUnreachable)
-      // Closed for good: a later use is refused without asking where the machine is.
-      expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
-      expect(yield* Ref.get(located)).toBe(1)
-    }).pipe(Effect.scoped),
-  40_000,
+it.live.skipIf(!peerAvailable)('keeps nothing from an opening the owner closed over', () =>
+  Effect.gen(function* () {
+    const server = yield* peer()
+    const held = links<string>(server.authorizedFile)
+    const located = yield* Ref.make(0)
+    const asked = yield* Deferred.make<void>()
+    const answer = yield* Deferred.make<void>()
+    const locate = Ref.update(located, (count) => count + 1).pipe(
+      Effect.andThen(Deferred.succeed(asked, undefined)),
+      Effect.andThen(Deferred.await(answer)),
+      Effect.as(server),
+    )
+    const opening = yield* held.get('machine', locate).pipe(Effect.flip, Effect.forkChild)
+    yield* Deferred.await(asked)
+    yield* held.close
+    yield* Deferred.succeed(answer, undefined)
+    expect(yield* Fiber.join(opening)).toBeInstanceOf(LinkUnreachable)
+    // Closed for good: a later use is refused without asking where the machine is.
+    expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
+    expect(yield* Ref.get(located)).toBe(1)
+  }).pipe(Effect.scoped),
 )
 
-it.live.skipIf(!peerAvailable)(
-  'opens nothing after the owner has closed',
-  () =>
-    Effect.gen(function* () {
-      const server = yield* peer()
-      const held = links<string>(server.authorizedFile)
-      const located = yield* Ref.make(0)
-      const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
-      yield* held.close
-      expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
-      expect(yield* Ref.get(located)).toBe(0)
-    }).pipe(Effect.scoped),
-  20_000,
+it.live.skipIf(!peerAvailable)('opens nothing after the owner has closed', () =>
+  Effect.gen(function* () {
+    const server = yield* peer()
+    const held = links<string>(server.authorizedFile)
+    const located = yield* Ref.make(0)
+    const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
+    yield* held.close
+    expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
+    expect(yield* Ref.get(located)).toBe(0)
+  }).pipe(Effect.scoped),
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -436,7 +409,6 @@ it.live.skipIf(!peerAvailable)(
       if (!(refused instanceof LinkFileRefused)) expect.fail('Expected a file refusal')
       expect(refused.reason).toBe('other')
     }).pipe(Effect.scoped),
-  30_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -510,7 +482,6 @@ it.live.skipIf(!peerAvailable)(
       expect(other.authorizedLines()).toContain(three)
       expect(other.authorizedLines()).not.toContain(two)
     }).pipe(Effect.scoped),
-  40_000,
 )
 
 /**
@@ -542,7 +513,6 @@ it.live.skipIf(!peerAvailable)(
       expect(yield* Ref.get(heard)).toBe('FIRST\nCAFé SECOND\n')
       expect(yield* spoken.ended).toEqual({ exitCode: 7, timedOut: false })
     }).pipe(Effect.scoped),
-  30_000,
 )
 
 it.live.skipIf(!peerAvailable)(
@@ -566,5 +536,4 @@ it.live.skipIf(!peerAvailable)(
       const after = yield* Fiber.join(ended)
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
-  30_000,
 )

@@ -260,7 +260,7 @@ function checkCode(
 /** Connection credentials are replaced at their external adapter; all tenancy, Gate and Approval SQL is real. */
 describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
-  { timeout: 30_000 },
+
   () => {
     // The program runs on a Computer that is this machine (`testing.ts`); each test still owns
     // fresh tenancy, Gate and provider fixtures, and each program its own process. The ceiling is

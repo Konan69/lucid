@@ -102,81 +102,76 @@ const desktopPicture = Effect.fn('ThreadProof.desktopPicture')(function* (
 describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
   'Thread Computer live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
-      it.effect(
-        'wakes Boat, types, clicks, reads and streams its scoped session receipt',
-        () =>
-          Effect.gen(function* () {
-            yield* proofProvider()
-            const fixture = yield* chainFixture('Computer chain proof')
-            const owned = yield* proofComputer(computerMachineKey(fixture.personId))
-            // The real Thread must wake the captured resource, not an existing Person Computer.
-            yield* owned.machine.stop(owned.key)
-            const runId = yield* fixture.send(
-              'Use your Computer browser, not read_page or run_code, to open https://www.selenium.dev/selenium/web/web-form.html. Type "Vivid chain verified" in Text input, read it back, click Submit, then read the resulting page. Call use_desktop to see the final screen. Tell me the confirmation shown. Use browse directly for every browser step.',
-            )
-            const running = yield* waitForState(fixture.conversation, (state) =>
-              toolParts(state).some(
-                (part) => part.toolName === 'browse' && part.state === 'input-available',
-              ),
-            )
-            const step = toolParts(running).find(
+    layer(chainLayer, { excludeTestServices: true })((it) => {
+      it.effect('wakes Boat, types, clicks, reads and streams its scoped session receipt', () =>
+        Effect.gen(function* () {
+          yield* proofProvider()
+          const fixture = yield* chainFixture('Computer chain proof')
+          const owned = yield* proofComputer(computerMachineKey(fixture.personId))
+          // The real Thread must wake the captured resource, not an existing Person Computer.
+          yield* owned.machine.stop(owned.key)
+          const runId = yield* fixture.send(
+            'Use your Computer browser, not read_page or run_code, to open https://www.selenium.dev/selenium/web/web-form.html. Type "Vivid chain verified" in Text input, read it back, click Submit, then read the resulting page. Call use_desktop to see the final screen. Tell me the confirmation shown. Use browse directly for every browser step.',
+          )
+          const running = yield* waitForState(fixture.conversation, (state) =>
+            toolParts(state).some(
               (part) => part.toolName === 'browse' && part.state === 'input-available',
-            )
-            if (step === undefined)
-              return yield* Effect.sync(() =>
-                expect.fail('The Thread must publish the running tool'),
-              )
-            const input = yield* decodeInput(step.input)
-            expect(input.summary).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i)
-            const state = yield* completeRun(fixture, runId)
-            const receipts = toolParts(state).filter(
-              (part) => part.toolName === 'browse' && part.state === 'output-available',
-            )
-            const actions = yield* Effect.forEach(receipts, (part) => decodeInput(part.input))
-            expect(actions.map((value) => value.action.kind)).toEqual(
-              expect.arrayContaining(['open', 'type', 'click', 'read']),
-            )
-            expect(
-              receipts.some((part) =>
-                Option.exists(
-                  typedInput(part.input),
-                  (value) => value.action.text === 'Vivid chain verified',
-                ),
+            ),
+          )
+          const step = toolParts(running).find(
+            (part) => part.toolName === 'browse' && part.state === 'input-available',
+          )
+          if (step === undefined)
+            return yield* Effect.sync(() => expect.fail('The Thread must publish the running tool'))
+          const input = yield* decodeInput(step.input)
+          expect(input.summary).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i)
+          const state = yield* completeRun(fixture, runId)
+          const receipts = toolParts(state).filter(
+            (part) => part.toolName === 'browse' && part.state === 'output-available',
+          )
+          const actions = yield* Effect.forEach(receipts, (part) => decodeInput(part.input))
+          expect(actions.map((value) => value.action.kind)).toEqual(
+            expect.arrayContaining(['open', 'type', 'click', 'read']),
+          )
+          expect(
+            receipts.some((part) =>
+              Option.exists(
+                typedInput(part.input),
+                (value) => value.action.text === 'Vivid chain verified',
               ),
-            ).toBe(true)
-            const observations: string[] = []
-            for (const part of receipts) {
-              if (part.state !== 'output-available') continue
-              const result = yield* decodeOutput(part.output)
-              observations.push(result.result.outline)
-              expect(result.computer.screen.address).toBe(computerScreenAddress)
-              expect(JSON.stringify(result.computer)).not.toContain(fixture.personId)
-            }
-            expect(
-              observations.some((outline) => outline.includes('Vivid chain verified')),
-              'A provider receipt must verify the entered value',
-            ).toBe(true)
-            expect(
-              observations.some((outline) => /received/i.test(outline)),
-              'The submitted page must show a real confirmation',
-            ).toBe(true)
-            const desktop = toolParts(state).find(
-              (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
+            ),
+          ).toBe(true)
+          const observations: string[] = []
+          for (const part of receipts) {
+            if (part.state !== 'output-available') continue
+            const result = yield* decodeOutput(part.output)
+            observations.push(result.result.outline)
+            expect(result.computer.screen.address).toBe(computerScreenAddress)
+            expect(JSON.stringify(result.computer)).not.toContain(fixture.personId)
+          }
+          expect(
+            observations.some((outline) => outline.includes('Vivid chain verified')),
+            'A provider receipt must verify the entered value',
+          ).toBe(true)
+          expect(
+            observations.some((outline) => /received/i.test(outline)),
+            'The submitted page must show a real confirmation',
+          ).toBe(true)
+          const desktop = toolParts(state).find(
+            (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
+          )
+          if (desktop === undefined || desktop.state !== 'output-available')
+            return yield* Effect.sync(() =>
+              expect.fail('The Thread must return its desktop picture'),
             )
-            if (desktop === undefined || desktop.state !== 'output-available')
-              return yield* Effect.sync(() =>
-                expect.fail('The Thread must return its desktop picture'),
-              )
-            yield* desktopPicture(fixture, yield* decodeDesktop(desktop.output))
-            expect(replyText(state)).toMatch(/received/i)
-            expect(
-              (yield* (yield* bindings()).load(computerMachineKey(fixture.personId)))._tag,
-            ).toBe('Some')
-            const other = yield* chainFixture('Computer isolation proof')
-            expect((yield* other.rpc.GetComputer()).computer.state._tag).toBe('Absent')
-          }).pipe(Effect.scoped),
-        { timeout: 240_000 },
+          yield* desktopPicture(fixture, yield* decodeDesktop(desktop.output))
+          expect(replyText(state)).toMatch(/received/i)
+          expect((yield* (yield* bindings()).load(computerMachineKey(fixture.personId)))._tag).toBe(
+            'Some',
+          )
+          const other = yield* chainFixture('Computer isolation proof')
+          expect((yield* other.rpc.GetComputer()).computer.state._tag).toBe('Absent')
+        }).pipe(Effect.scoped),
       )
     })
   },

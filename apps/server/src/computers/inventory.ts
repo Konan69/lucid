@@ -2,6 +2,11 @@ import { ComputerInventory, ComputerState, type PersonId } from '@vivid/contract
 import { Effect, Result, Schema } from 'effect'
 import { ComputerStore } from './store.ts'
 
+/** Optional inventory enrichment may be omitted while the Computer keeps its own work alive.
+ * Source: unmeasured. After thirty seconds the caller uses the explicit Unavailable context;
+ * this is not the action the Person requested and is never authority to act. */
+const INVENTORY_CONTEXT_SECONDS = 30
+
 const decode = Schema.decodeUnknownResult(Schema.fromJsonString(ComputerInventory))
 
 /** Observe through the ordinary Computer service; this never creates a Computer for a chat.
@@ -16,7 +21,7 @@ export const computerInventory = Effect.fn('Computer.inventory')(function* (pers
   const receipt = yield* store
     .probe(person, {
       command: '/opt/vivid/python/bin/python3 /opt/vivid/computer/catalogue.py inventory',
-      timeoutSeconds: 30,
+      timeoutSeconds: INVENTORY_CONTEXT_SECONDS,
     })
     .pipe(Effect.result)
   if (Result.isFailure(receipt) || receipt.success.exitCode !== 0 || receipt.success.truncated)

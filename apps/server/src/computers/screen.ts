@@ -1,5 +1,5 @@
 import * as NodeSocket from '@effect/platform-node/NodeSocket'
-import { Effect, Option, Predicate, Redacted, Stream } from 'effect'
+import { Duration, Effect, Option, Predicate, Redacted, Stream } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
@@ -9,6 +9,10 @@ import { ServerConfig } from '../config.ts'
 import { Changes, Topic, everyPart } from '../live/changes.ts'
 import { authenticate, sessionWorkspace } from '../auth/session.ts'
 import { ComputerStore, computerScreenAddress } from './store.ts'
+
+/** Only bounds the upstream viewer opening handshake. Source: unmeasured. Expiry returns
+ * 502 before the browser upgrade; established screen streams live with their route scope. */
+const VIEWER_OPEN_DEADLINE = Duration.seconds(10)
 
 const notFound = () =>
   HttpServerResponse.empty({ status: 404, headers: { 'cache-control': 'no-store' } })
@@ -28,7 +32,7 @@ const relay = Effect.fn('Computer.screen.relay')(function* (
       ),
       (socket) => Effect.sync(() => socket.close(1000)),
     ),
-    { openTimeout: '10 seconds' },
+    { openTimeout: VIEWER_OPEN_DEADLINE },
   )
   // Dial first: a dead provider must not leave the browser with a successful but unusable upgrade.
   const source = yield* upstream.reader

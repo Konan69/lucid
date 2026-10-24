@@ -71,7 +71,7 @@ describe.skipIf(!enabled)('Programs on a real Boat machine', () => {
   // One Layer for both: the machine is woken once, and the second program finds the runner
   // the first one installed.
   // The real clock: the machine is waited for and the provider answers in real time.
-  layer(supervised, { timeout: '10 minutes', excludeTestServices: true })((it) => {
+  layer(supervised, { excludeTestServices: true })((it) => {
     it.effect(
       'runs on the Computer, has two calls answered at the same time, and returns what it computed',
       () =>

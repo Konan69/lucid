@@ -1,4 +1,4 @@
-import { Effect, Function, Option, Redacted, Schema, Stream } from 'effect'
+import { Duration, Effect, Function, Option, Redacted, Schema, Stream } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
@@ -12,6 +12,16 @@ import {
 } from '../machine.ts'
 import { optionalSetting, requiredSetting, settingSecret, settingText } from '../../config.ts'
 import * as Protocol from './protocol.ts'
+
+/** Optional structured error enrichment after a refused resume. Source: unmeasured.
+ * Status already proves outage; expiry reports that status without waiting for its body. */
+const ERROR_BODY_GRACE = Duration.seconds(5)
+/** One silent failFast/unary provider exchange. Source: unmeasured. Boat supplies no push
+ * receipt for a lost HTTP request; expiry reports MachineUnreachable and never replays input. */
+const UNARY_EXCHANGE_DEADLINE = Duration.seconds(60)
+/** Initial headers only for command streams. Source: unmeasured. Productive streamed output
+ * has no total cap here; missing headers report MachineUnreachable. */
+const COMMAND_HEADERS_DEADLINE = Duration.seconds(90)
 
 const Request = Schema.TaggedUnion({
   Get: { path: Schema.String },
@@ -207,13 +217,16 @@ const requests = (
       if (response.status >= 500 && response.status !== 503) return yield* refused(response)
       // An edge's 503 may never finish its body. The code is looked for briefly; without it the
       // answer is the outage its status says it is, told at once and not when the start runs out.
-      const reply = yield* decodeError(response).pipe(Effect.timeout('5 seconds'), Effect.option)
+      const reply = yield* decodeError(response).pipe(
+        Effect.timeout(ERROR_BODY_GRACE),
+        Effect.option,
+      )
       const answer = Option.flatMap(reply, ({ error }) => sizeAnswer(error))
       if (Option.isSome(answer)) return answer.value
       return yield* refused(response)
     }).pipe(
       Effect.timeoutOrElse({
-        duration: '60 seconds',
+        duration: UNARY_EXCHANGE_DEADLINE,
         orElse: () => Effect.fail(new MachineUnreachable()),
       }),
     )
@@ -229,7 +242,7 @@ const requests = (
         duration:
           Request.guards.Post(input) && input.path.endsWith('/commands')
             ? '11 minutes'
-            : '60 seconds',
+            : UNARY_EXCHANGE_DEADLINE,
         orElse: () => Effect.fail(new MachineUnreachable()),
       }),
     )
@@ -243,7 +256,7 @@ const requests = (
     Stream.unwrap(
       dispatch(input).pipe(
         Effect.timeoutOrElse({
-          duration: '90 seconds',
+          duration: COMMAND_HEADERS_DEADLINE,
           orElse: () => Effect.fail(new MachineUnreachable()),
         }),
         Effect.map((response) =>

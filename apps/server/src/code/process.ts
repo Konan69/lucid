@@ -31,6 +31,10 @@ import { CodeComputer, type CodeComputerService, type Guest } from './computer.t
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
 import { DisplayPool, displayPoolLayer } from './pool.ts'
 
+/** Final-log drain after a terminal decision. Source: unmeasured. Missing logs remain marked
+ * incomplete after this grace; productive program work is already cancelled. */
+const FINAL_LOG_GRACE = CodeTiming.graceMs
+
 /** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
   Returned: {
@@ -350,7 +354,7 @@ export class Execution {
     yield* cancelled.pipe(
       Effect.andThen(Deferred.await(this.finished)),
       Effect.catchTag('CodePipeFailure', () => Effect.void),
-      Effect.timeoutOrElse({ duration: CodeTiming.graceMs, orElse: () => Effect.void }),
+      Effect.timeoutOrElse({ duration: FINAL_LOG_GRACE, orElse: () => Effect.void }),
     )
     return this.failed(failure)
   })

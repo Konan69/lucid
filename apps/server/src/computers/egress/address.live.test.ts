@@ -111,7 +111,7 @@ const computerIs = (fixture: ChainFixture, accepts: (state: ComputerState) => bo
   )
 
 describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => {
-  layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 900_000 })((it) => {
+  layer(NodeHttpClient.layerUndici, { excludeTestServices: true })((it) => {
     it.effect(
       'a page on the Computer sees the desktop app’s address with egress on, and the Computer’s with it off',
       () =>
@@ -150,7 +150,6 @@ describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => 
             expect(direct).not.toBe(known.value)
           }
         }).pipe(Effect.scoped),
-      { timeout: 900_000 },
     )
   })
 })
