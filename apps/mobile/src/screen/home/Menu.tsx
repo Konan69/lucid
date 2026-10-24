@@ -42,7 +42,7 @@ import { Face } from '../../ui/Face'
 import { Glass } from '../../ui/Glass'
 import { APPEAR, LEAVE, MORPH } from '../../ui/motion/morph'
 import { EDGE, GUTTER, IconButton, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
-import type { Routes } from '../../workspace'
+import type { DrawerPage } from '../../workspace'
 import { ScopeChip } from '../project/Chip'
 import { CreateProject } from '../project/Create'
 import { Mark } from '../project/Mark'
@@ -50,10 +50,11 @@ import { scope, useScope } from '../project/scope'
 import { Customise } from '../vivid/Customise'
 import { Threads } from './Threads'
 
-/** Where the drawer can send the Person that needs nothing said about it: a place, by its name. */
-export type Place = {
-  [Name in keyof Routes]: undefined extends Routes[Name] ? Name : never
-}[keyof Routes]
+/**
+ * Where the drawer can send the Person that needs nothing said about it: a page, by its name. Each
+ * opens in Home's place (`DRAWER_PAGES`, `workspace.ts`).
+ */
+export type Place = Exclude<DrawerPage, 'Project'>
 
 /**
  * The places beside Threads. Projects is not one of them: a Project is work, not a place, so
@@ -575,7 +576,6 @@ function Beside({
  */
 export function Menu({
   me,
-  width,
   refused,
   onSwitch,
   onFresh,
@@ -587,7 +587,6 @@ export function Menu({
   onRefused,
 }: {
   me: MeResponse
-  width: number
   /** A row's quick action that the server refused, said above the list. */
   refused: Option.Option<string>
   onSwitch: () => void
@@ -645,7 +644,6 @@ export function Menu({
         <Threads
           state={listed}
           query={Option.getOrElse(query, () => '')}
-          width={width}
           onOpen={onOpen}
           onRename={onRename}
           onFile={Option.some(onFile)}

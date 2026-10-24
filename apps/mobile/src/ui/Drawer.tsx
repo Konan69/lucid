@@ -31,9 +31,13 @@ const FLICK = 500
  * the finger's speed to a spring that finishes the movement, so a slow drag and a flick both end
  * where they were heading. Closed, a rightward drag anywhere on the first screen opens it (an
  * edge-only strip would be Android's own back gesture). On any screen over the first it cannot be
- * reached (`reachable`): there the same drag from the edge is the system's way back. Open, the scrim over the page closes it by tap or
- * by drag; the panel itself takes no drawer gesture, because the Thread rows in it are swiped.
- * Android's back button closes it too (`data/drawer.ts`).
+ * reached (`reachable`): there the same drag from the edge is the system's way back. A page the
+ * drawer opened stands in Home's place and is reachable too (`DRAWER_PAGES`, `workspace.ts`).
+ * Open, a leftward drag anywhere closes it, on the panel as on the scrim, and a tap on the scrim
+ * does as well. The panel used to take no drag, because its Thread rows were swiped; a finger
+ * closing the drawer over a row opened that row's actions instead (the owner, 24 October 2026),
+ * so the rows gave the swipe up (`screen/home/Row.tsx`). Android's back button closes it too
+ * (`data/drawer.ts`).
  *
  * The scrim is the theme's `backdrop` and the panel its `drawer` with a `drawer-border` edge,
  * the tokens T3 Code mobile's `src/features/threads/ThreadNavigationSidebar.tsx` paints its
@@ -88,6 +92,9 @@ export function Drawer({
   const opening = drag()
     .activeOffsetX(SIDEWAYS)
     .enabled(reachable && !opened)
+  // Across the panel a drag only closes it: the rows under the finger keep their taps and holds,
+  // and a vertical move is the list's scroll (`failOffsetY`).
+  const shutting = drag().activeOffsetX([-SIDEWAYS, SIDEWAYS])
   const closing = Gesture.Exclusive(
     drag().activeOffsetX([-SIDEWAYS, SIDEWAYS]),
     Gesture.Tap().onEnd(() => {
@@ -123,6 +130,7 @@ export function Drawer({
           style={[StyleSheet.absoluteFill, { backgroundColor: c.backdrop }, dimmed]}
         />
       </GestureDetector>
+      <GestureDetector gesture={shutting}>
       <Animated.View
         accessibilityViewIsModal={opened}
         accessibilityElementsHidden={!opened}
@@ -149,6 +157,7 @@ export function Drawer({
       >
         {panel}
       </Animated.View>
+      </GestureDetector>
     </View>
   )
 }

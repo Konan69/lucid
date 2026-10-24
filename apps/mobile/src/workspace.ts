@@ -8,7 +8,7 @@ import type {
   Service,
   ThreadId,
 } from '@vivid/contracts'
-import { useNavigation } from '@react-navigation/native'
+import { CommonActions, useNavigation, type NavigationState } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { Option } from 'effect'
 import { createContext, useContext, useSyncExternalStore } from 'react'
@@ -140,6 +140,48 @@ export function useOpenThread(): (id: ThreadId) => void {
     go.popTo('Home')
   }
 }
+
+/**
+ * The pages the drawer opens. Each stands in Home's place instead of over it: it is put right over
+ * Home with the system's way back taken away (`drawerPage` in `App.tsx`), so the back swipe cannot
+ * uncover whatever Thread Home was last showing, and the same rightward drag that opens the drawer
+ * on Home opens it here (`reachable`). Going from one to another replaces it (`openPage`), so the
+ * stack never piles drawer pages up.
+ *
+ * A Project is one of them only when the drawer opens it; one pushed from the Projects page, or
+ * from another Project, stands deeper and keeps the way back.
+ *
+ * They used to be pushed over Home like every other page. Leaving Feed with the back swipe then
+ * showed the Thread Home still held, when the Person had come from the drawer and expected it back
+ * (the owner, 24 October 2026), and on these pages the drawer could not be dragged open at all.
+ */
+export const DRAWER_PAGES = [
+  'Feed',
+  'Library',
+  'Notifications',
+  'Projects',
+  'Settings',
+  'Project',
+] as const satisfies ReadonlyArray<keyof Routes>
+export type DrawerPage = (typeof DRAWER_PAGES)[number]
+
+/** A drawer page with what it is opened with. */
+export type DrawerOpening = {
+  [Name in DrawerPage]: Routes[Name] extends undefined
+    ? { name: Name }
+    : { name: Name; params: Routes[Name] }
+}[DrawerPage]
+
+/** Whether a route, standing at `index` in the stack, is a drawer page in Home's place. */
+export const standsForHome = (name: string, index: number): boolean =>
+  index === 1 && DRAWER_PAGES.some((page) => page === name)
+
+/**
+ * Puts a drawer page in Home's place, in one change of the stack: Home, kept by its own key so it
+ * is not drawn again, and the page right over it. Whatever was open over Home goes.
+ */
+export const openPage = (state: NavigationState, page: DrawerOpening) =>
+  CommonActions.reset({ ...state, index: 1, routes: [state.routes[0], page] })
 
 /** A Membership's role as it is written on screen. A new role fails to compile here. */
 export const ROLE_NAME = {

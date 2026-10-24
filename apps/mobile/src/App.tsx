@@ -1,11 +1,18 @@
 import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
-import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native'
-import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import {
+  createNavigationContainerRef,
+  NavigationContainer,
+  StackActions,
+} from '@react-navigation/native'
+import {
+  createNativeStackNavigator,
+  type NativeStackNavigationOptions,
+} from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { useState, type ComponentProps } from 'react'
-import { StatusBar, View } from 'react-native'
+import { useState, useSyncExternalStore, type ComponentProps } from 'react'
+import { AppState, StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import type { ShowKey } from './data/connecting'
@@ -20,7 +27,7 @@ import {
   useLiveData,
   type LiveData,
 } from './data/live'
-import { pageOf, type Place } from './data/place'
+import { forgotten, pageOf, type Place } from './data/place'
 import { heardReadAtom } from './data/hearing'
 import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
@@ -43,12 +50,22 @@ import { Memory } from './screen/settings/Memory'
 import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
+import { useMenuMark } from './data/mark'
+import { menuOptions } from './ui/Bar'
 import { Drawer } from './ui/Drawer'
 import { IN_THREAD, ON_GREETING, Presence } from './ui/Presence'
 import { Recover } from './ui/Recover'
 import { FITTED_SHEET, GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { FrontProvider, MeProvider, useFront, useMe, useShowing, type Routes } from './workspace'
+import {
+  FrontProvider,
+  MeProvider,
+  standsForHome,
+  useFront,
+  useMe,
+  useShowing,
+  type Routes,
+} from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -252,8 +269,9 @@ const pagesOf = (
 type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>['layout']>>[0]
 
 /**
- * The stack with the menu over it. The menu can be dragged open only while Home, the first route,
- * is the screen in front: over any other screen the same drag is the system's way back.
+ * The stack with the menu over it. The menu can be dragged open while Home, the first route, is
+ * the screen in front, or a page the drawer opened in Home's place (`DRAWER_PAGES`): over any
+ * other screen the same drag is the system's way back.
  *
  * A bottom sheet is a route too (`FITTED_SHEET`). On iOS the system presents it over the whole
  * window, this layout included. On Android it is a view inside the stack, so what is drawn here
@@ -264,7 +282,12 @@ type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>
  * focus (`useTelling`, `ui/Presence.tsx`), which a sheet takes.
  */
 const underMenu = ({ children, state, navigation }: StackLayout) => (
-  <Drawer reachable={state.index === 0} panel={<Panel go={navigation} />}>
+  <Drawer
+    reachable={
+      state.index === 0 || standsForHome(state.routes[state.index].name, state.index)
+    }
+    panel={<Panel go={navigation} stack={state} />}
+  >
     {children}
     <Vivid go={navigation} />
   </Drawer>
@@ -297,6 +320,46 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
   )
 }
 
+/** A store that holds nothing; `useAfreshOnReturn` listens through it and reads no value. */
+const NOTHING = () => 0
+
+/**
+ * Starts afresh when the Person comes back to an app that was put away for longer than a place is
+ * kept (`KEPT_FOR`, `data/place.ts`): Home shows the greeting and nothing is open over it. A
+ * phone that ended the app meanwhile is answered by what is kept instead (`placeIn`); this is the
+ * app that stayed in memory, which would otherwise still show the last Thread hours later.
+ *
+ * The listener is the store's subscription, so it goes with the shell and a shell left behind by a
+ * change of workspace cannot touch the new one, as `useArrival` in `screen/Home.tsx` listens.
+ * Only `background` counts as away: `inactive` is a pulled-down Control Centre or a call banner.
+ */
+function useAfreshOnReturn(leave: () => void, afresh: () => void) {
+  const [listen] = useState(() => () => {
+    let left = Option.none<number>()
+    const heard = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        left = Option.some(Date.now())
+        leave()
+        return
+      }
+      if (state !== 'active') return
+      if (Option.exists(left, (at) => forgotten(at, Date.now()))) afresh()
+      left = Option.none()
+    })
+    return () => heard.remove()
+  })
+  useSyncExternalStore(listen, NOTHING, NOTHING)
+}
+
+/**
+ * What a drawer page standing in Home's place changes in its route's options: no way back, so
+ * neither the bar's button nor the edge swipe can uncover the Thread Home holds, and the way to the
+ * menu where the way back was, as Home has it. The rightward drag is then the drawer's
+ * (`underMenu`). Android's back button still returns to Home, the app's start.
+ */
+const drawerPage = (stands: boolean, own: boolean): NativeStackNavigationOptions =>
+  stands ? { gestureEnabled: false, headerBackVisible: false, ...menuOptions(own) } : {}
+
 /**
  * The signed-in app: one native stack, with the menu over it.
  *
@@ -312,7 +375,8 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
  * Thread Vivid's avatar floats in the middle (one avatar, drawn over the stack: `Vivid` above).
  *
  * The menu is the navigator's `layout`, so it is drawn over the stack and its bar and is handed
- * the stack's state: it can be dragged open only while Home is the screen in front.
+ * the stack's state: it can be dragged open while Home, or a page it opened in Home's place
+ * (`DRAWER_PAGES`), is the screen in front.
  *
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
@@ -327,6 +391,7 @@ function Shell() {
   const { colors: c, dark } = useTheme()
   const data = useLiveData()
   const workspace = workspaceKey(useMe().workspace)
+  const menuMark = useMenuMark()
   // Where the Person was in this workspace when the app was last open (`data/place.ts`), read
   // once as the shell is built: it is where the shell starts, not something it follows.
   const [start] = useState(() => placeIn(data.session.server, workspace))
@@ -344,10 +409,19 @@ function Shell() {
     keepPlace(data.session.server, workspace, {
       thread: Front.$is('Thread')(showing) ? Option.some(showing.id) : Option.none(),
       pages: pagesOf(stack.value.routes),
+      at: Date.now(),
     })
   }
   // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
   const [front] = useState(() => makeFront(start.thread))
+  useAfreshOnReturn(
+    // Kept again as the app is put away, so the time it was last seen is the time it went.
+    () => keep(front.showing()),
+    () => {
+      front.fresh()
+      if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
+    },
+  )
   /**
    * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
    * is ready; were it not, the machine is told, and the press is said to have failed where it
@@ -378,14 +452,21 @@ function Shell() {
         >
           <Stack.Navigator
             layout={underMenu}
-            screenOptions={{
+            screenOptions={({ route, navigation: stack }) => ({
               ...GLASS_HEADER,
               ...SCREEN_CHANGE,
               // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
               // `primary` would paint the way back in the accent.
               headerTintColor: c.foreground,
               contentStyle: { backgroundColor: c.screen },
-            }}
+              ...drawerPage(
+                standsForHome(
+                  route.name,
+                  stack.getState().routes.findIndex((at) => at.key === route.key),
+                ),
+                menuMark,
+              ),
+            })}
           >
             {/* Screens that render a bar of their own start with an empty title, so the route's
               name is never what the bar says before the screen has spoken. */}

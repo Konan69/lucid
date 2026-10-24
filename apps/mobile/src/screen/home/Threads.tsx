@@ -12,8 +12,6 @@ import { ThreadRow } from './Row'
 
 /** What a row can do, the same for every list of Threads in the drawer. */
 export interface ThreadActions {
-  /** How wide the list is, for a row's full swipe. */
-  readonly width: number
   readonly onOpen: (thread: Thread) => void
   readonly onRename: (thread: Thread) => void
   /** Files a Thread in a Project; none where the Person has no Project to file it in. */

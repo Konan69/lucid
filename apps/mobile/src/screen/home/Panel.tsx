@@ -1,14 +1,12 @@
-import type { NavigationHelpers } from '@react-navigation/native'
+import { StackActions, type NavigationHelpers, type NavigationState } from '@react-navigation/native'
 import type { Thread } from '@vivid/contracts'
 import { Data, Effect, Option } from 'effect'
 import { useState } from 'react'
-import { useWindowDimensions } from 'react-native'
 import { closeDrawer } from '../../data/drawer'
 import { refusalOf, useLiveData } from '../../data/live'
 import { patchThread } from '../../data/threads'
-import { drawerWidth } from '../../ui/Drawer'
 import { NameSheet } from '../../ui/Sheet'
-import { useFront, useMe, type Routes } from '../../workspace'
+import { openPage, useFront, useMe, type DrawerOpening, type Routes } from '../../workspace'
 import { Filing } from './Filing'
 import { Menu } from './Menu'
 import { Switcher } from './Switcher'
@@ -35,21 +33,30 @@ const Over = Data.taggedEnum<Over>()
  * (`Shell` in `App.tsx`), and so it is handed the stack's navigation (`go`) and cannot ask for a
  * screen's own.
  *
- * Choosing a Thread puts it in the first screen's place (`data/front.ts`); nothing is pushed.
+ * Choosing a Thread puts it in the first screen's place (`data/front.ts`); nothing is pushed. A
+ * page the menu opens stands in Home's place too (`openPage`), never over a Thread.
  * It owns no data. What is local is which sheet is up, and a row's action the server refused.
  */
-export function Panel({ go }: { go: NavigationHelpers<Routes> }) {
+export function Panel({ go, stack }: { go: NavigationHelpers<Routes>; stack: NavigationState }) {
   const me = useMe()
   const front = useFront()
-  const width = drawerWidth(useWindowDimensions().width)
   const [over, setOver] = useState<Over>(Over.Nothing())
-  // A swipe or a menu choice on a row that the server refused. The row has nowhere to say it.
+  // A menu choice on a row that the server refused. The row has nowhere to say it.
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const close = () => setOver(Over.Nothing())
 
-  /** Leaves the menu for somewhere else. It closes behind whatever is shown. */
-  const leave = (travel: () => void) => {
-    travel()
+  /**
+   * Leaves the menu for Home, showing what `show` puts there. The drawer may have been opened over
+   * one of its own pages (`DRAWER_PAGES`), which is taken down, so the Thread chosen is what is seen.
+   */
+  const home = (show: () => void) => {
+    show()
+    go.dispatch(StackActions.popTo('Home'))
+    closeDrawer()
+  }
+  /** Leaves the menu for one of its pages, which takes the place of whatever was in front. */
+  const page = (opening: DrawerOpening) => {
+    go.dispatch(openPage(stack, opening))
     closeDrawer()
   }
 
@@ -57,13 +64,12 @@ export function Panel({ go }: { go: NavigationHelpers<Routes> }) {
     <>
       <Menu
         me={me}
-        width={width}
         refused={refused}
         onSwitch={() => setOver(Over.Switching())}
-        onFresh={() => leave(() => front.fresh())}
-        onGo={(place) => leave(() => go.navigate(place))}
-        onProject={(id) => leave(() => go.navigate('Project', { id }))}
-        onOpen={(thread) => leave(() => front.open(thread.id, false))}
+        onFresh={() => home(() => front.fresh())}
+        onGo={(place) => page({ name: place })}
+        onProject={(id) => page({ name: 'Project', params: { id } })}
+        onOpen={(thread) => home(() => front.open(thread.id, false))}
         onRename={(thread) => setOver(Over.Renaming({ thread }))}
         onFile={(thread) => setOver(Over.Filing({ thread }))}
         onRefused={setRefused}

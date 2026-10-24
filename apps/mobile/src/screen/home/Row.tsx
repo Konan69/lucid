@@ -8,7 +8,6 @@ import { relativeTime } from '../../data/lanes'
 import { useLiveData } from '../../data/live'
 import { deleteThread, patchThread, retitleThread } from '../../data/threads'
 import { HoldMenu } from '../../t3/Menu'
-import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
 import { Faces } from '../../ui/Avatar'
 import { confirmDestructive, Dot, GUTTER, Label, radius } from '../../ui/ui'
@@ -99,20 +98,24 @@ function LineFace({ thread, now, pressed, retitling }: FaceProps & { readonly no
 }
 
 /**
- * One Thread in the list. A tap opens it. A swipe marks it done (or brings a done one back),
- * and a long press offers everything else, so a row never grows a strip of buttons.
+ * One Thread in the list. A tap opens it, and a long press offers everything else: marking it
+ * done (or bringing a done one back), renaming, filing and deleting.
+ *
+ * A row used to be swiped to mark it done or delete it. The drawer is closed by a leftward swipe
+ * across it (`ui/Drawer.tsx`), and a finger closing the drawer over a row opened that row's
+ * actions instead (the owner, 24 October 2026). The swipe was the only way the drawer could not be
+ * swiped shut, so the row gave it up; everything it did is in the menu on a hold.
  *
  * Marking done is shown at once and confirmed by the server's next result. Deleting is the one
  * thing here that cannot be taken back, so it is the one thing that asks first.
  *
  * Both are shown before the server has answered and taken back if it refuses. A row has nowhere
- * to say that, and a Thread that silently slides back reads as a swipe that did nothing, so what
+ * to say that, and a Thread that silently slides back reads as an action that did nothing, so what
  * came of each is handed to the list (`onRefused`), which says it where Home says refusals.
  */
 export function ThreadRow({
   thread,
   now,
-  width,
   onOpen,
   onRename,
   onFile,
@@ -120,8 +123,6 @@ export function ThreadRow({
 }: {
   thread: Thread
   now: number
-  /** How wide the list is: a full swipe is measured against it, and the drawer is not the screen. */
-  width: number
   onOpen: (thread: Thread) => void
   onRename: (thread: Thread) => void
   /** Files the Thread in a Project. The menu offers it only where there is one to file it in. */
@@ -129,7 +130,6 @@ export function ThreadRow({
   /** A sentence when a quick action was refused; none when the next one went through. */
   onRefused: (message: Option.Option<string>) => void
 }) {
-  const { colors: c } = useTheme()
   const data = useLiveData()
   const shelveLabel = thread.archived ? 'Move back to threads' : 'Mark as done'
   const [retitling, setRetitling] = useState(false)
@@ -192,20 +192,6 @@ export function ThreadRow({
   ])
 
   return (
-    <ThreadSwipeable
-      backgroundColor={c.drawer}
-      compactActions
-      fullSwipeAction="primary"
-      fullSwipeWidth={width}
-      threadTitle={thread.title}
-      onDelete={remove}
-      primaryAction={{
-        accessibilityLabel: `${shelveLabel}: ${thread.title}`,
-        icon: thread.archived ? 'arrow.uturn.backward' : 'archivebox',
-        label: thread.archived ? 'Restore' : 'Done',
-        onPress: shelve,
-      }}
-    >
       <HoldMenu
         title={thread.title}
         actions={[
@@ -225,6 +211,5 @@ export function ThreadRow({
           <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
         )}
       </HoldMenu>
-    </ThreadSwipeable>
   )
 }
