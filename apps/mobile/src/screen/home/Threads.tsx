@@ -10,6 +10,9 @@ import { useTheme } from '../../theme'
 import { GUTTER, Label, Notice, Press, radius, Skeleton } from '../../ui/ui'
 import { ThreadRow } from './Row'
 
+/** Keeps drawer position current each native frame. Source: UX policy, 16 ms disables scroll throttling. */
+const SCROLL_REPORT_MS = 16
+
 /** What a row can do, the same for every list of Threads in the drawer. */
 export interface ThreadActions {
   readonly onOpen: (thread: Thread) => void
@@ -167,7 +170,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
   const scrolling = {
     keyboardShouldPersistTaps: 'handled',
     keyboardDismissMode: 'on-drag',
-    scrollEventThrottle: 16,
+    scrollEventThrottle: SCROLL_REPORT_MS,
     onScroll: props.onScroll,
     // Room for the floating "New thread" under the last row.
     contentContainerStyle: { paddingBottom: 88 },

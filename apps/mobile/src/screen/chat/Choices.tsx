@@ -35,6 +35,9 @@ import {
   useTallest,
 } from './Banner'
 
+/** Keeps the choice edge fade in step with native frames. Source: UX policy, 16 ms disables scroll throttling. */
+const SCROLL_REPORT_MS = 16
+
 /**
  * One question giving way to the next, or to the one before: what is under the head fades out as
  * what replaces it fades in, over 160 ms, in place. Nothing slides, so the banner reads as one
@@ -521,7 +524,7 @@ export function Rows<Each extends Shown>({
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        scrollEventThrottle={16}
+        scrollEventThrottle={SCROLL_REPORT_MS}
         onScroll={follow}
         onLayout={(event) => room.set(event.nativeEvent.layout.height)}
         onContentSizeChange={(_width, height) => content.set(height)}

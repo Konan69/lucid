@@ -98,6 +98,9 @@ import { Opening } from './home/First'
 import { Share } from './chat/Share'
 import { start } from '../data/app'
 
+/** Reports chat position at most every 32 ms while scrolling. Source: UX event-cadence policy. */
+const SCROLL_REPORT_MS = 32
+
 /**
  * One Thread: the conversation with Vivid, and everything live around it. It is drawn in the
  * first screen's place (`screen/Home.tsx`), not as a screen of its own; `writing` says its
@@ -1386,7 +1389,7 @@ function Transcript(props: MessagesProps) {
             returning.current = false
             place.release()
           }}
-          scrollEventThrottle={32}
+          scrollEventThrottle={SCROLL_REPORT_MS}
           style={{ opacity: placed ? 1 : 0 }}
           // A Thread with few words keeps them at the foot, beside the composer.
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}

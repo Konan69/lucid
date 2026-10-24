@@ -35,8 +35,12 @@ export const pressOn =
   (state: Presses): Option.Option<feed.Press> =>
     Option.fromUndefinedOr(state.presses.get(card))
 
-/** A new accepted press restarts this timer; disposing the session cancels it. */
-const pleasing = Atom.keepAlive(Atom.fn(() => Effect.sleep('3500 millis')))
+/**
+ * Holds the pleased pose after an accepted press. Source: UX policy, 3500 ms across screens.
+ * Expiry restores the ordinary pose; transport work has its own owner and is never delayed.
+ */
+const PLEASED_FOR = '3500 millis'
+const pleasing = Atom.keepAlive(Atom.fn(() => Effect.sleep(PLEASED_FOR)))
 
 /** Vivid stays pleased for 3500 ms after an accepted press, across screen changes. */
 export const usePleased = <Value>(select: (state: Pleased) => Value): Value =>
