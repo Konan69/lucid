@@ -78,14 +78,16 @@ export class ExecutorEventsUnreachable extends Schema.TaggedError<ExecutorEvents
   { title: 'Executor events unreachable' },
 ) {}
 
-export type ExecutorEventsFailure =
-  | ExecutorEventMissing
-  | ExecutorEventChanged
-  | ExecutorEventArgumentsInvalid
-  | ExecutorCallbackFailed
-  | ExecutorEventRefused
-  | ExecutorEventsUnsupported
-  | ExecutorEventsUnreachable
+export const ExecutorEventsFailure = Schema.Union([
+  ExecutorEventMissing,
+  ExecutorEventChanged,
+  ExecutorEventArgumentsInvalid,
+  ExecutorCallbackFailed,
+  ExecutorEventRefused,
+  ExecutorEventsUnsupported,
+  ExecutorEventsUnreachable,
+])
+export type ExecutorEventsFailure = typeof ExecutorEventsFailure.Type
 
 /**
  * One declared event as `events/list` returns it (`McpSchema.EventDefinition`). `name` is

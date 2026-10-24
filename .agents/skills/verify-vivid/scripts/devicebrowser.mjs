@@ -144,10 +144,7 @@ async function settingsChoice(run, name, answer) {
 async function clickAnswer(run, container, answer) {
   const target = `Array.from((${container}).querySelectorAll('button')).find(b => b.innerText.trim() === ${JSON.stringify(answer)})`
   const index = JSON.parse(
-    await run([
-      'eval',
-      `Array.from(document.querySelectorAll('button')).indexOf(${target})`,
-    ]),
+    await run(['eval', `Array.from(document.querySelectorAll('button')).indexOf(${target})`]),
   )
   NodeAssert.ok(Number.isInteger(index) && index >= 0, 'Missing visible answer ' + answer)
   await run(['find', 'nth', String(index), 'button', 'click'])

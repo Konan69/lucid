@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { FeedItem, ServiceId, WatchState } from '@vivid/contracts'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect'
 import {
   ExecutorAppId,
@@ -15,7 +15,6 @@ import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { watchArrivals } from './tables.ts'
 
 /**
  * The whole proactive path on the real stack: a Person asks Vivid in a Thread to watch an
@@ -180,14 +179,20 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
               .where(eq(runs.threadId, item.thread)),
           )
           expect(woke).toEqual([{ origin: 'Watch' }])
-          // Exactly one arrival for the Watch: the filtered-out ping never reached Vivid.
-          const arrivals = yield* database.run(
+          // The Person owns only this Watch. A filtered-out event must start no background Run.
+          const deliveries = yield* database.run(
             database
-              .select({ thread: watchArrivals.threadId })
-              .from(watchArrivals)
-              .where(eq(watchArrivals.watchId, watch.id)),
+              .select({ thread: runs.threadId })
+              .from(runs)
+              .where(
+                and(
+                  eq(runs.personId, fixture.personId),
+                  sql`${runs.origin}->>'_tag' = 'Watch'`,
+                  sql`${runs.origin}->>'watchName' = ${watch.name}`,
+                ),
+              ),
           )
-          expect(arrivals).toEqual([{ thread: item.thread }])
+          expect(deliveries).toEqual([{ thread: item.thread }])
         }).pipe(Effect.scoped),
       { timeout: 420_000 },
     )
