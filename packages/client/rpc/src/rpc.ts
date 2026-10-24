@@ -26,16 +26,16 @@ export class RpcConnection extends Context.Service<RpcConnection, RpcConnectionS
 ) {}
 
 /**
- * Only socket loss can be recovered by opening another connection. Protocol, decoding, HTTP,
- * worker and TLS-upgrade failures require their caller to act. Close codes for malformed data,
- * policy refusals and unsupported protocols are final too, even while the app stays mounted.
+ * A scope-owned socket supervisor retries all transport failures except positively identified
+ * permanent refusals. Unknown edge/proxy close codes can recover after a deployment, so they
+ * must not strand a mounted app. Protocol, decoding and worker errors require caller action.
  */
 export const isTransientSocketReason = Match.type<RpcClientError.RpcClientError['reason']>().pipe(
   Match.tagsExhaustive({
     SocketReadError: () => true,
     SocketWriteError: () => true,
     SocketOpenError: () => true,
-    SocketCloseError: ({ code }) => RECOVERABLE_CLOSES.has(code),
+    SocketCloseError: ({ code }) => !PERMANENT_CLOSES.has(code),
     SocketUpgradeError: () => false,
     HttpError: () => false,
     RpcClientDefect: () => false,
@@ -46,8 +46,8 @@ export const isTransientSocketReason = Match.type<RpcClientError.RpcClientError[
   }),
 )
 
-/** Normal closure, missing close frames, network loss and server restart/overload permit reconnect. */
-const RECOVERABLE_CLOSES = new Set([1000, 1001, 1005, 1006, 1011, 1012, 1013, 1014])
+/** RFC 6455 protocol/data/policy refusals cannot be repaired by replaying the same client. */
+const PERMANENT_CLOSES = new Set([1002, 1003, 1007, 1008, 1009, 1010])
 
 /**
  * Reconnect pacing for a socket owned by the app, with no total lifetime cap.
@@ -64,6 +64,14 @@ const reconnect = (stopped: (error: RpcClientError.RpcClientError) => Effect.Eff
     Schedule.spaced(RECONNECT_MAX),
   ]).pipe(
     Schedule.setInputType<Socket.SocketError>(),
+    Schedule.tap(({ input }) =>
+      Effect.logWarning('Live socket disconnected; reconnect policy evaluated').pipe(
+        Effect.annotateLogs({
+          reason: input.reason._tag,
+          closeCode: input.reason._tag === 'SocketCloseError' ? input.reason.code : 'none',
+        }),
+      ),
+    ),
     Schedule.while(({ input }) =>
       isTransientSocketReason(input.reason)
         ? Effect.succeed(true)

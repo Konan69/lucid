@@ -9,7 +9,7 @@ import {
   Schema,
   Semaphore,
 } from 'effect'
-import { AccountUnreachable } from './refusal'
+import { AccountUnavailable, AccountUnreachable } from './refusal'
 import { parseServer, type ServerAddress } from './server'
 
 /**
@@ -260,8 +260,8 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
    * Releases the app immediately, then asks the server and protected store independently.
    * Neither delays the start of the other. A refused store remains recorded as Forgetting,
    * and a refused or unanswered revocation reaches the action atom after both have settled.
-   * Only lost or timed-out exchanges are retried within the existing bounded recovery policy.
-   * Explicit server refusals stop immediately; replay safety does not make them transient.
+   * Lost or timed-out exchanges, rate limits and server outages use the existing bounded
+   * recovery policy. Permanent account refusals stop immediately.
    */
   const leave = Effect.fn('Session.leave')(function* <Unanswered>(
     session: Outside,
@@ -280,7 +280,9 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
               schedule: SERVER_RETRY,
               times: SERVER_ASKED_AGAIN,
               while: (error) =>
-                error instanceof SignOutUnanswered || error instanceof AccountUnreachable,
+                error instanceof SignOutUnanswered ||
+                error instanceof AccountUnreachable ||
+                error instanceof AccountUnavailable,
             }),
           ),
         ),

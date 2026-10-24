@@ -35,6 +35,13 @@ export class AccountRefused extends Schema.TaggedError<AccountRefused>()(
   { title: 'Account request refused' },
 ) {}
 
+/** A rate limit or server outage answered; replaying an idempotent sign-out may succeed. */
+export class AccountUnavailable extends Schema.TaggedError<AccountUnavailable>()(
+  'AccountUnavailable',
+  { status: Schema.Int, message: Schema.String },
+  { title: 'Account server temporarily unavailable' },
+) {}
+
 /** No answer came back at all: the wrong address, no network, or a server that is not running. */
 export class AccountUnreachable extends Schema.TaggedError<AccountUnreachable>()(
   'AccountUnreachable',
@@ -43,7 +50,11 @@ export class AccountUnreachable extends Schema.TaggedError<AccountUnreachable>()
 ) {}
 
 /** Everything signing in can fail with: the account request, or keeping the session afterwards. */
-export type EntryFailure = AccountRefused | AccountUnreachable | StorageUnavailable
+export type EntryFailure =
+  | AccountRefused
+  | AccountUnavailable
+  | AccountUnreachable
+  | StorageUnavailable
 
 /** Where a sentence is shown: under the field it is about, or above the button when it is about none. */
 export type Beside = 'password' | 'form'
@@ -65,6 +76,8 @@ export const saidFor = (failure: EntryFailure): Said =>
   Match.value(failure).pipe(
     Match.tagsExhaustive({
       AccountRefused: ({ reason }): Said => REFUSED[reason],
+      AccountUnavailable: ({ status }): Said =>
+        status === 429 ? REFUSED.TooManyAttempts : { beside: 'form', words: REFUSED.Other.words },
       AccountUnreachable: (): Said => ({
         beside: 'form',
         words: 'Can’t reach Vivid. Check your connection and try again.',

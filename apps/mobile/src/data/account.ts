@@ -1,5 +1,10 @@
 import { Effect, Option, Redacted, Schema } from 'effect'
-import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
+import {
+  AccountRefused,
+  AccountUnavailable,
+  AccountUnreachable,
+  type RefusalReason,
+} from './refusal'
 import { accountAddress, type ServerAddress } from './server'
 import type { SignedIn } from './session'
 import { bearer, request } from './transport'
@@ -36,7 +41,9 @@ const REASONS = new Map<number, { reason: RefusalReason; message: string }>([
 ])
 
 /** The refusal for an answer: the known reason for its status, else what the server said. */
-const refusalFor = (status: number, body: string): AccountRefused => {
+const refusalFor = (status: number, body: string): AccountRefused | AccountUnavailable => {
+  if (status === 429 || (status >= 500 && status <= 599))
+    return new AccountUnavailable({ status, message: UNREACHABLE })
   const known = REASONS.get(status)
   if (known !== undefined) return new AccountRefused(known)
   return new AccountRefused({
