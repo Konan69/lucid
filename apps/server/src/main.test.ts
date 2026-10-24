@@ -1,10 +1,14 @@
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
-import { expect, it } from '@effect/vitest'
+import { expect, layer } from '@effect/vitest'
+import * as Context from 'effect/Context'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
+import { StartupReceipt, StartupRequest } from '../tests/startup/protocol.ts'
 
 /** Startup could not be observed; no environment, path or native error detail is retained. */
 class StartupLaunchFailed extends Schema.TaggedError<StartupLaunchFailed>()(
@@ -13,66 +17,95 @@ class StartupLaunchFailed extends Schema.TaggedError<StartupLaunchFailed>()(
   { title: 'Server startup test process unavailable' },
 ) {}
 
+/** The file scope owns one prepared process and the command that starts its real server entry. */
+class Startup extends Context.Service<
+  Startup,
+  { readonly run: Effect.Effect<number | null, StartupLaunchFailed> }
+>()('ServerStartup.test.process') {}
+
 /**
- * Observe the shipped server entry with no app credentials or addresses. The absolute executable
- * and public tsx loader require no inherited environment. Listeners attach in the spawn tick;
- * scope kills only this captured child when needed and awaits native close before releasing it.
+ * Dependency loading belongs to scoped layer acquisition, before the assertion's clock starts.
+ * The public tsx loader runs with no inherited app credentials or addresses. Native listeners
+ * attach in the spawn tick so even an early preparation failure settles readiness. Cleanup
+ * kills only this captured child when needed and awaits close before releasing its scope.
  */
-const startupExit = Effect.fn('ServerStartup.test.exit')(function* (flags: ReadonlyArray<string>) {
-  const owned = yield* Effect.acquireRelease(
-    Effect.try({
-      try: () => {
-        const ended = Deferred.makeUnsafe<number | null, StartupLaunchFailed>()
-        const closed = Deferred.makeUnsafe<void>()
-        const child = NodeChildProcess.spawn(
-          NodeProcess.execPath,
-          [
-            '--import',
-            'tsx',
-            ...flags,
-            NodeURL.fileURLToPath(new URL('./main.ts', import.meta.url)),
-          ],
-          { cwd: NodeURL.fileURLToPath(new URL('..', import.meta.url)), env: {}, stdio: 'ignore' },
-        )
-        child.once('exit', (code) => Deferred.doneUnsafe(ended, Effect.succeed(code)))
-        child.once('error', () =>
-          Deferred.doneUnsafe(ended, Effect.fail(new StartupLaunchFailed())),
-        )
-        child.once('close', () => Deferred.doneUnsafe(closed, Effect.void))
-        return { child, ended, closed }
-      },
-      catch: () => new StartupLaunchFailed(),
-    }),
-    (resource) =>
-      Effect.gen(function* () {
-        if (!(yield* Deferred.isDone(resource.closed))) {
-          yield* Effect.sync(() => resource.child.kill('SIGKILL'))
-          yield* Deferred.await(resource.closed)
-        }
+const startupLayer = Layer.effect(
+  Startup,
+  Effect.gen(function* () {
+    const owned = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => {
+          const ready = Deferred.makeUnsafe<void, StartupLaunchFailed>()
+          const ended = Deferred.makeUnsafe<number | null, StartupLaunchFailed>()
+          const closed = Deferred.makeUnsafe<void>()
+          const child = NodeChildProcess.spawn(
+            NodeProcess.execPath,
+            [
+              '--import',
+              'tsx',
+              '--max-old-space-size-percentage=50',
+              NodeURL.fileURLToPath(new URL('../tests/startup/main.ts', import.meta.url)),
+            ],
+            {
+              cwd: NodeURL.fileURLToPath(new URL('..', import.meta.url)),
+              env: {},
+              stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+            },
+          )
+          child.on('message', (message) => {
+            const receipt = Schema.decodeUnknownResult(StartupReceipt)(message)
+            Result.match(receipt, {
+              onFailure: () => Deferred.doneUnsafe(ready, Effect.fail(new StartupLaunchFailed())),
+              onSuccess: (value) =>
+                StartupReceipt.match(value, {
+                  Ready: () => Deferred.doneUnsafe(ready, Effect.void),
+                }),
+            })
+          })
+          child.once('exit', (code) => {
+            Deferred.doneUnsafe(ended, Effect.succeed(code))
+            Deferred.doneUnsafe(ready, Effect.fail(new StartupLaunchFailed()))
+          })
+          child.on('error', () => {
+            Deferred.doneUnsafe(ended, Effect.fail(new StartupLaunchFailed()))
+            Deferred.doneUnsafe(ready, Effect.fail(new StartupLaunchFailed()))
+          })
+          child.once('close', () => Deferred.doneUnsafe(closed, Effect.void))
+          return { child, ready, ended, closed }
+        },
+        catch: () => new StartupLaunchFailed(),
       }),
-  )
-  return yield* Deferred.await(owned.ended)
-})
-
-/**
- * The bound for one real start of the server entry. The child loads the whole server graph
- * through tsx before it can exit, which takes about four seconds alone on a developer machine
- * (measured 3.7 to 3.9 s on 4 October 2026) and longer beside the rest of the suite, so the
- * runner's five-second default failed correct runs. The test still waits on the child's own
- * exit and never sleeps.
- */
-const STARTUP_TIMEOUT_MS = 30_000
-
-/**
- * Configuration refusal must precede even config loading: the real entry exits EX_CONFIG (78)
- * with the overriding flag. A generic exit 1 also accepts import failures and does not prove
- * configuration ordering, so only the distinct extraction refusal is asserted here.
- */
-it.effect(
-  'refuses extraction configuration first',
-  () =>
-    Effect.gen(function* () {
-      expect(yield* startupExit(['--max-old-space-size-percentage=50'])).toBe(78)
-    }),
-  STARTUP_TIMEOUT_MS,
+      (resource) =>
+        Effect.gen(function* () {
+          if (!(yield* Deferred.isDone(resource.closed))) {
+            yield* Effect.sync(() => resource.child.kill('SIGKILL'))
+            yield* Deferred.await(resource.closed)
+          }
+        }),
+    )
+    yield* Deferred.await(owned.ready)
+    const run = Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => owned.child.send(StartupRequest.cases.Run.make({})),
+        catch: () => new StartupLaunchFailed(),
+      })
+      return yield* Deferred.await(owned.ended)
+    })
+    return Startup.of({ run })
+  }),
 )
+
+// Preparation and the actual startup retain separate instances of the existing 30 s budget.
+const STARTUP_TIMEOUT_MS = 30_000
+layer(startupLayer, { timeout: STARTUP_TIMEOUT_MS })('Server entry', (it) => {
+  /** Only the production main program's extraction refusal selects 78 before config loading. */
+  it.effect(
+    'refuses extraction configuration first',
+    () =>
+      Effect.gen(function* () {
+        const startup = yield* Startup
+        expect(yield* startup.run).toBe(78)
+      }),
+    STARTUP_TIMEOUT_MS,
+  )
+})
