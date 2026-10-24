@@ -6,6 +6,8 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import * as Effect from 'effect/Effect'
+import * as Duration from 'effect/Duration'
+import * as Stream from 'effect/Stream'
 import * as Result from 'effect/Result'
 import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
@@ -31,6 +33,21 @@ class ArchiveAvailabilityFailure extends Schema.TaggedError()(
   { dependency: Schema.String },
   { title: 'Archive availability failure' },
 ) {}
+
+class ArchiveTransferIdle extends Schema.TaggedError()(
+  'ArchiveTransferIdle',
+  { dependency: Schema.String },
+  { title: 'Archive transfer idle' },
+) {}
+
+/** Locked GETs are idempotent. Source: unmeasured. Two retries bound repeated transient
+ * availability or idle failures; integrity and permanent HTTP failures fail immediately. */
+const archiveAvailabilityRetries = 2
+
+/** The registry cannot push readiness before headers or bytes. Source: unmeasured.
+ * Sixty seconds without headers or another body chunk fails this read-only attempt with
+ * ArchiveTransferIdle. Every chunk resets the idle bound; total transfer time is unlimited. */
+const archiveIdle = Duration.seconds(60)
 
 const isString = Schema.is(Schema.String)
 const Strings = Schema.Record(Schema.String, Schema.String)
@@ -297,22 +314,43 @@ const inspectArchive = Effect.fn('release.inspectArchive')(
       tarball === undefined
         ? `https://registry.npmjs.org/${name}/-/${name.split('/').at(-1)}-${version}.tgz`
         : tarball
-    const response = yield* Effect.tryPromise({
-      try: () => fetch(url, { signal: AbortSignal.timeout(60_000) }),
-      catch: () => new ArchiveAvailabilityFailure({ dependency: key }),
-    })
-    if (!response.ok) {
-      const failure =
-        response.status === 408 || response.status === 429 || response.status >= 500
-          ? new ArchiveAvailabilityFailure({ dependency: key })
-          : new ArchiveFailure({ dependency: key })
-      return yield* Effect.fail(failure)
-    }
-    const bytes = yield* Effect.tryPromise({
-      try: () => response.arrayBuffer(),
-      catch: () => new ArchiveAvailabilityFailure({ dependency: key }),
-    })
-    return yield* verifyArchive(Buffer.from(bytes), resolution, key)
+    const bytes = yield* Effect.acquireUseRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) =>
+        Effect.gen(function* () {
+          const response = yield* Effect.tryPromise({
+            try: (signal) => fetch(url, { signal: AbortSignal.any([signal, controller.signal]) }),
+            catch: () => new ArchiveAvailabilityFailure({ dependency: key }),
+          }).pipe(
+            Effect.timeoutOrElse({
+              duration: archiveIdle,
+              orElse: () => Effect.fail(new ArchiveTransferIdle({ dependency: key })),
+            }),
+          )
+          if (!response.ok) {
+            const failure =
+              response.status === 408 || response.status === 429 || response.status >= 500
+                ? new ArchiveAvailabilityFailure({ dependency: key })
+                : new ArchiveFailure({ dependency: key })
+            return yield* Effect.fail(failure)
+          }
+          if (response.body === null)
+            return yield* Effect.fail(new ArchiveFailure({ dependency: key }))
+          const chunks = yield* Stream.fromReadableStream({
+            evaluate: () => response.body,
+            onError: () => new ArchiveAvailabilityFailure({ dependency: key }),
+          }).pipe(
+            Stream.timeoutOrElse({
+              duration: archiveIdle,
+              orElse: () => Stream.fail(new ArchiveTransferIdle({ dependency: key })),
+            }),
+            Stream.runCollect,
+          )
+          return Buffer.concat(chunks)
+        }),
+      (controller) => Effect.sync(() => controller.abort()),
+    )
+    return yield* verifyArchive(bytes, resolution, key)
   },
 )
 
@@ -433,7 +471,13 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
     if (resolution === undefined) continue
     if (
       yield* inspectArchive(root, snapshot.revision, key, resolution).pipe(
-        Effect.retry({ times: 2, while: Predicate.isTagged('ArchiveAvailabilityFailure') }),
+        Effect.retry({
+          times: archiveAvailabilityRetries,
+          while: Predicate.or(
+            Predicate.isTagged('ArchiveAvailabilityFailure'),
+            Predicate.isTagged('ArchiveTransferIdle'),
+          ),
+        }),
       )
     )
       return { key, native: true }
