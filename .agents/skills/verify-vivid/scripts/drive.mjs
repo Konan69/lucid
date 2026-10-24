@@ -3,6 +3,7 @@ import * as NodeAssert from 'node:assert/strict'
 import { chat, history, rpc, request, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
+import { devices } from './devices.mjs'
 export const features = [
   'first',
   'reload',
@@ -17,6 +18,7 @@ export const features = [
   'watch',
   'library',
   'feed',
+  'devices',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -265,7 +267,7 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
-const recipes = { first, reload, tool, question, picture, document }
+const recipes = { first, reload, tool, question, picture, document, devices }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',

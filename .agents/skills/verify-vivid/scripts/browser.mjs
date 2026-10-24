@@ -6,6 +6,7 @@ import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
+import { deviceBrowser } from './devicebrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -47,6 +48,7 @@ const missing = {
   feed: 'No disposable Watch occurrence',
 }
 const recipes = {
+  devices: { check: 'devices' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -319,73 +321,84 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (existing) {
-      await run([
-        'wait',
-        '--text',
-        'Remember the verification marker amber-orchid. Acknowledge briefly.',
-      ])
-      const reopened = await history(state, id, directory, 'reopened-history')
-      assert.deepEqual(reopened.messages, existing.messages)
+    if (feature === 'devices') {
+      await deviceBrowser(state, id, directory, { run, capture })
+      verdict = {
+        ...base,
+        verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
+        thread: id,
+        scope:
+          'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+      }
+    } else {
+      if (existing) {
+        await run([
+          'wait',
+          '--text',
+          'Remember the verification marker amber-orchid. Acknowledge briefly.',
+        ])
+        const reopened = await history(state, id, directory, 'reopened-history')
+        assert.deepEqual(reopened.messages, existing.messages)
+        await run(['reload'])
+        await run([
+          'wait',
+          '--text',
+          'Remember the verification marker amber-orchid. Acknowledge briefly.',
+        ])
+        await capture('existing-reloaded')
+      }
+      await capture('before')
+      if (feature === 'reload') await exactReply(run, 'amber-orchid', directory, 'before')
+      const recipe = recipes[feature]
+      const phrase =
+        state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
+      await run(['find', 'label', 'Message Vivid', 'fill', phrase])
+      await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+      await settled(state, id, feature === 'reload' ? 2 : 1, 'Completed', directory)
+      const page = await history(state, id, directory)
+      const replies = page.messages.filter((m) => m.role === 'assistant')
+      assert.ok(
+        replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
+        'No assistant reply',
+      )
+      const text = replies
+        .at(-1)
+        .parts.filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('')
+        .trim()
+      if (feature === 'reload') assert.equal(await dom(run, renderedReply(text)), 'amber-orchid')
+      if (recipe.check === 'reply' || recipe.check === 'reload')
+        await exactReply(run, text, directory, 'after')
+      await rendered(run, recipe.check)
+      await capture('after')
       await run(['reload'])
-      await run([
-        'wait',
-        '--text',
-        'Remember the verification marker amber-orchid. Acknowledge briefly.',
-      ])
-      await capture('existing-reloaded')
-    }
-    await capture('before')
-    if (feature === 'reload') await exactReply(run, 'amber-orchid', directory, 'before')
-    const recipe = recipes[feature]
-    const phrase =
-      state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
-    await run(['find', 'label', 'Message Vivid', 'fill', phrase])
-    await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
-    await settled(state, id, feature === 'reload' ? 2 : 1, 'Completed', directory)
-    const page = await history(state, id, directory)
-    const replies = page.messages.filter((m) => m.role === 'assistant')
-    assert.ok(
-      replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
-      'No assistant reply',
-    )
-    const text = replies
-      .at(-1)
-      .parts.filter((part) => part.type === 'text')
-      .map((part) => part.text)
-      .join('')
-      .trim()
-    if (feature === 'reload') assert.equal(await dom(run, renderedReply(text)), 'amber-orchid')
-    if (recipe.check === 'reply' || recipe.check === 'reload')
-      await exactReply(run, text, directory, 'after')
-    await rendered(run, recipe.check)
-    await capture('after')
-    await run(['reload'])
-    if (recipe.check === 'reply' || recipe.check === 'reload')
-      await exactReply(run, text, directory, 'reloaded')
-    await rendered(run, recipe.check)
-    await capture('reloaded')
-    const reloaded = await history(state, id, directory, 'reloaded-history')
-    assert.equal(
-      reloaded.messages.filter((m) => m.role === 'user').length,
-      feature === 'reload' ? 2 : 1,
-    )
-    assert.deepEqual(reloaded.messages, page.messages)
-    if (feature === 'document') {
-      const artifacts = await rpc(state, 'ListArtifacts', { threadId: id }, directory)
-      assert.equal(artifacts.artifacts.length, 1)
-      assert.equal(artifacts.artifacts[0].version, 1)
-    }
-    verdict = {
-      ...base,
-      verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
-      thread: id,
-      scope:
-        feature === 'document'
-          ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
-          : feature === 'reload'
-            ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
-            : 'send and rendered reply before and after reload',
+      if (recipe.check === 'reply' || recipe.check === 'reload')
+        await exactReply(run, text, directory, 'reloaded')
+      await rendered(run, recipe.check)
+      await capture('reloaded')
+      const reloaded = await history(state, id, directory, 'reloaded-history')
+      assert.equal(
+        reloaded.messages.filter((m) => m.role === 'user').length,
+        feature === 'reload' ? 2 : 1,
+      )
+      assert.deepEqual(reloaded.messages, page.messages)
+      if (feature === 'document') {
+        const artifacts = await rpc(state, 'ListArtifacts', { threadId: id }, directory)
+        assert.equal(artifacts.artifacts.length, 1)
+        assert.equal(artifacts.artifacts[0].version, 1)
+      }
+      verdict = {
+        ...base,
+        verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
+        thread: id,
+        scope:
+          feature === 'document'
+            ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
+            : feature === 'reload'
+              ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
+              : 'send and rendered reply before and after reload',
+      }
     }
   } catch (error) {
     await run(['errors']).catch(() => {})

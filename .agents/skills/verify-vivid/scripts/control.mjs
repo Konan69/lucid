@@ -141,7 +141,7 @@ try {
   if (action === 'launch') await launch()
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed | browser <feature> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
