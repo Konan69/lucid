@@ -129,6 +129,10 @@ export class Embeddings extends Context.Service<Embeddings, EmbeddingsService>()
   'vivid/Embeddings',
 ) {}
 
+/** Bounds reuse of identical text under this Layer's captured model and dimensions.
+ * Source: unmeasured. Expiry re-embeds on the next read; it never stops a provider request. */
+const EMBEDDING_REUSE = '30 minutes'
+
 /** Validate ordering, batch coverage and dimensions before a provider vector can reach an index. */
 export const embeddingsLayer = Layer.effect(
   Embeddings,
@@ -174,7 +178,7 @@ export const embeddingsLayer = Layer.effect(
     })
     const cache = yield* Cache.makeWith((text: string) => embedBatch([text]), {
       capacity: 256,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? '30 minutes' : 0),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? EMBEDDING_REUSE : 0),
     })
     return Embeddings.of({
       embed: Effect.fn('Embeddings.embed')(function* (texts) {
