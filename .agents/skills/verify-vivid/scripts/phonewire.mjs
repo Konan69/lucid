@@ -49,6 +49,7 @@ export const PhoneState = Schema.Struct({
   modelKind: Schema.String,
   hostname: Schema.String,
   devbox: Schema.String,
+  web: Schema.String,
   ports: Schema.Struct({ web: Schema.Number }),
 })
 export const readState = Schema.decodeUnknownResult(Schema.fromJsonString(PhoneState))
