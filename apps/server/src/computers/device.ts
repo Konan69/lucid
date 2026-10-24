@@ -11,7 +11,7 @@ import {
   Queue,
   Ref,
   Schema,
-  Semaphore,
+  type Semaphore,
   Scope,
   Stream,
 } from 'effect'
@@ -56,6 +56,7 @@ import {
 import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { Runtime } from '../runtime/client.ts'
+import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
 
@@ -632,7 +633,7 @@ type Ledger = ReturnType<typeof makeLedger>
  * Waits its turn on one computer, for a bounded time. The wait is the only part that may be cut
  * short here; once the turn is taken it is always given back, whatever happens to the work.
  */
-const inTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.Effect<A, E>) =>
+const takeTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.Effect<A, E>) =>
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       const held = yield* Ref.make(false)
@@ -653,6 +654,15 @@ const inTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.
           Ref.get(held).pipe(Effect.flatMap((mine) => (mine ? turn.release(1) : Effect.void))),
         ),
       )
+    }),
+  )
+
+/** Keep one keyed entry through the bounded wait and the existing raced-take release. */
+const inTurn = <A, E>(turns: KeyedPermits<DeviceId>, device: DeviceId, work: Effect.Effect<A, E>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const turn = yield* turns.lease(device)
+      return yield* takeTurn(turn, device, work)
     }),
   )
 
@@ -780,14 +790,7 @@ const dispatchRun = Effect.fn('Device.dispatchRun')(function* (input: {
  * longer has.
  */
 const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
-  const turns = new Map<DeviceId, Semaphore.Semaphore>()
-  const turnOf = (device: DeviceId) => {
-    const existing = turns.get(device)
-    if (existing !== undefined) return existing
-    const created = Semaphore.makeUnsafe(1)
-    turns.set(device, created)
-    return created
-  }
+  const turns = keyedPermits<DeviceId>()
 
   return Effect.fn('Device.dispatch')(function* (input: {
     personId: PersonId
@@ -811,7 +814,7 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
       : REQUEST_BUDGET_MILLIS
     const expiresAt = (yield* Clock.currentTimeMillis) + budget
     return yield* inTurn(
-      turnOf(id),
+      turns,
       id,
       Effect.gen(function* () {
         // Stop can arrive while queued; recheck the same Run immediately before dispatch.

@@ -2,8 +2,10 @@ import * as NodeProcess from 'node:process'
 import { expect } from '@effect/vitest'
 import {
   fauxAssistantMessage,
+  fauxToolCall,
   fauxProvider,
   type FauxProviderHandle,
+  type FauxResponseFactory,
 } from '@earendil-works/pi-ai/providers/faux'
 import { AgentRunError, init } from '@flue/runtime'
 import { start } from '@flue/runtime/node'
@@ -12,6 +14,7 @@ import { Config, Data, Deferred, Effect, Match, Option, Redacted, Schema } from 
 import app from '../src/app.ts'
 import { Vivid } from '../src/agents/vivid.ts'
 import { disposableStorage } from './schema.ts'
+import type { Note } from '../src/notes.ts'
 
 /** Expected non-successful settlements remain distinct from a failure to read settlement. */
 export type Settled = Data.TaggedEnum<{
@@ -134,6 +137,27 @@ const settled = Effect.fn('RuntimeRoutes.settled')(function* (
   )
 })
 
+/** Real note tool receipts, observed by the next model turn rather than guessed from reply text. */
+const noteReceipt = (note: Note, tool: 'write_note' | 'read_note') => {
+  return (context: Parameters<FauxResponseFactory>[0]) => {
+    // Work on a copy: inspect the latest receipt without changing Flue's message order.
+    const result = context.messages
+      .slice()
+      .reverse()
+      .find((message) => message.role === 'toolResult' && message.toolName === tool)
+    if (result === undefined || result.role !== 'toolResult')
+      expect.fail('The note tool must return a receipt')
+    expect(result.isError).toBe(false)
+    const text = result.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+    if (tool === 'write_note') expect(text).toMatch(/"ok"\s*:\s*true/u)
+    else expect(text).toContain(note.body)
+    return fauxAssistantMessage(tool === 'write_note' ? 'written' : note.body)
+  }
+}
+
 const stopFailed = Effect.sync(() => expect.fail('Runtime route fixture stop failed'))
 
 /**
@@ -220,6 +244,34 @@ export const routes = Effect.gen(function* () {
     /** A missing queued response fails loudly in the installed faux provider. */
     reply: (text: string) => Effect.sync(() => faux.appendResponses([fauxAssistantMessage(text)])),
     hold: (text: string) => heldReply(faux, text),
+    /** Drive production write_note through a real Vivid turn, then inspect its model-visible receipt. */
+    writeNote: (note: Note) =>
+      Effect.sync(() =>
+        faux.appendResponses([
+          fauxAssistantMessage(
+            fauxToolCall('write_note', {
+              summary: 'Keep the fixture preference',
+              file: note.file,
+              kind: note.kind,
+              description: note.description,
+              note: note.body,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          noteReceipt(note, 'write_note'),
+        ]),
+      ),
+    /** A new runtime must retrieve the same Person's note through production read_note. */
+    readNote: (note: Note) =>
+      Effect.sync(() =>
+        faux.appendResponses([
+          fauxAssistantMessage(
+            fauxToolCall('read_note', { summary: 'Read the fixture preference', file: note.file }),
+            { stopReason: 'toolUse' },
+          ),
+          noteReceipt(note, 'read_note'),
+        ]),
+      ),
     settled,
     modelCalls: Effect.sync(() => faux.state.callCount),
   }

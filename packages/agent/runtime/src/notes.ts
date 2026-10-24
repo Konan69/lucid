@@ -3,10 +3,17 @@ import * as NodePath from 'node:path'
 import { MemoryKind, type PersonId } from '@vivid/contracts'
 import type { AgentFS } from 'agentfs-sdk'
 import * as Arr from 'effect/Array'
+import type * as Cause from 'effect/Cause'
+import * as Context from 'effect/Context'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as Latch from 'effect/Latch'
+import * as RcMap from 'effect/RcMap'
 import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
 
 /**
  * Vivid's memory: one small filesystem per Person, in one SQLite file (AgentFS), holding one note
@@ -71,6 +78,13 @@ export class NotesUnavailable extends Schema.TaggedError<NotesUnavailable>()(
   { title: 'NotesUnavailable' },
 ) {}
 
+/** The runtime's bounded set of open stores is full; the Person's file has not failed. */
+export class NotesAtCapacity extends Schema.TaggedError<NotesAtCapacity>()(
+  'NotesAtCapacity',
+  {},
+  { title: 'NotesAtCapacity' },
+) {}
+
 /** No note has that file name. */
 export class NoteMissing extends Schema.TaggedError<NoteMissing>()(
   'NoteMissing',
@@ -87,6 +101,7 @@ export const INDEX_BUDGET = 8000
 
 const Header = Schema.Struct({ kind: MemoryKind, description: Schema.NonEmptyString })
 const decodeHeader = Schema.decodeUnknownOption(Header)
+const decodeNote = Schema.decodeUnknownEffect(Note)
 
 /**
  * The stored form: a header between `---` lines, then the body. It is the layout of Claude Code's
@@ -104,61 +119,82 @@ function parsed(text: string) {
   const match = /^---\nkind: (.*)\ndescription: (.*)\n---\n\n([\s\S]*)$/u.exec(text)
   if (match === null) return Option.none<{ kind: MemoryKind; description: string; body: string }>()
   const [, kind, description, body] = match
+  if (body === undefined)
+    return Option.none<{ kind: MemoryKind; description: string; body: string }>()
   return Option.map(decodeHeader({ kind, description }), (header) => ({
-    ...header,
-    body: body === undefined ? '' : body.trimEnd(),
+    kind: header.kind,
+    description: header.description,
+    body: body.trimEnd(),
   }))
 }
 
 /** A Person's identifier becomes part of a path on disk, so only a plain identifier is accepted. */
 const SAFE_PERSON = /^[A-Za-z0-9_-]{1,128}$/u
 
-/** One open filesystem per Person for the life of the process; opening costs 60 to 100 ms. */
-const open = new Map<string, Promise<AgentFS>>()
+/** Stable owner policy; zero idle closes immediately, while an infinite TTL would defeat the bound. */
+export const NotesSettings = Schema.Struct({
+  directory: Schema.NonEmptyString,
+  capacity: Schema.Int.check(Schema.isGreaterThan(0)),
+  idle: Schema.Duration.check(Schema.makeFilter(Duration.isFinite)),
+}).pipe(Schema.brand('NotesSettings'))
+export type NotesSettings = typeof NotesSettings.Type
 
-/**
- * AgentFS is loaded only when a Person's notes are first opened. It ships a native SQLite binary
- * per platform; an installation that keeps no notes, or an image the binary does not support,
- * must still start, so the package is never loaded when the module is.
- */
-function openStore(path: string) {
-  return import('agentfs-sdk').then(({ AgentFS: store }) => {
-    // AgentFS makes directories only for its own default location, not for a path it is given. The
-    // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
-    // without this every note call would fail until someone made it by hand.
-    return NodeFS.promises
-      .mkdir(NodePath.dirname(path), { recursive: true })
-      .then(() => store.open({ path }))
-  })
+/** SQLite persistence and handle ownership stay inside this runtime authority. */
+interface NotesService {
+  readonly index: (person: PersonId) => Effect.Effect<NoteIndex, NotesUnavailable | NotesAtCapacity>
+  readonly read: (
+    person: PersonId,
+    file: NoteFile,
+  ) => Effect.Effect<Note, NoteMissing | NotesUnavailable | NotesAtCapacity>
+  readonly write: (
+    person: PersonId,
+    note: Note,
+  ) => Effect.Effect<boolean, NotesUnavailable | NotesAtCapacity>
+  readonly delete: (
+    person: PersonId,
+    file: NoteFile,
+  ) => Effect.Effect<void, NoteMissing | NotesUnavailable | NotesAtCapacity>
 }
 
-/** Open, or reuse, the Person's filesystem. A failed open is forgotten so the next call tries again. */
-const opened = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
-  if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
-  const path = NodePath.join(directory, `${person}.db`)
-  const existing = open.get(path)
-  const pending = existing === undefined ? openStore(path) : existing
-  open.set(path, pending)
-  return yield* Effect.tryPromise({
-    try: () => pending,
+/** The authority owns both persistence and resource lifetime, rather than a hidden process cache. */
+export class Notes extends Context.Service<Notes, NotesService>()('@vivid/runtime/Notes') {}
+
+/**
+ * Import the native SDK only on first use. Each Promise is one unsafe operation; a runtime that
+ * never opens notes does not need to load its platform binary. AgentFS 0.6.4 open creates parents
+ * only for its default location, so an explicit notes directory must be made first.
+ */
+const openStore = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
+  const sdk = yield* Effect.tryPromise({
+    try: () => import('agentfs-sdk'),
     catch: () => NotesUnavailable.make({}),
-  }).pipe(Effect.tapError(() => Effect.sync(() => open.delete(path))))
+  })
+  yield* Effect.tryPromise({
+    try: () => NodeFS.promises.mkdir(directory, { recursive: true }),
+    catch: () => NotesUnavailable.make({}),
+  })
+  return yield* Effect.tryPromise({
+    try: () => sdk.AgentFS.open({ path: NodePath.join(directory, `${person}.db`) }),
+    catch: () => NotesUnavailable.make({}),
+  })
 })
+
+/** Native close rejection is typed and ignored only at release, so it cannot become a defect. */
+const closeStore = (store: AgentFS) =>
+  Effect.tryPromise({
+    try: () => store.close(),
+    catch: () => NotesUnavailable.make({}),
+  }).pipe(Effect.ignore)
 
 const isMissing = Schema.is(Schema.Struct({ code: Schema.Literal('ENOENT') }))
 const isNoteFile = Schema.is(NoteFile)
 
-/** A narrow Promise boundary around one AgentFS call; its only expected failure is a missing file. */
+/** AgentFS cannot cancel native I/O. Retain the operation lease until the whole SDK call settles. */
 function attempt<A>(file: NoteFile, call: () => Promise<A>) {
   return Effect.tryPromise({
     try: call,
     catch: (cause) => (isMissing(cause) ? NoteMissing.make({ file }) : NotesUnavailable.make({})),
-  })
-}
-
-export interface NotesOf {
-  readonly directory: string
-  readonly person: PersonId
+  }).pipe(Effect.uninterruptible)
 }
 
 /**
@@ -166,12 +202,12 @@ export interface NotesOf {
  * (`readdirPlus`), newest change first, and each note is read for its header. A file that is not
  * in the stored form is left out: it is not a note Vivid wrote.
  */
-export const noteIndex = Effect.fn('Notes.index')(function* (notes: NotesOf) {
-  const fs = (yield* opened(notes.directory, notes.person)).fs
+const noteIndex = Effect.fn('Notes.storeIndex')(function* (store: AgentFS) {
+  const fs = store.fs
   const entries = yield* Effect.tryPromise({
     try: () => fs.readdirPlus('/'),
     catch: () => NotesUnavailable.make({}),
-  })
+  }).pipe(Effect.uninterruptible)
   const files = Arr.sortWith(
     entries.filter((entry) => isNoteFile(entry.name)),
     (entry) => entry.stats.mtime,
@@ -191,16 +227,19 @@ export const noteIndex = Effect.fn('Notes.index')(function* (notes: NotesOf) {
 })
 
 /** One note, whole. */
-export const readNote = Effect.fn('Notes.read')(function* (notes: NotesOf, file: NoteFile) {
-  const fs = (yield* opened(notes.directory, notes.person)).fs
+const readNote = Effect.fn('Notes.storeRead')(function* (store: AgentFS, file: NoteFile) {
+  const fs = store.fs
   const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
   if (Option.isNone(note)) return yield* NoteMissing.make({ file })
-  return Note.make({ file, ...note.value })
+  // Persisted text is unknown input: a malformed body must be missing, never a constructor defect.
+  return yield* decodeNote({ file, ...note.value }).pipe(
+    Effect.mapError(() => NoteMissing.make({ file })),
+  )
 })
 
 /** Write a note, replacing the one with that file name if it exists. Reports which happened. */
-export const writeNote = Effect.fn('Notes.write')(function* (notes: NotesOf, note: Note) {
-  const fs = (yield* opened(notes.directory, notes.person)).fs
+const writeNote = Effect.fn('Notes.storeWrite')(function* (store: AgentFS, note: Note) {
+  const fs = store.fs
   const replaced = yield* attempt(note.file, () => fs.stat(`/${note.file}`)).pipe(
     Effect.as(true),
     Effect.catchTag('NoteMissing', () => Effect.succeed(false)),
@@ -210,7 +249,97 @@ export const writeNote = Effect.fn('Notes.write')(function* (notes: NotesOf, not
 })
 
 /** Delete a note. A file name with no note is a precise failure, never a silent success. */
-export const deleteNote = Effect.fn('Notes.delete')(function* (notes: NotesOf, file: NoteFile) {
-  const fs = (yield* opened(notes.directory, notes.person)).fs
+const deleteNote = Effect.fn('Notes.storeDelete')(function* (store: AgentFS, file: NoteFile) {
+  const fs = store.fs
   yield* attempt(file, () => fs.unlink(`/${file}`))
 })
+
+/**
+ * One scoped RcMap owns every store. Effect 4.0.2 get leases the entry until the operation's scope
+ * closes, so neither idle expiry nor capacity can close it between its native calls.
+ *
+ * Only the failed lookup invalidates. tapError sits OUTSIDE acquireRelease: acquisition is
+ * uninterruptible, but expiry/owner close can remove its entry while native open is pending.
+ * Restoring interruption before tapError prevents that old failure removing a new healthy
+ * entry for the same Person (RcMap.invalidate is by key, not entry identity). Successful opens
+ * always register close before interruption is restored. Invalidation starts immediately in a
+ * detached fiber: when no caller remains, closing the entry awaits this lookup's exit and must
+ * not run inside the lookup itself. Source: RcMap.ts get/release/invalidate and internal/effect.ts
+ * acquireRelease/fiberRunIn in installed Effect 4.0.2.
+ */
+export const make = Effect.fn('Notes.make')(function* (settings: NotesSettings) {
+  // Own sequential finalization even when the caller provides a parallel scope.
+  const owner = yield* Scope.fork(yield* Effect.scope)
+  const stores: RcMap.RcMap<PersonId, AgentFS, NotesUnavailable | Cause.ExceededCapacityError> =
+    yield* RcMap.make({
+      capacity: settings.capacity,
+      idleTimeToLive: settings.idle,
+      lookup: (person: PersonId) =>
+        Effect.acquireRelease(openStore(settings.directory, person), closeStore).pipe(
+          Effect.tapError(() =>
+            Effect.forkDetach(RcMap.invalidate(stores, person), { startImmediately: true }),
+          ),
+        ),
+    }).pipe(Scope.provide(owner))
+  let closed = false
+  let active = 0
+  const drained = Latch.makeUnsafe(true)
+  // RcMap shutdown closes entries regardless of reference counts. Stop admission and await
+  // operation scopes before its finalizer runs, including a cancelled caller's native receipt.
+  yield* Scope.addFinalizer(
+    owner,
+    Effect.suspend(() => {
+      closed = true
+      return drained.await
+    }),
+  )
+
+  /** Admission and release cannot be interrupted. Operations stay cancellable between SDK calls. */
+  const using = <A, E>(operation: Effect.Effect<A, E, Scope.Scope>) =>
+    Effect.acquireUseRelease(
+      Effect.suspend(() => {
+        if (closed) return Effect.fail(NotesUnavailable.make({}))
+        active++
+        drained.closeUnsafe()
+        return Effect.void
+      }),
+      () => Effect.scoped(operation),
+      () =>
+        Effect.sync(() => {
+          active--
+          if (active === 0) drained.openUnsafe()
+        }),
+    )
+  const opened = Effect.fn('Notes.lease')(function* (person: PersonId) {
+    // Validate before capacity admission; an unsafe disk path is never a full-store failure.
+    if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
+    return yield* RcMap.get(stores, person).pipe(
+      Effect.catchTag('ExceededCapacityError', () =>
+        Effect.logWarning('Notes store capacity reached').pipe(
+          Effect.andThen(Effect.fail(NotesAtCapacity.make({}))),
+        ),
+      ),
+    )
+  })
+  return Notes.of({
+    index: Effect.fn('Notes.index')(function* (person: PersonId) {
+      return yield* noteIndex(yield* opened(person)).pipe(
+        Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
+      )
+    }, using),
+    read: Effect.fn('Notes.read')(function* (person: PersonId, file: NoteFile) {
+      return yield* readNote(yield* opened(person), file)
+    }, using),
+    write: Effect.fn('Notes.write')(function* (person: PersonId, note: Note) {
+      return yield* writeNote(yield* opened(person), note).pipe(
+        Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
+      )
+    }, using),
+    delete: Effect.fn('Notes.delete')(function* (person: PersonId, file: NoteFile) {
+      return yield* deleteNote(yield* opened(person), file)
+    }, using),
+  })
+})
+
+/** The Layer owns the map's scope, independently of the shorter scopes of its operations. */
+export const layer = (settings: NotesSettings) => Layer.effect(Notes, make(settings))
