@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeNet from 'node:net'
 import * as NodeOS from 'node:os'
@@ -25,10 +26,13 @@ export function slotCount(cores) {
  */
 export async function takeLock(name) {
   const clients = new Set()
-  const server = NodeNet.createServer((client) => {
+  const server = NodeNet.createServer({ allowHalfOpen: true }, (client) => {
     clients.add(client)
     client.unref()
     client.once('close', () => clients.delete(client))
+    // Half-close distinguishes a release-aware holder from the older socket-only protocol.
+    client.write('1')
+    client.resume()
   })
   try {
     server.listen(`\0vivid-gate-${name}`)
@@ -50,14 +54,42 @@ export function treeLockName(root) {
   return `tree-${NodeCrypto.createHash('sha256').update(root).digest('hex').slice(0, 24)}`
 }
 
-/** Connect before retrying acquisition. A refused connection means release raced with
- * subscription; either outcome wakes the waiter without a clock or a lost notification. */
+/** New holders acknowledge the release protocol and close their peers on release.
+ * Older holders close on the waiter's half-close instead. Only those need SO_PEERPIDFD,
+ * Linux's atomic peer identity API, option 77 in asm-generic/socket.h since Linux 6.5.
+ * Their connection is closed before waiting for exit so it cannot keep the older gate alive. */
+const ownerScript = String.raw`
+import errno, os, select, socket, sys
+peer_pidfd = 77
+peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    peer.connect('\0vivid-gate-' + sys.argv[1])
+    peer.shutdown(socket.SHUT_WR)
+    protocol = peer.recv(1)
+    if protocol == b'1':
+        select.select([peer], [], [])
+    elif protocol == b'':
+        owner = peer.getsockopt(socket.SOL_SOCKET, peer_pidfd)
+        peer.close()
+        select.select([owner], [], [])
+        os.close(owner)
+    else:
+        raise RuntimeError('unrecognized gate slot owner protocol')
+except OSError as error:
+    if error.errno not in (errno.ECONNREFUSED, errno.ECONNRESET, errno.ESRCH):
+        raise
+finally:
+    peer.close()
+`
+
+/** Subscribe before retrying the bind. A missing or exited owner wakes the contender
+ * immediately; a living holder is watched by pidfd without relying on a recyclable PID. */
 function observeRelease(name) {
-  const socket = NodeNet.createConnection(`\0vivid-gate-${name}`)
-  const released = NodeEvents.once(socket, 'close').catch((error) => {
-    if (error.code !== 'ECONNREFUSED' && error.code !== 'ECONNRESET') throw error
+  const owner = NodeChildProcess.spawn('python3', ['-c', ownerScript, name])
+  const released = NodeEvents.once(owner, 'close').then(([code, signal]) => {
+    if (code !== 0 && signal === null) throw new Error('could not observe the gate slot owner')
   })
-  return { released, close: () => socket.destroy() }
+  return { released, close: () => owner.kill() }
 }
 
 /** Atomic bind remains the acquisition authority; observations only wake contenders. */
