@@ -16,7 +16,7 @@ import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
-import type { NoteMissing, NotesUnavailable } from '../notes.ts'
+import type { NoteMissing, NotesUnavailable, NotesAtCapacity } from '../notes.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
@@ -33,6 +33,7 @@ export type ToolFailure =
   | NobodyToActFor
   | NoteMissing
   | NotesUnavailable
+  | NotesAtCapacity
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -184,6 +185,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
       NoteMissing: ({ file }) =>
         failure(
           `You have no note called ${file}; use a file name from the list of what you remember.`,
+        ),
+      NotesAtCapacity: () =>
+        failure(
+          'Your notes are busy right now; try again in a moment, and do not claim it is saved.',
         ),
       NotesUnavailable: () =>
         failure(

@@ -15,6 +15,7 @@ import { RuntimeAdmissionBody } from '@vivid/contracts'
 import { modelDelivery, recordScope } from './delivery.ts'
 import { actingFor, threadOriginOf } from './client.ts'
 import { loadContext } from './context.ts'
+import { notesLayer } from './keeping.ts'
 
 const app = new Hono()
 
@@ -60,7 +61,9 @@ const prepareContext = async (context: AppContext) => {
   recordScope(delivery.threadId, delivery.turn, delivery.scope)
   const message = modelDelivery(delivery)
   await runResult(
-    loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))),
+    loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))).pipe(
+      Effect.provide(notesLayer),
+    ),
   )
   const url = new URL(context.req.url)
   url.pathname = `/${encodeURIComponent(delivery.threadId)}`

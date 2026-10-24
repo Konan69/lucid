@@ -1,9 +1,10 @@
 # Memory: a filesystem per Person, and Helix as the knowledge base
 
-**Status:** direction, 4 October 2026. Documented at Konan's request after the design discussion of
-that day. Nothing in "The direction" is built into the product yet. The combination it relies on
-was run as a proof the same day: see "Proof" and "Not verified". It replaces the memory part of [One product](22-one-product.md) as the
-target; "What exists today" describes what the code does until it lands.
+**Status:** the direction was recorded on 4 October 2026; "What exists today" was checked against
+the code on 24 October 2026. Personal SQLite notes and their response index are implemented.
+The filesystem-slot proof below is historical: production uses typed note tools, while the
+Computer owns Flue's filesystem slot. Computer mounting and device sync remain unfinished.
+This replaces the memory part of [One product](22-one-product.md) as the target.
 
 Evidence is the primary source of each reference system, read on 4 October 2026: the installed Flue
 documentation (`pnpm exec flue docs read guide/sandboxes`, `guide/durability`,
@@ -27,7 +28,7 @@ Code memory documentation. A claim marked **unverified** was read from source an
 
 ```mermaid
 flowchart LR
-  subgraph now["Now: the loop runs on our server"]
+  subgraph now["Filesystem-slot direction: the loop runs on our server"]
     Vivid["Vivid (Flue)"] -- "read, write, edit, grep" --> FS["Memory filesystem"]
     FS --> DB[("One SQLite file per Person")]
     Vivid -- "save, search" --> KB[("Helix knowledge base")]
@@ -68,9 +69,8 @@ Ported from Claude Code's file memory; Letta's memory filesystem uses the same s
 
   ```markdown
   ---
-  name: <short-kebab-case-slug>
+  kind: <kind of memory>
   description: <one line, used to decide whether to open this file>
-  type: <kind of memory>
   ---
 
   <the fact; for a preference or a decision, then **Why:** and **How to apply:**>
@@ -80,11 +80,15 @@ Ported from Claude Code's file memory; Letta's memory filesystem uses the same s
   still be true in a later session; update the existing file instead of writing a second one;
   delete a memory that turned out wrong; a memory can be stale, so check it before acting on it.
 
-The `type` vocabulary is Vivid's own. Today's kinds are fact, preference, person, organization,
-decision and workstream (`packages/contracts/src/memory.ts`); whether the files keep exactly these
-is open.
+The file name supplies the name. The `kind` vocabulary is Vivid's own: fact, preference, person,
+organization, decision and workstream (`packages/contracts/src/memory.ts`). The note tools use
+that same contract (`packages/agent/runtime/src/notes.ts`).
 
-## How it attaches to Flue
+## The filesystem-slot direction and proof
+
+This section records the integration investigated on 4 October, rather than the production note
+adapter. Production calls AgentFS through `read_note`, `write_note` and `delete_note`; its Computer
+filesystem occupies Flue's one slot (`packages/agent/runtime/src/tools/computer.ts`, `sandbox.ts`).
 
 Flue gives an agent a filesystem through one slot, the sandbox (`useSandbox`). With a sandbox
 attached, the model gets `read`, `write`, `edit`, `grep`, `glob` and `bash`, and Flue puts the
@@ -101,11 +105,9 @@ working directory's listing and its `AGENTS.md` into the system prompt at initia
 
 Three facts about Flue shape the work:
 
-- **One sandbox per agent.** The slot is in use today, but only by a placeholder whose file
-  operations all answer "unsupported": it exists so the Computer's screenshot tool can return
-  images, which Flue passes through `SandboxFactory.tools`
-  (`packages/agent/runtime/src/tools/computer.ts`, `desktopToolFactory`). A real filesystem takes
-  the slot and carries that tool with it.
+- **One sandbox per agent.** The Computer uses the slot for its real filesystem and screenshot
+  tools (`packages/agent/runtime/src/tools/computer.ts`, `computerSandboxFactory`). Personal notes
+  therefore use separate typed tools; the filesystem-slot proof does not describe their adapter.
 - **A sandbox is keyed by conversation.** Flue hands the factory the conversation's instance id.
   Memory belongs to a Person across every Thread, so the factory resolves the acting Person and
   opens that Person's file.
@@ -131,6 +133,23 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
 
 ## What exists today
 
+- Personal notes are in one AgentFS SQLite file per Person, opened by the runtime
+  (`packages/agent/runtime/src/notes.ts`). Development uses `VIVID_MEMORY_DIR=.state/notes`
+  relative to the runtime; production uses `/var/lib/vivid/memory` on its Railway volume
+  (`alchemy.run.ts`, `infra/railway.ts`). They are not on the Person's device today.
+- The runtime owns a scoped set of at most 64 leased or warm note stores. A complete operation
+  holds its lease; an unused store closes after one minute, and public Flue shutdown closes the
+  owner before its PostgreSQL pool. Failed opens are not cached. Capacity is a distinct failure,
+  rather than an empty memory result (`notes.ts`, `keeping.ts`, `storage.ts`).
+  The installed native SQLite SDK releases its file descriptors after garbage collection, so
+  this policy bounds owned stores rather than promising an immediate descriptor ceiling.
+- Before each response, `packages/agent/runtime/src/context.ts` loads the acting Person's note
+  index: file names, kinds and descriptions, newest first, within an 8,000-character budget, with
+  a flag when older notes are omitted. The index is derived from the notes and is never stored.
+  No model or application-server request is on this path.
+- Knowledge-base facts are separate `Memory` records in Helix: one sentence, a kind, and a scope
+  (Person, Company, Thread). `WatchMemory` returns the authorized facts and their brief
+  (`apps/server/src/memory/handlers.ts`), rather than the SQLite notes.
 - Facts are `Memory` records in Helix: one sentence, a kind, and a scope (Person, Company, Thread).
 - The runtime reads a memory brief through `MemoryAccess.brief` in
   `apps/server/src/memory/store.ts`. Its cache key includes the authorized memories and Person.
@@ -138,14 +157,16 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
   cached for ten minutes.
 - The model's knowledge-base tools are `recall` and `remember`. It changes and removes what it
   knows on its notes (`read_note`, `write_note`, `delete_note`); a Person corrects and removes
-  knowledge-base facts in Settings.
+  knowledge-base facts in Settings. That surface does not show or change the personal notes.
 - Nothing seeds memory. A new Person starts with no facts; no write happens at sign-up or
   onboarding.
 - On 4 October 2026 the production Helix held no memories. Learning is not called for a Run that
   finishes through an Approval continuation or after recovery; that is tracked in issue #16.
 
-The page is the always-on path the filesystem index will use. Its source changes from Helix records
-to the index derived from the notes' headers.
+The runtime's note index and the Settings knowledge brief are different views of different stores.
+Moving notes onto the Computer, backup and sync are tracked in
+[issue #51](https://github.com/Konan69/vivid/issues/51). The production volume currently supports
+one runtime instance; bounding open handles does not provide shared storage across instances.
 
 ## The references, side by side
 
@@ -225,8 +246,8 @@ opening the note. The index for 81 notes was 6,737 characters.
 - The product path. The behaviour test used a small harness with memory instructions only; Vivid's
   real prompt is much longer and its other tools compete for the model's attention.
 - Long conversations, and two conversations writing at the same moment.
-- Many notes: the index grows about 83 characters a note, so a few hundred notes need a budget and
-  a rule for what stays on it.
+- Performance with hundreds of notes. The implemented index keeps the newest notes within its
+  8,000-character budget; the recorded behaviour proof used 81 notes.
 - The write-ahead log: a 4 KB database carried a 424 KB log after one run; closing and checkpointing
   are not designed.
 - AgentFS is young (specification v0.4).
@@ -241,8 +262,9 @@ is out of scope for now; today's access rules stay as they are in code.
 
 1. **Seeding.** Whether sign-up and onboarding write the first notes (name, the onboarding answers,
    time zone).
-2. **Where the SQLite file sits while the loop runs on our server**, and how it is backed up and
-   synced to the Computer.
+2. **Backup and sync.** Notes currently sit on the runtime's volume; how they follow the Person to
+   the Computer and support multiple runtime instances remains open (issue #51).
 3. **Memory and the knowledge base.** Which facts go where, and whether learning after a Run writes
    files, Helix records, or both.
-4. **The Person's view.** A Settings surface for memory comes after the model side is right.
+4. **The Person's view.** Settings exposes knowledge-base facts; a surface for personal notes is
+   still unfinished.

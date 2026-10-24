@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
+import { afterAll } from 'vitest'
 
 /**
  * Vitest 5 runs setupFiles in each worker before importing the test module (run.C5UmxDPh.js,
@@ -38,11 +39,13 @@ delete NodeProcess.env.VIVID_SERVER_URL
 NodeProcess.env.VIVID_RUNTIME_TOKEN = NodeCrypto.randomUUID()
 
 /**
- * Notes are required: `src/notes.ts` reads `VIVID_MEMORY_DIR` when it is imported and the runtime
+ * Notes are required: `src/settings.ts` reads `VIVID_MEMORY_DIR` when it is imported and the runtime
  * does not start without it. Each worker gets its own empty directory under the system's temporary
  * directory, so a case never reads a developer's notes or another worker's. Nothing is written
  * until a case writes a note.
  */
-NodeProcess.env.VIVID_MEMORY_DIR = NodeFS.mkdtempSync(
-  NodePath.join(NodeOS.tmpdir(), 'vivid-notes-test-'),
-)
+const notesDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-notes-test-'))
+// Register cleanup before test imports or fixture writes. Runtime scopes stop Flue and close
+// Notes first; this final hook owns only the worker's temporary directory, never live state.
+afterAll(() => NodeFS.rmSync(notesDirectory, { recursive: true, force: true }))
+NodeProcess.env.VIVID_MEMORY_DIR = notesDirectory

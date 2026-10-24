@@ -11,8 +11,7 @@ import {
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
-import { noteIndex, type NoteIndex } from './notes.ts'
-import { notesDirectory } from './settings.ts'
+import { Notes, type NoteIndex } from './notes.ts'
 import { ContextSkill, contextSnapshots, Remembered, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
@@ -37,14 +36,13 @@ const snapshots = contextSnapshots()
  */
 const loadMemory = Effect.fn('Context.loadMemory')(function* (acting: Option.Option<Acting>) {
   if (Option.isNone(acting)) return Remembered.cases.Off.make({})
-  return yield* noteIndex({
-    directory: notesDirectory,
-    person: acting.value.personId,
-  }).pipe(
+  const notes = yield* Notes
+  return yield* notes.index(acting.value.personId).pipe(
     Effect.map((index) => Remembered.cases.Notes.make({ index })),
     Effect.catchTags({
       NotesUnavailable: () => Effect.succeed(Remembered.cases.Unavailable.make({})),
-      NoteMissing: () => Effect.succeed(Remembered.cases.Unavailable.make({})),
+      // Busy stores and unavailable files give the same instruction: never assume no memory.
+      NotesAtCapacity: () => Effect.succeed(Remembered.cases.Unavailable.make({})),
     }),
   )
 })
