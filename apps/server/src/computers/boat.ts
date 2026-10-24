@@ -1,5 +1,6 @@
 import { type BrowseResult } from '@vivid/contracts'
-import { Effect, Layer, Option, Semaphore, Stream } from 'effect'
+import { Effect, Layer, Option, Stream } from 'effect'
+import type { KeyedPermits } from '../runtime/keyed.ts'
 import {
   Machine,
   MachineCapabilityUnavailable,
@@ -29,7 +30,7 @@ import { browserProxy, startProxy } from './egress/guest.ts'
 const makeCookieCopy = (input: {
   readonly native: (key: MachineKey) => Effect.Effect<Driver, MachineFailure>
   readonly operations: Pick<MachineOperations, 'converse' | 'run'>
-  readonly permit: (key: MachineKey) => Semaphore.Semaphore
+  readonly permits: KeyedPermits<MachineKey>
 }) =>
   Effect.fn('Machine.boat.copySignIn')(
     function* (request: Parameters<MachineOperations['copySignIn']>[0]) {
@@ -50,7 +51,7 @@ const makeCookieCopy = (input: {
           }),
       })
     },
-    (effect, request) => input.permit(request.key).withPermit(effect),
+    (effect, request) => input.permits.withPermit(request.key, effect),
   )
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
@@ -144,7 +145,7 @@ export const boatMachineLayer = Layer.effect(
       copySignIn: makeCookieCopy({
         native: nativeDriver,
         operations: connections.operations(accepted),
-        permit,
+        permits,
       }),
       /** The prepared payload opens the native launcher once per desktop session. This is
        * presentation setup only; expensive installation happened before template capture.
