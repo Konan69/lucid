@@ -4,6 +4,9 @@ import { chat, history, rpc, request, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
+import { reading } from './reading.mjs'
+import { settingsProof } from './settingsproof.mjs'
+import { privacyBlocked } from './privacy.mjs'
 export const features = [
   'first',
   'reload',
@@ -19,6 +22,9 @@ export const features = [
   'library',
   'feed',
   'devices',
+  'reading',
+  'settings',
+  'privacy',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -267,8 +273,19 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
-const recipes = { first, reload, tool, question, picture, document, devices }
+const recipes = {
+  first,
+  reload,
+  tool,
+  question,
+  picture,
+  document,
+  devices,
+  reading,
+  settings: settingsProof,
+}
 const blocked = {
+  privacy: privacyBlocked,
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
   approve:

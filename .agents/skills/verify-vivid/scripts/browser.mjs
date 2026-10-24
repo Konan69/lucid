@@ -7,6 +7,9 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { readBrowser } from './readbrowser.mjs'
+import { settingsBrowser } from './settingsbrowser.mjs'
+import { privacyBlocked } from './privacy.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -37,6 +40,7 @@ function normaliseReply(text) {
 }
 
 const missing = {
+  privacy: privacyBlocked,
   question: 'No browser recipe for the multi-question controls yet',
   picture: 'No browser recipe for the composer file input yet',
   approve: 'No connected disposable Integration to produce a pending Approval',
@@ -48,6 +52,8 @@ const missing = {
   feed: 'No disposable Watch occurrence',
 }
 const recipes = {
+  reading: { check: 'reading' },
+  settings: { check: 'settings' },
   devices: { check: 'devices' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
@@ -67,6 +73,7 @@ const recipes = {
     check: 'document',
   },
 }
+const clientRecipes = { devices: deviceBrowser, reading: readBrowser, settings: settingsBrowser }
 for (const name of features)
   assert.ok(recipes[name] || missing[name], 'Unmapped browser feature ' + name)
 
@@ -321,14 +328,15 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (feature === 'devices') {
-      await deviceBrowser(state, id, directory, { run, capture })
+    if (clientRecipes[feature]) {
+      const result = await clientRecipes[feature](state, id, directory, { run, capture })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
         scope:
           'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+        ...result,
       }
     } else {
       if (existing) {
