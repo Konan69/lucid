@@ -196,6 +196,8 @@ export const makeTally = (): Tally => {
  */
 export const LiveTally = Context.Reference<Tally>('vivid/LiveTally', { defaultValue: makeTally })
 
+/** Source: UX/log-volume policy. Aggregate one minute of activity, then drain its counters.
+ * This cadence never delays a live result and an idle report emits nothing. */
 const REPORT_EVERY = '1 minute'
 
 /**

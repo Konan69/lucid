@@ -26,6 +26,10 @@ const counted = <A, E, R>(tally: Tally, name: Watched, load: Effect.Effect<A, E,
     )
   })
 
+/** Coalesces committed row bursts into one reload while adding only 20 ms to display refresh.
+ * Source: UX policy. This delay never stands in for transaction completion. */
+const CHANGE_COALESCENCE = '20 millis'
+
 /**
  * Turns a read into a live query: the current result now, then again each time it changes.
  *
@@ -62,7 +66,7 @@ export const watch = <A, E, R>(
         Effect.sync(() => tally.opened(name)),
         () => Effect.sync(() => tally.closed(name)),
       )
-      return Stream.concat(Stream.make(undefined), Stream.debounce(moved, '20 millis')).pipe(
+      return Stream.concat(Stream.make(undefined), Stream.debounce(moved, CHANGE_COALESCENCE)).pipe(
         Stream.switchMap(() => Stream.fromEffect(counted(tally, name, load))),
         Stream.changes,
         Stream.tap(() => Effect.sync(() => tally.sent(name))),
