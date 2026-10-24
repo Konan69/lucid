@@ -92,12 +92,7 @@ describe.skipIf(!enabled)('Programs on a real Boat machine', () => {
           const dispatch: Dispatch = Effect.fn('Live.answer')(function* (call) {
             const entered = yield* Ref.updateAndGet(asked, (kinds) => kinds.concat([call.kind]))
             if (entered.length === 2) yield* Deferred.succeed(bothEntered, undefined)
-            yield* Deferred.await(bothEntered).pipe(
-              Effect.timeoutOrElse({
-                duration: '30 seconds',
-                orElse: () => Effect.die('Both calls must enter dispatch together'),
-              }),
-            )
+            yield* Deferred.await(bothEntered)
             return CallOutcome.cases.Returned.make({
               value: { asked: call.input },
               summary: call.kind,
@@ -166,7 +161,17 @@ return {file, platform: process.platform};`,
               {
                 request: {
                   summary: 'Prove a decision stops the program',
-                  code: 'try { await tools.use_tool({pid:process.pid}); } catch (error) {} await new Promise((done) => setTimeout(done, 600000)); return "continued";',
+                  // A listening resource keeps the adversarial continuation alive until its
+                  // owner cancels it; passing the proof must not depend on a sleeping child.
+                  code: `try { await tools.use_tool({pid:process.pid}); } catch (error) {}
+const net = await import('node:net');
+await new Promise((resolve, reject) => {
+  const held = net.createServer();
+  held.once('error', reject);
+  held.listen(0, '127.0.0.1', resolve);
+});
+await new Promise(() => {});
+return "continued";`,
                 },
                 boundary: boundary(),
               },
