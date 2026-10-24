@@ -14,7 +14,7 @@ import * as RpcClient from 'effect/rpc/RpcClient'
 import * as Worker from 'effect/workers/Worker'
 import { WorkerError, WorkerReceiveError } from 'effect/workers/WorkerError'
 import { EXTRACTION_HEAP_MB } from '../extraction.ts'
-import { CRASH_TIMEOUT_MS, NativeMode, RECEIPT_FD } from '../fixtures/process/mode.ts'
+import { NativeMode, RECEIPT_FD } from '../fixtures/process/mode.ts'
 import { ExtractionRpcs } from './contract.ts'
 import {
   ProcessEnd,
@@ -134,36 +134,30 @@ const settled = ({ running, reportDir, entered }: Held) =>
 testLayer(NodeFileSystem.layer)((it) => {
   /** P0a: a real V8 heap OOM under the cap writes a report that names the process that died. */
 
-  it.effect(
-    'finds heap evidence in the report of a process that exhausted its heap',
-    () =>
-      Effect.gen(function* () {
-        const seen = yield* owned('grow', settled)
-        expect(seen.used).toEqual({ began: true, heap: true, foreign: false })
-        expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
-        expect(seen.pid).not.toBe(NodeProcess.pid)
-        expect([seen.kept, seen.removed]).toEqual([true, true])
+  it.effect('finds heap evidence in the report of a process that exhausted its heap', () =>
+    Effect.gen(function* () {
+      const seen = yield* owned('grow', settled)
+      expect(seen.used).toEqual({ began: true, heap: true, foreign: false })
+      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
+      expect(seen.pid).not.toBe(NodeProcess.pid)
+      expect([seen.kept, seen.removed]).toEqual([true, true])
 
-        // The OOM ended only the child: this process starts and observes the next one normally.
-        const next = yield* owned('exit', settled)
-        expect(next.used).toEqual({ began: true, heap: false, foreign: false })
-        expect(next.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
-      }),
-    CRASH_TIMEOUT_MS,
+      // The OOM ended only the child: this process starts and observes the next one normally.
+      const next = yield* owned('exit', settled)
+      expect(next.used).toEqual({ began: true, heap: false, foreign: false })
+      expect(next.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
+    }),
   )
 
   /** P0b: the same signal without Node's OOM handler is not heap evidence. */
 
-  it.effect(
-    'finds no heap evidence when a process aborts without exhausting its heap',
-    () =>
-      Effect.gen(function* () {
-        const seen = yield* owned('abort', settled)
-        expect(seen.used).toEqual({ began: true, heap: false, foreign: false })
-        expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
-        expect([seen.kept, seen.removed]).toEqual([true, true])
-      }),
-    CRASH_TIMEOUT_MS,
+  it.effect('finds no heap evidence when a process aborts without exhausting its heap', () =>
+    Effect.gen(function* () {
+      const seen = yield* owned('abort', settled)
+      expect(seen.used).toEqual({ began: true, heap: false, foreign: false })
+      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
+      expect([seen.kept, seen.removed]).toEqual([true, true])
+    }),
   )
 
   /** P0b: an ordinary exit is reported by code and is not heap evidence. */

@@ -528,7 +528,6 @@ describe.skipIf(!enabled)('Memory calls with real Helix and disposable PostgreSQ
               ).toEqual(['Company', 'Thread'])
             }).pipe(Effect.provideService(Audit, audit))
           }).pipe(Effect.scoped),
-        { timeout: 120000 },
       )
     },
   )

@@ -4,7 +4,6 @@ import { ServiceId } from '@vivid/contracts'
 import {
   effectScores,
   LIVE_METADATA_BUDGET,
-  LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
   liveDecisionLayer,
 } from '../decisions/testing.ts'
@@ -147,6 +146,5 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
         )
       }).pipe(Effect.scoped)
     },
-    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })
