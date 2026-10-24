@@ -9,7 +9,7 @@ Read the [feature map](features/README.md), the touched feature and [runtime bou
 
 ## Host and credentials
 
-Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, actual hostname and boot identity. Launch checks the alias against SSH-observed hostnames in `./scripts/settings.mjs`; refresh that mapping after a devbox replacement.
+Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, Boat sandbox id, hostname and boot identity. Launch checks the alias against the box's `BOAT_ID` (stable across restarts) in `./scripts/settings.mjs`; refresh that mapping only when a devbox is replaced. Keep provider keys in a private file such as `~/.config/vivid/verify.env` (mode 0600) and pass it as `VIVID_VERIFY_KEY_FILE`.
 
 On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser 0.39.0 or later and Chrome. Install a compatible agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
