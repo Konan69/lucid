@@ -58,7 +58,7 @@ export const ANSWERED = FadeIn.duration(220).reduceMotion(ReduceMotion.System)
 /**
  * A small mark arriving on a control that is already there: the dot that says something new is
  * waiting. It comes up from a quarter of its size while it fades in, over 200 ms on the product's
- * settling curve (`Rise.tsx`, `SETTLE`; the web's `--ease-out`), the values of the approved
+ * settling curve (the web's `--ease-out`), the values of the approved
  * prototype's dot. With reduced motion it is simply there.
  */
 export const POP = new Keyframe({
