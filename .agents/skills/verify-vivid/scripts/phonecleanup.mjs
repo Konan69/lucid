@@ -1,8 +1,9 @@
+import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodePath from 'node:path'
 import { command, json, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
-import { readPhone, required } from './phonewire.mjs'
+import { readPhone } from './phonewire.mjs'
 
 /** Both normal completion and abandoned-run recovery use the same captured device generations.
  * The private agent-device daemon verifies its own PID receipt through its public stop command. */
@@ -12,7 +13,7 @@ export async function phoneCleanup(state) {
     throw error
   })
   if (text === null) return
-  const phone = required(readPhone(text))
+  const phone = Result.getOrThrow(readPhone(text))
   if (
     phone.run !== state.run ||
     phone.session !== state.run ||

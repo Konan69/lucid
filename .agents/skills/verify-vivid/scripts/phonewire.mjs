@@ -1,4 +1,4 @@
-import { Schema, Result } from 'effect'
+import { Schema } from 'effect'
 
 export const Process = Schema.Struct({
   pid: Schema.Number,
@@ -36,7 +36,6 @@ export const readPhone = Schema.decodeUnknownResult(Schema.fromJsonString(Phone)
 export const readDevice = Schema.decodeUnknownResult(Schema.fromJsonString(Device))
 export const readApk = Schema.decodeUnknownResult(Schema.fromJsonString(Apk))
 export const readAccount = Schema.decodeUnknownResult(Schema.fromJsonString(Account))
-export const required = (result) => Result.getOrThrow(result)
 
 export const PhoneState = Schema.Struct({
   run: Schema.String,

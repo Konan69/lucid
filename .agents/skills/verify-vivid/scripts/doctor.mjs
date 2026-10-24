@@ -1,7 +1,8 @@
+import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import { alive, ownsPort, command, checkout } from './process.mjs'
 import { owned, sameBoot } from './recovery.mjs'
-import { readPhone, readApk, required } from './phonewire.mjs'
+import { readPhone, readApk } from './phonewire.mjs'
 import { apkHash } from './apk.mjs'
 
 /** Read-only checks record individual missing resources instead of throwing on partial/crashed
@@ -118,8 +119,8 @@ async function phoneIdentity(state, check) {
   if (receipt === null) return null
   let phone
   await check('Android APK identity', async () => {
-    const acquired = required(readPhone(receipt))
-    const artifact = required(
+    const acquired = Result.getOrThrow(readPhone(receipt))
+    const artifact = Result.getOrThrow(
       readApk(await NodeFSP.readFile(state.evidence + '/phone/apk.json', 'utf8')),
     )
     phone = {

@@ -10,6 +10,7 @@ import tempfile
 
 
 def tools():
+    """Recognize partial extraction so a restore or interrupted bootstrap can converge."""
     cache = Path.home() / '.cache/vivid-android'
     cache.mkdir(parents=True, exist_ok=True)
     node = cache / 'node'

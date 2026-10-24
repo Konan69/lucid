@@ -1,3 +1,4 @@
+import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeAssert from 'node:assert/strict'
@@ -6,7 +7,7 @@ import { host } from './settings.mjs'
 import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
-import { readAccount, readDevice, readState, required } from './phonewire.mjs'
+import { readAccount, readDevice, readState } from './phonewire.mjs'
 import { rpc } from './wire.mjs'
 
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -28,7 +29,7 @@ async function target(run, label) {
 /** The ordinary email controls authenticate the same disposable Person the public proof uses.
  * agent-device state stays private because its journal can include synthetic form values. */
 async function enter(state, run) {
-  const account = required(
+  const account = Result.getOrThrow(
     readAccount(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8')),
   )
   await run(['press', await target(run, 'Log in')])
@@ -70,7 +71,9 @@ export async function phone(state, feature) {
   NodeAssert.equal(state.dirty, false, 'Phone APK proof requires a clean committed checkout')
   const directory = state.evidence + '/phone'
   await NodeFSP.mkdir(directory, { recursive: true })
-  const device = required(readDevice(await NodeFSP.readFile(cache + '/device.json', 'utf8')))
+  const device = Result.getOrThrow(
+    readDevice(await NodeFSP.readFile(cache + '/device.json', 'utf8')),
+  )
   NodeAssert.equal(device.hostname, state.hostname)
   NodeAssert.equal(device.alias, state.devbox)
   NodeAssert.ok(await alive(device.emulator), 'Run verify android provision before phone')
@@ -142,4 +145,7 @@ export async function phone(state, feature) {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname)
-  await phone(required(readState(await NodeFSP.readFile(process.argv[2], 'utf8'))), process.argv[3])
+  await phone(
+    Result.getOrThrow(readState(await NodeFSP.readFile(process.argv[2], 'utf8'))),
+    process.argv[3],
+  )

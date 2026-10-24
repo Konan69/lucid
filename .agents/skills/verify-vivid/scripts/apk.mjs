@@ -1,9 +1,10 @@
+import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeModule from 'node:module'
 import { command, root, skill, json } from './process.mjs'
-import { readApk, required } from './phonewire.mjs'
+import { readApk } from './phonewire.mjs'
 
 export const phoneOrigin = 'http://127.0.0.1:19278'
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -65,7 +66,7 @@ export async function apk(state, record) {
     throw error
   })
   if (text !== null) {
-    const prior = required(readApk(text))
+    const prior = Result.getOrThrow(readApk(text))
     if (prior.fingerprint === fingerprint && prior.sha256 === (await apkHash(target)))
       return { ...prior, mode: 'reuse' }
     throw new Error('APK cache receipt mismatch; retain evidence and inspect the cached artifact')
@@ -104,7 +105,7 @@ export async function apk(state, record) {
   })
   let mode
   if (base !== null) {
-    const artifact = required(readApk(base))
+    const artifact = Result.getOrThrow(readApk(base))
     if ((await apkHash(artifact.file)) !== artifact.sha256)
       throw new Error('Native APK checksum mismatch')
     await repack(run, app, artifact, target)

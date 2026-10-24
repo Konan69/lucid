@@ -33,6 +33,7 @@ def run(args, **kwargs):
 
 
 def output(args):
+    """Capture only platform receipts; provider credentials never enter these commands."""
     return subprocess.check_output(args, env=ENV, text=True).strip()
 
 
@@ -45,11 +46,13 @@ def write(path, data):
 
 
 def identity(pid):
+    """Linux start ticks and boot identity distinguish PID reuse from the process we spawned."""
     stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
     return dict(pid=pid, start=stat[19], boot=BOOT)
 
 
 def alive(receipt):
+    """A zombie has exited; a new boot or start tick cannot inherit an old receipt."""
     if receipt['boot'] != BOOT:
         return False
     try:
@@ -197,6 +200,7 @@ def ready(receipt):
 
 
 def main():
+    """Host identity and the host lock precede every SDK mutation or captured-process stop."""
     action, alias, expected = sys.argv[1:]
     assert alias in ['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3'], 'Unknown devbox'
     assert socket.gethostname() == expected and expected.startswith('box-node-'), 'Host identity mismatch'
