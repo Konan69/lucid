@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeCrypto from 'node:crypto'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import { refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
+import { peerProbeSeconds, refusedHost, shellWord, snapshot } from './gate/cloud.mjs'
 
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const cases = {
@@ -91,9 +91,9 @@ for candidate in "$home"/trees/slot-*; do
 done
 if [ -z "$tree" ]; then
   [ -n "$waiting" ] || { echo "No warm gate tree with the replay lockfile" >&2; exit 92; }
-  echo "Waiting up to 300s for $waiting" >&2
+  echo "Waiting for $waiting" >&2
   exec 9>"$waiting.lock"
-  flock -w 300 9 || { echo "Warm gate tree stayed busy" >&2; exit 92; }
+  flock -x 9
   tree="$waiting"
 fi
 scratch=$(mktemp -d "$tree/.cache/boundaries-$fix-XXXXXX")
@@ -133,7 +133,7 @@ function runRemote(scratch, fix, test, host) {
     .join(' ')
   const result = NodeChildProcess.spawnSync(
     'ssh',
-    ['-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=15', host, command],
+    ['-o', 'ConnectTimeout=20', '-o', `ServerAliveInterval=${peerProbeSeconds}`, host, command],
     { stdio: 'inherit' },
   )
   if (result.error !== undefined) throw result.error

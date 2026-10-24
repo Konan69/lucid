@@ -2,7 +2,6 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeEvents from 'node:events'
 import * as NodeNet from 'node:net'
 import * as NodeOS from 'node:os'
-import * as NodeTimersPromises from 'node:timers/promises'
 
 /**
  * How many gates may do work at once on this machine, across every checkout: one per four
@@ -25,7 +24,12 @@ export function slotCount(cores) {
  * has no abstract namespace and fails here with the kernel's own error.
  */
 export async function takeLock(name) {
-  const server = NodeNet.createServer()
+  const clients = new Set()
+  const server = NodeNet.createServer((client) => {
+    clients.add(client)
+    client.unref()
+    client.once('close', () => clients.delete(client))
+  })
   try {
     server.listen(`\0vivid-gate-${name}`)
     await NodeEvents.once(server, 'listening')
@@ -35,12 +39,34 @@ export async function takeLock(name) {
   }
   // The lock must not keep a finished gate's process alive.
   server.unref()
-  return () => server.close()
+  return () => {
+    for (const client of clients) client.destroy()
+    server.close()
+  }
 }
 
 /** A lock name for one checkout: its path, shortened to something a socket name can hold. */
 export function treeLockName(root) {
   return `tree-${NodeCrypto.createHash('sha256').update(root).digest('hex').slice(0, 24)}`
+}
+
+/** Connect before retrying acquisition. A refused connection means release raced with
+ * subscription; either outcome wakes the waiter without a clock or a lost notification. */
+function observeRelease(name) {
+  const socket = NodeNet.createConnection(`\0vivid-gate-${name}`)
+  const released = NodeEvents.once(socket, 'close').catch((error) => {
+    if (error.code !== 'ECONNREFUSED' && error.code !== 'ECONNRESET') throw error
+  })
+  return { released, close: () => socket.destroy() }
+}
+
+/** Atomic bind remains the acquisition authority; observations only wake contenders. */
+async function availableSlot(slots) {
+  for (const slot of slots) {
+    const release = await takeLock(slot)
+    if (release !== undefined) return release
+  }
+  return undefined
 }
 
 /** Wait for one of the machine's slots and hold it. */
@@ -51,12 +77,15 @@ export async function holdSlot(announce) {
   )
   let announced = false
   for (;;) {
-    for (const slot of slots) {
-      const release = await takeLock(slot)
+    const observers = slots.map(observeRelease)
+    try {
+      const release = await availableSlot(slots)
       if (release !== undefined) return release
+      if (!announced) announce(`waiting: ${slots.length} gates are already running on this machine`)
+      announced = true
+      await Promise.race(observers.map((observer) => observer.released))
+    } finally {
+      for (const observer of observers) observer.close()
     }
-    if (!announced) announce(`waiting: ${slots.length} gates are already running on this machine`)
-    announced = true
-    await NodeTimersPromises.setTimeout(500)
   }
 }
