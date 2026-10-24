@@ -55,12 +55,24 @@ const startupExit = Effect.fn('ServerStartup.test.exit')(function* (flags: Reado
 })
 
 /**
+ * The bound for one real start of the server entry. The child loads the whole server graph
+ * through tsx before it can exit, which takes about four seconds alone on a developer machine
+ * (measured 3.7 to 3.9 s on 4 October 2026) and longer beside the rest of the suite, so the
+ * runner's five-second default failed correct runs. The test still waits on the child's own
+ * exit and never sleeps.
+ */
+const STARTUP_TIMEOUT_MS = 30_000
+
+/**
  * Configuration refusal must precede even config loading: the real entry exits EX_CONFIG (78)
  * with the overriding flag. A generic exit 1 also accepts import failures and does not prove
  * configuration ordering, so only the distinct extraction refusal is asserted here.
  */
-it.effect('refuses extraction configuration first', () =>
-  Effect.gen(function* () {
-    expect(yield* startupExit(['--max-old-space-size-percentage=50'])).toBe(78)
-  }),
+it.effect(
+  'refuses extraction configuration first',
+  () =>
+    Effect.gen(function* () {
+      expect(yield* startupExit(['--max-old-space-size-percentage=50'])).toBe(78)
+    }),
+  STARTUP_TIMEOUT_MS,
 )
