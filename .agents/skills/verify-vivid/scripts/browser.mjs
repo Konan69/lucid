@@ -9,7 +9,6 @@ import { features } from './drive.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
-import { privacyBlocked } from './privacy.mjs'
 import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 
@@ -42,7 +41,6 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  privacy: privacyBlocked,
   question: 'No browser recipe for the multi-question controls yet',
   picture: 'No browser recipe for the composer file input yet',
   approve: 'No connected disposable Integration to produce a pending Approval',

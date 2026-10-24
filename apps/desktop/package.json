@@ -27,8 +27,7 @@
     "@sentry/electron": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
-    "effect": "catalog:",
-    "@vivid/state": "workspace:*"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
