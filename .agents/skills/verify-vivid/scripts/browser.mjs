@@ -6,6 +6,7 @@ import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
+import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
@@ -45,12 +46,12 @@ const missing = {
   deny: 'No connected disposable Integration to produce a pending Approval',
   stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
-  watch: 'No disposable Integration with incoming events',
   library: 'No browser ingestion recipe yet',
 }
 const recipes = {
   notes: { check: 'notes' },
   devices: { check: 'devices' },
+  watch: { check: 'watch' },
   feed: { check: 'feed' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
@@ -71,6 +72,10 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  watch: {
+    drive: watchBrowser,
+    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+  },
   devices: {
     drive: deviceBrowser,
     scope:
@@ -299,7 +304,7 @@ async function journey(state, feature) {
           AGENT_BROWSER_DEFAULT_TIMEOUT: '120000',
         },
         log: directory + '/' + String(++sequence).padStart(2, '0') + '-' + args[0] + '.json',
-        redactions: [account.password],
+        redactions: [account.password, 'verify-pulse-local'],
         record: (process) => control(state, { action: 'capture', process }),
       },
     )

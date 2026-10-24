@@ -3,6 +3,8 @@ import * as os from 'node:os'
 import { parseEnv } from 'node:util'
 import { boot } from './process.mjs'
 
+export const authSecret = 'Verify-Auth!0123456789-ABCDefghijklmnop'
+
 /**
  * Each allowed alias names one Boat sandbox. Boat sets `BOAT_ID` on the box and keeps it across
  * restarts; the hostname changes on every start, so a hostname map went stale whenever a box
@@ -34,9 +36,7 @@ export async function provider() {
   const candidates = process.env.VIVID_VERIFY_KEY_FILE ? [process.env.VIVID_VERIFY_KEY_FILE] : []
   const names = ['EXPLABS_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
   const env = Object.fromEntries(
-    names.flatMap((name) =>
-      !candidates.length && process.env[name] ? [[name, process.env[name]]] : [],
-    ),
+    names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   )
   const sources = []
   for (const file of new Set(candidates)) {

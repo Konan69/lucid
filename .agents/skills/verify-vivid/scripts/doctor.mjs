@@ -1,6 +1,19 @@
+import { Schema } from 'effect'
+import { decodeText } from './receipts.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import { alive, ownsPort, command, checkout } from './process.mjs'
 import { owned, sameBoot } from './recovery.mjs'
+
+const ExecutorInspections = Schema.Array(
+  Schema.Struct({
+    State: Schema.Struct({
+      Running: Schema.Boolean,
+      Health: Schema.Struct({ Status: Schema.String }),
+    }),
+    Config: Schema.Struct({ Labels: Schema.Record(Schema.String, Schema.String) }),
+    HostConfig: Schema.Struct({ NetworkMode: Schema.String }),
+  }),
+)
 
 /** Read-only checks record individual missing resources instead of throwing on partial/crashed
  * state. Network probes run only for listeners owned by this run; Doctor never starts anything. */
@@ -31,6 +44,19 @@ export async function doctor(state) {
         value.State.Running &&
         value.Config.Labels['vivid.verify'] === state.run &&
         binding.some((b) => b.HostIp === '127.0.0.1' && Number(b.HostPort) === state.ports.helix),
+    }
+  })
+  await check('disposable Executor', async () => {
+    const [value] = decodeText(
+      ExecutorInspections,
+      await command(['docker', 'inspect', state.executorContainer]),
+    )
+    return {
+      ok:
+        value.State.Running &&
+        value.State.Health.Status === 'healthy' &&
+        value.Config.Labels['vivid.verify'] === state.run &&
+        value.HostConfig.NetworkMode === 'host',
     }
   })
   for (const role of ['supervisor', 'server', 'web', 'runtime'])
