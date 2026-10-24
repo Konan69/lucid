@@ -27,6 +27,13 @@ export class ChannelDisconnected extends Schema.TaggedError<ChannelDisconnected>
   { title: 'Channel disconnected' },
 ) {}
 
+/** Provider authentication or project setup must be repaired before reconnecting can succeed. */
+export class ChannelConnectionRefused extends Schema.TaggedError<ChannelConnectionRefused>()(
+  'ChannelConnectionRefused',
+  { channel: Channel },
+  { title: 'Channel connection refused' },
+) {}
+
 /** Invalid SDK envelopes cannot safely be attributed to a Person. */
 export class InvalidChannelMessage extends Schema.TaggedError<InvalidChannelMessage>()(
   'InvalidChannelMessage',
@@ -63,7 +70,7 @@ export interface ChannelProviderService {
     channel: Channel,
     id: ChannelEnrolmentId,
   ) => Effect.Effect<void, ChannelUnavailable | ChannelProviderFailed>
-  readonly inbound: Stream.Stream<ChannelInbound, ChannelDisconnected>
+  readonly inbound: Stream.Stream<ChannelInbound, ChannelDisconnected | ChannelConnectionRefused>
   readonly send: (input: {
     readonly channel: Channel
     readonly address: ChannelAddress

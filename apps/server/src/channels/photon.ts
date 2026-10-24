@@ -5,7 +5,7 @@ import {
   type ChannelAddress,
 } from '@vivid/contracts'
 import { Effect, Filter, Layer, Option, Redacted, Schema, Stream } from 'effect'
-import { Spectrum, type Message, type Space } from 'spectrum-ts'
+import { Spectrum, SpectrumCloudError, type Message, type Space } from 'spectrum-ts'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { imessage } from 'spectrum-ts/providers/imessage'
 import { normalizeChannelAddress } from './address.ts'
@@ -13,6 +13,7 @@ import {
   ChannelEnrolment,
   type ChannelEnrolmentId,
   ChannelDisconnected,
+  ChannelConnectionRefused,
   ChannelInbound,
   ChannelMessageId,
   ChannelProvider,
@@ -108,7 +109,18 @@ const Envelope = Schema.Struct({
 })
 const decodeEnvelope = Schema.decodeUnknownEffect(Envelope)
 
-const disconnected = () => new ChannelDisconnected({ channel: 'iMessage' })
+/** Spectrum 12.10.1 exports structured cloud status errors. Client/project refusals are
+ * permanent for captured credentials; transport, rate limiting and server faults may recover. */
+// The SDK rejects with unknown input. Classify its exported error once at this boundary.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters
+const disconnected = (error: unknown) =>
+  error instanceof SpectrumCloudError &&
+  error.status >= 400 &&
+  error.status < 500 &&
+  error.status !== 408 &&
+  error.status !== 429
+    ? new ChannelConnectionRefused({ channel: 'iMessage' })
+    : new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })
 
 /** Spectrum lacks cancellation input; dispose late acquisition when the reply deadline interrupts it. */
@@ -132,14 +144,12 @@ const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredent
 
 type PhotonApplication = Effect.Success<ReturnType<typeof connectPhoton>>
 
-/** SDK stop cascades iterator cancellation and closes provider clients; a cleanup failure cannot leak content. */
+/** Effect 4.0.2 Channel.fromAsyncIterable registers iterator.return in the consuming scope,
+ * before this acquisition's release runs. Await Spectrum 12.10.1 stopOnce through provider
+ * disposal; its own five-second stream grace must not compete with a second cleanup deadline. */
 const closePhoton = Effect.fn('Channels.closePhoton')((application: PhotonApplication) =>
   Effect.tryPromise({ try: () => application.stop(), catch: disconnected }).pipe(
-    Effect.interruptible,
-    Effect.timeout('5 seconds'),
-    Effect.catchTag(['ChannelDisconnected', 'TimeoutError'], () =>
-      Effect.logError('iMessage connection cleanup failed'),
-    ),
+    Effect.catch(() => Effect.logError('iMessage provider disposal failed')),
   ),
 )
 
