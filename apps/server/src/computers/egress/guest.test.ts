@@ -123,10 +123,13 @@ describe('starting the proxy on a Computer', () => {
       })
       const foreign = NodeNet.createServer((socket) => socket.destroy())
       yield* Effect.acquireRelease(
-        Effect.callback<void>((resume) =>
-          foreign.listen(ports.proxy, '127.0.0.1', () => resume(Effect.void)),
-        ),
-        () => Effect.callback<void>((resume) => foreign.close(() => resume(Effect.void))),
+        Effect.callback<void>((resume) => {
+          foreign.listen(ports.proxy, '127.0.0.1', () => resume(Effect.void))
+        }),
+        () =>
+          Effect.callback<void>((resume) => {
+            foreign.close(() => resume(Effect.void))
+          }),
       )
       expect(
         yield* start(home, command),

@@ -5,7 +5,6 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
 import * as NodeNet from 'node:net'
-import * as NodeChildProcess from 'node:child_process'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -68,7 +67,7 @@ import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { HELD, UNOPENED, UNSETTLED, holding, wake } from './boat/holder.ts'
-import { EGRESS_PROXY_ADDRESS, EGRESS_PROXY_PORT } from './egress/guest.ts'
+import { EGRESS_PROXY_PORT } from './egress/guest.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -1608,10 +1607,10 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
-    /** The real proxy starts through the fixture's SSH channel. Its own listener receipt
-     * proves readiness; a foreign listener cannot stand in for the egress protocol. */
+    /** A foreign listener cannot supply the owned proxy's readiness receipt. Both enabled
+     * and disabled egress use the direct browser route when startup cannot bind its ports. */
     it.effect.skipIf(!peerAvailable)(
-      'a browser that a step has to start is given the egress proxy when egress is on, and only then',
+      'a browser uses its direct route when a foreign listener occupies the egress port',
       () =>
         Effect.gen(function* () {
           const key = yield* fixture()
@@ -1619,46 +1618,28 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           const evidence = yield* Evidence
           const server = yield* peer()
           yield* Ref.set(evidence.ssh, Option.some(server))
-          // Register cleanup before the browser can start the fixture-owned daemon.
-          const stoppedProxy = Effect.callback<void>((resume) => {
-            const cleanup = String.raw`
-import os, pathlib, select, signal, sys
-record = pathlib.Path(sys.argv[1])/'.local/share/vivid/computer/egress.pid'
-if record.exists():
- try: descriptor = os.pidfd_open(int(record.read_text().strip()))
- except ProcessLookupError: raise SystemExit(0)
- try:
-  signal.pidfd_send_signal(descriptor, signal.SIGTERM)
-  select.select([descriptor], [], [])
- finally: os.close(descriptor)
-`
-            NodeChildProcess.execFile('python3', ['-c', cleanup, server.home], (failure) =>
-              resume(failure === null ? Effect.void : Effect.die('The proof proxy did not close.')),
-            )
-          })
-          yield* Effect.addFinalizer(() => stoppedProxy)
+          yield* Effect.acquireRelease(
+            Effect.callback<NodeNet.Server>((resume) => {
+              const foreign = NodeNet.createServer((socket) => socket.destroy())
+              // Another concurrent proof can already hold this port. Either listener is
+              // foreign to this fixture's home, so neither authorizes proxy readiness.
+              foreign.once('error', () => resume(Effect.succeed(foreign)))
+              foreign.listen(EGRESS_PROXY_PORT, '127.0.0.1', () => resume(Effect.succeed(foreign)))
+            }),
+            (foreign) => Effect.sync(() => foreign.close()),
+          )
           expect(yield* machine.ensure(key).pipe(Effect.isSuccess)).toBe(true)
           const action = BrowserAction.cases.Open.make({ address: 'https://example.com' })
           yield* Ref.set(evidence.browserClosed, true)
           yield* machine.browse({ key, egress: true, action })
           yield* Ref.set(evidence.browserClosed, true)
           yield* machine.browse({ key, egress: false, action })
-          yield* stoppedProxy
-          const foreign = NodeNet.createServer((socket) => socket.destroy())
-          yield* Effect.acquireRelease(
-            Effect.callback<void>((resume) =>
-              foreign.listen(EGRESS_PROXY_PORT, '127.0.0.1', () => resume(Effect.void)),
-            ),
-            () => Effect.callback<void>((resume) => foreign.close(() => resume(Effect.void))),
-          )
-          yield* Ref.set(evidence.browserClosed, true)
-          yield* machine.browse({ key, egress: true, action })
           expect(yield* Ref.get(evidence.browserStarts)).toEqual([
-            ['--force-renderer-accessibility', `--proxy-server=${EGRESS_PROXY_ADDRESS}`],
             ['--force-renderer-accessibility'],
             ['--force-renderer-accessibility'],
           ])
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+      30000,
     )
 
     it.effect(

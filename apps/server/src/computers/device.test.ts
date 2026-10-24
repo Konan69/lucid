@@ -1206,7 +1206,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
             Effect.forkScoped,
           )
           yield* TestClock.adjust('9 seconds')
-          expect(Option.isSome(yield* Fiber.poll(waiting))).toBe(true)
+          expect(waiting.pollUnsafe()).toBeDefined()
           expect(yield* Fiber.join(waiting)).toEqual(WindowOutcome.cases.Busy.make({}))
           expect(yield* Queue.size(subject.link.requests)).toBe(0)
           expect((yield* windowLedger(subject)).map((row) => [row.id, row.status])).toEqual([
