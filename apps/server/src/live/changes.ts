@@ -9,6 +9,7 @@ import * as Latch from 'effect/Latch'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as PubSub from 'effect/PubSub'
+import * as Predicate from 'effect/Predicate'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
@@ -216,6 +217,10 @@ const kindOf = (topic: string) => Option.fromUndefinedOr(kinds.get(topic.slice(0
 
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')
 
+/** Paces a Layer-owned connection supervisor after typed connection loss. Permanent SQL
+ * failures stop it. Source: unmeasured. The owning scope cancels transient recovery on shutdown. */
+const LISTEN_RECONNECT_DELAY = '2 seconds'
+
 /** Scoped listener acquisition confirms its first LISTEN before exposing a subscribable bus. */
 const makeChanges = Effect.fn('Changes.make')(function* () {
   const sql = yield* PgClient
@@ -254,13 +259,16 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
     )
   }).pipe(Effect.scoped)
 
-  // The listener is supervised for the life of the server: a dropped connection is logged and
-  // re-opened, never left dead with every live query quietly going stale.
+  // Only a lost connection is transient. Authentication, authorization and statement failures
+  // stop the listener visibly; re-running LISTEN cannot repair those conditions.
   const listener = yield* listen.pipe(
-    Effect.catchTag('SqlError', () =>
-      Effect.logWarning('The change listener lost its connection; reconnecting'),
+    Effect.retry({
+      schedule: Schedule.spaced(LISTEN_RECONNECT_DELAY),
+      while: (error) => Predicate.isTagged(error.reason, 'ConnectionError'),
+    }),
+    Effect.tapError((error) =>
+      Effect.logError('The change listener stopped', { failure: error.reason._tag }),
     ),
-    Effect.repeat(Schedule.spaced('2 seconds')),
     Effect.forkScoped,
   )
   // Propagate startup defects instead of awaiting a latch that a dead listener cannot open.

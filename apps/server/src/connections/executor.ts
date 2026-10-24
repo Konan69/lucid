@@ -1734,7 +1734,19 @@ function makeAvailabilityRecorder(
 
 /** Thirty seconds bounds repeated outage traffic while allowing prompt recovery after a 5s timeout. */
 const INSPECTION_FAILURE_TTL = '30 seconds'
+/** Bounds setup refusal retention while the provider offers no setup revision signal.
+ * Source: unmeasured. Expiry invalidates inspection and the next read rechecks setup. */
 const REFUSAL_TTL_MILLIS = 10 * 60 * 1000
+/** Bounds one read-only setup exchange because Executor can leave it unanswered.
+ * Source: unmeasured. Expiry returns ExecutorTransportFailure and retains the last display fact. */
+const SETUP_EXCHANGE_LIMIT = '5 seconds'
+/** Bounds successful setup fact staleness in the absence of a provider setup revision signal.
+ * Source: unmeasured. Expiry makes the next read inspect again. */
+const INSPECTION_SUCCESS_TTL = '10 minutes'
+/** Bounds discovery metadata staleness when a provider deploy changes its tools.
+ * Source: unmeasured. Expiry reloads on demand without interrupting a running tool. */
+const TOOL_SNAPSHOT_TTL = '5 minutes'
+
 const SetupRefusal = Schema.Struct({
   authorization: ServiceAuthorization.cases.SetupRequired,
   expiresAtMillis: Schema.Finite,
@@ -1834,7 +1846,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       const authorization = yield* permits.withPermits(1)(
         inspect(definition.value).pipe(
           Effect.timeoutOrElse({
-            duration: '5 seconds',
+            duration: SETUP_EXCHANGE_LIMIT,
             orElse: () =>
               Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
           }),
@@ -1854,7 +1866,8 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     }),
     {
       capacity: 1000,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : INSPECTION_FAILURE_TTL),
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) ? INSPECTION_SUCCESS_TTL : INSPECTION_FAILURE_TTL,
     },
   )
   const refusals = yield* makeSetupRefusals(inspections)
@@ -1901,7 +1914,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       if (Option.isSome(retained)) return retained.value
       const inspected = yield* inspect(requirement).pipe(
         Effect.timeoutOrElse({
-          duration: '5 seconds',
+          duration: SETUP_EXCHANGE_LIMIT,
           orElse: () =>
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
         }),
@@ -3034,7 +3047,7 @@ function makeRetire(http: ExecutorHttp) {
 const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorHttp) {
   const snapshots = yield* Cache.makeWith(makeDiscovery(http), {
     capacity: 1000,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? TOOL_SNAPSHOT_TTL : 0),
   })
   const discover = Effect.fn('Executor.discoverCached')(function* (references: ExecutorReferences) {
     if (ExecutorReferences.guards.Authorized(references)) {
@@ -3079,13 +3092,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ),
   )
   const http = makeHttp(client, yield* loadGoogleClient())
-  const remoteCatalog = yield* retainCatalog(
-    makeCatalog(http)().pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'connections', message: 'The catalog is unavailable.' }),
-      ),
-    ),
-  )
+  const remoteCatalog = yield* retainCatalog(makeCatalog(http)())
   // Vivid's own Google services lead the catalogue and need nothing from Executor to be listed,
   // so they stay offered while its public catalogue feed is unavailable.
   const google = googleServices.map((service) =>

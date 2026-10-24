@@ -1,3 +1,4 @@
+import { CATALOG_RETRY_DELAY } from './catalog.ts'
 import {
   Cause,
   Clock,
@@ -501,7 +502,7 @@ function listCatalogLifetime(
     Cause.findErrorOption(exit.cause),
     (error) => error instanceof ServiceUnavailable,
   )
-    ? '30 seconds'
+    ? CATALOG_RETRY_DELAY
     : 0
 }
 

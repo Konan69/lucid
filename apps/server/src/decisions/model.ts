@@ -109,11 +109,6 @@ const RECOVERY_PROBE_BUDGET = '2500 millis'
 /** Suspicion is weak evidence from one bounded attempt. Thirty seconds matches the outage
  * window: an isolated slow call cannot poison a later, otherwise independent interaction. */
 const DECISION_SUSPICION_MILLIS = 30_000
-/** A rejected credential requires operator repair, unlike transient transport failures.
- * Five minutes reduces repeated probes tenfold versus the thirty-second outage window;
- * one error per window announces the actionable fault without warning on every action.
- * A rebuilt gateway Layer with repaired configuration starts ready immediately. */
-const DECISION_AUTHENTICATION_BACKOFF_MILLIS = 300_000
 /** A 403 may be payload-specific, so requests remain admitted. One warning per
  * minute coalesces repeated rejection without suppressing a later healthy call;
  * this matches the metadata failure-cache interval while bounding log volume. */
@@ -127,7 +122,7 @@ const Availability = Schema.TaggedUnion({
   Ready: {},
   Suspect: { id: SuspicionId, markedAt: Schema.Finite, expiresAt: Schema.Finite },
   Cooling: { retryAt: Schema.Finite },
-  CredentialCooling: { retryAt: Schema.Finite },
+  CredentialRejected: {},
   Probing: {},
 })
 const Admission = Schema.TaggedUnion({
@@ -221,7 +216,7 @@ export const decisionWouldAttempt = Effect.gen(function* () {
     Ready: () => true,
     Suspect: () => true,
     Cooling: ({ retryAt }) => now >= retryAt,
-    CredentialCooling: ({ retryAt }) => now >= retryAt,
+    CredentialRejected: () => false,
     Probing: () => false,
   })
 }).pipe(Effect.withSpan('Decisions.wouldAttempt'))
@@ -246,10 +241,7 @@ const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Avai
           now < retryAt
             ? [Admission.cases.Backoff.make({}), current]
             : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
-        CredentialCooling: ({ retryAt }) =>
-          now < retryAt
-            ? [Admission.cases.Backoff.make({}), current]
-            : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
+        CredentialRejected: () => [Admission.cases.Backoff.make({}), current],
         Probing: () => [Admission.cases.Backoff.make({}), current],
       }),
   )
@@ -257,13 +249,11 @@ const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Avai
 
 type Settlement = readonly [Option.Option<typeof Transition.Type>, typeof Availability.Type]
 
-/** Credential rejection is a separate process state, never transport-outage evidence.
- * The transition's single error log replaces caller warnings and contains no key or payload. */
-const authenticationSettlement = (now: number): Settlement => [
+/** A rejected key is permanent for this model Layer. Only rebuilding with repaired configuration
+ * admits new calls. The transition logs once without retaining the credential or payload. */
+const authenticationSettlement = (): Settlement => [
   Option.some(Transition.cases.AuthenticationRejected.make({})),
-  Availability.cases.CredentialCooling.make({
-    retryAt: now + DECISION_AUTHENTICATION_BACKOFF_MILLIS,
-  }),
+  Availability.cases.CredentialRejected.make({}),
 ]
 
 /** Capturing the unique suspicion mark at admission proves the attempt started after it
@@ -308,9 +298,9 @@ const settleNormal = (
   now: number,
 ): Settlement => {
   if (Outcome.guards.AuthenticationFailure(outcome))
-    return Availability.guards.CredentialCooling(current)
+    return Availability.guards.CredentialRejected(current)
       ? [Option.none(), current]
-      : authenticationSettlement(now)
+      : authenticationSettlement()
   if (!Availability.isAnyOf(['Ready', 'Suspect'])(current)) return [Option.none(), current]
   return Outcome.match(outcome, {
     Outage: () => [
@@ -322,7 +312,7 @@ const settleNormal = (
     TimedOut: () => timeoutSettlement(current, admission, now),
     Success: () => [Option.none(), Availability.cases.Ready.make({})],
     RequestFailure: () => [Option.none(), Availability.cases.Ready.make({})],
-    AuthenticationFailure: () => authenticationSettlement(now),
+    AuthenticationFailure: () => authenticationSettlement(),
     Cancelled: () =>
       now - admission.startedAt >= DECISION_OUTAGE_MINIMUM_MILLIS
         ? timeoutSettlement(current, admission, now)
@@ -351,7 +341,7 @@ const settleProbe = (outcome: typeof Outcome.Type, now: number): Settlement => {
     TimedOut: () => cooling,
     CallerLocalTimeout: () => cooling,
     Cancelled: () => cooling,
-    AuthenticationFailure: () => authenticationSettlement(now),
+    AuthenticationFailure: () => authenticationSettlement(),
   })
 }
 
