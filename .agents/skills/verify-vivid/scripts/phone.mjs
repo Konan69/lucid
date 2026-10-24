@@ -33,7 +33,8 @@ async function enter(state, run) {
     readAccount(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8')),
   )
   await run(['press', await target(run, 'Log in')])
-  await run(['fill', await target(run, 'Email'), account.email])
+  // Android's interactive snapshot names the input by its visible placeholder.
+  await run(['fill', await target(run, 'name@example.com'), account.email])
   await run(['press', await target(run, 'Continue')])
   await run(['fill', await target(run, 'Password'), account.password], [account.password])
   await run(['press', await target(run, 'Sign in')])
