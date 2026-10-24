@@ -467,6 +467,9 @@ importers:
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vivid/state':
+        specifier: workspace:*
+        version: link:../../packages/client/state
       effect:
         specifier: 4.0.2
         version: 4.0.2

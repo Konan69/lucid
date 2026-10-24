@@ -7,7 +7,7 @@ import {
   type LiveQuery,
   type LiveResult,
 } from '@vivid/state'
-import { Effect, Option, Stream } from 'effect'
+import { Option, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { change, changing, start } from './app'

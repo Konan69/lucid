@@ -2,10 +2,14 @@ import type { Service } from '@vivid/contracts'
 import { Array as Arr, Option } from 'effect'
 
 /**
- * What a Person uses a service for, in the order the Integrations screen shows the groups:
+ * What a Person uses a service for, in the order Integrations shows the groups on every device:
  * everyday things first (mail, files, chat), then work, then the specialist tools.
+ *
+ * The browser and the phone each had this whole module, word for word. It is here so a service
+ * is found under the same heading everywhere and a newly placed service is placed once; each app
+ * only draws the groups.
  */
-export const PURPOSES = [
+const PURPOSES = [
   'Mail and calendar',
   'Files and notes',
   'Chat and meetings',
@@ -15,7 +19,7 @@ export const PURPOSES = [
   'Code and data',
   'More',
 ] as const
-export type Purpose = (typeof PURPOSES)[number]
+export type IntegrationPurpose = (typeof PURPOSES)[number]
 
 /**
  * The purpose of each service Vivid can place, by the whole name the catalog gives it. The
@@ -108,24 +112,25 @@ const BY_NAME = {
   'microsoft learn': 'Code and data',
   'google cloud bigquery': 'Code and data',
   'google bigquery': 'Code and data',
-} satisfies Record<string, Purpose>
+} satisfies Record<string, IntegrationPurpose>
 
-const PLACED = new Map<string, Purpose>(Object.entries(BY_NAME))
+const PLACED = new Map<string, IntegrationPurpose>(Object.entries(BY_NAME))
 
 /** Where a service goes: its purpose when Vivid can place it, "More" when it cannot. */
-const purposeOf = (service: Service): Purpose =>
+const purposeOf = (service: Service): IntegrationPurpose =>
   Option.getOrElse(
     Option.fromUndefinedOr(PLACED.get(service.name.trim().toLocaleLowerCase())),
-    (): Purpose => 'More',
+    (): IntegrationPurpose => 'More',
   )
 
 /**
  * The catalog's answer in groups, each group in the catalog's own order (most used first) and
  * the groups in the order of `PURPOSES`. A purpose nothing answered to is left out.
  */
-export function byPurpose(
-  services: ReadonlyArray<Service>,
-): ReadonlyArray<{ readonly purpose: Purpose; readonly services: ReadonlyArray<Service> }> {
+export function byPurpose(services: ReadonlyArray<Service>): ReadonlyArray<{
+  readonly purpose: IntegrationPurpose
+  readonly services: ReadonlyArray<Service>
+}> {
   const groups = Arr.groupBy(services, purposeOf)
   return PURPOSES.flatMap((purpose) => {
     const members = groups[purpose]
