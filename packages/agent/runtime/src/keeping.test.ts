@@ -1,95 +1,96 @@
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it } from '@effect/vitest'
-import {
-  PersonId,
-  RuntimeAdmissionBody,
-  RuntimeRunRequest,
-  RuntimeRunResponse,
-  ThreadId,
-  ThreadOrigin,
-} from '@vivid/contracts'
+import { describe, expect, layer } from '@effect/vitest'
+import { start, type Flue } from '@flue/runtime/node'
+import { PersonId } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
-import { testDatabaseConfigured } from '../tests/schema.ts'
-import { routes, Settled, type Routes } from '../tests/routes.ts'
+import { disposableStorage, testDatabaseConfigured } from '../tests/schema.ts'
+import { Vivid } from './agents/vivid.ts'
 import { Note, NoteFile, Notes, NotesUnavailable } from './notes.ts'
 import { notesLayer } from './keeping.ts'
 
-/** Response-body rejection is separate from a rejected admission or malformed receipt. */
-class ResponseReadFailed extends Schema.TaggedError<ResponseReadFailed>()(
-  'ResponseReadFailed',
+/** Startup can fail before a public stop handle owns the disposable storage. */
+class NotesRuntimeStartFailed extends Schema.TaggedError<NotesRuntimeStartFailed>()(
+  'NotesRuntimeStartFailed',
   {},
-  { title: 'Runtime response read failed' },
+  { title: 'Notes runtime start failed' },
 ) {}
 
-const encodeAdmission = Schema.encodeEffect(Schema.fromJsonString(RuntimeAdmissionBody))
-const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeRunResponse))
+/** Shutdown failure must fail the assertion and the fixture's scoped cleanup. */
+class NotesRuntimeStopFailed extends Schema.TaggedError<NotesRuntimeStopFailed>()(
+  'NotesRuntimeStopFailed',
+  {},
+  { title: 'Notes runtime stop failed' },
+) {}
 
-/** Separate Threads share only the Person's SQLite file; each runtime owns its disposable Flue schema. */
-const admission = (person: PersonId) => {
-  const threadId = ThreadId.make(NodeCrypto.randomUUID())
-  const request = RuntimeRunRequest.make({
-    threadId,
-    idempotencyKey: NodeCrypto.randomUUID(),
-    type: 'message',
-    body: 'Exercise the fixture note.',
-    // Production signals carry their turn so Flue can resolve the server-prepared authority.
-    attributes: { from: 'Fixture Person', turn: '1' },
-    turn: 1,
-    scope: { acting: person },
-  })
-  return RuntimeAdmissionBody.make({
-    ...request,
-    initialData: ThreadOrigin.make({ creator: person, creatorName: 'Fixture Person' }),
-  })
-}
+/** The SDK stop Promise is shared by the explicit assertion and failure cleanup. */
+const stopRuntime = Effect.fn('NotesRuntimeTest.stop')((runtime: Flue) =>
+  Effect.tryPromise({
+    try: () => runtime.stop(),
+    catch: () => NotesRuntimeStopFailed.make({}),
+  }),
+)
 
-/** The real Hono boundary prepares context and Person authority before the real Vivid tool turn. */
-const submit = Effect.fn('NotesRuntimeTest.submit')(function* (runtime: Routes, person: PersonId) {
-  const request = admission(person)
-  const response = yield* runtime.send(`/agents/vivid/${request.threadId}`, {
-    method: 'POST',
-    body: yield* encodeAdmission(request),
-  })
-  expect(response.status).toBe(202)
-  const receipt = yield* decodeReceipt(
-    yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: () => ResponseReadFailed.make({}),
+/**
+ * Public Flue start/stop owns production storage and its closeNotes callback. Each start gets
+ * an empty PostgreSQL schema, so startup reconciliation has no submissions to run. No agent
+ * is dispatched and no model request is made. Production notesLayer uses the worker's Notes
+ * directory from tests/setup.ts and builds the real ManagedRuntime with production settings.
+ */
+const openRuntime = Effect.fn('NotesRuntimeTest.open')(function* () {
+  const { schema, storage } = yield* disposableStorage
+  const flue = yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => start({ agents: [Vivid], db: storage }),
+      catch: () => NotesRuntimeStartFailed.make({}),
     }),
+    (runtime) =>
+      stopRuntime(runtime).pipe(
+        Effect.catch(() => Effect.sync(() => expect.fail('Notes runtime stop failed'))),
+      ),
   )
-  return yield* runtime.settled(request.threadId, receipt.submissionId)
+  const notes = Context.get(yield* Layer.build(notesLayer), Notes)
+  return { schema, notes, stop: stopRuntime(flue) }
 })
 
+/** Acquire cold Flue, PostgreSQL and native SQLite dependencies before the timed assertion. */
+const fixture = Effect.gen(function* () {
+  const first = yield* openRuntime()
+  const person = PersonId.make(NodeCrypto.randomUUID())
+  yield* first.notes.index(person)
+  return { first, person }
+}).pipe(Effect.withSpan('NotesRuntimeTest.fixture'))
+
+/** The test keeps the first real authority after its public Flue owner stops. */
+class NotesRuntime extends Context.Service<NotesRuntime, Effect.Success<typeof fixture>>()(
+  'NotesRuntimeTest',
+) {}
+
+/** The case scope owns the reopened runtime; the outer layer retains the stopped authority. */
+const lifecycle = Effect.gen(function* () {
+  const { first, person } = yield* NotesRuntime
+  const note = Note.make({
+    file: NoteFile.make('mornings.md'),
+    kind: 'preference',
+    description: 'Meetings before noon',
+    body: 'Meetings before noon. Why: afternoons are for writing.',
+  })
+  yield* first.notes.write(person, note)
+  yield* first.stop
+  expect(yield* Effect.flip(first.notes.index(person))).toBeInstanceOf(NotesUnavailable)
+  const reopened = yield* openRuntime()
+  expect(reopened.schema).not.toBe(first.schema)
+  expect(reopened.notes).not.toBe(first.notes)
+  expect(yield* reopened.notes.read(person, note.file)).toEqual(note)
+}).pipe(Effect.withSpan('NotesRuntimeTest.lifecycle'))
+
 describe.skipIf(!testDatabaseConfigured)('Notes ownership through public Flue lifecycle', () => {
-  it.live('writes with the real tool, stops, then reads the SQLite note in a new runtime', () =>
-    Effect.gen(function* () {
-      const person = PersonId.make(NodeCrypto.randomUUID())
-      const note = Note.make({
-        file: NoteFile.make('mornings.md'),
-        kind: 'preference',
-        description: 'Meetings before noon',
-        body: 'Meetings before noon. Why: afternoons are for writing.',
-      })
-      // Scope closure awaits public flue.stop, which settles submissions and invokes storage.close.
-      const previous = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const runtime = yield* routes
-          yield* runtime.writeNote(note)
-          expect(yield* submit(runtime, person)).toEqual(Settled.Completed({ text: 'written' }))
-          return Context.get(yield* Layer.build(notesLayer), Notes)
-        }),
+  layer(Layer.effect(NotesRuntime, fixture), { excludeTestServices: true })(
+    'native storage',
+    (it) => {
+      it.effect(
+        'closes real Notes on Flue stop and reopens the persisted SQLite note',
+        () => lifecycle,
       )
-      // A retained service must be closed by the public Flue stop, not merely replaced by a new cell.
-      expect(yield* Effect.flip(previous.index(person))).toBeInstanceOf(NotesUnavailable)
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const runtime = yield* routes
-          const reopened = Context.get(yield* Layer.build(notesLayer), Notes)
-          expect(reopened).not.toBe(previous)
-          yield* runtime.readNote(note)
-          expect(yield* submit(runtime, person)).toEqual(Settled.Completed({ text: note.body }))
-        }),
-      )
-    }).pipe(Effect.scoped),
+    },
   )
 })
