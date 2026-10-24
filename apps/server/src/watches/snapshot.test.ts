@@ -16,7 +16,7 @@ import type { Actor } from '../auth/access.ts'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes } from '../live/changes.ts'
-import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
+import { WatchedApps } from './apps.ts'
 import { ExecutorEvents } from './events.ts'
 import { Watches, watchesLayer } from './lifecycle.ts'
 import { ServerConfig } from '../config.ts'
@@ -175,9 +175,8 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
           refreshBefore: new Date(604800000),
         })
         const outcome = yield* Effect.result(watching.create(actor, request))
-        expect(outcome).toEqual(
-          Result.fail(new WatchConnectionRemoved({ connectionId: connection.id })),
-        )
+        expect(outcome).toHaveProperty('failure._tag', 'WatchConnectionRemoved')
+        expect(outcome).toHaveProperty('failure.connectionId', connection.id)
         yield* Queue.take(executor.subscribed)
         expect(yield* listRecords(actor)).toEqual([])
       }).pipe(Effect.scoped),
