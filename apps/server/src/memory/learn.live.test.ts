@@ -193,7 +193,6 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
           const helix = yield* HelixMemory
           expect(yield* helix.scopes(partition)).toEqual(scopes)
         }).pipe(Effect.scoped),
-      { timeout: 120000 },
     )
   })
 })

@@ -55,7 +55,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
         ),
       ),
     ),
-    { excludeTestServices: true, timeout: 120_000 },
+    { excludeTestServices: true },
   )((it) => {
     it.effect(
       'adds GitHub, completes the key card, discovers tools and isolates a second Person',
@@ -193,7 +193,6 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
             }).pipe(Effect.scoped, Effect.provide(context))
           }).pipe(Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped)
         }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
-      { timeout: 120_000 },
     )
   })
 })

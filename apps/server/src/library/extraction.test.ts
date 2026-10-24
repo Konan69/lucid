@@ -27,7 +27,6 @@ import {
 import { MAX_LIBRARY_FILE_BYTES } from './ingest.ts'
 import { type Launch, ProcessEnd, processOptions } from './extraction/process.ts'
 import { Fixture } from './fixtures/mode.ts'
-import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { rejectionOf } from './extraction/rejection.ts'
 import { Pages } from './fixtures/process/pages.ts'
@@ -102,38 +101,32 @@ testLayer(NodeFileSystem.layer)((it) => {
    * the signal. The deadline is never moved. The server process survives: the same test then extracts
    * a real PDF through the production entry.
    */
-  it.effect(
-    'E4 reports heap exhaustion from native evidence and keeps extracting',
-    () =>
-      Effect.gen(function* () {
-        const owned = nativeLaunch(Fixture.cases.grow.make({}), GROW_HEAP_MB)
-        const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
-        assertFailure(exit, new ExtractionLimitExceeded({ limit: 'heap' }))
-        expect(yield* Deferred.await(owned.entered)).toBe(true)
-        expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
-        expect(yield* reportRemoved(owned)).toBe(true)
-        expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
-      }),
-    CRASH_TIMEOUT_MS,
+  it.effect('E4 reports heap exhaustion from native evidence and keeps extracting', () =>
+    Effect.gen(function* () {
+      const owned = nativeLaunch(Fixture.cases.grow.make({}), GROW_HEAP_MB)
+      const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
+      assertFailure(exit, new ExtractionLimitExceeded({ limit: 'heap' }))
+      expect(yield* Deferred.await(owned.entered)).toBe(true)
+      expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
+      expect(yield* reportRemoved(owned)).toBe(true)
+      expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
+    }),
   )
 
   /**
    * The same signal without heap exhaustion is not `heap`: a bare abort inside the handler is
    * retryable `ExtractionUnavailable`. The abort ended only that process; the next extraction runs.
    */
-  it.effect(
-    'reports an aborted process as unavailable and keeps extracting',
-    () =>
-      Effect.gen(function* () {
-        const owned = nativeLaunch(Fixture.cases.abort.make({}), EXTRACTION_HEAP_MB)
-        const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
-        assertFailure(exit, new ExtractionUnavailable())
-        expect(yield* Deferred.await(owned.entered)).toBe(true)
-        expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
-        expect(yield* reportRemoved(owned)).toBe(true)
-        expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
-      }),
-    CRASH_TIMEOUT_MS,
+  it.effect('reports an aborted process as unavailable and keeps extracting', () =>
+    Effect.gen(function* () {
+      const owned = nativeLaunch(Fixture.cases.abort.make({}), EXTRACTION_HEAP_MB)
+      const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
+      assertFailure(exit, new ExtractionUnavailable())
+      expect(yield* Deferred.await(owned.entered)).toBe(true)
+      expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
+      expect(yield* reportRemoved(owned)).toBe(true)
+      expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
+    }),
   )
 
   /** E5 exercises process.exit inside an actual native RPC handler, rather than a mocked failure. */

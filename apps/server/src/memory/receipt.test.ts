@@ -224,285 +224,271 @@ const supersession = Effect.fn('ReceiptTest.supersession')(function* (neighbours
   expect(yield* inspect(f.partition)).toEqual(first)
 })
 
-/** Suite acquisition waits for all thirteen real index-build success signals on empty storage; assertion limits stay unchanged. */
-const INDEX_ACQUISITION_LIMIT = 60_000
-
 /** These assertions cross real durable Helix requests; no fake storage, sleep, poll, or test timeout supplies correctness. */
 describe.skipIf(process.env['VIVID_TEST_HELIX_URL'] === undefined)('Helix memory receipts', () => {
-  layer(adapters, { timeout: INDEX_ACQUISITION_LIMIT, excludeTestServices: true })(
-    'indexed storage',
-    (it) => {
-      it.effect('inserts once and reads the first memory from its tenant-qualified receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              record: f.seed,
-              embedding: f.embedding,
-              extends: Option.none<MemoryId>(),
-            }
-            expect(yield* f.helix.insertOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
-            expect(yield* f.helix.insertOnce({ ...input, record: f.replacement })).toEqual(
-              ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
-            )
-            expect(yield* f.helix.list({ partition: f.partition, scopes: [scope] })).toEqual([
-              f.seed,
-            ])
-            expect(yield* f.helix.receipt(input)).toEqual(Option.some(f.seed.memory.id))
-            expect(
-              yield* f.helix.receipt({
-                ...input,
-                partition: MemoryPartition.make(`c-other-${NodeCrypto.randomUUID()}`),
-              }),
-            ).toEqual(Option.none())
-            const stored = yield* inspect(f.partition)
-            expect(stored.memories).toHaveLength(1)
-            expect(stored.receipts).toEqual([{ memoryId: f.seed.memory.id }])
-          }),
-        ),
-      )
+  layer(adapters, { excludeTestServices: true })('indexed storage', (it) => {
+    it.effect('inserts once and reads the first memory from its tenant-qualified receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            record: f.seed,
+            embedding: f.embedding,
+            extends: Option.none<MemoryId>(),
+          }
+          expect(yield* f.helix.insertOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
+          expect(yield* f.helix.insertOnce({ ...input, record: f.replacement })).toEqual(
+            ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
+          )
+          expect(yield* f.helix.list({ partition: f.partition, scopes: [scope] })).toEqual([f.seed])
+          expect(yield* f.helix.receipt(input)).toEqual(Option.some(f.seed.memory.id))
+          expect(
+            yield* f.helix.receipt({
+              ...input,
+              partition: MemoryPartition.make(`c-other-${NodeCrypto.randomUUID()}`),
+            }),
+          ).toEqual(Option.none())
+          const stored = yield* inspect(f.partition)
+          expect(stored.memories).toHaveLength(1)
+          expect(stored.receipts).toEqual([{ memoryId: f.seed.memory.id }])
+        }),
+      ),
+    )
 
-      it.effect('races independent acquisitions without committing two records or receipts', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              embedding: f.embedding,
-              extends: Option.none<MemoryId>(),
+    it.effect('races independent acquisitions without committing two records or receipts', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            embedding: f.embedding,
+            extends: Option.none<MemoryId>(),
+          }
+          const results = yield* Effect.all(
+            [
+              independentInsert({ ...input, record: f.seed }),
+              independentInsert({ ...input, record: f.replacement }),
+            ],
+            { concurrency: 'unbounded' },
+          )
+          const stored = yield* inspect(f.partition)
+          expect(stored.memories).toHaveLength(1)
+          expect(stored.receipts).toHaveLength(1)
+          const survivor = stored.memories[0]
+          if (survivor === undefined) expect.fail('One survivor required')
+          expect(yield* f.helix.receipt(input)).toEqual(Option.some(survivor.memoryId))
+          expect(stored.receipts).toEqual([{ memoryId: survivor.memoryId }])
+          let applied = 0
+          for (const result of results) {
+            if (Result.isFailure(result)) {
+              expect(isConflict(result.failure) || isDuplicate(result.failure)).toBe(true)
+            } else {
+              ReceiptedWrite.match(result.success, {
+                Applied: () => {
+                  applied += 1
+                },
+                Recorded: ({ memoryId }) => expect(memoryId).toBe(survivor.memoryId),
+                Missing: () => expect.fail('Insert cannot be missing'),
+              })
             }
-            const results = yield* Effect.all(
-              [
-                independentInsert({ ...input, record: f.seed }),
-                independentInsert({ ...input, record: f.replacement }),
-              ],
-              { concurrency: 'unbounded' },
-            )
-            const stored = yield* inspect(f.partition)
-            expect(stored.memories).toHaveLength(1)
-            expect(stored.receipts).toHaveLength(1)
-            const survivor = stored.memories[0]
-            if (survivor === undefined) expect.fail('One survivor required')
-            expect(yield* f.helix.receipt(input)).toEqual(Option.some(survivor.memoryId))
-            expect(stored.receipts).toEqual([{ memoryId: survivor.memoryId }])
-            let applied = 0
-            for (const result of results) {
-              if (Result.isFailure(result)) {
-                expect(isConflict(result.failure) || isDuplicate(result.failure)).toBe(true)
-              } else {
-                ReceiptedWrite.match(result.success, {
-                  Applied: () => {
-                    applied += 1
-                  },
-                  Recorded: ({ memoryId }) => expect(memoryId).toBe(survivor.memoryId),
-                  Missing: () => expect.fail('Insert cannot be missing'),
-                })
-              }
-            }
-            expect(applied).toBe(1)
-          }),
-        ),
-      )
+          }
+          expect(applied).toBe(1)
+        }),
+      ),
+    )
 
-      it.effect('creates one EXTENDS edge with insertion and skips missing targets', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            yield* f.helix.insert({
-              partition: f.partition,
-              record: f.outgoing,
-              embedding: f.embedding,
-            })
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              record: f.seed,
-              embedding: f.embedding,
-              extends: Option.some(f.outgoing.memory.id),
-            }
-            expect(yield* f.helix.insertOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
-            expect(yield* f.helix.insertOnce(input)).toEqual(
-              ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
-            )
-            const context = yield* f.helix.expand({
+    it.effect('creates one EXTENDS edge with insertion and skips missing targets', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          yield* f.helix.insert({
+            partition: f.partition,
+            record: f.outgoing,
+            embedding: f.embedding,
+          })
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            record: f.seed,
+            embedding: f.embedding,
+            extends: Option.some(f.outgoing.memory.id),
+          }
+          expect(yield* f.helix.insertOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
+          expect(yield* f.helix.insertOnce(input)).toEqual(
+            ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
+          )
+          const context = yield* f.helix.expand({
+            partition: f.partition,
+            scopes: [scope],
+            ids: [f.seed.memory.id],
+            limit: 10,
+          })
+          expect(context.map((value) => value.memory.id)).toEqual([f.outgoing.memory.id])
+          expect((yield* inspect(f.partition)).edges).toEqual([{ kind: 'EXTENDS' }])
+          const missingTarget = {
+            ...input,
+            receiptId: MemoryReceiptId.make(NodeCrypto.randomUUID()),
+            record: f.replacement,
+            extends: Option.some(MemoryId.make(NodeCrypto.randomUUID())),
+          }
+          expect(yield* f.helix.insertOnce(missingTarget)).toEqual(
+            ReceiptedWrite.cases.Applied.make({}),
+          )
+          expect(
+            yield* f.helix.expand({
               partition: f.partition,
               scopes: [scope],
-              ids: [f.seed.memory.id],
+              ids: [f.replacement.memory.id],
               limit: 10,
+            }),
+          ).toEqual([])
+          expect((yield* inspect(f.partition)).edges).toHaveLength(1)
+        }),
+      ),
+    )
+
+    it.effect('reinforces once, preserving the first aliases, timestamp and EXTENDS edge', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          for (const value of [f.seed, f.outgoing])
+            yield* f.helix.insert({
+              partition: f.partition,
+              record: value,
+              embedding: f.embedding,
             })
-            expect(context.map((value) => value.memory.id)).toEqual([f.outgoing.memory.id])
-            expect((yield* inspect(f.partition)).edges).toEqual([{ kind: 'EXTENDS' }])
-            const missingTarget = {
+          const reinforced = MemoryRecord.make({
+            ...f.seed,
+            aliases: [...f.seed.aliases, 'second-alias'],
+            memory: Memory.make({ ...f.seed.memory, updatedAt: 200 }),
+          })
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            record: reinforced,
+            extends: Option.some(f.outgoing.memory.id),
+          }
+          expect(yield* f.helix.reinforceOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
+          const replayed = MemoryRecord.make({
+            ...reinforced,
+            aliases: [...reinforced.aliases, 'replay-alias'],
+            memory: Memory.make({ ...reinforced.memory, updatedAt: 300 }),
+          })
+          expect(yield* f.helix.reinforceOnce({ ...input, record: replayed })).toEqual(
+            ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
+          )
+          expect(yield* f.helix.get({ partition: f.partition, id: f.seed.memory.id })).toEqual(
+            Option.some(reinforced),
+          )
+          const stored = yield* inspect(f.partition)
+          const reinforcedRow = stored.memories.find((row) => row.memoryId === f.seed.memory.id)
+          if (reinforcedRow === undefined) expect.fail('Reinforced record required')
+          expect(reinforcedRow.accessCount).toBe(2)
+          expect(stored.edges).toEqual([{ kind: 'EXTENDS' }])
+          expect(stored.receipts).toEqual([{ memoryId: f.seed.memory.id }])
+        }),
+      ),
+    )
+
+    it.effect('skips reinforcement self-links and missing EXTENDS targets', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          yield* f.helix.insert({
+            partition: f.partition,
+            record: f.seed,
+            embedding: f.embedding,
+          })
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            record: f.seed,
+            extends: Option.some(f.seed.memory.id),
+          }
+          expect(yield* f.helix.reinforceOnce(input)).toEqual(ReceiptedWrite.cases.Applied.make({}))
+          expect(
+            yield* f.helix.reinforceOnce({
               ...input,
               receiptId: MemoryReceiptId.make(NodeCrypto.randomUUID()),
-              record: f.replacement,
               extends: Option.some(MemoryId.make(NodeCrypto.randomUUID())),
-            }
-            expect(yield* f.helix.insertOnce(missingTarget)).toEqual(
-              ReceiptedWrite.cases.Applied.make({}),
-            )
-            expect(
-              yield* f.helix.expand({
-                partition: f.partition,
-                scopes: [scope],
-                ids: [f.replacement.memory.id],
-                limit: 10,
-              }),
-            ).toEqual([])
-            expect((yield* inspect(f.partition)).edges).toHaveLength(1)
-          }),
-        ),
-      )
-
-      it.effect('reinforces once, preserving the first aliases, timestamp and EXTENDS edge', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            for (const value of [f.seed, f.outgoing])
-              yield* f.helix.insert({
-                partition: f.partition,
-                record: value,
-                embedding: f.embedding,
-              })
-            const reinforced = MemoryRecord.make({
-              ...f.seed,
-              aliases: [...f.seed.aliases, 'second-alias'],
-              memory: Memory.make({ ...f.seed.memory, updatedAt: 200 }),
-            })
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              record: reinforced,
-              extends: Option.some(f.outgoing.memory.id),
-            }
-            expect(yield* f.helix.reinforceOnce(input)).toEqual(
-              ReceiptedWrite.cases.Applied.make({}),
-            )
-            const replayed = MemoryRecord.make({
-              ...reinforced,
-              aliases: [...reinforced.aliases, 'replay-alias'],
-              memory: Memory.make({ ...reinforced.memory, updatedAt: 300 }),
-            })
-            expect(yield* f.helix.reinforceOnce({ ...input, record: replayed })).toEqual(
-              ReceiptedWrite.cases.Recorded.make({ memoryId: f.seed.memory.id }),
-            )
-            expect(yield* f.helix.get({ partition: f.partition, id: f.seed.memory.id })).toEqual(
-              Option.some(reinforced),
-            )
-            const stored = yield* inspect(f.partition)
-            const reinforcedRow = stored.memories.find((row) => row.memoryId === f.seed.memory.id)
-            if (reinforcedRow === undefined) expect.fail('Reinforced record required')
-            expect(reinforcedRow.accessCount).toBe(2)
-            expect(stored.edges).toEqual([{ kind: 'EXTENDS' }])
-            expect(stored.receipts).toEqual([{ memoryId: f.seed.memory.id }])
-          }),
-        ),
-      )
-
-      it.effect('skips reinforcement self-links and missing EXTENDS targets', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            yield* f.helix.insert({
-              partition: f.partition,
-              record: f.seed,
-              embedding: f.embedding,
-            })
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              record: f.seed,
-              extends: Option.some(f.seed.memory.id),
-            }
-            expect(yield* f.helix.reinforceOnce(input)).toEqual(
-              ReceiptedWrite.cases.Applied.make({}),
-            )
-            expect(
-              yield* f.helix.reinforceOnce({
-                ...input,
-                receiptId: MemoryReceiptId.make(NodeCrypto.randomUUID()),
-                extends: Option.some(MemoryId.make(NodeCrypto.randomUUID())),
-              }),
-            ).toEqual(ReceiptedWrite.cases.Applied.make({}))
-            expect((yield* inspect(f.partition)).edges).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('does not consume a receipt when reinforcement targets a forgotten record', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            yield* f.helix.insert({
-              partition: f.partition,
-              record: f.seed,
-              embedding: f.embedding,
-            })
-            yield* f.helix.forget({ partition: f.partition, id: f.seed.memory.id, now: 200 })
-            const input = {
-              partition: f.partition,
-              receiptId: f.receiptId,
-              record: f.seed,
-              extends: Option.some(f.outgoing.memory.id),
-            }
-            expect(yield* f.helix.reinforceOnce(input)).toEqual(
-              ReceiptedWrite.cases.Missing.make({}),
-            )
-            expect(yield* f.helix.receipt(input)).toEqual(Option.none())
-            expect((yield* inspect(f.partition)).memories).toEqual([
-              { memoryId: f.seed.memory.id, accessCount: 1 },
-            ])
-            expect((yield* inspect(f.partition)).receipts).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('supersedes and replays a record with no neighbours', () =>
-        verified(supersession(false)),
-      )
-      it.effect(
-        'supersedes once, copies both EXTENDS directions and replays without duplicate edges',
-        () => verified(supersession(true)),
-      )
-
-      it.effect(
-        'decodes a forced receipt uniqueness violation and rolls back the earlier record creation',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const first = yield* fixture()
-              const second = yield* fixture()
-              const input = {
-                partition: first.partition,
-                receiptId: first.receiptId,
-                record: first.seed,
-                embedding: first.embedding,
-                extends: Option.none<MemoryId>(),
-              }
-              yield* first.helix.insertOnce(input)
-              // The unique key is global, while receipt lookup is tenant-qualified. Deliberately violating
-              // key construction forces the server's exact 500 uniqueness path without a probabilistic race.
-              const duplicate = yield* second.helix
-                .insertOnce({ ...input, partition: second.partition, record: second.seed })
-                .pipe(Effect.result)
-              if (Result.isSuccess(duplicate))
-                expect.fail('Unique receipt index must reject the write')
-              expect(duplicate.failure).toBeInstanceOf(HelixDuplicate)
-              expect(
-                yield* second.helix.receipt({
-                  partition: second.partition,
-                  receiptId: first.receiptId,
-                }),
-              ).toEqual(Option.none())
-              expect((yield* inspect(second.partition)).memories).toEqual([])
-              expect((yield* inspect(second.partition)).receipts).toEqual([])
-              expect(yield* first.helix.receipt(input)).toEqual(Option.some(first.seed.memory.id))
             }),
-          ),
-      )
-    },
-  )
+          ).toEqual(ReceiptedWrite.cases.Applied.make({}))
+          expect((yield* inspect(f.partition)).edges).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('does not consume a receipt when reinforcement targets a forgotten record', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          yield* f.helix.insert({
+            partition: f.partition,
+            record: f.seed,
+            embedding: f.embedding,
+          })
+          yield* f.helix.forget({ partition: f.partition, id: f.seed.memory.id, now: 200 })
+          const input = {
+            partition: f.partition,
+            receiptId: f.receiptId,
+            record: f.seed,
+            extends: Option.some(f.outgoing.memory.id),
+          }
+          expect(yield* f.helix.reinforceOnce(input)).toEqual(ReceiptedWrite.cases.Missing.make({}))
+          expect(yield* f.helix.receipt(input)).toEqual(Option.none())
+          expect((yield* inspect(f.partition)).memories).toEqual([
+            { memoryId: f.seed.memory.id, accessCount: 1 },
+          ])
+          expect((yield* inspect(f.partition)).receipts).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('supersedes and replays a record with no neighbours', () =>
+      verified(supersession(false)),
+    )
+    it.effect(
+      'supersedes once, copies both EXTENDS directions and replays without duplicate edges',
+      () => verified(supersession(true)),
+    )
+
+    it.effect(
+      'decodes a forced receipt uniqueness violation and rolls back the earlier record creation',
+      () =>
+        verified(
+          Effect.gen(function* () {
+            const first = yield* fixture()
+            const second = yield* fixture()
+            const input = {
+              partition: first.partition,
+              receiptId: first.receiptId,
+              record: first.seed,
+              embedding: first.embedding,
+              extends: Option.none<MemoryId>(),
+            }
+            yield* first.helix.insertOnce(input)
+            // The unique key is global, while receipt lookup is tenant-qualified. Deliberately violating
+            // key construction forces the server's exact 500 uniqueness path without a probabilistic race.
+            const duplicate = yield* second.helix
+              .insertOnce({ ...input, partition: second.partition, record: second.seed })
+              .pipe(Effect.result)
+            if (Result.isSuccess(duplicate))
+              expect.fail('Unique receipt index must reject the write')
+            expect(duplicate.failure).toBeInstanceOf(HelixDuplicate)
+            expect(
+              yield* second.helix.receipt({
+                partition: second.partition,
+                receiptId: first.receiptId,
+              }),
+            ).toEqual(Option.none())
+            expect((yield* inspect(second.partition)).memories).toEqual([])
+            expect((yield* inspect(second.partition)).receipts).toEqual([])
+            expect(yield* first.helix.receipt(input)).toEqual(Option.some(first.seed.memory.id))
+          }),
+        ),
+    )
+  })
 })

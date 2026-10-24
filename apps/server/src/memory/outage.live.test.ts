@@ -61,7 +61,6 @@ describe.skipIf(process.env['VIVID_LIVE_MEMORY_OUTAGE'] !== '1')('Memory outage 
           )
           expect(replyText(state)).not.toMatch(/no (travel )?plans|nothing (saved|stored|about)/iu)
         }).pipe(Effect.scoped),
-      { timeout: 180_000 },
     )
   })
 })

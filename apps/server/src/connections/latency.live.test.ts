@@ -63,47 +63,44 @@ const requests = [
 /** One claim: real warm gateway attempts return complete usage receipts at the description cap.
  * Cold samples, warm distributions and token counts calibrate optional-work budgets; no latency assertion relies on a sleep. */
 describe.skipIf(!liveDecisionEnabled)('Gateway warm latency', () => {
-  layer(liveDecisionLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
-    it.effect(
-      'measures warm metadata judgments at the production description cap',
-      () =>
-        Effect.gen(function* () {
-          const receipts: {
-            readonly inputCount: number
-            readonly outputCount: number
-          }[] = []
-          for (const request of requests) {
-            const latencies: number[] = []
-            const inputTokens: number[] = []
-            const outputTokens: number[] = []
-            for (let sample = 0; sample <= WARM_SAMPLES; sample += 1) {
-              const start = yield* Clock.currentTimeMillis
-              const response = yield* request.run
-              latencies.push((yield* Clock.currentTimeMillis) - start)
-              if (response.usage.inputTokens !== undefined)
-                inputTokens.push(response.usage.inputTokens)
-              if (response.usage.outputTokens !== undefined)
-                outputTokens.push(response.usage.outputTokens)
-            }
-            yield* Effect.logInfo('Gateway latency calibration', {
-              workload: request.workload,
-              first: latencies[0],
-              warm: statistics(latencies.slice(1)),
-              latencies,
-              inputTokens: statistics(inputTokens),
-              outputTokens: statistics(outputTokens),
-            })
-            receipts.push({
-              inputCount: inputTokens.length,
-              outputCount: outputTokens.length,
-            })
+  layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
+    it.effect('measures warm metadata judgments at the production description cap', () =>
+      Effect.gen(function* () {
+        const receipts: {
+          readonly inputCount: number
+          readonly outputCount: number
+        }[] = []
+        for (const request of requests) {
+          const latencies: number[] = []
+          const inputTokens: number[] = []
+          const outputTokens: number[] = []
+          for (let sample = 0; sample <= WARM_SAMPLES; sample += 1) {
+            const start = yield* Clock.currentTimeMillis
+            const response = yield* request.run
+            latencies.push((yield* Clock.currentTimeMillis) - start)
+            if (response.usage.inputTokens !== undefined)
+              inputTokens.push(response.usage.inputTokens)
+            if (response.usage.outputTokens !== undefined)
+              outputTokens.push(response.usage.outputTokens)
           }
-          for (const receipt of receipts) {
-            expect(receipt.inputCount).toBe(WARM_SAMPLES + 1)
-            expect(receipt.outputCount).toBe(WARM_SAMPLES + 1)
-          }
-        }),
-      120_000,
+          yield* Effect.logInfo('Gateway latency calibration', {
+            workload: request.workload,
+            first: latencies[0],
+            warm: statistics(latencies.slice(1)),
+            latencies,
+            inputTokens: statistics(inputTokens),
+            outputTokens: statistics(outputTokens),
+          })
+          receipts.push({
+            inputCount: inputTokens.length,
+            outputCount: outputTokens.length,
+          })
+        }
+        for (const receipt of receipts) {
+          expect(receipt.inputCount).toBe(WARM_SAMPLES + 1)
+          expect(receipt.outputCount).toBe(WARM_SAMPLES + 1)
+        }
+      }),
     )
   })
 })

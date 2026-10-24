@@ -207,7 +207,6 @@ layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
             cases.map((entry) => ({ summary: entry.summary, outcome: entry.expected })),
           )
         }),
-      90_000,
     )
   })
 })

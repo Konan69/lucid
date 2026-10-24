@@ -312,6 +312,3 @@ export const effectScores = (lines: readonly string[], tool: string) =>
  * beyond the 1800ms production budget. Ten seconds leaves 7908ms of measurement
  * headroom above the largest observed sample without changing any runtime budget. */
 export const LIVE_METADATA_BUDGET = '10 seconds'
-/** The largest direct calibration has eighteen sequential attempts: 18 × 10s
- * plus twenty seconds for Layer acquisition and receipt assertions. */
-export const LIVE_METADATA_COHORT_BUDGET_MILLIS = 200_000
