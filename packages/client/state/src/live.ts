@@ -219,6 +219,8 @@ const recovery = (connection: RpcConnection['Service']) =>
 /**
  * Live subscriptions remain owned by their atoms. A socket loss waits for the protocol receipt;
  * a typed server outage retries with bounded backoff; a permanent refusal reaches the screen.
+ * A server that ends a Watch successfully is reopened at the retained retry cadence too: only
+ * releasing the atom or a permanent failure may end a scope-owned subscription.
  */
 const resilient = <Value, R>(
   open: () => Stream.Stream<Value, ProductFailure, R>,
@@ -226,7 +228,10 @@ const resilient = <Value, R>(
   Stream.unwrap(
     Effect.gen(function* () {
       const connection = yield* RpcConnection
-      return Stream.suspend(open).pipe(Stream.retry(recovery(connection)))
+      return Stream.suspend(open).pipe(
+        Stream.retry(recovery(connection)),
+        Stream.repeat(Schedule.spaced(SERVER_RETRY_FIRST)),
+      )
     }),
   )
 
