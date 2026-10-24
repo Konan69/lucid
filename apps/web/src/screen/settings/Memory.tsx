@@ -16,19 +16,23 @@ const WHERE = (memory: MemoryRecord) =>
   })
 
 /**
- * What Vivid knows. Everything it has kept is listed in plain sentences, with where it learned
- * each one, and the Person can correct or remove any of them: memory they cannot see and change
- * would not be theirs. The page at the top is what Vivid reads before each response.
+ * The knowledge Vivid has saved for reference: each fact in a plain sentence, with where it
+ * learned it, and the Person can correct or remove any of them. The page at the top is a summary
+ * the server writes from those same facts.
+ *
+ * This is one of Vivid's two kinds of memory and the screen says so. `WatchMemory` returns the
+ * knowledge base only (`apps/server/src/memory/handlers.ts`), which Vivid searches when it needs
+ * a fact. What is in front of Vivid on every response is the list of its own notes
+ * (`packages/agent/runtime/src/context.ts`), and this query does not return those. So nothing
+ * here is called everything Vivid knows, the summary is not called what Vivid reads before it
+ * answers, and forgetting a fact here is not said to remove it from the notes (docs/25-memory.md).
  */
 export function Memory() {
   const memory = useLive(live.memory)
   if (LiveState.$is('Failed')(memory)) {
     return (
-      <Section title="What Vivid knows">
-        <Empty>
-          Vivid’s memory is not answering right now. Nothing is lost: what Vivid knows is kept, and
-          it will be here again as soon as memory answers.
-        </Empty>
+      <Section title="Saved knowledge">
+        <Empty>Unable to load saved knowledge right now. Try again in a moment.</Empty>
       </Section>
     )
   }
@@ -36,18 +40,18 @@ export function Memory() {
   const { brief, memories } = memory.value
   return (
     <>
-      <Section title="In short" detail="What Vivid reads before it answers you.">
+      <Section title="In short" detail="A summary of the saved knowledge below.">
         <p className="px-4 py-3 text-label whitespace-pre-wrap text-ink-2">
           {brief.text.trim().length === 0
-            ? 'Nothing yet. As you work together, Vivid keeps what will matter later.'
+            ? 'Nothing yet. Facts Vivid saves for reference are summed up here.'
             : brief.text}
         </p>
       </Section>
       <Section
-        title="Everything it has kept"
-        detail="Correct what is wrong. Remove what it should not keep."
+        title="Saved knowledge"
+        detail="Facts Vivid can look up. Correct what is wrong, or remove what it should not keep. Vivid’s own notes are not shown here."
       >
-        {memories.length === 0 && <Empty>Nothing kept yet.</Empty>}
+        {memories.length === 0 && <Empty>Nothing saved yet.</Empty>}
         {memories.map((item) => (
           <MemoryRow key={item.id} memory={item} />
         ))}
