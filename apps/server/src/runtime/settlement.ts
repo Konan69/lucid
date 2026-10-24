@@ -110,9 +110,8 @@ const resultOfSnapshot = (snapshot: AgentConversationObservationSnapshot, runId:
 }
 
 /**
- * Observe transport loss for at most the first-content budget (90 s by default), even if SDK
- * retries clear their error between hydrates. Only reaching live resets this window. The content
- * deadline starts at observation, including a restarted observer with no assistant message.
+ * The content deadline starts at observation, including a restarted observer with no assistant
+ * message. Reconnection remains SDK-owned; only an authoritative terminal snapshot ends it.
  * Flue abort cancels all queued/active work; a product deadline must never abort the conversation.
  */
 export const observeRun = Effect.fn('Runtime.observeRun')(function* (
@@ -121,7 +120,6 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   firstTokenMillis: number,
 ) {
   const states = yield* Queue.unbounded<AgentConversationObservationSnapshot>()
-  const connectivity = yield* Queue.unbounded<boolean>()
   const seen = yield* Ref.make(false)
   const observation = yield* Effect.acquireRelease(
     Effect.sync(() => client.observe({ live: 'sse' })),
@@ -140,7 +138,6 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   const changed = () => {
     const snapshot = observation.getSnapshot()
     Queue.offerUnsafe(states, snapshot)
-    Queue.offerUnsafe(connectivity, snapshot.phase === 'live')
   }
   yield* Effect.acquireRelease(
     Effect.sync(() => observation.subscribe(changed)),
@@ -167,20 +164,7 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
     if (observation.getSnapshot().phase !== 'live') return Settlement.cases.Unknown.make({})
     return Settlement.cases.Failed.make({ reason: 'TimedOut' })
   })
-  // Repeated connecting/loading updates cannot renew the recovery window; a real live phase can.
-  const unavailable = Stream.fromQueue(connectivity).pipe(
-    Stream.changes,
-    Stream.switchMap((live) =>
-      live
-        ? Stream.never
-        : Stream.fromEffect(
-            Effect.sleep(firstTokenMillis).pipe(Effect.as(Settlement.cases.Unknown.make({}))),
-          ),
-    ),
-    Stream.runHead,
-    Effect.map(Option.getOrElse(() => Settlement.cases.Unknown.make({}))),
-  )
-  return yield* Effect.raceAll([outcome, deadline(), unavailable]).pipe(
+  return yield* Effect.raceAll([outcome, deadline()]).pipe(
     Effect.timeoutOrElse({
       duration: responseTimeoutMillis,
       orElse: () => Effect.succeed(Settlement.cases.Unknown.make({})),

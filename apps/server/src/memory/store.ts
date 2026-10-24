@@ -20,6 +20,7 @@ import {
   Array as Arr,
   Clock,
   Cache,
+  Duration,
   Exit,
   Context,
   Effect,
@@ -1332,7 +1333,7 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
     }),
     {
       capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
     },
   )
   // Cache uses structural equality for keys: immutable schema values keep the full authorization snapshot in the key.
