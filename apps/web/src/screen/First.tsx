@@ -2,20 +2,16 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, standingWords, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import { Arrival, useArrival } from '../data/arrival'
 import { live, LiveState, useLive } from '../data/live'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
+import { AboutHome } from './thread/About'
 import { Composer } from './thread/Composer'
 import { DeviceAsk } from './thread/Device'
 import { HeroButton } from './thread/Header'
-
-// The card around Vivid is the Thread's own and is fetched when it is first opened, as there.
-const AboutHome = lazy(() =>
-  import('./thread/About').then((module) => ({ default: module.AboutHome })),
-)
 
 /**
  * Home: a Thread that does not exist yet. Whatever the Person types becomes one.
@@ -133,13 +129,11 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
         <div className="flex-1" />
       </div>
       {about && (
-        <Suspense fallback={null}>
-          <AboutHome
-            mood={mood}
-            standing={working ? standingWords.Working : standingWords.Quiet}
-            onClose={() => setAbout(false)}
-          />
-        </Suspense>
+        <AboutHome
+          mood={mood}
+          standing={working ? standingWords.Working : standingWords.Quiet}
+          onClose={() => setAbout(false)}
+        />
       )}
     </section>
   )

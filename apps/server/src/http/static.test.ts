@@ -35,7 +35,8 @@ layer(NodeHttpServer.layerTest)((it) => {
       const unversioned = yield* get('/assets/manual-unversioned.js')
       expect(yield* unversioned.text).toBe('manual')
       expect(unversioned.headers['cache-control']).toBe('no-cache')
-      for (const url of ['/', '/index.html', '/threads/one', '/assets/missing.js']) {
+      expect((yield* get('/assets/missing-1234abcd.js')).status).toBe(404)
+      for (const url of ['/', '/index.html', '/threads/one']) {
         const response = yield* get(url)
         expect(yield* response.text).toBe('<html>Vivid</html>')
         expect(response.headers['cache-control']).toBe('no-cache')

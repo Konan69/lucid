@@ -5,7 +5,7 @@ import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
 import { Outlet, rootRouteId, useMatch, useMatches, useSearch } from '@tanstack/react-router'
-import { Fragment, lazy, Suspense } from 'react'
+import { Fragment, Suspense } from 'react'
 import { create } from 'zustand'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { panel, usePanel } from './data/panel'
@@ -15,32 +15,13 @@ import { router, threadOnScreen } from './router'
 import type { FileRoutesById } from './tree.gen'
 import { engine, link } from './data/runtime'
 import { sidebar, sidebarShown, useSidebar } from './data/sidebar'
+import { Computer } from './screen/Computer'
 import { Palette } from './screen/Palette'
+import { Settings } from './screen/Settings'
 import { Sidebar } from './screen/Sidebar'
 import { Welcome } from './screen/Welcome'
 import { IconButton } from './ui/button'
 import { Sayings } from './ui/Sayings'
-
-// The screens a Person may not open in a session, each in its own file on the wire: the Thread
-// is what loads first, and the Computer's screen client alone is a third of everything else.
-// Each is fetched when it is first drawn, and all of them are fetched once the first screen is
-// up and the browser is idle, so opening one later does not wait on the network. The Library
-// and Projects are places, so the router holds their files (`src/routes`) and is asked
-// to make them ready; the Computer and Settings open over a place and are held here.
-const overlays = {
-  Computer: () => import('./screen/Computer'),
-  Settings: () => import('./screen/Settings'),
-}
-const Computer = lazy(() => overlays.Computer().then((module) => ({ default: module.Computer })))
-const Settings = lazy(() => overlays.Settings().then((module) => ({ default: module.Settings })))
-
-const afterFirst = () => {
-  for (const load of Object.values(overlays)) void load()
-  void router.preloadRoute({ to: '/library' })
-  void router.preloadRoute({ to: '/projects/{-$id}', params: { id: undefined } })
-}
-if ('requestIdleCallback' in globalThis) requestIdleCallback(afterFirst)
-else setTimeout(afterFirst, 2000)
 
 // The lists of the places beside Threads are begun the moment it is known who is signed in, and
 // held open from then on: a Person who goes to the Library a fifth of a second after the page shows
@@ -251,20 +232,16 @@ function Shell({ me }: { me: MeResponse }) {
           </div>
         </Suspense>
         {beside && onThread && (
-          <Suspense fallback={null}>
-            <Computer onClose={panel.hide} />
-          </Suspense>
+          <Computer onClose={panel.hide} />
         )}
       </main>
       {Option.isSome(section) && (
-        <Suspense fallback={null}>
-          <Settings
-            // What is half-typed in Settings belongs to the workspace it was opened in.
-            key={workspaceKey(me.workspace)}
-            me={me}
-            section={section.value}
-          />
-        </Suspense>
+        <Settings
+          // What is half-typed in Settings belongs to the workspace it was opened in.
+          key={workspaceKey(me.workspace)}
+          me={me}
+          section={section.value}
+        />
       )}
       {floating === 'palette' && <Palette onClose={() => setOverlay('none')} />}
     </div>
