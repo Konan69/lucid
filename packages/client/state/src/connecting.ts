@@ -23,8 +23,9 @@ import { Atom } from 'effect/reactivity'
  * from writing over a newer press: one row's late answer replaced another row's key form.
  *
  * Here the states are the only places an attempt can stand, each state owns exactly the data
- * that is true while it is active, and work belongs to the state that needs it: leaving `Asking`
- * interrupts the call, so its answer cannot arrive anywhere else. An event a state does not name
+ * that is true while it is active, and work belongs to the state that needs it. Leaving `Asking`
+ * interrupts the call; an already queued answer also has to name the current attempt before it
+ * can be accepted after re-entry. An event a state does not name
  * is not taken. One attempt is made at a time (the phone's rule, now the web's as well): a press
  * while the server is still being asked is not taken, which is what `isWaiting` is drawn from.
  *
@@ -103,6 +104,13 @@ export const Refusal = Schema.TaggedUnion({
   Unusable: { serviceName: Schema.String },
 })
 export type Refusal = typeof Refusal.Type
+
+/** A queued invoke failure belongs to the attempt that made the call, even after re-entry. */
+class AttemptRefused extends Schema.TaggedError<AttemptRefused>()(
+  'ConnectingAttemptRefused',
+  { attempt: AttemptId, refusal: Refusal },
+  { title: 'ConnectingAttemptRefused' },
+) {}
 
 /** The provider's page could not be put in front of the Person. */
 export class PageRefused extends Schema.TaggedError<PageRefused>()(
@@ -327,12 +335,14 @@ const unusable = (attempt: Attempt, connection: Connection) => ({
 
 /** What the server answered and when, as the machine's own call reports it. */
 interface Answered {
+  readonly attempt: AttemptId
   readonly step: ConnectionStep
   readonly at: number
 }
 
 /** An account the live list showed and when. */
 interface Arrived {
+  readonly attempt: AttemptId
   readonly connection: Connection
   readonly at: number
 }
@@ -344,19 +354,58 @@ export const Connecting = Machine.make({
   emittedEvents: ConnectingEmitted,
   effects: {
     // The moment of the answer is read here, in the work, because a transition reads no clock.
-    ask: Effect.fn('Connecting.ask')(function* (asked: Asked) {
-      const step = yield* Asking.use((service) => service.ask(asked))
-      const answered: Answered = { step, at: yield* Clock.currentTimeMillis }
+    ask: Effect.fn('Connecting.ask')(function* (input: {
+      readonly attempt: AttemptId
+      readonly asked: Asked
+    }) {
+      const step = yield* Asking.use((service) => service.ask(input.asked)).pipe(
+        Effect.mapError(
+          () =>
+            new AttemptRefused({
+              attempt: input.attempt,
+              refusal: Refusal.cases.NotBegun.make({}),
+            }),
+        ),
+      )
+      const answered: Answered = {
+        attempt: input.attempt,
+        step,
+        at: yield* Clock.currentTimeMillis,
+      }
       return answered
     }),
-    open: (page: ProviderPage) => SignInPage.use((service) => service.open(page)),
-    showKey: (form: KeyAsked) => KeyForm.use((service) => service.show(form)),
+    // The attempt is captured before either surface starts work, on successes and refusals alike.
+    open: (page: ProviderPage & { readonly attempt: AttemptId }) =>
+      SignInPage.use((service) => service.open(page)).pipe(
+        Effect.as(page.attempt),
+        Effect.mapError(
+          (error) =>
+            new AttemptRefused({
+              attempt: page.attempt,
+              refusal: Refusal.cases[error.reason].make({ serviceName: page.serviceName }),
+            }),
+        ),
+      ),
+    showKey: (form: KeyAsked) =>
+      KeyForm.use((service) => service.show(form)).pipe(
+        Effect.as(form.attempt),
+        Effect.mapError(
+          () =>
+            new AttemptRefused({
+              attempt: form.attempt,
+              refusal: Refusal.cases.Unshown.make({ serviceName: form.serviceName }),
+            }),
+        ),
+      ),
   },
   streams: {
-    arrival: (id: ConnectionId): Stream.Stream<Arrived, never, Arrivals> =>
-      Stream.unwrap(Arrivals.use((service) => Effect.succeed(service.of(id)))).pipe(
+    arrival: (input: {
+      readonly attempt: AttemptId
+      readonly id: ConnectionId
+    }): Stream.Stream<Arrived, never, Arrivals> =>
+      Stream.unwrap(Arrivals.use((service) => Effect.succeed(service.of(input.id)))).pipe(
         Stream.mapEffect((connection) =>
-          Effect.map(Clock.currentTimeMillis, (at) => ({ connection, at })),
+          Effect.map(Clock.currentTimeMillis, (at) => ({ attempt: input.attempt, connection, at })),
         ),
       ),
   },
@@ -381,6 +430,8 @@ export const Connecting = Machine.make({
       unusable: { target: 'Refused' },
     },
     dismissed: { idle: { target: 'Idle' } },
+    opened: { away: { target: 'Away' } },
+    refused: { refused: { target: 'Refused' } },
   },
 }).handle({
   initial: { target: 'Idle' },
@@ -389,10 +440,13 @@ export const Connecting = Machine.make({
     Asking: {
       invoke: {
         src: 'ask',
-        input: ({ state }) => state.asked,
+        input: ({ state }) => ({ attempt: state.attempt.id, asked: state.asked }),
         onDone: {
           branches: 'answered',
-          resolve: ({ output, state, select }, enqueue) => {
+          declinable: true,
+          resolve: (context, enqueue) => {
+            const { output, state, select } = context
+            if (output.attempt !== state.attempt.id) return context.decline()
             // Each branch answers with its own selector, so the answer's type is said: `match`
             // would otherwise take the first branch's as the answer of them all.
             type Next = ReturnType<(typeof select)[keyof typeof select]>
@@ -418,28 +472,44 @@ export const Connecting = Machine.make({
           },
         },
         onFailure: {
-          target: 'Refused',
-          data: ({ state }) => ({
-            attempt: state.attempt,
-            refusal: Refusal.cases.NotBegun.make({}),
-          }),
+          branches: 'refused',
+          declinable: true,
+          resolve: (context) =>
+            context.error.attempt === context.state.attempt.id
+              ? context.select.refused({
+                  data: { attempt: context.state.attempt, refusal: context.error.refusal },
+                })
+              : context.decline(),
         },
       },
     },
     Opening: {
       invoke: {
         src: 'open',
-        input: ({ state }) => ({ address: state.address, serviceName: state.serviceName }),
+        input: ({ state }) => ({
+          attempt: state.attempt.id,
+          address: state.address,
+          serviceName: state.serviceName,
+        }),
         onDone: {
-          target: 'Away',
-          data: ({ state }) => ({ attempt: state.attempt, id: state.id }),
+          branches: 'opened',
+          declinable: true,
+          resolve: (context) =>
+            context.output === context.state.attempt.id
+              ? context.select.away({
+                  data: { attempt: context.state.attempt, id: context.state.id },
+                })
+              : context.decline(),
         },
         onFailure: {
-          target: 'Refused',
-          data: ({ state, error }) => ({
-            attempt: state.attempt,
-            refusal: Refusal.cases[error.reason].make({ serviceName: state.serviceName }),
-          }),
+          branches: 'refused',
+          declinable: true,
+          resolve: (context) =>
+            context.error.attempt === context.state.attempt.id
+              ? context.select.refused({
+                  data: { attempt: context.state.attempt, refusal: context.error.refusal },
+                })
+              : context.decline(),
         },
       },
       // A phone can be back in front before the call that opened the browser has answered. The
@@ -456,12 +526,13 @@ export const Connecting = Machine.make({
       // comes first ends the attempt, and leaving this state stops the listening.
       invoke: {
         src: 'arrival',
-        input: ({ state }) => state.id,
+        input: ({ state }) => ({ attempt: state.attempt.id, id: state.id }),
         onElement: {
           branches: 'finished',
           declinable: true,
           resolve: (context, enqueue) => {
             const { element, state, select } = context
+            if (element.attempt !== state.attempt.id) return context.decline()
             // The list says the account whenever it changes; only one that can be used ends
             // the sign-in. Anything else is the sign-in still under way.
             if (!usable(element.connection)) return context.decline()
@@ -484,10 +555,16 @@ export const Connecting = Machine.make({
     Checking: {
       invoke: {
         src: 'ask',
-        input: ({ state }) => Asked.cases.Resume.make({ id: state.id }),
+        input: ({ state }) => ({
+          attempt: state.attempt.id,
+          asked: Asked.cases.Resume.make({ id: state.id }),
+        }),
         onDone: {
           branches: 'checked',
-          resolve: ({ output, state, select }, enqueue) => {
+          declinable: true,
+          resolve: (context, enqueue) => {
+            const { output, state, select } = context
+            if (output.attempt !== state.attempt.id) return context.decline()
             type Next = ReturnType<(typeof select)[keyof typeof select]>
             return ConnectionStep.match<Next>(output.step, {
               // Still to do is not an error: people look at the page and leave.
@@ -507,8 +584,14 @@ export const Connecting = Machine.make({
         // The server would not say. The list still shows the account as unfinished, with a way
         // to finish it, so the attempt ends there too.
         onFailure: {
-          target: 'Unfinished',
-          data: ({ state }) => ({ attempt: state.attempt, id: state.id }),
+          branches: 'checked',
+          declinable: true,
+          resolve: (context) =>
+            context.error.attempt === context.state.attempt.id
+              ? context.select.unfinished({
+                  data: { attempt: context.state.attempt, id: context.state.id },
+                })
+              : context.decline(),
         },
       },
     },
@@ -526,11 +609,14 @@ export const Connecting = Machine.make({
         }),
         onDone: { none: true },
         onFailure: {
-          target: 'Refused',
-          data: ({ state }) => ({
-            attempt: state.attempt,
-            refusal: Refusal.cases.Unshown.make({ serviceName: state.serviceName }),
-          }),
+          branches: 'refused',
+          declinable: true,
+          resolve: (context) =>
+            context.error.attempt === context.state.attempt.id
+              ? context.select.refused({
+                  data: { attempt: context.state.attempt, refusal: context.error.refusal },
+                })
+              : context.decline(),
         },
       },
       on: {
