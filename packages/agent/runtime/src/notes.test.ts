@@ -388,6 +388,75 @@ describe('notes', () => {
     }),
   )
 
+  it.effect('drains a cancelled native replacement before closing its owner', () =>
+    Effect.gen(function* () {
+      const path = yield* directory
+      // The Notes owner must keep its own finalizers ordered even in a parallel caller scope.
+      const owner = yield* Scope.make('parallel')
+      yield* Effect.addFinalizer(() => Scope.close(owner, Exit.void))
+      const settings = NotesSettings.make({
+        directory: path,
+        capacity: 1,
+        idle: Duration.minutes(1),
+      })
+      const notes = yield* make(settings).pipe(Scope.provide(owner))
+      const person = PersonId.make('ada')
+      yield* notes.write(person, note('kept.md', 'Kept', 'The old fact.'))
+      const deleted = Latch.makeUnsafe()
+      let deletion = Option.none<Promise<unknown>>()
+      // V8 observes the real SDK's first Statement.run inside updateFileContent, the DELETE
+      // in AgentFS 0.6.4. Its settled hook runs after SQLite committed that statement and before
+      // the SDK's await resumes to INSERT. No SDK or native method is replaced or delayed.
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeV8.promiseHooks.createHook({
+            init: (promise) => {
+              if (Option.isSome(deletion)) return
+              const stack = new Error().stack
+              if (stack === undefined) expect.fail('V8 must provide the native receipt stack')
+              if (
+                stack.includes('at Statement.run (') &&
+                stack.includes('at AgentFS.updateFileContent (')
+              )
+                deletion = Option.some(promise)
+            },
+            settled: (promise) => {
+              if (Option.isSome(deletion) && deletion.value === promise) deleted.openUnsafe()
+            },
+          }),
+        ),
+        (stop) =>
+          Effect.sync(() => {
+            stop()
+          }),
+      )
+      const writing = yield* Effect.forkChild(
+        notes.write(person, note('kept.md', 'Updated', 'The replacement fact.')),
+        { startImmediately: true },
+      )
+      yield* deleted.await
+      expect(writing.pollUnsafe()).toBeUndefined()
+      const cancelling = yield* Effect.forkChild(Fiber.interrupt(writing), {
+        startImmediately: true,
+      })
+      const closing = yield* Effect.forkChild(Scope.close(owner, Exit.void), {
+        startImmediately: true,
+      })
+      // Cancellation cannot acknowledge completion while a non-cancellable SDK call still owns I/O.
+      expect(cancelling.pollUnsafe()).toBeUndefined()
+      expect(closing.pollUnsafe()).toBeUndefined()
+      yield* Fiber.join(cancelling)
+      yield* Fiber.join(closing)
+      expect(Exit.hasInterrupts(yield* Fiber.await(writing))).toBe(true)
+      expect(yield* handles(NodePath.join(path, 'ada.db'))).toBe(0)
+      expect(yield* Effect.flip(notes.index(person))).toBeInstanceOf(NotesUnavailable)
+      const reopened = yield* make(settings)
+      expect((yield* reopened.read(person, NoteFile.make('kept.md'))).body).toBe(
+        'The replacement fact.',
+      )
+    }),
+  )
+
   it.effect('reads a multi-call index across idle time without closing its leased handle', () =>
     Effect.gen(function* () {
       const fixture = yield* store('ada')
