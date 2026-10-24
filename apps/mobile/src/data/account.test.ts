@@ -78,9 +78,18 @@ for (const status of [401, 403, 422]) {
   it.effect(`stops sign-out at permanent HTTP ${status}`, () =>
     Effect.gen(function* () {
       const endpoint = yield* account([status])
-      const answer = yield* Effect.result(endpoint.leave)
-      expect(Result.isFailure(answer)).toBe(true)
-      expect(Option.getOrThrow(Result.getFailure(answer))._tag).toBe('AccountRefused')
+      const leaving = yield* Effect.result(endpoint.leave).pipe(Effect.forkScoped)
+      expect(yield* Queue.take(endpoint.failed)).toBe('AccountRefused')
+      yield* TestClock.adjust('1 second')
+      // Observe either settlement or another actual HTTP refusal, so reversing the fix fails
+      // this assertion instead of hanging while the old retry waits for its next clock tick.
+      const observed = yield* Effect.raceFirst(
+        Fiber.join(leaving).pipe(Effect.map((answer) => ({ kind: 'Settled', answer }) as const)),
+        Queue.take(endpoint.failed).pipe(Effect.map(() => ({ kind: 'Retried' }) as const)),
+      )
+      expect(observed.kind).toBe('Settled')
+      if (observed.kind !== 'Settled') return expect.fail('A permanent refusal was retried')
+      expect(Option.getOrThrow(Result.getFailure(observed.answer))._tag).toBe('AccountRefused')
       expect(endpoint.requests()).toBe(1)
       expect(endpoint.shown()._tag).toBe('SignedOut')
       expect(endpoint.owed()._tag).toBe('Done')
