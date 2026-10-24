@@ -164,10 +164,9 @@ const attempt = Atom.map(machine.snapshot, (result): Attempt =>
 /**
  * The card of a press this page has made and the machine has not yet shown, when there is one.
  *
- * The machine takes a press on its own turn, so for a moment after a press the snapshot still
- * reads as it did, and a second press in that moment used to pass `waitingOn` as well: it closed
- * the first press's tab, opened its own and left its carry-on, and the machine then refused it.
- * A press is therefore accepted here, at once, and nothing else is until the machine has moved.
+ * Idle sends now publish their snapshot before returning. The reservation still covers browser
+ * work before the send: the click must open its tab before the server is asked, and a reentrant
+ * press must not replace that tab or its carry-on. The next snapshot releases the reservation.
  */
 let unshown: Option.Option<{ readonly card: Option.Option<string> }> = Option.none()
 
