@@ -82,8 +82,8 @@ export const make = (services: Layer.Layer<Sending>) => {
     const state = result.value.state
     return Option.getOrElse(
       Option.firstSomeOf([
-        Option.map(States.get(state, 'Sending'), Reading.cases.Sending.make),
-        Option.map(States.get(state, 'Refused'), Reading.cases.Refused.make),
+        Option.map(States.get(state, 'Sending'), (sending) => Reading.cases.Sending.make(sending)),
+        Option.map(States.get(state, 'Refused'), (refused) => Reading.cases.Refused.make(refused)),
       ]),
       () => Reading.cases.Ready.make({}),
     )
