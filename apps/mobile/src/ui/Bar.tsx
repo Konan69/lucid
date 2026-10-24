@@ -237,7 +237,7 @@ function MenuButton() {
  * centre (5 October 2026). `unstable_headerLeftItems` is iOS's, so Android gets the same mark in
  * a button drawn by the app in its solid bar.
  */
-const menuOptions = (own: boolean): NativeStackNavigationOptions =>
+export const menuOptions = (own: boolean): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
     ? { unstable_headerLeftItems: () => [menuItem(own)] }
     : { headerLeft: () => <MenuButton /> }

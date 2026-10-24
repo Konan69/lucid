@@ -46,9 +46,12 @@ const standing = (): Places =>
     (): Places => ({}),
   )
 
-/** Where the Person was in a workspace on a server, or `NOWHERE` when nothing was kept for it. */
+/**
+ * Where the Person was in a workspace on a server, or `NOWHERE` when nothing was kept for it or
+ * it is too old to come back to now (`KEPT_FOR`, `data/place.ts`).
+ */
 export const placeIn = (origin: string, workspace: string): Place =>
-  placeAt(standing(), origin, workspace)
+  placeAt(standing(), origin, workspace, Date.now())
 
 /**
  * Keeps where the Person is in a workspace. The write is the small synchronous one (`keepFile`),

@@ -46,15 +46,35 @@ export type Page = typeof Page.Type
 /** Reads one route of the stack as a page, when it is one that can be drawn again. */
 export const pageOf = Schema.decodeUnknownOption(Page)
 
-/** One workspace's place: the Thread in front, when there is one, and the pages over it in order. */
+/**
+ * One workspace's place: the Thread in front, when there is one, the pages over it in order, and
+ * when the Person was last there (milliseconds since the epoch).
+ */
 const Place = Schema.Struct({
   thread: Schema.OptionFromNullOr(ThreadId),
   pages: Schema.Array(Page),
+  at: Schema.Finite,
 })
 export type Place = typeof Place.Type
 
 /** Nothing open: the greeting. Where a workspace starts, and where it is when nothing was kept. */
-export const NOWHERE: Place = { thread: Option.none(), pages: [] }
+export const NOWHERE: Place = { thread: Option.none(), pages: [], at: 0 }
+
+/**
+ * How long a place is worth coming back to, in milliseconds. A Person who comes back sooner
+ * finds what they left; one who comes back later finds the greeting, somewhere to start a new
+ * Thread, with nothing open over it.
+ *
+ * A place used to be kept for ever, so every launch opened on the last Thread and the app always
+ * had a conversation open. The owner asked for a new Thread to be what opens, with the kept one
+ * expiring (24 October 2026). Fifteen minutes covers a glance at another app and back, and
+ * not coming back to the phone after a break. The shell applies the same length to an app that
+ * was never ended, only put away (`useAfreshOnReturn`, `App.tsx`).
+ */
+export const KEPT_FOR = 15 * 60 * 1000
+
+/** Whether a place last visited at `at` is too old to come back to at `now`. */
+export const forgotten = (at: number, now: number): boolean => now - at > KEPT_FOR
 
 /**
  * Every place that is kept: by the server it was on, then by workspace (`workspaceKey`). Only
@@ -74,6 +94,7 @@ const PlacesText = Schema.fromJsonString(Places)
 const KeptPlace = Schema.Struct({
   thread: Schema.OptionFromNullOr(ThreadId),
   pages: Schema.Array(Schema.Unknown),
+  at: Schema.Finite,
 })
 const KeptText = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Record(Schema.String, KeptPlace)),
@@ -84,10 +105,12 @@ const readKept = Schema.decodeUnknownOption(KeptText)
 const placeOfKept = (kept: typeof KeptPlace.Type): Place => ({
   thread: kept.thread,
   pages: Arr.getSomes(kept.pages.map((page) => pageOf(page))),
+  at: kept.at,
 })
 
 /**
- * Reads the file's text. Text in a shape this build does not know is nothing kept, but a page this
+ * Reads the file's text. Text in a shape this build does not know is nothing kept (a file written
+ * before places carried `at` is one, and opens on the greeting, as a place that old would), but a page this
  * build no longer draws is only that page: it is dropped, and the Thread in front, the other
  * pages and every other workspace are kept as they were. The file is written by older builds too,
  * and a page can be retired (Routines went on 16 October 2026); read as one schema, a single
@@ -101,11 +124,17 @@ export const decodePlaces = (text: string): Option.Option<Places> =>
 /** The file's text for what is kept. */
 export const encodePlaces = Schema.encodeOption(PlacesText)
 
-/** Where the Person was in a workspace on a server, or `NOWHERE` when nothing is kept for it. */
-export const placeAt = (kept: Places, origin: string, workspace: string): Place =>
+/**
+ * Where the Person was in a workspace on a server, or `NOWHERE` when nothing is kept for it or
+ * what is kept is too old to come back to at `now` (`KEPT_FOR`).
+ */
+export const placeAt = (kept: Places, origin: string, workspace: string, now: number): Place =>
   Option.getOrElse(
-    Option.flatMap(Option.fromUndefinedOr(kept[origin]), (places) =>
-      Option.fromUndefinedOr(places[workspace]),
+    Option.filter(
+      Option.flatMap(Option.fromUndefinedOr(kept[origin]), (places) =>
+        Option.fromUndefinedOr(places[workspace]),
+      ),
+      (place) => !forgotten(place.at, now),
     ),
     () => NOWHERE,
   )

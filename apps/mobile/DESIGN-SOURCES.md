@@ -29,8 +29,9 @@ Android menu patch supplies the command argument array required by Fabric.
 260 ms, cubic in/out, system reduced-motion handling. The pane fades in over its
 first 80 points; the thread keeps its width during the phone drawer animation.
 The sidebar control and scrim toggle the same pane animation. Android keeps its
-screen-edge Back gesture; hardware Back also closes an open sidebar. Native
-conversation-row swipes retain T3's gesture handling and spring.
+screen-edge Back gesture; hardware Back also closes an open sidebar. Conversation
+rows take no swipe: a leftward swipe anywhere on the drawer closes it, and a row's
+actions are in its long-press menu.
 
 The composer uses T3's toolbar fade durations (160/120 ms), status transitions
 (180/140 ms), and iOS-only 220 ms layout transition. Android has no competing
