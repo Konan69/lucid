@@ -116,7 +116,9 @@ const Contexts = Schema.Struct({
 /** What a request breadcrumb keeps of its data. Its sizes and its separate query field are not named. */
 const RequestData = Schema.Struct({
   method: text,
-  status_code: Schema.optionalKey(Schema.Number),
+  status_code: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })),
+  ),
   url: text,
 })
 

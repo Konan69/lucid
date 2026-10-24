@@ -40,7 +40,7 @@ const decodeListeners = Schema.decodeUnknownEffect(Listeners)
 const decodeKept = Schema.decodeUnknownEffect(
   Schema.Struct({
     result: Schema.Struct({
-      value: Schema.Struct({ document: Schema.Number, symbols: Schema.Int }),
+      value: Schema.Struct({ document: Schema.Finite, symbols: Schema.Int }),
     }),
   }),
 )

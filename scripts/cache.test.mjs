@@ -266,7 +266,7 @@ void test('runtime source invalidates its dependents and no other package', (t) 
       initial.get(`@vivid/server#${task}`).hash,
       changed.get(`@vivid/server#${task}`).hash,
     )
-    for (const unrelated of ['skills', 'computer']) {
+    for (const unrelated of ['skills', 'marks']) {
       assert.equal(
         initial.get(`@vivid/${unrelated}#${task}`).hash,
         changed.get(`@vivid/${unrelated}#${task}`).hash,
