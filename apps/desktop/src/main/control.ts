@@ -286,39 +286,136 @@ const locate = Effect.fn('DesktopControl.locate')(function* (
   return found.value
 })
 
+/** One wait in the page: for an event on its window, or for the time to run out. */
+interface PageWait {
+  readonly event: 'focus' | 'keydown' | 'mousedown'
+  /** Listen while the event travels down to its target, before a page script can stop it. */
+  readonly capture: boolean
+  /** Script text, true when there is nothing to wait for. */
+  readonly already: string
+  /** What the wait answers when the event is heard, or was `already` there. */
+  readonly heard: string
+  /** Script text for what the wait answers when the time runs out; read at that moment. */
+  readonly late: string
+  readonly millis: number
+}
+
+/**
+ * The script of one wait in the page. Whichever of the event and the timer comes first takes the
+ * other away before it answers, so the wait leaves nothing in the page.
+ *
+ * Before, the listener was added with `once` and the timer was never cleared: when the timer won,
+ * the listener stayed on the window until the event next happened (on a page that never takes
+ * focus or the press, for as long as the document lived, one more per action), and when the event
+ * won, the timer stayed until it ran out. The listener is removed with the same `capture` it was
+ * added with; a removal with the other value removes nothing.
+ */
+const waitInPage = (wait: PageWait) => `new Promise((resolve) => {
+  if (${wait.already}) return resolve(${JSON.stringify(wait.heard)})
+  const settle = (value) => {
+    window.removeEventListener("${wait.event}", hear, ${wait.capture})
+    clearTimeout(timer)
+    resolve(value)
+  }
+  const hear = () => settle(${JSON.stringify(wait.heard)})
+  const timer = setTimeout(() => settle(${wait.late}), ${wait.millis})
+  window.addEventListener("${wait.event}", hear, ${wait.capture})
+})`
+
 /**
  * Resolves in the page once its document has focus, or after two seconds without it. Turning
  * focus emulation on is answered before the page has it; a key sent in between is dropped.
  * Found by running against real pages, where the first key after a page loaded never arrived.
  */
-const HAS_FOCUS = `new Promise((resolve) => {
-  if (document.hasFocus()) return resolve("focused")
-  window.addEventListener("focus", () => resolve("focused"), { once: true })
-  setTimeout(() => resolve("late"), 2000)
-})`
+const HAS_FOCUS = waitInPage({
+  event: 'focus',
+  capture: false,
+  already: 'document.hasFocus()',
+  heard: 'focused',
+  late: '"late"',
+  millis: 2000,
+})
 
 /** How long a press that has not been seen is waited for before it is called undelivered. */
 const LATE_MILLIS = 500
 
+/** The two events a press is seen by: a key going down, or a button. */
+type PressEvent = 'keydown' | 'mousedown'
+
 /** Where the page keeps its note of having seen Vivid's press; a symbol, so no page script meets it. */
-const noteOf = (event: 'keydown' | 'mousedown') => `window[Symbol.for("vivid.saw.${event}")]`
+const noteOf = (event: PressEvent) => `window[Symbol.for("vivid.saw.${event}")]`
+
+/**
+ * Where the page keeps the listener that writes the note, so that it can be taken off the window
+ * again: a listener can only be removed by the function it was added with.
+ */
+const hearOf = (event: PressEvent) => `window[Symbol.for("vivid.hear.${event}")]`
+
+/** Script text that takes the note's listener off the window, when one is there. */
+const unhear = (event: PressEvent) =>
+  `if (${hearOf(event)}) window.removeEventListener("${event}", ${hearOf(event)}, true); delete ${hearOf(event)};`
 
 /**
  * Asks the page to note the next key or button it sees go down. Sent before the press, and the
  * answer awaited: that round trip is also what lets the focus given to the page arrive before
  * the key does. Found by running against real pages: without it the key-down was dropped and
  * only the key-up arrived.
+ *
+ * The listener is kept beside the note. One left by a press that ended without `disarm` reaching
+ * the page is taken off first, so a page never holds two for one kind of event.
  */
-const arm = Effect.fn('DesktopControl.arm')(function* (
-  page: ControlledPage,
-  event: 'keydown' | 'mousedown',
-) {
+const arm = Effect.fn('DesktopControl.arm')(function* (page: ControlledPage, event: PressEvent) {
   const answer = yield* page.send('Runtime.evaluate', {
-    expression: `(() => { ${noteOf(event)} = false; window.addEventListener("${event}", () => { ${noteOf(event)} = true }, { capture: true, once: true }); return "ok" })()`,
+    expression: `(() => {
+      ${unhear(event)}
+      ${noteOf(event)} = false
+      const hear = () => { ${noteOf(event)} = true; if (${hearOf(event)} === hear) delete ${hearOf(event)} }
+      ${hearOf(event)} = hear
+      window.addEventListener("${event}", hear, { capture: true, once: true })
+      return "ok"
+    })()`,
     returnByValue: true,
   })
   yield* decodeScrolled(answer).pipe(failing('arm'))
 })
+
+/**
+ * Takes away what `arm` left in the page: the listener, when the press never reached it, and the
+ * note. Before, a press the page did not see left its listener on the window for as long as the
+ * document lived, one more for every such press.
+ *
+ * It runs when the press is over, after `witnessed` has read the note, never before. A page that
+ * has gone, or has moved to another document, has nothing to take away; the answer is not read
+ * (`releasing`).
+ */
+const disarm = (page: ControlledPage, event: PressEvent) =>
+  page.send('Runtime.evaluate', {
+    expression: `(() => { ${unhear(event)} delete ${noteOf(event)}; return "ok" })()`,
+    returnByValue: true,
+  })
+
+/**
+ * How long one step of letting go is waited for. Vivid's own bound: a debugger command on a page
+ * that answers takes milliseconds, so a second without an answer means the page is not answering.
+ */
+const RELEASE = Duration.seconds(1)
+
+/**
+ * One step of letting go after a press: tried, waited for at most `RELEASE`, and whatever it
+ * answers the next step is still tried.
+ *
+ * Before, each step waited for its answer without end. The debugger gives a command no time limit
+ * (`driver.ts`, `command`), and these steps run in a finalizer, which a stop or a deadline cannot
+ * interrupt: a page that stopped answering (stuck in its own script, for one) held the action's
+ * turn, and with it every later action, for as long as the page stayed that way.
+ *
+ * The time limit ends the waiting, not the command: Chromium already has it, and a page that
+ * answers later still lets the key go. The wait can be cut short inside a finalizer because the
+ * time limit runs the step in a fiber of its own, which is interruptible whatever its parent is
+ * (`raceAllFirst` in the installed Effect, `forkUnsafe(parent, effect, true, true, false)`).
+ */
+const releasing = (step: Effect.Effect<unknown, PageGone | StepFailed>) =>
+  step.pipe(Effect.timeoutOption(RELEASE), Effect.ignore)
 
 /**
  * Whether the press reached the page. Chromium accepts input for a page and can still drop it
@@ -335,15 +432,18 @@ const arm = Effect.fn('DesktopControl.arm')(function* (
  */
 const witnessed = Effect.fn('DesktopControl.witnessed')(function* (
   page: ControlledPage,
-  event: 'keydown' | 'mousedown',
+  event: PressEvent,
 ) {
   const answer = yield* page
     .send('Runtime.evaluate', {
-      expression: `new Promise((resolve) => {
-        if (${noteOf(event)} !== false) return resolve("seen")
-        window.addEventListener("${event}", () => resolve("seen"), { capture: true, once: true })
-        setTimeout(() => resolve(${noteOf(event)} === false ? "unseen" : "seen"), ${LATE_MILLIS})
-      })`,
+      expression: waitInPage({
+        event,
+        capture: true,
+        already: `${noteOf(event)} !== false`,
+        heard: 'seen',
+        late: `${noteOf(event)} === false ? "unseen" : "seen"`,
+        millis: LATE_MILLIS,
+      }),
       awaitPromise: true,
       returnByValue: true,
     })
@@ -392,18 +492,23 @@ const pointOf = Effect.fn('DesktopControl.pointOf')(function* (page: ControlledP
  * - Focus emulation around the press, confirmed by the page before the button goes down and
  *   turned off again by the same finalizer. The reference's guest is always laid out in its
  *   window; Vivid's page may not be drawn at all.
+ * - The page is asked whether it saw the button (`witnessed`), and what that left in the page is
+ *   taken away by the same finalizer (`disarm`), however the click ends.
+ * - Each step of that finalizer is waited for a bounded time (`releasing`), so a page that stops
+ *   answering cannot hold the turn.
  */
 const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage, target: string) {
   const control = yield* locate(page, target, 'click')
   yield* page.send('Input.setIgnoreInputEvents', { ignore: false })
   let went = false
+  let armed = false
   let button = { x: 0, y: 0, button: 'left', clickCount: 1 }
   const release = Effect.fn('DesktopControl.buttonUp')(function* () {
     if (went)
-      yield* page
-        .send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' })
-        .pipe(Effect.ignore)
-    yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: false }).pipe(Effect.ignore)
+      yield* releasing(page.send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' }))
+    yield* releasing(page.send('Emulation.setFocusEmulationEnabled', { enabled: false }))
+    // Last: the button and the focus are what the Person would feel held.
+    if (armed) yield* releasing(disarm(page, 'mousedown'))
   })
   const down = Effect.fn('DesktopControl.buttonDown')(function* () {
     // Found by running against real pages: Chromium drops pointer input to a page that is not
@@ -415,6 +520,8 @@ const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage,
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
     yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
     button = { ...button, ...(yield* pointOf(page, control.node)) }
+    // Set before the question is sent: one stopped midway may already have reached the page.
+    armed = true
     yield* arm(page, 'mousedown')
     went = true
     yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
@@ -462,7 +569,11 @@ const type = Effect.fn('DesktopControl.type')(function* (
  * - No `Page.bringToFront`. With it, the key that followed was dropped.
  * - The page confirms it has focus after emulation is turned on, before the key is sent.
  * - The page is asked whether it saw the key (`witnessed`); a key that never arrived is a failed
- *   step, where the reference reports success.
+ *   step, where the reference reports success. What asking left in the page is taken away when
+ *   the press is over (`disarm`), however it ends.
+ * - Each step of the release is waited for a bounded time (`releasing`), so a page that stops
+ *   answering cannot hold the turn. The reference waits for each without a limit
+ *   (`sendCleanupCommand`).
  */
 const press = Effect.fn('DesktopControl.press')(function* (
   page: ControlledPage,
@@ -474,16 +585,21 @@ const press = Effect.fn('DesktopControl.press')(function* (
   const { keyDown, keyUp } = sequence.value
   yield* page.send('Input.setIgnoreInputEvents', { ignore: false })
   let went = false
+  let armed = false
   let giveBack: Effect.Effect<void> = Effect.void
   const release = Effect.fn('DesktopControl.release')(function* () {
-    if (went) yield* page.send('Input.dispatchKeyEvent', keyUp).pipe(Effect.ignore)
-    yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: false }).pipe(Effect.ignore)
-    yield* giveBack
+    if (went) yield* releasing(page.send('Input.dispatchKeyEvent', keyUp))
+    yield* releasing(page.send('Emulation.setFocusEmulationEnabled', { enabled: false }))
+    yield* releasing(giveBack)
+    // Last: the key, the focus and the keyboard are what the Person would feel held.
+    if (armed) yield* releasing(disarm(page, 'keydown'))
   })
   const down = Effect.fn('DesktopControl.keyDown')(function* () {
     giveBack = yield* page.focus
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
     yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
+    // Set before the question is sent: one stopped midway may already have reached the page.
+    armed = true
     yield* arm(page, 'keydown')
     went = true
     yield* page.send('Input.dispatchKeyEvent', keyDown)
