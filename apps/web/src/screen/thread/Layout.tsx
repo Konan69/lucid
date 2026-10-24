@@ -6,10 +6,11 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { splitFull, useSplit } from '../../data/split'
 import { useFaceState, useLook } from '../../ui/Alive'
 import { cn } from '../../ui/cn'
+import { About } from './About'
 import { Header, Hero, STANDING, type Standing } from './Header'
 import { Share } from './Share'
 
@@ -30,8 +31,6 @@ const standingNow = (
     words: Option.match(doing, { onNone: () => 'Thinking…', onSome: (step) => `${step}…` }),
   }
 }
-
-const About = lazy(() => import('./About').then((module) => ({ default: module.About })))
 
 /**
  * The Thread's frame: the bar, the conversation and composer, and the card around Vivid with the
@@ -110,17 +109,15 @@ export function Layout({
         {children(!about && <Hero mood={standing.mood} onOpen={() => setAbout(true)} />)}
       </div>
       {about && (
-        <Suspense fallback={null}>
-          <About
-            thread={id}
-            mood={standing.mood}
-            standing={standing.words}
-            onClose={() => setAbout(false)}
-            onOpenComputer={() => {
-              if (!panelOpen) onTogglePanel()
-            }}
-          />
-        </Suspense>
+        <About
+          thread={id}
+          mood={standing.mood}
+          standing={standing.words}
+          onClose={() => setAbout(false)}
+          onOpenComputer={() => {
+            if (!panelOpen) onTogglePanel()
+          }}
+        />
       )}
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
         <Share

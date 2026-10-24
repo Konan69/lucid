@@ -69,7 +69,12 @@ export function staticRoutes(directory: Option.Option<string>) {
             request.headers.upgrade !== undefined
           )
             return HttpServerResponse.empty({ status: 404 })
-          const file = Option.getOrElse(yield* exactFile(root, name), () => index)
+          const found = yield* exactFile(root, name)
+          // A build file that is not here belongs to another build. Answering it with the page
+          // would hand a module import HTML, which the browser reports as a failed fetch.
+          if (Option.isNone(found) && name.startsWith('/assets/'))
+            return HttpServerResponse.empty({ status: 404 })
+          const file = Option.getOrElse(found, () => index)
           // Vite's default asset names include an eight-character content hash. Unversioned files revalidate.
           const hashed = name.startsWith('/assets/') && /-[\w-]{8}\.[\w.]+$/u.test(name)
           const cache =
