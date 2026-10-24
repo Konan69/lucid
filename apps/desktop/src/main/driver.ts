@@ -21,13 +21,6 @@ const PROTOCOL = '1.3'
  * `MAX_SCREENSHOT_WIDTH` (`preview/Manager.ts`).
  */
 const WIDEST_PICTURE = 1280
-/**
- * How long a loading page is waited for before it is read as it stands. Vivid's own bound: the
- * reference returns from navigation without waiting and leaves waiting to a separate tool, but a
- * `BrowseResult` is the page after the action, so the action waits for the load it started.
- */
-const SETTLE = '10 seconds'
-
 const decodePicture = Schema.decodeUnknownEffect(BrowserPicture)
 
 /** A closed page and a refused command are different answers to Vivid. */
@@ -107,20 +100,17 @@ const attach = Effect.fn('DesktopDriver.attach')(function* (contents: WebContent
   return undefined
 })
 
-/**
- * How long a page that is not drawn is waited for. The renderer brings the page forward when
- * Vivid starts using it, which takes a layout and a round trip, not seconds.
- */
-const DRAWN = '3 seconds'
-
-/**
- * Resolves in the page once it has drawn two frames, which only a page being shown does; or after
- * a second, so a page that cannot say is not waited for without end.
- */
+/** Two rendered frames confirm the placed page is drawing; cancellation removes both callbacks. */
 const DRAWING = `new Promise((resolve) => {
-  requestAnimationFrame(() => requestAnimationFrame(() => resolve("drawing")))
-  setTimeout(() => resolve("late"), 1000)
+  const key = Symbol.for("vivid.drawing")
+  let frame = requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => { delete window[key]; resolve("drawing") })
+  })
+  window[key] = () => { cancelAnimationFrame(frame); delete window[key]; resolve("cancelled") }
 })`
+const decodeDrawing = Schema.decodeUnknownEffect(
+  Schema.Struct({ result: Schema.Struct({ value: Schema.Literal('drawing') }) }),
+)
 
 /**
  * Gives the page the keyboard, once it is drawn on the window.
@@ -130,22 +120,37 @@ const DRAWING = `new Promise((resolve) => {
  * answered as failed, whatever was tried to make the page look shown. A key that may or may not
  * arrive cannot be reported honestly, so a key is pressed only on a page the Person can see.
  * The renderer shows the page Vivid is using (so the Person can see it and stop it); this waits
- * for that, and a page that is still not drawn after `DRAWN` is a failed step with nothing sent.
+ * for placement and drawing, until the action is cancelled or the page closes.
  */
 const keyboard = Effect.fn('DesktopDriver.keyboard')(function* (
   browser: Browser,
   tab: Tab,
   contents: WebContents,
 ) {
-  const drawn = yield* Effect.callback<void>((resume) => {
+  yield* Effect.callback<void, PageGone>((resume) => {
+    const gone = () => resume(Effect.fail(new PageGone({})))
+    contents.once('destroyed', gone)
     const stop = browser.whenDrawn(tab, () => resume(Effect.void))
-    return Effect.sync(stop)
-  }).pipe(Effect.timeoutOption(DRAWN))
-  if (Option.isNone(drawn)) return yield* new StepFailed({ step: 'undrawn' })
+    return Effect.sync(() => {
+      stop()
+      contents.removeListener('destroyed', gone)
+    })
+  })
   // Placed is not yet drawing: a page takes a moment to draw after it is put on the window, and a
   // key sent in that moment was dropped. Its own animation frames are the signal that it draws.
-  yield* command(contents, 'Runtime.evaluate', { expression: DRAWING, awaitPromise: true }).pipe(
-    Effect.ignore,
+  yield* command(contents, 'Runtime.evaluate', {
+    expression: DRAWING,
+    awaitPromise: true,
+    returnByValue: true,
+  }).pipe(
+    Effect.flatMap(decodeDrawing),
+    Effect.mapError(() => failure(contents, 'drawing')),
+    Effect.ensuring(
+      command(contents, 'Runtime.evaluate', {
+        expression:
+          '(() => { const cancel = window[Symbol.for("vivid.drawing")]; if (cancel) cancel() })()',
+      }).pipe(Effect.ignore),
+    ),
   )
   return yield* browser
     .keyboard(tab)
@@ -198,6 +203,7 @@ const stopped = (contents: WebContents) =>
     contents.once('did-stop-loading', done)
     contents.once('did-navigate-in-page', done)
     contents.once('destroyed', done)
+    if (contents.isDestroyed() || (!leaving.has(contents) && !contents.isLoading())) done()
     return Effect.sync(() => {
       contents.removeListener('did-stop-loading', done)
       contents.removeListener('did-navigate-in-page', done)
@@ -210,9 +216,8 @@ const stopped = (contents: WebContents) =>
  *
  * One command is sent to the page first and its answer awaited: by then the page has handled the
  * input before it, and has said so if that input made it ask to navigate. A page that asked, or
- * is loading, is waited for until it stops; one that never stops is read as it stands after
- * `SETTLE`. A page doing neither returns at once. A page in the middle of leaving may refuse the
- * command; that is the same news, so the refusal is not a failure.
+ * is loading, is waited for until it stops or its owner cancels. A page doing neither returns at
+ * once. A page in the middle of leaving may refuse the command; that is the same news, so the refusal is not a failure.
  */
 const settle = Effect.fn('DesktopDriver.settle')(function* (contents: WebContents) {
   if (contents.isDestroyed()) return undefined
@@ -224,8 +229,7 @@ const settle = Effect.fn('DesktopDriver.settle')(function* (contents: WebContent
     while (!contents.isDestroyed() && (leaving.has(contents) || contents.isLoading()))
       yield* stopped(contents)
   })
-  yield* arrived().pipe(Effect.timeoutOption(SETTLE))
-  leaving.delete(contents)
+  yield* arrived()
   return undefined
 })
 

@@ -45,6 +45,10 @@ class ArchiveTransferIdle extends Schema.TaggedError()(
  * ArchiveTransferIdle. Every chunk resets the idle bound; total transfer time is unlimited. */
 const archiveIdle = Duration.seconds(60)
 
+/** Locked GETs are idempotent. Source: unmeasured. Two retries bound repeated transient
+ * availability failures or idle transfers; integrity and permanent HTTP failures fail immediately. */
+const archiveAvailabilityRetries = 2
+
 const isString = Schema.is(Schema.String)
 const Strings = Schema.Record(Schema.String, Schema.String)
 const Edges = Schema.Struct({
@@ -468,7 +472,7 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
     if (
       yield* inspectArchive(root, snapshot.revision, key, resolution).pipe(
         Effect.retry({
-          times: 2,
+          times: archiveAvailabilityRetries,
           while: Predicate.or(
             Predicate.isTagged('ArchiveAvailabilityFailure'),
             Predicate.isTagged('ArchiveTransferIdle'),

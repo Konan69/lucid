@@ -11,7 +11,7 @@ Check the installed version with `rg effect-machine pnpm-workspace.yaml`. This s
 
 ## 1. Find and classify
 
-Count what the lint rule sees: `pnpm gate --only lint --host <devbox-pick host>` reports `react-no-state-after-wait` against its ceiling in `scripts/gate/ratchets.mjs`. Then list what it cannot see:
+Always run both the lint and `find.sh`. `pnpm gate --only lint --host <devbox-pick host>` reports `react-no-state-after-wait` against its ceiling in `scripts/gate/ratchets.mjs`. A plain `setX` after an `await` is counted there. `find.sh` lists only shapes the lint rule misses:
 
 ```bash
 .agents/skills/state-machines/scripts/find.sh [paths]
@@ -24,16 +24,18 @@ For each candidate, trace the whole attempt before touching syntax: the press, w
 - **Plain state**: one yes or no that nothing waits on (a sheet open, text in a field, a selected option). Stays `useState`.
 - **Server lifecycle**: stays in the database behind guarded writes, an idempotency key or a Run. A client machine never replaces it; it may front it.
 
+Dismissal sends `Dismissed` with the attempt id. Leaving the working state interrupts its invoke. A write the server already accepted is not undone. Nothing a finished attempt reports may act on a dismissed screen, including a late `onClose`.
+
 Many screens need two of these at once (a command machine plus a live query). Never copy server truth into machine state. Moving a setter into a reducer, a named callback, `Effect.sync` or a store silences the lint rule without fixing anything; read [references/finding.md](references/finding.md) for the shapes and the false conversions.
 
 Completion: every candidate in scope has a class and a written trace.
 
 ## 2. Decide the owner and lifetime
 
-Pick one, and write why in the module's JSDoc:
+Pick one, and write why in the module's JSDoc. A lifecycle read by more than one screen or entry point is session owned or keyed by entity. So is a lifecycle that must outlive its starting screen, such as sign-in away from the app or a send. A lifecycle confined to one dialog or sheet and ending on dismissal is React-subtree owned, with one machine per opening.
 
 - **Session or page owned**: one module-level bridge mounted in the live registry (`connecting`). For a workflow the whole surface shares.
-- **React subtree owned**: a factory used by one owner, keyed by the attempt; dismissal ends it.
+- **React subtree owned**: a factory used by one owner, keyed by the opening; dismissal ends it.
 - **Keyed by entity**: `AtomMachine.family` (or one machine per key, like `feed`) when unrelated readers must find the same machine by an immutable key.
 
 Read [references/wiring.md](references/wiring.md) for each recipe, registry identity, and how a machine is kept mounted and stopped.
@@ -43,10 +45,11 @@ Read [references/wiring.md](references/wiring.md) for each recipe, registry iden
 Write the module `packages/client/state/src/<one-word>.ts` in this order: schemas, `Machine.state`, `Machine.events`, `Machine.make({ effects, streams, timers, branches })`, `.handle(...)`, then the projection the screens read. Rules (each is checked by review; most by the types):
 
 - **States own their data.** A value that changes which events are taken or which work runs is a state; anything else is data on the lowest state that needs it. No `loading`/`error` flags beside each other.
-- **Events are the domain protocol**: `Press`, `Submit`, `Cancel`, `Finished`, never `SetLoading`. The presser makes the attempt id and the time (`attempt`, `at`); a transition reads no clock, makes no id, calls no service, awaits nothing.
+- **Events are the domain protocol**: `Press`, `Submit`, `Cancel`, `Finished`, never `SetLoading`. Every press makes a new attempt id. The presser supplies it and the time (`attempt`, `at`). A transition reads no clock, makes no id, calls no service, awaits nothing.
 - **Work belongs to the state that needs it** (`invoke` with `src` registered in `make`). Leaving the state interrupts it. Every reachable outcome has a transition: `onDone`, a typed `onFailure` that goes to a state the screen can word. Failures are `Schema.TaggedError`s that differ when handling differs.
 - **An event a state does not name is not taken.** Use `guard` for one conditional edge, a named branch group with `select.*` for several outcomes, `declinable: true` plus `decline()` for a stale answer (compare the event's attempt id with the state's). `{ none: true }` *accepts* an event; it is not a refusal.
 - **Identity travels with the attempt.** Anything said about an attempt from outside (a form answer, a dismissal) carries its attempt id and is declined if it is not the current one.
+- **Attempt identity and idempotency differ.** An idempotency key may persist across retries of the same content. `feed.ts` reuses a failed delivery's key while each press gets a new attempt id.
 - **Re-entered states check every invoke outcome.** For `reenter: true` or any path back into the same state, carry the attempt or revision through invoke input and output. Decline outcomes for another attempt. Typed failures and stream elements carry that identity too. Cancellation cannot remove an outcome already queued for the same state path and invoke id. The confirmed 0.46 race and evidence paths are in [references/library.md](references/library.md#reject-outcomes-from-another-attempt).
 - **Timers are invokes**, registered in `make({ timers })` and owned by a state. A timer that guesses how long work takes is an arbitrary timeout; apply the `arbitrary-timeouts` skill (`~/.agents/skills/arbitrary-timeouts/SKILL.md`).
 - `update` changes a state's data and keeps its running work; `reenter: true` restarts the work on purpose.
@@ -58,6 +61,7 @@ Read [references/library.md](references/library.md) for exact shapes, the compil
 
 - Adapter per app in `apps/<app>/src/data/<one-word>.ts`: it provides the services (RPC client, browser tab or `Linking`, navigator) and creates or mounts the bridge.
 - A screen reads atoms (`AtomMachine.select`, `AtomMachine.can`, or a domain projection like connecting's `Standing`) and says its own words from **one exhaustive `.match`** over that projection. No `if`/`else` over state names.
+- The machine ends in a state or emits an event that says what happened. Each screen reacts to that projection. Web may leave inline editing while phone closes its sheet. The machine never calls a screen callback to do this. Apply the dismissal rule from step 1.
 - Send with `useAtomSet(machine.send)`. Disable controls from the machine's reading and let the machine refuse the event as well. The only flag outside the machine is a gesture reservation an adapter needs because the browser opens a tab only inside the click (`apps/web/src/data/connecting.ts` `press`); keep its reason beside it.
 - The bridge queues sends during startup in write order. Send through `machine.send` without waiting for `ref`. An idle local send commits synchronous transitions and atom projections before returning. Entered invokes start in the sender's turn until their first suspension. Outcomes arrive in a later turn. Busy sends only queue. Never use `send` then `waitFor` as an acknowledgement.
 - Hit every surface the lifecycle exists on: web, phone, desktop, and each entry point (Thread, Thread list, Settings, notifications).

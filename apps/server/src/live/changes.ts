@@ -25,6 +25,9 @@ import { LiveTally, type Moved } from './tally.ts'
  *   away, being renamed or changing who may see it: those are announced whole.
  * - `notifications`: a Person's notifications and whether they were read.
  * - `drafts`: what a Person has typed and not sent.
+ * - `feed`: stages and posted cards in every readable Thread the Person owns. Thread creation,
+ *   rename, sharing and removal already announce the whole owner through `audienceTopics`,
+ *   which reaches Feed subscribers too; stage-only writes announce this part explicitly.
  *
  * These three are the writes one conversation turn makes. On 12 Oct 2026 production counted one
  * turn reloading each of a Person's twenty open queries three times, and their session twenty

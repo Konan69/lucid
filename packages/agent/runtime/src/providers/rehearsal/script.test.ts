@@ -1,61 +1,59 @@
-import { describe, expect, it } from '@effect/vitest'
-import * as NodeChildProcess from 'node:child_process'
-import { Option } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { expect, layer } from '@effect/vitest'
+import * as NodeURL from 'node:url'
+import { Effect, Option, Stream } from 'effect'
+import { ChildProcess } from 'effect/process'
 
-/**
- * Each registration case starts a Node process that boots Vite and loads the provider cold: about
- * two seconds on an idle machine, and past the default five when several gates share its cores
- * (6.6 s and 16 s measured on the Cloudbox, 6 Oct 2026). This is a ceiling for that start, not a
- * wait: nothing here sleeps.
- */
-const coldProcess = 30_000
-
-/** Isolated Node processes prove import-time opt-in against Flue's real registry without module mocks or global env changes. */
-function registration(model: Option.Option<string>) {
+/** Isolated, scoped Node processes prove import-time opt-in without sharing Flue's registry.
+ * Await exit and both output streams, so completion includes native pipe close. Cancellation
+ * closes the process scope. Vite closes on import failure too, instead of retaining watchers. */
+const registration = Effect.fn('RehearsalTest.registration')(function* (
+  model: Option.Option<string>,
+) {
   const env = { ...process.env }
   delete env.VIVID_MODEL
   if (Option.isSome(model)) env.VIVID_MODEL = model.value
-  const module = new URL('../rehearsal.ts', import.meta.url).href
+  const module = NodeURL.fileURLToPath(new URL('../rehearsal.ts', import.meta.url))
   const code = `import { createServer } from 'vite';
     import { hasProvider, resolveModel } from '@flue/runtime/internal';
     const bundler = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, watch: null } });
-    await bundler.ssrLoadModule(${JSON.stringify(module.replace('file://', ''))});
-    console.log(JSON.stringify({ registered: hasProvider('rehearsal'), model: hasProvider('rehearsal') ? resolveModel('rehearsal/script').id : null }));
-    await bundler.close();`
-  const result = NodeChildProcess.spawnSync(process.execPath, ['--input-type=module', '-e', code], {
-    cwd: new URL('../../../', import.meta.url),
+    try {
+      await bundler.ssrLoadModule(${JSON.stringify(module)});
+      console.log(JSON.stringify({ registered: hasProvider('rehearsal'), model: hasProvider('rehearsal') ? resolveModel('rehearsal/script').id : null }));
+    } finally {
+      await bundler.close();
+    }`
+  const child = yield* ChildProcess.make(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: NodeURL.fileURLToPath(new URL('../../../', import.meta.url)),
     env,
-    encoding: 'utf8',
-    timeout: coldProcess,
   })
-  expect(result.status, result.stderr).toBe(0)
-  return result.stdout.trim()
-}
-
-describe('Rehearsal scenes', () => {
-  it(
-    'does not register without explicit opt-in for absent, unrelated or similarly named models',
-    () => {
-      for (const model of [
-        Option.none<string>(),
-        Option.some('openrouter/z-ai/glm-5.3-flash'),
-        Option.some('rehearsalish/script'),
-      ]) {
-        expect(
-          registration(model),
-          Option.getOrElse(model, () => 'no model'),
-        ).toBe('{"registered":false,"model":null}')
-      }
-    },
-    coldProcess * 3,
+  const [status, stdout, stderr] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText, Stream.mkString),
+      child.stderr.pipe(Stream.decodeText, Stream.mkString),
+    ],
+    { concurrency: 3 },
   )
-  it(
-    'registers exactly the opt-in script model through Flue',
-    () => {
-      expect(registration(Option.some('rehearsal/script'))).toBe(
+  expect(status, stderr).toBe(0)
+  return stdout.trim()
+})
+
+layer(NodeServices.layer, { excludeTestServices: true })('Rehearsal scenes', (it) => {
+  it.effect.each([
+    Option.none<string>(),
+    Option.some('openrouter/z-ai/glm-5.3-flash'),
+    Option.some('rehearsalish/script'),
+  ])('does not register without explicit opt-in for %s', (model) =>
+    Effect.gen(function* () {
+      expect(yield* registration(model)).toBe('{"registered":false,"model":null}')
+    }),
+  )
+  it.effect('registers exactly the opt-in script model through Flue', () =>
+    Effect.gen(function* () {
+      expect(yield* registration(Option.some('rehearsal/script'))).toBe(
         '{"registered":true,"model":"script"}',
       )
-    },
-    coldProcess,
+    }),
   )
 })
