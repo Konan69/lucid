@@ -531,6 +531,11 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
+type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes
+type ProvideAuthority = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
+
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
@@ -544,9 +549,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ServerConfig,
     Changes,
   )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
-  const provide = <A, E>(
-    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
-  ) => effect.pipe(Effect.provide(dependencies))
+  const provide: ProvideAuthority = (effect) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
@@ -629,9 +632,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 /** Registration owns allocation and its failure translation; management owns existing accounts. */
 function makeRegistration(input: {
   readonly executor: ExecutorService
-  readonly provide: <A, E>(
-    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
-  ) => Effect.Effect<A, E>
+  readonly provide: ProvideAuthority
   readonly catalogServices: () => Effect.Effect<
     ReadonlyArray<Service>,
     ReturnType<typeof executorFailure>
@@ -856,9 +857,7 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
 const makeManagement = (input: {
   readonly executor: ExecutorService
   readonly database: typeof Database.Service
-  readonly provide: <A, E>(
-    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
-  ) => Effect.Effect<A, E>
+  readonly provide: ProvideAuthority
   readonly get: (
     actor: Actor,
     id: ConnectionId,
@@ -920,16 +919,17 @@ const makeManagement = (input: {
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
-      yield* removeConnection(row).pipe(
-        Effect.catchTag(
-          'ConnectionReclamationBlocked',
-          () =>
-            new ServiceUnavailable({
-              service: 'connections',
-              message: 'Vivid cannot remove this integration right now. Try again later.',
-            }),
+      yield* provide(
+        removeConnection(row).pipe(
+          Effect.catchTag(
+            'ConnectionReclamationBlocked',
+            () =>
+              new ServiceUnavailable({
+                service: 'connections',
+                message: 'Vivid cannot remove this integration right now. Try again later.',
+              }),
+          ),
         ),
-        Effect.provide(dependencies),
       )
       yield* provide(recordChanged(actor, row))
       yield* provide(
