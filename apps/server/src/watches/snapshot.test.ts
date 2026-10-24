@@ -1,9 +1,18 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest } from '@vivid/contracts'
+import { ConnectionId, CreateWatchRequest, ServiceId } from '@vivid/contracts'
 import { Effect, Layer, Option, Queue, Ref, Result } from 'effect'
-import { Executor as ConnectionExecutor } from '../connections/executor.ts'
+import {
+  Executor as ConnectionExecutor,
+  ExecutorAppId,
+  ExecutorAppOwnership,
+  ExecutorBinding,
+  ExecutorOwnerId,
+  ExecutorReferences,
+} from '../connections/executor.ts'
 import { removeConnection } from '../connections/migration.ts'
-import { listRecords } from '../connections/records.ts'
+import { decodeRow, encodeReferences, listRecords } from '../connections/records.ts'
+import { connections } from '../connections/tables.ts'
+import type { Actor } from '../auth/access.ts'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes } from '../live/changes.ts'
@@ -20,6 +29,39 @@ const request = CreateWatchRequest.make({
   event: 'message.received',
   arguments: {},
   instruction: 'Tell me when a client writes.',
+})
+
+/** Own the persisted fixture so reversal against main still reaches each removal assertion. */
+const connect = Effect.fn('WatchSnapshotTest.connect')(function* (actor: Actor) {
+  const database = yield* Database
+  const id = ConnectionId.make(crypto.randomUUID())
+  const app = ExecutorAppId.make(`app-${id}`)
+  const references = ExecutorReferences.cases.Public.make({
+    service: ServiceId.make('mail'),
+    app,
+    owner: ExecutorOwnerId.make(`owner-${actor.person.id}`),
+    binding: ExecutorBinding.cases.Public.make({}),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+  })
+  const rows = yield* database.run(
+    database
+      .insert(connections)
+      .values({
+        id,
+        personId: actor.person.id,
+        companyId: null,
+        service: references.service,
+        serviceName: 'Mail',
+        name: 'Work',
+        executorApp: app,
+        references: yield* encodeReferences(references),
+        status: 'ready',
+        createdAt: 0,
+        updatedAt: 0,
+      })
+      .returning(),
+  )
+  return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
 /** Keep SQL real; pause after the first read so a separate client can commit removal. */
@@ -49,6 +91,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
       it.effect(`${selection} names Watches from the same snapshot when removal commits`, () =>
         Effect.gen(function* () {
           const actor = yield* person()
+          const connection = yield* connect(actor)
           const executor = yield* Executor
           yield* Queue.offer(executor.answers, {
             id: 'evs_snapshot',
@@ -56,7 +99,6 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
           })
           const watch = yield* (yield* Watches).create(actor, request)
           yield* Queue.take(executor.subscribed)
-          const connection = yield* returned(yield* listRecords(actor), 'Connection')
           const writerContext = yield* Layer.build(Layer.fresh(testDatabaseLayer))
           const writer = yield* Database.pipe(Effect.provideContext(writerContext))
           const removalContext = yield* Layer.build(
@@ -98,8 +140,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
     it.effect('reports removal after activation before returning the granted Watch', () =>
       Effect.gen(function* () {
         const actor = yield* person()
-        yield* (yield* WatchedApps).appOf(actor, request.account)
-        const connection = yield* returned(yield* listRecords(actor), 'Connection')
+        const connection = yield* connect(actor)
         const removalContext = yield* Layer.build(
           Layer.mock(ConnectionExecutor, { remove: () => Effect.void }),
         )
