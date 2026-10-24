@@ -1,8 +1,8 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import * as Pg from 'pg'
-import { describe, expect, it } from '@effect/vitest'
-import { Config, Effect, Redacted, Schema } from 'effect'
+import { describe, expect, layer } from '@effect/vitest'
+import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect'
 import { InputAnswer, PersonId } from '@vivid/contracts'
 import { Signal } from '../approvals/signal.ts'
 import { DeliveryMessage } from '../threads/conversation.ts'
@@ -66,7 +66,16 @@ const legacy = [
   { id: 'withdrawn', status: 'withdrawn', answer: null, settled: 30, allows: false },
 ]
 
-/** A disposable prior-state database is isolated and cleaned even when seeding or migration fails. */
+/** The suite owns a real prior-schema connection and releases it before dropping its database. */
+class PreviousDatabase extends Context.Service<PreviousDatabase, Pg.Client>()(
+  'Inputs.test.PreviousDatabase',
+) {}
+
+/**
+ * Prior-schema construction is fixture acquisition, not the upgrade under test. Build it in the
+ * suite's scoped Layer so all historical DDL completes before the test's five-second budget.
+ * This still replays every real migration from template0; acquisition failure fails the suite.
+ */
 const freshDatabase = Effect.fn('Inputs.test.migrationDatabase')(function* () {
   const supplied = Redacted.value(yield* Config.Redacted('VIVID_TEST_DATABASE_URL'))
   const address = new URL(supplied)
@@ -78,12 +87,14 @@ const freshDatabase = Effect.fn('Inputs.test.migrationDatabase')(function* () {
   yield* Effect.promise(() => admin.query(`CREATE DATABASE "${name}" TEMPLATE template0`))
   address.pathname = `/${name}`
   const database = yield* connect(address.href)
+  yield* Effect.promise(() => database.query(previous.map((migration) => migration.sql).join('\n')))
   return database
 })
 
-/** Seed old columns on the actual preceding schema, including both terminal states and owed delivery. */
+const previousDatabaseLayer = Layer.effect(PreviousDatabase, freshDatabase())
+
+/** Seed both terminal states and owed delivery before any of the upgrade's generated SQL runs. */
 const seedPrevious = Effect.fn('Inputs.test.seedPrevious')(function* (database: Pg.Client) {
-  for (const migration of previous) yield* Effect.promise(() => database.query(migration.sql))
   yield* Effect.promise(() =>
     database.query(
       `INSERT INTO "user" (id, name, email) VALUES ('migration-person', 'Ada', 'migration@example.test');
@@ -172,12 +183,16 @@ const verifyUpgrade = Effect.fn('Inputs.test.verifyUpgrade')(function* (database
  * before CREATE DATABASE, and its name retains the gate's prefix for cleanup after termination.
  */
 describe.skipIf(!testDatabaseConfigured)('Input request database upgrade', () => {
-  it.live('carries waiting, withdrawn, chosen, and written legacy records into ordered JSONB', () =>
-    Effect.gen(function* () {
-      const database = yield* freshDatabase()
-      yield* seedPrevious(database)
-      for (const sql of changed) yield* Effect.promise(() => database.query(sql))
-      yield* verifyUpgrade(database)
-    }).pipe(Effect.scoped),
-  )
+  layer(previousDatabaseLayer)('prior-schema fixture', (it) => {
+    it.effect(
+      'carries waiting, withdrawn, chosen, and written legacy records into ordered JSONB',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* PreviousDatabase
+          yield* seedPrevious(database)
+          yield* Effect.promise(() => database.query(changed.join('\n')))
+          yield* verifyUpgrade(database)
+        }),
+    )
+  })
 })
