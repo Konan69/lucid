@@ -47,6 +47,10 @@ The devices journey uses public enrolment and decision RPCs with no model calls.
 
 For Electron changes read the [desktop recipe](features/desktop.md), then run `.agents/skills/verify-vivid/verify desktop flue-<id>` on the devbox. It launches the built app and a private default browser under Xvfb against this disposable server. It drives email sign-in, Google handoff/Cancel, device connectivity and a model browser action, retains `desktop/` evidence and closes native processes in finally. Google grants, egress routing and OS-specific behavior retain the prerequisites in that recipe. Each repetition needs a fresh Launch.
 
+## Android phone
+
+For Android work, read [the phone feature](features/phone.md) and [Android setup](references/android.md). From the PC run `verify android provision <devbox-pick alias>`. It rebuilds empty snapshot-excluded SDK and AVD directories, boots headless and reports the observed serial. In the same host's proof checkout run Launch, Doctor, `verify phone thread <run>`, Doctor, then Cleanup. The phone command uses the existing synthetic account and `adb reverse` to this run's server. Its snapshots, screenshots, APK checksum and cleanup receipts stay under `<evidence>/phone/`. It proves idle navigation only.
+
 ## Evidence and cleanup
 
 Evidence stays under `.cache/verify/flue-…/`. Include the feature file, exact head, working-tree status, model kind/id, host, per-feature HTTP/browser verdicts and evidence directory in the PR body. A screenshot proves its visible state only. Failed, blocked and plumbing-only runs remain unverified. For a blocked feature write `blocked: <reason>` and make unblocking its recipe the next task. A parent must obtain the different-family gate at the exact pushed head.

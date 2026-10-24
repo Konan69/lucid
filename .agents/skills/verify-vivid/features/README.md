@@ -3,6 +3,7 @@
 Read the touched feature before launching. A verdict belongs to the recorded commit. HTTP and browser are separate claims. The seeded map is not full product coverage.
 
 - [First message](first.md).
+- [Android Thread navigation](phone.md).
 - [Reload a Thread](reload.md).
 - [Rich replies](tool.md).
 - [Questions](question.md).

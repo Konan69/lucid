@@ -5,17 +5,7 @@ import { boot } from './process.mjs'
 
 export const authSecret = 'Verify-Auth!0123456789-ABCDefghijklmnop'
 
-/**
- * Each allowed alias names one Boat sandbox. Boat sets `BOAT_ID` on the box and keeps it across
- * restarts; the hostname changes on every start, so a hostname map went stale whenever a box
- * restarted (all three by 24 October 2026). The production Vivid Computer (`bx_yjj2hakd`) is in
- * no entry, so it is refused like any unknown box. Refresh only when a box is replaced.
- */
-const hosts = {
-  'cloudbox-konan': 'bx_gu65277z',
-  'cloudbox-konan2': 'bx_8b9c35bp',
-  'cloudbox-konan3': 'bx_5suus7qp',
-}
+import { hosts } from './hosts.mjs'
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
   if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== process.env.BOAT_ID)

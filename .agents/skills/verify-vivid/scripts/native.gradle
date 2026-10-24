@@ -1,0 +1,15 @@
+// Gradle workers bound tasks, while each task's Ninja compiler otherwise uses every CPU.
+// Public AGP finalizeDsl and CMake job pools cap those nested compilers on a shared devbox.
+gradle.beforeProject { project ->
+    ['com.android.application', 'com.android.library'].each { plugin ->
+        project.pluginManager.withPlugin(plugin) {
+            project.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                    '-DCMAKE_JOB_POOLS=vivid_compile=2;vivid_link=1',
+                    '-DCMAKE_JOB_POOL_COMPILE=vivid_compile',
+                    '-DCMAKE_JOB_POOL_LINK=vivid_link',
+                ])
+            }
+        }
+    }
+}

@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import * as NodeOS from 'node:os'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
@@ -15,6 +16,16 @@ export const dependencyLink =
 export const lock = root + '/.cache/verify-heavy.lock'
 export const cache = process.env.VIVID_VERIFY_CACHE ?? root + '/.cache/verify'
 export const boot = (await NodeFSP.readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim()
+
+/** A fresh measurement at the heavy boundary prevents a stale selector from overloading a box. */
+export async function capacity() {
+  if (NodeOS.loadavg()[0] > NodeOS.availableParallelism())
+    throw new Error('Devbox busy; choose an idle host with devbox-pick')
+  const memory = await NodeFSP.readFile('/proc/meminfo', 'utf8')
+  const available = /^MemAvailable:\s+(\d+)/mu.exec(memory)
+  if (available === null || Number(available[1]) < 6 * 1024 * 1024)
+    throw new Error('Heavy verification needs at least 6 GiB available')
+}
 
 /** Atomic publication keeps ownership readable across a crash; independent evidence writers
  * use unique sibling temporaries, so they never share a rename. */

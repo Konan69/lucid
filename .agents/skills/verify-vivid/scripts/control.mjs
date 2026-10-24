@@ -18,6 +18,7 @@ import {
   cache,
   dependencyLink,
   checkout,
+  capacity,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
@@ -34,10 +35,11 @@ async function selected() {
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
-  await NodeFSP.mkdir(cache, { recursive: true })
-  await recoverPrevious(cache)
   const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
+  await NodeFSP.mkdir(cache, { recursive: true })
+  await recoverPrevious(cache)
+  await capacity()
   const modelConfig = await provider()
   const snapshot = await checkout()
   const head = await command(['git', 'rev-parse', 'HEAD'])
@@ -148,9 +150,22 @@ async function launch() {
 
 try {
   if (action === 'launch') await launch()
+  else if (action === 'apk')
+    console.log(
+      await command(
+        [
+          'flock',
+          '-n',
+          NodeOS.homedir() + '/.cache/vivid-android/lock',
+          process.execPath,
+          skill + '/scripts/compile.mjs',
+        ],
+        { heavy: true },
+      ),
+    )
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | desktop | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
@@ -181,6 +196,28 @@ try {
             {
               heavy: true,
               log: state.evidence + '/feature-command.json',
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      else if (action === 'phone')
+        console.log(
+          await command(
+            [
+              'flock',
+              '-n',
+              NodeOS.homedir() + '/.cache/vivid-android/lock',
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/phone.mjs',
+              state.evidence + '/state.json',
+              args.find((arg) => !arg.startsWith('flue-')) ?? 'thread',
+            ],
+            {
+              heavy: true,
+              log: state.evidence + '/phone-command.json',
+              env: { ...process.env, VIVID_VERIFY_DEVBOX: state.devbox },
               record: (process) => control(state, { action: 'capture', process }),
             },
           ),

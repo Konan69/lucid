@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
+if [[ "${1:-}" == android ]]; then
+  shift
+  exec node .agents/skills/verify-vivid/scripts/android.mjs "$@"
+fi
 loader=$(node --input-type=module -e 'import { createRequire } from "node:module"; import { resolve } from "node:path"; try { console.log(createRequire(resolve("apps/server/package.json")).resolve("tsx")) } catch { console.error("Install repository dependencies with pnpm install --frozen-lockfile before running verify-vivid"); process.exit(1) }')
 exec node --import "$loader" .agents/skills/verify-vivid/scripts/control.mjs "$@"
