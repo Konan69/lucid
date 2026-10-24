@@ -60,6 +60,7 @@ it.effect('keeps the thirty-second cold recovery pace after transient retries ex
   Effect.gen(function* () {
     const test = yield* fixture(503)
     yield* Queue.take(test.failed)
+    expect((yield* test.catalog().pipe(Effect.flip))._tag).toBe('ServiceUnavailable')
     for (let retry = 0; retry < 3; retry++) {
       yield* TestClock.adjust('30 seconds')
       yield* Queue.take(test.failed)
