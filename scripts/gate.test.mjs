@@ -120,6 +120,15 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
   assert.equal(followed.status, 92, followed.stdout + followed.stderr)
   assert.ok(NodeFS.existsSync(active), 'unconfirmed ownership must preserve run evidence')
   assert.equal(NodeFS.readFileSync(active, 'utf8'), 'still owned\n')
+  // An interrupted receipt write must never turn an empty file into a successful gate.
+  NodeFS.writeFileSync(NodePath.join(runs, 'partial.log'), '')
+  NodeFS.writeFileSync(NodePath.join(runs, 'partial.exit'), '')
+  const partial = NodeChildProcess.spawnSync('bash', ['-s', '--', 'partial'], {
+    input: followScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.notEqual(partial.status, 0, 'an incomplete receipt must fail closed')
 })
 
 /**

@@ -167,7 +167,14 @@ owner.once('close', (code) => {
     process.exitCode = 93
     return
   }
-  process.exitCode = Number(fs.readFileSync(run + '.exit', 'utf8').trim())
+  const receipt = fs.readFileSync(run + '.exit', 'utf8').trim()
+  // A killed writer can leave an empty receipt. Number('') is zero, not proof of success.
+  if (!/^(0|[1-9][0-9]{0,2})$/.test(receipt) || Number(receipt) > 254) {
+    console.error('the run ended without a valid result')
+    process.exitCode = 93
+    return
+  }
+  process.exitCode = Number(receipt)
 })
 // Closing a follower owns its waiting child, never the detached gate.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
