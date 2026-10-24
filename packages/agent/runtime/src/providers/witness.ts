@@ -29,9 +29,8 @@ const RequestRecord = Schema.TaggedUnion({
   Unread: {},
 })
 const Body = Schema.TaggedUnion({
-  Read: { text: Schema.String, empty: Schema.Boolean, redacted: Schema.Boolean },
+  Read: { text: Schema.String, redacted: Schema.Boolean },
   Unreadable: {},
-  Uninspected: {},
 })
 
 class RequestUnreadable extends Schema.TaggedError<RequestUnreadable>()(
@@ -157,7 +156,6 @@ const bodyOf = Effect.fn('Provider.body')(function* (
       })
       return Body.cases.Read.make({
         text: scrubbed,
-        empty: text.trim().length === 0,
         redacted: scrubbed !== text,
       })
     }),
@@ -170,19 +168,16 @@ const record = Effect.fn('Provider.witness')(function* (input: {
   readonly response: Response
   readonly body: typeof Body.Type
   readonly metadata: typeof RequestRecord.Type
-  readonly attempt: 1 | 2
 }) {
   const log = input.response.status >= 400 ? Effect.logWarning : Effect.logInfo
   yield* log(
     JSON.stringify({
       event: 'ProviderWitness',
-      attempt: input.attempt,
       status: input.response.status,
       headers: headersOf(input.response),
       body: Body.match(input.body, {
         Read: ({ text }) => text.slice(0, 2048),
         Unreadable: () => '[unreadable]',
-        Uninspected: () => '[not-read]',
       }),
       request: input.metadata,
     }),
@@ -214,34 +209,16 @@ function requestOf(args: Parameters<FetchFunction>) {
   )
 }
 
-/**
- * How a refused request is read and sent again.
- *
- * - No body, or a string one in `init` (what Pi's OpenAI SDK sends): the arguments are read only
- *   once a refusal arrives, so an answered request costs nothing, and are sent again as they are.
- * - A Request carrying its own body: the first send reads it once, so a clone is taken before it,
- *   and it is read and sent again only from that clone.
- * - Any other body in `init` (a stream, a form): nothing can copy it without taking it from the
- *   first send, so it is neither read nor sent again, and a refusal is returned as it came.
- */
-interface Retained {
-  readonly read: () => Option.Option<Request>
-  readonly replay: Option.Option<Parameters<FetchFunction>>
-}
-
-function retain(args: Parameters<FetchFunction>): Retained {
+/** Retain a readable Request before fetch can consume it; never consume an init stream or form. */
+function retain(args: Parameters<FetchFunction>): () => Option.Option<Request> {
   const [input] = args
   return Option.match(initBody(args), {
     onNone: () => {
-      if (!(input instanceof Request) || input.body === null)
-        return { read: () => requestOf(args), replay: Option.some(args) }
+      if (!(input instanceof Request) || input.body === null) return () => requestOf(args)
       const copy = requestOf(args)
-      return { read: () => copy, replay: Option.map(copy, (request) => [request] as const) }
+      return () => copy
     },
-    onSome: (body) =>
-      Predicate.isString(body)
-        ? { read: () => requestOf(args), replay: Option.some(args) }
-        : { read: () => Option.none(), replay: Option.none() },
+    onSome: (body) => (Predicate.isString(body) ? () => requestOf(args) : () => Option.none()),
   })
 }
 
@@ -261,43 +238,26 @@ function delivered(response: Response, body: typeof Body.Type) {
   })
 }
 
-/** Only an empty 400 is replayed, once, before Pi can consume any assistant output. */
+/** Witness every refusal once. Pi owns retry eligibility, including explicit provider headers. */
 const send = Effect.fn('Provider.send')(function* (
   transport: FetchFunction,
   args: Parameters<FetchFunction>,
-  retained: Retained,
+  read: () => Option.Option<Request>,
 ) {
   const response = yield* fetchResponse(transport, args)
   if (response.status < 400) return response
-  const metadata = yield* Option.match(retained.read(), {
+  const metadata = yield* Option.match(read(), {
     onNone: () => Effect.succeed(RequestRecord.cases.Unread.make({})),
     onSome: describeRequest,
   })
   const body = yield* bodyOf(response, args)
-  yield* record({ response, metadata, body, attempt: 1 })
-  if (response.status !== 400 || !Body.guards.Read(body) || !body.empty)
-    return delivered(response, body)
-  // Without a replayable request, return the actual refusal rather than a consumed-body error.
-  if (Option.isNone(retained.replay)) return response
-  yield* Effect.sleep('300 millis')
-  const retried = yield* fetchResponse(transport, retained.replay.value)
-  if (retried.status < 400) {
-    yield* record({
-      response: retried,
-      metadata,
-      body: Body.cases.Uninspected.make({}),
-      attempt: 2,
-    })
-    return retried
-  }
-  const nextBody = yield* bodyOf(retried, args)
-  yield* record({ response: retried, metadata, body: nextBody, attempt: 2 })
-  return delivered(retried, nextBody)
+  yield* record({ response, metadata, body })
+  return delivered(response, body)
 })
 
 /**
  * Pi requires a Promise-returning FetchFunction, the sole execution boundary. Effect owns the
- * inspection and interruptible wait. Run to Exit so an SDK timeout preserves its AbortError
+ * inspection. Run to Exit so an SDK timeout preserves its AbortError
  * reason: runPromise's generic interruption error would become APIConnectionError instead of
  * APIConnectionTimeoutError in OpenAI 6.40.0. Transport rejections likewise return unchanged.
  */
