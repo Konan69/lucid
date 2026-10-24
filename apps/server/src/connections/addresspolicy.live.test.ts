@@ -30,7 +30,7 @@ const destinations = [
  * Calling Executor directly ensures Vivid's inspection cannot mask an Executor policy gap.
  */
 describe.skipIf(!enabled)('Public destination live policy', () => {
-  layer(connectionAddressLayer, { excludeTestServices: true })((it) => {
+  layer(connectionAddressLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'Vivid refuses internal addresses and public names resolving to private addresses',
       () =>
@@ -43,38 +43,42 @@ describe.skipIf(!enabled)('Public destination live policy', () => {
             )
           }
         }),
+      { timeout: 120_000 },
     )
   })
 
-  layer(NodeHttpClient.layerUndici, { excludeTestServices: true })(
+  layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 120_000 })(
     'Executor destination policy',
     (it) => {
-      it.effect('Executor independently refuses the same destinations before creating an app', () =>
-        Effect.gen(function* () {
-          if (url === undefined || key === undefined || organization === undefined)
-            return expect.fail('Supply disposable Executor test authority')
-          const client = yield* HttpClient.HttpClient
-          for (const destination of destinations) {
-            const request = yield* HttpClientRequest.bodyJson(
-              HttpClientRequest.post(`${url}/api/organizations/${organization}/apps/import`).pipe(
-                HttpClientRequest.bearerToken(key),
-              ),
-              { source: { kind: 'mcp', name: 'Public policy proof', url: destination } },
-            )
-            const response = yield* client.execute(request)
-            expect(response.status).toBe(422)
-            // Assert a policy refusal, rather than accepting auth failures as proof of isolation.
-            const refusal = yield* response.json.pipe(
-              Effect.flatMap(
-                Schema.decodeUnknownEffect(
-                  Schema.TaggedStruct('CatalogImportFailed', { code: Schema.String }),
+      it.effect(
+        'Executor independently refuses the same destinations before creating an app',
+        () =>
+          Effect.gen(function* () {
+            if (url === undefined || key === undefined || organization === undefined)
+              return expect.fail('Supply disposable Executor test authority')
+            const client = yield* HttpClient.HttpClient
+            for (const destination of destinations) {
+              const request = yield* HttpClientRequest.bodyJson(
+                HttpClientRequest.post(`${url}/api/organizations/${organization}/apps/import`).pipe(
+                  HttpClientRequest.bearerToken(key),
                 ),
-              ),
-            )
-            expect(['mcp_url', 'mcp_probe', 'mcp_discovery']).toContain(refusal.code)
-          }
-          return yield* Effect.void
-        }).pipe(Effect.scoped),
+                { source: { kind: 'mcp', name: 'Public policy proof', url: destination } },
+              )
+              const response = yield* client.execute(request)
+              expect(response.status).toBe(422)
+              // Assert a policy refusal, rather than accepting auth failures as proof of isolation.
+              const refusal = yield* response.json.pipe(
+                Effect.flatMap(
+                  Schema.decodeUnknownEffect(
+                    Schema.TaggedStruct('CatalogImportFailed', { code: Schema.String }),
+                  ),
+                ),
+              )
+              expect(['mcp_url', 'mcp_probe', 'mcp_discovery']).toContain(refusal.code)
+            }
+            return yield* Effect.void
+          }).pipe(Effect.scoped),
+        { timeout: 120_000 },
       )
     },
   )

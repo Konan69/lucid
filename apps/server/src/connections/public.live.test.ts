@@ -80,101 +80,106 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
           ),
         ),
       ),
-      { excludeTestServices: true },
+      { excludeTestServices: true, timeout: 120_000 },
     )((it) => {
-      it.effect(`adds ${source.name} by address, lists its tools and uses one public read`, () =>
-        Effect.gen(function* () {
-          const { personalActor, threadId } = yield* fixture()
-          const database = yield* Database
-          yield* database.run(
-            database
-              .update(threads)
-              .set({ companyId: null, audience: 'private' })
-              .where(eq(threads.id, threadId)),
-          )
-          const auth = AuthState.Vivid({
-            person: personalActor.person,
-            workspace: personalActor.workspace,
-            threadId,
-          })
-          return yield* Effect.gen(function* () {
-            // Capture the live public adapter, production audit and approval gate for this source.
-            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
-            return yield* Effect.gen(function* () {
-              const store = yield* ConnectionStore
-              // Cleanup is installed before registration, including failures after a saved card.
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  const removed = yield* Effect.exit(
-                    Effect.gen(function* () {
-                      const rows = yield* store.records(personalActor)
-                      for (const row of rows) yield* store.remove(personalActor, row.id)
-                    }),
-                  )
-                  expect(removed._tag).toBe('Success')
-                }),
-              )
-              const added = yield* connectionHandlers.AddIntegration({
-                name: source.name,
-                address: source.address,
-                shared: false,
-              })
-              console.info(JSON.stringify({ source: source.name, added }))
-              expect(AddIntegrationOutcome.guards.Added(added)).toBe(true)
-              const rows = yield* store.records(personalActor)
-              const row = rows.find((entry) => entry.service === `url:${source.address}`)
-              if (row === undefined) return yield* Effect.die('Public registration did not persist')
-              const discovery = yield* store.tools(personalActor, row)
-              const tools = ToolDiscovery.match(discovery, {
-                Ready: ({ tools: catalog }) => catalog,
-                Failed: () => [],
-              })
-              console.info(
-                JSON.stringify({
-                  source: source.name,
-                  tools: tools.map((tool) => tool.name),
-                }),
-              )
-              const discovered = yield* connectionHandlers.FindTools({
-                query: source.query,
-              })
-              const selected = discovered.tools.find((tool) => tool.name === source.tool)
-              expect(selected).toBeDefined()
-              const resolved = yield* connectionHandlers.ResolveTool({
-                account: source.name,
-                tool: source.tool,
-              })
-              expect(resolved.effect).toBe('read')
-              const used = yield* connectionHandlers.UseTool({
-                connectionId: resolved.connectionId,
-                tool: resolved.name,
-                input: source.input,
-                summary: 'Read public sample information',
-                rationale: 'Verify that a public integration can be connected and used by address.',
-              })
-              console.info(
-                JSON.stringify({
-                  source: source.name,
-                  outcome: used._tag,
-                  outputExcerpt: ToolOutcome.guards.Completed(used)
-                    ? JSON.stringify(used.output).slice(0, 180)
-                    : used,
-                }),
-              )
-              expect(ToolOutcome.guards.Completed(used)).toBe(true)
-              if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
-              const response = yield* decodeRead(used.output)
-              const text = response.content.map((part) => part.text).join('\n')
-              expect(text).toMatch(/^# Codex CLI$/mu)
-              expect(text).toMatch(/^## Getting started$/mu)
-              return yield* Effect.void
-            }).pipe(
-              Effect.scoped,
-              Effect.provideService(AuthContext, auth),
-              Effect.provide(context),
+      it.effect(
+        `adds ${source.name} by address, lists its tools and uses one public read`,
+        () =>
+          Effect.gen(function* () {
+            const { personalActor, threadId } = yield* fixture()
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(threads)
+                .set({ companyId: null, audience: 'private' })
+                .where(eq(threads.id, threadId)),
             )
-          }).pipe(Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped)
-        }).pipe(Effect.scoped),
+            const auth = AuthState.Vivid({
+              person: personalActor.person,
+              workspace: personalActor.workspace,
+              threadId,
+            })
+            return yield* Effect.gen(function* () {
+              // Capture the live public adapter, production audit and approval gate for this source.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const store = yield* ConnectionStore
+                // Cleanup is installed before registration, including failures after a saved card.
+                yield* Effect.addFinalizer(() =>
+                  Effect.gen(function* () {
+                    const removed = yield* Effect.exit(
+                      Effect.gen(function* () {
+                        const rows = yield* store.records(personalActor)
+                        for (const row of rows) yield* store.remove(personalActor, row.id)
+                      }),
+                    )
+                    expect(removed._tag).toBe('Success')
+                  }),
+                )
+                const added = yield* connectionHandlers.AddIntegration({
+                  name: source.name,
+                  address: source.address,
+                  shared: false,
+                })
+                console.info(JSON.stringify({ source: source.name, added }))
+                expect(AddIntegrationOutcome.guards.Added(added)).toBe(true)
+                const rows = yield* store.records(personalActor)
+                const row = rows.find((entry) => entry.service === `url:${source.address}`)
+                if (row === undefined)
+                  return yield* Effect.die('Public registration did not persist')
+                const discovery = yield* store.tools(personalActor, row)
+                const tools = ToolDiscovery.match(discovery, {
+                  Ready: ({ tools: catalog }) => catalog,
+                  Failed: () => [],
+                })
+                console.info(
+                  JSON.stringify({
+                    source: source.name,
+                    tools: tools.map((tool) => tool.name),
+                  }),
+                )
+                const discovered = yield* connectionHandlers.FindTools({
+                  query: source.query,
+                })
+                const selected = discovered.tools.find((tool) => tool.name === source.tool)
+                expect(selected).toBeDefined()
+                const resolved = yield* connectionHandlers.ResolveTool({
+                  account: source.name,
+                  tool: source.tool,
+                })
+                expect(resolved.effect).toBe('read')
+                const used = yield* connectionHandlers.UseTool({
+                  connectionId: resolved.connectionId,
+                  tool: resolved.name,
+                  input: source.input,
+                  summary: 'Read public sample information',
+                  rationale:
+                    'Verify that a public integration can be connected and used by address.',
+                })
+                console.info(
+                  JSON.stringify({
+                    source: source.name,
+                    outcome: used._tag,
+                    outputExcerpt: ToolOutcome.guards.Completed(used)
+                      ? JSON.stringify(used.output).slice(0, 180)
+                      : used,
+                  }),
+                )
+                expect(ToolOutcome.guards.Completed(used)).toBe(true)
+                if (!ToolOutcome.guards.Completed(used)) expect.fail('Public read did not complete')
+                const response = yield* decodeRead(used.output)
+                const text = response.content.map((part) => part.text).join('\n')
+                expect(text).toMatch(/^# Codex CLI$/mu)
+                expect(text).toMatch(/^## Getting started$/mu)
+                return yield* Effect.void
+              }).pipe(
+                Effect.scoped,
+                Effect.provideService(AuthContext, auth),
+                Effect.provide(context),
+              )
+            }).pipe(Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped)
+          }).pipe(Effect.scoped),
+        { timeout: 120_000 },
       )
     })
   }

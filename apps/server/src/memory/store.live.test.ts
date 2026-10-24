@@ -168,6 +168,7 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
             Option.none(),
           )
         }).pipe(Effect.scoped),
+      { timeout: 120000 },
     )
   })
 })

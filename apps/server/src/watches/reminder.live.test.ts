@@ -45,88 +45,91 @@ const movedAt = (item: FeedItem) =>
   })
 
 describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain', () => {
-  layer(chainLayer, { excludeTestServices: true })((test) => {
-    test.effect('a reminder Vivid sets for itself reaches the Feed at its time', () =>
-      Effect.gen(function* () {
-        const fixture = yield* chainFixture('Reminder proof')
-        const sentAt = Date.now()
-        const asked = yield* fixture.send(
-          'Remind me in two minutes to stretch my legs. My time zone is Africa/Lagos.',
-        )
-        const state = yield* completeRun(fixture, asked)
-        const settledAt = Date.now()
-        const steps = toolNames(state)
-        // Vitest hides a passing test's output; the trail is kept where the runner asks for it.
-        const trail = process.env['VIVID_PROOF_TRAIL']
-        if (trail !== undefined)
-          NodeFS.writeFileSync(
-            trail,
-            JSON.stringify({ reply: replyText(state), tools: toolParts(state) }, null, 2),
+  layer(chainLayer, { excludeTestServices: true, timeout: 600_000 })((test) => {
+    test.effect(
+      'a reminder Vivid sets for itself reaches the Feed at its time',
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* chainFixture('Reminder proof')
+          const sentAt = Date.now()
+          const asked = yield* fixture.send(
+            'Remind me in two minutes to stretch my legs. My time zone is Africa/Lagos.',
           )
-        // The trail is the evidence of what Vivid chose to do; it is printed on failure.
-        expect(steps, replyText(state)).toContain('make_integration:output-available')
-        expect(steps, replyText(state)).toContain('watch:output-available')
-        expect(steps, replyText(state)).toContain('use_tool:output-available')
-        // The reminder was set through the made app, for about two minutes from the ask, and
-        // its event was not fired by hand.
-        const calls = toolParts(state).filter(
-          (part) => part.toolName === 'use_tool' && part.state === 'output-available',
-        )
-        const called = calls.map((part) =>
-          Option.match(decodeUseTool(part.input), {
-            onNone: () => '',
-            onSome: ({ tool }) => tool,
-          }),
-        )
-        expect(called, replyText(state)).not.toContain('ring')
-        const set = calls.find((part) =>
-          Option.exists(decodeUseTool(part.input), ({ tool }) => tool.startsWith('remind')),
-        )
-        if (set === undefined || set.state !== 'output-available')
-          return yield* Effect.sync(() => expect.fail('Vivid must set the reminder'))
-        const receipt = decodeReceipt(set.output)
-        if (Option.isNone(receipt))
-          return yield* Effect.sync(() => expect.fail('The reminder must be accepted'))
-        const due = Date.parse(receipt.value.output.at)
-        // Asked as a delay, it must be the two minutes the Person said.
-        const requested = Option.flatMap(decodeUseTool(set.input), (call) =>
-          call.tool === 'remindIn' ? decodeAfter(call.input) : Option.none(),
-        )
-        if (Option.isSome(requested)) expect(requested.value.minutes).toBe(2)
-        // Two minutes from when Vivid set it, which is some time inside its Run.
-        expect(due).toBeGreaterThanOrEqual(sentAt + 115_000)
-        expect(due).toBeLessThanOrEqual(settledAt + 125_000)
+          const state = yield* completeRun(fixture, asked)
+          const settledAt = Date.now()
+          const steps = toolNames(state)
+          // Vitest hides a passing test's output; the trail is kept where the runner asks for it.
+          const trail = process.env['VIVID_PROOF_TRAIL']
+          if (trail !== undefined)
+            NodeFS.writeFileSync(
+              trail,
+              JSON.stringify({ reply: replyText(state), tools: toolParts(state) }, null, 2),
+            )
+          // The trail is the evidence of what Vivid chose to do; it is printed on failure.
+          expect(steps, replyText(state)).toContain('make_integration:output-available')
+          expect(steps, replyText(state)).toContain('watch:output-available')
+          expect(steps, replyText(state)).toContain('use_tool:output-available')
+          // The reminder was set through the made app, for about two minutes from the ask, and
+          // its event was not fired by hand.
+          const calls = toolParts(state).filter(
+            (part) => part.toolName === 'use_tool' && part.state === 'output-available',
+          )
+          const called = calls.map((part) =>
+            Option.match(decodeUseTool(part.input), {
+              onNone: () => '',
+              onSome: ({ tool }) => tool,
+            }),
+          )
+          expect(called, replyText(state)).not.toContain('ring')
+          const set = calls.find((part) =>
+            Option.exists(decodeUseTool(part.input), ({ tool }) => tool.startsWith('remind')),
+          )
+          if (set === undefined || set.state !== 'output-available')
+            return yield* Effect.sync(() => expect.fail('Vivid must set the reminder'))
+          const receipt = decodeReceipt(set.output)
+          if (Option.isNone(receipt))
+            return yield* Effect.sync(() => expect.fail('The reminder must be accepted'))
+          const due = Date.parse(receipt.value.output.at)
+          // Asked as a delay, it must be the two minutes the Person said.
+          const requested = Option.flatMap(decodeUseTool(set.input), (call) =>
+            call.tool === 'remindIn' ? decodeAfter(call.input) : Option.none(),
+          )
+          if (Option.isSome(requested)) expect(requested.value.minutes).toBe(2)
+          // Two minutes from when Vivid set it, which is some time inside its Run.
+          expect(due).toBeGreaterThanOrEqual(sentAt + 115_000)
+          expect(due).toBeLessThanOrEqual(settledAt + 125_000)
 
-        const watches = (yield* fixture.rpc.ListWatches()).watches
-        expect(watches.length).toBeGreaterThan(0)
-        yield* Effect.addFinalizer(() =>
-          Effect.forEach(watches, (watch) => fixture.rpc.StopWatch({ name: watch.name })).pipe(
-            Effect.catch(() => Effect.sync(() => expect.fail('Reminder watch stop failed'))),
-          ),
-        )
-
-        // The reminder arrives on its own about two minutes later; the Feed is read live.
-        const arrived = yield* fixture.rpc.WatchFeed().pipe(
-          Stream.filter((feed) =>
-            feed.items.some(
-              (item) =>
-                item.thread.startsWith('watch-') &&
-                item.post !== null &&
-                (FeedItem.guards.Waiting(item) || FeedItem.guards.Settled(item)),
+          const watches = (yield* fixture.rpc.ListWatches()).watches
+          expect(watches.length).toBeGreaterThan(0)
+          yield* Effect.addFinalizer(() =>
+            Effect.forEach(watches, (watch) => fixture.rpc.StopWatch({ name: watch.name })).pipe(
+              Effect.catch(() => Effect.sync(() => expect.fail('Reminder watch stop failed'))),
             ),
-          ),
-          Stream.runHead,
-          Effect.timeout(Duration.minutes(6)),
-        )
-        if (Option.isNone(arrived))
-          return yield* Effect.sync(() => expect.fail('The Feed stream ended'))
-        const [card] = arrived.value.items.filter((item) => item.thread.startsWith('watch-'))
-        if (card === undefined || card.post === null)
-          return yield* Effect.sync(() => expect.fail('The reminder must reach the Feed'))
-        expect(`${card.post.title} ${card.post.words}`).toMatch(/stretch/i)
-        // It reached the Feed at its time, not before (a little clock slack between services).
-        expect(movedAt(card)).toBeGreaterThanOrEqual(due - 2_000)
-      }).pipe(Effect.scoped),
+          )
+
+          // The reminder arrives on its own about two minutes later; the Feed is read live.
+          const arrived = yield* fixture.rpc.WatchFeed().pipe(
+            Stream.filter((feed) =>
+              feed.items.some(
+                (item) =>
+                  item.thread.startsWith('watch-') &&
+                  item.post !== null &&
+                  (FeedItem.guards.Waiting(item) || FeedItem.guards.Settled(item)),
+              ),
+            ),
+            Stream.runHead,
+            Effect.timeout(Duration.minutes(6)),
+          )
+          if (Option.isNone(arrived))
+            return yield* Effect.sync(() => expect.fail('The Feed stream ended'))
+          const [card] = arrived.value.items.filter((item) => item.thread.startsWith('watch-'))
+          if (card === undefined || card.post === null)
+            return yield* Effect.sync(() => expect.fail('The reminder must reach the Feed'))
+          expect(`${card.post.title} ${card.post.words}`).toMatch(/stretch/i)
+          // It reached the Feed at its time, not before (a little clock slack between services).
+          expect(movedAt(card)).toBeGreaterThanOrEqual(due - 2_000)
+        }).pipe(Effect.scoped),
+      { timeout: 600_000 },
     )
   })
 })

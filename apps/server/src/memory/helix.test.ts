@@ -383,27 +383,31 @@ describe.skipIf(!enabled)('Helix memory graph', () => {
           yield* scopedBriefs({ helix, partition, seed, embedding: seedVector })
           yield* boundedList({ helix, embedding: sharedVector })
         }).pipe(Effect.scoped),
+      { timeout: 120000 },
     )
   })
 
-  it.effect('rejects opening the existing index under a different embedding model', () =>
-    Effect.gen(function* () {
-      const result = yield* Layer.build(
-        helixMemoryLayer.pipe(
-          Layer.provide(NodeHttpClient.layerUndici),
-          Layer.provide(
-            ConfigProvider.layerAdd(
-              ConfigProvider.fromUnknown({
-                VIVID_HELIX_URL: url,
-                VIVID_EMBEDDING_MODEL: 'mismatched-test-model',
-              }),
-              { asPrimary: true },
+  it.effect(
+    'rejects opening the existing index under a different embedding model',
+    () =>
+      Effect.gen(function* () {
+        const result = yield* Layer.build(
+          helixMemoryLayer.pipe(
+            Layer.provide(NodeHttpClient.layerUndici),
+            Layer.provide(
+              ConfigProvider.layerAdd(
+                ConfigProvider.fromUnknown({
+                  VIVID_HELIX_URL: url,
+                  VIVID_EMBEDDING_MODEL: 'mismatched-test-model',
+                }),
+                { asPrimary: true },
+              ),
             ),
           ),
-        ),
-      ).pipe(Effect.scoped, Effect.result)
-      if (Result.isSuccess(result)) expect.fail('Expected an embedding-space mismatch')
-      expect(result.failure).toBeInstanceOf(MemoryIndexMismatch)
-    }),
+        ).pipe(Effect.scoped, Effect.result)
+        if (Result.isSuccess(result)) expect.fail('Expected an embedding-space mismatch')
+        expect(result.failure).toBeInstanceOf(MemoryIndexMismatch)
+      }),
+    { timeout: 10000 },
   )
 })
