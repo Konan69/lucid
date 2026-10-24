@@ -1,7 +1,7 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as NodePath from '@effect/platform-node/NodePath'
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
-import * as NodeProcess from 'node:process'
+import NodeProcess from 'node:process'
 import * as Console from 'effect/Console'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
