@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { ConfigProvider, Effect, Layer, Predicate, Queue, Schema } from 'effect'
+import { ConfigProvider, Effect, Layer, Predicate, Queue, Result, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/http'
 import { Decision, DecisionModel } from 'effect/ai'
 import { decisionModelLayer } from '../decisions/model.ts'
@@ -53,7 +53,7 @@ describe('OpenRouter server adapters', () => {
   it.effect('completes structured text without an ExpLabs credential', () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
-      const context = yield* Layer.build(
+      const acquired = yield* Layer.build(
         memoryModelLayer.pipe(
           Layer.provide(
             provider(requests, {
@@ -64,11 +64,12 @@ describe('OpenRouter server adapters', () => {
           ),
           Layer.provide(settings),
         ),
-      ).pipe(
-        Effect.catch(() =>
-          expect.fail('OpenRouter text adapter must start with only its selected key'),
-        ),
-      )
+      ).pipe(Effect.result)
+      expect(
+        Result.isSuccess(acquired),
+        'OpenRouter text adapter must start with only its selected key',
+      ).toBe(true)
+      const context = Result.getOrThrow(acquired)
       const model = yield* MemoryModel.pipe(Effect.provideContext(context))
       const completion = yield* model.complete({
         name: 'title',
@@ -87,16 +88,17 @@ describe('OpenRouter server adapters', () => {
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
       const vector = Array.from({ length: 1536 }, () => 0.125)
-      const context = yield* Layer.build(
+      const acquired = yield* Layer.build(
         embeddingsLayer.pipe(
           Layer.provide(provider(requests, { data: [{ index: 0, embedding: vector }] })),
           Layer.provide(settings),
         ),
-      ).pipe(
-        Effect.catch(() =>
-          expect.fail('OpenRouter embedding adapter must start with only its selected key'),
-        ),
-      )
+      ).pipe(Effect.result)
+      expect(
+        Result.isSuccess(acquired),
+        'OpenRouter embedding adapter must start with only its selected key',
+      ).toBe(true)
+      const context = Result.getOrThrow(acquired)
       const embeddings = yield* Embeddings.pipe(Effect.provideContext(context))
       expect(yield* embeddings.embed(['Florence holiday'])).toEqual([vector])
       const request = yield* Queue.take(requests)
@@ -111,7 +113,7 @@ describe('OpenRouter server adapters', () => {
   it.effect('uses the compatible System One endpoint for decisions', () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
-      const context = yield* Layer.build(
+      const acquired = yield* Layer.build(
         decisionModelLayer.pipe(
           Layer.provide(
             provider(requests, {
@@ -121,11 +123,12 @@ describe('OpenRouter server adapters', () => {
           ),
           Layer.provide(settings),
         ),
-      ).pipe(
-        Effect.catch(() =>
-          expect.fail('OpenRouter decision adapter must start with only its selected key'),
-        ),
-      )
+      ).pipe(Effect.result)
+      expect(
+        Result.isSuccess(acquired),
+        'OpenRouter decision adapter must start with only its selected key',
+      ).toBe(true)
+      const context = Result.getOrThrow(acquired)
       const definition = Decision.make({
         input: Schema.String,
         decisions: {
@@ -135,10 +138,15 @@ describe('OpenRouter server adapters', () => {
           }),
         },
       })
-      const result = yield* DecisionModel.decide(definition, { input: 'Today' }).pipe(
+      const answered = yield* DecisionModel.decide(definition, { input: 'Today' }).pipe(
         Effect.provideContext(context),
-        Effect.catch(() => expect.fail('The configured OpenRouter decision must be answered')),
+        Effect.result,
       )
+      expect(
+        Result.isSuccess(answered),
+        'The configured OpenRouter decision must be answered',
+      ).toBe(true)
+      const result = Result.getOrThrow(answered)
       expect(result.answers.urgent.probability).toBe(0.9)
       const request = yield* Queue.take(requests)
       expect(request.url).toBe('https://openrouter.ai/api/v1/systemone')

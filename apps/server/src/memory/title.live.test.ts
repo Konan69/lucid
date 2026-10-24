@@ -3,7 +3,7 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { layer } from '@effect/vitest'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { describe, expect } from 'vitest'
 import { personTable } from '../auth/tables.ts'
@@ -32,7 +32,9 @@ const observedClient = Layer.effect(
           Effect.fn('TitleProof.receipt')(function* (response) {
             yield* Effect.logInfo('Title provider receipt', { status: response.status })
             if (response.status !== 429) return
-            const body = yield* refusal(response)
+            const decoded = yield* refusal(response).pipe(Effect.result)
+            expect(Result.isSuccess(decoded), 'The provider refusal must have a code').toBe(true)
+            const body = Result.getOrThrow(decoded)
             expect(body.error.code).toBe('insufficient_quota')
             yield* Effect.logInfo('Title provider refusal', { reason: 'insufficient_quota' })
           }),
