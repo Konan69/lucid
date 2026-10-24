@@ -55,4 +55,6 @@ agent-device screenshot <evidence>/phone/screen.png --platform android --serial 
 
 Invoke the pinned launcher at `~/.cache/vivid-android/tools/node_modules/agent-device/bin/agent-device.mjs` with the cached Node executable. Do not use a global daemon or another run's session. Re-snapshot after a transition before selecting another ref. Use agent-device's semantic waits. Only the latest snapshot grants ref identity.
 
+A durable host lease prevents another checkout from taking an emulator left by a killed phone worker. SDK provision and stop refuse that lease; recover it with `verify cleanup` in the owning checkout.
+
 Always finish with `verify cleanup` and, for provision-only runs, the PC's `verify android stop <alias>`. Inspect the saved process receipts and `ps` output. Stop uses PID, Linux start ticks and boot identity, so a recycled PID grants no authority.

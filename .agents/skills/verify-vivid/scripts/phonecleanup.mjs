@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
-import * as NodePath from 'node:path'
+import * as NodeOS from 'node:os'
 import { command, json, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { readPhone } from './phonewire.mjs'
@@ -8,12 +8,21 @@ import { readPhone } from './phonewire.mjs'
 /** Both normal completion and abandoned-run recovery use the same captured device generations.
  * The private agent-device daemon verifies its own PID receipt through its public stop command. */
 export async function phoneCleanup(state) {
-  const text = await NodeFSP.readFile(state.scratch + '/phone.json', 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return null
-    throw error
-  })
-  if (text === null) return
-  const phone = Result.getOrThrow(readPhone(text))
+  // The supervisor isolates HOME in scratch; the OS account owns the rebuildable host cache.
+  const home = NodeOS.userInfo().homedir
+  const cache = home + '/.cache/vivid-android'
+  const leasePath = cache + '/lease.json'
+  const read = (file) =>
+    NodeFSP.readFile(file, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+  const leaseText = await read(leasePath)
+  const lease = leaseText === null ? null : Result.getOrThrow(readPhone(leaseText))
+  const text = await read(state.scratch + '/phone.json')
+  if (text === null && (lease === null || lease.run !== state.run)) return
+  const phone = text === null ? lease : Result.getOrThrow(readPhone(text))
+  if (lease !== null && lease.run !== state.run) throw new Error('Phone lease ownership mismatch')
   if (
     phone.run !== state.run ||
     phone.session !== state.run ||
@@ -21,9 +30,6 @@ export async function phoneCleanup(state) {
   )
     throw new Error('Phone ownership mismatch')
   const directory = state.evidence + '/phone'
-  // The supervisor isolates HOME in scratch. The captured SDK locates the real host tool cache.
-  const home = NodePath.dirname(phone.device.sdk)
-  const cache = home + '/.cache/vivid-android'
   const env = {
     ...process.env,
     HOME: home,
@@ -67,7 +73,8 @@ export async function phoneCleanup(state) {
   await json(directory + '/cleanup.json', { stopped, surviving, status, failures })
   if (surviving || failures.length)
     throw new Error('Phone cleanup failed; inspect ' + directory + '/cleanup.json')
-  await NodeFSP.unlink(state.scratch + '/phone.json')
+  await NodeFSP.rm(state.scratch + '/phone.json', { force: true })
+  await NodeFSP.rm(leasePath, { force: true })
 }
 
 /** Reverse mappings belong to this disposable emulator and must disappear before its adb stops. */

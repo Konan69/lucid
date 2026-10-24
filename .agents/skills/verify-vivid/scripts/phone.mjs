@@ -78,12 +78,20 @@ export async function phone(state, feature) {
   NodeAssert.equal(device.alias, state.devbox)
   NodeAssert.ok(await alive(device.emulator), 'Run verify android provision before phone')
   NodeAssert.ok(await alive(device.adb), 'Owned adb is not alive')
+  const lease = cache + '/lease.json'
+  const prior = await NodeFSP.stat(lease).catch((error) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (prior !== null)
+    throw new Error('A proof run owns this emulator; clean it before another phone journey')
   const receipt = {
     run: state.run,
     stateDir: state.scratch + '/device',
     session: state.run,
     device,
   }
+  await json(lease, receipt)
   await json(state.scratch + '/phone.json', receipt)
   await json(directory + '/receipt.json', receipt)
   const env = { ...phoneEnvironment, AGENT_DEVICE_STATE_DIR: receipt.stateDir }

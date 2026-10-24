@@ -207,6 +207,9 @@ def main():
     CACHE.mkdir(parents=True, exist_ok=True)
     with open(CACHE / 'lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lease = CACHE / 'lease.json'
+        if action != 'status' and lease.exists():
+            raise RuntimeError('A proof run owns this emulator; use verify cleanup in its checkout')
         location = CACHE / 'device.json'
         receipt = json.loads(location.read_text()) if location.exists() else {}
         started = time.monotonic()
@@ -216,7 +219,7 @@ def main():
             print(json.dumps(dict(stopped=result)))
             return
         if action == 'status':
-            print(json.dumps(dict(receipt=receipt, alive={key: alive(receipt[key])
+            print(json.dumps(dict(receipt=receipt, leased=lease.exists(), alive={key: alive(receipt[key])
                   for key in ['emulator', 'adb'] if key in receipt})))
             return
         assert action == 'provision', 'Choose provision, status or stop'
