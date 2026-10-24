@@ -1,4 +1,5 @@
 import * as NodeAssert from 'node:assert/strict'
+import { Channel } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { json, rpc } from './wire.mjs'
 import { catalog, settingsLimits } from './settingsproof.mjs'
@@ -19,10 +20,18 @@ async function groups(run) {
   return Result.getOrThrow(decodeGroups(await run(['eval', 'JSON.stringify(' + expression + ')'])))
 }
 
-/** Each public service appears exactly once, retaining the public catalog order within its visible group. */
-function assertCatalog(actual, services) {
-  const expected = services.map((service) => service.name)
+/** Text Vivid precedes the catalog and filters the closed channel vocabulary by name. Both
+ * sources must appear exactly once, retaining their own source order within each visible group. */
+function assertCatalog(actual, services, query) {
+  const channels = Channel.literals.filter((name) =>
+    name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  )
+  const expected = [...channels, ...services.map((service) => service.name)]
   NodeAssert.deepEqual(actual.flatMap((group) => group.names).toSorted(), expected.toSorted())
+  NodeAssert.deepEqual(
+    actual.filter((group) => group.purpose === 'Text Vivid'),
+    channels.length === 0 ? [] : [{ purpose: 'Text Vivid', names: channels }],
+  )
   for (const group of actual)
     NodeAssert.deepEqual(
       group.names,
@@ -90,10 +99,17 @@ export async function settingsBrowser(state, id, directory, browser) {
     '--fn',
     `Array.from(document.querySelectorAll('[role="dialog"] h3')).some(h => h.innerText.trim() === 'Mail and calendar')`,
   ])
+  // Channels arrive through their own live query, independently of FindServices.
+  await run([
+    'wait',
+    '--fn',
+    `Array.from(document.querySelectorAll('[role="dialog"] h3')).some(h => h.innerText.trim() === 'Text Vivid')`,
+  ])
   const popular = await catalog(state, directory, '', 'popular-services')
   const visible = await groups(run)
-  assertCatalog(visible, popular)
+  assertCatalog(visible, popular, '')
   const order = [
+    'Text Vivid',
     'Mail and calendar',
     'Files and notes',
     'Chat and meetings',
@@ -136,7 +152,7 @@ export async function settingsBrowser(state, id, directory, browser) {
     results.map((group) => group.purpose),
     ['Results'],
   )
-  assertCatalog(results, searched)
+  assertCatalog(results, searched, 'Gmail')
   await json(directory + '/search-groups.json', results)
   await capture('catalog-search')
   const connections = await rpc(state, 'ListConnections', undefined, directory, 'after-browsing')

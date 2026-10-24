@@ -9,10 +9,12 @@ const reports = (events, id) =>
 const receipts = (events, id) =>
   events.filter((e) => e.kind === 'receipt' && e.thread === id && e.outcome === 'Success').length
 
-/** Sidebar clicks keep the same application and ledger alive; full navigation would reset both. */
+/** The sidebar renders every row in a clipped scrolling nav. Reveal the real row before clicking
+ * its link, preserving the application and ledger and excluding inert copies left by list motion. */
 async function visit(run, id) {
-  const selector = 'a[href="/t/' + id + '"]'
+  const selector = 'aside nav [data-moves="' + id + '"] a[href="/t/' + id + '"]'
   await run(['wait', selector])
+  await run(['scrollintoview', selector])
   await run(['click', selector])
   await run(['wait', '--url', '**/t/' + id])
   await run(['wait', '[aria-label="Message Vivid"]'])
