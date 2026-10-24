@@ -1,0 +1,552 @@
+[
+  {
+    "name": "Child and scoped fibers",
+    "module": "lifetime/Effect",
+    "exports": "forkChild forkScoped forkIn forkDetach awaitAllChildren",
+    "description": "Forking starts an Effect in another fiber. forkChild attaches it to the parent. forkScoped uses the current Scope. forkIn uses a supplied Scope. forkDetach uses the global lifetime. Options include startImmediately and uninterruptible.",
+    "good": "Background consumers, parallel attempts, and services whose work has an explicit owner.",
+    "bad": "Persisted work owed after process death. Workflow and SQL-backed delivery belong to that problem. A detached fiber also needs an explicit shutdown policy.",
+    "observed": "Runtime-proved. lifetime.mjs prints scope.defaultCloseOrder [\"child\",2,1]. The child was started before its owner closed. Other fork options are source-verified only.",
+    "vivid": "Uses Effect.forkScoped in apps/server/src/channels/worker.ts:59. Candidate arrays of child fibers in apps/server/src/code/process.ts:371 need FiberSet or a stream consumer, while preserving admission and completion semantics."
+  },
+  {
+    "name": "Fiber outcomes and interruption",
+    "module": "lifetime/Fiber",
+    "exports": "await awaitAll join joinAll interrupt interruptAll",
+    "description": "Fiber.await returns Exit without propagating failure. Fiber.join propagates the fiber result. Fiber.interrupt requests interruption and waits for termination. Observer and unsafe operations are included on the Fiber interface.",
+    "good": "Joining work, observing completion, and ending owned background work.",
+    "bad": "JavaScript CPU preemption or rollback of an accepted external write. Workers address CPU isolation. A provider receipt and idempotency address external writes.",
+    "observed": "Runtime-proved. lifetime.mjs prints interrupt-returned only after all the tested finalizers. FIFO in the coordination probes concerns wake registration, not eventual completion of arbitrary user work.",
+    "vivid": "Uses Fiber.join in apps/server/src/code/pool.ts:142. Candidate manual running array and join loop in apps/server/src/code/process.ts:371 and :391."
+  },
+  {
+    "name": "Interruption masks",
+    "module": "lifetime/Effect",
+    "exports": "interrupt interruptible uninterruptible uninterruptibleMask interruptibleMask onInterrupt abortSignal",
+    "description": "uninterruptible masks interruption. uninterruptibleMask supplies restore for the previous interruptibility. onInterrupt runs a cleanup Effect for interruption. abortSignal adapts fiber interruption to AbortSignal.",
+    "good": "Protecting acquisition and release while leaving the long wait interruptible. Adapter cancellation belongs beside callback registration.",
+    "bad": "Masking an entire unbounded task. Restore interruption for its wait. AbortSignal cannot prove that an external write was undone.",
+    "observed": "Runtime-proved. lifetime.mjs prints uninterruptibleMask.restore [\"acquisition-complete\",\"finalizer\",\"interruption-complete\"]. The pending interruption is held until restore.",
+    "vivid": "Uses interruption-aware fibers in apps/server/src/code/pool.ts:128. Candidate AbortController plus delayed action in apps/mobile/src/screen/chat/Choices.tsx:180 belongs in a machine invoke with an interruptible timer."
+  },
+  {
+    "name": "Finalizers and scoped acquisition",
+    "module": "lifetime/Effect",
+    "exports": "ensuring onExit onInterrupt acquireRelease acquireUseRelease addFinalizer scoped scopedWith",
+    "description": "ensuring installs a finalizer. onExit passes Exit to the finalizer. acquireRelease registers release in Scope. acquireUseRelease brackets one use without exposing the resource lifetime.",
+    "good": "Files, subscriptions, sockets, permits, and release obligations on success, failure, or interruption.",
+    "bad": "Durable compensation across crashes. Workflow compensation still needs idempotent external operations and a durable engine.",
+    "observed": "Runtime-proved. lifetime.mjs prints [\"onInterrupt\",\"ensuring\",\"resource-b\",\"resource-a\",\"onExit\",\"interrupt-returned\"]. This is the tested nesting and default sequential Scope. It does not imply an order for parallel finalizers.",
+    "vivid": "Uses Effect.acquireRelease in apps/server/src/code/pool.ts:94. Candidate explicit timer clear paths in apps/server/src/computers/ssh/link.ts:441 and :471 can move into one scoped adapter finalizer."
+  },
+  {
+    "name": "Scope",
+    "module": "lifetime/Scope",
+    "exports": "make makeUnsafe fork addFinalizer addFinalizerExit close provide use",
+    "description": "Scope owns finalizers. Its constructors accept sequential or parallel finalizerStrategy. Closing records an Exit and executes registered finalizers.",
+    "good": "One lifetime that owns several resources and background fibers.",
+    "bad": "Event state, transactions, or persistence. A machine models event transitions. SQL models durable authority.",
+    "observed": "Runtime-proved. lifetime.mjs prints scope.defaultCloseOrder [\"child\",2,1]. Source effect@4.0.2/src/internal/effect.ts:3975 reverses registration order for sequential close.",
+    "vivid": "Uses Effect scopes in apps/server/src/code/pool.ts:144. Candidate manual subscriber and timer cleanup in packages/client/state/src/stream.ts:70."
+  },
+  {
+    "name": "Exit",
+    "module": "lifetime/Exit",
+    "exports": "Exit succeed fail failCause isSuccess isFailure hasInterrupts match",
+    "description": "Exit is the completed success or failure of an Effect. Its Failure carries Cause. Constructors, transformations, and matching operations are listed in the declarations.",
+    "good": "Completion receipts and outcome-dependent finalizers.",
+    "bad": "An in-progress lifecycle. A machine state owns pending data. Exit records a completed attempt.",
+    "observed": "Runtime-proved through the timeout and queue probes. time.mjs prints Failure with TimeoutError for timeout and Success with None for timeoutOption.",
+    "vivid": "Uses Exit in packages/client/state/src/live.ts:8. No additional replacement established."
+  },
+  {
+    "name": "Cause",
+    "module": "lifetime/Cause",
+    "exports": "Cause Reason hasInterrupts hasInterruptsOnly findErrorOption combine pretty",
+    "description": "Cause contains failure reasons. Reasons distinguish typed Fail, Die, and Interrupt. It also exposes Done for stream completion and TimeoutError.",
+    "good": "Supervision and adapter code that must preserve interruption while classifying a failure.",
+    "bad": "Flattening expected domain errors into strings. Tagged errors preserve the handling distinction. A Cause is not a domain state machine.",
+    "observed": "Runtime-proved. coordination.mjs reports interrupted queue takes. time.mjs reports externalInterrupted true for all three timeout operators.",
+    "vivid": "Uses Cause.findErrorOption in packages/client/state/src/live.ts:69. No additional replacement established."
+  },
+  {
+    "name": "Bounded parallelism and races",
+    "module": "lifetime/Effect",
+    "exports": "all forEach zip zipWith race raceFirst raceAll raceAllFirst",
+    "description": "all and forEach accept explicit concurrency options. Races distinguish first success from first completion. The exact overloads describe error and environment propagation.",
+    "good": "Finite independent work, bounded provider fanout, and competing alternatives.",
+    "bad": "Per-key shared lookup deduplication. Cache fits reusable results. RcMap fits scoped resources. A race is also not an external cancellation receipt.",
+    "observed": "Unverified at runtime. Read each race declaration before relying on failure or loser interruption.",
+    "vivid": "Uses Effect.forEach with concurrency in apps/server/src/code/process.ts:391. The adjacent manually retained fibers are a candidate for FiberSet, not an instruction to parallelize all admission work."
+  },
+  {
+    "name": "FiberSet, FiberMap, and FiberHandle",
+    "module": "lifetime/FiberSet",
+    "exports": "make run join clear",
+    "description": "FiberSet tracks scoped fibers. FiberMap tracks fibers by key. FiberHandle tracks one fiber. Their run and runtime adapters preserve an owning Scope.",
+    "good": "Bounded ownership of many tasks, replacement by key, or one current background task.",
+    "bad": "Result memoization or durable jobs. Cache and RcMap preserve different sharing contracts. SQL-backed work survives restart.",
+    "observed": "Unverified at runtime. Signatures and semantics for FiberMap and FiberHandle are in their separate catalog pages.",
+    "vivid": "Candidate running array in apps/server/src/code/process.ts:371. Its completion and failure behavior must be preserved before replacing it."
+  },
+  {
+    "name": "Deferred",
+    "module": "coordination/Deferred",
+    "exports": "make await succeed fail done complete completeWith into interrupt poll",
+    "description": "Deferred is a one-shot completion cell for a value or failure. Completion operations return whether they won. complete memoizes the supplied Effect result. completeWith stores the Effect directly.",
+    "good": "Readiness, one terminal receipt, and multiple waiters for the same result.",
+    "bad": "Reusable gates or streams of events. Latch fits reopenable admission. Queue fits a sequence of one-consumer values. PubSub fits fanout.",
+    "observed": "Runtime-proved. coordination.mjs prints Deferred.wakeOrder [1,3] after cancelling waiter 2. Installed source Deferred.ts:1697 resumes the remaining registration array in order. Downstream scheduling can reorder completion.",
+    "vivid": "Uses Deferred in apps/server/src/code/pool.ts:48. Candidate callback receipt maps in apps/server/src/computers/signins/guest.ts:120 require an Effect-owned adapter before migration."
+  },
+  {
+    "name": "Latch",
+    "module": "coordination/Latch",
+    "exports": "make await open close release whenOpen isOpen",
+    "description": "Latch is a reusable gate. open admits current and future waiters. close blocks future waiters. release admits the current waiters while leaving the gate closed.",
+    "good": "Ready or paused gates with several reopen cycles.",
+    "bad": "A value-bearing completion or a permit count. Deferred carries a one-shot result. Semaphore counts capacity.",
+    "observed": "Runtime-proved. coordination.mjs prints Latch.wakeOrder [1,3] and Latch.releaseKeepsClosed true. Installed source internal/effect.ts:5827 stores ordered waiter arrays.",
+    "vivid": "Candidate waiting callback set in apps/desktop/src/main/egress.ts:241. A Latch can coordinate callers but cannot create a WebSocket drain event."
+  },
+  {
+    "name": "Semaphore",
+    "module": "coordination/Semaphore",
+    "exports": "make withPermit withPermits withPermitsIfAvailable take takeIfAvailable release resize releaseAll",
+    "description": "Semaphore counts permits. withPermit and withPermits acquire and release around work. withPermitsIfAvailable returns Option without waiting. take and release expose manual ownership.",
+    "good": "Process-local locks and capacity bounds. One permit serializes an effectful critical section.",
+    "bad": "Strict weighted FIFO, bounded admission queues, cross-process locks, or resource pools. Queue, Pool, and a durable database protocol address those shapes. releaseAll does not cancel current holders.",
+    "observed": "Runtime-proved. coordination.mjs prints equalPermitOrder [1,2,3] and mixedPermitOrder [\"small\",\"large\"]. The two-permit waiter was overtaken by the later one-permit waiter.",
+    "vivid": "Uses Semaphore in apps/server/src/code/pool.ts:90. The custom FIFO admission queue at :47 is not a proven drop-in replacement. It also has a bounded waiting room and synchronous handoff."
+  },
+  {
+    "name": "PartitionedSemaphore",
+    "module": "coordination/PartitionedSemaphore",
+    "exports": "make",
+    "description": "PartitionedSemaphore limits concurrent work independently for each partition key. Its public model exposes the keyed permit wrappers.",
+    "good": "Per-tenant or per-resource in-process serialization.",
+    "bad": "Cross-process ownership and custom admission order. SQL claims provide durable authority. A bounded queue can provide an explicit waiting-room policy.",
+    "observed": "Unverified at runtime. Capacity reclamation and fairness need a focused proof before becoming lifecycle requirements.",
+    "vivid": "Candidate keyed permits in apps/server/src/computers/boat/lifecycle.ts:217. Import and implementation fit remain unverified."
+  },
+  {
+    "name": "Queue and its variants",
+    "module": "coordination/Queue",
+    "exports": "make bounded dropping sliding unbounded offer offerAll take takeAll takeN takeBetween poll end fail failCause shutdown",
+    "description": "Queue hands each message to one taker. bounded suspends offers at capacity. dropping rejects excess new items. sliding evicts old items. unbounded grows without a capacity limit. Queue carries an error channel and Done completion.",
+    "good": "Work handoff, callback adaptation, backpressure, and bounded coalescing when loss is intentional.",
+    "bad": "Broadcast or crash durability. PubSub gives each subscriber a copy. PersistedQueue stores owed work. A sliding queue loses older work by design.",
+    "observed": "Runtime-proved. coordination.mjs prints shutdown {\"blockedOffer\":false,\"takeInterrupted\":true,\"size\":0}. A pending empty take also interrupts. end drains \"retained\" before Done. Dropping and sliding eviction are source-verified only.",
+    "vivid": "Uses a sliding change queue in packages/client/state/src/snapshot.ts:187. Candidate manual buffered delivery must preserve the terminal protocol in apps/server/src/code/process.ts:373."
+  },
+  {
+    "name": "PubSub",
+    "module": "coordination/PubSub",
+    "exports": "bounded dropping sliding unbounded subscribe publish publishAll take end shutdown",
+    "description": "PubSub delivers messages to each current subscription. Bounded storage applies suspend, dropping, or sliding policies. Constructors accept replay for late subscribers. subscribe requires Scope.",
+    "good": "Process-local fanout with an explicit retention and overflow policy.",
+    "bad": "Durable cursor replay, database changefeeds, or one-consumer work dispatch. An event log or durable queue supplies different guarantees.",
+    "observed": "Runtime-proved. coordination.mjs prints lateReplay [2,3] for replay 2 after publishing 1,2,3 without subscribers. Default replay is 0. A bounded publisher waits until both current subscribers consume the occupied slot.",
+    "vivid": "Candidate callback fanout in packages/client/state/src/live.ts:331. Changing a synchronous session notification into an asynchronous stream needs a caller contract review."
+  },
+  {
+    "name": "SubscriptionRef",
+    "module": "coordination/SubscriptionRef",
+    "exports": "make get changes set modify modifyEffect update updateEffect",
+    "description": "SubscriptionRef stores a current value and publishes changes. Construction uses an unbounded PubSub with replay 1. Effectful modifications serialize through one semaphore.",
+    "good": "Current in-memory status plus ordered subscriptions to updates.",
+    "bad": "Durable history or a client event protocol. A database owns durable state. An Effect Machine owns lifecycle transitions. Ref fits a value without observers.",
+    "observed": "Runtime-proved. coordination.mjs prints changes [0,1,1,2]. The initial value is replayed and equal successive writes are emitted. Concurrent effectful update ordering is source-verified only.",
+    "vivid": "Uses live state through Atom in packages/client/state/src/live.ts:200. No proven SubscriptionRef replacement is established for that richer projection."
+  },
+  {
+    "name": "Ref",
+    "module": "coordination/Ref",
+    "exports": "make get set modify update getAndUpdate",
+    "description": "Ref stores one mutable value with synchronous atomic modification operations in Effect.",
+    "good": "Counters, indexes, and a shared value whose transition is pure.",
+    "bad": "Awaited read-modify-write sequences. SynchronizedRef.modifyEffect serializes an effectful update. TxRef and Effect.tx coordinate several transactional values.",
+    "observed": "Unverified at runtime. The generator preserves all Option-based and unsafe variants.",
+    "vivid": "Uses Ref in apps/server/src/computers/boat.test.ts:152. No production hand-rolled Ref replacement established."
+  },
+  {
+    "name": "SynchronizedRef",
+    "module": "coordination/SynchronizedRef",
+    "exports": "make get set modifyEffect updateEffect",
+    "description": "SynchronizedRef stores a value behind a semaphore. Its effectful modifier holds serialization across suspension.",
+    "good": "An in-memory state update that must await work before committing the new value.",
+    "bad": "SQL transaction isolation, durable authority, or independent values that need one atomic commit. SQL and Effect.tx fit those distinct domains.",
+    "observed": "Unverified at runtime. Failure and interruption semantics require an integration proof when an external write participates.",
+    "vivid": "Candidate callback-held state in apps/server/src/computers/ssh/link.ts:427. A callback adapter still needs an explicit state model and cancellation receipt."
+  },
+  {
+    "name": "RcRef",
+    "module": "coordination/RcRef",
+    "exports": "make get invalidate",
+    "description": "RcRef acquires one scoped resource lazily and counts borrowing scopes. idleTimeToLive can retain it after the last reference leaves.",
+    "good": "Shared connection or subscription ownership with release after the final borrower.",
+    "bad": "A result cache or exclusive lease. Cache memoizes results. Semaphore limits access. RcRef shares a resource concurrently.",
+    "observed": "Unverified directly at runtime. RcMap idle release was proved separately. That result is not a substitute for an RcRef proof.",
+    "vivid": "Candidate shared stream lifetime in packages/client/state/src/live.ts:383. Its existing Atom ownership must be compared before introducing another owner."
+  },
+  {
+    "name": "RcMap",
+    "module": "coordination/RcMap",
+    "exports": "make get getOption invalidate touch keys",
+    "description": "RcMap lazily acquires scoped resources by key. Concurrent borrowers share the pending lookup or resource. capacity limits entries. idleTimeToLive can vary by key.",
+    "good": "Keyed clients, sessions, subscriptions, and reference-counted in-flight executions.",
+    "bad": "Blind caching of completed writes, LRU eviction promises, or strict admission fairness. Cache fits recomputable values. A queue owns admission policy.",
+    "observed": "Runtime-proved. time.mjs prints acquired 1, reused 1, released [[\"x\",1199]]. The first reference ended at 1000. Reuse at 1099 moved release to 1199. No release occurred at either 99 ms checkpoint.",
+    "vivid": "Uses RcMap in apps/server/src/code/pool.ts:124. This already replaces in-flight sharing. Its custom waiting room at :47 has additional semantics."
+  },
+  {
+    "name": "ScopedRef",
+    "module": "coordination/ScopedRef",
+    "exports": "fromAcquire make get set",
+    "description": "ScopedRef stores a scoped resource and supports replacing it through a new acquisition. The previous value has its own release lifetime.",
+    "good": "Hot reload of a resource with cleanup.",
+    "bad": "Borrow counting or keyed pooling. RcRef and RcMap track borrowers. Pool bounds interchangeable resources.",
+    "observed": "Unverified at runtime. Acquisition failure and reader lifetime fit must be proved for a hot-swap integration.",
+    "vivid": "No concrete hand-rolled replacement established. Consult the catalog usage scan before adding one."
+  },
+  {
+    "name": "Pool",
+    "module": "coordination/Pool",
+    "exports": "make makeWithTTL makeWithStrategy get use reserve invalidate",
+    "description": "Pool bounds acquired resources. makeWithTTL adds idle eviction. Size, concurrency, and utilization options are in the exact declarations. Borrowers use a Scope.",
+    "good": "Reusable interchangeable connections or workers whose acquisition and release are owned.",
+    "bad": "Caching arbitrary keyed results or promising strict person-specific FIFO admission. Cache and RcMap share by key. An admission queue owns waiting order.",
+    "observed": "Unverified at runtime. Pool capacity and invalidation integration require a proof before replacing admission code.",
+    "vivid": "Candidate PersonPool name in apps/server/src/code/pool.ts:47 is misleading as a fit signal. That type is a ticket queue, not an acquired resource pool."
+  },
+  {
+    "name": "Cache",
+    "module": "coordination/Cache",
+    "exports": "make makeWith get getOption getSuccess set has refresh invalidate invalidateAll",
+    "description": "Cache memoizes keyed lookup results and pending work. make uses one TTL. makeWith computes TTL from Exit and key. capacity bounds entries. Lookup context options are in the declarations.",
+    "good": "Recomputable lookups, concurrent same-key deduplication, and explicit invalidation.",
+    "bad": "External write replay or resource borrowing. An idempotency protocol protects writes. RcMap owns scoped resources. Zero failure TTL can prevent retention of transient failure.",
+    "observed": "Unverified at runtime in this investigation. Concurrent lookup behavior is source-verified in the catalog.",
+    "vivid": "No remaining manual TTL cache was established in the inspected candidates. The WeakRef family at packages/client/state/src/live.ts:290 preserves object identity and is not a normal lookup cache."
+  },
+  {
+    "name": "ScopedCache",
+    "module": "coordination/ScopedCache",
+    "exports": "make makeWith get refresh invalidate",
+    "description": "ScopedCache adds scoped acquisition and release to keyed cache entries. Its declarations specify lookup context and TTL options.",
+    "good": "Cached resources whose cleanup follows cache ownership.",
+    "bad": "Borrower-counted ownership. RcMap releases according to active borrowers. SQL durability needs a persistence module.",
+    "observed": "Unverified at runtime. Eviction while a caller holds a value needs source and integration review.",
+    "vivid": "No concrete hand-rolled replacement established. The RcMap in apps/server/src/code/pool.ts:124 needs borrower ownership, so it is not an automatic ScopedCache candidate."
+  },
+  {
+    "name": "Request and RequestResolver",
+    "module": "coordination/RequestResolver",
+    "exports": "make makeWith makeGrouped fromEffectTagged batchN setDelay setDelayEffect withCache asCache persisted",
+    "description": "Request describes typed work. Effect.request sends it through a RequestResolver. The resolver groups entries, delays collection, runs batches, and completes every entry. batchN bounds one batch.",
+    "good": "Collapsing many distinct keys into a real backend batch call.",
+    "bad": "APIs that only accept one key per call. Bounded Effect.forEach is clearer there. A resolver does not itself make writes idempotent.",
+    "observed": "Unverified at runtime. RequestResolver.ts:175 requires all accepted entries to complete. Its preCheck false path needs another completion path.",
+    "vivid": "No proven batching replacement established. Pending callback RPC ids in apps/server/src/computers/signins/guest.ts:120 do not demonstrate a backend batch endpoint."
+  },
+  {
+    "name": "Transactional state",
+    "module": "transactions/TxRef",
+    "exports": "make get set modify update",
+    "description": "Effect.tx commits changes to transactional in-memory structures. TxRef, TxDeferred, TxSemaphore, TxQueue, TxPubSub, TxSubscriptionRef, and TxPriorityQueue provide transactional companions.",
+    "good": "Atomic coordination across several memory values and retry-on-conflict transactions.",
+    "bad": "Database durability or exactly-once external effects. SQL transactions own durable records. External calls in a retried memory transaction can repeat.",
+    "observed": "Unverified at runtime. The catalog includes all public exports of these seven modules and Effect.tx and txRetry.",
+    "vivid": "No concrete replacement established. The durable Computer lifecycle at apps/server/src/computers/boat/lifecycle.ts:215 must retain its stored binding protocol."
+  },
+  {
+    "name": "Schedule",
+    "module": "time/Schedule",
+    "exports": "spaced fixed windowed exponential fibonacci recurs once forever duration during cron upTo jittered addDelay modifyDelay min max concat concatResult while tap map passthrough setInputType fromStep fromStepWithMetadata toStep toStepWithSleep toStepWithMetadata",
+    "description": "Schedule computes continuation, output, and delay. Constructors describe cadence or backoff. Combinators bound, combine, inspect, or alter policies. Metadata includes input, attempt, now, start, elapsed, output, and duration.",
+    "good": "Retry policies, repeat cadence, bounded polling when no event exists, jitter, and time-based pacing.",
+    "bad": "Absolute attempt deadlines or a substitute for an available completion signal. timeout bounds a wait. Deferred or a callback receipt signals readiness.",
+    "observed": "Runtime-proved. time.mjs prints 3 evaluations for upTo times 2. A duration 100 policy accepts steps at 0 and 100 and ends at 101. With 200 ms work and 100 ms spacing, starts are [0,300]. jittered samples for a 100 ms delay are [81.38313,80.570541,109.19449,95.224,114.344968,89.312355]. Source Schedule.ts:1487 scales by 0.8 to 1.2. Samples do not prove endpoints.",
+    "vivid": "Uses Schedule in apps/server/src/channels/worker.ts:6. Candidate manual two-second provider polling in apps/server/src/computers/boat/lifecycle.ts:190. Preserve its withdrawal behavior and elapsed deadline."
+  },
+  {
+    "name": "Effect retry and repeat",
+    "module": "lifetime/Effect",
+    "exports": "Retry retry retryOrElse Repeat repeat repeatOrElse schedule scheduleFrom forever",
+    "description": "retry reruns typed failures. repeat reruns successful effects. Options include schedule, times, while, and until. The source runs once before either policy is stepped.",
+    "good": "Idempotent transient retries and scoped workers with explicit failure policy.",
+    "bad": "Retrying defects or interruptions, or repeating an uncertain external write. Preserve interruption and require a provider idempotency key or receipt for writes.",
+    "observed": "Runtime-proved. time.mjs observes 3 evaluations with 2 schedule outputs. Typed failure retry options are source-verified only.",
+    "vivid": "Uses Effect.repeat in apps/server/src/channels/worker.ts:59. Candidate recursive reconnect delay in packages/client/state/src/live.ts:171 can use Stream.retry with a typed retry policy."
+  },
+  {
+    "name": "Timeout family",
+    "module": "lifetime/Effect",
+    "exports": "timeout timeoutOption timeoutOrElse delay sleep timed",
+    "description": "timeout fails with TimeoutError. timeoutOption returns None only when the timeout wins. timeoutOrElse runs a lazy fallback after the source is interrupted. timeoutTo is absent at this pin.",
+    "good": "Explicit time budgets for an awaited operation and distinct typed timeout outcomes.",
+    "bad": "Guaranteed wall-clock return when cleanup or acquisition cannot be interrupted. None does not represent arbitrary failure or external cancellation. A timeout is not proof that a provider stopped.",
+    "observed": "Runtime-proved. time.mjs holds a 50 ms finalizer beyond a 100 ms timeout. No operator finishes at the deadline. timeout fails, timeoutOption returns None, timeoutOrElse runs fallback after release. External interruption stays interruption in all three.",
+    "vivid": "Uses Effect.timeoutOption in apps/desktop/src/main/control.ts:835. Candidate local timer in apps/server/src/computers/ssh/link.ts:455 must retain the TERM and channel-close protocol, not merely stop waiting."
+  },
+  {
+    "name": "Clock, TestClock, and Duration",
+    "module": "time/Clock",
+    "exports": "Clock currentTimeMillis currentTimeNanos",
+    "description": "Clock supplies time and sleep. TestClock substitutes controllable time. Duration represents time quantities and provides constructors, comparisons, arithmetic, encoding, and conversions.",
+    "good": "Typed time units and deterministic tests of sleeping fibers, schedules, retries, and Effect timeouts.",
+    "bad": "Controlling Date.now or arbitrary platform timers through TestClock. Atom registry idle eviction uses Date.now and setTimeout, so the atom probe uses the supported Node mock clock instead.",
+    "observed": "Runtime-proved. time.mjs advances logical time with TestClock.adjust. atoms.mjs observes a 100 ms Atom TTL removed at 101 with timeoutResolution 1 and mocked wall time 0.",
+    "vivid": "Candidate Date.now and setTimeout stores in packages/client/state/src/texting.ts:207 and src/stream.ts:70. A one-shot display deadline still needs mount-owned cleanup."
+  },
+  {
+    "name": "Stream callback and transport sources",
+    "module": "stream/Stream",
+    "exports": "callback fromQueue fromPubSub fromPubSubTake fromAsyncIterable",
+    "description": "Stream models many values with error and environment channels. callback adapts push producers through an owned queue. fromQueue consumes a dequeue. fromPubSub subscribes each consumer. Stream.async is absent at this pin.",
+    "good": "Callback feeds, ordered events, pull consumers, and producer backpressure.",
+    "bad": "One result or durable delivery. Effect.callback fits one callback result. A durable queue or event log supplies persistence.",
+    "observed": "Runtime-proved indirectly by the SubscriptionRef stream probe. General callback disposal and overflow are source-verified only.",
+    "vivid": "Candidate custom callback waiting set in apps/desktop/src/main/egress.ts:241. The public WebSocket API still lacks a drain receipt, so a scheduled adapter check can remain necessary."
+  },
+  {
+    "name": "Stream debounce, throttle, and grouping",
+    "module": "stream/Stream",
+    "exports": "debounce throttle throttleEffect groupedWithin schedule",
+    "description": "debounce emits after a quiet period. throttle controls throughput by units and duration with a cost function. groupedWithin emits groups bounded by size or elapsed time. schedule paces a stream through a Schedule.",
+    "good": "Search input, rate-shaped output, batched writes, and bounded latency groups.",
+    "bad": "Debouncing owed work or substituting quiet-period debounce for a leading write plus cooldown. Queue coalescing plus a repeat policy can preserve those semantics.",
+    "observed": "Unverified at runtime. Exact throttle options and groupedWithin signatures are in the catalog.",
+    "vivid": "Uses Atom.debounce in packages/client/state/src/live.ts:430. Candidate manual persistence cadence in packages/client/state/src/snapshot.ts:202 must preserve its initial 500 ms delay and 10 second cooldown."
+  },
+  {
+    "name": "Stream interruption and graceful halt",
+    "module": "stream/Stream",
+    "exports": "interruptWhen haltWhen",
+    "description": "interruptWhen interrupts an in-progress upstream pull. haltWhen waits for the current pull and then stops. A pull can emit a whole chunk. The signal failure becomes stream failure.",
+    "good": "Immediate cancellation or graceful stop at a pull boundary, chosen explicitly.",
+    "bad": "Assuming one pull is one element. Chunk boundaries matter. Immediate truncation needs interruptWhen. An external accepted write still needs its own receipt.",
+    "observed": "Unverified at runtime. Source Stream.ts:18056 and :18182 documents the distinct pull behavior.",
+    "vivid": "Candidate manual read loop in apps/server/src/code/process.ts:373. Its protocol intentionally waits for accepted calls, so immediate interruption may be wrong."
+  },
+  {
+    "name": "Stream broadcast and share",
+    "module": "stream/Stream",
+    "exports": "broadcast broadcastN share",
+    "description": "broadcast and broadcastN multicast through bounded or unbounded subscriber buffers. share starts upstream on first use and releases it after the last consumer, optionally after idleTimeToLive. replay is explicit.",
+    "good": "Several consumers sharing one acquisition with explicit overflow and idle retention.",
+    "bad": "Durable subscriber replay or independent restart positions. An event log with persisted cursors owns that contract.",
+    "observed": "Unverified directly at runtime. PubSub replay and backpressure were proved. Stream.share uses RcRef in Stream.ts:16787, but its complete integration was not run.",
+    "vivid": "Candidate subscription lifetime in packages/client/state/src/live.ts:383. Its Atom registry already owns stream lifetimes, so an additional share layer is not automatically needed."
+  },
+  {
+    "name": "Atom and AtomRegistry",
+    "module": "reactivity/Atom",
+    "exports": "make readable writable runtime context",
+    "description": "Atom describes reactive computation. AtomRegistry owns values, dependency links, subscriptions, schedules, and disposal. Atom.runtime builds service-backed reactive work. A registry is an independent cache and lifetime.",
+    "good": "Derived values and live queries whose dependencies can invalidate their results.",
+    "bad": "A lifecycle event protocol or durable storage. An Effect Machine models accepted events and invokes. SQL owns durable server authority.",
+    "observed": "Runtime-proved. atoms.mjs observes no acquisition before mounting. The same script disposes an ordinary atom after its last mount leaves and the supplied scheduler runs.",
+    "vivid": "Uses Atom and AtomRegistry in packages/client/state/src/live.ts:370. Candidate custom elapsed store in packages/client/state/src/stream.ts:70 can use a mounted Effect atom."
+  },
+  {
+    "name": "Atom keepAlive, idle TTL, and disposal",
+    "module": "reactivity/Atom",
+    "exports": "keepAlive autoDispose setIdleTTL setLazy mount",
+    "description": "keepAlive retains an evaluated atom without subscribers. autoDispose restores disposal. setIdleTTL configures idle retention. Infinite TTL sets keepAlive. Registry defaultIdleTTL supplies a default.",
+    "good": "Warm queries, short unmount gaps, and one intentionally session-owned computation.",
+    "bad": "Preloading by declaration alone or unlimited retention of high-cardinality keys. Mount starts ownership. Finite idle retention bounds unused lifetimes.",
+    "observed": "Runtime-proved. atoms.mjs retains keep after unmount, releases cold on scheduler flush, and releases idle at mocked time 101 for TTL 100 with resolution 1. registry.dispose releases keep too. Source AtomRegistry.ts:677 rounds into wall-clock buckets.",
+    "vivid": "Uses defaultIdleTTL in packages/client/state/src/live.ts:370 and keepAlive at :248. Candidate timer cleanup in src/stream.ts:70 belongs to the same registry lifetime if converted."
+  },
+  {
+    "name": "Atom families",
+    "module": "reactivity/Atom",
+    "exports": "family",
+    "description": "Atom.family memoizes an object factory by argument. The implementation uses weak values only when both WeakRef and FinalizationRegistry exist. Otherwise its MutableHashMap holds values strongly.",
+    "good": "Shared query or atom identity for equivalent keys.",
+    "bad": "Assuming garbage collection or an idle TTL on every platform. Registry disposal and family identity retention are separate. A custom weak-key policy may be required when platform capabilities differ.",
+    "observed": "Unverified at runtime on Hermes. Source Atom.ts:1603 checks both globals. The family signature returns T extends object, so its result is not restricted to Atom.",
+    "vivid": "Candidate familyOf in packages/client/state/src/live.ts:283. Its Hermes branch preserves WeakRef without FinalizationRegistry, unlike this pin. A direct replacement has an unverified retention cost."
+  },
+  {
+    "name": "Atom.fn and refresh",
+    "module": "reactivity/Atom",
+    "exports": "fn fnSync Reset Interrupt refresh getResult set update",
+    "description": "Atom.fn exposes an Effect or Stream function as a writable AsyncResult atom. Options include initialValue and concurrent. Reset and Interrupt are control writes. refresh invalidates and recomputes through the registry.",
+    "good": "Reactive commands and refreshable queries where AsyncResult is the full contract.",
+    "bad": "A domain lifecycle requiring guarded events, attempt identity, dismissal, or idempotency. An Effect Machine owns that protocol. Concurrent writes do not imply SQL concurrency control.",
+    "observed": "Unverified at runtime. Source Atom.ts:1428 tracks concurrent fibers separately. Default replacement interrupts prior computation through its reactive lifetime.",
+    "vivid": "Uses a richer command and query layer in packages/client/state/src/live.ts:486. Candidate delayed choice submission in apps/mobile/src/screen/chat/Choices.tsx:189 belongs to a machine, rather than a bare Atom.fn conversion."
+  },
+  {
+    "name": "Reactivity",
+    "module": "reactivity/Reactivity",
+    "exports": "make mutation query stream invalidate layer",
+    "description": "Reactivity registers process-local callbacks by invalidation key. mutation invalidates after Effect success. query returns results through a queue. stream exposes query results as a Stream.",
+    "good": "Local cache invalidation and rerunning keyed queries after mutations.",
+    "bad": "A database changefeed or post-commit cross-process notification. The registered callbacks live in a Map. A transaction or durable transport must establish those other guarantees.",
+    "observed": "Unverified at runtime. Source Reactivity.ts:96 owns the handler map and :134 defines mutation with Effect.tap.",
+    "vivid": "Candidate session callback set in packages/client/state/src/live.ts:331. Preserve its synchronous unauthenticated notification semantics before replacing it."
+  },
+  {
+    "name": "AtomRpc and AtomHttpApi",
+    "module": "reactivity/AtomRpc",
+    "exports": "Service",
+    "description": "AtomRpc.Service derives reactive query, mutation, and stream access from RPC contracts. AtomHttpApi.Service does the corresponding work for an HttpApi. Constructors expose runtime and client options.",
+    "good": "Typed client contracts, keyed query reuse, mutation invalidation, and reactive transport adapters.",
+    "bad": "Inventing a second transport contract beside an existing typed client. A schema contract still defines the boundary. Durable state and post-commit notification remain server responsibilities.",
+    "observed": "Unverified at runtime. Exact Service options and model methods appear in the two catalog pages.",
+    "vivid": "Candidate packages/client/state/src/live.ts:383 wraps the existing VividRpcClient. packages/client/state/src/live.ts:106 documents a live-stream optimistic requirement that must survive a migration."
+  },
+  {
+    "name": "Workflow, Activity, and durable coordination",
+    "module": "workflow/Workflow",
+    "exports": "make",
+    "description": "Workflow defines payload, success, failure schemas, execution identity, registration, and execution operations. Activity records a named step through WorkflowEngine. DurableDeferred, DurableClock, and DurableQueue integrate waits and handoff with an engine.",
+    "good": "Several steps that need recorded outcomes and restart recovery, when backed by a persistent engine and idempotent external operations.",
+    "bad": "A client UI statechart or assuming durable behavior from the in-memory engine. Effect Machine owns the client lifecycle. A SQL-backed engine owns persistent workflow state.",
+    "observed": "Unverified at runtime. Source Workflow.ts:47 exposes the typed definition and WorkflowEngine dependency. Durable database and crash recovery were not exercised.",
+    "vivid": "No proposed replacement established for Vivid's durable server models. apps/server/src/computers/boat/lifecycle.ts:205 already has a stored binding and reconciliation protocol."
+  },
+  {
+    "name": "Cluster and SingleRunner",
+    "module": "cluster/ClusterWorkflowEngine",
+    "exports": "layer",
+    "description": "ClusterWorkflowEngine implements WorkflowEngine with persisted cluster messages. SingleRunner.layer builds a single-process cluster with SQL message storage. ClusterSchema, ClusterCron, MachineId, and the other cluster modules appear in the catalog.",
+    "good": "Addressed entities, persisted RPC, and SQL-backed workflows in one process or a configured distributed deployment.",
+    "bad": "A default event bus, a requirement to deploy several nodes, or authorization. PubSub handles local fanout. Company and Membership contracts define tenancy.",
+    "observed": "Unverified at runtime. Source cluster/SingleRunner.ts:69 requires SqlClient and Crypto even with in-memory runner storage. No SQL workflow integration or crash replay was run.",
+    "vivid": "No concrete replacement established. An adoption proposal must answer the durable fit check in references/CAPABILITIES.md using the installed paths corrected by this reference."
+  },
+  {
+    "name": "Machine, State, Mailbox, and unstable names",
+    "module": "discovery/Metric",
+    "exports": "CounterState FrequencyState GaugeState HistogramState SummaryState",
+    "description": "The root source has no Machine.ts, State.ts, or Mailbox.ts. State types do exist in Scope, RcMap, ScopedCache, Pool, and TxQueue. Other state-named exports describe metrics, MCP protocols, SQL errors, and event-log transport. MachineId is a cluster identifier.",
+    "good": "Locating the actual public module before choosing an implementation. The catalog discovery pages enumerate exported names containing Machine, State, Workflow, Activity, or Cluster outside the main inventory.",
+    "bad": "Inferring a transition runtime from a State type name. @typeonce/effect-machine supplies the client machine in this repository. The installed Effect package has no src/unstable directory.",
+    "observed": "Runtime-proved. presence.mjs reports the three root modules absent, workflow and cluster directories present, and unstable absent. Absence is scoped to this installed package.",
+    "vivid": "Uses @typeonce/effect-machine through packages/client/state/src/connecting.ts:1. This inventory does not change that ownership."
+  },
+  {
+    "name": "Single-result callback adaptation",
+    "module": "lifetime/Effect",
+    "exports": "callback",
+    "description": "Effect.callback registers a producer that resumes one Effect result. Registration can return cleanup. The signature exposes the AbortSignal and fiber-related adapter options.",
+    "good": "One event receipt from a callback API and cleanup of listeners when the caller leaves.",
+    "bad": "A multi-element feed. Stream.callback or a Queue fits repeated values. Resuming a callback does not undo a provider write after cancellation.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "Candidate callback command settlement in apps/server/src/computers/ssh/link.ts:441. Preserve its close and TERM behavior."
+  },
+  {
+    "name": "Single-result memoization",
+    "module": "lifetime/Effect",
+    "exports": "cached cachedWithTTL cachedInvalidateWithTTL",
+    "description": "These operations return a reusable Effect that caches one computation. TTL and explicit invalidation variants control when it is recomputed.",
+    "good": "Repeated reads of one expensive value within an explicitly owned runtime.",
+    "bad": "Keyed lookup, scoped resource borrowing, and replaying an uncertain external write. Cache fits keys. RcRef fits a shared resource. A provider idempotency key protects writes.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "TestClock",
+    "module": "time/TestClock",
+    "exports": "make layer adjust setTime withLive",
+    "description": "TestClock provides a Clock implementation starting at logical time zero. adjust and setTime resume sleeps at the controlled time. withLive temporarily uses the live Clock.",
+    "good": "Deterministic Effect timeouts, retry delay, cadence, and resource idle release checks.",
+    "bad": "Platform timers that read Date.now or setTimeout directly. The supported platform fake clock must control those APIs instead.",
+    "observed": "Runtime-proved. time.mjs advances schedules, timeouts, and RcMap release with TestClock.adjust. atoms.mjs uses the Node mock clock for its different timer boundary.",
+    "vivid": "Candidate manual timer state in packages/client/state/src/stream.ts:70. A converted Effect-owned timer would then be driven by TestClock."
+  },
+  {
+    "name": "Duration",
+    "module": "time/Duration",
+    "exports": "Duration Input millis seconds zero infinity toMillis isFinite min max",
+    "description": "Duration represents time quantities and accepts documented numeric, tuple, bigint, and string inputs through its Input type. Construction, parsing, comparison, arithmetic, conversion, and formatting exports appear in the catalog.",
+    "good": "Keeping duration units explicit when configuring policies and adapter deadlines.",
+    "bad": "An absolute timestamp or an elapsed deadline guarantee. Clock provides timestamps. timeout bounds a running operation subject to interruption and cleanup.",
+    "observed": "Runtime-proved as a dependency of time.mjs. Its seeded jitter uses Duration.toMillis. Parsing boundary failures and infinity conversions remain unverified.",
+    "vivid": "Uses Duration in apps/desktop/src/main/control.ts:835. Candidate raw milliseconds in apps/mobile/src/screen/computer/Live.tsx:77."
+  },
+  {
+    "name": "AtomRef",
+    "module": "reactivity/AtomRef",
+    "exports": "make collection",
+    "description": "AtomRef is a mutable reactive reference with synchronous subscribe, set, update, property references, and mapped read-only views. collection maintains reactive item references.",
+    "good": "Observable synchronous values with property-level projections.",
+    "bad": "Async invocation ownership, guarded events, or persisted state. Atom and a machine supply different lifetime and protocol behavior. SQL supplies durable state.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "AsyncResult",
+    "module": "reactivity/AsyncResult",
+    "exports": "initial success failure match",
+    "description": "AsyncResult represents initial, successful, and failed reactive results. Waiting and previous-success metadata preserve state during refresh.",
+    "good": "Query rendering with a previous successful value while a new result is pending.",
+    "bad": "A domain event protocol. A machine models admissible actions and attempt identity rather than deriving them from query flags.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "Uses AsyncResult in packages/client/state/src/live.ts:17 and the projection at :78. No replacement established for that domain-specific projection."
+  },
+  {
+    "name": "Hydration",
+    "module": "reactivity/Hydration",
+    "exports": "dehydrate hydrate",
+    "description": "Hydration serializes initialized serializable atoms from a registry and restores serialized values into a registry. Options and serialized metadata are in the catalog.",
+    "good": "Transferring server-rendered or preloaded atom state into a client registry.",
+    "bad": "A durable database or an offline conflict protocol. Snapshot ownership and persistence are distinct requirements.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "Activity",
+    "module": "workflow/Activity",
+    "exports": "make retry idempotencyKey raceAll",
+    "description": "Activity wraps an Effect with a stable step name and result schemas. It executes through WorkflowEngine and WorkflowInstance. retry and idempotency helpers operate within that workflow context.",
+    "good": "Recorded steps in a persistent workflow with explicit retry and provider deduplication.",
+    "bad": "Exactly-once external effects. A provider call can happen before its outcome is recorded. Provider idempotency and durable reconciliation remain necessary.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "WorkflowEngine",
+    "module": "workflow/WorkflowEngine",
+    "exports": "WorkflowEngine WorkflowInstance layerMemory makeUnsafe",
+    "description": "WorkflowEngine is the execution and activity authority for workflow definitions. layerMemory supplies an in-process implementation. The engine interface includes durable-clock and deferred operations.",
+    "good": "One engine boundary for workflow registration, execution, step results, and suspension.",
+    "bad": "Assuming layerMemory survives process death. ClusterWorkflowEngine with SQL storage supplies the persistent implementation inspected here.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "DurableDeferred",
+    "module": "workflow/DurableDeferred",
+    "exports": "make await succeed fail",
+    "description": "DurableDeferred defines a schema-backed completion token whose result is stored through WorkflowEngine. Waiting can suspend a workflow.",
+    "good": "External approvals or inputs that need completion identity across workflow replay.",
+    "bad": "Authorization or a reusable local gate. Membership authority must validate the completion. Deferred and Latch fit in-process waits.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "DurableClock",
+    "module": "workflow/DurableClock",
+    "exports": "sleep",
+    "description": "DurableClock schedules workflow wakeup through WorkflowEngine. sleep uses an in-memory activity at or below inMemoryThreshold and a durable clock for longer waits. Its options include name, duration, and inMemoryThreshold.",
+    "good": "Long waits that must resume through a persistent workflow engine.",
+    "bad": "Ordinary short in-process sleeps or assuming a memory engine persists timers. Clock and TestClock fit process-local time.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  },
+  {
+    "name": "DurableQueue",
+    "module": "workflow/DurableQueue",
+    "exports": "make",
+    "description": "DurableQueue combines PersistedQueue work with workflow result delivery. The model exposes typed offer and consumer operations.",
+    "good": "Persisted handoff with workflow completion delivery.",
+    "bad": "Broadcast history or stronger exactly-once execution claims. DurableQueue builds on a queue protocol and external writes still need deduplication.",
+    "observed": "Unverified at runtime. The linked declarations provide source signatures and options.",
+    "vivid": "No concrete replacement established. The catalog records lexical usage; aliased use remains unverified."
+  }
+]

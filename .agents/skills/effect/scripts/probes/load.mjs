@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+export { assert };
+const root = process.argv[2];
+assert(root, "Pass the resolved Effect package directory");
+assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "4.0.2");
+export const effect = await import(pathToFileURL(path.join(root, "dist/index.js")));
+export const testing = await import(pathToFileURL(path.join(root, "dist/testing/index.js")));
+export const reactivity = await import(pathToFileURL(path.join(root, "dist/reactivity/index.js")));
+export const log = (name, value) => console.log(`${name} ${JSON.stringify(value)}`);

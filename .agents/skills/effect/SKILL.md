@@ -29,6 +29,7 @@ Check these before guessing:
 Read only the branch references that match the task.
 
 - Any Effect work in Vivid: also read `references/VIVID.md`.
+- Lifecycle ownership, state, coordination, concurrency, waiting, time, or reactivity: read [rules/primitives.md](rules/primitives.md) before adding timers, flags, retry loops, locks, or caches. It links the installed signatures, general fit limits, Vivid candidates, and runtime probes.
 - Collection, record, option, result, string, or structure transformations: read `references/STANDARD_LIBRARY.md` before introducing a helper or manual loop.
 - Data models, schemas, brands, variants, optional keys, or decoders: read `references/SCHEMA.md`.
 - Services, module surfaces, layers, runtime wiring, errors, `Effect.fn`, or test services: read `references/SERVICES_LAYERS.md`.

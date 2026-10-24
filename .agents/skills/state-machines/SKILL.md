@@ -42,6 +42,8 @@ Read [references/wiring.md](references/wiring.md) for each recipe, registry iden
 
 ## 3. Model it
 
+Read [Effect capabilities](../effect/rules/primitives.md) for the coordination, lifetime, time, and reactivity APIs used by invokes and services.
+
 Write the module `packages/client/state/src/<one-word>.ts` in this order: schemas, `Machine.state`, `Machine.events`, `Machine.make({ effects, streams, timers, branches })`, `.handle(...)`, then the projection the screens read. Rules (each is checked by review; most by the types):
 
 - **States own their data.** A value that changes which events are taken or which work runs is a state; anything else is data on the lowest state that needs it. No `loading`/`error` flags beside each other.
