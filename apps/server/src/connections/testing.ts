@@ -1,3 +1,4 @@
+import { ExecutorEvents } from '../watches/events.ts'
 import * as NodeHttp from 'node:http'
 import { expect } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
@@ -121,7 +122,6 @@ const authorized = (input: ExecutorReferences) => {
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
     appSlug: (app) => Effect.succeed(`slug-${app}`),
-    unsubscribeEvent: () => Effect.void,
     inventory: Effect.succeed({ apps: [], accounts: [], links: [] }),
     reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
     prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
@@ -300,6 +300,7 @@ const probeLayer = Layer.effectContext(
 )
 
 const dependencies = Layer.mergeAll(
+  Layer.mock(ExecutorEvents, { unsubscribe: () => Effect.void }),
   testDatabaseLayer,
   testConfigLayer,
   silentChangesLayer,

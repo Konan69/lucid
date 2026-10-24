@@ -920,17 +920,16 @@ const makeManagement = (input: {
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
-      yield* provide(
-        removeConnection(row).pipe(
-          Effect.catchTag(
-            'ConnectionReclamationBlocked',
-            () =>
-              new ServiceUnavailable({
-                service: 'connections',
-                message: 'Vivid cannot remove this integration right now. Try again later.',
-              }),
-          ),
+      yield* removeConnection(row).pipe(
+        Effect.catchTag(
+          'ConnectionReclamationBlocked',
+          () =>
+            new ServiceUnavailable({
+              service: 'connections',
+              message: 'Vivid cannot remove this integration right now. Try again later.',
+            }),
         ),
+        Effect.provide(dependencies),
       )
       yield* provide(recordChanged(actor, row))
       yield* provide(

@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 import {
   Cause,
   Clock,
@@ -119,11 +119,7 @@ const retryable = sql`(${connections.references} ? 'profile' OR ${connections.re
 const legacyRows = Effect.fn('Connections.legacyRows')(function* () {
   const database = yield* Database
   const rows = yield* database.run(
-    database
-      .select()
-      .from(connections)
-      .where(isNull(connections.removedAt))
-      .orderBy(connections.createdAt, connections.id),
+    database.select().from(connections).orderBy(connections.createdAt, connections.id),
   )
   const valid: Array<typeof storedRowSchema.Type> = []
   for (const raw of rows) {
@@ -356,9 +352,7 @@ const heldResources = Effect.fn('Connections.heldResources')(function* (
   }
 })
 
-/** Connection removal and Watch creation serialize on this identity. A tombstone preserves
- * the required Watch FK; accounts without history retain ordinary deletion semantics.
- */
+/** The row lock excludes late Watch creation; subscription keys must survive the cascade. */
 const removeRow = Effect.fn('Connections.removeRow')(function* (
   tx: Parameters<typeof disconnectWatches>[0],
   row: ConnectionRecord,
@@ -368,16 +362,10 @@ const removeRow = Effect.fn('Connections.removeRow')(function* (
     .from(connections)
     .where(eq(connections.id, row.id))
     .for('update'))[0]
-  if (current === undefined || current.updatedAt !== row.updatedAt || current.removedAt !== null)
+  if (current === undefined || current.updatedAt !== row.updatedAt)
     return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
-  const { retained, subscriptions } = yield* disconnectWatches(tx, row.id)
-  if (retained) {
-    const now = yield* Clock.currentTimeMillis
-    yield* tx
-      .update(connections)
-      .set({ removedAt: now, updatedAt: Math.max(now, row.updatedAt + 1) })
-      .where(eq(connections.id, row.id))
-  } else yield* tx.delete(connections).where(eq(connections.id, row.id))
+  const subscriptions = yield* disconnectWatches(tx, row.id)
+  yield* tx.delete(connections).where(eq(connections.id, row.id))
   return subscriptions
 })
 
@@ -453,10 +441,7 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         })
       const target = yield* decodeRow(current)
       if (ExecutorReferences.guards.ReconnectRequired(target.references)) {
-        const others = yield* tx
-          .select()
-          .from(connections)
-          .where(and(ne(connections.id, row.id), isNull(connections.removedAt)))
+        const others = yield* tx.select().from(connections).where(ne(connections.id, row.id))
         const claims = yield* heldResources(others)
         yield* executor
           .retire({ resources: target.references.retired, ...claims })

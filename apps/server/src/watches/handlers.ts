@@ -18,6 +18,7 @@ import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import {
   WatchedApps,
+  type WatchConnectionRemoved,
   type WatchAccountNotReady,
   type WatchAccountShared,
   type WatchAccountUnknown,
@@ -72,7 +73,8 @@ const resolved = <A, R>(
     | WatchAccountShared
     | DatabaseInfrastructureError
     | WatchEventUnknown
-    | WatchNameTaken,
+    | WatchNameTaken
+    | WatchConnectionRemoved,
     R
   >,
 ) =>
@@ -85,6 +87,13 @@ const resolved = <A, R>(
               new NotFound({ message: `No Integration account has that name. ${known}` }),
             ),
           ),
+        ),
+      WatchConnectionRemoved: () =>
+        Effect.fail(
+          new InvalidRequest({
+            message:
+              'This Integration was removed while the Watch was starting. Connect it again before watching it.',
+          }),
         ),
       WatchAccountNotReady: () =>
         Effect.fail(

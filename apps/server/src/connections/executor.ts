@@ -32,11 +32,6 @@ import type * as HttpBody from 'effect/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
-import {
-  ExecutorEvents,
-  executorEventsLayer,
-  type ExecutorEventsService,
-} from '../watches/events.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
@@ -539,8 +534,6 @@ const SignInInput = Schema.Struct({
 export interface ExecutorService {
   /** Read the event namespace through the same authenticated app transport as Connection setup. */
   readonly appSlug: (app: typeof ExecutorAppId.Type) => Effect.Effect<string, ExecutorFailure>
-  /** Connection removal also reclaims subscriptions through the existing MCP events adapter. */
-  readonly unsubscribeEvent: ExecutorEventsService['unsubscribe']
   /** Inspect public service setup without issuing an account grant or starting sign-in. */
   readonly authorization: (input: {
     readonly service: ServiceId
@@ -3069,7 +3062,6 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
   return { snapshots, discover }
 })
 
-/** App event namespaces use the Connection adapter's scoped response reader and timeout. */
 function makeAppSlug(http: ExecutorHttp) {
   return Effect.fn('Executor.appSlug')(function* (app: typeof ExecutorAppId.Type) {
     const record = yield* http.readApp(
@@ -3152,10 +3144,8 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   const call = makeCall(http, toolCache.discover)
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
-  const events = yield* ExecutorEvents
   return Executor.of({
     appSlug: makeAppSlug(http),
-    unsubscribeEvent: events.unsubscribe,
     catalog: availability.catalog,
     authorization: availability.authorization,
     begin: registration.begin,
@@ -3240,4 +3230,4 @@ export const executorLayer = Layer.effect(
     )
     return yield* makeExecutor(url, key, organization)
   }),
-).pipe(Layer.provide(executorEventsLayer))
+)

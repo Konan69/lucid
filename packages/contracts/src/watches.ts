@@ -40,9 +40,9 @@ export const WatchInstruction = Schema.String.check(
 /**
  * Why a Watch stopped. `removed`: the Person or Vivid stopped it. `refused`: Executor no longer
  * lets this Vivid use the event. `changed`: the app no longer declares the event or a filter it
- * names. `disconnected`: its Integration was removed. An unreachable Executor never stops a Watch: renewal keeps trying, even past expiry.
+ * names. An unreachable Executor never stops a Watch: renewal keeps trying, even past expiry.
  */
-export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed', 'disconnected'])
+export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed'])
 export type WatchStopReason = typeof WatchStopReason.Type
 
 /**

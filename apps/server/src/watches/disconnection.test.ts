@@ -26,7 +26,7 @@ import { Watches } from './lifecycle.ts'
 import { watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
 import { WatchStore } from './store.ts'
-import { Executor, person, testLayer } from './testing.ts'
+import { Delivered, Executor, person, testLayer } from './testing.ts'
 
 /** The real removal path receives a ready dedicated Connection, as Settings supplies it. */
 const connect = Effect.fn('WatchDisconnectTest.connect')(function* (actor: Actor) {
@@ -64,7 +64,7 @@ const connect = Effect.fn('WatchDisconnectTest.connect')(function* (actor: Actor
 describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
   layer(testLayer)((it) => {
     it.effect(
-      'stops Watches on Integration removal, unsubscribes and rejects signed deliveries',
+      'deletes Watches on Integration removal, unsubscribes and rejects signed deliveries',
       () =>
         Effect.gen(function* () {
           const actor = yield* person()
@@ -90,18 +90,20 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
           const removal = yield* Layer.build(
             Layer.mock(ConnectionExecutor, {
               remove: () => Effect.void,
-              unsubscribeEvent: (subscription) =>
+            }),
+          )
+          yield* removeConnection(connection).pipe(
+            Effect.provideContext(removal),
+            Effect.provideService(ExecutorEvents, {
+              ...events,
+              unsubscribe: (subscription) =>
                 events
                   .unsubscribe(subscription)
                   .pipe(Effect.andThen(Effect.fail(new ExecutorEventsUnreachable({})))),
             }),
           )
-          yield* removeConnection(connection).pipe(Effect.provideContext(removal))
           const found = yield* (yield* WatchStore).find(watch.id)
-          expect(Option.map(found, (record) => record.watch.state._tag)).toEqual(
-            Option.some('Stopped'),
-          )
-          expect(found).toMatchObject({ value: { watch: { state: { reason: 'disconnected' } } } })
+          expect(Option.isNone(found)).toBe(true)
           expect((yield* Ref.get(executor.unsubscribed)).slice(before)).toEqual([
             'mail.message.received',
           ])
@@ -145,12 +147,31 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
             ),
           )
           expect(response.status).toBe(410)
+          const forged = yield* Effect.promise(() =>
+            web.handler(
+              new Request(`${config.PUBLIC_URL.href.replace(/\/$/u, '')}/api/watches/${watch.id}`, {
+                method: 'POST',
+                body,
+                headers: {
+                  'webhook-id': id,
+                  'webhook-timestamp': timestamp,
+                  'webhook-signature': 'v1,AAAA',
+                },
+              }),
+            ),
+          )
+          expect([401, 404]).toContain(forged.status)
+          expect(
+            (yield* Ref.get(yield* Delivered)).filter((delivery) =>
+              delivery.idempotencyKey.startsWith(`watch:${watch.id}:`),
+            ),
+          ).toEqual([])
           const database = yield* Database
           expect(
             yield* database.run(
               database.select().from(connections).where(eq(connections.id, connection.id)),
             ),
-          ).toHaveLength(1)
+          ).toHaveLength(0)
         }).pipe(Effect.scoped),
     )
 
@@ -208,37 +229,40 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('stops a Pending Watch when removal races its subscription grant', () =>
-      Effect.gen(function* () {
-        const actor = yield* person()
-        const connection = yield* connect(actor)
-        const executor = yield* Executor
-        const creating = yield* Effect.forkChild(
-          (yield* Watches).create(
-            actor,
-            CreateWatchRequest.make({
-              name: 'Pending mail',
-              account: 'Mail (Work)',
-              event: 'message.received',
-              arguments: {},
-              instruction: 'Tell me when a client writes.',
+    it.effect(
+      'reports an Integration removed while a Pending Watch awaits its subscription grant',
+      () =>
+        Effect.gen(function* () {
+          const actor = yield* person()
+          const connection = yield* connect(actor)
+          const executor = yield* Executor
+          const creating = yield* Effect.forkChild(
+            (yield* Watches).create(
+              actor,
+              CreateWatchRequest.make({
+                name: 'Pending mail',
+                account: 'Mail (Work)',
+                event: 'message.received',
+                arguments: {},
+                instruction: 'Tell me when a client writes.',
+              }),
+            ),
+          )
+          const subscription = yield* Queue.take(executor.subscribed)
+          const removal = yield* Layer.build(
+            Layer.mock(ConnectionExecutor, {
+              remove: () => Effect.void,
             }),
-          ),
-        )
-        const subscription = yield* Queue.take(executor.subscribed)
-        const events = yield* ExecutorEvents
-        const removal = yield* Layer.build(
-          Layer.mock(ConnectionExecutor, {
-            remove: () => Effect.void,
-            unsubscribeEvent: events.unsubscribe,
-          }),
-        )
-        yield* removeConnection(connection).pipe(Effect.provideContext(removal))
-        expect(yield* (yield* Watches).list(actor)).toEqual([])
-        yield* Queue.offer(executor.answers, { id: 'evs_late', refreshBefore: new Date(604800000) })
-        expect((yield* Effect.flip(Fiber.join(creating)))._tag).toBe('DatabaseFailure')
-        expect(yield* Ref.get(executor.unsubscribed)).toContain(subscription.name)
-      }).pipe(Effect.scoped),
+          )
+          yield* removeConnection(connection).pipe(Effect.provideContext(removal))
+          expect(yield* (yield* Watches).list(actor)).toEqual([])
+          yield* Queue.offer(executor.answers, {
+            id: 'evs_late',
+            refreshBefore: new Date(604800000),
+          })
+          expect((yield* Effect.flip(Fiber.join(creating)))._tag).toBe('WatchConnectionRemoved')
+          expect(yield* Ref.get(executor.unsubscribed)).toContain(subscription.name)
+        }).pipe(Effect.scoped),
     )
   })
 })
