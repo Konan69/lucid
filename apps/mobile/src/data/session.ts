@@ -1,4 +1,5 @@
-import { Data, Duration, Effect, Option, Redacted, Result, Schema, Semaphore } from 'effect'
+import { Data, Duration, Effect, Option, Redacted, Result, Schedule, Schema, Semaphore } from 'effect'
+import { AccountUnreachable } from './refusal'
 import { parseServer, type ServerAddress } from './server'
 
 /**
@@ -119,6 +120,22 @@ export class SignOutUnanswered extends Schema.TaggedError<SignOutUnanswered>()(
  */
 const SERVER_ANSWER = Duration.seconds(8)
 
+/**
+ * Retains the production recovery from fbfba5ed9: four idempotent sign-out requests, separated
+ * by 1, 2 and 4 seconds, tolerate a lost answer without delaying release of app authority.
+ * Source: unmeasured retry pacing; only an unanswered exchange is retried, never a refusal.
+ */
+const SERVER_ASKED_AGAIN = 3
+const SERVER_RETRY = Schedule.exponential(Duration.seconds(1))
+
+/**
+ * Retains the locked-store recovery from 5ef00287f: six writes over about half a minute.
+ * Source: unmeasured retry pacing. StorageUnavailable still conflates locked and full storage;
+ * until its producer distinguishes them, preserve this bounded production safeguard.
+ */
+const STORE_ASKED_AGAIN = 5
+const STORE_RETRY = Schedule.exponential(Duration.seconds(1))
+
 /** What taking up and letting go of a session needs from the device it is done on. */
 export interface Keeper<Refusal> {
   /** Puts a session in the device's store, which can refuse. */
@@ -200,11 +217,13 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
   )
 
   /**
-   * Gives the store one attempt. StorageUnavailable does not distinguish a lock from full or
-   * broken storage, so automatic retries cannot be justified. Refused retains the existing
-   * manual retry while inTurn still protects an already-started write from interruption.
+   * Preserves bounded recovery when the protected store is temporarily locked. Each retry
+   * checks the debt under inTurn, so a later sign-in cannot be overwritten by an old sign-out.
+   * Refused and the existing manual retry remain available when the bounded attempts run out.
    */
-  const forget = Effect.fn('Session.forget')(() => forgetOnce)
+  const forget = Effect.fn('Session.forget')(() =>
+    forgetOnce.pipe(Effect.retry({ schedule: STORE_RETRY, times: STORE_ASKED_AGAIN })),
+  )
 
   /**
    * Takes the token out of the app, in this turn: every screen and the live socket stop acting as
@@ -231,7 +250,8 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
    * Releases the app immediately, then asks the server and protected store independently.
    * Neither delays the start of the other. A refused store remains recorded as Forgetting,
    * and a refused or unanswered revocation reaches the action atom after both have settled.
-   * No generic refusal is retried: replay safety alone does not make a failure transient.
+   * Only lost or timed-out exchanges are retried within the existing bounded recovery policy.
+   * Explicit server refusals stop immediately; replay safety does not make them transient.
    */
   const leave = Effect.fn('Session.leave')(function* <Unanswered>(
     session: Outside,
@@ -245,6 +265,12 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
             Effect.timeoutOrElse({
               duration: SERVER_ANSWER,
               orElse: () => Effect.fail(new SignOutUnanswered({})),
+            }),
+            Effect.retry({
+              schedule: SERVER_RETRY,
+              times: SERVER_ASKED_AGAIN,
+              while: (error) =>
+                error instanceof SignOutUnanswered || error instanceof AccountUnreachable,
             }),
           ),
         ),
