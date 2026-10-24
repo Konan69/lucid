@@ -137,10 +137,10 @@ async function settingsChoice(run, name, answer) {
 /** The CLI supports CSS ordinals. Resolve the exact visible row's action without custom selectors. */
 async function clickAnswer(run, container, answer) {
   const target = `Array.from((${container}).querySelectorAll('button')).find(b => b.innerText.trim() === ${JSON.stringify(answer)})`
-  const index = Number(
+  const index = JSON.parse(
     await run([
       'eval',
-      `JSON.stringify(Array.from(document.querySelectorAll('button')).indexOf(${target}))`,
+      `Array.from(document.querySelectorAll('button')).indexOf(${target})`,
     ]),
   )
   NodeAssert.ok(Number.isInteger(index) && index >= 0, 'Missing visible answer ' + answer)
