@@ -24,9 +24,7 @@ import { requiredSetting, settingSecret } from '../config.ts'
 /** The MCP protocol revision that carries events. Older initialized protocols do not have them. */
 const PROTOCOL = '2026-07-28'
 
-/** Bounds a finite events grant exchange. Source: Executor events defaultEventDeliveryLimits
- * gives callback verification ten seconds; this allows three verification windows for transport
- * and decoding. Expiry returns ExecutorEventsUnreachable without ending an active subscription. */
+/** How long one call may take. Subscribing waits on Executor's own 10 s callback verification. */
 const CALL_TIMEOUT = '30 seconds'
 
 /** The draft MCP events extension's error codes (`McpSchema` in the patched `effect/ai`). */

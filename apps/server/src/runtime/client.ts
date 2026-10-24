@@ -303,8 +303,11 @@ export const documentRun = Effect.fn('Runtime.documentRun')(function* (
 
 const unavailable = (message: string) => () => new RuntimeUnavailable({ message })
 
-/** Bounds the keyed admission exchange, separate from Run completion. Source: unmeasured.
- * Expiry yields AdmissionUncertain and preserves its key for reconciliation. */
+/**
+ * How long the runtime has to accept a delivery. It reads the acting Person's context before it
+ * answers, which is three calls back to this server, so the bound is generous. It includes the
+ * receipt body: after it passes admission is uncertain, even if response headers already arrived.
+ */
 const ADMIT_WITHIN = '30 seconds'
 
 /** Capture transport and credential authority once; each finite admission owns its own response scope. */

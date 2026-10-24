@@ -39,8 +39,7 @@ import { WatchStore, type WatchRecord } from './store.ts'
 
 /** The lifetime asked for: Executor's maximum. */
 export const TTL_MS = 7 * 24 * 60 * 60_000
-/** Source: outage-tolerance policy. Six hours leaves thirty-six ten-minute recovery opportunities
- * before provider expiry. This margin schedules renewal and never caps active Watch work. */
+/** A Watch is renewed once its subscription expires within this. */
 export const RENEW_WITHIN_MS = 6 * 60 * 60_000
 
 /** The Actor has no live Watch by this name. */

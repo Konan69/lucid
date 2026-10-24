@@ -35,16 +35,6 @@ const encodeReceipt = encodeStored(PushReceipt, 'push receipt')
 /** The body as it is sent: the claim row stores its hash and length, so one that will not encode cannot be claimed. */
 const encodePayload = encodeStored(Schema.fromJsonString(PushPayload), 'push payload')
 
-/** Expo recommends waiting 15 minutes before reading asynchronous delivery receipts.
- * Source: https://docs.expo.dev/push-notifications/sending-notifications/ . */
-const RECEIPT_READY_AFTER_MS = 15 * 60_000
-/** Expo removes receipts after 24 hours. Expiry stops inspection and never resends a claim.
- * Source: https://docs.expo.dev/push-notifications/sending-notifications/ . */
-const RECEIPT_RETENTION_MS = 24 * 60 * 60_000
-/** Paces pull-only Expo receipt reconciliation. Source: unmeasured. Each pass leaves unresolved
- * tickets owed; the cadence adds up to one minute to provider confirmation visibility. */
-const RECEIPT_CADENCE = '1 minute'
-
 /** Push quotes only an existing Notification, with the recipient's current Thread access checked. */
 const readable = Effect.fn('Push.readable')(function* (notice: typeof NoticeRow.Type) {
   if (notice.conversationId === null) return true
@@ -225,7 +215,7 @@ const makeReconcile = Effect.fn('Push.reconcile')(function* (services: DeliveryS
       .innerJoin(notifications, eq(notifications.id, pushDeliveries.notificationId))
       .where(
         and(
-          lte(pushDeliveries.updatedAt, now - RECEIPT_READY_AFTER_MS),
+          lte(pushDeliveries.updatedAt, now - 15 * 60_000),
           sql`${pushDeliveries.receipt}->>'_tag' = 'Sent'`,
           sql`${pushDeliveries.receipt}->'acceptance'->>'_tag' = 'Phone'`,
           sql`${pushDeliveries.receipt}->'acceptance'->>'confirmed' = 'false'`,
@@ -254,7 +244,7 @@ const settleReceipt = Effect.fn('Push.settleReceipt')(function* (
   const now = yield* Clock.currentTimeMillis
   if (Option.isNone(result)) {
     // Expo drops tickets after 24 hours; stop inspecting an irrecoverable receipt, never resend it.
-    if (now - row.delivery.createdAt < RECEIPT_RETENTION_MS) {
+    if (now - row.delivery.createdAt < 24 * 60 * 60_000) {
       // Rotate pending tickets to avoid starving newer receipts when a provider stays silent.
       yield* saveReceipt(services.database, row.delivery, receipt)
       return
@@ -310,7 +300,7 @@ export const pushReceiptsLayer = Layer.effectDiscard(
       ),
       Effect.ignore,
       untraced,
-      Effect.repeat(Schedule.spaced(RECEIPT_CADENCE)),
+      Effect.repeat(Schedule.spaced('1 minute')),
       Effect.forkScoped,
     )
   }),
