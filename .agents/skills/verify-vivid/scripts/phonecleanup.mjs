@@ -8,27 +8,9 @@ import { readPhone } from './phonewire.mjs'
 /** Both normal completion and abandoned-run recovery use the same captured device generations.
  * The private agent-device daemon verifies its own PID receipt through its public stop command. */
 export async function phoneCleanup(state) {
-  // The supervisor isolates HOME in scratch; the OS account owns the rebuildable host cache.
-  const home = NodeOS.userInfo().homedir
-  const cache = home + '/.cache/vivid-android'
-  const leasePath = cache + '/lease.json'
-  const read = (file) =>
-    NodeFSP.readFile(file, 'utf8').catch((error) => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    })
-  const leaseText = await read(leasePath)
-  const lease = leaseText === null ? null : Result.getOrThrow(readPhone(leaseText))
-  const text = await read(state.scratch + '/phone.json')
-  if (text === null && (lease === null || lease.run !== state.run)) return
-  const phone = text === null ? lease : Result.getOrThrow(readPhone(text))
-  if (lease !== null && lease.run !== state.run) throw new Error('Phone lease ownership mismatch')
-  if (
-    phone.run !== state.run ||
-    phone.session !== state.run ||
-    phone.stateDir !== state.scratch + '/device'
-  )
-    throw new Error('Phone ownership mismatch')
+  const acquisition = await phoneAcquisition(state)
+  if (acquisition === null) return
+  const { home, cache, leasePath, phone } = acquisition
   const directory = state.evidence + '/phone'
   const env = {
     ...process.env,
@@ -99,4 +81,30 @@ async function reverseCleanup({ phone, env, directory, port }, failures) {
   } catch (error) {
     failures.push(error.message)
   }
+}
+
+/** The host lease is the acquisition journal if a worker dies before its private copy is written. */
+async function phoneAcquisition(state) {
+  // The supervisor isolates HOME in scratch; the OS account owns the rebuildable host cache.
+  const home = NodeOS.userInfo().homedir
+  const cache = home + '/.cache/vivid-android'
+  const leasePath = cache + '/lease.json'
+  const read = (file) =>
+    NodeFSP.readFile(file, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+  const leaseText = await read(leasePath)
+  const lease = leaseText === null ? null : Result.getOrThrow(readPhone(leaseText))
+  const text = await read(state.scratch + '/phone.json')
+  if (text === null && (lease === null || lease.run !== state.run)) return null
+  const phone = text === null ? lease : Result.getOrThrow(readPhone(text))
+  if (lease !== null && lease.run !== state.run) throw new Error('Phone lease ownership mismatch')
+  if (
+    phone.run !== state.run ||
+    phone.session !== state.run ||
+    phone.stateDir !== state.scratch + '/device'
+  )
+    throw new Error('Phone ownership mismatch')
+  return { home, cache, leasePath, phone }
 }
