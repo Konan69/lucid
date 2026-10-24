@@ -133,7 +133,7 @@ const SERVER_ANSWER = Duration.seconds(8)
 /**
  * Retains the production recovery from fbfba5ed9: four idempotent sign-out requests, separated
  * by 1, 2 and 4 seconds, tolerate a lost answer without delaying release of app authority.
- * Source: unmeasured retry pacing; only an unanswered exchange is retried, never a refusal.
+ * Source: unmeasured retry pacing; unanswered exchanges, rate limits and server outages retry; permanent refusals stop.
  */
 const SERVER_ASKED_AGAIN = 3
 const SERVER_RETRY = Schedule.exponential(Duration.seconds(1))

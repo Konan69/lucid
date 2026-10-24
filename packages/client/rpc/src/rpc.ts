@@ -36,7 +36,7 @@ export const isTransientSocketReason = Match.type<RpcClientError.RpcClientError[
     SocketWriteError: () => true,
     SocketOpenError: () => true,
     SocketCloseError: ({ code }) => !PERMANENT_CLOSES.has(code),
-    SocketUpgradeError: () => false,
+    SocketUpgradeError: ({ cause }) => cause !== undefined,
     HttpError: () => false,
     RpcClientDefect: () => false,
     WorkerReceiveError: () => false,
@@ -68,7 +68,7 @@ const reconnect = (stopped: (error: RpcClientError.RpcClientError) => Effect.Eff
       Effect.logWarning('Live socket disconnected; reconnect policy evaluated').pipe(
         Effect.annotateLogs({
           reason: input.reason._tag,
-          closeCode: input.reason._tag === 'SocketCloseError' ? input.reason.code : 'none',
+          closeCode: input.reason instanceof Socket.SocketCloseError ? input.reason.code : 'none',
         }),
       ),
     ),
