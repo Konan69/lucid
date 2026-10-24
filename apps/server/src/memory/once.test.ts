@@ -369,189 +369,150 @@ const replay = Effect.fn('OnceTest.replay')(function* (
   return first
 })
 
-/** Suite acquisition waits for all thirteen real index-build success signals on empty storage; assertion limits stay unchanged. */
-const INDEX_ACQUISITION_LIMIT = 60_000
-
 describe.skipIf(!testDatabaseConfigured || url === undefined)('MemoryAccess.learnOnce', () => {
-  layer(access, { timeout: INDEX_ACQUISITION_LIMIT, excludeTestServices: true })(
-    'indexed storage',
-    (it) => {
-      it.effect('new: one record, one count and the same memory on replay', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-            )
-            const first = yield* replay(f, f.personal, input)
-            expect(first).toMatchObject({
-              content: 'Dami prefers Tuesday planning.',
-              kind: 'fact',
-              scope: MemoryScope.cases.Person.make({}),
-            })
-            expect(yield* f.memory.list(f.personal)).toEqual([first])
-            expect(
-              yield* f.memory.recall(f.personal, { query: input.candidate.content, limit: 10 }),
-            ).toEqual([first])
-            expect((yield* inspect(f.personalPartition)).memories).toEqual([
-              { memoryId: first.id, accessCount: 1 },
-            ])
-          }),
-        ),
-      )
+  layer(access, { excludeTestServices: true })('indexed storage', (it) => {
+    it.effect('new: one record, one count and the same memory on replay', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          const first = yield* replay(f, f.personal, input)
+          expect(first).toMatchObject({
+            content: 'Dami prefers Tuesday planning.',
+            kind: 'fact',
+            scope: MemoryScope.cases.Person.make({}),
+          })
+          expect(yield* f.memory.list(f.personal)).toEqual([first])
+          expect(
+            yield* f.memory.recall(f.personal, { query: input.candidate.content, limit: 10 }),
+          ).toEqual([first])
+          expect((yield* inspect(f.personalPartition)).memories).toEqual([
+            { memoryId: first.id, accessCount: 1 },
+          ])
+        }),
+      ),
+    )
 
-      it.effect('extends: one new record and exactly one directed EXTENDS edge', () =>
+    it.effect('extends: one new record and exactly one directed EXTENDS edge', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.personal, {
+            kind: 'fact',
+            content: 'Dami runs the planning team.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              'Dami plans Tuesdays with the product team.',
+              MemoryRelation.cases.extends.make({ id: target.id }),
+            ),
+          )
+          const first = yield* replay(f, f.personal, input)
+          expect(yield* f.memory.list(f.personal)).toHaveLength(2)
+          expect((yield* inspect(f.personalPartition)).edges).toEqual([
+            { kind: 'EXTENDS', from: first.id, to: target.id },
+          ])
+          expect(
+            (yield* f.helix.expand({
+              partition: f.personalPartition,
+              scopes: [MemoryScopeKey.make(`person:${f.personal.person.id}`)],
+              ids: [first.id],
+              limit: 10,
+            })).map((value) => value.memory.id),
+          ).toEqual([target.id])
+        }),
+      ),
+    )
+
+    it.effect('duplicate: accessCount and aliases merge once, retaining updatedAt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.personal, {
+            kind: 'fact',
+            content: 'Dami prefers Tuesday planning.',
+            forCompany: false,
+          })
+          const before = yield* count(f.personalPartition, target.id)
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              'Planning happens on Tuesday for Dami.',
+              MemoryRelation.cases.duplicate.make({ id: target.id }),
+            ),
+          )
+          const first = yield* replay(f, f.personal, input)
+          expect(first.id).toBe(target.id)
+          expect(yield* count(f.personalPartition, target.id)).toBe(before + 1)
+          const record = yield* f.helix.get({ partition: f.personalPartition, id: target.id })
+          expect(Option.map(record, (value) => value.aliases)).toEqual(
+            Option.some(['original-alias']),
+          )
+          expect(yield* f.memory.list(f.personal)).toEqual([first])
+        }),
+      ),
+    )
+
+    it.effect(
+      'updates: replacement replays although its original target is no longer current',
+      () =>
         verified(
           Effect.gen(function* () {
             const f = yield* fixture()
             const target = yield* f.memory.remember(f.personal, {
               kind: 'fact',
-              content: 'Dami runs the planning team.',
+              content: 'Dami plans Mondays.',
               forCompany: false,
             })
             const input = yield* checkpoint(
               f.memory,
               f.personal,
               candidate(
-                'Dami plans Tuesdays with the product team.',
-                MemoryRelation.cases.extends.make({ id: target.id }),
+                'Dami now plans Tuesdays.',
+                MemoryRelation.cases.updates.make({ id: target.id }),
               ),
             )
             const first = yield* replay(f, f.personal, input)
-            expect(yield* f.memory.list(f.personal)).toHaveLength(2)
-            expect((yield* inspect(f.personalPartition)).edges).toEqual([
-              { kind: 'EXTENDS', from: first.id, to: target.id },
-            ])
-            expect(
-              (yield* f.helix.expand({
-                partition: f.personalPartition,
-                scopes: [MemoryScopeKey.make(`person:${f.personal.person.id}`)],
-                ids: [first.id],
-                limit: 10,
-              })).map((value) => value.memory.id),
-            ).toEqual([target.id])
-          }),
-        ),
-      )
-
-      it.effect('duplicate: accessCount and aliases merge once, retaining updatedAt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.personal, {
-              kind: 'fact',
-              content: 'Dami prefers Tuesday planning.',
-              forCompany: false,
-            })
-            const before = yield* count(f.personalPartition, target.id)
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate(
-                'Planning happens on Tuesday for Dami.',
-                MemoryRelation.cases.duplicate.make({ id: target.id }),
-              ),
-            )
-            const first = yield* replay(f, f.personal, input)
-            expect(first.id).toBe(target.id)
-            expect(yield* count(f.personalPartition, target.id)).toBe(before + 1)
-            const record = yield* f.helix.get({ partition: f.personalPartition, id: target.id })
-            expect(Option.map(record, (value) => value.aliases)).toEqual(
-              Option.some(['original-alias']),
+            expect(first.id).not.toBe(target.id)
+            expect(yield* f.store.get({ partition: f.personalPartition, id: target.id })).toEqual(
+              Option.none(),
             )
             expect(yield* f.memory.list(f.personal)).toEqual([first])
+            expect((yield* inspect(f.personalPartition)).memories).toHaveLength(2)
           }),
         ),
-      )
+    )
 
-      it.effect(
-        'updates: replacement replays although its original target is no longer current',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              const target = yield* f.memory.remember(f.personal, {
-                kind: 'fact',
-                content: 'Dami plans Mondays.',
-                forCompany: false,
-              })
-              const input = yield* checkpoint(
-                f.memory,
-                f.personal,
-                candidate(
-                  'Dami now plans Tuesdays.',
-                  MemoryRelation.cases.updates.make({ id: target.id }),
-                ),
-              )
-              const first = yield* replay(f, f.personal, input)
-              expect(first.id).not.toBe(target.id)
-              expect(yield* f.store.get({ partition: f.personalPartition, id: target.id })).toEqual(
-                Option.none(),
-              )
-              expect(yield* f.memory.list(f.personal)).toEqual([first])
-              expect((yield* inspect(f.personalPartition)).memories).toHaveLength(2)
-            }),
-          ),
-      )
+    it.effect('dedup new: receipts name the existing record and reinforcement happens once', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const value = candidate(
+            'Dami prefers Tuesday planning.',
+            MemoryRelation.cases.new.make({}),
+          )
+          const original = yield* checkpoint(f.memory, f.personal, value)
+          const target = saved(yield* f.memory.learnOnce(f.personal, original), 'Saved')
+          const input = yield* checkpoint(f.memory, f.personal, value)
+          const first = yield* replay(f, f.personal, input)
+          expect(first.id).toBe(target.id)
+          expect(yield* count(f.personalPartition, target.id)).toBe(2)
+          expect(yield* f.memory.list(f.personal)).toEqual([first])
+        }),
+      ),
+    )
 
-      it.effect('dedup new: receipts name the existing record and reinforcement happens once', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const value = candidate(
-              'Dami prefers Tuesday planning.',
-              MemoryRelation.cases.new.make({}),
-            )
-            const original = yield* checkpoint(f.memory, f.personal, value)
-            const target = saved(yield* f.memory.learnOnce(f.personal, original), 'Saved')
-            const input = yield* checkpoint(f.memory, f.personal, value)
-            const first = yield* replay(f, f.personal, input)
-            expect(first.id).toBe(target.id)
-            expect(yield* count(f.personalPartition, target.id)).toBe(2)
-            expect(yield* f.memory.list(f.personal)).toEqual([first])
-          }),
-        ),
-      )
-
-      it.effect(
-        'dedup extends: reinforcement atomically adds one EXTENDS edge and replays once',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              const original = yield* checkpoint(
-                f.memory,
-                f.personal,
-                candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-              )
-              const existing = saved(yield* f.memory.learnOnce(f.personal, original), 'Saved')
-              const target = yield* f.memory.remember(f.personal, {
-                kind: 'fact',
-                content: 'The planning team meets weekly.',
-                forCompany: false,
-              })
-              const input = yield* checkpoint(
-                f.memory,
-                f.personal,
-                candidate(
-                  original.candidate.content,
-                  MemoryRelation.cases.extends.make({ id: target.id }),
-                ),
-              )
-              const first = yield* replay(f, f.personal, input)
-              expect(first.id).toBe(existing.id)
-              expect(yield* count(f.personalPartition, existing.id)).toBe(2)
-              expect((yield* inspect(f.personalPartition)).edges).toEqual([
-                { kind: 'EXTENDS', from: existing.id, to: target.id },
-              ])
-              expect(yield* f.memory.list(f.personal)).toHaveLength(2)
-            }),
-          ),
-      )
-
-      it.effect('dedup extends: extending the deduplicated record creates no self-link', () =>
+    it.effect(
+      'dedup extends: reinforcement atomically adds one EXTENDS edge and replays once',
+      () =>
         verified(
           Effect.gen(function* () {
             const f = yield* fixture()
@@ -561,402 +522,147 @@ describe.skipIf(!testDatabaseConfigured || url === undefined)('MemoryAccess.lear
               candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
             )
             const existing = saved(yield* f.memory.learnOnce(f.personal, original), 'Saved')
+            const target = yield* f.memory.remember(f.personal, {
+              kind: 'fact',
+              content: 'The planning team meets weekly.',
+              forCompany: false,
+            })
             const input = yield* checkpoint(
               f.memory,
               f.personal,
               candidate(
                 original.candidate.content,
-                MemoryRelation.cases.extends.make({ id: existing.id }),
+                MemoryRelation.cases.extends.make({ id: target.id }),
               ),
             )
-            expect((yield* replay(f, f.personal, input)).id).toBe(existing.id)
+            const first = yield* replay(f, f.personal, input)
+            expect(first.id).toBe(existing.id)
             expect(yield* count(f.personalPartition, existing.id)).toBe(2)
-            expect((yield* inspect(f.personalPartition)).edges).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('concurrent independent access stacks: both callers settle to one mutation', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-            )
-            // Separate full subtree builds acquire distinct MemoryStore semaphores and adapter resources.
-            const a = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
-            const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
-            expect(a).not.toBe(b)
-            const gate = yield* Deferred.make<void>()
-            const operation = (memory: MemoryAccess['Service']) =>
-              Deferred.await(gate).pipe(Effect.andThen(memory.learnOnce(f.personal, input)))
-            const left = yield* operation(a).pipe(Effect.forkScoped)
-            const right = yield* operation(b).pipe(Effect.forkScoped)
-            yield* Deferred.succeed(gate, undefined)
-            const results = yield* Effect.all([Fiber.join(left), Fiber.join(right)])
-            const tags = results.map((value) => value._tag).toSorted()
-            expect(tags).toEqual(['AlreadySaved', 'Saved'])
-            const memories = results.map((value) =>
-              saved(value, LearnResult.guards.Saved(value) ? 'Saved' : 'AlreadySaved'),
-            )
-            const winner = memories[0]
-            if (winner === undefined) expect.fail('Concurrent winner required')
-            expect(memories[0]).toEqual(memories[1])
-            expect((yield* inspect(f.personalPartition)).memories).toEqual([
-              { memoryId: winner.id, accessCount: 1 },
+            expect((yield* inspect(f.personalPartition)).edges).toEqual([
+              { kind: 'EXTENDS', from: existing.id, to: target.id },
             ])
+            expect(yield* f.memory.list(f.personal)).toHaveLength(2)
           }),
         ),
-      )
+    )
 
-      it.effect('updates interleaving: B commits before A receipt pre-read', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.personal, {
-              kind: 'fact',
-              content: 'Dami plans Mondays.',
-              forCompany: false,
-            })
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate(
-                'Dami now plans Tuesdays.',
-                MemoryRelation.cases.updates.make({ id: target.id }),
-              ),
-            )
-            const a = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
-            const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
-            const first = saved(yield* b.learnOnce(f.personal, input), 'Saved')
-            expect(saved(yield* a.learnOnce(f.personal, input), 'AlreadySaved')).toEqual(first)
-            expect(yield* f.memory.list(f.personal)).toEqual([first])
-          }),
-        ),
-      )
+    it.effect('dedup extends: extending the deduplicated record creates no self-link', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const original = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          const existing = saved(yield* f.memory.learnOnce(f.personal, original), 'Saved')
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              original.candidate.content,
+              MemoryRelation.cases.extends.make({ id: existing.id }),
+            ),
+          )
+          expect((yield* replay(f, f.personal, input)).id).toBe(existing.id)
+          expect(yield* count(f.personalPartition, existing.id)).toBe(2)
+          expect((yield* inspect(f.personalPartition)).edges).toEqual([])
+        }),
+      ),
+    )
 
-      it.effect('updates forced receipt miss: target NotFound reconciles to B replacement', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.personal, {
-              kind: 'fact',
-              content: 'Dami plans Mondays.',
-              forCompany: false,
-            })
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate(
-                'Dami now plans Tuesdays.',
-                MemoryRelation.cases.updates.make({ id: target.id }),
-              ),
-            )
-            const a = yield* missedReceipt(f.store)
-            const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
-            const first = saved(yield* b.learnOnce(f.personal, input), 'Saved')
-            expect(saved(yield* a.memory.learnOnce(f.personal, input), 'AlreadySaved')).toEqual(
-              first,
-            )
-            expect(yield* Ref.get(a.reads)).toBe(2)
-            expect(yield* f.memory.list(f.personal)).toEqual([first])
-            expect((yield* inspect(f.personalPartition)).memories).toHaveLength(2)
-          }),
-        ),
-      )
+    it.effect('concurrent independent access stacks: both callers settle to one mutation', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          // Separate full subtree builds acquire distinct MemoryStore semaphores and adapter resources.
+          const a = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
+          const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
+          expect(a).not.toBe(b)
+          const gate = yield* Deferred.make<void>()
+          const operation = (memory: MemoryAccess['Service']) =>
+            Deferred.await(gate).pipe(Effect.andThen(memory.learnOnce(f.personal, input)))
+          const left = yield* operation(a).pipe(Effect.forkScoped)
+          const right = yield* operation(b).pipe(Effect.forkScoped)
+          yield* Deferred.succeed(gate, undefined)
+          const results = yield* Effect.all([Fiber.join(left), Fiber.join(right)])
+          const tags = results.map((value) => value._tag).toSorted()
+          expect(tags).toEqual(['AlreadySaved', 'Saved'])
+          const memories = results.map((value) =>
+            saved(value, LearnResult.guards.Saved(value) ? 'Saved' : 'AlreadySaved'),
+          )
+          const winner = memories[0]
+          if (winner === undefined) expect.fail('Concurrent winner required')
+          expect(memories[0]).toEqual(memories[1])
+          expect((yield* inspect(f.personalPartition)).memories).toEqual([
+            { memoryId: winner.id, accessCount: 1 },
+          ])
+        }),
+      ),
+    )
 
-      it.effect(
-        'destination change: shared Thread made private writes neither partition nor receipt',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              const input = yield* checkpoint(
-                f.memory,
-                f.shared,
-                candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-              )
-              // handlers.test.ts uses this same database-backed audience transition, not a mocked Thread authority.
-              yield* f.database.run(
-                f.database
-                  .update(threads)
-                  .set({ audience: 'private' })
-                  .where(eq(threads.id, f.sharedThread)),
-              )
-              expect(yield* f.memory.learnOnce(f.shared, input).pipe(Effect.flip)).toBeInstanceOf(
-                DestinationChanged,
-              )
-              expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
-              for (const partition of [f.personalPartition, f.companyPartition])
-                expect((yield* inspect(partition)).memories).toEqual([])
-            }),
-          ),
-      )
+    it.effect('updates interleaving: B commits before A receipt pre-read', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.personal, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              'Dami now plans Tuesdays.',
+              MemoryRelation.cases.updates.make({ id: target.id }),
+            ),
+          )
+          const a = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
+          const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
+          const first = saved(yield* b.learnOnce(f.personal, input), 'Saved')
+          expect(saved(yield* a.learnOnce(f.personal, input), 'AlreadySaved')).toEqual(first)
+          expect(yield* f.memory.list(f.personal)).toEqual([first])
+        }),
+      ),
+    )
 
-      it.effect('forgotten result: replay is AlreadyApplied and never recreates knowledge', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-            )
-            const first = saved(yield* f.memory.learnOnce(f.personal, input), 'Saved')
-            yield* f.memory.forget(f.personal, first.id)
-            expect(yield* f.memory.learnOnce(f.personal, input)).toEqual(
-              LearnResult.cases.AlreadyApplied.make({}),
-            )
-            expect(yield* f.memory.list(f.personal)).toEqual([])
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.some(first.id))
-            expect((yield* inspect(f.personalPartition)).memories).toEqual([
-              { memoryId: first.id, accessCount: 1 },
-            ])
-          }),
-        ),
-      )
+    it.effect('updates forced receipt miss: target NotFound reconciles to B replacement', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.personal, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              'Dami now plans Tuesdays.',
+              MemoryRelation.cases.updates.make({ id: target.id }),
+            ),
+          )
+          const a = yield* missedReceipt(f.store)
+          const b = Context.get(yield* Layer.build(Layer.fresh(access)), MemoryAccess)
+          const first = saved(yield* b.learnOnce(f.personal, input), 'Saved')
+          expect(saved(yield* a.memory.learnOnce(f.personal, input), 'AlreadySaved')).toEqual(first)
+          expect(yield* Ref.get(a.reads)).toBe(2)
+          expect(yield* f.memory.list(f.personal)).toEqual([first])
+          expect((yield* inspect(f.personalPartition)).memories).toHaveLength(2)
+        }),
+      ),
+    )
 
-      it.effect(
-        'lost access: unauthorized replay matches learn failure before any receipt read',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              const input = yield* checkpoint(
-                f.memory,
-                f.shared,
-                candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-              )
-              yield* f.memory.learnOnce(f.shared, input)
-              const reads = yield* Ref.make(0)
-              const observed = yield* wrappedAccess(
-                MemoryStore.of({
-                  ...f.store,
-                  receipt: (value) =>
-                    Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(f.store.receipt(value))),
-                }),
-              )
-              const expected = yield* f.memory
-                .learn(f.unauthorized, input.candidate)
-                .pipe(Effect.flip)
-              const failure = yield* observed.learnOnce(f.unauthorized, input).pipe(Effect.flip)
-              expect(failure).toEqual(expected)
-              expect(failure).toBeInstanceOf(NotFound)
-              expect(yield* Ref.get(reads)).toBe(0)
-            }),
-          ),
-      )
-
-      it.effect('lost access during reconciliation: refuse before rereading the receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.shared, {
-              kind: 'fact',
-              content: 'Dami plans Mondays.',
-              forCompany: false,
-            })
-            const input = yield* checkpoint(
-              f.memory,
-              f.shared,
-              candidate(
-                'Dami now plans Tuesdays.',
-                MemoryRelation.cases.updates.make({ id: target.id }),
-              ),
-            )
-            const first = saved(yield* f.memory.learnOnce(f.shared, input), 'Saved')
-            const reads = yield* Ref.make(0)
-            // Revoke real Membership after A's initial authority check, at its forced receipt miss.
-            const observed = yield* wrappedAccess(
-              MemoryStore.of({
-                ...f.store,
-                receipt: Effect.fn('OnceTest.revokedReceipt')(function* (value) {
-                  const read = yield* Ref.getAndUpdate(reads, (n) => n + 1)
-                  if (read !== 0) return yield* f.store.receipt(value)
-                  yield* f.database
-                    .run(
-                      f.database
-                        .delete(membershipTable)
-                        .where(eq(membershipTable.userId, f.shared.person.id)),
-                    )
-                    .pipe(
-                      Effect.match({
-                        // A failed test-owned SQL interleaving is an assertion defect, not a fabricated MemoryStore failure.
-                        onFailure: (error) =>
-                          expect.fail(`Membership revocation fixture failed: ${error._tag}`),
-                        onSuccess: () => undefined,
-                      }),
-                    )
-                  return Option.none<MemoryId>()
-                }),
-              }),
-            )
-            const result = yield* observed.learnOnce(f.shared, input).pipe(Effect.result)
-            expect.soft(yield* Ref.get(reads)).toBe(1)
-            if (Result.isSuccess(result))
-              expect.fail(`Expected NotFound; received ${result.success._tag}`)
-            expect(result.failure).toEqual(NotFound.make({ message: 'Thread not found' }))
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.some(first.id))
-          }),
-        ),
-      )
-
-      it.effect(
-        'destination change during reconciliation: refuse before rereading the receipt',
-        () =>
-          verified(
-            Effect.gen(function* () {
-              const f = yield* fixture()
-              const target = yield* f.memory.remember(f.shared, {
-                kind: 'fact',
-                content: 'Dami plans Mondays.',
-                forCompany: false,
-              })
-              const input = yield* checkpoint(
-                f.memory,
-                f.shared,
-                candidate(
-                  'Dami now plans Tuesdays.',
-                  MemoryRelation.cases.updates.make({ id: target.id }),
-                ),
-              )
-              yield* f.memory.learnOnce(f.shared, input)
-              const reads = yield* Ref.make(0)
-              // The checkpoint remains shared while PostgreSQL makes the acting Thread private.
-              const observed = yield* wrappedAccess(
-                MemoryStore.of({
-                  ...f.store,
-                  receipt: Effect.fn('OnceTest.changedReceipt')(function* (value) {
-                    const read = yield* Ref.getAndUpdate(reads, (n) => n + 1)
-                    if (read !== 0) return yield* f.store.receipt(value)
-                    yield* f.database
-                      .run(
-                        f.database
-                          .update(threads)
-                          .set({ audience: 'private' })
-                          .where(eq(threads.id, f.sharedThread)),
-                      )
-                      .pipe(
-                        Effect.match({
-                          // Keep test setup errors out of the public store wrapper's production error contract.
-                          onFailure: (error) =>
-                            expect.fail(`Audience transition fixture failed: ${error._tag}`),
-                          onSuccess: () => undefined,
-                        }),
-                      )
-                    return Option.none<MemoryId>()
-                  }),
-                }),
-              )
-              const result = yield* observed.learnOnce(f.shared, input).pipe(Effect.result)
-              expect.soft(yield* Ref.get(reads)).toBe(1)
-              if (Result.isSuccess(result))
-                expect.fail(`Expected MemoryDestinationChanged; received ${result.success._tag}`)
-              expect(result.failure).toBeInstanceOf(DestinationChanged)
-              expect((yield* inspect(f.personalPartition)).memories).toEqual([])
-            }),
-          ),
-      )
-
-      it.effect('skipped shouldStore false: no destination, mutation or receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-            )
-            const value = MemoryCandidate.make({ ...input.candidate, shouldStore: false })
-            expect(yield* f.memory.destination(f.personal, value)).toEqual(Option.none())
-            expect(yield* f.memory.learn(f.personal, value)).toEqual(Option.none())
-            expect(yield* f.memory.learnOnce(f.personal, { ...input, candidate: value })).toEqual(
-              LearnResult.cases.Skipped.make({}),
-            )
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
-            expect(yield* f.memory.list(f.personal)).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('skipped Company candidate in Personal workspace: no destination or receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
-            )
-            const value = MemoryCandidate.make({ ...input.candidate, forCompany: true })
-            expect(yield* f.memory.destination(f.personal, value)).toEqual(Option.none())
-            expect(yield* f.memory.learn(f.personal, value)).toEqual(Option.none())
-            expect(yield* f.memory.learnOnce(f.personal, { ...input, candidate: value })).toEqual(
-              LearnResult.cases.Skipped.make({}),
-            )
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
-            expect(yield* f.memory.list(f.personal)).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('vanished duplicate target without receipt: precise NotFound and no receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.personal, {
-              kind: 'fact',
-              content: 'Dami plans Mondays.',
-              forCompany: false,
-            })
-            const input = yield* checkpoint(
-              f.memory,
-              f.personal,
-              candidate(
-                'Dami plans on Monday.',
-                MemoryRelation.cases.duplicate.make({ id: target.id }),
-              ),
-            )
-            yield* f.memory.forget(f.personal, target.id)
-            const failure = yield* f.memory.learnOnce(f.personal, input).pipe(Effect.flip)
-            expect(failure).toEqual(NotFound.make({ message: 'Memory not found' }))
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
-            expect(yield* f.memory.list(f.personal)).toEqual([])
-            expect(yield* count(f.personalPartition, target.id)).toBe(1)
-          }),
-        ),
-      )
-
-      it.effect('updates across destination scope: InvalidRequest and no receipt', () =>
-        verified(
-          Effect.gen(function* () {
-            const f = yield* fixture()
-            const target = yield* f.memory.remember(f.privateAtWork, {
-              kind: 'fact',
-              content: 'Dami plans Mondays.',
-              forCompany: false,
-            })
-            const value = MemoryCandidate.make({
-              ...candidate(
-                'Dami plans Tuesdays.',
-                MemoryRelation.cases.updates.make({ id: target.id }),
-              ),
-              forCompany: true,
-            })
-            const input = yield* checkpoint(f.memory, f.privateAtWork, value)
-            expect(yield* f.memory.learnOnce(f.privateAtWork, input).pipe(Effect.flip)).toEqual(
-              InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
-            )
-            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
-            expect(yield* f.memory.list(f.privateAtWork)).toEqual([target])
-            expect((yield* inspect(f.companyPartition)).memories).toEqual([])
-          }),
-        ),
-      )
-
-      it.effect('Thread rename preserves the checkpointed scope identity', () =>
+    it.effect(
+      'destination change: shared Thread made private writes neither partition nor receipt',
+      () =>
         verified(
           Effect.gen(function* () {
             const f = yield* fixture()
@@ -965,18 +671,302 @@ describe.skipIf(!testDatabaseConfigured || url === undefined)('MemoryAccess.lear
               f.shared,
               candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
             )
+            // handlers.test.ts uses this same database-backed audience transition, not a mocked Thread authority.
             yield* f.database.run(
               f.database
                 .update(threads)
-                .set({ title: 'Renamed' })
+                .set({ audience: 'private' })
                 .where(eq(threads.id, f.sharedThread)),
             )
-            const first = yield* replay(f, f.shared, input)
-            expect(yield* f.memory.list(f.shared)).toEqual([first])
-            expect((yield* inspect(f.companyPartition)).memories).toHaveLength(1)
+            expect(yield* f.memory.learnOnce(f.shared, input).pipe(Effect.flip)).toBeInstanceOf(
+              DestinationChanged,
+            )
+            expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
+            for (const partition of [f.personalPartition, f.companyPartition])
+              expect((yield* inspect(partition)).memories).toEqual([])
           }),
         ),
-      )
-    },
-  )
+    )
+
+    it.effect('forgotten result: replay is AlreadyApplied and never recreates knowledge', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          const first = saved(yield* f.memory.learnOnce(f.personal, input), 'Saved')
+          yield* f.memory.forget(f.personal, first.id)
+          expect(yield* f.memory.learnOnce(f.personal, input)).toEqual(
+            LearnResult.cases.AlreadyApplied.make({}),
+          )
+          expect(yield* f.memory.list(f.personal)).toEqual([])
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.some(first.id))
+          expect((yield* inspect(f.personalPartition)).memories).toEqual([
+            { memoryId: first.id, accessCount: 1 },
+          ])
+        }),
+      ),
+    )
+
+    it.effect(
+      'lost access: unauthorized replay matches learn failure before any receipt read',
+      () =>
+        verified(
+          Effect.gen(function* () {
+            const f = yield* fixture()
+            const input = yield* checkpoint(
+              f.memory,
+              f.shared,
+              candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+            )
+            yield* f.memory.learnOnce(f.shared, input)
+            const reads = yield* Ref.make(0)
+            const observed = yield* wrappedAccess(
+              MemoryStore.of({
+                ...f.store,
+                receipt: (value) =>
+                  Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(f.store.receipt(value))),
+              }),
+            )
+            const expected = yield* f.memory
+              .learn(f.unauthorized, input.candidate)
+              .pipe(Effect.flip)
+            const failure = yield* observed.learnOnce(f.unauthorized, input).pipe(Effect.flip)
+            expect(failure).toEqual(expected)
+            expect(failure).toBeInstanceOf(NotFound)
+            expect(yield* Ref.get(reads)).toBe(0)
+          }),
+        ),
+    )
+
+    it.effect('lost access during reconciliation: refuse before rereading the receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.shared, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.shared,
+            candidate(
+              'Dami now plans Tuesdays.',
+              MemoryRelation.cases.updates.make({ id: target.id }),
+            ),
+          )
+          const first = saved(yield* f.memory.learnOnce(f.shared, input), 'Saved')
+          const reads = yield* Ref.make(0)
+          // Revoke real Membership after A's initial authority check, at its forced receipt miss.
+          const observed = yield* wrappedAccess(
+            MemoryStore.of({
+              ...f.store,
+              receipt: Effect.fn('OnceTest.revokedReceipt')(function* (value) {
+                const read = yield* Ref.getAndUpdate(reads, (n) => n + 1)
+                if (read !== 0) return yield* f.store.receipt(value)
+                yield* f.database
+                  .run(
+                    f.database
+                      .delete(membershipTable)
+                      .where(eq(membershipTable.userId, f.shared.person.id)),
+                  )
+                  .pipe(
+                    Effect.match({
+                      // A failed test-owned SQL interleaving is an assertion defect, not a fabricated MemoryStore failure.
+                      onFailure: (error) =>
+                        expect.fail(`Membership revocation fixture failed: ${error._tag}`),
+                      onSuccess: () => undefined,
+                    }),
+                  )
+                return Option.none<MemoryId>()
+              }),
+            }),
+          )
+          const result = yield* observed.learnOnce(f.shared, input).pipe(Effect.result)
+          expect.soft(yield* Ref.get(reads)).toBe(1)
+          if (Result.isSuccess(result))
+            expect.fail(`Expected NotFound; received ${result.success._tag}`)
+          expect(result.failure).toEqual(NotFound.make({ message: 'Thread not found' }))
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.some(first.id))
+        }),
+      ),
+    )
+
+    it.effect('destination change during reconciliation: refuse before rereading the receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.shared, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.shared,
+            candidate(
+              'Dami now plans Tuesdays.',
+              MemoryRelation.cases.updates.make({ id: target.id }),
+            ),
+          )
+          yield* f.memory.learnOnce(f.shared, input)
+          const reads = yield* Ref.make(0)
+          // The checkpoint remains shared while PostgreSQL makes the acting Thread private.
+          const observed = yield* wrappedAccess(
+            MemoryStore.of({
+              ...f.store,
+              receipt: Effect.fn('OnceTest.changedReceipt')(function* (value) {
+                const read = yield* Ref.getAndUpdate(reads, (n) => n + 1)
+                if (read !== 0) return yield* f.store.receipt(value)
+                yield* f.database
+                  .run(
+                    f.database
+                      .update(threads)
+                      .set({ audience: 'private' })
+                      .where(eq(threads.id, f.sharedThread)),
+                  )
+                  .pipe(
+                    Effect.match({
+                      // Keep test setup errors out of the public store wrapper's production error contract.
+                      onFailure: (error) =>
+                        expect.fail(`Audience transition fixture failed: ${error._tag}`),
+                      onSuccess: () => undefined,
+                    }),
+                  )
+                return Option.none<MemoryId>()
+              }),
+            }),
+          )
+          const result = yield* observed.learnOnce(f.shared, input).pipe(Effect.result)
+          expect.soft(yield* Ref.get(reads)).toBe(1)
+          if (Result.isSuccess(result))
+            expect.fail(`Expected MemoryDestinationChanged; received ${result.success._tag}`)
+          expect(result.failure).toBeInstanceOf(DestinationChanged)
+          expect((yield* inspect(f.personalPartition)).memories).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('skipped shouldStore false: no destination, mutation or receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          const value = MemoryCandidate.make({ ...input.candidate, shouldStore: false })
+          expect(yield* f.memory.destination(f.personal, value)).toEqual(Option.none())
+          expect(yield* f.memory.learn(f.personal, value)).toEqual(Option.none())
+          expect(yield* f.memory.learnOnce(f.personal, { ...input, candidate: value })).toEqual(
+            LearnResult.cases.Skipped.make({}),
+          )
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
+          expect(yield* f.memory.list(f.personal)).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('skipped Company candidate in Personal workspace: no destination or receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          const value = MemoryCandidate.make({ ...input.candidate, forCompany: true })
+          expect(yield* f.memory.destination(f.personal, value)).toEqual(Option.none())
+          expect(yield* f.memory.learn(f.personal, value)).toEqual(Option.none())
+          expect(yield* f.memory.learnOnce(f.personal, { ...input, candidate: value })).toEqual(
+            LearnResult.cases.Skipped.make({}),
+          )
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
+          expect(yield* f.memory.list(f.personal)).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('vanished duplicate target without receipt: precise NotFound and no receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.personal, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const input = yield* checkpoint(
+            f.memory,
+            f.personal,
+            candidate(
+              'Dami plans on Monday.',
+              MemoryRelation.cases.duplicate.make({ id: target.id }),
+            ),
+          )
+          yield* f.memory.forget(f.personal, target.id)
+          const failure = yield* f.memory.learnOnce(f.personal, input).pipe(Effect.flip)
+          expect(failure).toEqual(NotFound.make({ message: 'Memory not found' }))
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
+          expect(yield* f.memory.list(f.personal)).toEqual([])
+          expect(yield* count(f.personalPartition, target.id)).toBe(1)
+        }),
+      ),
+    )
+
+    it.effect('updates across destination scope: InvalidRequest and no receipt', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const target = yield* f.memory.remember(f.privateAtWork, {
+            kind: 'fact',
+            content: 'Dami plans Mondays.',
+            forCompany: false,
+          })
+          const value = MemoryCandidate.make({
+            ...candidate(
+              'Dami plans Tuesdays.',
+              MemoryRelation.cases.updates.make({ id: target.id }),
+            ),
+            forCompany: true,
+          })
+          const input = yield* checkpoint(f.memory, f.privateAtWork, value)
+          expect(yield* f.memory.learnOnce(f.privateAtWork, input).pipe(Effect.flip)).toEqual(
+            InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
+          )
+          expect(yield* f.helix.receipt(receiptIdentity(input))).toEqual(Option.none())
+          expect(yield* f.memory.list(f.privateAtWork)).toEqual([target])
+          expect((yield* inspect(f.companyPartition)).memories).toEqual([])
+        }),
+      ),
+    )
+
+    it.effect('Thread rename preserves the checkpointed scope identity', () =>
+      verified(
+        Effect.gen(function* () {
+          const f = yield* fixture()
+          const input = yield* checkpoint(
+            f.memory,
+            f.shared,
+            candidate('Dami prefers Tuesday planning.', MemoryRelation.cases.new.make({})),
+          )
+          yield* f.database.run(
+            f.database
+              .update(threads)
+              .set({ title: 'Renamed' })
+              .where(eq(threads.id, f.sharedThread)),
+          )
+          const first = yield* replay(f, f.shared, input)
+          expect(yield* f.memory.list(f.shared)).toEqual([first])
+          expect((yield* inspect(f.companyPartition)).memories).toHaveLength(1)
+        }),
+      ),
+    )
+  })
 })

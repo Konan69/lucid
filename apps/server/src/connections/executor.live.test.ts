@@ -97,7 +97,6 @@ describe.skipIf(
             }),
           )
         }),
-      { timeout: 120_000 },
     )
   })
 })

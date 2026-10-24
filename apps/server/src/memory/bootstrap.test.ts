@@ -23,21 +23,15 @@ const emptyReads = Effect.fn('MemoryTest.bootstrap')(function* () {
   expect(yield* helix.list({ partition, scopes: [MemoryScopeKey.make('company')] })).toEqual([])
 })
 
-/** Suite acquisition waits for all thirteen real index-build success signals on empty storage; assertion limits stay unchanged. */
-const INDEX_ACQUISITION_LIMIT = 60_000
-
 /** Run this on a freshly started, in-memory instance to prove first boot without fixtures, embeddings, or credentials. */
 describe.skipIf(url === undefined)('Helix bootstrap', () => {
-  layer(adapters, { timeout: INDEX_ACQUISITION_LIMIT, excludeTestServices: true })(
-    'indexed storage',
-    (it) => {
-      it.effect('acquires and re-acquires indexed reads before any record exists', () =>
-        Effect.gen(function* () {
-          yield* emptyReads()
-          // The setup proved first acquisition; a separate acquisition must preserve empty indexed reads.
-          yield* emptyReads().pipe(Effect.provide(yield* Layer.build(Layer.fresh(adapters))))
-        }),
-      )
-    },
-  )
+  layer(adapters, { excludeTestServices: true })('indexed storage', (it) => {
+    it.effect('acquires and re-acquires indexed reads before any record exists', () =>
+      Effect.gen(function* () {
+        yield* emptyReads()
+        // The setup proved first acquisition; a separate acquisition must preserve empty indexed reads.
+        yield* emptyReads().pipe(Effect.provide(yield* Layer.build(Layer.fresh(adapters))))
+      }),
+    )
+  })
 })
