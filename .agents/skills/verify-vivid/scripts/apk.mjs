@@ -111,7 +111,7 @@ export async function apk(state) {
     await run(
       [
         './gradlew',
-        'assembleRelease',
+        ':app:assembleRelease',
         '--init-script',
         skill + '/scripts/native.gradle',
         '--max-workers=2',
@@ -176,10 +176,11 @@ async function repack(run, app, base, target) {
     [
       'python3',
       '-c',
-      `import sys,zipfile
+      `import sys,zipfile,re
 with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as dst:
  for entry in src.infolist():
-  if entry.filename.startswith('META-INF/') or entry.filename == 'assets/index.android.bundle': continue
+  signature=re.fullmatch(r'META-INF/(MANIFEST\.MF|[^/]+\.(SF|RSA|DSA|EC))',entry.filename,re.I)
+  if signature or entry.filename == 'assets/index.android.bundle': continue
   dst.writestr(entry,src.read(entry.filename))
  dst.write(sys.argv[2], 'assets/index.android.bundle')`,
       base.file,
@@ -190,7 +191,11 @@ with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as ds
     app,
   )
   const aligned = target + '.aligned'
-  await run([sdk + '/build-tools/36.0.0/zipalign', '-f', '-p', '4', target, aligned], 'align', app)
+  await run(
+    [sdk + '/build-tools/36.0.0/zipalign', '-P', '16', '-f', '4', target, aligned],
+    'align',
+    app,
+  )
   await NodeFSP.rename(aligned, target)
   await run(
     [
