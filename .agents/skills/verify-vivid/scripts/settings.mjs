@@ -5,7 +5,7 @@ import { boot } from './process.mjs'
 
 /** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
 const hosts = {
-  'cloudbox-konan': 'box-node-a12c0c06aaf7d4a6',
+  'cloudbox-konan': 'box-node-d29022b64c1f5b4f',
   'cloudbox-konan2': 'box-node-0679eca2d05326b3',
   'cloudbox-konan3': 'box-node-b33a619732667f20',
 }
