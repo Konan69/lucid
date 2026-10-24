@@ -19,7 +19,7 @@ class StartupLaunchFailed extends Schema.TaggedError<StartupLaunchFailed>()(
 
 /** The prepared process exposes only the command that starts its real server entry. */
 interface StartupProcess {
-  readonly run: () => Effect.Effect<number | null, StartupLaunchFailed>
+  readonly run: Effect.Effect<number | null, StartupLaunchFailed>
 }
 
 /** The file scope owns one prepared process through its final close receipt. */
@@ -96,7 +96,7 @@ const startupLayer = Layer.effect(
       })
       return yield* Deferred.await(owned.ended)
     })
-    return Startup.of({ run })
+    return Startup.of({ run: run() })
   }),
 )
 
@@ -109,7 +109,7 @@ layer(startupLayer, { timeout: STARTUP_TIMEOUT_MS })('Server entry', (it) => {
     () =>
       Effect.gen(function* () {
         const startup = yield* Startup
-        expect(yield* startup.run()).toBe(78)
+        expect(yield* startup.run).toBe(78)
       }),
     STARTUP_TIMEOUT_MS,
   )
