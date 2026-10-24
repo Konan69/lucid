@@ -21,7 +21,7 @@ import { runs, threads } from '../threads/tables.ts'
 import { feedCards } from './tables.ts'
 
 /**
- * Reading the Feed: every background Thread of the Person that is still open or settled in the
+ * Reading the Feed: every readable Thread owned by the Person that is still open or settled in the
  * last day, each put in its stage. The Feed knows nothing of what started the work; it reads the
  * Thread, its card, its Runs and anything it is waiting on, the same for every source.
  */
@@ -57,11 +57,11 @@ interface Asks {
 const NO_ASKS: Asks = { asking: [], since: 0 }
 
 /**
- * The Person's own background Threads, and only while they can still read them: a Company one
- * stops when they leave. Readability alone would admit another Person's readable Thread.
+ * The Person's own Threads, and only while they can still read them: a Company one stops when
+ * they leave. Both places in `threads/place.ts`, Conversation and Background, are real work;
+ * neither is hidden system state. Readability alone would admit another Person's shared Thread.
  */
-const mine = (person: PersonId) =>
-  and(eq(threads.personId, person), readableBy(person), eq(threads.place, 'Background'))
+const mine = (person: PersonId) => and(eq(threads.personId, person), readableBy(person))
 
 /**
  * When a Thread last settled, as the Feed dates it: the later of its last activity and the moment
@@ -100,6 +100,17 @@ const stillOpen = (now: number) =>
   )
 
 /**
+ * Whether a Thread holds work that was done, so it may be history: a Background Thread exists only
+ * because something woke Vivid, but a Conversation is opened before anything is said in it (the
+ * first screen opens one on arrival), and one nobody has said anything in is not handled work. A
+ * Conversation counts once a Run has been made in it.
+ */
+const workDone = or(
+  eq(threads.place, 'Background'),
+  exists(sql`(select 1 from ${runs} where ${runs.threadId} = ${threads.id})`),
+)
+
+/**
  * Two reads: everything still open, all of it whatever its age, so nothing waiting on the Person
  * can fall off the Feed; and the settled history of the last day, capped, dated by `settledAt`.
  */
@@ -121,7 +132,7 @@ const readThreads = Effect.fn('Feed.readThreads')(function* (
       .select(fields)
       .from(threads)
       .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
-      .where(and(mine(person), not(stillOpen(now)), gte(settledAt, now - SETTLED_WINDOW)))
+      .where(and(mine(person), not(stillOpen(now)), gte(settledAt, now - SETTLED_WINDOW), workDone))
       .orderBy(desc(settledAt))
       .limit(HISTORY_LIMIT),
   )
@@ -189,7 +200,7 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
 })
 
 /**
- * Which stage one background Thread is in. Waiting on the Person wins over a Run going, because
+ * Which stage one owned Thread is in. Waiting on the Person wins over a Run going, because
  * a Run stopped on an Approval or a question is still open while it waits; then a Run going;
  * then a card not put away; anything else is settled.
  */

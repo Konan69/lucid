@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   Company,
@@ -9,10 +10,11 @@ import {
   PostRequest,
   RunId,
   ThreadId,
+  Workspace,
   type FeedAsk,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
-import { Effect, Layer } from 'effect'
+import { Effect, Exit, Layer, Option } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { approvals } from '../approvals/tables.ts'
 import { personTable } from '../auth/tables.ts'
@@ -20,20 +22,33 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { inputRequests } from '../inputs/tables.ts'
+import { CHANNEL } from '../live/changes.ts'
+import { payload, silent } from '../live/testing.ts'
+import { Runtime } from '../runtime/client.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
 import type { ThreadPlace } from '../threads/place.ts'
+import { RunEnding, RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
+import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
+import { stopPersonRun } from '../threads/stop.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { cardIdOf } from './read.ts'
 import { FeedStore, feedStoreLayer } from './store.ts'
 import { feedCards } from './tables.ts'
 
 /**
- * The Feed over the real tables on the disposable database: what each background Thread shows as,
+ * The Feed over the real tables on the disposable database: what each owned Thread shows as,
  * whose Feed it reaches, how long settled work stays and that open work is never cut. Threads,
  * Runs, Approvals and questions are written as rows, because the Feed reads them as rows and the
- * stores that write them in production are not what these tests are about.
+ * stores that write them in production are exercised separately for their committed Feed notices.
  */
 
-const testLayer = feedStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
+// This suite proves the committed SQL publication; real runtime abortion is driven by the live recipe.
+const testLayer = Layer.mergeAll(
+  feedStoreLayer,
+  runStoreLayer,
+  threadStoreLayer,
+  Layer.mock(Runtime, { stop: () => Effect.succeed(false) }),
+).pipe(Layer.provideMerge(testDatabaseLayer))
 
 const now = 1_800_000_000_000
 const hour = 60 * 60 * 1000
@@ -96,7 +111,7 @@ const fixture = Effect.fn('FeedTest.fixture')(function* () {
       })),
     ),
   )
-  return { ada: ada.id, ben: ben.id, company: company.id }
+  return { ada: ada.id, ben: ben.id, company: company.id, person: ada }
 })
 
 /** Where a Thread lives and who may read it; a personal-space Thread has no Company. */
@@ -281,7 +296,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('only the Person’s own background Threads reach their Feed', () =>
+    it.effect('only the Person’s own Threads reach their Feed, including Conversations', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
         const store = yield* FeedStore
@@ -292,18 +307,213 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           'Ben’s mail',
         )
         yield* store.post({ person: test.ben, thread: bens, request: firstPost })
-        // Ada's own conversation, with a card and a Run going, is not background work.
+        // A Conversation has no posted card, but its working Run still belongs in Ada's Feed.
         const conversation = yield* insertThread(
           { person: test.ada, place: 'Conversation', company: null, updatedAt: now },
           'Talking',
         )
-        yield* store.post({ person: test.ada, thread: conversation, request: firstPost })
         yield* working(test.ada, conversation, now)
 
-        expect(yield* items(test.ada)).toEqual([])
-        expect((yield* items(test.ben)).map((item) => [item._tag, item.thread])).toEqual([
-          ['Waiting', bens],
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Working.make({
+            card: cardIdOf(conversation),
+            thread: conversation,
+            from: 'Talking',
+            since: now,
+            post: null,
+          }),
         ])
+        const bensFeed = yield* items(test.ben)
+        expect(bensFeed.map((item) => [item._tag, item.thread])).toEqual([['Waiting', bens]])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a Conversation with a pending Approval waits without a posted card', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const thread = yield* insertThread(
+          { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
+          'Approve payment',
+        )
+        yield* working(test.ada, thread, now - hour)
+        yield* database.run(
+          database.insert(approvals).values({
+            id: crypto.randomUUID(),
+            threadId: thread,
+            personId: test.ada,
+            action: {},
+            digest: 'digest',
+            status: 'pending',
+            expiresAt: now + hour,
+            createdAt: now,
+          }),
+        )
+        yield* TestClock.setTime(now)
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Waiting.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Approve payment',
+            at: now,
+            post: null,
+            seen: false,
+            asking: ['approval'],
+          }),
+        ])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a Conversation settled today appears without a posted card', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const opened = yield* (yield* ThreadStore).openFirst({
+          person: test.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'person' as const,
+          threadId: Option.none<ThreadId>(),
+        })
+        expect(opened._tag).toBe('Opened')
+        expect(yield* items(test.ada)).toEqual([])
+        const thread = yield* insertThread(
+          { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
+          'Finished payment',
+        )
+        yield* database.run(
+          database.insert(runs).values({
+            id: RunId.make(crypto.randomUUID()),
+            threadId: thread,
+            personId: test.ada,
+            turn: 1,
+            origin: {},
+            state: 'completed',
+            startedAt: now - 2 * hour,
+            finishedAt: now - hour,
+          }),
+        )
+        yield* TestClock.setTime(now)
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Settled.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Finished payment',
+            at: now - hour,
+            post: null,
+          }),
+        ])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a Conversation without a posted card refuses both seen and done marks', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* FeedStore
+        const thread = yield* insertThread(
+          { person: test.ada, place: 'Conversation', company: null, updatedAt: now },
+          'Talking',
+        )
+        yield* working(test.ada, thread, now)
+        yield* TestClock.setTime(now)
+        const before = yield* items(test.ada)
+        expect(before).toHaveLength(1)
+        for (const state of ['seen', 'done'] as const) {
+          const refused = yield* Effect.flip(
+            store.mark(test.ada, MarkFeedCardRequest.make({ card: cardIdOf(thread), state })),
+          )
+          expect(refused._tag).toBe('NotFound')
+          expect(refused.message).toBe('That card is gone.')
+        }
+        expect(yield* items(test.ada)).toEqual(before)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a foreground Run starting and settling announces its Thread owner’s Feed', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* RunStore
+        // Ben acts in Ada's readable Company Thread. The Feed follows ownership, not the Run.
+        const thread = yield* insertThread(
+          {
+            person: test.ada,
+            place: 'Conversation',
+            company: test.company,
+            updatedAt: now - 2 * day,
+          },
+          'Shared work',
+        )
+        const id = RunId.make(crypto.randomUUID())
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        yield* TestClock.setTime(now - hour)
+        expect(
+          yield* store.start({
+            id,
+            threadId: thread,
+            personId: test.ben,
+            origin: StoredRunOrigin.cases.Message.make({}),
+          }),
+        ).toEqual(TurnReservation.cases.Reserved.make({ turn: 1 }))
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
+        yield* TestClock.setTime(now)
+        expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(true)
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Settled.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Shared work',
+            at: now,
+            post: null,
+          }),
+        ])
+        expect(yield* items(test.ben)).toEqual([])
+        expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(false)
+        yield* silent(notifications)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('desktop Stop publishes the owner’s Feed once and dates old work as handled', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const thread = yield* insertThread(
+          {
+            person: test.ada,
+            place: 'Conversation',
+            company: test.company,
+            updatedAt: now - 2 * day,
+          },
+          'Desktop work',
+        )
+        const runId = RunId.make(crypto.randomUUID())
+        yield* (yield* RunStore).start({
+          id: runId,
+          threadId: thread,
+          personId: test.ben,
+          origin: StoredRunOrigin.cases.Message.make({}),
+        })
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        yield* TestClock.setTime(now)
+        // SQL publication is the seam under test. Runtime abortion returns after the commit.
+        yield* stopPersonRun(test.ben, runId)
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Settled.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Desktop work',
+            at: now,
+            post: null,
+          }),
+        ])
+        yield* stopPersonRun(test.ben, runId)
+        expect(yield* (yield* RunStore).end(runId, RunEnding.cases.Stopped.make({}))).toBe(false)
+        yield* silent(notifications)
       }).pipe(Effect.scoped),
     )
 

@@ -4,16 +4,26 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-The Person sees the delivered work and can open its Thread. Reload retains eligible items and read/attention changes reach the same Feed. Waiting and Working items remain visible; Handled history is limited to 100 items from the last 24 hours.
+The Person sees work in every readable Thread they own, including ordinary Conversations. An empty Conversation stays out. Working Runs appear, questions and Approvals make items Waiting, and completed or stopped work appears in Handled. Waiting and Working items remain visible; Handled history is limited to 100 items from the last 24 hours.
+
+A Conversation without a posted card has no persisted seen or Done state. Visibility must send no `MarkFeedCard` request for that derived item. Desktop Stop must publish Feed settlement even when later runtime settlement changes nothing.
 
 ## How to get to it (user POV)
 
-Open Feed after a real Watch occurrence.
+Start an ordinary Thread and send a message. Open Feed to see its handled work, or open a waiting item to answer in its Thread.
 
 ## Driving it with verify-vivid
 
-Run `.agents/skills/verify-vivid/verify feature feed` after Launch and Doctor, then run `verify browser feed`. Both commands currently return blocked before exercising the journey. Inspect `feed/verdict.json` and `browser/feed/verdict.json`; no action transcript, settlement, history or SQL is produced. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
+After Launch and Doctor, run `verify feature feed <run>` and `verify browser feed <run>` on the unchanged combined commit. Run `verify cleanup <run>` afterward. These recipes cover ordinary Conversations only. Real-model calls use the shipped gateway and durable history. Rehearsal remains plumbing-only.
+
+The HTTP recipe checks empty Conversation exclusion and a real completed reply in Handled. Public `AskInput` with disposable runtime authority creates a question through its owning handler. `question-waiting.json` records the subscribed-before-write `WatchFeed` transition. This proves question projection, not model question generation. A separate real Run must be observed Working before public `ReportDeviceStop` stops it. `desktop-stop-settled.json`, `settlement.json`, and repeated-stop receipts prove settlement publication and stable repeat behavior. A Run that finishes before Stop fails the journey. No fixture Run or synthetic Feed row is written.
+
+The browser recipe opens a real completed Conversation's question on Feed, opens its Thread, returns, and reloads. Screenshots and semantic DOM checks prove the waiting card survives. Chrome's public network events observe the actual live transport without replacing it. `rpc-traffic.json` must contain `WatchFeed` and no `MarkFeedCard` for the derived card after its visibility callbacks. The browser recipe owns and closes its CDP observer; the shared browser driver retains its existing process cleanup.
+
+Neither recipe has been run for the recovery commit yet. A recipe implementation is not verification evidence. Record both verdicts, head, working-tree status, real model, host, and surviving evidence directory before claiming proof.
 
 ## Gotchas
 
-Both recipes are blocked. Full proof needs an implemented journey and a real Watch occurrence through disposable Executor authority and a public callback. Inline actions, Done, retry, automatic seen state and display Query/Mutation execution remain unproved; see apps/web/src/screen/feed/Card.tsx. A synthetic Feed row does not prove delivery.
+Background delivery remains blocked without a real Watch occurrence through disposable Executor authority and a public callback. Posted-card actions, Done, retry, successful seen marks, and display Query/Mutation execution remain unproved. The ordinary-Thread recipe does not activate Watches or establish those paths. The device permission recipe is separate and unchanged.
+
+Phone and desktop native controls require device runs. The HTTP desktop Stop report proves the server boundary, not the native Stop control. Database-backed Feed tests separately cover owner isolation, empty first Threads, old-history dating, and idempotent Stop announcements.
