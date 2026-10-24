@@ -7,7 +7,7 @@ import { boot } from './process.mjs'
 const hosts = {
   'cloudbox-konan': 'box-node-d29022b64c1f5b4f',
   'cloudbox-konan2': 'box-node-0679eca2d05326b3',
-  'cloudbox-konan3': 'box-node-b33a619732667f20',
+  'cloudbox-konan3': 'box-node-5eeedc8142a1a342',
 }
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
