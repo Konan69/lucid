@@ -53,7 +53,7 @@ export const channelWorkerLayer = Layer.effectDiscard(
       ).pipe(
         Effect.scoped,
         Effect.catchTag('ChannelDisconnected', (error) =>
-          Effect.logWarning('Channel disconnected; reconnecting', { channel: error.channel }),
+          Effect.logError('Channel disconnected; reconnecting', { channel: error.channel }),
         ),
       )
       return received

@@ -1,15 +1,15 @@
 import { ServiceUnavailable } from '@vivid/contracts'
-import { Deferred, Effect, Exit, Option, Predicate, Ref, Schedule } from 'effect'
+import { Deferred, Duration, Effect, Exit, Option, Predicate, Ref, Schedule } from 'effect'
 import type { ExecutorFailure, ExecutorServiceEntry } from './executor.ts'
 
 /** Cold pulls can recover from transport loss or a temporarily unavailable Executor. Three
  * retries bound one recovery series; malformed responses and access refusals require repair.
- * Source: unmeasured. Exhaustion retains the last good snapshot until the next scheduled refresh. */
-export const CATALOG_RETRY_DELAY = '30 seconds'
+ * Source: unmeasured. A cold transient failure keeps this pace even after the fast retry series. */
+export const CATALOG_RETRY_DELAY = Duration.seconds(30)
 const CATALOG_RETRIES = 3
 /** Bounds catalog staleness because this provider exposes a pull feed, with no change signal.
  * Source: unmeasured. Expiry refreshes the snapshot without discarding the last good one. */
-const CATALOG_REFRESH = '10 minutes'
+const CATALOG_REFRESH = Duration.minutes(10)
 
 /** Only transport loss, temporary readiness and uncertain read outcomes can recover without repair. */
 const catalogTransient = (error: ExecutorFailure) =>
@@ -19,7 +19,8 @@ const catalogTransient = (error: ExecutorFailure) =>
 
 /** One scoped writer owns all downloads. Readers retain the last good catalog, while cold
  * readers share the current attempt's latch, including its typed failure. Schedules use the
- * Effect Clock: successful refreshes wait ten minutes; failed attempts retry after thirty seconds.
+ * Effect Clock: cold transient failures retain thirty-second recovery after fast retries exhaust.
+ * Successes, warm failures and refusals wait ten minutes. No failure ends this scoped writer.
  */
 export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
   load: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>,
@@ -72,10 +73,23 @@ export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
         ),
         while: catalogTransient,
       }),
-      Effect.catchIf(catalogTransient, () => Effect.void),
-      Effect.repeat(Schedule.spaced(CATALOG_REFRESH)),
-      Effect.catch((error) =>
-        Effect.logError('Connection catalog refresh stopped', { failure: error._tag }),
+      Effect.as(CATALOG_REFRESH),
+      Effect.catch(
+        Effect.fn('Executor.catalogRefreshFailure')(function* (error: ExecutorFailure) {
+          yield* Effect.logError('Connection catalog refresh failed; retaining refresh schedule', {
+            failure: error._tag,
+          })
+          const current = yield* Ref.get(snapshot)
+          return catalogTransient(error) && Option.isNone(current)
+            ? CATALOG_RETRY_DELAY
+            : CATALOG_REFRESH
+        }),
+      ),
+      Effect.repeat(
+        Schedule.forever.pipe(
+          Schedule.setInputType<Duration.Duration>(),
+          Schedule.addDelay(({ input }) => Effect.succeed(input)),
+        ),
       ),
     ),
   )

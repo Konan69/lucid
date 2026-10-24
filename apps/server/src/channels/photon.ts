@@ -109,16 +109,12 @@ const Envelope = Schema.Struct({
 })
 const decodeEnvelope = Schema.decodeUnknownEffect(Envelope)
 
-/** Spectrum 12.10.1 exports structured cloud status errors. Client/project refusals are
- * permanent for captured credentials; transport, rate limiting and server faults may recover. */
+/** Only 401 proves that Layer-captured credentials are refused. Other 4xx statuses can be
+ * temporary project/provider state and must keep reconnecting under the worker's capped backoff. */
 // The SDK rejects with unknown input. Classify its exported error once at this boundary.
 // oxlint-disable-next-line anti-slop/no-unknown-parameters
-const disconnected = (error: unknown) =>
-  error instanceof SpectrumCloudError &&
-  error.status >= 400 &&
-  error.status < 500 &&
-  error.status !== 408 &&
-  error.status !== 429
+export const disconnected = (error: unknown) =>
+  error instanceof SpectrumCloudError && error.status === 401
     ? new ChannelConnectionRefused({ channel: 'iMessage' })
     : new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })

@@ -114,7 +114,6 @@ const Availability = Schema.TaggedUnion({
   Ready: {},
   Suspect: { id: SuspicionId, markedAt: Schema.Finite, expiresAt: Schema.Finite },
   Cooling: { retryAt: Schema.Finite },
-  CredentialRejected: {},
   Probing: {},
 })
 const Admission = Schema.TaggedUnion({
@@ -208,7 +207,6 @@ export const decisionWouldAttempt = Effect.gen(function* () {
     Ready: () => true,
     Suspect: () => true,
     Cooling: ({ retryAt }) => now >= retryAt,
-    CredentialRejected: () => false,
     Probing: () => false,
   })
 }).pipe(Effect.withSpan('Decisions.wouldAttempt'))
@@ -233,7 +231,6 @@ const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Avai
           now < retryAt
             ? [Admission.cases.Backoff.make({}), current]
             : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
-        CredentialRejected: () => [Admission.cases.Backoff.make({}), current],
         Probing: () => [Admission.cases.Backoff.make({}), current],
       }),
   )
@@ -241,11 +238,12 @@ const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Avai
 
 type Settlement = readonly [Option.Option<typeof Transition.Type>, typeof Availability.Type]
 
-/** A rejected key is permanent for this model Layer. Only rebuilding with repaired configuration
- * admits new calls. The transition logs once without retaining the credential or payload. */
-const authenticationSettlement = (): Settlement => [
+/** A provider can repair account or credential state without rebuilding this Layer. Retain the
+ * five-minute re-probe introduced by f385b4a6d while suppressing rejected requests in between. */
+const CREDENTIAL_REPROBE = Duration.minutes(5)
+const authenticationSettlement = (now: number): Settlement => [
   Option.some(Transition.cases.AuthenticationRejected.make({})),
-  Availability.cases.CredentialRejected.make({}),
+  Availability.cases.Cooling.make({ retryAt: now + Duration.toMillis(CREDENTIAL_REPROBE) }),
 ]
 
 /** Capturing the unique suspicion mark at admission proves the attempt started after it
@@ -289,10 +287,7 @@ const settleNormal = (
   admission: typeof Admission.cases.Normal.Type,
   now: number,
 ): Settlement => {
-  if (Outcome.guards.AuthenticationFailure(outcome))
-    return Availability.guards.CredentialRejected(current)
-      ? [Option.none(), current]
-      : authenticationSettlement()
+  if (Outcome.guards.AuthenticationFailure(outcome)) return authenticationSettlement(now)
   if (!Availability.isAnyOf(['Ready', 'Suspect'])(current)) return [Option.none(), current]
   return Outcome.match(outcome, {
     Outage: () => [
@@ -304,7 +299,7 @@ const settleNormal = (
     TimedOut: () => timeoutSettlement(current, admission, now),
     Success: () => [Option.none(), Availability.cases.Ready.make({})],
     RequestFailure: () => [Option.none(), Availability.cases.Ready.make({})],
-    AuthenticationFailure: () => authenticationSettlement(),
+    AuthenticationFailure: () => authenticationSettlement(now),
     Cancelled: () =>
       now - admission.startedAt >= DECISION_OUTAGE_MINIMUM_MILLIS
         ? timeoutSettlement(current, admission, now)
@@ -333,7 +328,7 @@ const settleProbe = (outcome: typeof Outcome.Type, now: number): Settlement => {
     TimedOut: () => cooling,
     CallerLocalTimeout: () => cooling,
     Cancelled: () => cooling,
-    AuthenticationFailure: () => authenticationSettlement(),
+    AuthenticationFailure: () => authenticationSettlement(now),
   })
 }
 
