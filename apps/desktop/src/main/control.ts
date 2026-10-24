@@ -486,8 +486,8 @@ const type = Effect.fn('DesktopControl.type')(function* (
  * next page would act as focused.
  *
  * What Vivid changes, each found by running against real pages:
- * - A key is pressed only on a page that is drawn on the window (`focus` waits for that, and
- *   fails the step with nothing sent otherwise). Keys to a page that is not drawn were delivered
+ * - A key is pressed only after the page is drawn on the window. `focus` waits for placement
+ *   or owning cancellation. Keys to a page that is not drawn were delivered
  *   unreliably, and sometimes after the action had been answered.
  * - No `Page.bringToFront`. With it, the key that followed was dropped.
  * - The page confirms it has focus after emulation is turned on, before the key is sent.
