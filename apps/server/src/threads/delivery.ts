@@ -34,7 +34,7 @@ import {
   type Delivery,
   type ServerDelivery,
 } from './conversation.ts'
-import { serializeAdmissions } from './admissions.ts'
+import { keyedPermits } from '../runtime/keyed.ts'
 import { flueMessage } from './message.ts'
 import { notifiesFrom } from './place.ts'
 import { Presence } from './presence.ts'
@@ -242,7 +242,9 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const changes = yield* Changes
   const scope = yield* Effect.scope
   const observe = yield* makeObserve()
-  const withAdmission = serializeAdmissions()
+  // Serialize reservation through Flue receipt, never the response itself. Pending admissions
+  // recheck under one Thread permit; SQL still protects turn allocation without spanning runtime I/O.
+  const admissions = keyedPermits<ThreadId>()
   const withDatabase = Effect.provideService(Database, database)
 
   // Runs with an observer in this process. A delivery Flue recognises as a repeat does not mean
@@ -353,7 +355,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         incarnation: admission.incarnation,
       } satisfies Admitted
     },
-    (effect, delivery) => withAdmission(effect, delivery.threadId),
+    (effect, delivery) => admissions.withPermit(delivery.threadId, effect),
   )
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)

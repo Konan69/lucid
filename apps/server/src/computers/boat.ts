@@ -112,7 +112,7 @@ export const boatMachineLayer = Layer.effect(
     // machine it was is forgotten then, and the SSH connection to it is closed.
     const connections = machineLinks(api)
     yield* Effect.addFinalizer(() => connections.close)
-    const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
+    const { ensure, status, inspect, stop, running, permits } = yield* lifecycle(
       api,
       saved,
       (key) =>
@@ -191,7 +191,7 @@ export const boatMachineLayer = Layer.effect(
               output.length > 32768,
           }
         },
-        (effect, input) => permit(input.key).withPermit(effect),
+        (effect, input) => permits.withPermit(input.key, effect),
       ),
       /** No permit: a followed command lasts minutes and the actions it asks for need the
        * machine meanwhile. */
@@ -211,7 +211,7 @@ export const boatMachineLayer = Layer.effect(
           yield* desktopStep(native, input.action)
           return yield* look(native, api, { id: identity.id, key: input.key })
         },
-        (effect, input) => permit(input.key).withPermit(effect),
+        (effect, input) => permits.withPermit(input.key, effect),
       ),
       browse: Effect.fn('Machine.boat.browse')(
         function* (input) {
@@ -225,7 +225,7 @@ export const boatMachineLayer = Layer.effect(
           tabs.set(input.key, result.tabs)
           return result
         },
-        (effect, input) => permit(input.key).withPermit(effect),
+        (effect, input) => permits.withPermit(input.key, effect),
       ),
     })
   }),
