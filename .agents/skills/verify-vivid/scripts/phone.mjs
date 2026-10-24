@@ -7,7 +7,9 @@ import { host } from './settings.mjs'
 import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
-import { readAccount, readDevice, readState } from './phonewire.mjs'
+import { readDevice, readState } from './phonewire.mjs'
+import { enter, target } from './phoneentry.mjs'
+import { phoneDevices } from './phonedevices.mjs'
 import { rpc } from './wire.mjs'
 
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -15,34 +17,6 @@ const cli = [
   cache + '/node/bin/node',
   cache + '/tools/node_modules/agent-device/bin/agent-device.mjs',
 ]
-
-/** Re-snapshot before every interaction. Refs are selected from the current accessibility tree,
- * never remembered across a transition or guessed from screen coordinates. */
-async function target(run, label) {
-  await run(['wait', 'text', label, '60000'])
-  const snapshot = await run(['snapshot', '-i'])
-  const lines = snapshot
-    .split('\n')
-    .filter((line) => line.includes(label) && /@e\d+ \[(button|text-field)\]/u.test(line))
-  NodeAssert.equal(lines.length, 1, 'Expected one interactive ref for ' + label + '\n' + snapshot)
-  return lines[0].match(/@e\d+/u)[0]
-}
-
-/** The ordinary email controls authenticate the same disposable Person the public proof uses.
- * agent-device state stays private because its journal can include synthetic form values. */
-async function enter(state, run) {
-  const account = Result.getOrThrow(
-    readAccount(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8')),
-  )
-  await run(['press', await target(run, 'Log in')])
-  // Android's interactive snapshot names the input by its visible placeholder.
-  await run(['fill', await target(run, 'name@example.com'), account.email])
-  await run(['press', await target(run, 'Continue')])
-  await run(['fill', await target(run, 'Password'), account.password], [account.password])
-  await run(['press', await target(run, 'Sign in')])
-  await run(['wait', 'text', 'Open menu', '60000'])
-  return account
-}
 
 /** Idle Thread navigation isolates Android rendering and authentication from model behaviour.
  * A public CreateThread/GetThread receipt seeds and confirms the same Thread selected in the UI. */
@@ -75,7 +49,20 @@ async function journey(state, run, directory) {
 /** One phone command owns the host lease until finally has closed its session and stopped the
  * captured emulator. A killed worker leaves acquisition receipts for verify cleanup. */
 export async function phone(state, feature) {
-  NodeAssert.equal(feature, 'thread', 'No phone recipe for ' + feature)
+  const recipes = {
+    thread: {
+      drive: journey,
+      feature: 'features/phone.md',
+      claim: 'idle native navigation; no model behaviour',
+    },
+    devices: {
+      drive: phoneDevices,
+      feature: 'features/devices.md',
+      claim: 'native Feed and Settings device decisions; no model behaviour',
+    },
+  }
+  NodeAssert.ok(Object.hasOwn(recipes, feature), 'No phone recipe for ' + feature)
+  const recipe = recipes[feature]
   await host()
   NodeAssert.equal(state.dirty, false, 'Phone APK proof requires a clean committed checkout')
   const directory = state.evidence + '/phone'
@@ -135,22 +122,23 @@ export async function phone(state, feature) {
     await execute([adb, '-s', device.serial, 'shell', 'pm', 'clear', 'work.vivid.mobile'])
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
-    const thread = await journey(state, run, directory)
-    verdict = { verdict: 'proved', thread, apk: artifact }
+    const result = await recipe.drive(state, run, directory)
+    verdict = { verdict: 'proved', thread: result, apk: artifact }
   } catch (error) {
     verdict = { verdict: 'failed', error: error.stack }
     throw error
   } finally {
     await json(directory + '/verdict.json', {
       ...verdict,
-      feature: 'features/phone.md',
+      feature: recipe.feature,
+      journey: feature,
       head: state.head,
       dirty: state.dirty,
       tree: state.tree,
       diffHash: state.diffHash,
       model: state.model,
       modelKind: state.modelKind,
-      claim: 'idle native navigation; no model behaviour',
+      claim: recipe.claim,
       alias: state.devbox,
       hostname: state.hostname,
       serial: device.serial,

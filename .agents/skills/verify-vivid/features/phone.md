@@ -1,4 +1,4 @@
-# Android Thread navigation
+# Android phone journeys
 
 Model requirement: none. Launch still starts the real runtime and requires its provider keys. This journey makes no model call and proves no model behaviour.
 
@@ -22,6 +22,8 @@ The recipe creates one idle Thread through public `CreateThread`, installs a rel
 
 `agent-device` opens Vivid, waits for the actual controls, and reads `snapshot -i` before each press or fill. The journey signs in, opens the menu, captures the Thread list, selects the exact seeded Thread button by its current snapshot ref, and waits for navigation to settle and the idle composer's `Message Vivid`. Public `GetThread` confirms the same id has zero Runs and the synthetic Person is present through the phone's held `BePresent` call. The phone deliberately keeps the Thread title in the menu; presence proves which Thread is on top after the drawer closes.
 
+For device permission changes, run `verify phone devices flue-<id>` with the same prerequisites. Read [Device permission requests](devices.md) for its Feed, Home, Chat, and Settings assertions. Each phone command stops the owned emulator in finally. Provision again before running a second phone journey. The Thread journey remains unchanged.
+
 ## Evidence
 
 `phone/receipt.json` records host alias, observed hostname, serial, boot identity and captured process generations. `phone/apk.json` and `phone/verdict.json` record the APK SHA-256, native fingerprint, build mode and commit. Numbered command receipts retain snapshots and the exact selected refs. `phone/threads.png` and `phone/thread.png` show the signed-in list and idle Thread. Doctor includes the phone artifact identity. `phone/cleanup.json` and `phone/ps-cleanup.json` prove the owned processes stopped.
@@ -30,4 +32,4 @@ The command holds the devbox Android lock until its finally block closes the pri
 
 ## Limits
 
-This proves Android email sign-in, Thread list navigation and idle rendering only. A working Thread's thinking orb has crashed software renderers in prior runs. Do not infer active conversation, rich replies, notifications, permissions, iOS or desktop coverage from this feature. Extend the recipe before making those claims.
+The Thread journey proves Android email sign-in, Thread list navigation and idle rendering only. A working Thread's thinking orb has crashed software renderers in prior runs. Do not infer active conversation, rich replies, notifications, device permissions, iOS or desktop coverage from this feature. Extend the recipe before making those claims.

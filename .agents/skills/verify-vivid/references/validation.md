@@ -2,7 +2,7 @@
 
 A behaviour proof runs Launch, Doctor, the touched feature HTTP and browser recipes, then Cleanup on the same commit and unchanged tree. A dirty run is labelled dirty; it does not prove a clean commit. A rehearsal run proves plumbing only. Blocked features remain unverified and unblocking their recipe becomes the next task.
 
-For [Android Thread navigation](../features/phone.md), use Launch, Doctor, `verify phone thread <run>`, Doctor, and Cleanup on the same clean commit. Its public RPC receipts and native accessibility journey form a separate phone claim. Web browser recipes do not substitute for it.
+For [Android Thread navigation](../features/phone.md), use Launch, Doctor, `verify phone thread <run>`, Doctor, and Cleanup on the same clean commit. Its public RPC receipts and native accessibility journey form a separate phone claim. Web browser recipes do not substitute for it. Device permission changes also require `verify phone devices <run>` using the [devices recipe](../features/devices.md). Provision the emulator again before a second phone command. iOS header clearance remains a separate claim that Linux cannot prove.
 
 Keep state, launch/build logs, doctor, public request/response/stream/history, SQL, browser commands, snapshots, screenshots and cleanup audits under the run's evidence directory. Record host and model alongside the feature file and head in the PR. The parent owns the required independent cross-family gate at the exact head. When no authorized reviewer is available, report that gate pending. This skill does not authorize Claude usage.
 

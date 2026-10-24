@@ -1,6 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
-import { DeviceListResponse, DevicePresence, DeviceRequest } from '@vivid/contracts'
+import { DeviceAccess, DeviceListResponse, DevicePresence, DeviceRequest } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { runtimeHeaders } from '@vivid/contracts/auth'
 import { Schema, Result } from 'effect'
@@ -169,6 +169,20 @@ export async function devices(state, _thread, directory) {
       pending.device,
     )
     NodeAssert.equal(list.devices.find((d) => d.id === other.id).presence._tag, 'Connected')
+    const published = await deviceState(
+      state,
+      directory,
+      'pending-published',
+      (value) =>
+        value.devices.some(
+          (d) => d.id === pending.device.id && DeviceAccess.guards.Pending(d.access),
+        ) &&
+        value.devices.some((d) => d.id === other.id && DevicePresence.guards.Connected(d.presence)),
+    )
+    NodeAssert.deepEqual(
+      published.devices.find((d) => d.id === pending.device.id).access,
+      pending.device.access,
+    )
     const allowed = await rpc(state, 'AllowDevice', { id: pending.device.id }, directory)
     NodeAssert.equal(allowed.device.access._tag, 'Allowed')
     const switched = await rpc(state, 'ListDevices', undefined, directory, 'switched-list')
