@@ -26,7 +26,7 @@ import { Atom } from 'effect/reactivity'
  * that is true while it is active, and work belongs to the state that needs it: leaving `Asking`
  * interrupts the call, so its answer cannot arrive anywhere else. An event a state does not name
  * is not taken. One attempt is made at a time (the phone's rule, now the web's as well): a press
- * while the server is still being asked is not taken, which is what `canPress` is drawn from.
+ * while the server is still being asked is not taken, which is what `isWaiting` is drawn from.
  *
  * What differs by surface is behind four services: how the server is asked (`Asking`, which also
  * says where the Person is signing in from), how a provider's page is put in front of the Person
