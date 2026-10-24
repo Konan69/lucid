@@ -37,8 +37,8 @@ export async function apkHash(file) {
 
 /** Native reuse requires identical dependency, config, asset and plugin inputs. TS/JS may repack.
  * The source checkout is private: Expo prebuild never writes to the proof's product checkout. */
-async function inputs(head) {
-  const tree = await command(['git', 'ls-tree', '-r', head])
+async function inputs(head, cwd) {
+  const tree = await command(['git', 'ls-tree', '-r', head], { cwd })
   const lines = tree.split('\n').filter((line) => {
     const path = line.split('\t')[1]
     if (/package.json$|pnpm-lock.yaml$|pnpm-workspace.yaml$|^patches\//u.test(path)) return true
@@ -58,7 +58,7 @@ async function inputs(head) {
 export async function apk(state) {
   const directory = cache + '/apks'
   await NodeFSP.mkdir(directory, { recursive: true })
-  const fingerprint = await inputs(state.head)
+  const fingerprint = await inputs(state.head, root)
   const target = directory + '/' + state.head + '.apk'
   const receipt = target + '.json'
   const text = await NodeFSP.readFile(receipt, 'utf8').catch((error) => {
@@ -77,6 +77,8 @@ export async function apk(state) {
     throw error
   })
   if (present === null) await command(['git', 'clone', '--shared', '--no-checkout', root, source])
+  const previousHead = await command(['git', 'rev-parse', 'HEAD'], { cwd: source })
+  const nativeChanged = (await inputs(previousHead, source)) !== fingerprint
   await command(['git', 'fetch', 'origin', state.head], { cwd: source })
   await command(['git', 'checkout', '--detach', state.head], { cwd: source })
   const run = (args, name, cwd = source) =>
@@ -101,7 +103,7 @@ export async function apk(state) {
     await repack(run, app, artifact, target)
     mode = 'repack'
   } else {
-    await NodeFSP.rm(app + '/android', { recursive: true, force: true })
+    if (nativeChanged) await NodeFSP.rm(app + '/android', { recursive: true, force: true })
     // native.mjs pins the template to the shipped SDK and prebuilds only if Android is absent.
     await run(['node', 'scripts/native.mjs', 'android', '--prebuild-only'], 'prebuild', app)
     await run(['python3', skill + '/scripts/profile.py', app], 'profile')
