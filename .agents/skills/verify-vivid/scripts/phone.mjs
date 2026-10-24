@@ -53,6 +53,7 @@ async function journey(state, run, directory) {
   await run(['screenshot', directory + '/threads.png'])
   await run(['press', await target(run, title)])
   await run(['wait', 'text', 'Message Vivid', '60000'])
+  await run(['wait', 'text', title, '60000'])
   await run(['snapshot', '-i'])
   await run(['screenshot', directory + '/thread.png'])
   const detail = await rpc(state, 'GetThread', { id }, directory, 'idle-thread')
