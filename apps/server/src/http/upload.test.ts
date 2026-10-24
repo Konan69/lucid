@@ -375,8 +375,8 @@ const forwardingHop = Effect.fn('LibraryUploadTest.forwardingHop')(function* (
  * NodeHttpServer 4.0.2 delegates request.multipart directly to NodeMultipart.persisted.
  * Drive that same parser and native file writer with the full payload in one readable chunk,
  * so the limit proof does not measure loopback throughput or a 10 MiB SQL RETURNING/list.
- * "persists all three supported parts in the chosen folder" below owns real HTTP, FormData,
- * authentication, folder selection and PostgreSQL persistence at a small payload size.
+ * The mounted HTTP case below separately proves the route accepts the same exact limit,
+ * authenticates the Person and persists the file in the selected folder.
  */
 layer(NodeServices.layer)((cases) => {
   cases.effect('accepts the payload limit with all three supported parts', () =>
@@ -417,20 +417,36 @@ layer(NodeServices.layer)((cases) => {
 
 describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP', () => {
   layer(testLayer, { excludeTestServices: true })((it) => {
-    it.effect('persists all three supported parts in the chosen folder', () =>
-      Effect.gen(function* () {
-        const { people, store, send } = yield* httpFixture()
-        const folder = yield* store.createFolder(people.owner.actor, {
-          name: 'Stored files',
-          shelf: 'Mine',
-          parentId: null,
-        })
-        const body = uploadBody(8)
-        body.set('folderId', folder.id)
-        expect((yield* send(request(body))).status).toBe(201)
-        const list = yield* store.list(people.owner.actor, { shelf: 'Mine' })
-        expect(list.documents).toEqual([expect.objectContaining({ size: 8, folderId: folder.id })])
-      }),
+    it.effect(
+      'persists an exact-limit file and all three supported parts in the chosen folder',
+      () =>
+        Effect.gen(function* () {
+          const { people, store, send } = yield* httpFixture()
+          const folder = yield* store.createFolder(people.owner.actor, {
+            name: 'Stored files',
+            shelf: 'Mine',
+            parentId: null,
+          })
+          // Native multipart bytes avoid Blob streaming while preserving both independent size checks.
+          const bytes = Buffer.alloc(MAX_LIBRARY_FILE_BYTES, ' ')
+          bytes[0] = 97
+          const body = Buffer.concat([
+            Buffer.from(
+              `--vivid-reuse\r\nContent-Disposition: form-data; name="folderId"\r\n\r\n${folder.id}\r\n`,
+            ),
+            reusableUpload('bounded.txt', bytes),
+          ])
+          const response = yield* send(
+            HttpClientRequest.post('/api/library').pipe(
+              HttpClientRequest.bodyUint8Array(body, 'multipart/form-data; boundary=vivid-reuse'),
+            ),
+          )
+          expect(response.status).toBe(201)
+          const list = yield* store.list(people.owner.actor, { shelf: 'Mine' })
+          expect(list.documents).toEqual([
+            expect.objectContaining({ size: MAX_LIBRARY_FILE_BYTES, folderId: folder.id }),
+          ])
+        }),
     )
     for (const size of [MAX_LIBRARY_FILE_BYTES + 1, MAX_LIBRARY_FILE_BYTES + 4096]) {
       it.effect(`refuses a ${size}-byte file with a readable 413 and no item`, () =>
