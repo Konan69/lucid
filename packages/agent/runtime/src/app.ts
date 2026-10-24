@@ -60,7 +60,7 @@ const prepareContext = async (context: AppContext) => {
     return context.json({ error: 'Wrong Thread' }, 400)
   recordScope(delivery.threadId, delivery.turn, delivery.scope)
   const message = modelDelivery(delivery)
-  await runResult(
+  await Effect.runPromise(
     loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))).pipe(
       Effect.provide(notesLayer),
     ),

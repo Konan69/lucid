@@ -340,7 +340,8 @@ async function journey(state, feature) {
       await noteBrowser(state, id, directory, {
         run,
         capture,
-        reply: (text, evidence, stage) => exactReply(run, text, evidence, stage),
+        render: (text) => dom(run, renderedReply(text)),
+        normalise: normaliseReply,
       })
       verdict = {
         ...base,
