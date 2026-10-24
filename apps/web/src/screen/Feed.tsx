@@ -17,7 +17,7 @@ import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
 import { Card, Answers } from './feed/Card'
-import { Computer } from './thread/Device'
+import { Computer } from './feed/Device'
 import { Composer } from './thread/Composer'
 
 const when = makeWhen(thisReader())

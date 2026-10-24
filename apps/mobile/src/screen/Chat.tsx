@@ -71,7 +71,6 @@ import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
-import { DeviceAsk } from './chat/Device'
 import {
   ApprovalHold,
   approvalHoldOf,
@@ -795,7 +794,6 @@ function Conversation({
         listed={listed && page === 'Conversation'}
         onShare={() => setSharing(true)}
       />
-      <DeviceAsk />
       <View style={{ flex: 1 }}>
         <View ref={wake} style={{ flex: 1 }}>
           <Messages

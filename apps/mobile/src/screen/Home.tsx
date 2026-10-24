@@ -17,7 +17,6 @@ import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
-import { DeviceAsk } from './chat/Device'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
 import { start } from '../data/app'
@@ -137,7 +136,6 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 function Writing({ me, mood, starting, placeholder }: WritingProps) {
   return (
     <View style={{ flex: 1 }}>
-      <DeviceAsk />
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"

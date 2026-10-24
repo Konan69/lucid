@@ -2,39 +2,16 @@ import {
   deciding,
   deviceAnswers,
   deviceQuestion,
-  devicesWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { useState } from 'react'
 import { answerDevice, useDeviceDecision } from '../../data/devices'
-import { live, useLiveValue } from '../../data/live'
 import { openSettings } from '../../router'
 import { Button } from '../../ui/button'
 
 const when = makeWhen(thisReader())
-
-/** A separate section keeps device decisions available while a chat question or approval is open. */
-export function DeviceAsk() {
-  const devices = useLiveValue(live.devices)
-  const waiting = Option.match(devices, { onNone: () => [], onSome: devicesWaiting })
-  const [now] = useState(() => Date.now())
-  if (waiting.length === 0) return null
-  return (
-    <section
-      aria-label="Pending device requests"
-      className="max-h-60 shrink-0 overflow-y-auto px-4 py-2"
-    >
-      <div className="mx-auto flex w-full max-w-180 flex-col gap-3">
-        {waiting.map((request) => (
-          <Computer key={request.device.id} waiting={request} now={now} />
-        ))}
-      </div>
-    </section>
-  )
-}
 
 /** The accepted Feed device card, without a conversation post or an independent dismiss action. */
 export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number }) {

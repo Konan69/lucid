@@ -8,7 +8,7 @@ import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimate
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
-import { Computer } from './chat/Device'
+import { Computer } from './feed/Device'
 import { Display } from '../parts/display'
 import { useTheme } from '../theme'
 import { Composer } from '../ui/Composer'
@@ -63,7 +63,8 @@ const Row = Data.taggedEnum<Row>()
  * The Feed on the phone: the same Feed as the web (`apps/web/src/screen/Feed.tsx`), laid out for
  * one column, as the accepted design's phone frames are (13 October 2026, v8 then v9). The head is
  * the date, the greeting and Vivid's face with the standing line; then each card that waits on the
- * Person, Vivid's work, and what is handled; the composer stays at the foot.
+ * Person, Vivid's work, and what is handled; the composer stays at the foot. The list fills the
+ * remaining height and lets UIKit clear the transparent native bar, as Settings does.
  *
  * A card that waits counts as looked at once all of it has been on screen (`markSeen`, from the
  * list's own viewability event). Pressing a card's answer folds it out of the list while the
@@ -140,6 +141,8 @@ export function Feed() {
   return (
     <Screen>
       <FlatList
+        style={{ flex: 1 }}
+        contentInsetAdjustmentBehavior="automatic"
         data={rows}
         keyExtractor={Row.$match({
           Computer: ({ waiting }) => `computer:${waiting.device.id}`,
