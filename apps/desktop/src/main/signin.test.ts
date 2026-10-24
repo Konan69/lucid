@@ -11,6 +11,8 @@ import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import { googleSignIn } from './signin.ts'
 import { loadThemeSurfaces } from './tokens.ts'
 
+const decodeStart = Schema.decodeUnknownEffect(SignInStart)
+
 /** Real loopback callbacks remain receivable while a Person takes time in the external browser. */
 it.effect('accepts a sign-in callback after six minutes and serves its final page', () =>
   Effect.gen(function* () {
@@ -30,9 +32,7 @@ it.effect('accepts a sign-in callback after six minutes and serves its final pag
     })
     expect(yield* signIn.begin).toBe('opened')
     const address = new URL(yield* Queue.take(opened))
-    const start = yield* Schema.decodeUnknownEffect(SignInStart)(
-      Object.fromEntries(address.searchParams),
-    )
+    const start = yield* decodeStart(Object.fromEntries(address.searchParams))
     yield* TestClock.adjust('6 minutes')
     const returned = yield* HttpClient.get(
       signInReturnAddress(start.port, SignInReturn.cases.Failed.make({ state: start.state })),
