@@ -1,17 +1,19 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { DECISION_MODEL, gatewayDecisionLayer } from './model.ts'
-import { Array as Arr, Config, Effect, Layer, Schema } from 'effect'
+import { Array as Arr, Effect, Layer, Schema } from 'effect'
+import { serverModelGateway } from '../config.ts'
 
 /** Live judgments require explicit consent and the gateway key; normal suites never spend
  * credentials. They ask the real provider whatever `VIVID_DECISIONS` says, because the claim
  * under test is the model's behaviour, not the switch. The key is decoded redacted. */
 export const liveDecisionEnabled =
   NodeProcess.env['VIVID_LIVE_DECISIONS'] === '1' &&
-  NodeProcess.env['EXPLABS_API_KEY'] !== undefined
+  (NodeProcess.env['EXPLABS_API_KEY'] !== undefined ||
+    NodeProcess.env['OPENROUTER_API_KEY'] !== undefined)
 export const liveDecisionLayer = Layer.unwrap(
-  Effect.map(Config.schema(Schema.Redacted(Schema.NonEmptyString), 'EXPLABS_API_KEY'), (key) =>
-    gatewayDecisionLayer({ key, model: DECISION_MODEL }),
+  Effect.map(serverModelGateway, (gateway) =>
+    gatewayDecisionLayer({ key: gateway.key, url: gateway.url, model: DECISION_MODEL }),
   ),
 ).pipe(Layer.provide(NodeHttpClient.layerUndici))
 

@@ -23,9 +23,9 @@ The ceiling in `scripts/gate/ratchets.mjs` is an aggregate count, checked both w
 - Flue's run `status` (`packages/client/state/src/stream.ts`): library-owned; never mirror it into a machine.
 - Existing protections must survive a conversion: Input-request and Approval attempt checks and proposal digests, key-sheet attempt ids, phone rule-text comparison, UUID-keyed upload rows, first-message delivery keys.
 
-## Inventory on 24 October 2026 (main 2365c47f)
+## Inventory snapshot on 24 October 2026 (main 2365c47f)
 
-103 lint findings in 41 files (53 web, 50 phone), grouped into about 38 lifecycles. Highest severity first; re-run the lint and `find.sh` before relying on it.
+This is a dated snapshot. Rerun both the lint and `.agents/skills/state-machines/scripts/find.sh` before relying on it. The snapshot had 103 lint findings in 41 files (53 web, 50 phone), grouped into about 38 lifecycles. Highest severity first.
 
 - Library search and item opening; Library rename and move (web `screen/Library.tsx`).
 - Memory correction (web and phone `screen/settings/Memory.tsx`).

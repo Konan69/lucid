@@ -150,7 +150,7 @@ try {
   if (action === 'launch') await launch()
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | desktop | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
@@ -185,7 +185,24 @@ try {
             },
           ),
         )
-      else if (action === 'browser')
+      else if (action === 'desktop') {
+        console.log(
+          await command(
+            [
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/desktop.mjs',
+              state.evidence + '/state.json',
+            ],
+            {
+              heavy: true,
+              log: state.evidence + '/desktop-command.json',
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      } else if (action === 'browser')
         console.log(
           await command(
             [

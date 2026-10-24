@@ -15,6 +15,7 @@ import {
 } from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/ai'
 import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
+import { serverModelGateway } from '../config.ts'
 
 /** docs/22, “The trust loop”: the reviewer has ten seconds and one attempt. */
 export const DECISION_TIMEOUT = '10 seconds'
@@ -23,15 +24,6 @@ export const DECISION_TIMEOUT = '10 seconds'
  * succeeded and thirty-nine were rejected with HTTP 400 on 4 Oct 2026. This is the tested
  * payload ceiling, not an inferred provider maximum; effects, relevance and rules share it. */
 export const DECISION_QUESTION_LIMIT = 20
-
-/**
- * Vivid's model gateway, Experiential Labs. It serves TypeSafe's System One endpoint
- * (`POST /systemone`) for the Jev decision model under the same key as every other model
- * (`EXPLABS_API_KEY`), so decisions need no provider account of their own. The same address is
- * written in `packages/agent/runtime/src/providers/explabs.ts` and `memory/embeddings.ts`; the
- * server cannot import the runtime package, so this is the server's copy until they share one.
- */
-export const GATEWAY_URL = 'https://api.experientiallabs.ai/v1'
 
 /** The decision model as the gateway's `GET /models` names it. `VIVID_DECISION_MODEL` overrides it. */
 export const DECISION_MODEL = 'jev-latest'
@@ -411,8 +403,11 @@ const unavailableReason = (
 
 const Configuration = Schema.TaggedUnion({
   Disabled: {},
-  Unconfigured: {},
-  Gateway: { key: Schema.Redacted(Schema.NonEmptyString), model: Schema.NonEmptyString },
+  Gateway: {
+    key: Schema.Redacted(Schema.NonEmptyString),
+    url: Schema.NonEmptyString,
+    model: Schema.NonEmptyString,
+  },
 })
 
 /**
@@ -425,14 +420,11 @@ const configuration = Effect.gen(function* () {
     'VIVID_DECISIONS',
   ).pipe(Config.withDefault('off' as const))
   if (flag === 'off') return Configuration.cases.Disabled.make({})
-  const key = yield* Config.option(
-    Config.schema(Schema.Redacted(Schema.NonEmptyString), 'EXPLABS_API_KEY'),
-  )
-  if (Option.isNone(key)) return Configuration.cases.Unconfigured.make({})
+  const gateway = yield* serverModelGateway
   const model = yield* Config.NonEmptyString('VIVID_DECISION_MODEL').pipe(
     Config.withDefault(DECISION_MODEL),
   )
-  return Configuration.cases.Gateway.make({ key: key.value, model })
+  return Configuration.cases.Gateway.make({ key: gateway.key, url: gateway.url, model })
 }).pipe(Effect.withSpan('Decisions.configuration'))
 
 /**
@@ -471,13 +463,16 @@ export const unconfiguredDecisionLayer = absentLayer('Unconfigured')
 export const disabledDecisionLayer = absentLayer('Disabled')
 
 /**
- * Decisions answered by Jev through the gateway. rc.116 `TypeSafeDecisionModel.make` sends every
+ * Decisions answered by Jev through the selected gateway. Effect 4.0.2 `TypeSafeDecisionModel.make` sends every
  * named decision of a definition in one `systemOne` request; `TypeSafeClient` is pointed at the
  * gateway and uses the surrounding `HttpClient` without retries. Exported for the live
- * evaluations, which ask the real provider whatever the switch says.
+ * evaluations, which ask the real provider whatever the switch says. OpenRouter exposes the
+ * same System One protocol and accepts the bare jev-latest id, so no decision translation is needed.
+ * https://openrouter.ai/docs/api/api-reference/systemone/submit-a-system-one-request
  */
 export const gatewayDecisionLayer = (options: {
   readonly key: Redacted.Redacted
+  readonly url: string
   readonly model: string
 }) =>
   Layer.effect(
@@ -490,7 +485,7 @@ export const gatewayDecisionLayer = (options: {
       availability.set(model, { state, scope, permissionWarningAfter })
       return model
     }),
-  ).pipe(Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: GATEWAY_URL })))
+  ).pipe(Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: options.url })))
 
 /**
  * The one place the switch is read and the provider chosen. The state is announced once here,
@@ -502,7 +497,6 @@ export const decisionModelLayer = Layer.unwrap(
     yield* Effect.logInfo('Decisions', { state: selected._tag })
     return Configuration.match(selected, {
       Disabled: () => disabledDecisionLayer,
-      Unconfigured: () => unconfiguredDecisionLayer,
       Gateway: gatewayDecisionLayer,
     })
   }),

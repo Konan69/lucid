@@ -4,6 +4,7 @@ import { expect } from '@effect/vitest'
 import { Config, Effect, Redacted, Schema } from 'effect'
 import { Client, Pool } from 'pg'
 import { flueStorage } from '../src/storage.ts'
+import { closeNotes } from '../src/keeping.ts'
 
 /**
  * Synchronous suite gating reads only the isolated test variable, never `DATABASE_URL`. The
@@ -84,7 +85,7 @@ export const disposableStorage = Effect.gen(function* () {
   })
   // pg 8.23.0 Pool connects lazily and flueStorage performs no I/O, so nothing between this
   // construction and the finalizer registered below can leave an open connection behind.
-  const storage = flueStorage(pool)
+  const storage = flueStorage(pool, closeNotes)
   // flueStorage infers Flue's PersistenceAdapter, whose `close?(): void | Promise<void>` is
   // optional (@flue/runtime 2.2.2 dist/agent-execution-store-TmGF9yZ1.d.mts). Decide once who
   // ends the pool. A silent `storage.close?.()` would leave it open and hide that.

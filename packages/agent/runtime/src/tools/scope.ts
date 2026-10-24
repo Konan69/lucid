@@ -1,9 +1,10 @@
 import type { DeliveredMessage, ToolContext } from '@flue/runtime'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { ThreadOrigin } from '@vivid/contracts'
+import type { PersonId, ThreadOrigin } from '@vivid/contracts'
 import { Context, Effect, Layer, Option, Predicate } from 'effect'
 import { actingLayer, runtimeClientLayer, type Acting } from '../client.ts'
 import { recoverAuthority, resolveAuthority } from '../delivery.ts'
+import type { Notes } from '../notes.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
 import type { ComputerSaid } from './sandbox.ts'
 
@@ -14,6 +15,22 @@ export interface ScopeService {
 
 /** Authority is server-bound per render; the actor cannot be chosen by model input. */
 export class Scope extends Context.Service<Scope, ScopeService>()('vivid/Tools/Scope') {}
+
+/** Resolve server-bound authority once for both product and local note tools, recovering only on a miss. */
+export const authorityOf = Effect.fn('Tools.authorityOf')(function* (
+  thread: string,
+  delivery: DeliveredMessage,
+  origin: Option.Option<ThreadOrigin>,
+) {
+  return yield* resolveAuthority(thread, delivery, origin, (threadId, turn) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* Layer.build(runtimeClientLayer)
+        return yield* recoverAuthority(threadId, turn).pipe(Effect.provide(context))
+      }),
+    ),
+  )
+})
 
 /** Tool-time recovery is lazy; the attributed client shares the tool Layer's lifetime.
  * Returning a client from a nested Effect.provide closes its RPC scope before the first call.
@@ -26,14 +43,7 @@ export function scopeLayer(
 ): Layer.Layer<Scope, ToolFailure> {
   return Layer.unwrap(
     Effect.gen(function* () {
-      const authority = yield* resolveAuthority(thread, delivery, origin, (threadId, turn) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* Layer.build(runtimeClientLayer)
-            return yield* recoverAuthority(threadId, turn).pipe(Effect.provide(context))
-          }),
-        ),
-      )
+      const authority = yield* authorityOf(thread, delivery, origin)
       return Layer.effect(
         Scope,
         Effect.gen(function* () {
@@ -98,3 +108,33 @@ export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
 }
 
 export type RunScoped = ReturnType<typeof scopedRunner>
+
+/**
+ * Local notes require the prepared Person authority, not a product RPC client. Resolve it
+ * through the same production resolver as Scope, including durable recovery if needed. An
+ * absent product server therefore cannot block local memory on an already attributed turn.
+ * The caller supplies the Notes layer so tool definitions can load without runtime settings.
+ */
+export function noteRunner(
+  thread: string,
+  delivery: DeliveredMessage,
+  origin: Option.Option<ThreadOrigin>,
+  notes: Layer.Layer<Notes>,
+) {
+  return function runNote(
+    operation: (person: PersonId) => Effect.Effect<ToolResult, ToolFailure, Notes>,
+    { signal, tool }: Pick<ToolContext<undefined>, 'signal'> & { readonly tool: string },
+  ) {
+    const program = Effect.gen(function* () {
+      const authority = yield* authorityOf(thread, delivery, origin)
+      return yield* operation(authority.acting.personId)
+    }).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The local Flue note boundary borrows the runtime-owned Notes layer.
+      Effect.provide(notes),
+    )
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- Flue's local note tool boundary.
+    return Effect.runPromise(settle(program, tool), { signal })
+  }
+}
+
+export type RunNote = ReturnType<typeof noteRunner>

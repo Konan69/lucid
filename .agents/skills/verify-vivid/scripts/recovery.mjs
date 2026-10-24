@@ -182,6 +182,8 @@ export async function recover(state) {
       },
     }),
   )
+  const { desktopCleanup } = await import('./desktopcleanup.mjs')
+  await desktopCleanup(state)
   await browserDirectories(state)
   await NodeFSP.rm(state.scratch, { recursive: true, force: true })
   state.ready = false

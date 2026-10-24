@@ -27,7 +27,7 @@ const enabled =
   process.env['VIVID_LIVE_MEMORY'] === '1' &&
   testDatabaseConfigured &&
   url !== undefined &&
-  process.env['EXPLABS_API_KEY'] !== undefined
+  (process.env['EXPLABS_API_KEY'] !== undefined || process.env['OPENROUTER_API_KEY'] !== undefined)
 /** Model-backed learning keeps transport diagnostics in the test console; endpoint category and status explain outages without recording exchange text or credentials. */
 const observedClient = Layer.effect(
   HttpClient.HttpClient,

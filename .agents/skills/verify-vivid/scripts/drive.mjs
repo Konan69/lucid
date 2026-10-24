@@ -5,6 +5,7 @@ import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { watch } from './watch.mjs'
+import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 export const features = [
   'first',
@@ -21,6 +22,7 @@ export const features = [
   'library',
   'feed',
   'devices',
+  'notes',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -269,7 +271,7 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
-const recipes = { first, reload, tool, question, picture, document, devices, watch, feed }
+const recipes = { first, reload, tool, question, picture, document, devices, notes, watch, feed }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
@@ -287,7 +289,10 @@ const realBlocked = {
 export async function drive(state, feature) {
   const chosen = feature === 'all' ? features : [feature]
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
-  const unavailable = state.modelKind === 'real' ? realBlocked : blocked
+  const unavailable =
+    state.modelKind === 'real'
+      ? realBlocked
+      : { ...blocked, notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.' }
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name

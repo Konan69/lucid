@@ -8,6 +8,7 @@ import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -48,6 +49,7 @@ const missing = {
   library: 'No browser ingestion recipe yet',
 }
 const recipes = {
+  notes: { check: 'notes' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -252,11 +254,15 @@ async function journey(state, feature) {
     diffHash: state.diffHash,
     evidence: directory,
   }
-  if (missing[feature]) {
+  const reason =
+    feature === 'notes' && state.modelKind !== 'real'
+      ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
+      : missing[feature]
+  if (reason) {
     const verdict = {
       ...base,
       verdict: 'blocked',
-      reason: 'no browser recipe: ' + missing[feature],
+      reason: missing[feature] ? 'no browser recipe: ' + reason : reason,
     }
     await json(directory + '/verdict.json', verdict)
     console.log(JSON.stringify(verdict))
@@ -346,6 +352,20 @@ async function journey(state, feature) {
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
         scope: specialRecipes[feature].scope,
+      }
+    } else if (feature === 'notes') {
+      await noteBrowser(state, id, directory, {
+        run,
+        capture,
+        render: (text) => dom(run, renderedReply(text)),
+        normalise: normaliseReply,
+      })
+      verdict = {
+        ...base,
+        verdict: 'proved',
+        thread: id,
+        scope:
+          'Notes tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
       }
     } else {
       if (existing) {

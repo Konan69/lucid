@@ -13,7 +13,6 @@ import {
   Result,
   Schedule,
   Schema,
-  Semaphore,
   Scope,
 } from 'effect'
 import {
@@ -66,6 +65,7 @@ import {
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
 import { computers } from './tables.ts'
+import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 
 export { computerScreenAddress } from './machine.ts'
 
@@ -233,7 +233,7 @@ const activityRows = (database: Database['Service']) => {
 /** All record reads and mutations are constrained by Person ownership, including background completions. */
 const persistence = Effect.fn('ComputerStore.persistence')(function* (
   machine: Machine['Service'],
-  lock: ReturnType<typeof personLocks>,
+  lock: KeyedPermits<PersonId>,
 ) {
   const database = yield* Database
   const changes = yield* Changes
@@ -557,19 +557,6 @@ export class ComputerStore extends Context.Service<ComputerStore, ComputerStoreS
   'vivid/ComputerStore',
 ) {}
 
-/** A permit belongs to a Person, so independent Computers never share an application lifecycle lock. */
-const personLocks = () => {
-  const locks = new Map<PersonId, Semaphore.Semaphore>()
-  /** Every operation for one Person shares one permit; different Persons remain independent. */
-  return (person: PersonId) => {
-    const found = locks.get(person)
-    if (found !== undefined) return found
-    const created = Semaphore.makeUnsafe(1)
-    locks.set(person, created)
-    return created
-  }
-}
-
 /** The same persisted reconciliation projects Person viewer reads and screen-free action observations. */
 const observations = (
   rows: Persistence,
@@ -684,7 +671,8 @@ const observations = (
 /** Scoped lifecycle workers and Person locks order start/stop/hold/execution without tying startup to an RPC fiber. */
 const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   const machine = yield* Machine
-  const lock = personLocks()
+  // Each Person owns a Computer; independent Computers never share a lifecycle permit.
+  const lock = keyedPermits<PersonId>()
   const rows = yield* persistence(machine, lock)
   const scope = yield* Effect.scope
   const pending = new Set<PersonId>()
@@ -736,7 +724,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       const worker = yield* startMachine(machine, rows, person, row.value).pipe(
         Effect.tap((ended) => (ended.standing ? rest(person) : Effect.void)),
         Effect.map((ended) => ended.refusal),
-        (effect) => lock(person).withPermit(effect),
+        (effect) => lock.withPermit(person, effect),
         Effect.catch(() =>
           Effect.logError('Computer startup state could not be persisted.').pipe(
             Effect.as(Option.none<MachineNoCapacity>()),
@@ -748,7 +736,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       workers.set(person, worker)
       return wire(row.value, ComputerState.cases.Starting.make({ since: row.value.since }))
     },
-    (effect, person) => lock(person).withPermit(effect),
+    (effect, person) => lock.withPermit(person, effect),
   )
   /**
    * An idempotent request during startup returns its receipt immediately, without waiting for
@@ -788,7 +776,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
         onSome: (value) => wire(value, state),
       })
     },
-    (effect, person) => lock(person).withPermit(effect),
+    (effect, person) => lock.withPermit(person, effect),
   )
   /** Cancel a starting worker before taking its permit; provider cleanup finishes before stop records its receipt. */
   const stop = Effect.fn('ComputerStore.stop')(function* (person: PersonId) {
@@ -884,7 +872,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     readonly touch: (person: PersonId) => Effect.Effect<void, DatabaseInfrastructureError>
   }
   readonly machine: Machine['Service']
-  readonly lock: ReturnType<typeof personLocks>
+  readonly lock: KeyedPermits<PersonId>
 }) {
   const scope = yield* Effect.scope
   const timers = new Map<PersonId, Fiber.Fiber<void>>()
@@ -901,7 +889,8 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
    * be asked, so that whether the machine stopped is not known and nothing is recorded.
    */
   const expire = Effect.fn('ComputerStore.expire')(function* (before: Stored) {
-    return yield* state.lock(before.personId).withPermit(
+    return yield* state.lock.withPermit(
+      before.personId,
       Effect.gen(function* () {
         const current = yield* state.rows.load(before.personId)
         if (Option.isNone(current) || current.value.held || watchers.has(before.personId))
@@ -965,7 +954,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       yield* activity(person)
       watchers.set(person, (watchers.get(person) ?? 0) + 1)
     },
-    (effect, person) => state.lock(person).withPermit(effect),
+    (effect, person) => state.lock.withPermit(person, effect),
   )
   /** The last departing watcher starts a full idle period from its durable departure time. */
   const watchClose = Effect.fn('ComputerStore.watchClose')(
@@ -976,7 +965,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       yield* activity(person)
       yield* arm(person)
     },
-    (effect, person) => state.lock(person).withPermit(effect),
+    (effect, person) => state.lock.withPermit(person, effect),
     Effect.catch(() => Effect.logError('Computer watch release could not be persisted.')),
   )
   /** The stream scope owns presence, including cancellation and disconnected clients. */
@@ -1007,7 +996,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
     ),
   )
   yield* inactivity.watching(person)
-  const key = yield* state.lock(person).withPermit(requireReady(state, person))
+  const key = yield* state.lock.withPermit(person, requireReady(state, person))
   const attachment: ComputerAttachment = {
     // `.` is where an SSH command starts: the home of the Computer's user.
     converse: (input) =>
@@ -1127,7 +1116,7 @@ export const computerStoreLayer = Layer.effect(
           ),
         )
       },
-      (effect, person) => state.lock(person).withPermit(effect),
+      (effect, person) => state.lock.withPermit(person, effect),
     )
     /** Idle cleanup must preserve the original readiness failure even if its database write fails. */
     const recoverIdle = Effect.fn('ComputerStore.recoverIdle')((person: PersonId) =>
@@ -1158,7 +1147,7 @@ export const computerStoreLayer = Layer.effect(
           timeoutSeconds: input.timeoutSeconds,
         })
       },
-      (effect, person) => state.lock(person).withPermit(effect),
+      (effect, person) => state.lock.withPermit(person, effect),
     )
     /**
      * Both outline and image run under the same takeover permit. Whether the Person chose egress
