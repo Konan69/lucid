@@ -7,7 +7,7 @@ import { Effect, Option } from 'effect'
  * once their Person allows it. The server keeps the list and the decision, and the list is live
  * (`live.devices`): a computer whose desktop app signs in appears, waiting, in a Settings that is
  * already open on another device. This module knows what a decision does to the list before the
- * server confirms it (`allowing`, `stopping`, `@vivid/state`), what a computer's state is called,
+ * server confirms it (`deciding`, `@vivid/state`), what a computer's state is called,
  * and the one thing only the desktop app can say: which of them is the computer this window is
  * running on.
  */
