@@ -1,0 +1,60 @@
+import { assert, effect, testing, log } from "./load.mjs";
+const { Cause, Clock, Duration, Effect, Fiber, Option, Random, RcMap, Schedule } = effect;
+const { TestClock } = testing;
+await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const step = yield* Schedule.toStep(Schedule.spaced(100).pipe(Schedule.jittered));
+  const samples = [];
+  for (let n = 0; n < 6; n++) samples.push(Duration.toMillis((yield* step(n, undefined))[1]));
+  assert(samples.every((n) => n >= 80 && n <= 120));
+  log("Schedule.jittered.seededMillis", samples);
+  const times = [];
+  yield* Effect.sync(() => times.push(times.length)).pipe(Effect.repeat(Schedule.forever.pipe(Schedule.upTo({ times: 2 }))));
+  assert.equal(times.length, 3);
+  log("Schedule.upTo.times2.evaluations", times.length);
+  const timedStep = yield* Schedule.toStep(Schedule.spaced(100).pipe(Schedule.upTo({ duration: 100 })));
+  const statuses = [];
+  for (const now of [0, 100, 101]) statuses.push((yield* Effect.exit(timedStep(now, undefined)))._tag);
+  assert.deepEqual(statuses, ["Success", "Success", "Failure"]);
+  log("Schedule.upTo.duration100.at0_100_101", statuses);
+  const overrun = [];
+  const longPass = Effect.gen(function* () { overrun.push(yield* Clock.currentTimeMillis); yield* Effect.sleep(200); });
+  const repeated = yield* Effect.forkChild(longPass.pipe(Effect.repeat(Schedule.spaced(100).pipe(Schedule.upTo({ duration: 100 })))));
+  yield* TestClock.adjust(1000);
+  yield* Fiber.join(repeated);
+  assert.deepEqual(overrun, [0, 300]);
+  log("Schedule.upTo.duration100.work200.starts", overrun);
+  let acquired = 0;
+  const released = [];
+  const map = yield* RcMap.make({ lookup: (key) => Effect.acquireRelease(Effect.sync(() => ++acquired), () => Clock.currentTimeMillis.pipe(Effect.tap((now) => Effect.sync(() => released.push([key, now]))))), idleTimeToLive: 100 });
+  yield* Effect.scoped(RcMap.get(map, "x"));
+  yield* TestClock.adjust(99);
+  assert.equal(released.length, 0);
+  const reused = yield* Effect.scoped(RcMap.get(map, "x"));
+  yield* TestClock.adjust(99);
+  assert.equal(released.length, 0);
+  yield* TestClock.adjust(1);
+  assert.deepEqual(released, [["x", 1199]]);
+  log("RcMap.idleRelease", { acquired, reused, released });
+})).pipe(Random.withSeed("effect-dig"), Effect.provide(TestClock.layer())));
+
+for (const name of ["timeout", "timeoutOption", "timeoutOrElse"]) {
+  const events = [];
+  const timeout = (source, duration) => name === "timeoutOrElse" ? Effect.timeoutOrElse(source, { duration, orElse: () => Effect.sync(() => { events.push("fallback"); return "fallback"; }) }) : Effect[name](source, duration);
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const source = Effect.never.pipe(Effect.ensuring(Effect.andThen(Effect.sleep(50), Effect.sync(() => events.push("released")))));
+    const fiber = yield* Effect.forkChild(timeout(source, 100));
+    yield* TestClock.adjust(100);
+    const atDeadline = [...events];
+    yield* TestClock.adjust(50);
+    const exit = yield* Fiber.await(fiber);
+    const external = yield* Effect.forkChild(timeout(Effect.never, 100));
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(external);
+    const interrupted = yield* Fiber.await(external);
+    assert(Cause.hasInterrupts(interrupted.cause));
+    return { atDeadline, events, exit: exit._tag, value: exit._tag === "Success" ? exit.value : exit.cause.reasons.map((r) => r._tag === "Fail" ? r.error._tag : r._tag), externalInterrupted: true };
+  }).pipe(Effect.provide(TestClock.layer())));
+  assert.deepEqual(result.atDeadline, []);
+  assert.equal(result.events[0], "released");
+  log(`Effect.${name}`, result);
+}

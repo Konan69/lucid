@@ -11,6 +11,7 @@
 - Vivid routing and product/runtime guidance in `SKILL.md` and `references/VIVID.md`.
 - Vivid branding and standard-library guidance in `references/STANDARD_LIBRARY.md`.
 - Official-module discovery for durable work, waits, fanout, workers and persisted state in `references/CAPABILITIES.md`, with its routing lines in `SKILL.md`. Owner-written; upstream has no counterpart.
+- Installed capability inventory in `rules/primitives.md`, its generated `rules/inventory/` declarations, [fit records](scripts/fits.json), generator, and runtime probes. Local addition on 2026-10-24. General fit guidance and Vivid applications remain separate.
 - `Schema.TaggedError`, which agrees with current upstream and the project-pinned API.
 
 ## Refresh changes and conflicts

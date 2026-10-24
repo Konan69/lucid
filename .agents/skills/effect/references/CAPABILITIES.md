@@ -6,7 +6,7 @@ Module facts below were read from source at the pin current when this was writte
 
 ## Source protocol
 
-1. **Installed first.** Read the pinned `effect` package's `package.json` exports and the group barrel: `persistence`, `workflow`, `eventlog`, `cluster`, `rpc`, `workers`, `reactivity`. On the current pin these live under `effect/unstable/<group>`. List the barrel; module names recalled from memory or copied from this table are leads only.
+1. **Installed first.** Read the pinned `effect` package's `package.json` exports and the group barrel: `persistence`, `workflow`, `eventlog`, `cluster`, `rpc`, `workers`, `reactivity`. At 4.0.2 these live under `effect/<group>`, as verified by `rules/primitives.md` and its presence probe. List the barrel; module names recalled from memory or copied from this table are leads only.
 2. **Then newer official source, when the pin lacks the capability or carries a defect.** Compare the latest official release, then unreleased `main`, in the canonical [`Effect-TS/effect`](https://github.com/Effect-TS/effect) repository. Label every fact *installed*, *released* or *unreleased*. The older `effect-smol` repository and old snapshot tags are stale for v4.
 3. **Newer source is evidence only.** Keep the installed import paths (stable releases move them). An upgrade is separate work under the lockstep rule in `AGENTS.md`; propose it, never fold it into a feature.
 
@@ -30,7 +30,7 @@ Name which of these the design needs, one by one: **in-memory coordination**, **
 | Closed set of states | `Schema.TaggedUnion` (see `SCHEMA.md`) | Cases, constructors, guards, exhaustive match | Transition graph, persistence, lifecycle |
 | Atomic change to several in-memory values | `Effect.tx`, `TxRef` and the `Tx*` structures | A memory journal that retries on conflict | Durability. SQL or external effects in the body are outside the journal and can repeat; it cannot commit a row plus a notification. |
 
-**State machine runtime.** The official `Machine` module was not ported to v4; the [migration annotation](https://github.com/Effect-TS/effect/blob/395f256c223fa839585971254f0a7b48a903dd1f/migration/annotations/effect__experimental__Machine.yaml) records it as having no replacement. A third-party machine library is a separate candidate with its own semantics: read the source of the version you would install and judge it on the fit check below. A transition count is no reason to adopt or reject it, and no machine replaces SQL authority or an external receipt.
+**State machine runtime.** The installed 4.0.2 package has no root `Machine`, `State`, or `Mailbox` module. The source scan and runtime export checks are in [the capability inventory](../rules/primitives.md). A third-party machine library is a separate candidate with its own semantics: read the source of the version you would install and judge it on the fit check below. A transition count is no reason to adopt or reject it, and no machine replaces SQL authority or an external receipt.
 
 ## Fit check
 

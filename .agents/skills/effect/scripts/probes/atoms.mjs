@@ -1,0 +1,35 @@
+import { mock } from "node:test";
+import { assert, reactivity, log } from "./load.mjs";
+const { Atom, AtomRegistry } = reactivity;
+mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+const jobs = [];
+const scheduleTask = (run) => { const job = { run, active: true }; jobs.push(job); return () => { job.active = false; }; };
+const flush = () => { while (jobs.length) { const job = jobs.shift(); if (job.active) job.run(); } };
+const events = [];
+const registry = AtomRegistry.make({ scheduleTask, timeoutResolution: 1 });
+const resource = (name) => Atom.make((get) => { events.push(`acquire-${name}`); get.addFinalizer(() => events.push(`release-${name}`)); return name; });
+try {
+  const cold = resource("cold");
+  const keep = resource("keep").pipe(Atom.keepAlive);
+  const idle = resource("idle").pipe(Atom.setIdleTTL(100));
+  const beforeRead = [...events];
+  const stops = [cold, keep, idle].map((atom) => registry.mount(atom));
+  stops.forEach((stop) => stop());
+  flush();
+  assert.deepEqual(beforeRead, []);
+  assert(events.includes("release-cold"));
+  assert(!events.includes("release-keep"));
+  assert(!events.includes("release-idle"));
+  mock.timers.tick(100);
+  flush();
+  const releasedAt100 = events.includes("release-idle");
+  mock.timers.tick(1);
+  flush();
+  assert(!releasedAt100);
+  assert(events.includes("release-idle"));
+  assert(!events.includes("release-keep"));
+  log("Atom.idleDisposal", { beforeRead, releasedAt100, releasedAt101: true, events: [...events] });
+  registry.dispose();
+  assert(events.includes("release-keep"));
+  log("Atom.keepAlive.registryDispose", events);
+} finally { registry.dispose(); mock.timers.reset(); }

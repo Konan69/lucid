@@ -17,7 +17,7 @@ All hashes in `skills-lock.json` exclude each skill's `UPSTREAM.md`. External sk
 | drizzle-pull | drizzle-kit RC.5 bundle | `ab785fcd` | none | Provenance only |
 | drizzle-push | drizzle-kit RC.5 bundle | `ab785fcd` | none | Provenance only; Vivid no-push policy recorded |
 | drizzle-responses-and-errors | drizzle-kit RC.5 bundle | `ab785fcd` | none | Provenance plus package-manager-neutral wording |
-| effect | kitlangton/skills | `22c35cb7` | Vivid references and owner wording | Scheduling and pagination corrections; truthful RC state |
+| effect | kitlangton/skills | `22c35cb7` | Vivid references, owner wording, and local capability inventory | Scheduling and pagination corrections; local `rules/primitives.md`, generated declaration catalog, fit records, and probes for installed 4.0.2 |
 | effect-service-design | dmmulroy/skills | `86033808` | owner `SKILL.md` | Added upstream audit reference, OpenAI metadata, and complete provenance |
 | email-and-password-best-practices | better-auth/skills | `20c9e88a` | pnpm/Vivid migration policy | `auth` CLI rename |
 | helix-cli | HelixDB/skills | `199e5d03` | legacy v3.1.1 live facts | Current WorkOS/broker CLI; legacy note scoped/unverified |
