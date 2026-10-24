@@ -25,7 +25,7 @@ describe.skipIf(!testDatabaseConfigured)('presence connection signals', () => {
         )
         const publishedAt = yield* Queue.unbounded<number>()
         const observed = Changes.of({
-          publish: Effect.fn('Presence.test.publish')(function* (topics) {
+          publish: Effect.fn('Presence.observePublication')(function* (topics) {
             const now = yield* Clock.currentTimeMillis
             yield* changes.publish(topics)
             yield* Queue.offer(publishedAt, now)
