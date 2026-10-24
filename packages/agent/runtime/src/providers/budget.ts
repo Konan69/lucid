@@ -13,12 +13,14 @@ export const completions = openAICompletionsApi()
  * Allow two retries per Pi request. Source: unmeasured, bounds repeated pre-stream failures;
  * exhausted failures reach Flue. Pi's abortable backoff honors the request's AbortSignal.
  * maxRetryDelayMs: 0 is Pi's public opt-out from rejecting a provider's Retry-After value
- * (dist/utils/provider-retry.js, validateServerRetryDelayMs). The provider owns that delay.
+ * (dist/utils/provider-retry.js, validateServerRetryDelayMs). Its abortableSleep clears the timer
+ * and rejects on the caller's AbortSignal, including during a provider-requested delay.
  * Flue 2.2.2 useModel has no request options, so supply these at its public Provider API seam.
  * This adapter never replays a stream after assistant content or a tool delta. Flue separately
  * retries some failed turns up to three times, without a public content guard or retry option:
- * each Pi request makes at most three HTTP attempts. Four Flue turn attempts can make twelve HTTP
- * requests and replay partial output.
+ * witness can replay an empty 400 once within each of three Pi attempts, at most six HTTP
+ * requests per Pi request. Four Flue turn attempts can therefore make twenty-four HTTP requests
+ * and replay partial output.
  */
 export const requestBudget = { maxRetries: 2, maxRetryDelayMs: 0 }
 
