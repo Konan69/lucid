@@ -6,6 +6,7 @@ import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
+import { privacyBlocked } from './privacy.mjs'
 import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 export const features = [
@@ -25,6 +26,7 @@ export const features = [
   'devices',
   'reading',
   'settings',
+  'privacy',
   'notes',
 ]
 const png =
@@ -288,6 +290,7 @@ const recipes = {
   settings: settingsProof,
 }
 const blocked = {
+  privacy: privacyBlocked,
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
   approve:

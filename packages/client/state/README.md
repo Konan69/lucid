@@ -8,6 +8,7 @@ proved through integration tests and live runs.
 
 - `threads.ts`: how Threads are grouped and what a Thread's standing line says.
 - `seen.ts`: bounded Thread read reporting while a foreground screen reads its query.
+- `privacy.ts`: the report allowlist shared by each Sentry SDK adapter.
 - `purpose.ts`: the Integration catalog's shared grouping and order.
 - `steps.ts`, `activity.ts`: turning tool calls into the step lines and activity a Person reads.
 - `shown.ts`: reading a `show` tool call into a card, and the helpers cards share.
