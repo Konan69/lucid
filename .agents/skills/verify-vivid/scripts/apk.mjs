@@ -2,8 +2,9 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeModule from 'node:module'
-import { command, root, json } from './process.mjs'
+import { command, root, skill, json } from './process.mjs'
 import { readApk, required } from './phonewire.mjs'
+import { control } from './socket.mjs'
 
 export const phoneOrigin = 'http://127.0.0.1:19278'
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -45,7 +46,11 @@ async function inputs(head) {
     return !/^apps\/mobile\/(src\/|index\.ts$)/u.test(path) || !/\.(tsx?|jsx?)$/u.test(path)
   })
   return NodeCrypto.createHash('sha256')
-    .update(lines.join('\n') + phoneOrigin)
+    .update(
+      lines.join('\n') +
+        phoneOrigin +
+        (await NodeFSP.readFile(skill + '/scripts/profile.py', 'utf8')),
+    )
     .digest('hex')
 }
 
@@ -79,6 +84,7 @@ export async function apk(state) {
       cwd,
       env: phoneEnvironment,
       log: state.evidence + '/apk-' + name + '.json',
+      record: (process) => control(state, { action: 'capture', process }),
     })
   await run([...pnpm, 'install', '--frozen-lockfile', '--filter', '@vivid/mobile...'], 'install')
   const app = source + '/apps/mobile'
@@ -98,6 +104,7 @@ export async function apk(state) {
     await NodeFSP.rm(app + '/android', { recursive: true, force: true })
     // native.mjs pins the template to the shipped SDK and prebuilds only if Android is absent.
     await run(['node', 'scripts/native.mjs', 'android', '--prebuild-only'], 'prebuild', app)
+    await run(['python3', skill + '/scripts/profile.py', app], 'profile')
     await NodeFSP.writeFile(app + '/android/local.properties', 'sdk.dir=' + sdk + '\n')
     await run(
       [

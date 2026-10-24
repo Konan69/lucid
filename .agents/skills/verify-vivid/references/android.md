@@ -1,6 +1,6 @@
 # Set up an Android devbox
 
-Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote hostname must match `scripts/hosts.mjs`. The production Computer is refused.
+Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote hostname must match `../scripts/hosts.mjs`. The production Computer is refused.
 
 ```sh
 .agents/skills/verify-vivid/verify android provision cloudbox-konan3
@@ -10,7 +10,7 @@ Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision com
 
 Provision requires SSH, Python 3 with pidfd, curl, unzip, flock, JDK 17 and writable `/dev/kvm` on the box. It checks load and available memory before heavy work. If KVM is inaccessible, restore the host's KVM access before retrying. A missing prerequisite is a failure.
 
-The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu guest`, two cores and 3 GiB memory. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
+The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `../scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu guest`, two cores and 3 GiB memory. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
 
 The SDK lives in `~/android_sdk` and the AVD in `~/vivid-emulator`. The provisioner retains these exclusions in `~/.boxignore`; this is the one intentional write outside the skill. Boat snapshots must exclude live disks and dependency caches. A restore can empty these directories. Repeating provision reconstructs missing packages and AVD state. A healthy running device takes the fast path.
 
@@ -34,7 +34,7 @@ Follow [the phone feature](../features/phone.md) for the journey. The key file c
 
 `verify phone thread` builds in its private `~/.cache/vivid-android/source` checkout. The proof checkout's product source stays untouched. Expo's shipped `scripts/native.mjs android --prebuild-only` pins the native template. Gradle uses x86_64, two workers, a 4 GiB heap, 1536 MiB metaspace, no persistent daemon, and in-process Kotlin compilation.
 
-The APK cache verifies bytes against SHA-256 before reuse. Its native fingerprint includes dependency manifests, the lockfile, patches, phone config, plugins and assets. A changed native fingerprint builds a fresh APK. When only JavaScript changes, Expo exports a new bundle and the shipped Hermes compiler compiles it. Repacking replaces only the embedded bundle, aligns the APK and signs with the generated React Native debug keystore. Asset changes require a full build. Cached APKs are test artifacts, never phone releases.
+The APK cache verifies bytes against SHA-256 before reuse. Its native fingerprint includes dependency manifests, the lockfile, patches, phone config, plugins and assets. A changed native fingerprint builds a fresh APK. When only JavaScript changes, Expo exports a new bundle and the shipped Hermes compiler compiles it. Repacking replaces only the embedded bundle, aligns the APK and signs with the generated React Native debug keystore. Asset changes require a full build. The generated test manifest permits cleartext only to 127.0.0.1 and disables OTA loading, so the embedded commit remains the code under test. This overlay is part of the native fingerprint. Cached APKs are test artifacts, never phone releases.
 
 The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. The dedicated adb server uses port 15037, leaving the host's ordinary adb server alone.
 

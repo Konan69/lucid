@@ -13,6 +13,8 @@ def tools():
     cache = Path.home() / '.cache/vivid-android'
     cache.mkdir(parents=True, exist_ok=True)
     node = cache / 'node'
+    if (node / 'release/bin/node').exists() and not (node / 'bin').exists():
+        (node / 'bin').symlink_to('release/bin')
     if not (node / 'bin/node').exists():
         with tempfile.TemporaryDirectory(dir=cache) as directory:
             archive = Path(directory) / 'node.tar.xz'
@@ -33,8 +35,11 @@ def tools():
     wanted = {'private': True, 'dependencies': {'agent-device': '0.21.31', 'pnpm': '12.4.2'}}
     if not package.exists() or json.loads(package.read_text()) != wanted:
         package.write_text(json.dumps(wanted))
-    if not (target / 'node_modules/agent-device/bin/agent-device.mjs').exists():
-        subprocess.run(['pnpm', '--dir', str(target), 'install', '--ignore-scripts'],
+    versions = [target / 'node_modules' / name / 'package.json' for name in wanted['dependencies']]
+    installed = all(file.exists() and json.loads(file.read_text()).get('version') == version
+                    for file, version in zip(versions, wanted['dependencies'].values()))
+    if not installed:
+        subprocess.run(['pnpm', '--dir', str(target), 'install', '--ignore-scripts', '--no-frozen-lockfile'],
                        env=environment, check=True, stdout=sys.stderr)
     print(json.dumps({'node': str(node / 'bin/node'),
                       'pnpm': str(target / 'node_modules/pnpm/bin/pnpm.mjs'),

@@ -24,7 +24,7 @@ ADB = str(SDK / 'platform-tools/adb')
 NAME = 'Vivid_API_35'
 PACKAGES = ['platform-tools', 'emulator', 'platforms;android-36', 'build-tools;36.0.0',
             'platforms;android-35', 'build-tools;35.0.0', 'ndk;27.1.12297006',
-            'cmake;3.22.1', 'system-images;android-35;google_apis;x86_64']
+            'ndk;27.0.12077973', 'cmake;3.22.1', 'system-images;android-35;google_apis;x86_64']
 
 
 def run(args, **kwargs):
