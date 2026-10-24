@@ -31,8 +31,10 @@ it.effect('keeps an HTTP-rejected credential blocked until the model Layer is re
       )
       const origin = new URL(HttpServer.formatAddress(server.address))
       origin.hostname = '127.0.0.1'
-      const client = HttpClient.mapRequest(yield* HttpClient.HttpClient, (request) =>
-        HttpClientRequest.setUrl(request, origin.href),
+      const transport = yield* HttpClient.HttpClient
+      // Redirect at the transport boundary, after TypeSafe has prepended its gateway URL.
+      const client = HttpClient.make((request) =>
+        transport.execute(HttpClientRequest.setUrl(request, origin.href)),
       )
       const layer = gatewayDecisionLayer({
         key: Redacted.make('test-rejected-key'),
@@ -40,6 +42,7 @@ it.effect('keeps an HTTP-rejected credential blocked until the model Layer is re
       }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)))
       const model = yield* Layer.build(layer)
       const first = yield* decide(question, {}).pipe(Effect.provide(model), Effect.flip)
+      expect(yield* Ref.get(calls)).toBe(1)
       expect(first.reason).toBe('Authentication')
       yield* TestClock.adjust('6 minutes')
       const refused = yield* decide(question, {}).pipe(Effect.provide(model), Effect.flip)
