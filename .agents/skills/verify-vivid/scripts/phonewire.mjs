@@ -29,7 +29,11 @@ export const Phone = Schema.Struct({
   session: Schema.String,
   device: Device,
 })
-export const Account = Schema.Struct({ email: Schema.String, password: Schema.String })
+export const Account = Schema.Struct({
+  person: Schema.String,
+  email: Schema.String,
+  password: Schema.String,
+})
 
 /** Decode persisted receipts once; malformed ownership cannot grant install or cleanup authority. */
 export const readPhone = Schema.decodeUnknownResult(Schema.fromJsonString(Phone))

@@ -20,7 +20,7 @@ In the separate proof checkout on that same host, run Launch and Doctor. Then ru
 
 The recipe creates one idle Thread through public `CreateThread`, installs a release APK from the recorded commit, and clears only this disposable emulator's Vivid app data. `adb reverse` maps the APK's fixed emulator loopback address to this run's own single-origin web proxy. Email sign-in uses the run's synthetic Better Auth account. It uses neither Google nor a developer account.
 
-`agent-device` opens Vivid, waits for the actual controls, and reads `snapshot -i` before each press or fill. The journey signs in, opens the menu, captures the Thread list, selects the exact seeded Thread by its current snapshot ref, and waits for the idle composer's `Message Vivid`. Public `GetThread` confirms the same id has zero Runs.
+`agent-device` opens Vivid, waits for the actual controls, and reads `snapshot -i` before each press or fill. The journey signs in, opens the menu, captures the Thread list, selects the exact seeded Thread button by its current snapshot ref, and waits for navigation to settle and the idle composer's `Message Vivid`. Public `GetThread` confirms the same id has zero Runs and the synthetic Person is present through the phone's held `BePresent` call. The phone deliberately keeps the Thread title in the menu; presence proves which Thread is on top after the drawer closes.
 
 ## Evidence
 

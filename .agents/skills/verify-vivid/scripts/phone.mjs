@@ -41,6 +41,7 @@ async function enter(state, run) {
   await run(['fill', await target(run, 'Password'), account.password], [account.password])
   await run(['press', await target(run, 'Sign in')])
   await run(['wait', 'text', 'Open menu', '60000'])
+  return account
 }
 
 /** Idle Thread navigation isolates Android rendering and authentication from model behaviour.
@@ -50,7 +51,7 @@ async function journey(state, run, directory) {
   const title = 'Phone verification ' + state.run.slice(-8)
   await rpc(state, 'CreateThread', { id, title, projectId: null }, directory, 'create-thread')
   await run(['open', 'work.vivid.mobile', '--relaunch'])
-  await enter(state, run)
+  const account = await enter(state, run)
   await run(['press', await target(run, 'Open menu')])
   await run(['wait', 'text', title, '60000'])
   await run(['snapshot', '-i'])
@@ -59,14 +60,15 @@ async function journey(state, run, directory) {
   // Settle waits for the drawer transition before the composer's background text can count.
   await run(['press', await target(run, title), '--settle'])
   await run(['wait', 'text', 'Message Vivid', '60000'])
-  await run(['wait', 'text', title, '60000'])
   const opened = await run(['snapshot', '-i'])
-  NodeAssert.ok(opened.includes(title), 'The selected Thread title must be visible')
   NodeAssert.ok(!opened.includes('"Close menu"'), 'The drawer must close after selection')
   await run(['screenshot', directory + '/thread.png'])
   const detail = await rpc(state, 'GetThread', { id }, directory, 'idle-thread')
   NodeAssert.equal(detail.thread.id, id)
   NodeAssert.equal(detail.runs.length, 0, 'The idle journey must not start model work')
+  // Chat.Top deliberately omits the title. The real phone's held BePresent call proves which
+  // Thread is on top (data/live.ts presentIn), beyond merely tapping a correctly labelled row.
+  NodeAssert.ok(detail.present.some((seen) => seen.person.id === account.person))
   return { id, title }
 }
 
