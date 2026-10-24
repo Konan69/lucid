@@ -18,7 +18,7 @@ const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
   process.env['VIVID_LIVE_MEMORY'] === '1' &&
   url !== undefined &&
-  process.env['EXPLABS_API_KEY'] !== undefined
+  (process.env['EXPLABS_API_KEY'] !== undefined || process.env['OPENROUTER_API_KEY'] !== undefined)
 const configuration = ConfigProvider.layerAdd(
   ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }),
   { asPrimary: true },

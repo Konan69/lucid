@@ -6,7 +6,8 @@ import { describe, expect } from 'vitest'
 import { MemoryExtraction, memoryExtractionLayer } from './extract.js'
 
 const enabled =
-  process.env['VIVID_LIVE_MEMORY'] === '1' && process.env['EXPLABS_API_KEY'] !== undefined
+  process.env['VIVID_LIVE_MEMORY'] === '1' &&
+  (process.env['EXPLABS_API_KEY'] !== undefined || process.env['OPENROUTER_API_KEY'] !== undefined)
 /** One real brief generation checks observable preference coverage and the bounded word budget. */
 describe.skipIf(!enabled)('Memory brief generation', () => {
   layer(memoryExtractionLayer.pipe(Layer.provide(NodeHttpClient.layerUndici)), {

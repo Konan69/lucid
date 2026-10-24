@@ -31,6 +31,8 @@ export interface InfrastructureEnvironment {
    * Sent only when the deploy has one: it is needed only while `VIVID_MODEL` names OpenRouter. */
   readonly openRouterKey: Option.Option<Redacted.Redacted>
   readonly model: string
+  /** Server model provider, validated by the server. Absent keeps its existing default. */
+  readonly serverModelProvider: Option.Option<string>
   /** Sign-in with Google: the client's id and secret and the address Google sends a Person back to. */
   readonly google: GoogleAccess
   /**
@@ -146,6 +148,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     Config.withDefault('opencode-go/glm-5.3-flash'),
     Effect.mapError(() => environmentError('VIVID_MODEL')),
   )
+  const serverModelProvider = yield* optionalString('VIVID_SERVER_MODEL_PROVIDER')
   const google: GoogleAccess = {
     clientId: yield* requiredString('GOOGLE_CLIENT_ID'),
     clientSecret: yield* requiredSecret('GOOGLE_CLIENT_SECRET'),
@@ -197,6 +200,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     openCodeKey,
     openRouterKey,
     model,
+    serverModelProvider,
     google,
     executor,
     texting,

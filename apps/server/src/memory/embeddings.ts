@@ -1,29 +1,7 @@
 import { ServiceUnavailable } from '@vivid/contracts'
-import {
-  Array as Arr,
-  Cache,
-  Exit,
-  Context,
-  Effect,
-  Layer,
-  Option,
-  Order,
-  Redacted,
-  Schema,
-} from 'effect'
+import { Array as Arr, Cache, Exit, Context, Effect, Layer, Option, Order, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from 'effect/http'
-import { optionalSetting, requiredSetting, settingSecret, settingText } from '../config.ts'
-
-/**
- * The model gateway's key. Memory embeds through the gateway and the background model (Thread
- * titles, what Vivid learns after a Run) completes through it, so a server does not run without
- * it: it is required while the server is composed and its absence stops launch naming it.
- */
-export const modelGatewayKey = requiredSetting(
-  'EXPLABS_API_KEY',
-  settingSecret,
-  'the model gateway key',
-)
+import { optionalSetting, serverModelGateway, settingText } from '../config.ts'
 
 /**
  * One dimension recipe governs provider validation and Helix index bootstrap. Both embedding
@@ -93,11 +71,15 @@ export type EmbeddingFailure = ProviderFailure | EmbeddingDimensionMismatch | Em
 /** Share provider status handling between embedding and extraction so 429 always preserves Retry-After. */
 export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
   client: HttpClient.HttpClient,
-  input: { readonly key: Redacted.Redacted; readonly path: string; readonly body: Schema.Json },
+  input: {
+    readonly gateway: Effect.Success<typeof serverModelGateway>
+    readonly path: string
+    readonly body: Schema.Json
+  },
 ) {
   const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post(`https://api.experientiallabs.ai/v1/${input.path}`).pipe(
-      HttpClientRequest.bearerToken(input.key),
+    HttpClientRequest.post(`${input.gateway.url}/${input.path}`).pipe(
+      HttpClientRequest.bearerToken(input.gateway.key),
     ),
     input.body,
   ).pipe(Effect.mapError(() => ProviderMalformed.make({ operation: input.path })))
@@ -152,18 +134,23 @@ export const embeddingsLayer = Layer.effect(
   Embeddings,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    // Memory needs the gateway for every embedding, so the key is required while the server is
-    // composed. The gateway not answering later is a typed failure on that call, below.
-    const key = yield* modelGatewayKey
+    const gateway = yield* serverModelGateway
     const model = yield* embeddingModel
     const dimensions = yield* embeddingDimensions
+    // OpenRouter namespaces OpenAI's embedding models. Keep the unprefixed identity persisted
+    // in Helix unchanged; only the wire id differs. Both gateways serve the same vector space.
+    // https://openrouter.ai/docs/api/api-reference/embeddings/submit-an-embedding-request
+    const requestModel =
+      gateway.provider === 'openrouter' && model.startsWith('text-embedding-')
+        ? `openai/${model}`
+        : model
     /** Cache successes for warm recall and identical remembers; failed/rate-limited requests are never cached. */
     const embedBatch = Effect.fn('Embeddings.embed')(function* (texts: ReadonlyArray<string>) {
       if (texts.length === 0) return []
       const response = yield* providerResponse(client, {
-        key,
+        gateway,
         path: 'embeddings',
-        body: { model, input: [...texts] },
+        body: { model: requestModel, dimensions, input: [...texts] },
       })
       const decoded = yield* decodeEmbeddings(response).pipe(
         Effect.mapError(() => ProviderMalformed.make({ operation: 'embeddings' })),
