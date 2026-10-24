@@ -4,7 +4,6 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeModule from 'node:module'
 import { command, root, skill, json } from './process.mjs'
 import { readApk, required } from './phonewire.mjs'
-import { control } from './socket.mjs'
 
 export const phoneOrigin = 'http://127.0.0.1:19278'
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -55,7 +54,7 @@ async function inputs(head, cwd) {
 }
 
 /** Content-addressed native builds survive runs; only a matching byte receipt permits reuse. */
-export async function apk(state) {
+export async function apk(state, record) {
   const directory = cache + '/apks'
   await NodeFSP.mkdir(directory, { recursive: true })
   const fingerprint = await inputs(state.head, root)
@@ -86,7 +85,7 @@ export async function apk(state) {
       cwd,
       env: phoneEnvironment,
       log: state.evidence + '/apk-' + name + '.json',
-      record: (process) => control(state, { action: 'capture', process }),
+      record,
     })
   await run([...pnpm, 'install', '--frozen-lockfile', '--filter', '@vivid/mobile...'], 'install')
   const app = source + '/apps/mobile'
@@ -179,7 +178,7 @@ async function repack(run, app, base, target) {
       `import sys,zipfile,re
 with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as dst:
  for entry in src.infolist():
-  signature=re.fullmatch(r'META-INF/(MANIFEST\.MF|[^/]+\.(SF|RSA|DSA|EC))',entry.filename,re.I)
+  signature=re.fullmatch(r'META-INF/(MANIFEST[.]MF|[^/]+[.](SF|RSA|DSA|EC))',entry.filename,re.I)
   if signature or entry.filename == 'assets/index.android.bundle': continue
   dst.writestr(entry,src.read(entry.filename))
  dst.write(sys.argv[2], 'assets/index.android.bundle')`,

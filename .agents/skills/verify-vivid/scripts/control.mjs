@@ -139,9 +139,22 @@ async function launch() {
 
 try {
   if (action === 'launch') await launch()
+  else if (action === 'apk')
+    console.log(
+      await command(
+        [
+          'flock',
+          '-n',
+          NodeOS.homedir() + '/.cache/vivid-android/lock',
+          process.execPath,
+          skill + '/scripts/compile.mjs',
+        ],
+        { heavy: true },
+      ),
+    )
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()

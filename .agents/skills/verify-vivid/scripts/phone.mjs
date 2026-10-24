@@ -107,7 +107,7 @@ export async function phone(state, feature) {
     )
   let verdict
   try {
-    const artifact = await apk(state)
+    const artifact = await apk(state, (process) => control(state, { action: 'capture', process }))
     await json(directory + '/apk.json', artifact)
     const adb = device.sdk + '/platform-tools/adb'
     await execute([adb, '-s', device.serial, 'install', '-r', artifact.file])
