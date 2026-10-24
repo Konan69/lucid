@@ -24,6 +24,13 @@ import {
 import * as TestClock from 'effect/testing/TestClock'
 import { Note, NoteFile, NotesSettings, make, NotesUnavailable, NotesAtCapacity } from './notes.ts'
 
+/** A controlled mkdir receipt fails independently of native filesystem errors. */
+class DirectoryReceiptFailed extends Schema.TaggedError<DirectoryReceiptFailed>()(
+  'DirectoryReceiptFailed',
+  { directory: Schema.String },
+  { title: 'Test-controlled directory failure' },
+) {}
+
 /**
  * The real store, AgentFS on a SQLite file, in a temporary directory that is removed when the test
  * ends. All store and note operations use real AgentFS; the failed-open race controls one mkdir receipt.
@@ -297,7 +304,7 @@ describe('notes', () => {
           // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library, vivid/no-runpromise-nested
           return Effect.runPromise(
             Deferred.await(unavailable).pipe(
-              Effect.andThen(Effect.fail(new Error('Test-controlled directory failure'))),
+              Effect.andThen(Effect.fail(DirectoryReceiptFailed.make({ directory: path }))),
             ),
           )
         })
@@ -342,7 +349,7 @@ describe('notes', () => {
           // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library, vivid/no-runpromise-nested
           return Effect.runPromise(
             Deferred.await(unavailable).pipe(
-              Effect.andThen(Effect.fail(new Error('Test-controlled directory failure'))),
+              Effect.andThen(Effect.fail(DirectoryReceiptFailed.make({ directory: path }))),
             ),
           )
         })

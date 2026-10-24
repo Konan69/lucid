@@ -142,7 +142,8 @@ const noteReceipt = (note: Note, tool: 'write_note' | 'read_note') => {
   return (context: Parameters<FauxResponseFactory>[0]) => {
     // Work on a copy: inspect the latest receipt without changing Flue's message order.
     const result = context.messages
-      .toReversed()
+      .slice()
+      .reverse()
       .find((message) => message.role === 'toolResult' && message.toolName === tool)
     if (result === undefined || result.role !== 'toolResult')
       expect.fail('The note tool must return a receipt')

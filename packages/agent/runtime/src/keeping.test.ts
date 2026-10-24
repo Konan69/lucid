@@ -8,7 +8,7 @@ import {
   ThreadId,
   ThreadOrigin,
 } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Context, Effect, Layer, Schema } from 'effect'
 import { testDatabaseConfigured } from '../tests/schema.ts'
 import { routes, Settled, type Routes } from '../tests/routes.ts'
 import { Note, NoteFile, Notes, NotesUnavailable } from './notes.ts'
@@ -76,7 +76,7 @@ describe.skipIf(!testDatabaseConfigured)('Notes ownership through public Flue li
           const runtime = yield* routes
           yield* runtime.writeNote(note)
           expect(yield* submit(runtime, person)).toEqual(Settled.Completed({ text: 'written' }))
-          return yield* Notes.pipe(Effect.provide(notesLayer))
+          return Context.get(yield* Layer.build(notesLayer), Notes)
         }),
       )
       // A retained service must be closed by the public Flue stop, not merely replaced by a new cell.
@@ -84,7 +84,7 @@ describe.skipIf(!testDatabaseConfigured)('Notes ownership through public Flue li
       yield* Effect.scoped(
         Effect.gen(function* () {
           const runtime = yield* routes
-          const reopened = yield* Notes.pipe(Effect.provide(notesLayer))
+          const reopened = Context.get(yield* Layer.build(notesLayer), Notes)
           expect(reopened).not.toBe(previous)
           yield* runtime.readNote(note)
           expect(yield* submit(runtime, person)).toEqual(Settled.Completed({ text: note.body }))
