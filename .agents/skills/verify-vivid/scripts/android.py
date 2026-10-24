@@ -98,17 +98,21 @@ def prerequisites():
         with ignore.open('a') as file:
             file.write('\n# Rebuildable Android testing resources.\n' + '\n'.join(additions) + '\n')
     assert os.access('/dev/kvm', os.R_OK | os.W_OK), 'KVM access missing; grant this user access to /dev/kvm'
-    # Boot/build holds cores. Fail before adding work to a contended devbox.
-    assert os.getloadavg()[0] <= os.cpu_count(), 'Devbox busy; choose another with devbox-pick'
-    swap = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
-    assert int(swap['MemAvailable'].split()[0]) > 6 * 1024 * 1024, 'Devbox has less than 6 GiB available'
     run(['java', '-version'])
+
+
+def capacity():
+    """Only missing resources and a cold boot need a heavy slot; a live fast path does not."""
+    assert os.getloadavg()[0] <= os.cpu_count(), 'Devbox busy; choose another with devbox-pick'
+    memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+    assert int(memory['MemAvailable'].split()[0]) > 6 * 1024 * 1024, 'Devbox has less than 6 GiB available'
 
 
 def install():
     """Package receipts, not a top-level marker, decide what a restore or partial install lacks."""
     manager = SDK / 'cmdline-tools/latest/bin/sdkmanager'
     if not manager.exists():
+        capacity()
         SDK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=CACHE) as temporary:
             archive = Path(temporary) / 'tools.zip'
@@ -121,12 +125,14 @@ def install():
             os.rename(Path(temporary) / 'cmdline-tools', SDK / 'cmdline-tools/latest')
     missing = [name for name in PACKAGES if not (SDK / name.replace(';', '/') / 'package.xml').exists()]
     if missing:
+        capacity()
         # sdkmanager has no noninteractive acceptance switch. The finite input covers its licenses.
         run([str(manager), '--sdk_root=' + str(SDK), '--licenses'], input='y\n' * 100)
         run([str(manager), '--sdk_root=' + str(SDK), *missing], input='y\n' * 100)
     avds = AVD / 'avd'
     avds.mkdir(parents=True, exist_ok=True)
     if not (avds / (NAME + '.avd/config.ini')).exists():
+        capacity()
         run([str(manager.with_name('avdmanager')), 'create', 'avd', '--force', '-n', NAME,
              '-k', PACKAGES[-1], '--device', 'pixel_7'], input='no\n')
     return missing
@@ -138,6 +144,7 @@ def boot(receipt):
         serial = receipt['serial']
         assert output([ADB, '-s', serial, 'shell', 'getprop', 'sys.boot_completed']) == '1'
         return
+    capacity()
     # adb's dedicated server avoids restarting another worktree's system adb daemon.
     if 'adb' not in receipt or not alive(receipt['adb']):
         with socket.socket() as probe:
