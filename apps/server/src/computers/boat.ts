@@ -47,7 +47,7 @@ const makeCookieCopy = (input: {
             key: request.key,
             command,
             directory: '.',
-            timeoutSeconds: 30,
+            timeoutSeconds: null,
           }),
       })
     },

@@ -20,9 +20,6 @@ export const EGRESS_PROXY_PORT = 8791
 /** What the Computer's browser is told its proxy is. */
 export const EGRESS_PROXY_ADDRESS = `http://127.0.0.1:${EGRESS_PROXY_PORT}`
 
-/** The line that ends the proxy's text inside the start command. It is not a line of that text. */
-const END_OF_TEXT = 'VIVID_EGRESS_PROXY_TEXT'
-
 /**
  * The command that makes sure the proxy is running on a Computer. Every word of it is the
  * server's own. It may be run any number of times:
@@ -39,10 +36,10 @@ const END_OF_TEXT = 'VIVID_EGRESS_PROXY_TEXT'
  *   process is ever looked for by name.
  * - A second copy started beside a running one ends by itself: the ports are taken.
  *
- * It answers 0 once the proxy port takes a connection, and 1 when it has not within five
- * seconds. `setsid` takes the proxy out of the command's process group, so it outlives the
- * command and the SSH connection that ran it: the browser's proxy must not vanish when the
- * server restarts.
+ * The captured old process is opened through pidfd before signalling, then joined through the
+ * descriptor's exit readiness. A private inherited pipe reports both new listen callbacks, or
+ * EOF if the child fails. No port polling guesses readiness. The lock serializes replacement.
+ * The successful daemon owns a separate session and survives the SSH command that starts it.
  */
 export const startCommand = (
   text: string,
@@ -50,20 +47,50 @@ export const startCommand = (
 ): string => {
   const hash = NodeCrypto.createHash('sha256').update(text).digest('hex').slice(0, 16)
   return [
-    'dir="$HOME/.local/share/vivid/computer"',
-    `file="$dir/egress-${hash}.mjs"`,
-    'pid="$dir/egress.pid"',
-    `listening() { (exec 3<>/dev/tcp/127.0.0.1/${ports.proxy}) 2>/dev/null; }`,
-    'recorded() { [ -f "$pid" ] && tr "\\0" " " < "/proc/$(cat "$pid")/cmdline" 2>/dev/null | grep -qF -- "$1"; }',
-    'mkdir -p "$dir" || exit 1',
-    `[ -f "$file" ] || { cat > "$file.$$.new" <<'${END_OF_TEXT}' && mv "$file.$$.new" "$file" || exit 1; }`,
-    text,
-    END_OF_TEXT,
-    'if recorded "$file" && listening; then exit 0; fi',
-    'if recorded "$dir/egress-"; then kill "$(cat "$pid")"; for _ in $(seq 20); do listening || break; sleep 0.1; done; fi',
-    `setsid nohup node "$file" ${ports.tunnel} ${ports.proxy} "$pid" > /dev/null 2>&1 < /dev/null &`,
-    'for _ in $(seq 50); do listening && exit 0; sleep 0.1; done',
-    'exit 1',
+    "python3 - <<'VIVID_EGRESS_START'",
+    'import fcntl, json, os, pathlib, select, signal, subprocess',
+    'def cancelled(signum, frame): raise SystemExit(1)',
+    'signal.signal(signal.SIGTERM, cancelled)',
+    `text = ${JSON.stringify(text)}`,
+    "directory = pathlib.Path.home()/'.local/share/vivid/computer'",
+    'directory.mkdir(parents=True, exist_ok=True)',
+    `file = directory/'egress-${hash}.mjs'`,
+    "record = directory/'egress.pid'",
+    "with (directory/'egress.lock').open('a') as lock:",
+    ' fcntl.flock(lock, fcntl.LOCK_EX)',
+    ' if not file.exists():',
+    "  temporary = file.with_suffix('.new')",
+    '  temporary.write_text(text); temporary.replace(file)',
+    ' if record.exists():',
+    '  pid = int(record.read_text().strip())',
+    '  try: descriptor = os.pidfd_open(pid)',
+    '  except ProcessLookupError: descriptor = None',
+    '  if descriptor is not None:',
+    '   try:',
+    "    try: arguments = pathlib.Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\\0')",
+    '    except FileNotFoundError: arguments = []',
+    '    if str(file).encode() in arguments: raise SystemExit(0)',
+    "    owned = any(argument.startswith(str(directory/'egress-').encode()) and argument.endswith(b'.mjs') for argument in arguments)",
+    "    if not owned: raise RuntimeError('proxy process ownership unavailable')",
+    '    signal.pidfd_send_signal(descriptor, signal.SIGTERM)',
+    '    select.select([descriptor], [], [])',
+    '   finally: os.close(descriptor)',
+    ' read, write = os.pipe()',
+    ' signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})',
+    ` child = subprocess.Popen(['node',str(file),'${ports.tunnel}','${ports.proxy}',str(record),str(write)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,pass_fds=(write,))`,
+    ' os.close(write)',
+    ' ready = False',
+    ' try:',
+    '  with os.fdopen(read) as receipt: message = receipt.readline()',
+    "  if not message: raise RuntimeError('proxy exited before listening')",
+    '  bound = json.loads(message)',
+    `  if bound != {'tunnel': ${ports.tunnel}, 'proxy': ${ports.proxy}}: raise RuntimeError('proxy listeners differ')`,
+    '  ready = True',
+    ' finally:',
+    '  if not ready:',
+    '   if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)',
+    '   child.wait()',
+    'VIVID_EGRESS_START',
   ].join('\n')
 }
 
@@ -93,7 +120,7 @@ export const startProxy = Effect.fn('Egress.startProxy')(function* (
       key,
       command: startCommand(text.value, { tunnel: EGRESS_TUNNEL_PORT, proxy: EGRESS_PROXY_PORT }),
       directory: '/',
-      timeoutSeconds: 20,
+      timeoutSeconds: null,
     })
     .pipe(
       Effect.map((run) => run.exitCode === 0),

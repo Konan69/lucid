@@ -8,7 +8,6 @@ import {
   Clock,
   Context,
   Deferred,
-  Duration,
   Effect,
   Exit,
   Fiber,
@@ -345,49 +344,6 @@ const useSignIn = (who: Somebody, threadId: ThreadId, request: CopySignInRequest
       }),
     ),
   )
-
-/**
- * Acknowledge the public handler's bounded turn wait, without replacing its permit or SQL.
- * Effect 4.0.2 timeoutOption races work with Clock.sleep. With the first desktop request held,
- * its ten-second timer proves this next handler reached the queue; interruption joins both
- * race branches before the first request is answered. Delegate every clock reading and wait
- * to this case's TestClock, preserving method receivers.
- */
-const queuedWindow = Effect.fn('DeviceTest.queuedWindow')(function* (
-  who: Somebody,
-  threadId: ThreadId,
-) {
-  const clock = yield* Clock.Clock
-  const entered = yield* Deferred.make<void>()
-  const observed: Clock.Clock = {
-    currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
-    currentTimeMillis: clock.currentTimeMillis,
-    currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
-    currentTimeNanos: clock.currentTimeNanos,
-    monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
-    monotonicTimeNanos: clock.monotonicTimeNanos,
-    sleep: (duration) =>
-      Effect.gen(function* () {
-        if (Duration.toMillis(duration) === 10_000) yield* Deferred.succeed(entered, undefined)
-        yield* clock.sleep(duration)
-      }),
-  }
-  const running = yield* useWindow(who, threadId, look).pipe(
-    Effect.provideService(Clock.Clock, observed),
-    Effect.forkScoped,
-  )
-  yield* Effect.raceFirst(
-    Deferred.await(entered),
-    Fiber.join(running).pipe(
-      Effect.andThen(
-        Effect.sync(() =>
-          expect.fail('Queued Window work settled before acknowledging its turn wait'),
-        ),
-      ),
-    ),
-  )
-  return running
-})
 
 /** Accept a controlled desktop answer through the authenticated public handler. */
 const answerWindow = (test: Effect.Success<ReturnType<typeof native>>, id: DeviceRequestId) =>
@@ -1235,98 +1191,34 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    /** An interrupted waiter must not consume a later turn or create a dispatch receipt. */
+    /** Contention is refused before dispatch; releasing the original request admits the next one. */
     it.effect(
-      'interrupts queued window work and admits exactly one next dispatch on the same Device',
+      'refuses a busy Device immediately and admits new work after its owner completes',
       () =>
         Effect.gen(function* () {
           const test = yield* native()
           const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
           const request = yield* Queue.take(test.link.requests)
           const queuedRun = yield* working(test.who.person, test.who.person)
-          const queued = yield* queuedWindow(test.who, queuedRun.threadId)
+          expect(yield* useWindow(test.who, queuedRun.threadId, look)).toEqual(
+            WindowOutcome.cases.Busy.make({}),
+          )
           expect(yield* Queue.size(test.link.requests)).toBe(0)
-          expect((yield* windowLedger(test)).map((row) => row.runId)).toEqual([test.runId])
-          yield* Fiber.interrupt(queued)
-          expect(Exit.hasInterrupts(yield* Fiber.await(queued))).toBe(true)
+          expect((yield* windowLedger(test)).map((row) => [row.id, row.status])).toEqual([
+            [request.id, 'Dispatched'],
+          ])
           yield* answerWindow(test, request.id)
           expect(yield* Fiber.join(first)).toEqual(
             WindowOutcome.cases.Completed.make({ result: seen }),
           )
-          const nextRun = yield* working(test.who.person, test.who.person)
-          const next = yield* useWindow(test.who, nextRun.threadId, look).pipe(Effect.forkScoped)
-          const nextRequest = yield* Queue.take(test.link.requests)
-          expect(nextRequest.runId).toBe(nextRun.runId)
-          expect(nextRequest.id).not.toBe(request.id)
-          yield* answerWindow(test, nextRequest.id)
+          const next = yield* useWindow(test.who, queuedRun.threadId, look).pipe(Effect.forkScoped)
+          const admitted = yield* Queue.take(test.link.requests)
+          expect(admitted.runId).toBe(queuedRun.runId)
+          yield* answerWindow(test, admitted.id)
           expect(yield* Fiber.join(next)).toEqual(
             WindowOutcome.cases.Completed.make({ result: seen }),
           )
-          expect(yield* Queue.size(test.link.requests)).toBe(0)
-          expect(
-            new Map((yield* windowLedger(test)).map((row) => [row.id, [row.runId, row.status]])),
-          ).toEqual(
-            new Map([
-              [request.id, [test.runId, 'Did']],
-              [nextRequest.id, [nextRun.runId, 'Did']],
-            ]),
-          )
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-    )
-
-    /** Stop is persisted while a different Run holds this Device; admission rechecks after taking the turn. */
-    it.effect('a Run stopped while queued sends no window request and creates no ledger row', () =>
-      Effect.gen(function* () {
-        const test = yield* native()
-        const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-        const request = yield* Queue.take(test.link.requests)
-        const queuedRun = yield* working(test.who.person, test.who.person)
-        const queued = yield* queuedWindow(test.who, queuedRun.threadId)
-        yield* computerHandlers
-          .ReportDeviceStop({
-            device: test.device.id,
-            installation: test.installation,
-            runId: queuedRun.runId,
-          })
-          .pipe(as(test.who))
-        expect(yield* Queue.take((yield* Stops).calls)).toBe(queuedRun.threadId)
-        yield* answerWindow(test, request.id)
-        expect(yield* Fiber.join(first)).toEqual(
-          WindowOutcome.cases.Completed.make({ result: seen }),
-        )
-        expect(yield* Fiber.join(queued)).toEqual(WindowOutcome.cases.RunRequired.make({}))
-        expect(yield* Queue.size(test.link.requests)).toBe(0)
-        expect((yield* windowLedger(test)).map((row) => [row.id, row.runId, row.status])).toEqual([
-          [request.id, test.runId, 'Did'],
-        ])
-      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-    )
-
-    /** The turn-wait deadline is shorter than the already dispatched request's budget. */
-    it.effect('window work queued for ten seconds is Busy without an extra dispatch', () =>
-      Effect.gen(function* () {
-        const test = yield* native()
-        const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-        const request = yield* Queue.take(test.link.requests)
-        const queuedRun = yield* working(test.who.person, test.who.person)
-        const queued = yield* queuedWindow(test.who, queuedRun.threadId)
-        yield* TestClock.adjust('9999 millis')
-        expect(
-          queued.pollUnsafe(),
-          'The acknowledged wait has not reached its deadline',
-        ).toBeUndefined()
-        expect(yield* Queue.size(test.link.requests)).toBe(0)
-        yield* TestClock.adjust('1 millis')
-        expect(yield* Fiber.join(queued)).toEqual(WindowOutcome.cases.Busy.make({}))
-        expect(yield* Queue.size(test.link.requests)).toBe(0)
-        expect((yield* windowLedger(test)).map((row) => [row.id, row.status])).toEqual([
-          [request.id, 'Dispatched'],
-        ])
-        yield* answerWindow(test, request.id)
-        expect(yield* Fiber.join(first)).toEqual(
-          WindowOutcome.cases.Completed.make({ result: seen }),
-        )
-      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('offline, Pending and Revoked Devices are NotConnected; capability is live', () =>

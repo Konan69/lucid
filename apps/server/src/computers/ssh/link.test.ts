@@ -86,7 +86,7 @@ it.live.skipIf(!peerAvailable)(
       const run = yield* link.run({
         command: 'wc -l < notes/today/list.txt; echo problem >&2; exit 3',
         directory: server.home,
-        timeoutSeconds: 20,
+        timeoutSeconds: null,
       })
       expect(run.stdout.trim()).toBe('2')
       expect(run.stderr.trim()).toBe('problem')
@@ -149,14 +149,14 @@ const created = (path: string) =>
 /** A pipe stays open while either the command or its child lives. EOF proves both released it. */
 const lifetime = Effect.fn('LinkTest.lifetime')(function* (home: string, link: Link) {
   const path = NodePath.join(home, 'alive')
-  NodeChildProcess.execFileSync('mkfifo', [path])
+  NodeChildProcess.execFileSync('mkfifo', [path, NodePath.join(home, 'hold')])
   const ended = yield* link
-    .run({ command: 'cat alive; echo gone', directory: home, timeoutSeconds: 20 })
+    .run({ command: 'cat alive; echo gone', directory: home, timeoutSeconds: null })
     .pipe(Effect.forkScoped)
   return ended
 })
 
-const heldCommand = `bash -c 'exec 3>alive; sleep 300 & child=$!; touch started; wait "$child"' & wait`
+const heldCommand = `bash -c 'exec 3>alive; cat <hold & child=$!; touch started; wait "$child"' & wait`
 
 it.live.skipIf(!peerAvailable)(
   'ends a command and its children at the deadline',
@@ -191,7 +191,7 @@ it.live.skipIf(!peerAvailable)(
         link.run({
           command: heldCommand,
           directory: server.home,
-          timeoutSeconds: 600,
+          timeoutSeconds: null,
         }),
       )
       yield* created(NodePath.join(server.home, 'started'))
@@ -210,7 +210,7 @@ it.live.skipIf(!peerAvailable)(
       const run = yield* link.run({
         command: `head -c ${OUTPUT_BYTES * 3} /dev/zero | tr '\\0' a; echo; echo last-line`,
         directory: server.home,
-        timeoutSeconds: 30,
+        timeoutSeconds: null,
       })
       expect(run.truncated).toBe(true)
       expect(run.stdout.length).toBeLessThanOrEqual(OUTPUT_BYTES)
@@ -238,9 +238,9 @@ it.live.skipIf(!peerAvailable)(
       const running = yield* Effect.forkChild(
         Effect.flip(
           link.run({
-            command: 'touch started; sleep 300',
+            command: 'touch started; read line',
             directory: server.home,
-            timeoutSeconds: 600,
+            timeoutSeconds: null,
           }),
         ),
       )
@@ -277,13 +277,15 @@ it.live.skipIf(!peerAvailable)(
       expect(yield* Ref.get(located)).toBe(1)
       yield* first.disconnect
       expect(
-        yield* Effect.flip(one.run({ command: 'true', directory: first.home, timeoutSeconds: 10 })),
+        yield* Effect.flip(
+          one.run({ command: 'true', directory: first.home, timeoutSeconds: null }),
+        ),
       ).toBeInstanceOf(LinkRunLost)
       yield* first.end
       const two = yield* held.get('machine', locate)
       expect(two).not.toBe(one)
       expect(yield* Ref.get(located)).toBe(2)
-      const run = yield* two.run({ command: 'pwd', directory: second.home, timeoutSeconds: 10 })
+      const run = yield* two.run({ command: 'pwd', directory: second.home, timeoutSeconds: null })
       expect(run.stdout.trim()).toBe(second.home)
     }).pipe(Effect.scoped),
   40_000,
@@ -315,7 +317,7 @@ it.live.skipIf(!peerAvailable)(
       const run = yield* awake.run({
         command: 'echo here',
         directory: server.home,
-        timeoutSeconds: 10,
+        timeoutSeconds: null,
       })
       expect(run.stdout.trim()).toBe('here')
       yield* Deferred.succeed(answer, undefined)
@@ -369,7 +371,7 @@ it.live.skipIf(!peerAvailable)(
       const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
       const old = yield* held.get('machine', locate)
       yield* server.disconnect
-      yield* Effect.flip(old.run({ command: 'true', directory: server.home, timeoutSeconds: 10 }))
+      yield* Effect.flip(old.run({ command: 'true', directory: server.home, timeoutSeconds: null }))
       const fresh = yield* held.get('machine', locate)
       expect(fresh).not.toBe(old)
       // A second call that was on the old connection reports its loss only now.
@@ -485,7 +487,7 @@ it.live.skipIf(!peerAvailable)(
       const run = yield* second.run({
         command: 'echo in',
         directory: machine.home,
-        timeoutSeconds: 10,
+        timeoutSeconds: null,
       })
       expect(run.stdout.trim()).toBe('in')
       const lines = machine.authorizedLines()
@@ -501,7 +503,7 @@ it.live.skipIf(!peerAvailable)(
       const home = yield* second.run({
         command: 'echo "$HOME"',
         directory: '/',
-        timeoutSeconds: 10,
+        timeoutSeconds: null,
       })
       expect(home.stdout.trim()).toBe(machine.home)
       // The other machine never saw the first machine's keys.
@@ -526,7 +528,7 @@ it.live.skipIf(!peerAvailable)(
         command:
           'while read line; do [ "$line" = stop ] && exit 7; echo "$line" | tr a-z A-Z; done',
         directory: server.home,
-        timeoutSeconds: 20,
+        timeoutSeconds: null,
       })
       const heard = yield* Ref.make('')
       const reading = yield* Effect.forkChild(
@@ -555,7 +557,7 @@ it.live.skipIf(!peerAvailable)(
           // Starts something that would run for ten minutes, says which process it is, and waits.
           command: `echo started; ${heldCommand}`,
           directory: server.home,
-          timeoutSeconds: 900,
+          timeoutSeconds: null,
         })
         .pipe(Scope.provide(scope))
       expect(yield* Stream.runHead(spoken.output)).toEqual(Option.some('started\n'))

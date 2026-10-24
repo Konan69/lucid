@@ -129,7 +129,7 @@ export const holderClaim = (input: { readonly id: ProviderId; readonly intent: s
     'directory="$HOME/.vivid"; record="$directory/holder"',
     `mkdir -p "$directory" && touch "$directory/holder.lock" || exit ${UNSETTLED}`,
     `exec 9>"$directory/holder.lock" || exit ${UNSETTLED}`,
-    `flock -w 20 9 || exit ${UNSETTLED}`,
+    `flock 9 || exit ${UNSETTLED}`,
     'if [ -e "$record" ] || [ -L "$record" ]; then',
     `  [ "$(wc -c < "$record")" -eq ${RECORD_BYTES} ] || exit ${UNSETTLED}`,
     `  held="$(cat "$record")" || exit ${UNSETTLED}`,

@@ -216,7 +216,7 @@ export const installRunner = Effect.fn('Code.installRunner')(function* (
   runner: Runner,
 ) {
   const there = yield* attachment
-    .converse({ command: `[ -f '${runner.path}' ]`, timeoutSeconds: 30 })
+    .converse({ command: `[ -f '${runner.path}' ]`, timeoutSeconds: null })
     .pipe(
       Effect.flatMap((spoken) => spoken.ended),
       Effect.map((end) => end.exitCode === 0),

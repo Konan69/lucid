@@ -60,6 +60,14 @@ export class MachineUnreachable extends Schema.TaggedError<MachineUnreachable>()
   { title: 'MachineUnreachable' },
 ) {}
 
+/** The provider kept reporting the same lifecycle state without progress. The binding stays
+ * authoritative, and a later call reconciles this machine instead of creating a replacement. */
+export class MachineLifecycleStalled extends Schema.TaggedError<MachineLifecycleStalled>()(
+  'MachineLifecycleStalled',
+  { key: MachineKey },
+  { title: 'Computer lifecycle stopped progressing' },
+) {}
+
 /** A lost command receipt is uncertain: the provider must not authorize an automatic retry. */
 export class MachineExecutionUnknown extends Schema.TaggedError<MachineExecutionUnknown>()(
   'MachineExecutionUnknown',
@@ -207,6 +215,7 @@ export class MachinePortClosed extends Schema.TaggedError<MachinePortClosed>()(
 export type MachineFailure =
   | MachineNotRunning
   | MachineOperationFailed
+  | MachineLifecycleStalled
   | MachineUnreachable
   | MachineExecutionUnknown
   | MachineResponseInvalid
@@ -341,7 +350,7 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly command: string
     readonly directory: string
-    readonly timeoutSeconds: number
+    readonly timeoutSeconds: number | null
   }) => Effect.Effect<MachineRun, MachineFailure>
   /**
    * Starts a command and holds it for the scope; closing the scope ends it. Unlike `follow`, it
@@ -351,7 +360,7 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly command: string
     readonly directory: string
-    readonly timeoutSeconds: number
+    readonly timeoutSeconds: number | null
   }) => Effect.Effect<MachineConversation, MachineFailure, Scope.Scope>
   /**
    * A byte stream to a port on the machine's own loopback, over its SSH connection, held for the
