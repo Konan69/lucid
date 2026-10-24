@@ -3,6 +3,7 @@
 Read the touched feature before launching. A verdict belongs to the recorded commit. HTTP and browser are separate claims. The seeded map is not full product coverage.
 
 - [First message](first.md).
+- [Android Thread navigation](phone.md).
 - [Reload a Thread](reload.md).
 - [Rich replies](tool.md).
 - [Questions](question.md).
@@ -16,8 +17,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Library](library.md).
 - [Feed](feed.md).
 - [Device permission requests](devices.md).
-- [Android Thread navigation](phone.md).
 - [Notes](notes.md).
 - [Desktop app](desktop.md).
 
-Routines were removed. The Watch recipe uses its disposable Verify Pulse Integration and checks the delivered Feed card. The ordinary Conversation Feed recipe checks projection and lifecycle separately. Web is the primary surface. Android idle navigation has its own phone recipe. Other phone behavior requires its own device runs. Desktop has a separate Linux Electron recipe with explicit OS limits. Home’s first-send handoff/retry and once-only arrival greeting, parked-Thread revisits, socket recovery, interactive display actions, question withdrawal and reminder delivery remain unproved entry points within the mapped features. Library shelves, folders, rename/move, duplicate feedback and Ask Vivid also lack recipes; see apps/web/src/screen/Library.tsx and packages/client/state/src/library.ts. Projects, sharing, settings, appearance, saved skills and connections remain additional entry points in main; extend this map before changing them, using production contracts and the actual client controls.
+Routines were removed. The Watch recipe uses its disposable Verify Pulse Integration and checks the delivered Feed card. The ordinary Conversation Feed recipe checks projection and lifecycle separately. Web is the primary surface. Phone native behavior requires its own device runs. Desktop has a separate Linux Electron recipe with explicit OS limits. Home’s first-send handoff/retry and once-only arrival greeting, parked-Thread revisits, socket recovery, interactive display actions, question withdrawal and reminder delivery remain unproved entry points within the mapped features. Library shelves, folders, rename/move, duplicate feedback and Ask Vivid also lack recipes; see apps/web/src/screen/Library.tsx and packages/client/state/src/library.ts. Projects, sharing, settings, appearance, saved skills and connections remain additional entry points in main; extend this map before changing them, using production contracts and the actual client controls.
