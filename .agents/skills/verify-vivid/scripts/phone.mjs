@@ -21,7 +21,9 @@ const cli = [
 async function target(run, label) {
   await run(['wait', 'text', label, '60000'])
   const snapshot = await run(['snapshot', '-i'])
-  const lines = snapshot.split('\n').filter((line) => line.includes(label) && /@e\d+/u.test(line))
+  const lines = snapshot
+    .split('\n')
+    .filter((line) => line.includes(label) && /@e\d+ \[(button|text-field)\]/u.test(line))
   NodeAssert.equal(lines.length, 1, 'Expected one interactive ref for ' + label + '\n' + snapshot)
   return lines[0].match(/@e\d+/u)[0]
 }
@@ -53,7 +55,9 @@ async function journey(state, run, directory) {
   await run(['wait', 'text', title, '60000'])
   await run(['snapshot', '-i'])
   await run(['screenshot', directory + '/threads.png'])
-  await run(['press', await target(run, title)])
+  // The scroll container repeats descendant text; only its button grants an actionable ref.
+  // Settle waits for the drawer transition before the composer's background text can count.
+  await run(['press', await target(run, title), '--settle'])
   await run(['wait', 'text', 'Message Vivid', '60000'])
   await run(['wait', 'text', title, '60000'])
   await run(['snapshot', '-i'])
