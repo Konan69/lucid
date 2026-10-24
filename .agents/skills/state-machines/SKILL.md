@@ -5,9 +5,9 @@ description: "Write or convert a client lifecycle as an Effect Machine (@typeonc
 
 # State machines
 
-A lifecycle is state that moves through named steps and waits on something between them. In Vivid it is an Effect Machine in `packages/client/state`, read by every surface through atoms. The rule is `AGENTS.md` "Lifecycles are machines"; the decision record is `docs/statecharts.md` (only its first section is current). The pattern files are `packages/client/state/src/connecting.ts` (one attempt at a time, four surface services) and `packages/client/state/src/feed.ts` (one machine per card, idempotency keys, `reenter`).
+A lifecycle moves through named steps and waits between them. In Vivid it is an Effect Machine in `packages/client/state`, read by every surface through atoms. Follow "Lifecycles are machines" in `AGENTS.md`. Read `docs/statecharts.md` for the decision and current runtime semantics. Its original measurements used 0.40.0 and have not been repeated for 0.46.0. The pattern files are `packages/client/state/src/connecting.ts` for surface services and `packages/client/state/src/feed.ts` for card identity and idempotency. Their invokes still need the attempt checks described in step 3 before reuse in re-entered states.
 
-Check the installed version first: `grep effect-machine pnpm-workspace.yaml`. Everything here is for **0.40.0**. Upstream behaviour changed in 0.42 to 0.46; read [references/library.md](references/library.md#version-drift) before trusting anything from upstream docs or memory.
+Check the installed version with `rg effect-machine pnpm-workspace.yaml`. This skill targets **0.46.0** on Effect 4.0.2. Read [references/library.md](references/library.md) for the runtime contract, lint rules, and confirmed mailbox race.
 
 ## 1. Find and classify
 
@@ -47,6 +47,7 @@ Write the module `packages/client/state/src/<one-word>.ts` in this order: schema
 - **Work belongs to the state that needs it** (`invoke` with `src` registered in `make`). Leaving the state interrupts it. Every reachable outcome has a transition: `onDone`, a typed `onFailure` that goes to a state the screen can word. Failures are `Schema.TaggedError`s that differ when handling differs.
 - **An event a state does not name is not taken.** Use `guard` for one conditional edge, a named branch group with `select.*` for several outcomes, `declinable: true` plus `decline()` for a stale answer (compare the event's attempt id with the state's). `{ none: true }` *accepts* an event; it is not a refusal.
 - **Identity travels with the attempt.** Anything said about an attempt from outside (a form answer, a dismissal) carries its attempt id and is declined if it is not the current one.
+- **Re-entered states check every invoke outcome.** For `reenter: true` or any path back into the same state, carry the attempt or revision through invoke input and output. Decline outcomes for another attempt. Typed failures and stream elements carry that identity too. Cancellation cannot remove an outcome already queued for the same state path and invoke id. The confirmed 0.46 race and evidence paths are in [references/library.md](references/library.md#reject-outcomes-from-another-attempt).
 - **Timers are invokes**, registered in `make({ timers })` and owned by a state. A timer that guesses how long work takes is an arbitrary timeout; apply the `arbitrary-timeouts` skill (`~/.agents/skills/arbitrary-timeouts/SKILL.md`).
 - `update` changes a state's data and keeps its running work; `reenter: true` restarts the work on purpose.
 - What differs by surface is a `Context.Service` declared beside the machine and provided by each app. The machine imports nothing from React, the DOM or React Native. Apps do not depend on `@typeonce/effect-machine`; `@vivid/state` exports the domain API, not the library.
@@ -58,7 +59,7 @@ Read [references/library.md](references/library.md) for exact shapes, the compil
 - Adapter per app in `apps/<app>/src/data/<one-word>.ts`: it provides the services (RPC client, browser tab or `Linking`, navigator) and creates or mounts the bridge.
 - A screen reads atoms (`AtomMachine.select`, `AtomMachine.can`, or a domain projection like connecting's `Standing`) and says its own words from **one exhaustive `.match`** over that projection. No `if`/`else` over state names.
 - Send with `useAtomSet(machine.send)`. Disable controls from the machine's reading and let the machine refuse the event as well. The only flag outside the machine is a gesture reservation an adapter needs because the browser opens a tab only inside the click (`apps/web/src/data/connecting.ts` `press`); keep its reason beside it.
-- On 0.40, a send before the machine has started fails with `NotReadyError`, and `send` succeeds when the event is queued, not handled. Mount the machine before the control is enabled; never use `send` then `waitFor` as an acknowledgement.
+- The bridge queues sends during startup in write order. Send through `machine.send` without waiting for `ref`. An idle local send commits synchronous transitions and atom projections before returning. Entered invokes start in the sender's turn until their first suspension. Outcomes arrive in a later turn. Busy sends only queue. Never use `send` then `waitFor` as an acknowledgement.
 - Hit every surface the lifecycle exists on: web, phone, desktop, and each entry point (Thread, Thread list, Settings, notifications).
 
 ## 5. Delete the old lifecycle
@@ -71,6 +72,7 @@ Remove every `useState`, flag, map and callback the machine replaced, on every s
 - Drive the real app with the `verify-vivid` skill (`.agents/skills/verify-vivid/SKILL.md`) for the feature the lifecycle serves, on the devbox. Exercise the races the trace in step 1 named: double press, press then cancel then press again, a slow answer arriving after a newer press, dismissal mid-flight, background and return on the phone. Check the phone on the devbox emulator. Name the feature file and the evidence path in the PR.
 - Where the server is involved, a database-backed integration test with `VIVID_TEST_DATABASE_URL` proves the server side.
 - `pnpm gate --host <devbox-pick host>` green, including the lowered ceiling.
+- The seven `effect-machine` rules run at error for `packages/client/state`. Fix their diagnostics before review. [references/library.md](references/library.md#lint-in-the-gate) names all seven.
 
 ## 7. Review
 

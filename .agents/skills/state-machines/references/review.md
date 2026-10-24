@@ -1,6 +1,6 @@
 # Reviewing a machine
 
-Give this to the reviewer with the diff. Each finding cites file and line, names the rule, and shows the smallest correction. A deliberate ownership choice that is not wrong is a question, not a finding.
+Give this to the reviewer with the diff. First run the seven recommended rules from `@typeonce/oxlint-plugin-effect-machine` at error through the gate. [library.md](library.md#lint-in-the-gate) lists them. Each finding cites file and line, names the rule, and shows the smallest correction. A deliberate ownership choice that is not wrong is a question, not a finding.
 
 ## Per state
 
@@ -8,6 +8,7 @@ Give this to the reviewer with the diff. Each finding cites file and line, names
 - Which events does it take? For each event it does not take, is refusing right?
 - What work does it own, what starts it, and what does leaving the state do to it? Does every reachable outcome (`onDone`, each typed failure, stream end) go somewhere a screen can word?
 - Can a late outcome or a stale event (another attempt id, a closed form) change it? How is that declined?
+- Can the state be re-entered through `reenter: true` or a path back into it? Its invoke output must carry the attempt or revision and decline a mismatch. Check typed failures and stream elements too. Cancellation alone does not reject an outcome already in the mailbox. [library.md](library.md#reject-outcomes-from-another-attempt) records the confirmed 0.46 race.
 
 ## Per event
 
@@ -30,6 +31,7 @@ Search the components, hooks and adapters for service calls, `Effect.run*`, prom
 
 - One exhaustive `.match` per screen over what the machine exposes; no `if`/`else` over state names.
 - The control is disabled from the machine's reading and the machine refuses the event too. Only a documented gesture reservation lives outside.
+- Startup sends use the writable atom without waiting for `ref`. Idle local sends commit synchronous state changes before returning. Required browser work runs before the invoke's first suspension. Web connecting still reserves its tab before the network wait. Phone connecting needs no reservation.
 - The machine imports nothing from React, the DOM or React Native; apps import `@vivid/state`, not the library.
 - The old `useState`, flags and callbacks are gone on every surface, and the lint ceiling equals the measured count.
 - No pure state tests were added; the proof is a verify-vivid run (and a database-backed test when the server is involved).
