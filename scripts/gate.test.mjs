@@ -7,6 +7,7 @@ import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import './gate/database.test.mjs'
 import { withoutRepositoryEnvironment } from './gate.mjs'
 import {
   followScript,
@@ -77,9 +78,9 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
       `import { takeLock } from ${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(repositoryRoot, 'scripts/gate/slots.mjs')).href)}
        const held = await takeLock(${JSON.stringify(name)})
        console.log(held === undefined ? 'refused' : 'held')
-       setInterval(() => {}, 1000)`,
+       process.stdin.resume()`,
     ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
+    { stdio: ['pipe', 'pipe', 'inherit'] },
   )
   t.after(async () => {
     if (holder.exitCode === null && holder.signalCode === null) {
@@ -97,6 +98,28 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
   after()
   assert.equal(slotCount(8), 2)
   assert.equal(slotCount(2), 1)
+  // No completion receipt means ownership is unconfirmed, even when evidence is old.
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-gate-owner-'))
+  t.after(() => NodeFS.rmSync(home, { recursive: true, force: true }))
+  const runs = NodePath.join(home, 'vivid-gate/fast/runs')
+  NodeFS.mkdirSync(runs, { recursive: true })
+  const active = NodePath.join(runs, 'active.log')
+  NodeFS.writeFileSync(active, 'still owned\n')
+  NodeFS.utimesSync(active, new Date(0), new Date(0))
+  const env = { ...withoutRepositoryEnvironment(process.env), HOME: home }
+  const started = NodeChildProcess.spawnSync('bash', ['-s', '--', 'absent', 'cleanup', 'label'], {
+    input: remoteScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.equal(started.status, 0, started.stderr)
+  const followed = NodeChildProcess.spawnSync('bash', ['-s', '--', 'cleanup'], {
+    input: followScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.equal(followed.status, 92, followed.stdout + followed.stderr)
+  assert.equal(NodeFS.readFileSync(active, 'utf8'), 'still owned\n')
 })
 
 /**
@@ -203,6 +226,7 @@ void test('a push from a linked worktree cannot reach that worktree through the 
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
+import './gate/database.test.mjs'
 import { withoutRepositoryEnvironment } from ${JSON.stringify(NodePath.join(repositoryRoot, 'scripts/gate.mjs'))}
 const inherited = process.env.GIT_DIR !== undefined
 const env = withoutRepositoryEnvironment(process.env)
