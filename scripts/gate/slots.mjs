@@ -30,6 +30,8 @@ export async function takeLock(name) {
     clients.add(client)
     client.unref()
     client.once('close', () => clients.delete(client))
+    // Cancelling an observer can reset its socket while the acknowledgement is in flight.
+    client.on('error', () => client.destroy())
     // Half-close distinguishes a release-aware holder from the older socket-only protocol.
     client.write('1')
     client.resume()
