@@ -25,7 +25,10 @@ export interface Saying {
   readonly leaving: boolean
 }
 
-/** Long enough to read one sentence twice; short enough not to sit over the composer. */
+/**
+ * Source: UX policy, six seconds to read one sentence twice before it covers the composer too
+ * long. Expiry dismisses the sentence; a manual dismissal or withdrawal can end it sooner.
+ */
 const SAID_FOR_MS = 6000
 
 /**

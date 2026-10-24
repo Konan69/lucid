@@ -26,7 +26,8 @@ import { isFinal, type ProductFailure } from './live.js'
 /**
  * How long a place's words rest before they are saved. Long enough that a sentence being typed is
  * one save, not one per letter; short enough that putting the laptop down and picking the phone
- * up finds the words already there.
+ * up finds the words already there. Source: UX policy, 700 ms of quiet typing. Expiry sends
+ * the latest draft; a new draft or session ending cancels the pending save.
  */
 const REST = '700 millis'
 

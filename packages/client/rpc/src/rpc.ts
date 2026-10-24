@@ -1,4 +1,5 @@
 import * as Context from 'effect/Context'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as HttpClient from 'effect/http/HttpClient'
@@ -10,6 +11,13 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as Socket from 'effect/socket/Socket'
 import { ComputerState, type ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
+
+/**
+ * Protocol heartbeat cadence. Source: Effect 4.0.2 RpcClient.makePinger's five-second default.
+ * A quiet connection is pinged; two missed intervals close it so its owner can reconnect.
+ */
+const PING_INTERVAL = Duration.seconds(5)
+const PING_IDLE = Duration.times(PING_INTERVAL, 2)
 
 /**
  * Keep the schema-derived client named in Context.Service's emitted base class.
@@ -93,8 +101,8 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
       Layer.provide(
         RpcClient.layerProtocolSocket({
           retryTransientErrors: false,
-          pingInterval: '5 seconds',
-          pingTimeout: '10 seconds',
+          pingInterval: PING_INTERVAL,
+          pingTimeout: PING_IDLE,
         }),
       ),
       Layer.provide(

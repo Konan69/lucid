@@ -26,7 +26,10 @@ import { forgetFile, keepFileAside, recallFile } from './storage'
  */
 const FILE = 'heard.json'
 
-/** How long new words may wait in memory before the file is written, in milliseconds. */
+/**
+ * Coalesces settled conversation writes for one second. Source: UX policy to avoid file I/O
+ * for every message update. Expiry writes the latest memory; background flushes immediately.
+ */
 const REST_MS = 1000
 
 /**

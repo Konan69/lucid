@@ -35,12 +35,18 @@ if (
   history.replaceState(null, '', '/')
 }
 
+/**
+ * Reuses an intent-preloaded route for thirty seconds. Source: UX cache retention policy.
+ * Expiry reruns its loader; the live query keeps receiving updates throughout this window.
+ */
+const PRELOAD_WARM_MS = 30_000
+
 export const router = createRouter({
   routeTree,
   defaultPreload: 'intent',
   // A loader here only opens a live query (`routes/thread.tsx`). The query stays open for the
   // registry's idle time whoever asked, so there is nothing to gain from asking again sooner.
-  defaultPreloadStaleTime: 30_000,
+  defaultPreloadStaleTime: PRELOAD_WARM_MS,
 })
 
 declare module '@tanstack/react-router' {

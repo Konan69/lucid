@@ -115,6 +115,8 @@ export const Forgetting = Data.taggedEnum<Forgetting>()
  * Running out of time says nothing certain about the session. A request can end it on the server
  * and lose its answer on the way back, and a request can fail to arrive at all: when no answer
  * came, the session may still be valid on the server until it expires, or may already be ended.
+ * Source: unmeasured, retained eight-second bound for one remote request with no reply.
+ * Expiry ends that request; lack of acknowledgement leaves server authority unknown.
  */
 const SERVER_ANSWER = '8 seconds'
 const SERVER_ASKED_AGAIN = 3

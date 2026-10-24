@@ -181,6 +181,18 @@ export const judge = (snapshot: Snapshot, me: MeResponse): Verdict => {
 }
 
 /**
+ * Coalesces the initial cache burst. Source: T3 cachePersistence.runCachePersistence, 500 ms.
+ * Expiry writes the latest state; background/pagehide flush does not wait for this window.
+ */
+const FIRST_WRITE_REST = '500 millis'
+
+/**
+ * Limits subsequent cache writes. Source: T3 cachePersistence.runCachePersistence, ten seconds.
+ * Changes coalesce in the sliding queue and an explicit lifecycle flush remains immediate.
+ */
+const WRITE_REST = '10 seconds'
+
+/**
  * Writes the latest state down, paced so that keeping it never competes with drawing it.
  *
  * Ported from T3 Code's `runCachePersistence`
@@ -197,11 +209,11 @@ export const keepLatest = Effect.fn('Snapshot.keepLatest')(function* (
   persist: Effect.Effect<void>,
 ) {
   yield* Queue.take(changes)
-  yield* Effect.sleep('500 millis')
+  yield* Effect.sleep(FIRST_WRITE_REST)
   yield* Queue.poll(changes)
   while (true) {
     yield* persist
-    yield* Effect.sleep('10 seconds')
+    yield* Effect.sleep(WRITE_REST)
     yield* Queue.take(changes)
   }
 })

@@ -34,10 +34,11 @@ export function useDoor<Value>(atom: Atom.Atom<Value>): Value {
 
 /**
  * Says so once something has been waited on for long enough that a Person deserves more than
- * "connecting". It is one timer, started when a screen first reads it and thrown away when that
+ * "connecting". Source: UX policy, six seconds of quiet before explanatory copy. It is one timer, started when a screen first reads it and thrown away when that
  * screen goes; nothing is polled.
  */
-export const patienceAtom = Atom.make(Effect.as(Effect.sleep('6 seconds'), true))
+const EXPLAIN_AFTER = '6 seconds'
+export const patienceAtom = Atom.make(Effect.as(Effect.sleep(EXPLAIN_AFTER), true))
 
 /** How a device action (signing in, saving) stands, as the three things a form draws. */
 export interface Attempt {
