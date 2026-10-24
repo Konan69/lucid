@@ -24,9 +24,9 @@ source locations, and what must change on the way in.
 | 4   | Typed input request that resumes the work              | `apps/server/src/engine/service.ts:306-330,844-864`                                                 | `apps/server/src/inputs` (empty)         | P0       |
 | 5   | Tool-result journal (replay-safe tools after re-lease) | `apps/server/src/engine/model.ts:24-95`                                                             | Flue tool adapter / Runs                 | P1       |
 | 6   | Idempotent, keyed notifications + outcome publication  | `apps/server/src/engine/service.ts:73-116,578-588,749-807`                                          | `apps/server/src/notifications`          | P1       |
-| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `packages/computer` egress               | P0       |
-| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `packages/computer/desktop`              | P1       |
-| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `packages/computer/machine`              | P1       |
+| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `apps/server/src/computers` egress       | P0       |
+| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `apps/desktop/src/main`                  | P1       |
+| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `apps/server/src/computers`              | P1       |
 | 10  | Short-lived signed file URLs                           | `apps/server/src/auth.ts:42-55`, `apps/server/src/files.ts:50-52`                                   | Artifacts                                | P1       |
 | 11  | Credential envelope encryption                         | `packages/integrations/src/vault.ts`                                                                | `apps/server/src/connections`            | P1       |
 | 12  | Google adapter: ETag-guarded calendar writes           | `packages/integrations/src/google.ts:523-548,787-816`                                               | `apps/server/src/connections/google`     | P1       |
@@ -227,7 +227,7 @@ which `CLAUDE.md` forbids; a VNC stream or event-driven frames replace it.
   cancelled reliably, and the lease is not released until the stop is confirmed.
 
 **Vivid mapping.** Vivid wants a whole machine, not a 30-second sandbox; OpenMuse's limits are the
-opposite thesis. Two ideas still transfer to `packages/computer/machine`: receipt-before-execute
+opposite thesis. Two ideas still transfer to `apps/server/src/computers`: receipt-before-execute
 with an idempotency key, and "kill the whole unit when you cannot prove a command stopped".
 
 ## 10. Short-lived signed file URLs

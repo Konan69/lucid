@@ -189,7 +189,6 @@ void test('lint checks every workspace without executing declaration producers',
     'apps/web',
     'packages/contracts',
     'packages/client/rpc',
-    'packages/computer/state',
     'packages/client/state',
     'packages/design/marks',
     'packages/design/tokens',
@@ -198,7 +197,7 @@ void test('lint checks every workspace without executing declaration producers',
   ]) {
     receipts.push(NodeFS.readFileSync(NodePath.join(root, directory, '.cache/executions'), 'utf8'))
   }
-  assert.equal(receipts.filter((receipt) => receipt === 'lint\n').length, 12)
+  assert.equal(receipts.filter((receipt) => receipt === 'lint\n').length, 11)
   assert.equal(receipts.filter((receipt) => receipt === 'lint:root\n').length, 1)
 })
 
@@ -213,10 +212,7 @@ void test('dependency source invalidates consumers while unrelated leaf checks s
   const changed = hashes(root)
   for (const task of ['lint', 'typecheck']) {
     assert.notEqual(initial.get(`@vivid/web#${task}`).hash, changed.get(`@vivid/web#${task}`).hash)
-    assert.equal(
-      initial.get(`@vivid/computer#${task}`).hash,
-      changed.get(`@vivid/computer#${task}`).hash,
-    )
+    assert.equal(initial.get(`@vivid/marks#${task}`).hash, changed.get(`@vivid/marks#${task}`).hash)
   }
   assert.notEqual(initial.get('//#typecheck:root').hash, changed.get('//#typecheck:root').hash)
   assert.notEqual(initial.get('@vivid/client-runtime#lint').command, '<NONEXISTENT>')
@@ -309,14 +305,14 @@ void test('cache hits replay diagnostics and restore build info without executin
   const args = [
     'lint',
     'typecheck',
-    '--filter=@vivid/computer',
+    '--filter=@vivid/marks',
     '--concurrency=1',
     '--ui=stream',
     '--output-logs=full',
     '--cache=local:rw',
   ]
   const first = runTurbo(root, args)
-  const packageRoot = NodePath.join(root, 'packages/computer/state')
+  const packageRoot = NodePath.join(root, 'packages/design/marks')
   const executions = NodeFS.readFileSync(NodePath.join(packageRoot, '.cache/executions'), 'utf8')
   const buildInfo = NodePath.join(packageRoot, '.cache/typescript/tsconfig.tsbuildinfo')
   NodeFS.rmSync(buildInfo)
@@ -367,7 +363,7 @@ void test('backend overrides reach lint tasks and invalidate cached diagnostics'
   for (const task of before.tasks.filter((entry) => entry.command !== '<NONEXISTENT>')) {
     assert.notEqual(task.hash, after.tasks.find((entry) => entry.taskId === task.taskId).hash)
   }
-  const result = runTurbo(root, ['lint', '--filter=@vivid/computer', '--ui=stream'], {
+  const result = runTurbo(root, ['lint', '--filter=@vivid/marks', '--ui=stream'], {
     OXLINT_TSGOLINT_PATH: '/backend/a',
   })
   assert.match(result.stdout, /backend=\/backend\/a/u)

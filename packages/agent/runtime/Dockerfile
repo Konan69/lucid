@@ -17,7 +17,6 @@ COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/client/rpc/package.json packages/client/rpc/package.json
-COPY packages/computer/state/package.json packages/computer/state/package.json
 COPY packages/client/state/package.json packages/client/state/package.json
 COPY packages/design/marks/package.json packages/design/marks/package.json
 COPY packages/design/tokens/package.json packages/design/tokens/package.json
