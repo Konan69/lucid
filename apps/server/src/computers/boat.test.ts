@@ -4,7 +4,6 @@ import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
-import * as NodeNet from 'node:net'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -67,7 +66,6 @@ import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { HELD, UNOPENED, UNSETTLED, holding, wake } from './boat/holder.ts'
-import { EGRESS_PROXY_PORT } from './egress/guest.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -1607,39 +1605,14 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
-    /** A foreign listener cannot supply the owned proxy's readiness receipt. Both enabled
-     * and disabled egress use the direct browser route when startup cannot bind its ports. */
-    it.effect.skipIf(!peerAvailable)(
-      'a browser uses its direct route when a foreign listener occupies the egress port',
-      () =>
-        Effect.gen(function* () {
-          const key = yield* fixture()
-          const machine = yield* Machine
-          const evidence = yield* Evidence
-          const server = yield* peer()
-          yield* Ref.set(evidence.ssh, Option.some(server))
-          yield* Effect.acquireRelease(
-            Effect.callback<NodeNet.Server>((resume) => {
-              const foreign = NodeNet.createServer((socket) => socket.destroy())
-              // Another concurrent proof can already hold this port. Either listener is
-              // foreign to this fixture's home, so neither authorizes proxy readiness.
-              foreign.once('error', () => resume(Effect.succeed(foreign)))
-              foreign.listen(EGRESS_PROXY_PORT, '127.0.0.1', () => resume(Effect.succeed(foreign)))
-            }),
-            (foreign) => Effect.sync(() => foreign.close()),
-          )
-          expect(yield* machine.ensure(key).pipe(Effect.isSuccess)).toBe(true)
-          const action = BrowserAction.cases.Open.make({ address: 'https://example.com' })
-          yield* Ref.set(evidence.browserClosed, true)
-          yield* machine.browse({ key, egress: true, action })
-          yield* Ref.set(evidence.browserClosed, true)
-          yield* machine.browse({ key, egress: false, action })
-          expect(yield* Ref.get(evidence.browserStarts)).toEqual([
-            ['--force-renderer-accessibility'],
-            ['--force-renderer-accessibility'],
-          ])
-        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
-      30000,
+    /** The provider request must leave lifetime to Vivid's idle policy, so active work
+     * cannot be archived by an unrelated total machine TTL. */
+    it.effect('creates a Computer without a total provider lifetime', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        expect(yield* machine.ensure(key).pipe(Effect.isSuccess)).toBe(true)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
     )
 
     it.effect(

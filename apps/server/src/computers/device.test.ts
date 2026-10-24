@@ -1218,7 +1218,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           }
           const reply = yield* useWindow(subject.who, queuedRun.threadId, look).pipe(
             Effect.provideService(Clock.Clock, observed),
-            Effect.map(Option.some),
+            Effect.asSome,
             Effect.raceFirst(Deferred.await(delayed).pipe(Effect.as(Option.none<WindowOutcome>()))),
           )
           expect(reply).toEqual(Option.some(WindowOutcome.cases.Busy.make({})))
