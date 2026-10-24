@@ -67,8 +67,9 @@ catalog:
   '@types/pg': 8.23.1
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.3
-  '@typeonce/effect-machine': 0.40.0
-  '@typeonce/effect-machine-react': 0.40.0
+  '@typeonce/effect-machine': 0.46.0
+  '@typeonce/effect-machine-react': 0.46.0
+  '@typeonce/oxlint-plugin-effect-machine': 0.46.0
   '@vitejs/plugin-react': 6.1.1
   alchemy: 2.0.0-beta.81
   better-auth: 1.7.5
@@ -194,5 +195,7 @@ minimumReleaseAgeExclude:
   - '@maschwenk/tsrslint-linux-x64@0.1.5'
   - '@maschwenk/tsrslint-linux-arm64@0.1.5'
   - '@maschwenk/tsrslint-darwin-arm64@0.1.5'
+  - '@typeonce/effect-machine@0.46.0'
+  - '@typeonce/oxlint-plugin-effect-machine@0.46.0'
 
 preferSymlinkedExecutables: true
