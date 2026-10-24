@@ -8,10 +8,12 @@ import * as Context from 'effect/Context'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Latch from 'effect/Latch'
 import * as RcMap from 'effect/RcMap'
 import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
 
 /**
  * Vivid's memory: one small filesystem per Person, in one SQLite file (AgentFS), holding one note
@@ -187,12 +189,12 @@ const closeStore = (store: AgentFS) =>
 const isMissing = Schema.is(Schema.Struct({ code: Schema.Literal('ENOENT') }))
 const isNoteFile = Schema.is(NoteFile)
 
-/** A narrow Promise boundary around one AgentFS call; its only expected failure is a missing file. */
+/** AgentFS cannot cancel native I/O. Retain the operation lease until the whole SDK call settles. */
 function attempt<A>(file: NoteFile, call: () => Promise<A>) {
   return Effect.tryPromise({
     try: call,
     catch: (cause) => (isMissing(cause) ? NoteMissing.make({ file }) : NotesUnavailable.make({})),
-  })
+  }).pipe(Effect.uninterruptible)
 }
 
 /**
@@ -205,7 +207,7 @@ const noteIndex = Effect.fn('Notes.storeIndex')(function* (store: AgentFS) {
   const entries = yield* Effect.tryPromise({
     try: () => fs.readdirPlus('/'),
     catch: () => NotesUnavailable.make({}),
-  })
+  }).pipe(Effect.uninterruptible)
   const files = Arr.sortWith(
     entries.filter((entry) => isNoteFile(entry.name)),
     (entry) => entry.stats.mtime,
@@ -266,6 +268,8 @@ const deleteNote = Effect.fn('Notes.storeDelete')(function* (store: AgentFS, fil
  * acquireRelease/fiberRunIn in installed Effect 4.0.2.
  */
 export const make = Effect.fn('Notes.make')(function* (settings: NotesSettings) {
+  // Own sequential finalization even when the caller provides a parallel scope.
+  const owner = yield* Scope.fork(yield* Effect.scope)
   const stores: RcMap.RcMap<PersonId, AgentFS, NotesUnavailable | Cause.ExceededCapacityError> =
     yield* RcMap.make({
       capacity: settings.capacity,
@@ -276,17 +280,39 @@ export const make = Effect.fn('Notes.make')(function* (settings: NotesSettings) 
             Effect.forkDetach(RcMap.invalidate(stores, person), { startImmediately: true }),
           ),
         ),
-    })
+    }).pipe(Scope.provide(owner))
   let closed = false
-  // Registered after RcMap: refuse stale service references before the stores begin closing.
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
+  let active = 0
+  const drained = Latch.makeUnsafe(true)
+  // RcMap shutdown closes entries regardless of reference counts. Stop admission and await
+  // operation scopes before its finalizer runs, including a cancelled caller's native receipt.
+  yield* Scope.addFinalizer(
+    owner,
+    Effect.suspend(() => {
       closed = true
+      return drained.await
     }),
   )
+
+  /** Admission and release cannot be interrupted. Operations stay cancellable between SDK calls. */
+  const using = <A, E>(operation: Effect.Effect<A, E, Scope.Scope>) =>
+    Effect.acquireUseRelease(
+      Effect.suspend(() => {
+        if (closed) return Effect.fail(NotesUnavailable.make({}))
+        active++
+        drained.closeUnsafe()
+        return Effect.void
+      }),
+      () => Effect.scoped(operation),
+      () =>
+        Effect.sync(() => {
+          active--
+          if (active === 0) drained.openUnsafe()
+        }),
+    )
   const opened = Effect.fn('Notes.lease')(function* (person: PersonId) {
     // Validate before capacity admission; an unsafe disk path is never a full-store failure.
-    if (closed || !SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
+    if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
     return yield* RcMap.get(stores, person).pipe(
       Effect.catchTag('ExceededCapacityError', () =>
         Effect.logWarning('Notes store capacity reached').pipe(
@@ -300,18 +326,18 @@ export const make = Effect.fn('Notes.make')(function* (settings: NotesSettings) 
       return yield* noteIndex(yield* opened(person)).pipe(
         Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
       )
-    }, Effect.scoped),
+    }, using),
     read: Effect.fn('Notes.read')(function* (person: PersonId, file: NoteFile) {
       return yield* readNote(yield* opened(person), file)
-    }, Effect.scoped),
+    }, using),
     write: Effect.fn('Notes.write')(function* (person: PersonId, note: Note) {
       return yield* writeNote(yield* opened(person), note).pipe(
         Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
       )
-    }, Effect.scoped),
+    }, using),
     delete: Effect.fn('Notes.delete')(function* (person: PersonId, file: NoteFile) {
       return yield* deleteNote(yield* opened(person), file)
-    }, Effect.scoped),
+    }, using),
   })
 })
 
