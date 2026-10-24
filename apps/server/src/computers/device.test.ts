@@ -544,7 +544,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       Effect.gen(function* () {
         const ada = yield* somebody(farFuture)
         const watch = yield* watchingDevices(ada)
-        expect(watch.initial).toEqual({ devices: [] })
+        expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(ada, 'Laptop')
         const enrolledNotice = yield* nextValue(watch)
         expect(enrolledNotice.devices).toMatchObject([
@@ -555,6 +555,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             presence: DevicePresence.cases.Offline.make({}),
           },
         ])
+        // Its app enrolled just now and it is waiting: it is asking to be allowed.
+        expect(enrolledNotice.asking).toEqual([device.id])
         // Each nextValue advances the debounce clock by 20 ms; access dates precede that advance.
         const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
         const allowedNotice = yield* nextValue(watch)
@@ -567,6 +569,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           },
         ])
         expect(allowedNotice.devices).toEqual([allowed.device])
+        expect(allowedNotice.asking).toEqual([])
         const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
         const live = yield* nextValue(watch)
         expect(live.devices).toMatchObject([
@@ -589,7 +592,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const persisted = yield* Effect.gen(function* () {
           const { device } = yield* enrolled(ada, 'Laptop')
           const watch = yield* watchingDevices(ada)
-          expect(watch.initial).toEqual({ devices: [device] })
+          expect(watch.initial).toEqual({ devices: [device], asking: [device.id] })
           const notices = yield* (yield* PgClient).listen(CHANNEL)
           yield* TestClock.adjust('61 seconds')
           yield* silent(notices)

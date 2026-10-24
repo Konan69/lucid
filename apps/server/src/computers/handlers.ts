@@ -1,6 +1,7 @@
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
   type CopySignInRequest,
@@ -49,7 +50,12 @@ const load = Effect.fn('Computer.load')(function* (actor: Actor) {
 const loadDevices = Effect.fn('Computer.loadDevices')(function* (actor: Pick<Actor, 'person'>) {
   const registry = yield* DeviceRegistry
   const devices = yield* registry.list(actor.person.id)
-  return DeviceListResponse.make({ devices })
+  return DeviceListResponse.make({
+    devices,
+    asking: devices.flatMap((device) =>
+      DeviceAccess.guards.Pending(device.access) ? [device.id] : [],
+    ),
+  })
 })
 
 /** The calling Person's computers, wrapped for the wire. */

@@ -275,6 +275,8 @@ export const DeviceResponse = Schema.Struct({ device: Device })
  */
 export const DeviceListResponse = Schema.Struct({
   devices: Schema.Array(Device),
+  /** Installed OTA bundles require this field; every Pending device asks until explicitly decided. */
+  asking: Schema.Array(DeviceId),
 })
 
 /** What the desktop app sends once it is signed in. Repeating it changes nothing. */
