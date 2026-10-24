@@ -89,31 +89,7 @@ export async function doctor(state) {
       health: value,
     }
   })
-  let phone
-  const receipt = await NodeFSP.readFile(state.evidence + '/phone/receipt.json', 'utf8').catch(
-    (error) => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    },
-  )
-  if (receipt !== null)
-    await check('Android APK identity', async () => {
-      const acquired = required(readPhone(receipt))
-      const artifact = required(
-        readApk(await NodeFSP.readFile(state.evidence + '/phone/apk.json', 'utf8')),
-      )
-      phone = {
-        alias: acquired.device.alias,
-        hostname: acquired.device.hostname,
-        serial: acquired.device.serial,
-        sha256: artifact.sha256,
-        head: artifact.head,
-      }
-      return {
-        ok: artifact.head === state.head && artifact.sha256 === (await apkHash(artifact.file)),
-        ...phone,
-      }
-    })
+  const phone = await phoneIdentity(state, check)
   const result = {
     worthy: checks.every((value) => value.ok),
     head: state.head,
@@ -129,4 +105,34 @@ export async function doctor(state) {
   await NodeFSP.writeFile(state.evidence + '/doctor.json', JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result, null, 2))
   if (!result.worthy) process.exitCode = 1
+}
+
+/** The APK identity is independent from server health and stays inspectable after device stop. */
+async function phoneIdentity(state, check) {
+  const receipt = await NodeFSP.readFile(state.evidence + '/phone/receipt.json', 'utf8').catch(
+    (error) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    },
+  )
+  if (receipt === null) return null
+  let phone
+  await check('Android APK identity', async () => {
+    const acquired = required(readPhone(receipt))
+    const artifact = required(
+      readApk(await NodeFSP.readFile(state.evidence + '/phone/apk.json', 'utf8')),
+    )
+    phone = {
+      alias: acquired.device.alias,
+      hostname: acquired.device.hostname,
+      serial: acquired.device.serial,
+      sha256: artifact.sha256,
+      head: artifact.head,
+    }
+    return {
+      ok: artifact.head === state.head && artifact.sha256 === (await apkHash(artifact.file)),
+      ...phone,
+    }
+  })
+  return phone
 }

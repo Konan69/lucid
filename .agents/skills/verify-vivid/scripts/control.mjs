@@ -188,7 +188,7 @@ try {
               loader,
               skill + '/scripts/phone.mjs',
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'thread',
+              args.find((arg) => !arg.startsWith('flue-')) ?? 'thread',
             ],
             {
               heavy: true,
