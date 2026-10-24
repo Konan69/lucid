@@ -8,4 +8,5 @@ export const Extract = Schema.TaggedStruct('Extract', {})
 export class CommandUnavailable extends Schema.TaggedError<CommandUnavailable>()(
   'ExtractionCommandUnavailable',
   {},
+  { title: 'Extraction command unavailable' },
 ) {}

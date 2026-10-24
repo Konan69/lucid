@@ -10,6 +10,11 @@
     "symbols": ["extractPages"]
   },
   {
+    "file": "apps/server/src/library/fixtures/process/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["preparePdfjs"]
+  },
+  {
     "file": "packages/agent/runtime/src/app.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["runResult", "requireRuntimeToken", "get:/health", "prepareContext"]

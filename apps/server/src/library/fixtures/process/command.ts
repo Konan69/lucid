@@ -11,16 +11,18 @@ import * as Stream from 'effect/Stream'
 import { type Running, type ProcessEnd, start, stop } from '../../extraction/process.ts'
 import { CommandUnavailable, Extract, Ready } from './control.ts'
 
+/** The prepared CLI owns its request channel, complete stdout, and native termination receipts. */
+interface CommandControl {
+  readonly request: Effect.Effect<void, CommandUnavailable | Schema.SchemaError>
+  readonly printed: Effect.Effect<string, CommandUnavailable>
+  readonly ended: Effect.Effect<typeof ProcessEnd.Type>
+  readonly closed: Effect.Effect<void>
+}
+
 /** The assertion receives only an already prepared CLI and the observations needed to prove exit. */
-export class Command extends Context.Service<
-  Command,
-  {
-    readonly request: Effect.Effect<void, CommandUnavailable | Schema.SchemaError>
-    readonly printed: Effect.Effect<string, CommandUnavailable>
-    readonly ended: Effect.Effect<typeof ProcessEnd.Type>
-    readonly closed: Effect.Effect<void>
-  }
->()('LibraryExtractionFixture.Command') {}
+export class Command extends Context.Service<Command, CommandControl>()(
+  'LibraryExtractionFixture.Command',
+) {}
 
 const decodeReady = Schema.decodeUnknownEffect(Ready)
 const encodeExtract = Schema.encodeEffect(Extract)

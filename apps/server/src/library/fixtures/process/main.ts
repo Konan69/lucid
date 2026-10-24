@@ -1,6 +1,7 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as NodePath from '@effect/platform-node/NodePath'
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
+import type * as NodeChildProcess from 'node:child_process'
 import NodeProcess from 'node:process'
 import * as Console from 'effect/Console'
 import * as Effect from 'effect/Effect'
@@ -18,12 +19,23 @@ const encodePages = Schema.encodeEffect(Pages)
 const encodeReady = Schema.encodeEffect(Ready)
 const decodeExtract = Schema.decodeUnknownEffect(Extract)
 
+/**
+ * unpdf 1.8.1 index.mjs:98-112 loads the parser without opening a document.
+ * Keep its Promise-only import at this adapter, before the CLI advertises readiness.
+ */
+const preparePdfjs = Effect.fn('LibraryExtractionFixture.preparePdfjs')(function* () {
+  yield* Effect.tryPromise({
+    try: () => getResolvedPDFJS(),
+    catch: () => new CommandUnavailable(),
+  })
+})
+
 /** Register the typed request listener before readiness, so extraction cannot run during setup. */
-const requested = Effect.gen(function* () {
+const requested = Effect.fn('LibraryExtractionFixture.requested')(function* () {
   const message = yield* encodeReady(Ready.make({}))
   yield* Effect.callback<typeof Extract.Type, CommandUnavailable | Schema.SchemaError>((resume) => {
     if (NodeProcess.send === undefined) return resume(Effect.fail(new CommandUnavailable()))
-    const onMessage = (input: unknown) => resume(decodeExtract(input))
+    const onMessage = (input: NodeChildProcess.Serializable) => resume(decodeExtract(input))
     NodeProcess.once('message', onMessage)
     NodeProcess.send(message, (error) => {
       if (error !== null) resume(Effect.fail(new CommandUnavailable()))
@@ -36,13 +48,8 @@ const requested = Effect.gen(function* () {
 
 /** Print only after extractPdf has awaited native process termination and closed its RPC scope. */
 const program = Effect.fn('LibraryExtractionFixture.main')(function* () {
-  // unpdf 1.8.1 index.mjs getResolvedPDFJS loads the real parser without opening a document.
-  // This prepares the CLI's dependencies only. extractPdf still forks its original source entry.
-  yield* Effect.tryPromise({
-    try: () => getResolvedPDFJS(),
-    catch: () => new CommandUnavailable(),
-  })
-  yield* requested
+  yield* preparePdfjs()
+  yield* requested()
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   const bytes = yield* fs.readFile(
