@@ -18,6 +18,7 @@ import {
   cache,
   dependencyLink,
   checkout,
+  capacity,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
@@ -34,10 +35,11 @@ async function selected() {
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
-  await NodeFSP.mkdir(cache, { recursive: true })
-  await recoverPrevious(cache)
   const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
+  await NodeFSP.mkdir(cache, { recursive: true })
+  await recoverPrevious(cache)
+  await capacity()
   const modelConfig = await provider()
   const snapshot = await checkout()
   const head = await command(['git', 'rev-parse', 'HEAD'])

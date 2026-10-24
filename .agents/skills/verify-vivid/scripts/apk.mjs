@@ -3,7 +3,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeModule from 'node:module'
-import { command, root, skill, json } from './process.mjs'
+import { command, root, skill, json, capacity } from './process.mjs'
 import { readApk } from './phonewire.mjs'
 
 export const phoneOrigin = 'http://127.0.0.1:19278'
@@ -95,14 +95,7 @@ export async function apk(state, record) {
   const foundation = directory + '/' + fingerprint + '.json'
   const base = await stored(foundation)
   if (base !== null && (await equivalent(state.head, base))) return { ...base, mode: 'reuse' }
-  if (NodeOS.loadavg()[0] > NodeOS.availableParallelism())
-    throw new Error('Devbox busy; warm the APK on an idle devbox before launching the proof')
-  const memory = await NodeFSP.readFile('/proc/meminfo', 'utf8')
-  const available = /^MemAvailable:\s+(\d+)/mu.exec(memory)
-  if (available === null || Number(available[1]) < 6 * 1024 * 1024)
-    throw new Error(
-      'APK build needs at least 6 GiB available; warm it before starting the emulator',
-    )
+  await capacity()
   const source = cache + '/source'
   const present = await NodeFSP.stat(source + '/.git').catch((error) => {
     if (error.code === 'ENOENT') return null
