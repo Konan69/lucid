@@ -91,9 +91,9 @@ for candidate in "$home"/trees/slot-*; do
 done
 if [ -z "$tree" ]; then
   [ -n "$waiting" ] || { echo "No warm gate tree with the replay lockfile" >&2; exit 92; }
-  echo "Waiting up to 300s for $waiting" >&2
+  echo "Waiting for $waiting" >&2
   exec 9>"$waiting.lock"
-  flock -w 300 9 || { echo "Warm gate tree stayed busy" >&2; exit 92; }
+  flock -x 9
   tree="$waiting"
 fi
 scratch=$(mktemp -d "$tree/.cache/boundaries-$fix-XXXXXX")
