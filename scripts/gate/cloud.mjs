@@ -121,7 +121,10 @@ mkdir -p .cache/gate
 # while the download lands (seen after a machine woke with its cache gone). Ask twice.
 pnpm --version > /dev/null 2>&1 || pnpm --version > /dev/null 2>&1 || true
 stamp=$(git ls-tree -r "$sha" | grep -E '(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|[[:space:]]patches/' | sha256sum | cut -c1-32)
-if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ]; then
+# A stored install hash cannot prove the links survived a later interrupted install.
+# Load the actual CLI before reusing the graph, and revoke the old receipt before mutation.
+if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ] || ! node --input-type=module -e 'import "./scripts/gate.mjs"' > /dev/null 2>&1; then
+  rm -f .cache/gate/installed
   echo "installing dependencies"
   pnpm install --frozen-lockfile > .cache/gate/install.log 2>&1 || { tail -20 .cache/gate/install.log; finish 90; }
   echo "$stamp" > .cache/gate/installed
