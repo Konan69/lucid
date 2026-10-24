@@ -8,7 +8,14 @@ const cache = NodeOS.homedir() + '/.cache/vivid-android'
 const sdk = NodeOS.homedir() + '/android_sdk'
 export const phoneEnvironment = {
   ...process.env,
-  PATH: cache + '/node/bin:' + sdk + '/platform-tools:' + process.env.PATH,
+  PATH:
+    cache +
+    '/node/bin:' +
+    cache +
+    '/tools/node_modules/.bin:' +
+    sdk +
+    '/platform-tools:' +
+    process.env.PATH,
   ANDROID_HOME: sdk,
   ANDROID_SDK_ROOT: sdk,
   ANDROID_ADB_SERVER_PORT: '15037',
@@ -20,8 +27,7 @@ const pnpm = [cache + '/node/bin/node', cache + '/tools/node_modules/pnpm/bin/pn
 
 /** Hash actual APK bytes, so reuse never trusts a filename or stale marker alone. */
 export async function apkHash(file) {
-  return crypto
-    .createHash('sha256')
+  return NodeCrypto.createHash('sha256')
     .update(await NodeFSP.readFile(file))
     .digest('hex')
 }
@@ -36,8 +42,7 @@ async function inputs(head) {
     if (!path.startsWith('apps/mobile/')) return false
     return !/^apps\/mobile\/(src\/|index\.ts$)/u.test(path) || !/\.(tsx?|jsx?)$/u.test(path)
   })
-  return crypto
-    .createHash('sha256')
+  return NodeCrypto.createHash('sha256')
     .update(lines.join('\n') + phoneOrigin)
     .digest('hex')
 }
