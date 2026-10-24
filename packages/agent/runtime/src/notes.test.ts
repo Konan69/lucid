@@ -75,11 +75,11 @@ const handles = Effect.fn('NotesTest.handles')(function* (path: string) {
   const descriptors = yield* Effect.tryPromise(() => NodeFSP.readdir('/proc/self/fd'))
   const links = yield* Effect.forEach(descriptors, (descriptor) =>
     Effect.tryPromise(() => NodeFSP.readlink(`/proc/self/fd/${descriptor}`)).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       // A descriptor can disappear after enumeration; any other observation failure fails proof.
       Effect.catchIf(
         (error) => descriptorGone(error.cause),
-        () => Effect.succeed(Option.none()),
+        () => Effect.succeedNone,
       ),
     ),
   )
@@ -290,6 +290,7 @@ describe('notes', () => {
         yield* Effect.addFinalizer(() => Scope.close(owner, Exit.void))
         const entered = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>()
         const unavailable = yield* Deferred.make<void>()
+        const testContext = yield* Effect.context()
         const mkdir = yield* Effect.acquireRelease(
           Effect.sync(() => vi.spyOn(NodeFS.promises, 'mkdir')),
           (spy) => Effect.sync(() => spy.mockRestore()),
@@ -300,9 +301,9 @@ describe('notes', () => {
           const lookup = Fiber.getCurrent()
           if (lookup === undefined) expect.fail('mkdir must run inside the store lookup fiber')
           Deferred.doneUnsafe(entered, Effect.succeed(lookup))
-          // This Promise boundary only holds the filesystem receipt; the next open is real SQLite.
+          // Keep test services at this filesystem Promise boundary; the next open is real SQLite.
           // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library, vivid/no-runpromise-nested
-          return Effect.runPromise(
+          return Effect.runPromiseWith(testContext)(
             Deferred.await(unavailable).pipe(
               Effect.andThen(Effect.fail(DirectoryReceiptFailed.make({ directory: path }))),
             ),
@@ -338,6 +339,7 @@ describe('notes', () => {
         const path = yield* directory
         const entered = Latch.makeUnsafe()
         const unavailable = yield* Deferred.make<void>()
+        const testContext = yield* Effect.context()
         const mkdir = yield* Effect.acquireRelease(
           Effect.sync(() => vi.spyOn(NodeFS.promises, 'mkdir')),
           (spy) => Effect.sync(() => spy.mockRestore()),
@@ -345,9 +347,9 @@ describe('notes', () => {
         mkdir.mockImplementationOnce(() => {
           entered.openUnsafe()
           // Only this filesystem receipt is held. The replacement opens real AgentFS and SQLite;
-          // no SDK method is replaced. This public Promise adapter owns test coordination only.
+          // no SDK method is replaced. The Promise adapter retains the captured test services.
           // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library, vivid/no-runpromise-nested
-          return Effect.runPromise(
+          return Effect.runPromiseWith(testContext)(
             Deferred.await(unavailable).pipe(
               Effect.andThen(Effect.fail(DirectoryReceiptFailed.make({ directory: path }))),
             ),

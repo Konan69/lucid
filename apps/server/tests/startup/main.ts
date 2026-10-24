@@ -6,6 +6,7 @@ import * as Schema from 'effect/Schema'
 import { StartupReceipt, StartupRequest } from './protocol.ts'
 
 const entry = new URL('../../src/main.ts', import.meta.url)
+const decodeStartupRequest = Schema.decodeUnknownSync(StartupRequest)
 
 /**
  * Evaluate only the entry's runtime dependencies through the same public tsx loader as main.
@@ -31,7 +32,7 @@ for (const statement of dependencies.program.body) {
 
 /** Close the control channel before real startup so IPC cannot hold the production exit open. */
 NodeProcess.once('message', (message) => {
-  const request = Schema.decodeUnknownSync(StartupRequest)(message)
+  const request = decodeStartupRequest(message)
   StartupRequest.match(request, {
     Run: () => {
       NodeProcess.disconnect()

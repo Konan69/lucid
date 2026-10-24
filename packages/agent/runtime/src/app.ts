@@ -62,6 +62,7 @@ const prepareContext = async (context: AppContext) => {
   const message = modelDelivery(delivery)
   await Effect.runPromise(
     loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The Hono request boundary owns final Notes composition before Flue dispatch.
       Effect.provide(notesLayer),
     ),
   )

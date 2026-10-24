@@ -230,7 +230,7 @@ const noteIndex = Effect.fn('Notes.storeIndex')(function* (store: AgentFS) {
 const readNote = Effect.fn('Notes.storeRead')(function* (store: AgentFS, file: NoteFile) {
   const fs = store.fs
   const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
-  if (Option.isNone(note)) return yield* Effect.fail(NoteMissing.make({ file }))
+  if (Option.isNone(note)) return yield* NoteMissing.make({ file })
   // Persisted text is unknown input: a malformed body must be missing, never a constructor defect.
   return yield* decodeNote({ file, ...note.value }).pipe(
     Effect.mapError(() => NoteMissing.make({ file })),

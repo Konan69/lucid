@@ -17,11 +17,15 @@ class StartupLaunchFailed extends Schema.TaggedError<StartupLaunchFailed>()(
   { title: 'Server startup test process unavailable' },
 ) {}
 
-/** The file scope owns one prepared process and the command that starts its real server entry. */
-class Startup extends Context.Service<
-  Startup,
-  { readonly run: Effect.Effect<number | null, StartupLaunchFailed> }
->()('ServerStartup.test.process') {}
+/** The prepared process exposes only the command that starts its real server entry. */
+interface StartupProcess {
+  readonly run: () => Effect.Effect<number | null, StartupLaunchFailed>
+}
+
+/** The file scope owns one prepared process through its final close receipt. */
+class Startup extends Context.Service<Startup, StartupProcess>()('ServerStartup.test.process') {}
+
+const decodeStartupReceipt = Schema.decodeUnknownResult(StartupReceipt)
 
 /**
  * Dependency loading belongs to scoped layer acquisition, before the assertion's clock starts.
@@ -53,7 +57,7 @@ const startupLayer = Layer.effect(
             },
           )
           child.on('message', (message) => {
-            const receipt = Schema.decodeUnknownResult(StartupReceipt)(message)
+            const receipt = decodeStartupReceipt(message)
             Result.match(receipt, {
               onFailure: () => Deferred.doneUnsafe(ready, Effect.fail(new StartupLaunchFailed())),
               onSuccess: (value) =>
@@ -84,7 +88,8 @@ const startupLayer = Layer.effect(
         }),
     )
     yield* Deferred.await(owned.ready)
-    const run = Effect.gen(function* () {
+    /** Readiness precedes this command; the real entry's exit code is the assertion receipt. */
+    const run = Effect.fn('StartupTest.run')(function* () {
       yield* Effect.try({
         try: () => owned.child.send(StartupRequest.cases.Run.make({})),
         catch: () => new StartupLaunchFailed(),
@@ -104,7 +109,7 @@ layer(startupLayer, { timeout: STARTUP_TIMEOUT_MS })('Server entry', (it) => {
     () =>
       Effect.gen(function* () {
         const startup = yield* Startup
-        expect(yield* startup.run).toBe(78)
+        expect(yield* startup.run()).toBe(78)
       }),
     STARTUP_TIMEOUT_MS,
   )
