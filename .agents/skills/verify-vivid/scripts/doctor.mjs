@@ -3,7 +3,7 @@ import * as NodeFSP from 'node:fs/promises'
 import { alive, ownsPort, command, checkout } from './process.mjs'
 import { owned, sameBoot } from './recovery.mjs'
 import { readPhone, readApk } from './phonewire.mjs'
-import { apkHash } from './apk.mjs'
+import { equivalent } from './apk.mjs'
 
 /** Read-only checks record individual missing resources instead of throwing on partial/crashed
  * state. Network probes run only for listeners owned by this run; Doctor never starts anything. */
@@ -128,10 +128,11 @@ async function phoneIdentity(state, check) {
       hostname: acquired.device.hostname,
       serial: acquired.device.serial,
       sha256: artifact.sha256,
-      head: artifact.head,
+      head: state.head,
+      sourceHead: artifact.head,
     }
     return {
-      ok: artifact.head === state.head && artifact.sha256 === (await apkHash(artifact.file)),
+      ok: await equivalent(state.head, artifact),
       ...phone,
     }
   })
