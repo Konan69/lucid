@@ -1,19 +1,31 @@
 # Watches
 
-Model requirement: needs a real model. Rehearsal proves plumbing only.
+Model requirement: a real model with `EXPLABS_API_KEY` for the server memory/title model and a key for the chosen runtime model. Rehearsal cannot prove this journey.
 
-## Sub-features
+## Drive the journey
 
-A durable Watch receives an actual event, creates a bounded background Run and appears in Feed. Record provider receipt, Watch and Run ids.
+Launch and Doctor on the devbox selected by `devbox-pick`, then run `verify feature watch` and `verify browser watch` with the same explicit run id. Cleanup that run afterwards.
 
-## How to get to it (user POV)
+Launch owns disposable PostgreSQL, Helix and Executor beta.23. Its private catalogue offers Verify Pulse, an authored Integration with one key-backed account, one declared event and one emitting mutation. Executor reads this catalogue through its supported `EXECUTOR_CATALOG_URL` setting. Vivid installs a dedicated app through ordinary Connect. Product source and curation stay unchanged.
 
-Connect a disposable Integration. Ask Vivid to follow an event, then produce a real provider event.
+The HTTP journey signs in with Launch's synthetic Person, finds Verify Pulse and completes Connect through public RPCs. It asks Vivid in a Thread to find events, create a Watch and post each pulse to Feed. The saved conversation must contain successful `find_events` and `watch` calls. The Watch must be Active before the provider operation is called directly on the disposable Executor.
 
-## Driving it with verify-vivid
+WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The browser journey separately connects through Settings, sends the request through the composer, checks the delivered Feed card and reloads it, then clicks Disconnect in Settings.
 
-Run `.agents/skills/verify-vivid/verify feature watch` after Launch and Doctor, then run `verify browser watch`. Both commands currently return blocked before exercising the journey. Inspect `watch/verdict.json` and `browser/watch/verdict.json`; no action transcript, settlement, history or SQL is produced. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
+## Prove removal
 
-## Gotchas
+After the first occurrence, the fixture connects an independent account directly at Executor. This replaces its default account link. Vivid's real removal policy preserves apps with unrelated account links, so removing the Person's Integration leaves an actual emitter available. No event is emitted during this setup gap.
 
-Routines were removed from main. The real Watch workers are mounted. Both recipes are blocked. Full proof needs an implemented journey, disposable Executor authority, a connected Integration with observable incoming events and a publicly reachable callback. This launch points Executor at refused loopback port 1. Conversational list/stop and made-Integration reminders remain unproved; see packages/agent/runtime/src/tools/watches.ts and apps/server/src/watches/reminder.live.test.ts. Never recreate the removed Routine fixture.
+After real Remove, the fixture emits another event. Executor's supported `executor-host export` reads a quiesced copy of only this run's provider volume. The inspector uses Executor's pinned PGlite version, in memory. The private export and inspector stay in scratch and disappear at Cleanup. Evidence includes only the selected safe columns.
+
+Require the Watch to be Stopped with reason `disconnected`, its exact provider subscription to be absent or stopped, the second provider event to exist without a queued delivery, and no new Run. On the old product, the same journey records the Watch still Active and follows the unwanted second delivery to settlement before reporting failure.
+
+## Evidence
+
+The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, Watch id, background Run id, Feed card id and item. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card.
+
+## Boundaries
+
+Executor uses host networking and an explicit loopback HTTP policy. Vivid's `PUBLIC_URL` is the disposable web origin, which proxies the real callback. No public tunnel or production authority is needed. Launch verifies the selected alias against Boat's persistent `BOAT_ID`, rather than a replaceable VM hostname.
+
+This recipe does not prove native clients, conversational list/stop or made-Integration reminders. Those need separate journeys.

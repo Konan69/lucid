@@ -6,6 +6,7 @@ import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
+import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -43,12 +44,12 @@ const missing = {
   deny: 'No connected disposable Integration to produce a pending Approval',
   stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
-  watch: 'No disposable Integration with incoming events',
   library: 'No browser ingestion recipe yet',
   feed: 'No disposable Watch occurrence',
 }
 const recipes = {
   devices: { check: 'devices' },
+  watch: { check: 'watch' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -280,7 +281,7 @@ async function journey(state, feature) {
           AGENT_BROWSER_DEFAULT_TIMEOUT: '120000',
         },
         log: directory + '/' + String(++sequence).padStart(2, '0') + '-' + args[0] + '.json',
-        redactions: [account.password],
+        redactions: [account.password, 'verify-pulse-local'],
         record: (process) => control(state, { action: 'capture', process }),
       },
     )
@@ -321,7 +322,15 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (feature === 'devices') {
+    if (feature === 'watch') {
+      await watchBrowser(state, id, directory, { run, capture })
+      verdict = {
+        ...base,
+        verdict: 'proved',
+        thread: id,
+        scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+      }
+    } else if (feature === 'devices') {
       await deviceBrowser(state, id, directory, { run, capture })
       verdict = {
         ...base,

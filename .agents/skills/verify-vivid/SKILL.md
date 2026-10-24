@@ -43,7 +43,7 @@ Each run owns fresh ports, labelled containers, synthetic Better Auth account, m
 
 The repository workflow uses agent-browser on the selected host with a private namespace, session and profile. Read its installed core skill before use. Set `VIVID_VERIFY_BROWSER` and `VIVID_VERIFY_CHROME` when binaries are elsewhere. Browser processes are recorded from its private PID receipts. Close always runs in finally; cleanup retries retained receipts.
 
-The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. Feed delivery and Watch occurrences remain separate blocked recipes.
+The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. The Watch recipe checks real event delivery and its Feed card. The broader Feed recipe remains separate.
 
 ## Evidence and cleanup
 
@@ -55,7 +55,7 @@ ps -p <captured-pids> -o pid,ppid,args
 docker ps -a --filter label=vivid.verify --format '{{.Names}} {{.Status}} {{.Ports}}'
 ```
 
-Save cleanup audits beside evidence. Confirm captured generations exited, owned ports closed and both exact containers absent. Cleanup validates canonical paths and labels, stops captured generations only, removes private scratch and volumes, and retains evidence. Never kill by pattern. Delete any private remote key file after cleanup.
+Save cleanup audits beside evidence. Confirm captured generations exited, owned ports closed and all labelled containers and their anonymous volumes absent. Cleanup validates canonical paths and labels, stops captured generations only, removes private scratch and volumes, and retains evidence. Never kill by pattern. Delete any private remote key file after cleanup.
 
 ## Skill checks
 

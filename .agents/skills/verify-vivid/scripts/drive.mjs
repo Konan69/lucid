@@ -4,6 +4,7 @@ import { chat, history, rpc, request, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
+import { watch } from './watch.mjs'
 export const features = [
   'first',
   'reload',
@@ -267,15 +268,13 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
-const recipes = { first, reload, tool, question, picture, document, devices }
+const recipes = { first, reload, tool, question, picture, document, devices, watch }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
   approve:
     'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
   deny: 'Needs an actual pending proposal from a connected disposable Integration.',
-  watch:
-    'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   feed: 'Needs a real Watch occurrence. No incoming Integration is configured.',
