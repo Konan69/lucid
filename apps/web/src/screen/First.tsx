@@ -118,7 +118,7 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
           </div>
         </div>
         {/* A computer waiting to be allowed is asked about where the Person starts. */}
-        <DeviceAsk free />
+        <DeviceAsk />
         <Composer
           place={placeOf(me)}
           placeholder={`Message ${name}`}

@@ -35,11 +35,15 @@ Each run owns fresh ports, labelled containers, synthetic Better Auth account, m
 .agents/skills/verify-vivid/verify browser first flue-<id>
 .agents/skills/verify-vivid/verify feature document flue-<id>
 .agents/skills/verify-vivid/verify browser document flue-<id>
+.agents/skills/verify-vivid/verify feature devices flue-<id>
+.agents/skills/verify-vivid/verify browser devices flue-<id>
 ```
 
 `feature all` and `browser all` attempt every mapped feature. Missing browser recipes exit unsuccessfully with `no browser recipe`. Only the requested feature's journey can produce its verdict. HTTP uses Person cookies, public contracts/RPC and the real server gateway. WatchThread proves settlement. Browser uses the composer, Send and reload, records snapshots/screenshots and asserts semantic DOM. Tool checks table columns and rows. Document checks the tool-card element and expanded list item; the Artifact opener is blocked in this web client. Full document proof also requires the HTTP versioning recipe.
 
 The repository workflow uses agent-browser on the selected host with a private namespace, session and profile. Read its installed core skill before use. Set `VIVID_VERIFY_BROWSER` and `VIVID_VERIFY_CHROME` when binaries are elsewhere. Browser processes are recorded from its private PID receipts. Close always runs in finally; cleanup retries retained receipts.
+
+The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. Feed delivery and Watch occurrences remain separate blocked recipes.
 
 ## Evidence and cleanup
 

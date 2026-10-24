@@ -32,6 +32,7 @@ import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '
 import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
 import { Record } from './settings/Record'
+import { Devices } from './settings/Devices'
 import { Rules } from './settings/Rules'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
@@ -47,6 +48,7 @@ const THEMES = [
 /** What is open over Settings. One thing at a time. */
 type Over = Data.TaggedEnum<{
   Nothing: {}
+  Devices: {}
   Zone: {}
   Customise: {}
   Rules: {}
@@ -122,6 +124,13 @@ export function Settings() {
           />
         </Section>
         <VividRow workspace={me.workspace} onCustomise={() => setOver(Over.Customise())} />
+        <Section title="Devices">
+          <Row
+            title="Your computers"
+            detail="Allow or stop allowing Vivid to use a personal computer."
+            onPress={() => setOver(Over.Devices())}
+          />
+        </Section>
         <TextVivid onOpen={() => go.navigate('Texting')} />
         <Live state={settings} loading={<Skeleton rows={3} />}>
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
@@ -143,6 +152,7 @@ export function Settings() {
         </Section>
         <ThisApp />
       </ScrollView>
+      {Over.$is('Devices')(over) && <Devices onClose={close} />}
       {Over.$is('Zone')(over) && <Zone onClose={close} />}
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
       {Over.$is('Rules')(over) && <Rules onClose={close} />}

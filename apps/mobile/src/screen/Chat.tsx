@@ -603,8 +603,6 @@ function Raised({
     return (
       <>
         <RaisedApproval allowing={allowing} dock={dock.value} covered={covered} />
-        {/* A computer waiting to be allowed is asked about here too, once nothing else is up. */}
-        <DeviceAsk free={allowing.free} dock={dock.value} covered={covered} />
       </>
     )
   }
@@ -797,6 +795,7 @@ function Conversation({
         listed={listed && page === 'Conversation'}
         onShare={() => setSharing(true)}
       />
+      <DeviceAsk />
       <View style={{ flex: 1 }}>
         <View ref={wake} style={{ flex: 1 }}>
           <Messages

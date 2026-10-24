@@ -35,7 +35,7 @@ import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { Asks, Hold, useAsks } from './thread/Allow'
+import { Asks, useAsks } from './thread/Allow'
 import { DeviceAsk } from './thread/Device'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
@@ -595,10 +595,9 @@ function Column({
   const footer = useOnward(asked.progress, asked.answering, onward, backward)
   return (
     <>
+      <DeviceAsk />
       {children}
       <Asks allowing={allowing} asked={asked} />
-      {/* A computer waiting to be allowed is asked about here too, once nothing else is up. */}
-      <DeviceAsk free={Hold.$is('Free')(allowing.hold) && asking.Hold.$is('Free')(asked.hold)} />
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.

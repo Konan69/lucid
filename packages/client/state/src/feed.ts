@@ -8,6 +8,7 @@ import {
 } from '@vivid/contracts'
 import { Context, Data, Effect, type Layer, Option, Predicate, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
+import { devicesWaiting, type DeviceList, type DeviceWaiting } from './devices.js'
 import type { FormState } from './display.js'
 
 /**
@@ -39,13 +40,18 @@ export const revisionOf = (item: Waiting): string => JSON.stringify([item.post, 
 
 /** The three stages, each newest first, and how many things wait on the Person. */
 export interface FeedView {
+  readonly computers: ReadonlyArray<DeviceWaiting>
   readonly waiting: ReadonlyArray<Waiting>
   readonly working: ReadonlyArray<Working>
   readonly settled: ReadonlyArray<Settled>
 }
 
 /** Sorts the Feed's items by stage. The server already sends them newest first. */
-export const feedView = (items: FeedResponse['items']): FeedView => ({
+export const feedView = (
+  items: FeedResponse['items'],
+  devices: Option.Option<DeviceList>,
+): FeedView => ({
+  computers: Option.match(devices, { onNone: () => [], onSome: devicesWaiting }),
   waiting: items.filter(FeedItem.guards.Waiting),
   working: items.filter(FeedItem.guards.Working),
   settled: items.filter(FeedItem.guards.Settled),
@@ -74,7 +80,7 @@ export const feedFace = (
 ): 'done' | 'working' | 'waiting' | 'idle' => {
   if (pleased) return 'done'
   if (view.working.length > 0) return 'working'
-  if (view.waiting.length > 0) return 'waiting'
+  if (view.waiting.length > 0 || view.computers.length > 0) return 'waiting'
   return 'idle'
 }
 

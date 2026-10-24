@@ -483,8 +483,14 @@ async function dispatch(input) {
   if (input.action === 'capture') {
     if (cleaning || !state.ready) throw new Error('Verification is not ready for workers')
     if (!(await alive(input.process))) return { captured: false, alreadyGone: true }
-    if ((await NodeFSP.readlink('/proc/' + input.process.pid + '/cwd')) !== root)
-      throw new Error('Worker cwd is not this worktree')
+    // A fast browser CLI may exit between liveness and cwd reads. Recheck its generation before
+    // accepting the receipt; disappearance needs no cleanup and PID reuse grants no authority.
+    const cwd = await NodeFSP.readlink('/proc/' + input.process.pid + '/cwd').catch((error) => {
+      if (['ENOENT', 'ESRCH'].includes(error.code)) return null
+      throw error
+    })
+    if (!(await alive(input.process))) return { captured: false, alreadyGone: true }
+    if (cwd !== root) throw new Error('Worker cwd is not this worktree')
     state.commands[input.process.pid] = input.process
     await save()
     return { captured: true }

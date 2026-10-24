@@ -46,7 +46,6 @@ import {
   ThreadId,
   Workspace,
   type Device,
-  DEVICE_ASKING_MILLIS,
   DeviceListResponse,
   DeviceRequest,
   CopySignInRequest,
@@ -586,23 +585,71 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    it.effect('a waiting computer asks only while its app keeps enrolling', () =>
+    /** Closing the first registry discards all process memory while retaining the actual device row. */
+    it.effect('pending requests survive deadlines and restarts until explicit Allow or Deny', () =>
       Effect.gen(function* () {
         const ada = yield* somebody(farFuture)
-        const { device, installation } = yield* enrolled(ada, 'Laptop')
-        const asking = computerHandlers.ListDevices().pipe(
-          as(ada),
-          Effect.map((list) => list.asking),
-        )
-        expect(yield* asking).toEqual([device.id])
-        yield* TestClock.adjust(DEVICE_ASKING_MILLIS - 1)
-        expect(yield* asking).toEqual([device.id])
-        // The app was closed: a minute without enrolling and it is no longer asked about.
-        yield* TestClock.adjust(1)
-        expect(yield* asking).toEqual([])
-        // The same app enrolling again is asking again.
-        yield* computerHandlers.EnrolDevice({ installation, name: 'Laptop' }).pipe(as(ada))
-        expect(yield* asking).toEqual([device.id])
+        const persisted = yield* Effect.gen(function* () {
+          const { device } = yield* enrolled(ada, 'Laptop')
+          const watch = yield* watchingDevices(ada)
+          expect(watch.initial).toEqual({ devices: [device], asking: [device.id] })
+          const notices = yield* (yield* PgClient).listen(CHANNEL)
+          yield* TestClock.adjust('61 seconds')
+          expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(watch.initial)
+          yield* silent(notices)
+          expect(yield* Queue.size(watch.values)).toBe(0)
+          return watch.initial
+        }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+        yield* TestClock.adjust('1 day')
+        yield* Effect.gen(function* () {
+          const watch = yield* watchingDevices(ada)
+          expect(watch.initial).toEqual(persisted)
+          expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
+          expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(persisted)
+        }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+        const ben = yield* somebody(farFuture)
+        const current = yield* enrolled(ben, 'Current computer')
+        yield* computerHandlers.AllowDevice({ id: current.device.id }).pipe(as(ben))
+        const link = yield* listen(ben, current.device, current.installation)
+        const allowed = yield* enrolled(ben, 'Allowed later')
+        const denied = yield* enrolled(ben, 'Denied later')
+        yield* TestClock.adjust('61 seconds')
+        expect(
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
+        ).toEqual([
+          ['Allowed later', 'Pending', 'Offline'],
+          ['Current computer', 'Allowed', 'Connected'],
+          ['Denied later', 'Pending', 'Offline'],
+        ])
+        yield* computerHandlers.RevokeDevice({ id: denied.device.id }).pipe(as(ben))
+        expect(
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
+        ).toEqual([
+          ['Allowed later', 'Pending', 'Offline'],
+          ['Current computer', 'Allowed', 'Connected'],
+          ['Denied later', 'Revoked', 'Offline'],
+        ])
+        yield* computerHandlers.AllowDevice({ id: allowed.device.id }).pipe(as(ben))
+        expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
+        const decided = yield* computerHandlers.ListDevices().pipe(as(ben))
+        expect(
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
+        ).toEqual([
+          ['Allowed later', 'Allowed', 'Offline'],
+          ['Current computer', 'Revoked', 'Offline'],
+          ['Denied later', 'Revoked', 'Offline'],
+        ])
+        yield* TestClock.adjust('1 day')
+        yield* Effect.gen(function* () {
+          yield* computerHandlers
+            .EnrolDevice({ installation: allowed.installation, name: 'Allowed later' })
+            .pipe(as(ben))
+          yield* computerHandlers
+            .EnrolDevice({ installation: denied.installation, name: 'Denied later' })
+            .pipe(as(ben))
+          expect(yield* computerHandlers.ListDevices().pipe(as(ben))).toEqual(decided)
+          expect((yield* watchingDevices(ben)).initial).toEqual(decided)
+        }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 

@@ -1,5 +1,5 @@
 import { DisplaySource, type FeedCardId, type FeedPost, type ThreadId } from '@vivid/contracts'
-import { feed, greetingAt, makeWhen, thisReader } from '@vivid/state'
+import { feed, greetingAt, makeWhen, thisReader, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -7,7 +7,8 @@ import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
-import { LiveState, useLive, useLiveData } from '../data/live'
+import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
+import { Computer } from './chat/Device'
 import { Display } from '../parts/display'
 import { useTheme } from '../theme'
 import { Composer } from '../ui/Composer'
@@ -51,6 +52,7 @@ const ANSWER = { height: 40, radius: 12 } as const
 
 /** The Feed's rows: a card that waits, Vivid's work, and the one block of what is handled. */
 type Row = Data.TaggedEnum<{
+  Computer: { readonly waiting: DeviceWaiting }
   Waiting: { readonly item: feed.Waiting }
   Working: { readonly item: feed.Working }
   Handled: { readonly items: ReadonlyArray<feed.Settled> }
@@ -76,7 +78,7 @@ export function Feed() {
   const insets = useSafeAreaInsets()
   const state = useLive(data.live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
-  const view = feed.feedView(items)
+  const view = feed.feedView(items, useLiveValue(data.live.devices))
   const pleased = usePleased((now) => now.pleased)
   const presses = usePresses((now) => now.presses)
   const [hello] = useState(() => greetingAt(new Date().getHours()))
@@ -90,10 +92,11 @@ export function Feed() {
     (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
   )
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
-  const standing = feed.standingOf(shown.length)
+  const standing = feed.standingOf(view.computers.length + shown.length)
   // Every waiting card stays in the list, a folded one drawn as nothing (`Waiting`), so what the
   // Person chose in its display is still there if the send fails and the card comes back.
   const rows: ReadonlyArray<Row> = [
+    ...view.computers.map((waiting) => Row.Computer({ waiting })),
     ...view.waiting.map((item) => Row.Waiting({ item })),
     ...view.working.map((item) => Row.Working({ item })),
     ...(view.settled.length > 0 ? [Row.Handled({ items: view.settled })] : []),
@@ -139,6 +142,7 @@ export function Feed() {
       <FlatList
         data={rows}
         keyExtractor={Row.$match({
+          Computer: ({ waiting }) => `computer:${waiting.device.id}`,
           // A new post is a new row: the display's own choices start again with it.
           Waiting: ({ item }) => `${item.card}:${feed.revisionOf(item)}`,
           Working: ({ item }) => item.card,
@@ -149,6 +153,7 @@ export function Feed() {
         viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
           Row.$match(row, {
+            Computer: ({ waiting }) => <Computer waiting={waiting} now={now} />,
             Handled: ({ items: settled }) => (
               <Handled items={settled} now={now} onOpen={(thread) => openThread(thread)} />
             ),
