@@ -12,10 +12,12 @@ import { Check } from 'lucide-react'
 import { Option } from 'effect'
 import { useState } from 'react'
 import { answer, close, pressOn, seenWhenShown, usePleased, usePresses } from '../data/feed'
-import { live, LiveState, useLive, useLiveValue } from '../data/live'
+import { live, LiveState, useLive } from '../data/live'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
+import { Live } from '../ui/Live'
+import { SkeletonList } from '../ui/skeleton'
 import { Card, Answers } from './feed/Card'
 import { Computer } from './feed/Device'
 import { Composer } from './thread/Composer'
@@ -45,24 +47,28 @@ const today = new Intl.DateTimeFormat(thisReader().locale, {
  */
 export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId) => void }) {
   const state = useLive(live.feed)
-  const items = LiveState.$is('Ready')(state) ? state.value.items : []
-  const devices = useLiveValue(live.devices)
-  return <FeedView me={me} items={items} devices={devices} onOpen={onOpen} />
+  const devices = useLive(live.devices)
+  return <FeedView me={me} state={state} devices={devices} onOpen={onOpen} />
 }
 
-/** The Feed drawn from its items: everything above, with no query of its own. */
+/** Draws each query independently so one failure cannot hide the other query's cards. */
 export function FeedView({
   me,
-  items,
+  state,
   devices,
   onOpen,
 }: {
   me: MeResponse
-  items: (typeof FeedResponse.Type)['items']
-  devices: Option.Option<DeviceList>
+  state: LiveState<typeof FeedResponse.Type>
+  devices: LiveState<DeviceList>
   onOpen: (thread: ThreadId) => void
 }) {
-  const view = feed.feedView(items, devices)
+  // Group the available cards independently; each query keeps its own loading or failure UI.
+  const items = LiveState.$is('Ready')(state) ? state.value.items : []
+  const view = feed.feedView(
+    items,
+    LiveState.$is('Ready')(devices) ? Option.some(devices.value) : Option.none(),
+  )
   const pleased = usePleased((now) => now.pleased)
   const { name } = useAppearance()
   // Read once: a greeting that changed while someone was looking at it would be a glitch.
@@ -92,9 +98,12 @@ export function FeedView({
             <h1 className="mt-2.5 font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
               {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
             </h1>
-            <p className="mt-3 text-dialog text-pretty text-ink-2">
-              <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
-            </p>
+            {/* A partial answer cannot say that everything else is handled or nothing needs you. */}
+            {LiveState.$is('Ready')(state) && LiveState.$is('Ready')(devices) && (
+              <p className="mt-3 text-dialog text-pretty text-ink-2">
+                <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
+              </p>
+            )}
           </div>
           {/* On a narrow screen Vivid's face heads the page; on a wide one it heads its own column. */}
           <Alive state={feed.feedFace(view, pleased)} size={56} className="shrink-0 lg:hidden" />
@@ -108,11 +117,17 @@ export function FeedView({
         </div>
 
         <div className="mt-6 flex min-w-0 flex-col lg:col-span-3">
+          <Live state={devices} loading={<SkeletonList of="row" count={1} />}>
+            {() => null}
+          </Live>
           {view.computers.map((waiting) => (
             <div key={waiting.device.id} className="pb-3">
               <Computer waiting={waiting} now={now} />
             </div>
           ))}
+          <Live state={state} loading={<SkeletonList of="row" count={3} />}>
+            {() => null}
+          </Live>
           {view.waiting.map((item) => (
             <Waiting
               // A new post is a new card: the display's own choices start again with it.

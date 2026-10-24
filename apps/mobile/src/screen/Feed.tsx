@@ -1,5 +1,18 @@
-import { DisplaySource, type FeedCardId, type FeedPost, type ThreadId } from '@vivid/contracts'
-import { feed, greetingAt, makeWhen, thisReader, type DeviceWaiting } from '@vivid/state'
+import {
+  DisplaySource,
+  type FeedCardId,
+  type FeedPost,
+  type FeedResponse,
+  type ThreadId,
+} from '@vivid/contracts'
+import {
+  feed,
+  greetingAt,
+  makeWhen,
+  thisReader,
+  type DeviceList,
+  type DeviceWaiting,
+} from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -7,13 +20,14 @@ import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
-import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
+import { LiveState, useLive, useLiveData } from '../data/live'
 import { Computer } from './feed/Device'
 import { Display } from '../parts/display'
 import { useTheme } from '../theme'
 import { Composer } from '../ui/Composer'
+import { Live } from '../ui/Live'
 import { Screen } from '../ui/Screen'
-import { EDGE, Face, Label } from '../ui/ui'
+import { EDGE, Face, Label, Skeleton } from '../ui/ui'
 import { useGo, useMe, useOpenThread } from '../workspace'
 import { useStart } from './Home'
 
@@ -78,8 +92,13 @@ export function Feed() {
   const start = useStart()
   const insets = useSafeAreaInsets()
   const state = useLive(data.live.feed)
+  const devices = useLive(data.live.devices)
+  // Group the available cards independently; each query keeps its own loading or failure UI.
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
-  const view = feed.feedView(items, useLiveValue(data.live.devices))
+  const view = feed.feedView(
+    items,
+    LiveState.$is('Ready')(devices) ? Option.some(devices.value) : Option.none(),
+  )
   const pleased = usePleased((now) => now.pleased)
   const presses = usePresses((now) => now.presses)
   const [hello] = useState(() => greetingAt(new Date().getHours()))
@@ -118,26 +137,6 @@ export function Feed() {
     { viewabilityConfig: { viewAreaCoveragePercentThreshold: 80 }, onViewableItemsChanged: seen },
   ])
 
-  const head = (
-    <View style={{ paddingTop: 24, paddingBottom: 16 }}>
-      <Label size="label" tone="ink-3">
-        {date}
-      </Label>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 8 }}>
-        <Label accessibilityRole="header" size="opening" style={{ flex: 1 }}>
-          {first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
-        </Label>
-        <Face size={56} mood={LOOK[feed.feedFace(view, pleased)]} />
-      </View>
-      <Label size="body" tone="ink-2" style={{ marginTop: 10 }}>
-        <Label size="body" style={{ fontWeight: '600' }}>
-          {standing.lead}
-        </Label>
-        {standing.rest.length > 0 ? ` ${standing.rest}` : ''}
-      </Label>
-    </View>
-  )
-
   return (
     <Screen>
       <FlatList
@@ -151,7 +150,16 @@ export function Feed() {
           Working: ({ item }) => item.card,
           Handled: () => 'handled',
         })}
-        ListHeaderComponent={head}
+        ListHeaderComponent={
+          <Head
+            date={date}
+            greeting={first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
+            look={LOOK[feed.feedFace(view, pleased)]}
+            standing={standing}
+            state={state}
+            devices={devices}
+          />
+        }
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 12 }}
         viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
@@ -205,6 +213,52 @@ export function Feed() {
         />
       </View>
     </Screen>
+  )
+}
+
+/** The greeting and query status stay above the cards that have already arrived. */
+function Head({
+  date,
+  greeting,
+  look,
+  standing,
+  state,
+  devices,
+}: {
+  date: string
+  greeting: string
+  look: (typeof LOOK)[keyof typeof LOOK]
+  standing: ReturnType<typeof feed.standingOf>
+  state: LiveState<typeof FeedResponse.Type>
+  devices: LiveState<DeviceList>
+}) {
+  return (
+    <View style={{ paddingTop: 24, paddingBottom: 16 }}>
+      <Label size="label" tone="ink-3">
+        {date}
+      </Label>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 8 }}>
+        <Label accessibilityRole="header" size="opening" style={{ flex: 1 }}>
+          {greeting}
+        </Label>
+        <Face size={56} mood={look} />
+      </View>
+      {/* A partial answer cannot say that everything else is handled or nothing needs you. */}
+      {LiveState.$is('Ready')(state) && LiveState.$is('Ready')(devices) && (
+        <Label size="body" tone="ink-2" style={{ marginTop: 10 }}>
+          <Label size="body" style={{ fontWeight: '600' }}>
+            {standing.lead}
+          </Label>
+          {standing.rest.length > 0 ? ` ${standing.rest}` : ''}
+        </Label>
+      )}
+      <Live state={devices} loading={<Skeleton rows={1} />}>
+        {() => null}
+      </Live>
+      <Live state={state} loading={<Skeleton rows={3} />}>
+        {() => null}
+      </Live>
+    </View>
   )
 }
 
