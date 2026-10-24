@@ -141,7 +141,7 @@ try {
   if (action === 'launch') await launch()
   else if (action === 'help')
     console.log(
-      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
@@ -172,6 +172,28 @@ try {
             {
               heavy: true,
               log: state.evidence + '/feature-command.json',
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      else if (action === 'phone')
+        console.log(
+          await command(
+            [
+              'flock',
+              '-n',
+              NodeOS.homedir() + '/.cache/vivid-android/lock',
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/phone.mjs',
+              state.evidence + '/state.json',
+              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'thread',
+            ],
+            {
+              heavy: true,
+              log: state.evidence + '/phone-command.json',
+              env: { ...process.env, VIVID_VERIFY_DEVBOX: state.devbox },
               record: (process) => control(state, { action: 'capture', process }),
             },
           ),

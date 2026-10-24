@@ -32,6 +32,6 @@ For Thread coexistence, the recipe calls the real `AskInput` RPC with the dispos
 
 The supervisor supports capture and cleanup, with no server-restart operation. `scope.json` records that limitation. The database-backed device suite must separately prove time beyond the former deadline and reconstruction with a fresh registry. Reload alone does not prove either fact.
 
-Home has no public structured-question entry point. This journey checks its pending device section, while Thread checks coexistence with a question. Phone and desktop native controls require separate device runs. A Linux devbox cannot run an iOS simulator, and this selected box has no Android emulator installed.
+Home has no public structured-question entry point. This journey checks its pending device section, while Thread checks coexistence with a question. Phone and desktop native controls require separate device runs. A Linux devbox cannot run an iOS simulator. The Android provisioner and idle [phone journey](phone.md) do not yet drive device permission cards.
 
 Device permission cards on Feed do not establish general Feed delivery, Watch occurrences, reminders, or external Integration callbacks. The [Feed](feed.md) and [Watch](watch.md) recipes retain their blocked verdicts.

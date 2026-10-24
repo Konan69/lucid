@@ -45,6 +45,10 @@ The repository workflow uses agent-browser on the selected host with a private n
 
 The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. Feed delivery and Watch occurrences remain separate blocked recipes.
 
+## Android phone
+
+For Android work, read [the phone feature](features/phone.md) and [Android setup](references/android.md). From the PC run `verify android provision <devbox-pick alias>`. It rebuilds empty snapshot-excluded SDK and AVD directories, boots headless and reports the observed serial. In the same host's proof checkout run Launch, Doctor, `verify phone thread <run>`, Doctor, then Cleanup. The phone command uses the existing synthetic account and `adb reverse` to this run's server. Its snapshots, screenshots, APK checksum and cleanup receipts stay under `<evidence>/phone/`. It proves idle navigation only.
+
 ## Evidence and cleanup
 
 Evidence stays under `.cache/verify/flue-…/`. Include the feature file, exact head, working-tree status, model kind/id, host, per-feature HTTP/browser verdicts and evidence directory in the PR body. A screenshot proves its visible state only. Failed, blocked and plumbing-only runs remain unverified. For a blocked feature write `blocked: <reason>` and make unblocking its recipe the next task. A parent must obtain the different-family gate at the exact pushed head.

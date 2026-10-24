@@ -2,6 +2,7 @@ import * as NodeFSP from 'node:fs/promises'
 import { root, boot, alive, command, json, cache, dependencyLink } from './process.mjs'
 import { control } from './socket.mjs'
 import { remoteCleanup } from './remote.mjs'
+import { phoneCleanup } from './phonecleanup.mjs'
 
 /** The retained manifest grants cleanup authority only for canonical paths and the exact run name.
  * A forged/corrupt record cannot direct deletion at another directory, container or the app DB. */
@@ -149,6 +150,7 @@ export async function recover(state) {
       container = 'removed'
     }
   }
+  await phoneCleanup(state)
   await remoteCleanup(state, (argv, options) =>
     command(argv, {
       ...options,

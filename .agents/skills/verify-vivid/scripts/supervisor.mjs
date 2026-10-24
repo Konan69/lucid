@@ -18,6 +18,7 @@ import {
 } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { remoteCleanup } from './remote.mjs'
+import { phoneCleanup } from './phonecleanup.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -438,6 +439,7 @@ async function clean() {
       }
     }
   }
+  await phoneCleanup(state)
   await remoteCleanup(state, run)
   const browserReceipt = await NodeFSP.readFile(
     state.scratch + '/browser-cleanup.json',

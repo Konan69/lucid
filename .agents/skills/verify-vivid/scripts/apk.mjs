@@ -1,7 +1,9 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeCrypto from 'node:crypto'
+import * as NodeModule from 'node:module'
 import { command, root, json } from './process.mjs'
+import { readApk, required } from './phonewire.mjs'
 
 export const phoneOrigin = 'http://127.0.0.1:19278'
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
@@ -59,7 +61,7 @@ export async function apk(state) {
     throw error
   })
   if (text !== null) {
-    const prior = JSON.parse(text)
+    const prior = required(readApk(text))
     if (prior.fingerprint === fingerprint && prior.sha256 === (await apkHash(target)))
       return { ...prior, mode: 'reuse' }
     throw new Error('APK cache receipt mismatch; retain evidence and inspect the cached artifact')
@@ -87,10 +89,10 @@ export async function apk(state) {
   })
   let mode
   if (base !== null) {
-    const artifact = JSON.parse(base)
+    const artifact = required(readApk(base))
     if ((await apkHash(artifact.file)) !== artifact.sha256)
       throw new Error('Native APK checksum mismatch')
-    await repack(run, app, artifact.file, target)
+    await repack(run, app, artifact, target)
     mode = 'repack'
   } else {
     await NodeFSP.rm(app + '/android', { recursive: true, force: true })
@@ -111,6 +113,10 @@ export async function apk(state) {
       app + '/android',
     )
     await NodeFSP.copyFile(app + '/android/app/build/outputs/apk/release/app-release.apk', target)
+    await NodeFSP.copyFile(
+      app + '/android/app/debug.keystore',
+      directory + '/' + fingerprint + '.keystore',
+    )
     mode = 'build'
   }
   const result = {
@@ -152,7 +158,8 @@ async function repack(run, app, base, target) {
     'bundle',
     app,
   )
-  const hermes = app + '/node_modules/react-native/sdks/hermesc/linux64-bin/hermesc'
+  const react = NodeModule.createRequire(app + '/node_modules/react-native/package.json')
+  const hermes = react.resolve('hermes-compiler/hermesc/linux64-bin/hermesc')
   await run([hermes, '-O', '-emit-binary', '-out', bundle + '.hbc', bundle], 'hermes', app)
   await run(
     [
@@ -164,7 +171,7 @@ with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as ds
   if entry.filename.startswith('META-INF/') or entry.filename == 'assets/index.android.bundle': continue
   dst.writestr(entry,src.read(entry.filename))
  dst.write(sys.argv[2], 'assets/index.android.bundle')`,
-      base,
+      base.file,
       bundle + '.hbc',
       target,
     ],
@@ -179,7 +186,7 @@ with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as ds
       sdk + '/build-tools/36.0.0/apksigner',
       'sign',
       '--ks',
-      cache + '/source/apps/mobile/android/app/debug.keystore',
+      cache + '/apks/' + base.fingerprint + '.keystore',
       '--ks-pass',
       'pass:android',
       '--key-pass',
