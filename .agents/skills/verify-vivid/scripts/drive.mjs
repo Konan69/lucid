@@ -7,6 +7,7 @@ import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { privacyBlocked } from './privacy.mjs'
+import { feed } from './feed.mjs'
 export const features = [
   'first',
   'reload',
@@ -281,6 +282,7 @@ const recipes = {
   picture,
   document,
   devices,
+  feed,
   reading,
   settings: settingsProof,
 }
@@ -295,7 +297,6 @@ const blocked = {
     'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
-  feed: 'Needs a real Watch occurrence. No incoming Integration is configured.',
 }
 const realBlocked = {
   ...blocked,

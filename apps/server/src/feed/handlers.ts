@@ -32,7 +32,7 @@ export const feedHandlers = {
         Effect.fail(new Forbidden({ message: 'Posting to the Feed needs an acting Run.' })),
       ),
     )
-    // In a conversation the Person is already reading the reply; the Feed is for work they are not.
+    // Conversations show their reply in the Thread; only Background work composes a Feed post.
     const thread = yield* requireThread(auth.threadId, auth.person.id)
     if (thread.place !== 'Background')
       return yield* new Forbidden({

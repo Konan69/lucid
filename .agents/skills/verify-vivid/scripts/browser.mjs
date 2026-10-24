@@ -10,6 +10,7 @@ import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
 import { privacyBlocked } from './privacy.mjs'
+import { feedBrowser } from './feedbrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -49,12 +50,12 @@ const missing = {
   code: 'No disposable Person Computer authority',
   watch: 'No disposable Integration with incoming events',
   library: 'No browser ingestion recipe yet',
-  feed: 'No disposable Watch occurrence',
 }
 const recipes = {
   reading: { check: 'reading' },
   settings: { check: 'settings' },
   devices: { check: 'devices' },
+  feed: { check: 'feed' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -73,7 +74,28 @@ const recipes = {
     check: 'document',
   },
 }
-const clientRecipes = { devices: deviceBrowser, reading: readBrowser, settings: settingsBrowser }
+const specialRecipes = {
+  devices: {
+    drive: deviceBrowser,
+    scope:
+      'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+  },
+  feed: {
+    drive: feedBrowser,
+    scope:
+      'Ordinary Conversation Feed only; see scope.json. Watch delivery and native controls remain unproved.',
+  },
+  reading: {
+    drive: readBrowser,
+    scope:
+      'One web session, 52 empty Threads, repeat suppression, eviction after 50 remembered standings, offscreen update and report on return. See scope.json for blocked subcases.',
+  },
+  settings: {
+    drive: settingsBrowser,
+    scope:
+      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
+  },
+}
 for (const name of features)
   assert.ok(recipes[name] || missing[name], 'Unmapped browser feature ' + name)
 
@@ -328,15 +350,13 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (clientRecipes[feature]) {
-      const result = await clientRecipes[feature](state, id, directory, { run, capture })
+    if (feature in specialRecipes) {
+      await specialRecipes[feature].drive(state, id, directory, { run, capture })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
-        scope:
-          'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
-        ...result,
+        scope: specialRecipes[feature].scope,
       }
     } else {
       if (existing) {

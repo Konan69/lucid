@@ -21,6 +21,7 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { loadSummaries } from '../auth/access.ts'
+import { announceFeed } from '../feed/changes.ts'
 import { personTable } from '../auth/tables.ts'
 import {
   Database,
@@ -338,7 +339,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
           .orderBy(asc(runs.turn))
           .limit(1)
         if (answering !== undefined) return TurnReservation.cases.Busy.make({ person: answering })
-        yield* tx
+        const inserted = yield* tx
           .insert(runs)
           .values({
             id: input.id,
@@ -350,6 +351,8 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
             startedAt: now,
           })
           .onConflictDoNothing({ target: runs.id })
+          .returning({ id: runs.id })
+        if (inserted.length > 0) yield* announceFeed(tx, [input.threadId])
         const [recorded] = yield* tx.select().from(runs).where(eq(runs.id, input.id))
         if (recorded === undefined)
           return yield* new DatabaseFailure({ message: 'Reserved Run not found' })
@@ -376,17 +379,22 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
 const makeAdmitted = (database: DatabaseService) =>
   Effect.fn('RunStore.admitted')(function* (receipt: Admitted) {
     const now = yield* Clock.currentTimeMillis
-    yield* database.run(
-      database
-        .update(runs)
-        .set({
-          admittedAt: now,
-          receipt: yield* encodeReceipt(receipt),
-          state: 'working',
-          finishedAt: null,
-          failureReason: null,
-        })
-        .where(and(eq(runs.id, receipt.runId), sql`${runs.admittedAt} is null`)),
+    yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .update(runs)
+          .set({
+            admittedAt: now,
+            receipt: yield* encodeReceipt(receipt),
+            state: 'working',
+            finishedAt: null,
+            failureReason: null,
+          })
+          .where(and(eq(runs.id, receipt.runId), sql`${runs.admittedAt} is null`))
+          .returning({ thread: runs.threadId })
+        const row = rows[0]
+        if (row !== undefined) yield* announceFeed(tx, [row.thread])
+      }),
     )
   })
 
@@ -406,14 +414,29 @@ const makeEnd = (database: DatabaseService) =>
     })
     // One conditional update: only the caller that moves the Run out of `working` gets `true`, so
     // a settlement observed twice (a restart, a repeated delivery) acts once.
-    const rows = yield* database.run(
-      database
-        .update(runs)
-        .set({ ...columns, finishedAt: now })
-        .where(and(eq(runs.id, id), eq(runs.state, 'working')))
-        .returning({ id: runs.id }),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const [run] = yield* tx.select({ thread: runs.threadId }).from(runs).where(eq(runs.id, id))
+        if (run === undefined) return false
+        // Start and Thread deletion lock the parent first; settlement must keep that lock order.
+        yield* tx
+          .select({ id: threads.id })
+          .from(threads)
+          .where(eq(threads.id, run.thread))
+          .for('update')
+        const rows = yield* tx
+          .update(runs)
+          .set({ ...columns, finishedAt: now })
+          .where(and(eq(runs.id, id), eq(runs.state, 'working')))
+          .returning({ thread: runs.threadId })
+        const row = rows[0]
+        if (row === undefined) return false
+        // Settlement dates the Feed's history even when admission failed before delivery's touch.
+        yield* tx.update(threads).set({ updatedAt: now }).where(eq(threads.id, row.thread))
+        yield* announceFeed(tx, [row.thread])
+        return true
+      }),
     )
-    return rows.length > 0
   })
 
 /** The query remains lazy and repeatable while the service exposes an Effect value. */

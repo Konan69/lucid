@@ -3,6 +3,7 @@ import { BrowserAction, DeviceAnswer } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { chromium, type ChromiumPage } from './chromium.ts'
@@ -37,6 +38,12 @@ const decodeWindow = Schema.decodeUnknownEffect(
   Schema.Struct({ result: Schema.Struct({ objectId: Schema.String }) }),
 )
 const decodeListeners = Schema.decodeUnknownEffect(Listeners)
+const decodeReady = Schema.decodeUnknownEffect(
+  Schema.Struct({ result: Schema.Struct({ value: Schema.Literal('ready') }) }),
+)
+const decodeInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ result: Schema.Struct({ value: Schema.Literals(['keydown', 'mousedown']) }) }),
+)
 const decodeKept = Schema.decodeUnknownEffect(
   Schema.Struct({
     result: Schema.Struct({
@@ -91,19 +98,27 @@ const HEARING = `<!doctype html>
 </script>`
 
 /**
- * A page Vivid's scripts never hear from. It says it has no focus, and for each of the three
- * events the scripts wait for it has a listener of its own, added first and on the way down, that
- * stops the event there: the scripts' listeners are added and never called. That is the state a
- * dropped press leaves a page in, made on purpose: every wait runs out, which is when a listener
- * used to stay behind.
+ * This page receives real input but stops it before the executor's receipt listener. Its own
+ * EventTarget reports each stopped event through a Promise awaited over Runtime.evaluate.
+ * The proof can then press Stop without guessing when dispatch happened or changing Chromium's
+ * focus implementation. Cancellation must remove the executor's listeners on the same document.
  */
 const DEAF = `<!doctype html>
 <title>Deaf</title>
 <button>Send</button>
 <script>
-  document.hasFocus = () => false
-  for (const event of ["focus", "keydown", "mousedown"])
-    window.addEventListener(event, (heard) => heard.stopImmediatePropagation(), true)
+  const input = new EventTarget()
+  function nextInput(event) {
+    globalThis.receipt = new Promise((resolve) => {
+      input.addEventListener(event, () => resolve(event), { once: true })
+    })
+    return "ready"
+  }
+  for (const event of ["keydown", "mousedown"])
+    window.addEventListener(event, (heard) => {
+      heard.stopImmediatePropagation()
+      input.dispatchEvent(new Event(heard.type))
+    }, true)
 </script>`
 
 const enter = BrowserAction.cases.Press.make({ key: 'Enter' })
@@ -124,7 +139,11 @@ const acting = Effect.fn('ControlProof.acting')(function* (html: string) {
     const now = yield* Clock.currentTimeMillis
     return yield* control.execute({ action, expiresAt: now + 60_000 })
   })
-  return { page, act }
+  // The adapter owns one page. Stop uses that page's public tab identity.
+  const stop = Effect.sync(() => {
+    for (const tab of page.browser.state().tabs) control.stop(tab.tab)
+  })
+  return { page, act, stop }
 })
 
 /** The action was carried out, and the page it left says these words. */
@@ -156,24 +175,46 @@ describe.skipIf(!live)("what Vivid's actions leave in a real page", () => {
   )
 
   it.live(
-    'keys and clicks a page never hears, again and again on one document, leave its window as it was',
+    'stopping keys and clicks with no input receipt leaves the same document clean',
     () =>
       Effect.gen(function* () {
-        const { page, act } = yield* acting(DEAF)
+        const { page, act, stop } = yield* acting(DEAF)
         const before = yield* left(page)
         expect(before.listeners).toEqual({
-          'focus down': 1,
           'keydown down': 1,
           'mousedown down': 1,
         })
 
-        // Each action waits out the page's focus (two seconds) and then its press (half a
-        // second): the two waits that used to leave a listener each, and `arm` a third.
-        for (const action of [enter, send, enter, send, enter, send]) {
-          expect(yield* act(action)).toEqual(Option.some(DeviceAnswer.cases.Failed.make({})))
+        for (const { action, event } of [
+          { action: enter, event: 'keydown' },
+          { action: send, event: 'mousedown' },
+          { action: enter, event: 'keydown' },
+          { action: send, event: 'mousedown' },
+          { action: enter, event: 'keydown' },
+          { action: send, event: 'mousedown' },
+        ]) {
+          yield* page
+            .send('Runtime.evaluate', {
+              expression: `nextInput(${JSON.stringify(event)})`,
+              returnByValue: true,
+            })
+            .pipe(Effect.flatMap(decodeReady))
+          const pending = yield* act(action).pipe(Effect.forkScoped)
+          const received = yield* page
+            .send('Runtime.evaluate', {
+              expression: 'globalThis.receipt',
+              awaitPromise: true,
+              returnByValue: true,
+            })
+            .pipe(Effect.flatMap(decodeInput))
+          expect(received.result.value).toBe(event)
+          yield* stop
+          expect(yield* Fiber.join(pending)).toEqual(
+            Option.some(DeviceAnswer.cases.Refused.make({ reason: 'Stopped' })),
+          )
           expect(yield* left(page)).toEqual(before)
         }
       }),
-    120_000,
+    60_000,
   )
 })
