@@ -1,7 +1,7 @@
-import { createRequire } from 'node:module'
+import * as NodeModule from 'node:module'
 import { defineProject } from 'vitest/config'
 
-const require = createRequire(import.meta.url)
+const require = NodeModule.createRequire(import.meta.url)
 
 /** Use Expo's shipped web fetch adapter to exercise real HTTP without a native runtime. */
 export default defineProject({

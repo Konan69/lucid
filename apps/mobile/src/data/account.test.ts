@@ -1,6 +1,6 @@
-import { createServer } from 'node:http'
+import * as NodeHttp from 'node:http'
 import { expect, it } from '@effect/vitest'
-import { Effect, Fiber, Option, Queue, Redacted, Result } from 'effect'
+import { Effect, Fiber, Option, Queue, Redacted, Result, Predicate } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { signOut } from './account'
 import { makeCustody, Forgetting, Session } from './session'
@@ -15,7 +15,7 @@ const account = Effect.fn('AccountTest.account')(function* (statuses: ReadonlyAr
   const failed = yield* Queue.unbounded<string>()
   const server = yield* Effect.acquireRelease(
     Effect.sync(() =>
-      createServer((_request, response) => {
+      NodeHttp.createServer((_request, response) => {
         const status = statuses[requests]
         requests += 1
         response.writeHead(status === undefined ? 500 : status, {
@@ -34,7 +34,7 @@ const account = Effect.fn('AccountTest.account')(function* (statuses: ReadonlyAr
     server.listen(0, '127.0.0.1', () => resume(Effect.void))
   })
   const address = server.address()
-  if (address === null || typeof address === 'string')
+  if (address === null || Predicate.isString(address))
     return yield* Effect.die('Expected TCP listener')
   const origin = Result.getOrThrow(parseServer(`http://127.0.0.1:${address.port}`))
   const signedIn = Session.SignedIn({ server: origin, token: Redacted.make('fixture-token') })
@@ -84,12 +84,13 @@ for (const status of [401, 403, 422]) {
       // Observe either settlement or another actual HTTP refusal, so reversing the fix fails
       // this assertion instead of hanging while the old retry waits for its next clock tick.
       const observed = yield* Effect.raceFirst(
-        Fiber.join(leaving).pipe(Effect.map((answer) => ({ kind: 'Settled', answer }) as const)),
-        Queue.take(endpoint.failed).pipe(Effect.map(() => ({ kind: 'Retried' }) as const)),
+        Fiber.join(leaving).pipe(Effect.asSome),
+        Queue.take(endpoint.failed).pipe(Effect.as(Option.none())),
       )
-      expect(observed.kind).toBe('Settled')
-      if (observed.kind !== 'Settled') return expect.fail('A permanent refusal was retried')
-      expect(Option.getOrThrow(Result.getFailure(observed.answer))._tag).toBe('AccountRefused')
+      expect(Option.isSome(observed)).toBe(true)
+      expect(Option.getOrThrow(Result.getFailure(Option.getOrThrow(observed)))._tag).toBe(
+        'AccountRefused',
+      )
       expect(endpoint.requests()).toBe(1)
       expect(endpoint.shown()._tag).toBe('SignedOut')
       expect(endpoint.owed()._tag).toBe('Done')
