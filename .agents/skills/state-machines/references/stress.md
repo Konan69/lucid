@@ -50,7 +50,7 @@ The race and lifetime cases use deterministic schedules with repetition indices 
 | Timer resume | Restarts full delay | `timer.mjs`. 100/100 trials remained active 600 ms after resuming a timer already 600 ms into a 1,000 ms delay. Completion required a fresh full 1,000 ms. |
 | React StrictMode owner | Holds in test renderer | `react.mjs`. 100 owners, 200 factory evaluations, 100 runtime starts, 100 stops, maximum one active invoke. MachineState rendered 7 in every trial. |
 | Server rendering | Starts no work | `react.mjs --ssr`, in a separate process. 100 renders produced `<b>7</b>`. Runtime starts and stops were zero. |
-| Hermes | Not run | No attached emulator. The supplied recipe's scripts/start.sh and base.apk were missing. See prerequisites below. |
+| Hermes cases 1 and 3 | Matches Node | Android Hermes `250829098.0.17`, bytecode 98. Reentry ran 2,000 trials, with 1,000 unguarded stale outcomes and zero guarded stale outcomes. Cancellation ran 100 trials, with 100 native request arrivals, aborts, socket closures, and finalizers. See [Hermes](#hermes). |
 
 ## Reentry interpretation
 
@@ -85,9 +85,19 @@ No Vivid defect was confirmed by a product-runtime reproduction in this investig
 
 `/tmp/em-stress/upstream-1.md` is a draft extending the already documented mailbox-generation race to the tested source kinds. It has not been filed. The investigation found no separately confirmed new library bug. Conflicting owner updates and non-reenter input retention match selection and lifetime semantics.
 
-## Unexecuted checks
+## Hermes
 
-Hermes is unverified. The selected devbox's `adb devices` returned an empty list. `ls` reported both `~/vivid-emulator/scripts/start.sh` and `~/vivid-emulator/base.apk` missing. The Android SDK, emulator executable, and adb existed. The supplied recipe could not run as written. It needs a working start script and AVD, a local proof APK or Hermes host using these exact packages, and a nonproduction bundle. The memory recipe describes an app signed into production, which is outside this task's access limit. No production APK was opened and no emulator rebuild was started.
+Cases 1 and 3 ran on 24 October 2026 on `cloudbox-konan`, selected by `devbox-pick`. A new isolated API 35 x86_64 AVD, `EM_Hermes_35`, used `-gpu guest` and serial `emulator-5580`. Its proof-only bundle ran in a cached Vivid native release shell. The shell was built on 16 October, rather than rebuilt from this investigation's main commit. Its Hermes library matches the engine selected by current main's React Native 0.86.3. Installed source selects Hermes V1 by default and pins `HERMES_V1_VERSION_NAME=250829098.0.17` and tag `hermes-v250829098.0.17`. The legacy `.hermesversion` file names 0.17.0 and is not the selected V1 engine.
+
+The running VM's `HermesInternal.getRuntimeProperties()` reported OSS release `250829098.0.17`, bytecode 98, Release build, Static Hermes, and concurrent Hades GC. Esbuild 0.28.2 bundled the isolated published Effect Machine 0.46.0 and Effect 4.0.2 packages from the Node proof. Metro 0.84.6 added React Native and Expo's normal winter initialization. The matching `hermes-compiler` 250829098.0.17 compiled the embedded bytecode. The installed bundle matched the generated bundle's SHA-256 `0e3b0fcf705d084e5381299be68f6706c6cf96a5eaee4c0ffc126fdb97c5047a`. The installed native Hermes library was byte-for-byte identical to the cached shell's library. No SDK internals were patched.
+
+Case 1 retained the Node schedule and all 2,000 trials. Five source kinds, success, typed failure, stream element, timer, and child completion, each ran 100 repetitions for both reentry settings and both guard settings. Every unguarded cell landed the old outcome in 100/100 trials. Every guarded cell rejected it in 100/100 trials. With `reenter: true`, this reproduced stale queued outcomes after replacement in 500/500 unguarded trials. Without reentry, the other 500/500 unguarded trials retained the old invoke input as expected. The timer guard still uses the known first-attempt sentinel described above. Repetition indices are deterministic, not random seeds. EventProcessed inspection receipts control the check.
+
+Case 3 retained all 100 cancellation trials. The Hermes machine invoked the native Expo fetch installed by the app's normal Expo initialization, passing Effect's AbortSignal. A devbox HTTP server held each request open through an ADB reverse port. Separate arrival and socket-close receipts controlled cancellation and completion. All 100 requests arrived, all 100 signals emitted abort, all 100 server sockets closed, and all 100 invoke finalizers ran exactly once, including after explicit machine stop and scope disposal. No guessed completion sleeps or polling controlled these assertions.
+
+Scripts and evidence live outside the repository at `/tmp/em-stress/hermes/` on the devbox, with scripts and result copies on the investigating machine. `races.mjs`, `cancellation.mjs`, and `probe.mjs` contain the cases. `build.cjs`, `setup.sh`, `start.sh`, `prepare.py`, `repack.sh`, `run.sh`, and `server.mjs` retain the setup. `results.json`, `network.json`, `receipt.json`, `logcat.txt`, `engine-source.txt`, `hashes.txt`, and `verify.py` retain the observations and installed-byte checks. Logcat ends with `ALL REQUESTED HERMES PROBES FINISHED`. The devbox also retains the stopped AVD, base and proof APKs, and bundles. Expo updates were disabled in the proof manifest, external device networking was disabled, and no product account, production service, or app database was used. The emulator and HTTP server were stopped using their captured PIDs. This proves these schedules on the shipped engine version and native fetch boundary. It does not prove a current-main Vivid product workflow, iOS behavior, or mobile performance.
+
+## Unexecuted checks
 
 Real DOM hydration, focus retention, React Native StrictMode, native mobile performance, non-V8 WeakRef behavior, and a missing-WeakRef fallback were not run. React proof used react-test-renderer and a separate react-dom/server process. The renderer emits its deprecation warning. That warning is preserved in react.err.
 
