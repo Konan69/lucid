@@ -1,5 +1,5 @@
 import * as NodeFS from 'node:fs'
-import * as NodeProcess from 'node:process'
+import NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 import { parseSync } from 'oxc-parser'
 import * as Schema from 'effect/Schema'
