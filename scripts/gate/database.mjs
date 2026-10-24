@@ -86,7 +86,15 @@ async function awaitPostgres() {
   try {
     const ready = NodeEvents.once(output, 'ready')
     const check = () => {
-      const receipt = docker(['exec', container, 'pg_isready', '--host=127.0.0.1', '--quiet'])
+      // pg_isready otherwise imposes its own three-second cap and can lose the sole ready event.
+      const receipt = docker([
+        'exec',
+        container,
+        'pg_isready',
+        '--host=127.0.0.1',
+        '--timeout=0',
+        '--quiet',
+      ])
       if (receipt.status === 0) output.emit('ready')
     }
     output.on('line', (line) => {
