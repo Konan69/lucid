@@ -27,6 +27,14 @@ export class PushAdapter extends Context.Service<PushAdapter, PushAdapterService
   'vivid/PushAdapter',
 ) {}
 
+/** Bounds how long a browser provider retains an undelivered Run notice.
+ * Source: unmeasured. Expiry drops stale delivery; the persisted Notification stays readable. */
+const BROWSER_RETENTION_SECONDS = 3600
+/** Bounds one external acceptance or receipt exchange, including body decoding. No provider
+ * completion push exists for a stalled HTTP exchange. Source: unmeasured. Expiry returns
+ * PushUncertain, preserving the non-repeatable send claim. */
+const PUSH_EXCHANGE_LIMIT = '10 seconds'
+
 const ExpoResult = Schema.Union([
   Schema.Struct({ status: Schema.Literal('ok'), id: Schema.NonEmptyString }),
   Schema.Struct({
@@ -77,7 +85,7 @@ const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
           publicKey: config.publicKey,
           privateKey: Redacted.value(config.privateKey),
         },
-        TTL: 3600,
+        TTL: BROWSER_RETENTION_SECONDS,
         contentEncoding: 'aes128gcm',
       }),
     catch: () => new PushRejected({}),
@@ -174,7 +182,7 @@ const makePushAdapter = Effect.fn('PushAdapter.make')(function* () {
       Effect.scoped,
       Effect.provideContext(services),
       Effect.timeoutOrElse({
-        duration: '10 seconds',
+        duration: PUSH_EXCHANGE_LIMIT,
         orElse: () => Effect.fail(new PushUncertain({})),
       }),
     ),
@@ -183,7 +191,7 @@ const makePushAdapter = Effect.fn('PushAdapter.make')(function* () {
         Effect.scoped,
         Effect.provideContext(services),
         Effect.timeoutOrElse({
-          duration: '10 seconds',
+          duration: PUSH_EXCHANGE_LIMIT,
           orElse: () => Effect.fail(new PushUncertain({})),
         }),
       ),
