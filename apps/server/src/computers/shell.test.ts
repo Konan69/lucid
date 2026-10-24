@@ -260,7 +260,6 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
           // One wake served every call.
           expect(yield* Ref.get(wakes)).toBe(1)
         }).pipe(Effect.scoped),
-      60_000,
     )
   })
 })

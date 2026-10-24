@@ -180,7 +180,7 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
 
 /** Exercise the owned Machine seam against a real guest, with explicit compute opt-in. */
 describe.skipIf(!enabled)('Boat native guest live proof', () => {
-  layer(provider, { excludeTestServices: true, timeout: 25 * 60_000 })((it) => {
+  layer(provider, { excludeTestServices: true })((it) => {
     it.effect(
       'creates, views, clicks a link, types and reads values, archives and resumes the same machine',
       () =>

@@ -1684,7 +1684,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           )
           expect(persisted.map((row) => row.status)).toEqual(['stopped'])
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect(
@@ -1803,7 +1802,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               .pipe(asVivid(first), Effect.flip))._tag,
           ).toBe('Forbidden')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect(
@@ -1873,7 +1871,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           )
           expect((yield* Ref.get(evidence.calls)).length).toBe(count)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect('Vivid readiness and permitted actions never request Person viewer authority', () =>
@@ -2028,7 +2025,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               'The Computer provider could not finish the operation.',
             ])
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
     it.effect(
       'tells a provider outage on the call, records nothing, and works again once the provider answers',
@@ -2069,7 +2065,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect((yield* store.get(first.id)).state._tag).toBe('Running')
           expect((yield* store.run(first.id, request)).exitCode).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
     it.effect('an idle stop that met an outage records nothing and is tried again', () =>
       Effect.gen(function* () {
@@ -2118,7 +2113,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect((yield* store.run(first.id, request)).exitCode).toBe(0)
           expect((yield* store.get(first.id)).state._tag).toBe('Running')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
     it.effect(
       'stops a starting Computer by canceling its scoped worker, with no late resurrection',
@@ -2149,7 +2143,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             Option.match(physical, { onNone: () => false, onSome: ComputerState.guards.Running }),
           ).toBe(false)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
   })
 })

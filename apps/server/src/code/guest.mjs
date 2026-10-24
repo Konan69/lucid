@@ -1,5 +1,5 @@
 // The program runner. It is the only file of the server that runs on a Person's Computer, so it
-// uses nothing but Node 24: the server sends this text as it is and starts it there with
+// uses Node 24 and Linux Python 3 pidfds for descendant-exit receipts: the server sends this text as it is and starts it there with
 // `node <this file> <result bytes> <log characters> <calls> <call bytes>`.
 //
 // The Computer is where a program runs (5 October 2026). There is no interpreter inside the
@@ -21,7 +21,7 @@
 // Computer that has Node and nothing of Vivid's. `postMessage` is a worker thread's, which has no
 // target origin.
 /* oxlint-disable vivid/no-promise-constructor, vivid/no-try-catch, vivid/require-schema-decode-in-boundary, anti-slop/no-runtime-typeof, anti-slop-effect/no-manual-tagged-construction, anti-slop-effect/no-manual-tag-comparison, unicorn/require-post-message-target-origin */
-import * as NodeFS from 'node:fs'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeWorkerThreads from 'node:worker_threads'
 
 /**
@@ -164,64 +164,37 @@ function said(error) {
   return message.slice(0, 500)
 }
 
-/**
- * Ends the processes the program started and left attached to it, and theirs. Ending the worker
- * thread ends only the thread: a child the program spawned would otherwise run on after the
- * program was reported finished, where no later order to stop could reach it. They are found by
- * their recorded parent (`/proc/<pid>/stat`), starting from this process, never by a name.
- *
- * What is not ended: a process whose starter has gone, so that the system has adopted it. That is
- * what putting something in the background does (`nohup … &`), and such a process keeps running
- * after a program as it does after a command. The same happens, unasked, to the children of a
- * process that crashed. Returns the processes it signalled.
- */
-function endChildren() {
-  const parents = new Map()
-  let entries
-  try {
-    entries = NodeFS.readdirSync('/proc')
-  } catch {
-    return
-  }
-  for (const name of entries) {
-    if (!/^\d+$/.test(name)) continue
-    try {
-      const stat = NodeFS.readFileSync(`/proc/${name}/stat`, 'utf8')
-      // The command name is in parentheses and may itself hold spaces and parentheses; the
-      // state and the parent follow the last one.
-      parents.set(Number(name), Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]))
-    } catch {
-      // It ended between the listing and the read.
-    }
-  }
-  const started = [process.pid]
-  for (let index = 0; index < started.length; index++)
-    for (const [pid, parent] of parents) if (parent === started[index]) started.push(pid)
-  for (const pid of started.slice(1)) {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // Already gone.
-    }
-  }
-  return started.slice(1)
-}
-
-/** Whether a process is over: gone, or ended and waiting for its parent to collect it. */
-function over(pid) {
-  try {
-    const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, 'utf8')
-    return stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')
-  } catch {
-    return true
-  }
-}
-
-/** Calls `then` once every one of them is over, or after a second: an ended process is not
- * waited on for ever, and the system collects it when this process exits. */
-function whenOver(pids, then, tries = 50) {
-  if (tries === 0 || pids.every(over)) then()
-  else setTimeout(() => whenOver(pids, then, tries - 1), 20)
+/** Linux pidfds join captured descendants after killing them. A final result cannot race
+ * an orphan that still writes a file, and a busy host cannot exhaust a polling allowance. */
+function endChildren(then) {
+  const command = String.raw`
+import os, pathlib, select, signal
+root = os.getppid()
+parents = {}
+for entry in pathlib.Path('/proc').iterdir():
+ if not entry.name.isdigit(): continue
+ try: stat = (entry/'stat').read_text()
+ except FileNotFoundError: continue
+ parents[int(entry.name)] = int(stat[stat.rfind(')')+2:].split()[1])
+owned = [root]
+for parent in owned:
+ owned.extend(pid for pid, ancestor in parents.items() if ancestor == parent and pid != os.getpid())
+descriptors = []
+for pid in owned[1:]:
+ try: descriptors.append(os.pidfd_open(pid))
+ except ProcessLookupError: pass
+for descriptor in descriptors:
+ try: signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+ except ProcessLookupError: pass
+while descriptors:
+ ready, _, _ = select.select(descriptors, [], [])
+ for descriptor in ready:
+  os.close(descriptor); descriptors.remove(descriptor)
+`
+  NodeChildProcess.execFile('python3', ['-c', command], (failure) => {
+    if (failure !== null) process.exit(1)
+    else then()
+  })
 }
 
 /** What the program printed, kept within its allowance of characters. */
@@ -297,7 +270,7 @@ function runner() {
     finished = true
     const ended = worker === undefined ? Promise.resolve() : worker.terminate()
     ended.then(() =>
-      whenOver(endChildren(), () => {
+      endChildren(() => {
         process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
           process.exit(0),
         )

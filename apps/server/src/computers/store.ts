@@ -381,6 +381,9 @@ const START_DEADLINE = Duration.minutes(3)
 const STANDING_REST = Duration.minutes(10)
 const startTimedOut = `The Computer did not become ready within ${Duration.toMinutes(START_DEADLINE)} minutes.`
 
+/** Product cost policy. Twenty minutes without a command or watcher stops an unheld Computer.
+ * Commands cancel this deadline before work and reset it after completion. */
+const IDLE_PERIOD = Duration.minutes(20)
 /**
  * The scope owns the worker; a failed start is persisted, and stale generations cannot be
  * resurrected. A start that only met a provider outage is not a failed start: the Computer goes
@@ -927,7 +930,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     if (Option.isNone(row) || row.value.held || watchers.has(person)) return
     if (!Stored.isAnyOf(['starting', 'running'])(row.value)) return
     const now = yield* Clock.currentTimeMillis
-    const delay = Math.max(0, row.value.lastActivityAt + 20 * 60_000 - now)
+    const delay = Math.max(0, row.value.lastActivityAt + Duration.toMillis(IDLE_PERIOD) - now)
     const settle = expire(row.value).pipe(
       Effect.repeat({ until: (settled) => settled, schedule: Schedule.spaced('1 minute') }),
     )

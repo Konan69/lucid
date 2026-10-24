@@ -1125,7 +1125,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
           ).toBe('Running')
         }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
-      30000,
     )
 
     /**
@@ -1184,7 +1183,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           ).toBe('Running')
           expect(yield* Ref.get(evidence.created)).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
-      30000,
     )
 
     /**
@@ -1230,7 +1228,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(yield* Ref.get(evidence.launches)).toBe(launched + 1)
           expect(yield* Ref.get(evidence.created)).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect('a record that came with a copied disk says nothing about this machine', () =>
@@ -1322,7 +1319,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(one).not.toBe(two)
           for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
-      40_000,
     )
 
     /**
@@ -1390,7 +1386,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
           expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
-      15000,
     )
 
     /** Refusal creates no receipt that could expire while adoption is configured. */
@@ -1818,7 +1813,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(restored.screen._tag).toBe('Viewer')
           expect(yield* Ref.get(evidence.created)).toBe(1)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect(
@@ -2237,7 +2231,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(intents[0] === intents[1]).toBe(true)
           expect(yield* Ref.get(evidence.created)).toBe(1)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect(
@@ -2265,7 +2258,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Ref.set(evidence.wrongIdentity, true)
           expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
 
     it.effect(
@@ -2285,7 +2277,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Ref.set(evidence.edgeDown, false)
           expect((yield* machine.inspect(key))._tag).toBe('Running')
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
-      15000,
     )
   })
 })

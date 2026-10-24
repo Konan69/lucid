@@ -58,6 +58,7 @@ const unopened = () =>
  * answers in one round trip; this is for the one that is not. The `ws` package's own wait is
  * thirty seconds, on a timer of its own that no test and no shutdown can move.
  */
+/** Source: unmeasured. Expiry terminates the wire, then still waits for its real close. */
 export const CLOSE_DEADLINE_MILLIS = 5000
 
 /** Completes once a connection has closed. Interrupted, it stops listening. */

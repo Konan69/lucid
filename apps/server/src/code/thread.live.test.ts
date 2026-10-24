@@ -143,7 +143,6 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
             ])
           }).pipe(Effect.scoped, Effect.provide(caseContext))
         }).pipe(Effect.scoped),
-      { timeout: 300_000 },
     )
   },
 )

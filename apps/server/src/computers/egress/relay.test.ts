@@ -549,7 +549,6 @@ describe('the egress relay', () => {
         yield* turn({ chosen: false })
         yield* desktop.closing
       }),
-    30_000,
   )
 })
 
@@ -814,48 +813,44 @@ describe('a desktop app that has gone without a word', () => {
         expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
         expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
       }),
-    20_000,
   )
 
-  it.effect(
-    'is dropped the same way while it is parked, or only waits its turn',
-    () =>
-      Effect.gen(function* () {
-        const { proxy, relay, facts, turn } = yield* relaying()
-        const server = yield* routed(relay)
-        // Egress is off: the socket is parked, joined to nothing.
-        const parked = yield* desktopApp(server.port, false)
-        yield* server.held
-        for (let ping = 1; ping < deadline; ping += 1) {
-          yield* TestClock.adjust(EGRESS_PING_MILLIS)
-          yield* parked.pinged
-        }
+  it.effect('is dropped the same way while it is parked, or only waits its turn', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, facts, turn } = yield* relaying()
+      const server = yield* routed(relay)
+      // Egress is off: the socket is parked, joined to nothing.
+      const parked = yield* desktopApp(server.port, false)
+      yield* server.held
+      for (let ping = 1; ping < deadline; ping += 1) {
         yield* TestClock.adjust(EGRESS_PING_MILLIS)
-        expect(yield* parked.closed).toBe(1006)
+        yield* parked.pinged
+      }
+      yield* TestClock.adjust(EGRESS_PING_MILLIS)
+      expect(yield* parked.closed).toBe(1006)
 
-        // An app that is awake is the way out, and one that is not waits behind it.
-        const awake = yield* desktopApp(server.port, true)
-        yield* server.held
-        yield* turn({ chosen: true })
-        yield* proxy.attached(true)
-        const waiting = yield* desktopApp(server.port, false)
-        yield* server.held
-        for (let ping = 1; ping < deadline; ping += 1) {
-          yield* TestClock.adjust(EGRESS_PING_MILLIS)
-          yield* waiting.pinged
-          yield* awake.pinged
-          yield* awake.read
-        }
+      // An app that is awake is the way out, and one that is not waits behind it.
+      const awake = yield* desktopApp(server.port, true)
+      yield* server.held
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      const waiting = yield* desktopApp(server.port, false)
+      yield* server.held
+      for (let ping = 1; ping < deadline; ping += 1) {
         yield* TestClock.adjust(EGRESS_PING_MILLIS)
-        expect(yield* waiting.closed).toBe(1006)
-        // The one in front lost nothing by it.
+        yield* waiting.pinged
         yield* awake.pinged
         yield* awake.read
-        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
-        expect(facts.started).toBe(1)
-        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
-      }),
-    20_000,
+      }
+      yield* TestClock.adjust(EGRESS_PING_MILLIS)
+      expect(yield* waiting.closed).toBe(1006)
+      // The one in front lost nothing by it.
+      yield* awake.pinged
+      yield* awake.read
+      expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+      expect(facts.started).toBe(1)
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+    }),
   )
 
   /**
@@ -930,7 +925,6 @@ describe('a desktop app that has gone without a word', () => {
           EgressStatus.cases.Routing.make({ streams: 0 }),
         )
       }),
-    20_000,
   )
 
   it.effect(
@@ -966,65 +960,58 @@ describe('a desktop app that has gone without a word', () => {
         expect(yield* ended()).toBeGreaterThanOrEqual(deadline - 1)
         yield* server.ended
       }),
-    30_000,
   )
 
-  it.effect(
-    'with no other app, the Person is said to be waiting once it is dropped',
-    () =>
-      Effect.gen(function* () {
-        const { proxy, relay, turn, hub } = yield* relaying()
-        const server = yield* routed(relay)
-        const asleep = yield* desktopApp(server.port, false)
-        yield* server.held
-        yield* turn({ chosen: true })
-        yield* proxy.attached(true)
-        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
-        const told = yield* PubSub.subscribe(hub)
-        for (let ping = 1; ping < deadline; ping += 1) {
-          yield* TestClock.adjust(EGRESS_PING_MILLIS)
-          yield* asleep.pinged
-        }
+  it.effect('with no other app, the Person is said to be waiting once it is dropped', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, turn, hub } = yield* relaying()
+      const server = yield* routed(relay)
+      const asleep = yield* desktopApp(server.port, false)
+      yield* server.held
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 0 }))
+      const told = yield* PubSub.subscribe(hub)
+      for (let ping = 1; ping < deadline; ping += 1) {
         yield* TestClock.adjust(EGRESS_PING_MILLIS)
-        yield* asleep.closed
-        yield* proxy.attached(false)
-        expect(yield* until(relay, told, EgressStatus.guards.Waiting)).toEqual(
-          EgressStatus.cases.Waiting.make({}),
-        )
-      }),
-    20_000,
+        yield* asleep.pinged
+      }
+      yield* TestClock.adjust(EGRESS_PING_MILLIS)
+      yield* asleep.closed
+      yield* proxy.attached(false)
+      expect(yield* until(relay, told, EgressStatus.guards.Waiting)).toEqual(
+        EgressStatus.cases.Waiting.make({}),
+      )
+    }),
   )
 
-  it.effect(
-    'is kept for as long as it answers, parked or joined, with nothing carried',
-    () =>
-      Effect.gen(function* () {
-        const { proxy, relay, facts, turn } = yield* relaying()
-        const server = yield* routed(relay)
-        const awake = yield* desktopApp(server.port, true)
-        yield* server.held
-        /** Twice the deadline goes by, a ping at a time, each one answered and the answer read. */
-        const idle = Effect.fn('EgressTest.idle')(function* () {
-          for (let ping = 0; ping < 2 * deadline; ping += 1) {
-            yield* TestClock.adjust(EGRESS_PING_MILLIS)
-            yield* awake.pinged
-            // What a desktop app can see of the ping (`EGRESS_BEAT`).
-            expect(yield* awake.beat).toBe(EGRESS_BEAT)
-            yield* awake.read
-          }
-        })
-        yield* idle()
-        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+  it.effect('is kept for as long as it answers, parked or joined, with nothing carried', () =>
+    Effect.gen(function* () {
+      const { proxy, relay, facts, turn } = yield* relaying()
+      const server = yield* routed(relay)
+      const awake = yield* desktopApp(server.port, true)
+      yield* server.held
+      /** Twice the deadline goes by, a ping at a time, each one answered and the answer read. */
+      const idle = Effect.fn('EgressTest.idle')(function* () {
+        for (let ping = 0; ping < 2 * deadline; ping += 1) {
+          yield* TestClock.adjust(EGRESS_PING_MILLIS)
+          yield* awake.pinged
+          // What a desktop app can see of the ping (`EGRESS_BEAT`).
+          expect(yield* awake.beat).toBe(EGRESS_BEAT)
+          yield* awake.read
+        }
+      })
+      yield* idle()
+      expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
 
-        yield* turn({ chosen: true })
-        yield* proxy.attached(true)
-        yield* idle()
-        expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
-        expect(facts.started).toBe(1)
-        yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
-        expect((yield* awake.frame)._tag).toBe('Open')
-        expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
-      }),
-    20_000,
+      yield* turn({ chosen: true })
+      yield* proxy.attached(true)
+      yield* idle()
+      expect(awake.socket.readyState).toBe(NodeWS.WebSocket.OPEN)
+      expect(facts.started).toBe(1)
+      yield* Effect.forkScoped(tunnelled(proxy.ports.proxy, 'site.example:443', 'a'))
+      expect((yield* awake.frame)._tag).toBe('Open')
+      expect(yield* relay.status(person)).toEqual(EgressStatus.cases.Routing.make({ streams: 1 }))
+    }),
   )
 })
