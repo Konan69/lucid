@@ -12,7 +12,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import zipfile
 
 HOME = Path.home()
 SDK = HOME / 'android_sdk'
@@ -56,7 +55,7 @@ def alive(receipt):
     try:
         stat = Path(f"/proc/{receipt['pid']}/stat").read_text().rsplit(')', 1)[1].split()
         return stat[0] != 'Z' and stat[19] == receipt['start']
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -67,7 +66,10 @@ def stop(receipt):
     fd = os.pidfd_open(receipt['pid'])
     try:
         if alive(receipt):
-            signal.pidfd_send_signal(fd, signal.SIGTERM)
+            if os.getpgid(receipt['pid']) == receipt['pid']:
+                os.killpg(receipt['pid'], signal.SIGTERM)
+            else:
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
             if not select.select([fd], [], [], 20)[0]:
                 signal.pidfd_send_signal(fd, signal.SIGKILL)
                 assert select.select([fd], [], [], 10)[0], 'Owned process survived SIGKILL'
@@ -140,7 +142,16 @@ def boot(receipt):
     if 'adb' not in receipt or not alive(receipt['adb']):
         with socket.socket() as probe:
             assert probe.connect_ex(('127.0.0.1', 15037)) != 0, 'Private adb port occupied without receipt'
-        spawn('adb', [ADB, '-L', 'tcp:127.0.0.1:15037', 'server', 'nodaemon'], receipt)
+        spawn('adb', [ADB, '-L', 'tcp:15037', 'server', 'nodaemon'], receipt)
+        deadline = time.monotonic() + 10
+        while True:
+            assert alive(receipt['adb']), 'Owned adb server exited before binding'
+            with socket.socket() as probe:
+                if probe.connect_ex(('127.0.0.1', 15037)) == 0:
+                    break
+            assert time.monotonic() < deadline, 'Owned adb server did not bind within 10 seconds'
+            # adb nodaemon has no readiness fd. Only an observed listener permits commands.
+            select.select([], [], [], 0.05)
     port = None
     for candidate in range(5554, 5680, 2):
         with socket.socket() as first, socket.socket() as second:
@@ -161,6 +172,7 @@ def boot(receipt):
     run(['timeout', '300', ADB, '-s', receipt['serial'], 'wait-for-device'])
     run(['timeout', '300', ADB, '-s', receipt['serial'], 'shell',
          'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done'])
+    assert alive(receipt['adb']), 'Private adb server lost ownership'
     inventory = output([ADB, 'devices'])
     assert receipt['serial'] + '\tdevice' in inventory, inventory
     receipt['inventory'] = inventory
