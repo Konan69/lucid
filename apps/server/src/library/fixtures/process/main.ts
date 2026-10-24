@@ -1,20 +1,55 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as NodePath from '@effect/platform-node/NodePath'
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
+import type * as NodeChildProcess from 'node:child_process'
+import NodeProcess from 'node:process'
 import * as Console from 'effect/Console'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Layer from 'effect/Layer'
 import * as Path from 'effect/Path'
 import * as Schema from 'effect/Schema'
+import { getResolvedPDFJS } from 'unpdf'
 import { extractPdf } from '../../extraction.ts'
+import { CommandUnavailable, Extract, Ready } from './control.ts'
 import { Pages } from './pages.ts'
 
 /** Compile the shared stdout encoder once without adding another declaration of its wire shape. */
 const encodePages = Schema.encodeEffect(Pages)
+const encodeReady = Schema.encodeEffect(Ready)
+const decodeExtract = Schema.decodeUnknownEffect(Extract)
 
-/** Print only after extractPdf has awaited native thread termination and closed its RPC scope. */
+/**
+ * unpdf 1.8.1 index.mjs:98-112 loads the parser without opening a document.
+ * Keep its Promise-only import at this adapter, before the CLI advertises readiness.
+ */
+const preparePdfjs = Effect.fn('LibraryExtractionFixture.preparePdfjs')(function* () {
+  yield* Effect.tryPromise({
+    try: () => getResolvedPDFJS(),
+    catch: () => new CommandUnavailable(),
+  })
+})
+
+/** Register the typed request listener before readiness, so extraction cannot run during setup. */
+const requested = Effect.fn('LibraryExtractionFixture.requested')(function* () {
+  const message = yield* encodeReady(Ready.make({}))
+  yield* Effect.callback<typeof Extract.Type, CommandUnavailable | Schema.SchemaError>((resume) => {
+    if (NodeProcess.send === undefined) return resume(Effect.fail(new CommandUnavailable()))
+    const onMessage = (input: NodeChildProcess.Serializable) => resume(decodeExtract(input))
+    NodeProcess.once('message', onMessage)
+    NodeProcess.send(message, (error) => {
+      if (error !== null) resume(Effect.fail(new CommandUnavailable()))
+    })
+    return Effect.sync(() => {
+      NodeProcess.off('message', onMessage)
+    })
+  })
+})
+
+/** Print only after extractPdf has awaited native process termination and closed its RPC scope. */
 const program = Effect.fn('LibraryExtractionFixture.main')(function* () {
+  yield* preparePdfjs()
+  yield* requested()
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   const bytes = yield* fs.readFile(
@@ -24,7 +59,7 @@ const program = Effect.fn('LibraryExtractionFixture.main')(function* () {
   yield* Console.log(yield* encodePages(pages))
 })
 
-/** NodeRuntime.ts:58-65 lets success exit naturally; an unreleased thread would keep E8 running. */
+/** NodeRuntime lets success exit naturally; an unreleased process would keep E8 running. */
 NodeRuntime.runMain(
   // @effect-diagnostics-next-line strictEffectProvide:off -- This fixture process's entry point owns its platform Layers for the whole process, so no narrower lifetime exists to hold them.
   program().pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
