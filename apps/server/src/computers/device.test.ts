@@ -1202,12 +1202,26 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           )
           const request = yield* Queue.take(subject.link.requests)
           const queuedRun = yield* working(subject.who.person, subject.who.person)
-          const waiting = yield* useWindow(subject.who, queuedRun.threadId, look).pipe(
-            Effect.forkScoped,
+          // SQL validation may suspend independently of the clock. Race the actual reply
+          // against a timer-armed receipt, so the old queue fails without waiting ten seconds.
+          const clock = yield* Clock.Clock
+          const delayed = yield* Deferred.make<void>()
+          const observed: Clock.Clock = {
+            currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+            currentTimeMillis: clock.currentTimeMillis,
+            currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+            currentTimeNanos: clock.currentTimeNanos,
+            monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+            monotonicTimeNanos: clock.monotonicTimeNanos,
+            sleep: (duration) =>
+              Deferred.succeed(delayed, undefined).pipe(Effect.andThen(clock.sleep(duration))),
+          }
+          const reply = yield* useWindow(subject.who, queuedRun.threadId, look).pipe(
+            Effect.provideService(Clock.Clock, observed),
+            Effect.map(Option.some),
+            Effect.raceFirst(Deferred.await(delayed).pipe(Effect.as(Option.none<WindowOutcome>()))),
           )
-          yield* TestClock.adjust('9 seconds')
-          expect(waiting.pollUnsafe()).toBeDefined()
-          expect(yield* Fiber.join(waiting)).toEqual(WindowOutcome.cases.Busy.make({}))
+          expect(reply).toEqual(Option.some(WindowOutcome.cases.Busy.make({})))
           expect(yield* Queue.size(subject.link.requests)).toBe(0)
           expect((yield* windowLedger(subject)).map((row) => [row.id, row.status])).toEqual([
             [request.id, 'Dispatched'],
