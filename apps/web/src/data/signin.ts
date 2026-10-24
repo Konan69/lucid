@@ -117,7 +117,8 @@ const decodeSignedIn = Schema.decodeUnknownEffect(Schema.fromJsonString(SignedIn
  */
 export const tradeCode = Effect.fn('SignIn.tradeCode')(function* (trade: SignInTrade) {
   const body = yield* encodeTrade(trade).pipe(Effect.mapError(() => new TradeRefused({})))
-  const response = yield* Effect.tryPromise({
+  const answer = yield* Effect.tryPromise({
+    // One signal owns headers and body. Ending the exchange must abort a body still arriving.
     try: (signal) =>
       fetch(SIGN_IN_PLACES.trade, {
         method: 'POST',
@@ -125,15 +126,11 @@ export const tradeCode = Effect.fn('SignIn.tradeCode')(function* (trade: SignInT
         credentials: 'same-origin',
         body,
         signal,
-      }),
+      }).then((response) => response.text().then((text) => ({ ok: response.ok, text }))),
     catch: () => new TradeUnanswered({}),
   })
-  if (!response.ok) return yield* new TradeRefused({})
-  const answer = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: () => new TradeUnanswered({}),
-  })
-  return yield* decodeSignedIn(answer).pipe(Effect.mapError(() => new TradeRefused({})))
+  if (!answer.ok) return yield* new TradeRefused({})
+  return yield* decodeSignedIn(answer.text).pipe(Effect.mapError(() => new TradeRefused({})))
 })
 
 /**

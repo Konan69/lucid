@@ -57,26 +57,24 @@ interface Posting {
 
 /** Posts one account request and hands back the answer unread: its status, text and token. */
 const post = Effect.fn('Account.post')(function* (posting: Posting) {
-  const response = yield* Effect.tryPromise({
+  return yield* Effect.tryPromise({
+    // The request's cancellation owns the body too, including a sign-out body that never ends.
     try: (signal) =>
       request(accountAddress(posting.server, posting.path), {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...posting.headers },
         body: JSON.stringify(posting.fields),
         signal,
-      }),
+      }).then((response) =>
+        response.text().then((body) => ({
+          ok: response.ok,
+          status: response.status,
+          body,
+          token: Option.fromNullOr(response.headers.get('set-auth-token')),
+        })),
+      ),
     catch: () => new AccountUnreachable({ message: UNREACHABLE }),
   })
-  const body = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-  })
-  return {
-    ok: response.ok,
-    status: response.status,
-    body,
-    token: Option.fromNullOr(response.headers.get('set-auth-token')),
-  }
 })
 
 /** Starts a session with email and password and returns its token. */
