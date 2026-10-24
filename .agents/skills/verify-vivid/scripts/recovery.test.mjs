@@ -146,14 +146,14 @@ NodeTest.test(
   },
 )
 
-/** Launch must reject a live owner rather than clean its container or reuse its instance. */
+/** Host validation must precede recovery, so an invalid host cannot mutate even a live run. */
 NodeTest.test(
-  'launch refuses a live recorded run before acquiring product resources',
+  'launch refuses an invalid host before changing a live recorded run',
   async (context) => {
     const state = await fixture(context, true)
     const result = await cli(['launch'])
     NodeAssert.equal(result.code, 1, result.output)
-    NodeAssert.ok(result.output.includes('Live verification run ' + state.run), result.output)
+    NodeAssert.ok(result.output.includes('Selected devbox does not match'), result.output)
     NodeAssert.equal(await alive(state.processes.supervisor), true)
     await NodeFSP.access(state.scratch)
   },
