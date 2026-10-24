@@ -43,8 +43,8 @@ const decodeClaimed = decodeStored(Claimed, 'owed signal')
 
 /**
  * Claim at most 16 rows under SKIP LOCKED, then admit outside the transaction. All claims run
- * concurrently under a two-minute claim lease. Admission owns its receipt deadline; replay
- * awaits that typed outcome instead of imposing a second deadline. The token fences stale writes. Each domain executes its own complete queries.
+ * concurrently: admission has 30 seconds and each complete attempt has 60, inside a two-minute
+ * lease. The token fences stale writes. Each domain executes its own complete queries.
  * Claim and acknowledgement run on the replay's own Database, never a caller's transaction.
  * A dead process leaves an owed row, reclaimable after its lease. Runtime keys cover the crash
  * after admission but before acknowledgement, including a late response from an expired owner.
@@ -78,6 +78,7 @@ export const replaySignals = Effect.fn('Signals.replay')(function* (
     (value) =>
       replayOne(write, token, value).pipe(
         Effect.interruptible,
+        Effect.timeoutOption('60 seconds'),
         // A corrupt debt or unexpected infrastructure/authority failure stays leased for retry.
         // Log one safe diagnostic per attempt; never expose the signal body or SDK error message.
         Effect.catch((error) =>
@@ -132,7 +133,7 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
       })
       .pipe(
         Effect.interruptible,
-        Effect.asSome,
+        Effect.timeoutOption('30 seconds'),
         Effect.catchTag(['Conflict', 'RuntimeUnavailable'], () => Effect.succeedNone),
       )
     ending = Option.isSome(admitted)

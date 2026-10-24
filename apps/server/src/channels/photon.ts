@@ -144,12 +144,17 @@ const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredent
 
 type PhotonApplication = Effect.Success<ReturnType<typeof connectPhoton>>
 
-/** Effect 4.0.2 Channel.fromAsyncIterable registers iterator.return in the consuming scope,
- * before this acquisition's release runs. Await Spectrum 12.10.1 stopOnce through provider
- * disposal; its own five-second stream grace must not compete with a second cleanup deadline. */
+/** Keep the bounded disposal guard added by 11369b9a1: Spectrum stop can outlive its stream
+ * grace while awaiting provider cleanup. Removing this needs an SDK disposal completion fix,
+ * including applications acquired only for sending. Source: production shutdown safeguard. */
+const PHOTON_DISPOSAL_LIMIT = '5 seconds'
 const closePhoton = Effect.fn('Channels.closePhoton')((application: PhotonApplication) =>
   Effect.tryPromise({ try: () => application.stop(), catch: disconnected }).pipe(
-    Effect.catch(() => Effect.logError('iMessage provider disposal failed')),
+    Effect.interruptible,
+    Effect.timeout(PHOTON_DISPOSAL_LIMIT),
+    Effect.catchTag(['ChannelDisconnected', 'ChannelConnectionRefused', 'TimeoutError'], () =>
+      Effect.logError('iMessage connection cleanup failed'),
+    ),
   ),
 )
 
