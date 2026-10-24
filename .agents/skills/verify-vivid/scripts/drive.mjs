@@ -6,6 +6,7 @@ import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
+import { watch } from './watch.mjs'
 import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 export const features = [
@@ -284,6 +285,7 @@ const recipes = {
   devices,
   feed,
   notes,
+  watch,
   reading,
   settings: settingsProof,
 }
@@ -293,8 +295,6 @@ const blocked = {
   approve:
     'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
   deny: 'Needs an actual pending proposal from a connected disposable Integration.',
-  watch:
-    'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
 }

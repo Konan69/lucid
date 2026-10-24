@@ -11,8 +11,8 @@ import * as Schema from 'effect/Schema'
 import {
   AppEvent,
   AppEventFilter,
-  DatabaseFailure,
   WatchId,
+  Watch,
   WatchState,
   type CreateWatchRequest,
   type WatchStopReason,
@@ -22,7 +22,7 @@ import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { untraced } from '../observability/quiet.ts'
-import { WatchedApps } from './apps.ts'
+import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
 import { secretFor } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
@@ -167,17 +167,16 @@ const make = Effect.fn('Watches.make')(function* () {
       ttlMs: TTL_MS,
     })
 
-  /** Executor's grant becomes the Watch's Active state. A row that vanished is a database fault. */
+  /** A concurrent stop stays authoritative; a cascaded row means its Integration was removed. */
   const activate = Effect.fn('Watches.activate')(function* (
     record: WatchRecord,
     grant: { readonly id: string; readonly refreshBefore: Date },
   ) {
-    const active = yield* store.activate(record.watch.id, {
-      subscription: grant.id,
-      refreshBefore: grant.refreshBefore.getTime(),
-    })
-    return yield* Effect.fromOption(active).pipe(
-      Effect.mapError(() => new DatabaseFailure({ message: 'A subscribed Watch was not live' })),
+    const active = yield* store.activate(record.watch.id, grant.refreshBefore.getTime())
+    if (Option.isSome(active)) return active.value
+    const current = yield* store.find(record.watch.id)
+    return yield* Effect.fromOption(current).pipe(
+      Effect.mapError(() => new WatchConnectionRemoved({ connectionId: record.connectionId })),
     )
   })
 
@@ -203,7 +202,7 @@ const make = Effect.fn('Watches.make')(function* () {
       // Person-owned; the Company is the workspace it was made in, as other Person-owned rows keep.
       companyId: companyColumnOf(actor.workspace),
       name: request.name,
-      account: app.account,
+      connectionId: app.connectionId,
       event: request.event,
       subscribedName: `${app.appSlug}.${request.event}`,
       arguments: request.arguments,
@@ -214,14 +213,14 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Result.isFailure(granted)) {
       if (outcomeUnknown(granted.failure)) {
         yield* publish(pending)
-        return pending.watch
+        return (yield* store.present(actor, pending)).watch
       }
       yield* store.discard(id)
       return yield* granted.failure
     }
     const active = yield* activate(pending, granted.success)
     yield* publish(active)
-    return active.watch
+    return (yield* store.present(actor, active)).watch
   })
 
   /** The events an account's app declares, in words. */
@@ -247,7 +246,7 @@ const make = Effect.fn('Watches.make')(function* () {
       Effect.ignore,
     )
     yield* publish(stopped.value)
-    return stopped.value.watch
+    return Watch.make({ ...stopped.value.watch, account: found.value.watch.account })
   })
 
   /**

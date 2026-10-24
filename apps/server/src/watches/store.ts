@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, lt, ne, or } from 'drizzle-orm'
+import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -8,9 +8,9 @@ import * as Schema from 'effect/Schema'
 import {
   CompanyId,
   PersonId,
-  RunId,
-  ThreadId,
+  ConnectionId,
   Watch,
+  DatabaseFailure,
   WatchArguments,
   WatchId,
   WatchState,
@@ -18,7 +18,8 @@ import {
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
-import { watchArrivals, watches } from './tables.ts'
+import { accountNames, holdConnection, WatchConnectionRemoved } from './apps.ts'
+import { watches } from './tables.ts'
 
 /** A live Watch of this Person already has this name; Vivid stops Watches by name, so it must differ. */
 export class WatchNameTaken extends Schema.TaggedError<WatchNameTaken>()(
@@ -32,13 +33,12 @@ const common = {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   name: Watch.fields.name,
-  account: Schema.String,
+  connectionId: ConnectionId,
   event: Schema.String,
   subscribedName: Schema.String,
   arguments: WatchArguments,
   instruction: Watch.fields.instruction,
   callbackUrl: Schema.String,
-  subscription: Schema.NullOr(Schema.String),
   createdAt: Schema.Finite,
   updatedAt: Schema.Finite,
 }
@@ -68,12 +68,13 @@ const decodeWatch = decodeStored(StoredWatch, 'Watch')
 
 /**
  * A Watch with what only the server holds: whose it is and the exact subscription key sent to
- * Executor. `watch` is what its owner and Vivid read.
+ * Executor. Display names are added only for owner-facing reads.
  */
 export interface WatchRecord {
-  readonly watch: Watch
+  readonly watch: Omit<Watch, 'account'>
   readonly personId: PersonId
   readonly companyId: CompanyId | null
+  readonly connectionId: ConnectionId
   /** `<app slug>.<event>`, as subscribed. */
   readonly subscribedName: string
   readonly callbackUrl: string
@@ -88,18 +89,18 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
     Stopped: ({ stopReason }) => WatchState.cases.Stopped.make({ reason: stopReason }),
   })
   return {
-    watch: Watch.make({
+    watch: {
       id: stored.id,
       name: stored.name,
-      account: stored.account,
       event: stored.event,
       arguments: stored.arguments,
       instruction: stored.instruction,
       state,
       createdAt: stored.createdAt,
-    }),
+    },
     personId: stored.personId,
     companyId: stored.companyId,
+    connectionId: stored.connectionId,
     subscribedName: stored.subscribedName,
     callbackUrl: stored.callbackUrl,
   } satisfies WatchRecord
@@ -110,16 +111,14 @@ export interface NewWatch {
   readonly id: WatchId
   readonly personId: PersonId
   readonly companyId: CompanyId | null
+  readonly connectionId: ConnectionId
   readonly name: string
-  readonly account: string
   readonly event: string
   readonly subscribedName: string
   readonly arguments: WatchArguments
   readonly instruction: string
   readonly callbackUrl: string
 }
-
-const decodeArrival = decodeStored(Schema.Struct({ runId: Schema.NullOr(RunId) }), 'Watch arrival')
 
 /** The one row a keyed read or write found, if any. */
 const first = <A>(all: ReadonlyArray<A>) => Option.fromUndefinedOr(all[0])
@@ -140,28 +139,27 @@ const makeWrites = (database: Database['Service']) => {
     )
     if (taken.length > 0) return yield* new WatchNameTaken({})
     const now = yield* Clock.currentTimeMillis
-    const rows = yield* database.run(
-      database
-        .insert(watches)
-        .values({ ...input, state: 'Pending', createdAt: now, updatedAt: now })
-        .returning(),
+    const rows = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* holdConnection(tx, input.connectionId)
+        return yield* tx
+          .insert(watches)
+          .values({ ...input, state: 'Pending', createdAt: now, updatedAt: now })
+          .returning()
+      }),
     )
     return yield* record(yield* returned(rows, 'Watch'))
   })
 
   /** Executor granted (or renewed) the subscription; a Watch stopped meanwhile stays stopped. */
-  const activate = Effect.fn('WatchStore.activate')(function* (
-    id: WatchId,
-    grant: { readonly subscription: string; readonly refreshBefore: number },
-  ) {
+  const activate = Effect.fn('WatchStore.activate')(function* (id: WatchId, refreshBefore: number) {
     const now = yield* Clock.currentTimeMillis
     const rows = yield* database.run(
       database
         .update(watches)
         .set({
           state: 'Active',
-          subscription: grant.subscription,
-          refreshBefore: grant.refreshBefore,
+          refreshBefore,
           updatedAt: now,
         })
         .where(and(eq(watches.id, id), live))
@@ -177,7 +175,7 @@ const makeWrites = (database: Database['Service']) => {
     )
   })
 
-  /** Stop a live Watch for good; its arrivals and their Threads stay. */
+  /** Stop a live Watch for good; its background Threads stay. */
   const stop = Effect.fn('WatchStore.stop')(function* (id: WatchId, reason: WatchStopReason) {
     const now = yield* Clock.currentTimeMillis
     const rows = yield* database.run(
@@ -193,8 +191,39 @@ const makeWrites = (database: Database['Service']) => {
   return { insertPending, activate, discard, stop }
 }
 
+/** Snapshot reads retain the Connection's name alongside every Watch that references it. */
+const withAccount = (record: WatchRecord, names: ReadonlyMap<string, string>) => {
+  const account = names.get(record.connectionId)
+  if (account === undefined)
+    return Effect.fail(new DatabaseFailure({ message: 'Watch Connection has no name' }))
+  return Effect.succeed({ ...record, watch: Watch.make({ ...record.watch, account }) })
+}
+
+/** One inventory read names the entire result. */
+const presentAll = Effect.fn('WatchStore.presentAll')(function* (
+  actor: Actor,
+  records: ReadonlyArray<WatchRecord>,
+) {
+  if (records.length === 0) return []
+  const names = yield* accountNames(actor)
+  return yield* Effect.forEach(records, (record) => withAccount(record, names))
+})
+
 /** Reads of Watch rows, for their owner, for the receiver and for renewal. */
 const makeReads = (database: Database['Service']) => {
+  /**
+   * Watch rows and the whole naming inventory must see the same committed state. Drizzle's
+   * Effect adapter shares the transaction connection through fiber context, including the
+   * Database queries in accountNames. A join restricted to Watches would lose name ordinals.
+   */
+  const snapshot = <A, E, R>(read: Effect.Effect<A, E, R>) =>
+    database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* tx.setTransaction({ isolationLevel: 'repeatable read', accessMode: 'read only' })
+        return yield* read
+      }),
+    )
+
   /** The Actor's own live Watches in their workspace, oldest first. */
   const list = Effect.fn('WatchStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
@@ -204,8 +233,10 @@ const makeReads = (database: Database['Service']) => {
         .where(and(ownedHere(watches, actor), live))
         .orderBy(asc(watches.createdAt), asc(watches.id)),
     )
-    return yield* Effect.forEach(rows, record)
-  })
+    return yield* presentAll(actor, yield* Effect.forEach(rows, record)).pipe(
+      Effect.provideService(Database, database),
+    )
+  }, snapshot)
 
   /** One of the Actor's live Watches by its name. */
   const named = Effect.fn('WatchStore.named')(function* (actor: Actor, name: string) {
@@ -216,8 +247,11 @@ const makeReads = (database: Database['Service']) => {
         .where(and(ownedHere(watches, actor), live, eq(watches.name, name)))
         .limit(1),
     )
-    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
-  })
+    return yield* presentAll(actor, yield* Effect.forEach(rows, record)).pipe(
+      Effect.provideService(Database, database),
+      Effect.map(first),
+    )
+  }, snapshot)
 
   /** A Watch by id, whatever its state, for the receiver: the signature is its only authority. */
   const find = Effect.fn('WatchStore.find')(function* (id: WatchId) {
@@ -251,71 +285,22 @@ const makeReads = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record)
   })
 
-  return { list, named, find, due }
-}
-
-/** Arrivals: one row per event, the dedupe key for Executor's redeliveries. */
-const makeArrivals = (database: Database['Service']) => {
-  /**
-   * Record that an event arrived, in the Thread it wakes Vivid in, and answer the Run it
-   * already has. The primary key makes a redelivery a no-op insert. None means deliver: a first
-   * arrival, or a repeat whose earlier delivery failed before admission (Conversation deduplicates
-   * by the same idempotency key, so delivering again cannot start a second Run).
-   */
-  const arrive = Effect.fn('WatchStore.arrive')(function* (input: {
-    readonly watchId: WatchId
-    readonly eventId: string
-    readonly threadId: ThreadId
-  }) {
-    const receivedAt = yield* Clock.currentTimeMillis
-    const inserted = yield* database.run(
-      database
-        .insert(watchArrivals)
-        .values({ ...input, receivedAt })
-        .onConflictDoNothing()
-        .returning({ watchId: watchArrivals.watchId }),
-    )
-    if (inserted.length > 0) return Option.none<RunId>()
-    const rows = yield* database.run(
-      database
-        .select({ runId: watchArrivals.runId })
-        .from(watchArrivals)
-        .where(
-          and(eq(watchArrivals.watchId, input.watchId), eq(watchArrivals.eventId, input.eventId)),
-        ),
-    )
-    const existing = yield* decodeArrival(yield* returned(rows, 'Watch arrival'))
-    return Option.fromNullOr(existing.runId)
+  /** A display record, or removal when its Connection has left the current inventory. */
+  const present = Effect.fn('WatchStore.present')(function* (actor: Actor, record: WatchRecord) {
+    const names = yield* accountNames(actor).pipe(Effect.provideService(Database, database))
+    const account = names.get(record.connectionId)
+    if (account === undefined)
+      return yield* new WatchConnectionRemoved({ connectionId: record.connectionId })
+    return { ...record, watch: Watch.make({ ...record.watch, account }) }
   })
 
-  /** Attach the admitted Run to its arrival, once. */
-  const admitted = Effect.fn('WatchStore.admitted')(function* (
-    watchId: WatchId,
-    eventId: string,
-    runId: RunId,
-  ) {
-    yield* database.run(
-      database
-        .update(watchArrivals)
-        .set({ runId })
-        .where(
-          and(
-            eq(watchArrivals.watchId, watchId),
-            eq(watchArrivals.eventId, eventId),
-            isNull(watchArrivals.runId),
-          ),
-        ),
-    )
-  })
-
-  return { arrive, admitted }
+  return { list, named, find, due, present }
 }
 
-/** The service owns Watch rows and their arrivals; Executor and delivery stay with the caller. */
+/** The service owns Watch rows; Executor and delivery stay with the caller. */
 const makeStore = (database: Database['Service']) => ({
   ...makeWrites(database),
   ...makeReads(database),
-  ...makeArrivals(database),
 })
 
 export class WatchStore extends Context.Service<WatchStore, ReturnType<typeof makeStore>>()(

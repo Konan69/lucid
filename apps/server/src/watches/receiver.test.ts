@@ -1,6 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, WatchId } from '@vivid/contracts'
-import { and, eq } from 'drizzle-orm'
+import { CreateWatchRequest, RunState, WatchId } from '@vivid/contracts'
+import { eq } from 'drizzle-orm'
 import { Clock, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import { ServerConfig } from '../config.ts'
@@ -14,7 +14,7 @@ import { Watches } from './lifecycle.ts'
 import { BACKGROUND_INSTRUCTION, threadOf, watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
 import type { WatchStore } from './store.ts'
-import { watchArrivals } from './tables.ts'
+import { RunStore, RunEnding } from '../threads/runs.ts'
 import { Delivered, Executor, person, testLayer } from './testing.ts'
 
 const request = CreateWatchRequest.make({
@@ -122,7 +122,8 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         const repeat = yield* post(url, event('evt_1'), secret, Option.none())
         expect(repeat.status).toBe(200)
         const delivered = yield* deliveriesOf(watch.id)
-        expect(delivered).toHaveLength(1)
+        // Each retry reaches Conversation; its durable receipt owns deduplication.
+        expect(delivered).toHaveLength(2)
         const delivery = delivered[0]
         if (delivery === undefined) return expect.fail('Expected one delivery')
         const thread = threadOf(watch.id, 'evt_1')
@@ -147,37 +148,52 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         )
         expect(row).toMatchObject({ place: 'Background', title: request.name })
         expect((yield* (yield* ThreadStore).list(actor)).map((one) => one.id)).not.toContain(thread)
-        const [arrival] = yield* database.run(
-          database
-            .select()
-            .from(watchArrivals)
-            .where(and(eq(watchArrivals.watchId, watch.id), eq(watchArrivals.eventId, 'evt_1'))),
-        )
-        expect(arrival).toMatchObject({ threadId: thread, runId: `run-watch:${watch.id}:evt_1` })
+        const runs = yield* RunStore
+        const working = yield* runs.list(thread)
+        expect(working).toHaveLength(1)
+        const run = working[0]
+        if (run === undefined) return expect.fail('Expected one Run')
+        yield* runs.end(run.id, RunEnding.cases.Completed.make({}))
+        expect((yield* post(url, event('evt_1'), secret, Option.none())).status).toBe(200)
+        const finished = yield* runs.list(thread)
+        expect(finished).toHaveLength(1)
+        const completed = finished[0]
+        if (completed === undefined) return expect.fail('Expected the original Run')
+        expect(completed.id).toBe(run.id)
+        expect(RunState.guards.Completed(completed.state)).toBe(true)
         // A second event is a second background Thread.
         yield* post(url, event('evt_2'), secret, Option.none())
-        expect(yield* deliveriesOf(watch.id)).toHaveLength(2)
+        expect(yield* deliveriesOf(watch.id)).toHaveLength(4)
         expect(threadOf(watch.id, 'evt_2')).not.toBe(thread)
       }).pipe(Effect.scoped),
     )
 
-    it.effect('answers 404 for an unknown Watch and 410 once a Watch has stopped', () =>
-      Effect.gen(function* () {
-        const post = yield* receiver()
-        const { actor, watch, url, secret } = yield* activeWatch()
-        const unknown = url.replace(/[^/]+$/u, 'not-a-watch')
-        const missing = yield* post(
-          unknown,
-          event('evt_1'),
-          secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
-          Option.none(),
-        )
-        expect(missing).toEqual({ status: 404, text: '' })
-        yield* (yield* Watches).stop(actor, request.name)
-        const gone = yield* post(url, event('evt_9'), secret, Option.none())
-        expect(gone.status).toBe(410)
-        expect(yield* deliveriesOf(watch.id)).toEqual([])
-      }).pipe(Effect.scoped),
+    it.effect(
+      'answers 401 for a forged unknown Watch and 410 for a signed unknown or stopped Watch',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const { actor, watch, url, secret } = yield* activeWatch()
+          const unknown = url.replace(/[^/]+$/u, 'not-a-watch')
+          const missing = yield* post(
+            unknown,
+            event('evt_1'),
+            secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
+            Option.some('v1,AAAA'),
+          )
+          expect(missing).toEqual({ status: 401, text: '' })
+          const removed = yield* post(
+            unknown,
+            event('evt_1'),
+            secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
+            Option.none(),
+          )
+          expect(removed.status).toBe(410)
+          yield* (yield* Watches).stop(actor, request.name)
+          const gone = yield* post(url, event('evt_9'), secret, Option.none())
+          expect(gone.status).toBe(410)
+          expect(yield* deliveriesOf(watch.id)).toEqual([])
+        }).pipe(Effect.scoped),
     )
   })
 })

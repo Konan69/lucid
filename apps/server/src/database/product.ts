@@ -26,7 +26,7 @@ export {
   threads,
   titleSource,
 } from '../threads/tables.ts'
-export { watchArrivals, watches } from '../watches/tables.ts'
+export { watches } from '../watches/tables.ts'
 
 /** Compatibility marker retained exactly because existing databases already contain this table. */
 export const schemaMigrations = pgTable('vivid_schema_migrations', {

@@ -1,12 +1,13 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Company, CompanyId, ConnectionId, ServiceId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Clock, Effect, Option, Redacted, Ref } from 'effect'
+import { Clock, ConfigProvider, Effect, Layer, Option, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import type { Actor } from '../auth/access.ts'
 import {
+  Executor,
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorAppOwnership,
@@ -19,7 +20,7 @@ import { claimedApp, encodeReferences } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { makeWatchedApps } from './apps.ts'
+import { WatchedApps, watchedAppsLayer } from './apps.ts'
 import { person } from './testing.ts'
 
 /**
@@ -28,15 +29,11 @@ import { person } from './testing.ts'
  * which ids were asked for.
  */
 
-const settings = {
-  url: 'http://executor.test',
-  key: Redacted.make('test-key'),
-  organization: 'org_test',
-}
-
-/** Executor's `GET /apps/<id>`: the slug is the id's last part, so each app is told apart. */
-const executor = (asked: Ref.Ref<ReadonlyArray<string>>) =>
-  HttpClient.make((request) =>
+/** Both adapter boundaries remain controllable so reversal proves identity through an assertion. */
+const appsFor = Effect.fn('WatchAppsTest.appsFor')(function* (
+  asked: Ref.Ref<ReadonlyArray<string>>,
+) {
+  const transport = HttpClient.make((request) =>
     Effect.gen(function* () {
       const app = decodeURIComponent(request.url.slice(request.url.lastIndexOf('/') + 1))
       yield* Ref.update(asked, (previous) => [...previous, app])
@@ -48,6 +45,30 @@ const executor = (asked: Ref.Ref<ReadonlyArray<string>>) =>
       )
     }),
   )
+  const executor = Layer.mock(Executor, {
+    appSlug: (app) =>
+      Ref.update(asked, (previous) => [...previous, app]).pipe(Effect.as(`slug-${app}`)),
+  })
+  const context = yield* Layer.build(
+    watchedAppsLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(Database, yield* Database),
+          executor,
+          Layer.succeed(HttpClient.HttpClient, transport),
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_EXECUTOR_URL: 'http://executor.test',
+              VIVID_EXECUTOR_KEY: 'test-key',
+              VIVID_EXECUTOR_ORGANIZATION: 'org_test',
+            }),
+          ),
+        ),
+      ),
+    ),
+  )
+  return yield* WatchedApps.pipe(Effect.provideContext(context))
+})
 
 /** Store one of the Actor's own Connections with these references, as the Connection store does. */
 const connect = Effect.fn('WatchAppsTest.connect')(function* (
@@ -146,8 +167,8 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         const appA = `app-${crypto.randomUUID()}`
         const appB = `app-${crypto.randomUUID()}`
         // Both Persons call their account "Mail": only the app behind each name differs.
-        yield* connect(ada, 'Mail', authorized(appA), 'ready')
-        yield* connect(ben, 'Mail', authorized(appB), 'ready')
+        const connectionA = yield* connect(ada, 'Mail', authorized(appA), 'ready')
+        const connectionB = yield* connect(ben, 'Mail', authorized(appB), 'ready')
         yield* connect(ada, 'Calendar', shared, 'failed')
         // Ready, but on an app carried over from before beta.23 that may still hold others.
         const carried = `app-${crypto.randomUUID()}`
@@ -161,11 +182,17 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
           'ready',
         )
         const asked = yield* Ref.make<ReadonlyArray<string>>([])
-        const apps = makeWatchedApps(yield* Database, executor(asked), settings)
+        const apps = yield* appsFor(asked)
 
-        expect(yield* apps.appOf(ada, 'mail')).toEqual({ account: 'Mail', appSlug: `slug-${appA}` })
+        expect(yield* apps.appOf(ada, 'mail')).toEqual({
+          connectionId: connectionA,
+          appSlug: `slug-${appA}`,
+        })
         expect(yield* Ref.get(asked)).toEqual([appA])
-        expect(yield* apps.appOf(ben, 'Mail')).toEqual({ account: 'Mail', appSlug: `slug-${appB}` })
+        expect(yield* apps.appOf(ben, 'Mail')).toEqual({
+          connectionId: connectionB,
+          appSlug: `slug-${appB}`,
+        })
         expect(yield* Ref.get(asked)).toEqual([appA, appB])
 
         const refused = yield* Effect.flip(apps.appOf(ada, 'Calendar'))
@@ -192,9 +219,9 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
           database.update(connections).set({ companyId: shop.id }).where(eq(connections.id, id)),
         )
         const asked = yield* Ref.make<ReadonlyArray<string>>([])
-        const apps = makeWatchedApps(database, executor(asked), settings)
+        const apps = yield* appsFor(asked)
 
-        expect(yield* apps.appOf(ben, 'Mail')).toEqual({ account: 'Mail', appSlug: `slug-${app}` })
+        expect(yield* apps.appOf(ben, 'Mail')).toEqual({ connectionId: id, appSlug: `slug-${app}` })
         expect((yield* Effect.flip(apps.appOf(ada, 'Mail')))._tag).toBe('WatchAccountUnknown')
         expect(yield* apps.accountsOf(ada)).toEqual([])
         expect(yield* apps.accountsOf(ben)).toEqual(['Mail'])
@@ -218,19 +245,20 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         // Oldest first, which is what fixes each name: Ben's shared Mail, then Ada's two.
         yield* shared(yield* connect(ben, 'Mail', authorized(bens), 'ready'))
         yield* TestClock.adjust('1 second')
-        yield* connect(ada, 'Mail', authorized(personal), 'ready')
+        const personalId = yield* connect(ada, 'Mail', authorized(personal), 'ready')
         yield* TestClock.adjust('1 second')
-        yield* shared(yield* connect(ada, 'Mail', authorized(companys), 'ready'))
+        const companyId = yield* connect(ada, 'Mail', authorized(companys), 'ready')
+        yield* shared(companyId)
         const asked = yield* Ref.make<ReadonlyArray<string>>([])
-        const apps = makeWatchedApps(database, executor(asked), settings)
+        const apps = yield* appsFor(asked)
 
         expect(yield* apps.accountsOf(ada)).toEqual(['Mail (2)', 'Mail (3)'])
         expect(yield* apps.appOf(ada, 'Mail (2)')).toEqual({
-          account: 'Mail (2)',
+          connectionId: personalId,
           appSlug: `slug-${personal}`,
         })
         expect(yield* apps.appOf(ada, 'mail (3)')).toEqual({
-          account: 'Mail (3)',
+          connectionId: companyId,
           appSlug: `slug-${companys}`,
         })
         // "Mail" is Ben's, shown to Ada too, and not hers to watch.
