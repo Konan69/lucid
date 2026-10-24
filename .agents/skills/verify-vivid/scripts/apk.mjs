@@ -70,6 +70,14 @@ export async function apk(state, record) {
       return { ...prior, mode: 'reuse' }
     throw new Error('APK cache receipt mismatch; retain evidence and inspect the cached artifact')
   }
+  if (NodeOS.loadavg()[0] > NodeOS.availableParallelism())
+    throw new Error('Devbox busy; warm the APK on an idle devbox before launching the proof')
+  const memory = await NodeFSP.readFile('/proc/meminfo', 'utf8')
+  const available = /^MemAvailable:\s+(\d+)/mu.exec(memory)
+  if (available === null || Number(available[1]) < 6 * 1024 * 1024)
+    throw new Error(
+      'APK build needs at least 6 GiB available; warm it before starting the emulator',
+    )
   const source = cache + '/source'
   const present = await NodeFSP.stat(source + '/.git').catch((error) => {
     if (error.code === 'ENOENT') return null
