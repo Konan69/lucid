@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { FeedItem, ServiceId, WatchState } from '@vivid/contracts'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect'
 import {
   ExecutorAppId,
@@ -179,6 +179,20 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
               .where(eq(runs.threadId, item.thread)),
           )
           expect(woke).toEqual([{ origin: 'Watch' }])
+          // The Person owns only this Watch. A filtered-out event must start no background Run.
+          const deliveries = yield* database.run(
+            database
+              .select({ thread: runs.threadId })
+              .from(runs)
+              .where(
+                and(
+                  eq(runs.personId, fixture.personId),
+                  sql`${runs.origin}->>'_tag' = 'Watch'`,
+                  sql`${runs.origin}->>'watchName' = ${watch.name}`,
+                ),
+              ),
+          )
+          expect(deliveries).toEqual([{ thread: item.thread }])
         }).pipe(Effect.scoped),
       { timeout: 420_000 },
     )
