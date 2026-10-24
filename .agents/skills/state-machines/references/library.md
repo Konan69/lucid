@@ -50,9 +50,15 @@ Any invoked state that can be re-entered must own an attempt or revision. This i
 
 This is a hard rule on 0.46.0. An outcome already queued for attempt 1 can complete the same state after attempt 2 re-enters it. Cancellation and the upstream ownership check do not prevent that ordering. `guard` or a `declinable: true` resolver can reject the mismatched outcome. A `none` branch accepts it.
 
-The supplied evidence is /tmp/effect-machine-upgrade-evidence/reproduction.md and /tmp/effect-machine-upgrade-evidence/mailbox.json. The public-API probe is /tmp/effect-machine-046-mailbox.mjs. It holds the parent behind a parallel sibling's asynchronous finalizer, queues Cancel and Begin for attempt 2, then queues attempt 1's Done. Releasing the finalizer produces Finished with attempt 2 and value 1. The JSON records `staleOutcomeLanded: true`. The probe uses typed signals and no sleeps or patched internals. These local artifacts are not tracked in the repository.
+The current repeated evidence is [stress.md](stress.md). Its public-API probe `/tmp/em-stress/races.mjs` reproduces stale effects, typed failures, stream elements, timers, and child completion across 100 trials per combination. The earlier supplied evidence is /tmp/effect-machine-upgrade-evidence/reproduction.md and /tmp/effect-machine-upgrade-evidence/mailbox.json. The public-API probe is /tmp/effect-machine-046-mailbox.mjs. It holds the parent behind a parallel sibling's asynchronous finalizer, queues Cancel and Begin for attempt 2, then queues attempt 1's Done. Releasing the finalizer produces Finished with attempt 2 and value 1. The JSON records `staleOutcomeLanded: true`. The probe uses typed signals and no sleeps or patched internals. These local artifacts are not tracked in the repository.
 
-The installed invocation.ts checks `isCurrent` before sending. The installed planner.ts uses `selectInvocationTransition` to match the active path and invoke id. invocationEvent.ts carries no generation. The probe confirms a library race. It does not demonstrate a failure in Vivid's existing single-region machines. Their unguarded invoke outcomes are not a pattern to copy.
+The installed invocation.ts checks `isCurrent` before sending. The installed planner.ts uses `selectInvocationTransition` to match the active path and invoke id. invocationEvent.ts carries no generation. The probe confirms a library race. It does not demonstrate a failure in Vivid's existing single-region machines. Current main checks attempt identity in connecting and delivery identity in feed. See `connecting.ts:446` and `feed.ts:343` under `packages/client/state/src`.
+
+## Re-entered timers
+
+A bare registered timer completes with void. Its input can choose the duration but does not become completion output. The old timer fired into a newer attempt in 100/100 unguarded reentry trials in `/tmp/em-stress/races.mjs`. Its guarded timer case uses a known first-attempt sentinel to expose routing, not an application-ready identity check.
+
+For a deadline attached to a replaceable attempt, invoke an Effect that delays and returns the captured attempt identity. Check that identity in onDone. A timer closure that reads the current state cannot identify its original attempt. The timer source and void output are visible in upstream `src/internal/machine/invocation.ts:122` under the core package. Full-duration restart on resume passed 100/100 controlled-clock trials in `/tmp/em-stress/timer.mjs`.
 
 ## Lint in the gate
 

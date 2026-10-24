@@ -1,6 +1,6 @@
 # Wiring a machine into Vivid's surfaces
 
-Read against main 579c6d63 and Effect Machine 0.46.0. Re-read the named files before copying.
+Originally read against main 579c6d63 and Effect Machine 0.46.0. Feed outcome identity was rechecked against main ffe9e196e. Re-read the named files before copying.
 
 ## The bridge
 
@@ -16,7 +16,7 @@ Read against main 579c6d63 and Effect Machine 0.46.0. Re-read the named files be
 ## Owners in Vivid today
 
 - **Connecting** (`packages/client/state/src/connecting.ts`, adapters `apps/web/src/data/connecting.ts`, `apps/mobile/src/data/connecting.ts`): one bridge per page (web) or per signed-in session (phone, `apps/mobile/src/data/live.ts` `makeLiveData`), made from `Layer.mergeAll(asking, signIn, keyForm, arrivals)`. A long-lived registry subscription keeps it mounted. On the phone, `stop()` ends emission listening and continuations before `engine.registry.dispose()`.
-- **Feed** (`packages/client/state/src/feed.ts`, adapters `apps/web/src/data/feed.ts`, `apps/mobile/src/data/feed.ts`): one machine per card (`Idle`, `Sending`, `Sent`, `Unsent`). A newer post re-enters `Sending` with `reenter: true`. The same revision is declined. Retrying keeps the failed delivery's idempotency key. The presser makes the key with `crypto.randomUUID` on web or Expo `randomUUID` on phone. Adapters mount `machine.snapshot` and call `registry.set(machine.send, feed.PressEvents.Press({ item, how }))`. No per-card pruning exists yet. The current invoke returns `void` and its failure carries only the card id. Neither outcome checks the revision. Apply [the attempt rule](library.md#reject-outcomes-from-another-attempt) before copying it.
+- **Feed** (`packages/client/state/src/feed.ts`, adapters `apps/web/src/data/feed.ts`, `apps/mobile/src/data/feed.ts`): one machine per card (`Idle`, `Sending`, `Sent`, `Unsent`). A newer post re-enters `Sending` with `reenter: true`. The same revision is declined. Retrying keeps the failed delivery's idempotency key. The presser makes the key with `crypto.randomUUID` on web or Expo `randomUUID` on phone. Adapters mount `machine.snapshot` and call `registry.set(machine.send, feed.PressEvents.Press({ item, how }))`. No per-card pruning exists yet. The invoke now returns its captured delivery, and `DeliveryRefused` carries that delivery. Both outcomes use `sameDelivery` and decline mismatches at `packages/client/state/src/feed.ts:344` and `feed.ts:352`. Preserve those checks when copying it.
 - Phone connecting has no `unshown` reservation. Its next idle press reads the machine's updated waiting state. Its `owing().prune` needs only the current attempt. Web connecting keeps its gesture reservation for tab creation before the send.
 
 ## A press, end to end (web connecting)

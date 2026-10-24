@@ -5,9 +5,9 @@ description: "Write or convert a client lifecycle as an Effect Machine (@typeonc
 
 # State machines
 
-A lifecycle moves through named steps and waits between them. In Vivid it is an Effect Machine in `packages/client/state`, read by every surface through atoms. Follow "Lifecycles are machines" in `AGENTS.md`. Read `docs/statecharts.md` for the decision and current runtime semantics. Its original measurements used 0.40.0 and have not been repeated for 0.46.0. The pattern files are `packages/client/state/src/connecting.ts` for surface services and `packages/client/state/src/feed.ts` for card identity and idempotency. Their invokes still need the attempt checks described in step 3 before reuse in re-entered states.
+A lifecycle moves through named steps and waits between them. In Vivid it is an Effect Machine in `packages/client/state`, read by every surface through atoms. Follow "Lifecycles are machines" in `AGENTS.md`. Read `docs/statecharts.md` for the decision and current runtime semantics. Its original measurements used 0.40.0. The [0.46.0 stress results](references/stress.md) distinguish reproduced behavior from unverified claims. The pattern files are `packages/client/state/src/connecting.ts` for surface services and `packages/client/state/src/feed.ts` for card identity and idempotency. Their effect outcomes now reject mismatched identities. Connecting also checks arrival identity. Keep those checks when reusing the pattern.
 
-Check the installed version with `rg effect-machine pnpm-workspace.yaml`. This skill targets **0.46.0** on Effect 4.0.2. Read [references/library.md](references/library.md) for the runtime contract, lint rules, and confirmed mailbox race.
+Check the installed version with `rg effect-machine pnpm-workspace.yaml`. This skill targets **0.46.0** on Effect 4.0.2. Read [references/library.md](references/library.md) for the runtime contract, lint rules, and confirmed mailbox race. Use [references/capabilities.md](references/capabilities.md) for general good-for and not-good-for guidance, separate Vivid usage, and the complete public export and option index.
 
 ## 1. Find and classify
 
