@@ -1,10 +1,13 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeNet from 'node:net'
+import { Schema } from 'effect'
 import { RunState } from '@vivid/contracts'
 import { button, click, fill, wait } from './cdp.mjs'
 import { deviceState } from './devices.mjs'
-import { rpc, settled, history, json } from './wire.mjs'
+import { rpc, settled, history, json, decode } from './wire.mjs'
+
+const BrowseReceipt = Schema.fromJsonString(Schema.Struct({ ok: Schema.Boolean }))
 
 /** Missing model authority blocks the journey without misreporting a native action failure. */
 export class DesktopModelUnavailable extends Error {}
@@ -164,8 +167,9 @@ export async function browse(state, page, directory) {
         part.toolName === 'browse' &&
         part.state === 'output-available',
     )
+  // Native browse uses pictureResult's JSON text content in Flue history, even without a picture.
   NodeAssert.ok(
-    steps.some((step) => step.output.ok === true),
+    steps.some((step) => decode(BrowseReceipt, step.output).ok === true),
     'No successful browse tool receipt',
   )
   await json(directory + '/browse-receipts.json', steps)
