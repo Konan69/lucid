@@ -7,6 +7,7 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { feedBrowser } from './feedbrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -45,10 +46,10 @@ const missing = {
   code: 'No disposable Person Computer authority',
   watch: 'No disposable Integration with incoming events',
   library: 'No browser ingestion recipe yet',
-  feed: 'No disposable Watch occurrence',
 }
 const recipes = {
   devices: { check: 'devices' },
+  feed: { check: 'feed' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -65,6 +66,18 @@ const recipes = {
       'Use write_document to create one document titled Verification plan with body # Verification plan\nResearch, writing and review. Only write this one document.',
     rehearsal: 'write a document',
     check: 'document',
+  },
+}
+const specialRecipes = {
+  devices: {
+    drive: deviceBrowser,
+    scope:
+      'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+  },
+  feed: {
+    drive: feedBrowser,
+    scope:
+      'Ordinary Conversation Feed only; see scope.json. Watch delivery and native controls remain unproved.',
   },
 }
 for (const name of features)
@@ -321,14 +334,13 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (feature === 'devices') {
-      await deviceBrowser(state, id, directory, { run, capture })
+    if (feature in specialRecipes) {
+      await specialRecipes[feature].drive(state, id, directory, { run, capture })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
-        scope:
-          'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+        scope: specialRecipes[feature].scope,
       }
     } else {
       if (existing) {
