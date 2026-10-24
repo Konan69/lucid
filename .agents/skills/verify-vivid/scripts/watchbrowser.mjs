@@ -11,6 +11,7 @@ export async function watchBrowser(state, id, directory, { run, capture }) {
   await run(['open', state.web + '/?settings=connections'])
   await run(['wait', '[aria-label="Search integrations"]'])
   await run(['find', 'label', 'Search integrations', 'fill', 'Verify Pulse'])
+  await run(['wait', '[aria-label="Connect Verify Pulse"]'])
   await run(['find', 'role', 'button', 'click', '--name', 'Connect Verify Pulse', '--exact'])
   await run(['wait', 'input[name=code]'])
   await run(['fill', 'input[name=code]', 'verify-pulse-local'])

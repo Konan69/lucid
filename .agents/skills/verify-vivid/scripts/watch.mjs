@@ -8,13 +8,13 @@ import { rpc, chat, history, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { providerSnapshot } from './snapshot.mjs'
 import { ExecutorApp, ExecutorTools, ExecutorResult, executorRequest } from './executor.mjs'
+import { authSecret } from './settings.mjs'
 
 const rowSchemas = {
   vivid_connections: Schema.Struct({ executor_app: Schema.NonEmptyString }),
   vivid_watches: Schema.Struct({
     id: Schema.String,
     state: Schema.String,
-    stop_reason: Schema.NullOr(Schema.String),
     callback_url: Schema.String,
   }),
   vivid_runs: Schema.Struct({
@@ -214,9 +214,57 @@ async function retainEmitter(state, proof, directory) {
   })
 }
 
-/** Keep all three assertions on the baseline. The provider's exported committed state proves
+/** A fresh signed delivery must receive Executor's terminal status even after the cascade
+ * deletes the Watch. Repeat the second event id so the baseline observes one unwanted Run. */
+async function removedDelivery(proof, { callback, receipt }, directory) {
+  const signed = {
+    id: crypto.randomUUID(),
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    body: JSON.stringify({
+      eventId: receipt,
+      name: 'pulse.received',
+      timestamp: new Date().toISOString(),
+      data: { receipt, words: 'After removal' },
+    }),
+  }
+  const secret = NodeCrypto.createHmac('sha256', authSecret)
+    .update('vivid/watch/' + proof.watch)
+    .digest()
+  const signature = NodeCrypto.createHmac('sha256', secret)
+    .update(`${signed.id}.${signed.timestamp}.${signed.body}`)
+    .digest('base64')
+  const response = await fetch(callback, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'webhook-id': signed.id,
+      'webhook-timestamp': signed.timestamp,
+      'webhook-signature': 'v1,' + signature,
+    },
+    body: signed.body,
+    signal: AbortSignal.timeout(30_000),
+  })
+  await json(directory + '/removed-delivery.json', {
+    watch: proof.watch,
+    receipt,
+    callback,
+    status: response.status,
+  })
+  if (response.body !== null) await response.body.cancel()
+  return response.status
+}
+
+/** Keep every assertion on the baseline. The provider's exported committed state proves
  * no live subscription and no queued delivery, so absence of a Run needs no quiet-time sleep. */
 export async function disconnected(state, proof, directory, remove) {
+  const active = await watchRows(
+    state,
+    { table: 'vivid_watches', field: 'id', id: proof.watch },
+    directory,
+    'active-watch',
+  )
+  NodeAssert.equal(active.length, 1)
+  const callback = active[0].callback_url
   await retainEmitter(state, proof, directory)
   await remove()
   const rows = await watchRows(
@@ -230,15 +278,12 @@ export async function disconnected(state, proof, directory, remove) {
     { app: proof.app, marker: 'After removal', name: 'after-remove' },
     directory,
   )
-  if (rows[0].state === 'Active') {
+  if (rows.some((row) => row.state === 'Active')) {
     const item = await posted(state, receipt, directory)
     await settled(state, item.thread, 1, 'Completed', directory)
   }
-  const provider = await providerSnapshot(
-    state,
-    { callback: rows[0].callback_url, receipt },
-    directory,
-  )
+  const status = await removedDelivery(proof, { callback, receipt }, directory)
+  const provider = await providerSnapshot(state, { callback, receipt }, directory)
   const runs = await watchRows(
     state,
     { table: 'vivid_runs', field: 'thread_id', id: threadFor(proof.watch, receipt) },
@@ -246,8 +291,8 @@ export async function disconnected(state, proof, directory, remove) {
     'after-remove-runs',
   )
   const assertions = {
-    watchStopped: rows[0].state === 'Stopped',
-    disconnected: rows[0].stop_reason === 'disconnected',
+    watchRemoved: rows.length === 0,
+    signedDeliveryGone: status === 410,
     noLiveSubscription: provider.subscriptions.every((row) => row.status !== 'active'),
     furtherReceipt: receipt,
     providerEventStored: provider.events.length === 1,
@@ -255,8 +300,8 @@ export async function disconnected(state, proof, directory, remove) {
     noNewRun: runs.length === 0,
   }
   await json(directory + '/post-removal.json', assertions)
-  NodeAssert.equal(assertions.watchStopped, true, 'Removing the Integration left its Watch Active')
-  NodeAssert.equal(assertions.disconnected, true, 'Watch must stop with reason disconnected')
+  NodeAssert.equal(assertions.watchRemoved, true, 'Removing the Integration left its Watch Active')
+  NodeAssert.equal(assertions.signedDeliveryGone, true, 'Signed delivery must answer 410')
   NodeAssert.equal(assertions.noLiveSubscription, true, 'Executor retained a live subscription')
   NodeAssert.equal(
     assertions.providerEventStored,

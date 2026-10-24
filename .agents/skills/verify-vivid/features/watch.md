@@ -18,7 +18,7 @@ After the first occurrence, the fixture connects an independent account directly
 
 After real Remove, the fixture emits another event. Executor's supported `executor-host export` reads a quiesced copy of only this run's provider volume. The inspector uses Executor's pinned PGlite version, in memory. The private export and inspector stay in scratch and disappear at Cleanup. Evidence includes only the selected safe columns.
 
-Require the Watch to be Stopped with reason `disconnected`, its exact provider subscription to be absent or stopped, the second provider event to exist without a queued delivery, and no new Run. On the old product, the same journey records the Watch still Active and follows the unwanted second delivery to settlement before reporting failure.
+Require the Watch row to be gone through cascade deletion, its exact provider subscription to be absent or stopped, the second provider event to exist without a queued delivery, and no new Run. A fresh signed delivery for the removed Watch must answer 410. On the old product, the same journey records the Watch still Active and follows the unwanted second delivery to settlement before reporting failure.
 
 ## Evidence
 

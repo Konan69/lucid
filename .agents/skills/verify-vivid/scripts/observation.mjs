@@ -1,6 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import { Schema } from 'effect'
-import { RpcSerialization } from 'effect/rpc'
+import { RpcSchema, RpcSerialization } from 'effect/rpc'
 import { VividRpc } from '@vivid/contracts/rpc'
 
 import { Account, decodeText } from './receipts.mjs'
@@ -19,8 +19,10 @@ export async function observe(state, { tag, payload, accept }) {
   )
   const procedure = VividRpc.requests.get(tag)
   if (!procedure) throw new Error('Unknown public stream ' + tag)
+  const stream = procedure.successSchema
+  if (!RpcSchema.isStreamSchema(stream)) throw new Error('Not a public stream ' + tag)
   const Packet = Schema.TaggedUnion({
-    Chunk: { values: Schema.Array(RpcSerialization.ndjson.codecFor(procedure.successSchema)) },
+    Chunk: { values: Schema.Array(RpcSerialization.ndjson.codecFor(stream.success)) },
     Exit: { exit: Schema.Json },
     Pong: {},
   })

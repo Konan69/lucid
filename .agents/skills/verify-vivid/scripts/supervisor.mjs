@@ -19,6 +19,7 @@ import {
 import { stopCaptured } from './recovery.mjs'
 import { remoteCleanup } from './remote.mjs'
 import { executor } from './executor.mjs'
+import { authSecret } from './settings.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -280,7 +281,7 @@ async function launch() {
     ...provider,
     DATABASE_URL: databaseUrl(),
     VIVID_TEST_DATABASE_URL: databaseUrl(),
-    AUTH_SECRET: 'Verify-Auth!0123456789-ABCDefghijklmnop',
+    AUTH_SECRET: authSecret,
     PORT: String(state.ports.server),
     VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime}`,
     VIVID_SERVER_URL: state.server,
