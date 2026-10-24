@@ -4,6 +4,16 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { runIdentifier } from './process.mjs'
 
+/** Idle master retention between gate commands. Source: unmeasured. Expiry closes only an
+ * unused master; active gates keep their connection and durable run identity. */
+const masterIdleSeconds = 120
+/** Peer probes detect a dead SSH connection independently of quiet gate output.
+ * Source: unmeasured. Missed replies close the connection so follow can reconnect. */
+export const peerProbeSeconds = 15
+/** Rebuildable Turbo cache retention limits disk growth. Source: unmeasured.
+ * Expiry causes a cache miss, never deletion of a run's completion receipt. */
+const cacheRetentionDays = 7
+
 /**
  * One connection for the push, the start and the stream: a second `ssh` reuses the first one's
  * socket and skips the handshake, which is most of a focused run's waiting.
@@ -14,9 +24,9 @@ const sshOptions = [
   '-o',
   'ControlPath=~/.ssh/vivid-gate-%C',
   '-o',
-  'ControlPersist=120',
+  `ControlPersist=${masterIdleSeconds}`,
   '-o',
-  'ServerAliveInterval=15',
+  `ServerAliveInterval=${peerProbeSeconds}`,
   '-o',
   'ConnectTimeout=20',
 ]
@@ -53,7 +63,7 @@ home="$HOME/vivid-gate/fast"; log="$home/runs/$run.log"
 mkdir -p "$home/trees" "$home/runs" "$home/cache/turbo"
 printf '%s\n' @IGNORE@ > "$home/.boxignore"
 find "$home/runs" -type f -mtime +2 -delete
-find "$home/cache" -type f -mtime +7 -delete
+find "$home/cache" -type f -mtime +@CACHE@ -delete
 cat > "$home/runs/$run.sh" <<'RUN'
 set -uo pipefail
 sha="$1"; run="$2"; label="$3"; shift 3
@@ -96,7 +106,9 @@ finish $?
 RUN
 setsid nohup bash "$home/runs/$run.sh" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
 echo $! > "$home/runs/$run.pid"
-`.replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
+`
+  .replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
+  .replace('@CACHE@', String(cacheRetentionDays))
 
 /**
  * Follow the run's log until its exit file exists, then leave with the run's own exit code.

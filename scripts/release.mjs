@@ -32,6 +32,10 @@ class ArchiveAvailabilityFailure extends Schema.TaggedError()(
   { title: 'Archive availability failure' },
 ) {}
 
+/** Locked GETs are idempotent. Source: unmeasured. Two retries bound repeated transient
+ * availability failures; integrity and permanent HTTP failures fail immediately. */
+const archiveAvailabilityRetries = 2
+
 const isString = Schema.is(Schema.String)
 const Strings = Schema.Record(Schema.String, Schema.String)
 const Edges = Schema.Struct({
@@ -433,7 +437,10 @@ const inspectDependency = Effect.fn('release.inspectDependency')(function* (root
     if (resolution === undefined) continue
     if (
       yield* inspectArchive(root, snapshot.revision, key, resolution).pipe(
-        Effect.retry({ times: 2, while: Predicate.isTagged('ArchiveAvailabilityFailure') }),
+        Effect.retry({
+          times: archiveAvailabilityRetries,
+          while: Predicate.isTagged('ArchiveAvailabilityFailure'),
+        }),
       )
     )
       return { key, native: true }
