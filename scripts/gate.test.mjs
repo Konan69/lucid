@@ -7,7 +7,6 @@ import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
-import './gate/database.test.mjs'
 import { withoutRepositoryEnvironment } from './gate.mjs'
 import {
   followScript,
@@ -119,6 +118,7 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
     encoding: 'utf8',
   })
   assert.equal(followed.status, 92, followed.stdout + followed.stderr)
+  assert.ok(NodeFS.existsSync(active), 'unconfirmed ownership must preserve run evidence')
   assert.equal(NodeFS.readFileSync(active, 'utf8'), 'still owned\n')
 })
 
@@ -226,7 +226,6 @@ void test('a push from a linked worktree cannot reach that worktree through the 
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
-import './gate/database.test.mjs'
 import { withoutRepositoryEnvironment } from ${JSON.stringify(NodePath.join(repositoryRoot, 'scripts/gate.mjs'))}
 const inherited = process.env.GIT_DIR !== undefined
 const env = withoutRepositoryEnvironment(process.env)
