@@ -2,19 +2,15 @@ import * as Schema from 'effect/Schema'
 import { ThreadId } from './identity.js'
 
 /**
- * The Feed is how Vivid brings things to a Person. Work Vivid does on its own (an Integration's
- * event waking it) runs in a background Thread the Person never sees in their Thread list; the
- * only thing that reaches them from it is a card Vivid chose to post. Nothing worth their
- * attention means no card.
- *
- * A card is the face of one background Thread: Vivid posting again from the same Thread
- * replaces the card's words rather than adding a second card, so a follow-up (the Person pressed
- * one of its buttons and Vivid acted) updates what they already see.
+ * The Feed shows work in every readable Thread the Person owns, including Conversations and
+ * Background Threads. Each Thread has one derived card identity even when it has no posted card.
+ * Vivid can post words from a Background Thread; another post replaces those words on the same
+ * card, so a follow-up updates the work the Person already sees.
  */
 export const FeedCardId = Schema.NonEmptyString.pipe(Schema.brand('FeedCardId'))
 export type FeedCardId = typeof FeedCardId.Type
 
-/** New until the Person has looked at it; Done once they have dealt with it, which takes it off the Feed. */
+/** New until looked at; Done once dealt with. Settled work may remain in the Feed for a day. */
 export const FeedCardState = Schema.Literals(['new', 'seen', 'done'] as const)
 export type FeedCardState = typeof FeedCardState.Type
 
@@ -48,11 +44,9 @@ export const FeedAsk = Schema.Literals(['approval', 'question'] as const)
 export type FeedAsk = typeof FeedAsk.Type
 
 /**
- * One piece of Vivid's own work, as the Feed shows it: the face of one background Thread. The Feed
- * knows nothing of where work comes from (an Integration's event, a timer, whatever wakes Vivid
- * next): every source is a background Thread, and whatever it has to show is a post Vivid
- * composed, drawn by the same renderer. So a new source needs no Feed code. What the Feed does
- * know is the closed life of the work, and that is the union:
+ * One owned Thread's work as the Feed shows it, whether Conversation or Background. The Feed
+ * reads Runs, Approvals, questions and any posted card without knowing what started the work.
+ * A Conversation normally has no post. The closed life of the work is the union:
  *
  * - `Working`: a Run is going now. It may already have posted (a first look, progress).
  * - `Waiting`: it needs the Person: Vivid posted and they have not settled it, or the work stopped
@@ -62,9 +56,9 @@ export type FeedAsk = typeof FeedAsk.Type
  */
 const Item = {
   card: FeedCardId,
-  /** The background Thread; pressing an action continues it, and its title opens it. */
+  /** The owned Thread; pressing an action continues it, and its title opens it. */
   thread: ThreadId,
-  /** What brought it, as the Person named it: the background Thread's title. */
+  /** What brought it, as the Person named it: the Thread's title. */
   from: Schema.String,
 }
 export const FeedItem = Schema.TaggedUnion({
