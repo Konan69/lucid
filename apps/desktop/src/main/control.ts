@@ -50,7 +50,14 @@ class Stopped extends Schema.TaggedError<Stopped>()(
   { title: 'The Person stopped the action' },
 ) {}
 
-type StepFailure = PageGone | StepFailed | StepNotAllowed | StepUnsupported
+/** Input was dispatched, but its receipt was lost. Reporting failure could invite duplicate input. */
+class InputUnknown extends Schema.TaggedError<InputUnknown>()(
+  'InputUnknown',
+  {},
+  { title: 'The input outcome is unknown' },
+) {}
+
+type StepFailure = PageGone | StepFailed | StepNotAllowed | StepUnsupported | InputUnknown
 
 /** A value inside a debugger command: the plain data its protocol carries. */
 type CommandValue =
@@ -85,12 +92,12 @@ export interface ControlledPage {
   ) => Effect.Effect<unknown, PageGone | StepFailed>
   /**
    * Gives the page the keyboard, which needs the page drawn on the window; a page that is not
-   * drawn in time is a failed step. The effect it returns gives the keyboard back.
+   * drawn is waited for until placement or cancellation. The effect gives the keyboard back.
    */
   readonly focus: Effect.Effect<Effect.Effect<void>, PageGone | StepFailed>
   /** Takes a picture of the page as it is drawn now. */
   readonly capture: Effect.Effect<PagePicture, PageGone | StepFailed>
-  /** Waits for a page that is loading to stop, for a bounded time; returns at once otherwise. */
+  /** Waits for navigation completion or owner cancellation; returns at once when not loading. */
   readonly settle: Effect.Effect<void>
 }
 
@@ -170,8 +177,9 @@ const decodeTyped = Schema.decodeUnknownEffect(
   evaluated(Schema.Literals(['ok', 'notEditable', 'different'] as const)),
 )
 const decodeScrolled = Schema.decodeUnknownEffect(evaluated(Schema.Literal('ok')))
+const decodeFocused = Schema.decodeUnknownEffect(evaluated(Schema.Literal('focused')))
 const decodeWitness = Schema.decodeUnknownEffect(
-  evaluated(Schema.Literals(['seen', 'unseen'] as const)),
+  evaluated(Schema.Literals(['seen', 'departed'] as const)),
 )
 const decodeDocument = Schema.decodeUnknownEffect(
   Schema.Struct({ root: Schema.Struct({ nodeId: Schema.Int }) }),
@@ -287,74 +295,93 @@ const locate = Effect.fn('DesktopControl.locate')(function* (
 })
 
 /**
- * Resolves in the page once its document has focus, or after two seconds without it. Turning
- * focus emulation on is answered before the page has it; a key sent in between is dropped.
- * Found by running against real pages, where the first key after a page loaded never arrived.
+ * Focus belongs to this input attempt. The renderer removes its listeners on receipt, departure
+ * or cancellation; elapsed time never authorises input to an unfocused document.
  */
 const HAS_FOCUS = `new Promise((resolve) => {
-  if (document.hasFocus()) return resolve("focused")
-  window.addEventListener("focus", () => resolve("focused"), { once: true })
-  setTimeout(() => resolve("late"), 2000)
+  const key = Symbol.for("vivid.focus")
+  const controller = new AbortController()
+  const finish = (value) => {
+    controller.abort()
+    delete window[key]
+    resolve(value)
+  }
+  if (document.hasFocus()) return finish("focused")
+  window[key] = () => finish("cancelled")
+  window.addEventListener("focus", () => finish("focused"), { signal: controller.signal })
+  window.addEventListener("pagehide", () => finish("departed"), { signal: controller.signal })
 })`
 
-/** How long a press that has not been seen is waited for before it is called undelivered. */
-const LATE_MILLIS = 500
+/** Cancels renderer work even when the caller stopped awaiting the debugger command. */
+const clearObservation = (page: ControlledPage, name: 'focus' | 'keydown' | 'mousedown') =>
+  page
+    .send('Runtime.evaluate', {
+      expression: `(() => { const cancel = window[Symbol.for("vivid.${name}")]; if (cancel) cancel() })()`,
+    })
+    .pipe(Effect.ignore)
 
-/** Where the page keeps its note of having seen Vivid's press; a symbol, so no page script meets it. */
+/** A debugger response must confirm focus before any input is dispatched. */
+const focused = (page: ControlledPage) =>
+  page
+    .send('Runtime.evaluate', {
+      expression: HAS_FOCUS,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    .pipe(
+      Effect.flatMap((answer) => decodeFocused(answer).pipe(failing('focus'))),
+      Effect.ensuring(clearObservation(page, 'focus')),
+      Effect.asVoid,
+    )
+
+/** The receipt is installed before dispatch so an immediate event cannot be missed. */
 const noteOf = (event: 'keydown' | 'mousedown') => `window[Symbol.for("vivid.saw.${event}")]`
 
 /**
- * Asks the page to note the next key or button it sees go down. Sent before the press, and the
- * answer awaited: that round trip is also what lets the focus given to the page arrive before
- * the key does. Found by running against real pages: without it the key-down was dropped and
- * only the key-up arrived.
+ * Arms one input receipt and a document-departure receipt. Keeping the Promise in the document
+ * preserves an event that arrives between dispatch and the command that awaits it.
  */
 const arm = Effect.fn('DesktopControl.arm')(function* (
   page: ControlledPage,
   event: 'keydown' | 'mousedown',
 ) {
   const answer = yield* page.send('Runtime.evaluate', {
-    expression: `(() => { ${noteOf(event)} = false; window.addEventListener("${event}", () => { ${noteOf(event)} = true }, { capture: true, once: true }); return "ok" })()`,
+    expression: `(() => {
+      const controller = new AbortController()
+      ${noteOf(event)} = new Promise((resolve) => {
+        const finish = (value) => { controller.abort(); resolve(value) }
+        window[Symbol.for("vivid.${event}")] = () => {
+          finish("cancelled")
+          delete ${noteOf(event)}
+          delete window[Symbol.for("vivid.${event}")]
+        }
+        window.addEventListener("${event}", () => finish("seen"), { capture: true, signal: controller.signal })
+        window.addEventListener("pagehide", () => finish("departed"), { signal: controller.signal })
+      })
+      return "ok"
+    })()`,
     returnByValue: true,
   })
   yield* decodeScrolled(answer).pipe(failing('arm'))
 })
 
 /**
- * Whether the press reached the page. Chromium accepts input for a page and can still drop it
- * (a page that is not drawn takes no keys, for one), and the command succeeds either way; found
- * by running against real pages, where a press was answered as done and the page had seen
- * nothing. So the page is asked. It saw the press, or its note is gone because the press took it
- * to another document: both mean delivered. The note still there and unset means the press never
- * arrived, and that is a failed step, said as one, never a second press.
- *
- * A press can reach the page after the command that sent it has been answered; found the same
- * way, when a key was called undelivered and the page had it a moment later. Saying "failed" for
- * a press that arrived invites a second one, so an unseen press is given `LATE_MILLIS` to turn
- * up before it is called undelivered. A press seen at once costs no wait.
+ * Waits for actual delivery or document departure. A lost context or malformed receipt after
+ * dispatch means unknown, never failed or implicitly delivered. Stop and authority expiry still
+ * interrupt the owning action and release any held button or key.
  */
-const witnessed = Effect.fn('DesktopControl.witnessed')(function* (
-  page: ControlledPage,
-  event: 'keydown' | 'mousedown',
-) {
-  const answer = yield* page
+const witnessed = (page: ControlledPage, event: 'keydown' | 'mousedown') =>
+  page
     .send('Runtime.evaluate', {
-      expression: `new Promise((resolve) => {
-        if (${noteOf(event)} !== false) return resolve("seen")
-        window.addEventListener("${event}", () => resolve("seen"), { capture: true, once: true })
-        setTimeout(() => resolve(${noteOf(event)} === false ? "unseen" : "seen"), ${LATE_MILLIS})
-      })`,
+      expression: `${noteOf(event)}`,
       awaitPromise: true,
       returnByValue: true,
     })
     .pipe(
-      Effect.flatMap((given) => decodeWitness(given).pipe(failing('witness'))),
-      // A page that is already leaving refuses the question; it left because of the press.
-      Effect.catchTag('StepFailed', () => Effect.succeed({ result: { value: 'seen' as const } })),
+      Effect.flatMap((answer) => decodeWitness(answer)),
+      Effect.mapError(() => new InputUnknown({})),
+      Effect.asVoid,
     )
-  if (answer.result.value === 'unseen') return yield* new StepFailed({ step: 'undelivered' })
-  return undefined
-})
 
 /** The middle of where an element is drawn, refused when it lies outside what the page shows. */
 const pointOf = Effect.fn('DesktopControl.pointOf')(function* (page: ControlledPage, node: number) {
@@ -399,6 +426,7 @@ const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage,
   let went = false
   let button = { x: 0, y: 0, button: 'left', clickCount: 1 }
   const release = Effect.fn('DesktopControl.buttonUp')(function* () {
+    yield* clearObservation(page, 'mousedown')
     if (went)
       yield* page
         .send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' })
@@ -413,11 +441,13 @@ const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage,
     // page. Nothing is shown and the keyboard is not taken: a click must not move the Person's
     // typing away from where they are.
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
-    yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
+    yield* focused(page)
     button = { ...button, ...(yield* pointOf(page, control.node)) }
     yield* arm(page, 'mousedown')
     went = true
-    yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
+    yield* page
+      .send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
+      .pipe(Effect.mapError(() => new InputUnknown({})))
     yield* witnessed(page, 'mousedown')
   })
   yield* down().pipe(Effect.ensuring(release()))
@@ -456,13 +486,13 @@ const type = Effect.fn('DesktopControl.type')(function* (
  * next page would act as focused.
  *
  * What Vivid changes, each found by running against real pages:
- * - A key is pressed only on a page that is drawn on the window (`focus` waits for that, and
- *   fails the step with nothing sent otherwise). Keys to a page that is not drawn were delivered
+ * - A key is pressed only after the page is drawn on the window. `focus` waits for placement
+ *   or owning cancellation. Keys to a page that is not drawn were delivered
  *   unreliably, and sometimes after the action had been answered.
  * - No `Page.bringToFront`. With it, the key that followed was dropped.
  * - The page confirms it has focus after emulation is turned on, before the key is sent.
- * - The page is asked whether it saw the key (`witnessed`); a key that never arrived is a failed
- *   step, where the reference reports success.
+ * - The page supplies an input receipt (`witnessed`). A missing receipt after dispatch leaves
+ *   the outcome unknown instead of inviting another key press.
  */
 const press = Effect.fn('DesktopControl.press')(function* (
   page: ControlledPage,
@@ -476,6 +506,7 @@ const press = Effect.fn('DesktopControl.press')(function* (
   let went = false
   let giveBack: Effect.Effect<void> = Effect.void
   const release = Effect.fn('DesktopControl.release')(function* () {
+    yield* clearObservation(page, 'keydown')
     if (went) yield* page.send('Input.dispatchKeyEvent', keyUp).pipe(Effect.ignore)
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: false }).pipe(Effect.ignore)
     yield* giveBack
@@ -483,10 +514,12 @@ const press = Effect.fn('DesktopControl.press')(function* (
   const down = Effect.fn('DesktopControl.keyDown')(function* () {
     giveBack = yield* page.focus
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
-    yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
+    yield* focused(page)
     yield* arm(page, 'keydown')
     went = true
-    yield* page.send('Input.dispatchKeyEvent', keyDown)
+    yield* page
+      .send('Input.dispatchKeyEvent', keyDown)
+      .pipe(Effect.mapError(() => new InputUnknown({})))
     yield* witnessed(page, 'keydown')
   })
   yield* down().pipe(Effect.ensuring(release()))
@@ -654,7 +687,8 @@ const perform = (acting: Acting, action: BrowserAction) =>
       unseen(onFront(acting, (page) => scroll(page, scrollDelta(direction, notches)))),
     Back: () => unseen(travel(acting, 'Back')),
     Forward: () => unseen(travel(acting, 'Forward')),
-    // Held first, so the page shows its Stop button for the length of the wait.
+    // Source: BrowserAction.Wait in contracts. The Person asks for this pause of 1 to 10
+    // seconds; the page shows Stop throughout and owning cancellation interrupts the pause.
     Wait: ({ seconds }) => unseen(onFront(acting, () => Effect.sleep(Duration.seconds(seconds)))),
     OpenTab: ({ address }) => unseen(go(acting, Option.none(), address)),
     ShowTab: ({ tab }) => unseen(numbered(acting, tab, 'Show')),
@@ -729,8 +763,8 @@ const describe = Effect.fn('DesktopControl.describe')(function* (
 
 /**
  * One action to its answer. Every way an action can end is one of the contract's answers: done
- * with the page as it now is, refused for a named reason, or failed. Input is never sent a second
- * time: a step that fails is answered as failed and Vivid decides what to do next.
+ * with the page as it now is, refused for a named reason, or failed. Lost input receipts remain
+ * typed failures until the executor returns no answer, preserving the server's unknown outcome.
  */
 const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: BrowserAction) {
   const done = perform(acting, action).pipe(Effect.flatMap((picture) => describe(acting, picture)))
@@ -799,6 +833,7 @@ export const executor = Effect.fn('DesktopControl.make')(function* (
     running = Option.some(current)
     return yield* act({ ...dependencies, listed, running: current }, request.action).pipe(
       Effect.timeoutOption(Duration.millis(request.expiresAt - now)),
+      Effect.catchTag('InputUnknown', () => Effect.succeedNone),
       // However the action ends, the page stops saying Vivid is using it and Stop has no target.
       Effect.ensuring(
         Effect.sync(() => {

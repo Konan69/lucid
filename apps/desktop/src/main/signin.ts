@@ -50,13 +50,6 @@ import type { ThemeSurfaces } from './tokens.ts'
  */
 
 /**
- * How long an attempt waits for the browser to come back. The server keeps what it knows about
- * a sign-in for five minutes; a return after that could not be traded, so waiting longer would
- * only leave a port open for nothing.
- */
-const ATTEMPT_LASTS = '5 minutes'
-
-/**
  * How long the listener stays after a return, for the browser to follow the redirect to the
  * page it ends on. A browser follows a redirect at once, so this only ever runs out when the
  * tab was closed in that instant or the return was not made by a browser at all.
@@ -330,9 +323,9 @@ const unheard = (listening: Deferred.Deferred<Option.Option<LoopbackPort>>) =>
  * end, interruption included, closes the port.
  *
  * The order at the end matters. A return is said to the window at once, while the listener
- * stays to serve the page. Running out of time is said only after the scope has closed, so
- * `Expired` always means nothing is listening any more. That last line is also a no-op for
- * every attempt that has already ended: an ending is completed once.
+ * stays to serve the page. Human sign-in waits for its callback or explicit cancellation.
+ * The server validates OAuth state and the returned grant at their own boundaries.
+ * Listener startup failure is said only after its scope closes.
  */
 const attend = Effect.fn('DesktopSignIn.attend')(function* (input: {
   readonly secrets: AttemptSecrets
@@ -345,11 +338,8 @@ const attend = Effect.fn('DesktopSignIn.attend')(function* (input: {
     Effect.gen(function* () {
       const listener = yield* listen(input.secrets.state, input.pages)
       yield* Deferred.succeed(input.listening, Option.some(listener.port))
-      const back = yield* Deferred.await(listener.returned).pipe(
-        Effect.timeoutOption(ATTEMPT_LASTS),
-      )
-      if (Option.isNone(back)) return
-      yield* Deferred.succeed(input.ended, endingOf(back.value, input.secrets))
+      const back = yield* Deferred.await(listener.returned)
+      yield* Deferred.succeed(input.ended, endingOf(back, input.secrets))
       // The Person is in their browser; the app they are being signed in to comes forward.
       yield* Effect.sync(() => input.focus())
       yield* Deferred.await(listener.left).pipe(Effect.timeoutOption(LANDING_WAIT))
@@ -400,8 +390,8 @@ interface Attempt {
  * Makes the shell's Google sign-in. There is at most one attempt; everything it starts lives in
  * the scope this is made in, so closing that scope (the app quitting) stops any listener.
  *
- * An attempt is one fiber (`attend`): it listens, waits up to five minutes for the browser to
- * come back, says how it ended, and stays a moment longer to give the browser its last page.
+ * An attempt is one fiber (`attend`): it listens until the browser returns or the owner cancels,
+ * says how it ended, and stays a moment longer to give the browser its last page.
  *
  * An ending is handed to the window once. It is kept until `ended` is asked for it, so a return
  * that arrives before the window has started waiting is not lost; after that, and after
