@@ -1,4 +1,4 @@
-import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { ProjectId } from '@vivid/contracts'
 import { warm } from '../data/warm'
 
@@ -15,5 +15,4 @@ export const Route = createFileRoute('/projects/{-$id}')({
   },
   // Begins the screen's data before the screen (`data/warm.ts`); it holds nothing back.
   loader: () => warm.projects(),
-  component: lazyRouteComponent(() => import('../place/Projects'), 'ProjectsPlace'),
 })

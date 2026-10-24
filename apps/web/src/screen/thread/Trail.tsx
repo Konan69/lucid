@@ -17,13 +17,10 @@ import {
   Terminal,
   type LucideIcon,
 } from 'lucide-react'
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { cn } from '../../ui/cn'
-
-// The live picture of the Computer brings the screen client with it, which is a third of the
-// app's code; it is fetched the first time Vivid uses its computer in a Thread and not before.
-const Peek = lazy(() => import('../computer/Peek').then((module) => ({ default: module.Peek })))
+import { Peek } from '../computer/Peek'
 
 /**
  * What Vivid is doing and what it did, from the tool calls the Thread's stream already carries.
@@ -187,11 +184,7 @@ export function Doing({
           </li>
         )}
       </ol>
-      {onComputer && (
-        <Suspense fallback={null}>
-          <Peek />
-        </Suspense>
-      )}
+      {onComputer && <Peek />}
     </div>
   )
 }

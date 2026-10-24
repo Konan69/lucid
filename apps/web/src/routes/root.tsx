@@ -7,14 +7,9 @@ import { warm } from '../data/warm'
  *
  * The route files import no screen. The data modules import the router to go somewhere and the
  * router imports this tree, so a tree that imported the screens would close that circle through
- * every module a screen reads. A screen reaches its route one of two ways instead:
- *
- * - The screens a Person meets first (this shell, the first screen, a Thread, an invitation) are
- *   given to their routes by `main.tsx`, which imports them, so they ship in the app's first
- *   file. Naming them here through `import()` was measured: it cut the first load into 62 files
- *   where there had been 32.
- * - The Library and Projects are named by their routes through `lazyRouteComponent`,
- *   each in its own file, fetched on intent and when the browser is idle (`App.tsx`).
+ * every module a screen reads. `main.tsx` gives every route its screen instead, and nothing is
+ * split off: a deploy replaces every chunk, and a tab opened before it then failed to fetch a
+ * screen it had not drawn yet ("Failed to fetch dynamically imported module").
  *
  * Ported from T3 Code web (`apps/web/src/routes/__root.tsx`, `src/router.ts`): file routes, no
  * loaders that fetch, data in atoms. Adapted: T3 lets the plugin split every route's component
