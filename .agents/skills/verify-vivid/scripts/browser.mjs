@@ -7,6 +7,7 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { noteBrowser } from './notebrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -48,6 +49,7 @@ const missing = {
   feed: 'No disposable Watch occurrence',
 }
 const recipes = {
+  notes: { check: 'notes' },
   devices: { check: 'devices' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
@@ -234,11 +236,15 @@ async function journey(state, feature) {
     diffHash: state.diffHash,
     evidence: directory,
   }
-  if (missing[feature]) {
+  const reason =
+    feature === 'notes' && state.modelKind !== 'real'
+      ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
+      : missing[feature]
+  if (reason) {
     const verdict = {
       ...base,
       verdict: 'blocked',
-      reason: 'no browser recipe: ' + missing[feature],
+      reason: missing[feature] ? 'no browser recipe: ' + reason : reason,
     }
     await json(directory + '/verdict.json', verdict)
     console.log(JSON.stringify(verdict))
@@ -329,6 +335,19 @@ async function journey(state, feature) {
         thread: id,
         scope:
           'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+      }
+    } else if (feature === 'notes') {
+      await noteBrowser(state, id, directory, {
+        run,
+        capture,
+        reply: (text, evidence, stage) => exactReply(run, text, evidence, stage),
+      })
+      verdict = {
+        ...base,
+        verdict: 'proved',
+        thread: id,
+        scope:
+          'Notes tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
       }
     } else {
       if (existing) {
