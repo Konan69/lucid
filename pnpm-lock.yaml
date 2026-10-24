@@ -234,8 +234,11 @@ catalogs:
       specifier: 4.3.3
       version: 4.3.3
     '@typeonce/effect-machine':
-      specifier: 0.40.0
-      version: 0.40.0
+      specifier: 0.46.0
+      version: 0.46.0
+    '@typeonce/oxlint-plugin-effect-machine':
+      specifier: 0.46.0
+      version: 0.46.0
     '@types/node':
       specifier: 24.13.6
       version: 24.13.6
@@ -404,6 +407,9 @@ importers:
       '@shadcn/lint':
         specifier: 0.1.1
         version: 0.1.1(supports-color@8.1.1)
+      '@typeonce/oxlint-plugin-effect-machine':
+        specifier: 'catalog:'
+        version: 0.46.0(oxlint@1.83.0)
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -1001,7 +1007,7 @@ importers:
     dependencies:
       '@typeonce/effect-machine':
         specifier: 'catalog:'
-        version: 0.40.0(effect@4.0.2)
+        version: 0.46.0(effect@4.0.2)
       '@vivid/client-runtime':
         specifier: workspace:*
         version: link:../rpc
@@ -1050,6 +1056,12 @@ importers:
   packages/design/tokens: {}
 
 packages:
+
+  '@typeonce/oxlint-plugin-effect-machine@0.46.0':
+    resolution: {integrity: sha512-XpMrYGAlVEjKk2E5ZhMXpU0PYsn5ztYex54oZMorvE9C8KzJ9SXVfcMKWb9qx/ujS3ZNlgA6bwnz5ivbuQUbcg==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      oxlint: '>=1.80.0 <2'
 
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.81':
     resolution: {integrity: sha512-gGmshJZSFbeyK94UMRgRcrE0prwJrp3H3kQ8aZmGOuWzwJMMxaoCuf4Nulf8nGsvHcjMEAfFi45AXRRQBgbgQQ==}
@@ -5035,8 +5047,8 @@ packages:
   '@tursodatabase/database@0.4.4':
     resolution: {integrity: sha512-QkQ0qLp0AY8dC9BOrIMyeyUXoFCvhlRaH+wcg013OvzYufSmDnnzg44U0tQkmnXYfUZEIp+IpADO/UeGNL0M2Q==}
 
-  '@typeonce/effect-machine@0.40.0':
-    resolution: {integrity: sha512-BaTY12ylWy+MPxEJtcD/9+PqQtLXzmiXbbdfIk46L+QXpo6eAtKl0NoS2/sGLOXTE25gXFFNRTU669Rz8PmTtQ==}
+  '@typeonce/effect-machine@0.46.0':
+    resolution: {integrity: sha512-Fsvvzf2htH6XqrROyBlEonneuVvZjlTqdoXlY7cNnttN6gb/jWVZJDGtssehfKiN83NRLqT4Df22/Y9UiuK2vg==}
     engines: {node: '>=20'}
     peerDependencies:
       effect: 4.0.2
@@ -10269,6 +10281,11 @@ packages:
 
 snapshots:
 
+  '@typeonce/oxlint-plugin-effect-machine@0.46.0(oxlint@1.83.0)':
+    dependencies:
+      '@oxlint/plugins': 1.80.0
+      oxlint: 1.83.0
+
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.2)(rolldown@1.2.5)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))':
     dependencies:
       '@alchemy.run/node-utils': 2.0.0-beta.81
@@ -14392,7 +14409,7 @@ snapshots:
       '@tursodatabase/database-linux-x64-gnu': 0.4.4
       '@tursodatabase/database-win32-x64-msvc': 0.4.4
 
-  '@typeonce/effect-machine@0.40.0(effect@4.0.2)':
+  '@typeonce/effect-machine@0.46.0(effect@4.0.2)':
     dependencies:
       effect: 4.0.2
 
