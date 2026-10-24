@@ -128,8 +128,7 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
     GoogleSigningIn: notReady,
   })
 
-/** Bounds one Executor app-record exchange with no stalled-response signal. Source: unmeasured.
- * Expiry returns ExecutorEventsUnreachable; it does not end a Watch subscription. */
+/** How long reading an app record may take, its body included, before Executor counts as down. */
 const APP_TIMEOUT = '30 seconds'
 
 /** Only the slug of Executor's app record is read; every other field stays Executor's business. */

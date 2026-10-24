@@ -501,10 +501,6 @@ interface Destination {
   readonly headers: Record<string, string>
 }
 
-// Effect 4.0.2 OtlpLogger defaults. Cadence batches logs; drain grace caps shutdown only.
-const LOG_EXPORT_CADENCE = Duration.seconds(1)
-const LOG_DRAIN_GRACE = Duration.seconds(3)
-
 /**
  * The logger that exports: `guard.ts` `exportingLogger` builds each record, and rc.116's batch
  * exporter posts them.
@@ -522,7 +518,7 @@ const exportedLogs = Effect.fnUntraced(function* ({ url, headers }: Destination,
     label: 'OtlpLogger',
     url,
     headers,
-    exportInterval: LOG_EXPORT_CADENCE,
+    exportInterval: Duration.seconds(1),
     maxBatchSize: 1000,
     body: (lines: Array<ExportedLine>) => [
       serialization.logs({
@@ -530,15 +526,14 @@ const exportedLogs = Effect.fnUntraced(function* ({ url, headers }: Destination,
       }),
       Effect.void,
     ],
-    shutdownTimeout: LOG_DRAIN_GRACE,
+    shutdownTimeout: Duration.seconds(3),
   })
   return exportingLogger(keys, clock, (line) => {
     exporter.push(line)
   })
 })
 
-/** Bounds one OTLP exchange through body end because a stalled backend can occupy every slot.
- * Source: unmeasured. Expiry drops the batch and reports the export pause. */
+/** How long one export may take, from sending the request to the end of the answer's body. */
 export const LONGEST_EXPORT = Duration.seconds(10)
 /** How many exports may be outstanding at once, traces and logs together. */
 export const MOST_OUTSTANDING = 8

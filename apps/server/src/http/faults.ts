@@ -45,8 +45,6 @@ const LARGEST_REPORT = ByteSize.bytes(128 * 1024)
 
 /** How many reports are logged in one window, across every client. */
 export const REPORTS_PER_WINDOW = 30
-/** Source: UX/log-volume policy. A minute-wide bucket admits at most REPORTS_PER_WINDOW
- * reports. Excess calls get an explicit HTTP 429 rather than queued or delayed work. */
 export const WINDOW_MILLIS = 60_000
 
 class ReportsOverBudget extends Schema.TaggedError<ReportsOverBudget>()(
