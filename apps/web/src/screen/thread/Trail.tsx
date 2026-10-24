@@ -184,9 +184,7 @@ export function Doing({
           </li>
         )}
       </ol>
-      {onComputer && (
-        <Peek />
-      )}
+      {onComputer && <Peek />}
     </div>
   )
 }

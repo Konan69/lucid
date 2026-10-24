@@ -231,9 +231,7 @@ function Shell({ me }: { me: MeResponse }) {
             </Fragment>
           </div>
         </Suspense>
-        {beside && onThread && (
-          <Computer onClose={panel.hide} />
-        )}
+        {beside && onThread && <Computer onClose={panel.hide} />}
       </main>
       {Option.isSome(section) && (
         <Settings
