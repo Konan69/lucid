@@ -4,11 +4,7 @@ import { parseEnv } from 'node:util'
 import { boot } from './process.mjs'
 
 /** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
-const hosts = {
-  'cloudbox-konan': 'box-node-a12c0c06aaf7d4a6',
-  'cloudbox-konan2': 'box-node-0679eca2d05326b3',
-  'cloudbox-konan3': 'box-node-b33a619732667f20',
-}
+const hosts = JSON.parse(await fs.readFile(new URL('./hosts.json', import.meta.url), 'utf8'))
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
   if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== os.hostname())
