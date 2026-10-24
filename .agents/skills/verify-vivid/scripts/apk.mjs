@@ -177,7 +177,9 @@ async function repack(run, app, base, target) {
     'bundle',
     app,
   )
-  const react = NodeModule.createRequire(app + '/node_modules/react-native/package.json')
+  const react = NodeModule.createRequire(
+    await NodeFSP.realpath(app + '/node_modules/react-native/package.json'),
+  )
   const hermes = react.resolve('hermes-compiler/hermesc/linux64-bin/hermesc')
   await run([hermes, '-O', '-emit-binary', '-out', bundle + '.hbc', bundle], 'hermes', app)
   await run(
@@ -186,6 +188,7 @@ async function repack(run, app, base, target) {
       '-c',
       `import sys,zipfile,re
 with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[3],'w') as dst:
+ src.getinfo('assets/index.android.bundle')
  for entry in src.infolist():
   signature=re.fullmatch(r'META-INF/(MANIFEST[.]MF|[^/]+[.](SF|RSA|DSA|EC))',entry.filename,re.I)
   if signature or entry.filename == 'assets/index.android.bundle': continue
