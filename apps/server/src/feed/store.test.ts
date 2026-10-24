@@ -14,7 +14,7 @@ import {
   type FeedAsk,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
-import { Effect, Layer, Option } from 'effect'
+import { Effect, Exit, Layer, Option } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { approvals } from '../approvals/tables.ts'
 import { personTable } from '../auth/tables.ts'
@@ -42,9 +42,13 @@ import { feedCards } from './tables.ts'
  * stores that write them in production are exercised separately for their committed Feed notices.
  */
 
-const testLayer = Layer.mergeAll(feedStoreLayer, runStoreLayer, threadStoreLayer).pipe(
-  Layer.provideMerge(testDatabaseLayer),
-)
+// This suite proves the committed SQL publication; real runtime abortion is driven by the live recipe.
+const testLayer = Layer.mergeAll(
+  feedStoreLayer,
+  runStoreLayer,
+  threadStoreLayer,
+  Layer.mock(Runtime, { stop: () => Effect.succeed(false) }),
+).pipe(Layer.provideMerge(testDatabaseLayer))
 
 const now = 1_800_000_000_000
 const hour = 60 * 60 * 1000
@@ -319,9 +323,8 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             post: null,
           }),
         ])
-        expect((yield* items(test.ben)).map((item) => [item._tag, item.thread])).toEqual([
-          ['Waiting', bens],
-        ])
+        const bensFeed = yield* items(test.ben)
+        expect(bensFeed.map((item) => [item._tag, item.thread])).toEqual([['Waiting', bens]])
       }).pipe(Effect.scoped),
     )
 
@@ -365,6 +368,14 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
       Effect.gen(function* () {
         const test = yield* fixture()
         const database = yield* Database
+        const opened = yield* (yield* ThreadStore).openFirst({
+          person: test.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'person' as const,
+          threadId: Option.none<ThreadId>(),
+        })
+        expect(opened._tag).toBe('Opened')
+        expect(yield* items(test.ada)).toEqual([])
         const thread = yield* insertThread(
           { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
           'Finished payment',
@@ -402,8 +413,10 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           { person: test.ada, place: 'Conversation', company: null, updatedAt: now },
           'Talking',
         )
+        yield* working(test.ada, thread, now)
         yield* TestClock.setTime(now)
         const before = yield* items(test.ada)
+        expect(before).toHaveLength(1)
         for (const state of ['seen', 'done'] as const) {
           const refused = yield* Effect.flip(
             store.mark(test.ada, MarkFeedCardRequest.make({ card: cardIdOf(thread), state })),
@@ -440,10 +453,14 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             origin: StoredRunOrigin.cases.Message.make({}),
           }),
         ).toEqual(TurnReservation.cases.Reserved.make({ turn: 1 }))
-        yield* payload(notifications, [`p/feed:${test.ada}`])
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
         yield* TestClock.setTime(now)
         expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(true)
-        yield* payload(notifications, [`p/feed:${test.ada}`])
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
         expect(yield* items(test.ada)).toEqual([
           FeedItem.cases.Settled.make({
             card: cardIdOf(thread),
@@ -456,22 +473,6 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         expect(yield* items(test.ben)).toEqual([])
         expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(false)
         yield* silent(notifications)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('a first Thread nothing was said in is not on the Feed', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const store = yield* ThreadStore
-        yield* TestClock.setTime(now)
-        const opened = yield* store.openFirst({
-          person: test.person,
-          workspace: Workspace.cases.Personal.make({}),
-          by: 'person' as const,
-          threadId: Option.none<ThreadId>(),
-        })
-        expect(opened._tag).toBe('Opened')
-        expect(yield* items(test.ada)).toEqual([])
       }).pipe(Effect.scoped),
     )
 
@@ -497,9 +498,10 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         yield* TestClock.setTime(now)
         // SQL publication is the seam under test. Runtime abortion returns after the commit.
-        const runtime = Layer.mock(Runtime, { stop: () => Effect.succeed(false) })
-        yield* stopPersonRun(test.ben, runId).pipe(Effect.provide(runtime))
-        yield* payload(notifications, [`p/feed:${test.ada}`])
+        yield* stopPersonRun(test.ben, runId)
+        expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+          Exit.succeed(undefined),
+        )
         expect(yield* items(test.ada)).toEqual([
           FeedItem.cases.Settled.make({
             card: cardIdOf(thread),
@@ -509,7 +511,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             post: null,
           }),
         ])
-        yield* stopPersonRun(test.ben, runId).pipe(Effect.provide(runtime))
+        yield* stopPersonRun(test.ben, runId)
         expect(yield* (yield* RunStore).end(runId, RunEnding.cases.Stopped.make({}))).toBe(false)
         yield* silent(notifications)
       }).pipe(Effect.scoped),
