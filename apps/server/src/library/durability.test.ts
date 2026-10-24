@@ -34,6 +34,7 @@ import {
 } from './extraction.ts'
 import { fixture, pendingWork, storedWork } from './fixtures.ts'
 import { Fixture } from './fixtures/mode.ts'
+import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { digestBytes, ingestOwed } from './ingest.ts'
 import { INGESTION_QUEUE_NAME, ingestionOperations, libraryIngestion } from './ingestion.ts'
@@ -507,6 +508,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           expect(yield* storedClaims(healthy.document.id)).toEqual([{ held: false }])
           expect(yield* pendingWork()).toEqual([])
         }),
+      CRASH_TIMEOUT_MS,
     )
 
     /** Q10: attempt 9 settles exhaustion before reading even healthy bytes; notice is atomic. */
