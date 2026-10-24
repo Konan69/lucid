@@ -44,7 +44,14 @@ The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. 
 
 ## Inspect through agent-device
 
-The recipe sets `AGENT_DEVICE_STATE_DIR` to the run's private scratch directory and passes the actual serial and run session on every command. To add a phone feature, use the same context and these documented commands.
+The recipe sets `AGENT_DEVICE_STATE_DIR` to the run's private scratch directory and passes the actual serial and run session on every command. To add a phone feature, use the same context and these documented commands. The run's `phone/receipt.json` supplies the exact state directory and serial.
+
+```sh
+export ANDROID_HOME="$HOME/android_sdk"
+export ANDROID_ADB_SERVER_PORT=15037
+export AGENT_DEVICE_STATE_DIR="<run scratch>/device"
+export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+```
 
 ```sh
 agent-device open work.vivid.mobile --platform android --serial <observed-serial> --session <run>

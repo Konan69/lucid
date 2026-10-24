@@ -11,14 +11,14 @@ const cache = NodeOS.homedir() + '/.cache/vivid-android'
 const sdk = NodeOS.homedir() + '/android_sdk'
 export const phoneEnvironment = {
   ...process.env,
-  PATH:
-    cache +
-    '/node/bin:' +
-    cache +
-    '/tools/node_modules/.bin:' +
-    sdk +
-    '/platform-tools:' +
+  PATH: [
+    cache + '/node/bin',
+    cache + '/tools/node_modules/.bin',
+    sdk + '/platform-tools',
+    sdk + '/emulator',
+    sdk + '/cmdline-tools/latest/bin',
     process.env.PATH,
+  ].join(':'),
   ANDROID_HOME: sdk,
   ANDROID_SDK_ROOT: sdk,
   ANDROID_ADB_SERVER_PORT: '15037',
