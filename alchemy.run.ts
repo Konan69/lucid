@@ -110,6 +110,10 @@ const localStack = () =>
           VIVID_MIGRATIONS_HASH: migrations.hash.input,
           DATABASE_URL: databaseUrl,
           AUTH_SECRET: environment.authSecret,
+          ...Option.match(environment.serverModelProvider, {
+            onNone: () => ({}),
+            onSome: (provider) => ({ VIVID_SERVER_MODEL_PROVIDER: provider }),
+          }),
           /** Loopback locally; a container sets its own bind address (`infra/railway.ts`). */
           HOST: '127.0.0.1',
           PORT: '8787',
