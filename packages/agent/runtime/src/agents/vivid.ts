@@ -15,7 +15,7 @@ import '../providers/explabs.ts'
 import '../providers/openrouter.ts'
 import { DEFAULT_MODEL } from '../providers/opencode.ts'
 import { namedAs, useVividContext } from '../context.ts'
-import { notesDirectory } from '../settings.ts'
+import { notesLayer } from '../keeping.ts'
 import { DISPLAYS } from './displays.ts'
 import { askTools } from '../tools/ask.ts'
 import { mountComputer } from '../tools/computer.ts'
@@ -30,7 +30,14 @@ import { feedTools } from '../tools/feed.ts'
 import { watchTools } from '../tools/watches.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
-import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
+import {
+  scopeLayer,
+  scopedRunner,
+  toolRunner,
+  noteRunner,
+  type RunTool,
+  type RunNote,
+} from '../tools/scope.ts'
 
 import { nativeSkillsInOrder } from '@vivid/skills/native'
 
@@ -136,8 +143,8 @@ const KNOWING = [
  * (`tools/memory.ts`). Notes are always mounted: the runtime does not start without their
  * directory (`settings.ts`).
  */
-function remembering(runTool: RunTool) {
-  return [noteTools(runTool, notesDirectory), memoryTools(runTool)]
+function remembering(runTool: RunTool, runNote: RunNote) {
+  return [noteTools(runNote), memoryTools(runTool)]
 }
 
 /** Render one response with the fixed public native catalogue, while saved
@@ -153,6 +160,7 @@ export function Vivid({ id }: { id: string }) {
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
   const scope = scopeLayer(id, delivery, threadOriginOf(useInitialData()))
   const runTool = toolRunner(scope)
+  const runNote = noteRunner(id, delivery, threadOriginOf(useInitialData()), notesLayer)
   const context = useVividContext(acting)
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'
@@ -167,7 +175,7 @@ export function Vivid({ id }: { id: string }) {
     libraryTools(runTool),
     connectionTools(runTool),
     askTools(runTool),
-    ...remembering(runTool),
+    ...remembering(runTool, runNote),
     notifyTools(runTool),
     skillTools(runTool),
     watchTools(runTool),

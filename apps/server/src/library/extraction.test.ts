@@ -1,10 +1,8 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
-import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
-import * as NodeServices from '@effect/platform-node/NodeServices'
 import { expect } from 'vitest'
 import { layer as testLayer } from '@effect/vitest'
 import * as Cause from 'effect/Cause'
@@ -14,9 +12,7 @@ import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import * as Stream from 'effect/Stream'
 import * as TestClock from 'effect/testing/TestClock'
-import * as ChildProcess from 'effect/process/ChildProcess'
 import { extractText } from 'unpdf'
 import { AbortException, InvalidPDFException, PasswordException } from 'unpdf/pdfjs'
 import {
@@ -29,12 +25,13 @@ import {
   extractPdf,
 } from './extraction.ts'
 import { MAX_LIBRARY_FILE_BYTES } from './ingest.ts'
-import { type Launch, processOptions } from './extraction/process.ts'
+import { type Launch, ProcessEnd, processOptions } from './extraction/process.ts'
 import { Fixture } from './fixtures/mode.ts'
 import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { rejectionOf } from './extraction/rejection.ts'
 import { Pages } from './fixtures/process/pages.ts'
+import { Command, commandLayer } from './fixtures/process/command.ts'
 
 /** Compare the sole typed failure exactly while allowing Effect.fn's diagnostic stack annotations. */
 const assertFailure = (
@@ -252,35 +249,24 @@ testLayer(NodeFileSystem.layer)((it) => {
         expect(yield* reportRemoved(owned)).toBe(true)
       }),
   )
-
-  /** Compile the shared stdout ingress once; E8 still decodes only after EOF and successful exit. */
 })
 
+/** Compile the shared stdout ingress once; E8 still decodes only after EOF and successful exit. */
 const decodePages = Schema.decodeUnknownEffect(Pages)
 
 /**
- * E8 uses the production tsx CLI argument shape without loader overrides, so the extraction process
- * it forks inherits the loader from `execArgv`. Scope owns the CLI's process group; stdout EOF,
- * natural exit 0, then decoded pages prove extraction and that no process or handle was left.
+ * E8 acquires the production tsx CLI argument shape without loader overrides before assertion.
+ * A typed request then calls the original extractPdf, whose fresh source process inherits tsx
+ * through execArgv. Full stdout EOF, natural exit 0 and native close precede decoded pages.
  */
-testLayer(NodeServices.layer)((it) => {
+testLayer(commandLayer)('Production tsx extraction', (it) => {
   it.effect('E8 extracts a real PDF when started by the production tsx command', () =>
     Effect.gen(function* () {
-      const handle = yield* ChildProcess.make(
-        NodeProcess.execPath,
-        [
-          NodeURL.fileURLToPath(import.meta.resolve('tsx/cli')),
-          'src/library/fixtures/process/main.ts',
-        ],
-        {
-          cwd: NodeURL.fileURLToPath(new URL('../../', import.meta.url)),
-          stdin: 'ignore',
-          stderr: 'inherit',
-          forceKillAfter: '1 second',
-        },
-      )
-      const printed = yield* Stream.mkString(Stream.decodeText(handle.stdout))
-      expect(yield* handle.exitCode, printed).toBe(0)
+      const command = yield* Command
+      yield* command.request
+      const printed = yield* command.printed
+      expect(yield* command.ended, printed).toEqual(ProcessEnd.cases.Exited.make({ code: 0 }))
+      yield* command.closed
       expect(yield* decodePages(printed)).toEqual(['Vivid extraction fixture'])
     }),
   )

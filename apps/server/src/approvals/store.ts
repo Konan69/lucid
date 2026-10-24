@@ -39,6 +39,7 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { changed, Topic, Changes } from '../live/changes.ts'
+import { announceFeed } from '../feed/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
@@ -310,25 +311,29 @@ const claim = Effect.fn('Approvals.claim')(function* (
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
     return yield* new Conflict({ message: 'This request ran out' })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
-  const rows = yield* database.run(
-    database
-      .update(approvals)
-      .set({
-        status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
-        decidedBy: actor.person.id,
-        decidedAt: now,
-        signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
-        signalDueAt: now,
-      })
-      .where(
-        and(
-          scope,
-          eq(approvals.digest, request.digest),
-          eq(approvals.status, 'pending'),
-          gt(approvals.expiresAt, now),
-        ),
-      )
-      .returning(),
+  const rows = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const written = yield* tx
+        .update(approvals)
+        .set({
+          status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
+          decidedBy: actor.person.id,
+          decidedAt: now,
+          signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
+          signalDueAt: now,
+        })
+        .where(
+          and(
+            scope,
+            eq(approvals.digest, request.digest),
+            eq(approvals.status, 'pending'),
+            gt(approvals.expiresAt, now),
+          ),
+        )
+        .returning()
+      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
+      return written
+    }),
   )
   const claimed = rows[0]
   if (claimed === undefined) return yield* new Conflict({ message: 'Approval already decided' })
@@ -534,6 +539,7 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
           createdAt: now,
         })
         .returning()
+      yield* announceFeed(tx, [threadId])
       return { row: yield* returned(rows, 'Approval'), inserted: true }
     }),
   )
@@ -576,6 +582,7 @@ const recover = (
       })
       .where(eq(approvals.id, row.id))
       .returning()
+    yield* announceFeed(tx, [row.threadId])
     return yield* decodeRow(yield* returned(updated, 'Recovered Approval'))
   })
 
@@ -641,6 +648,36 @@ const settleRecovered = Effect.fn('Approvals.settleRecovered')(
     effect.pipe(Effect.catch(() => Effect.logError('Approval recovery notification failed'))),
 )
 
+/** Withdraw only pending work addressed to the caller, preserving the reason and timestamp. */
+const withdraw = Effect.fn('ApprovalStore.withdraw')(function* (actor: Actor, id: ApprovalId) {
+  const database = yield* Database
+  const scope = and(eq(approvals.id, id), ownedHere(approvals, actor))
+  const found = yield* database.run(database.select().from(approvals).where(scope).limit(1))
+  const value = found[0]
+  if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
+  const row = yield* decodeRow(value)
+  yield* requireThread(row.threadId, actor.person.id).pipe(
+    Effect.provideService(Database, database),
+  )
+  const rows = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const written = yield* tx
+        .update(approvals)
+        .set({
+          status: 'withdrawn',
+          finishedAt: yield* Clock.currentTimeMillis,
+          outcome: 'Withdrawn by the addressed Person',
+        })
+        .where(and(scope, eq(approvals.status, 'pending')))
+        .returning()
+      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
+      return written
+    }),
+  )
+  if (rows.length === 0) return yield* new Conflict({ message: 'Approval already decided' })
+  return row.threadId
+})
+
 /** Acquires collaborators once; row decoding remains the sole vocabulary for every read surface. */
 export const approvalStoreLayer = Layer.effect(
   ApprovalStore,
@@ -691,30 +728,7 @@ export const approvalStoreLayer = Layer.effect(
       }),
       raise: (actor, action) => run(raise(actor, action)),
       decide: (actor, request) => run(decide(actor, request)),
-      /** Withdraw only pending work addressed to the caller, preserving the reason and timestamp. */
-      withdraw: Effect.fn('ApprovalStore.withdraw')(function* (actor, id) {
-        const scope = and(eq(approvals.id, id), ownedHere(approvals, actor))
-        const found = yield* database.run(database.select().from(approvals).where(scope).limit(1))
-        const value = found[0]
-        if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
-        const row = yield* decodeRow(value)
-        yield* requireThread(row.threadId, actor.person.id).pipe(
-          Effect.provideService(Database, database),
-        )
-        const rows = yield* database.run(
-          database
-            .update(approvals)
-            .set({
-              status: 'withdrawn',
-              finishedAt: yield* Clock.currentTimeMillis,
-              outcome: 'Withdrawn by the addressed Person',
-            })
-            .where(and(scope, eq(approvals.status, 'pending')))
-            .returning(),
-        )
-        if (rows.length === 0) return yield* new Conflict({ message: 'Approval already decided' })
-        return row.threadId
-      }),
+      withdraw: (actor, id) => run(withdraw(actor, id)),
       expire: run(expire()),
       replay: run(replaySignals(signalWriter, Option.none())),
     })

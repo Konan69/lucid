@@ -203,7 +203,7 @@ def main():
     """Host identity and the host lock precede every SDK mutation or captured-process stop."""
     action, alias, expected = sys.argv[1:]
     assert alias in ['cloudbox-konan', 'cloudbox-konan2', 'cloudbox-konan3'], 'Unknown devbox'
-    assert socket.gethostname() == expected and expected.startswith('box-node-'), 'Host identity mismatch'
+    assert expected != 'bx_yjj2hakd' and os.environ.get('BOAT_ID') == expected, 'Host identity mismatch'
     CACHE.mkdir(parents=True, exist_ok=True)
     with open(CACHE / 'lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

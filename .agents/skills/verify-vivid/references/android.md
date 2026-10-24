@@ -1,6 +1,6 @@
 # Set up an Android devbox
 
-Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote hostname must match `../scripts/hosts.mjs`. The production Computer is refused.
+Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote Boat sandbox id must match `../scripts/hosts.mjs`. The current hostname is recorded rather than used as permanent identity: Boat changes it on restart. The production Computer is refused.
 
 ```sh
 .agents/skills/verify-vivid/verify android provision cloudbox-konan3

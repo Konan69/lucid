@@ -1,6 +1,7 @@
-/** SSH-observed identities. Replaced devboxes require an explicit refresh before running proofs. */
+/** Boat sandbox ids survive restarts, unlike hostnames. Production is absent from this registry.
+ * SSH observes the sandbox before bootstrapping; receipts retain the current hostname and boot. */
 export const hosts = {
-  'cloudbox-konan': 'box-node-d29022b64c1f5b4f',
-  'cloudbox-konan2': 'box-node-0679eca2d05326b3',
-  'cloudbox-konan3': 'box-node-5eeedc8142a1a342',
+  'cloudbox-konan': 'bx_gu65277z',
+  'cloudbox-konan2': 'bx_8b9c35bp',
+  'cloudbox-konan3': 'bx_5suus7qp',
 }

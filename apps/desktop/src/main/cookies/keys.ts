@@ -25,7 +25,8 @@ const refused = (browser: SignInBrowser) =>
   })
 
 /** A narrow platform adapter. Keys enter on piped stdin and leave on private stdout, never in
- * arguments, logs or the model. execFile owns cancellation, timeout and a bounded stdout buffer. */
+ * arguments, logs or the model. execFile owns cancellation and a bounded stdout buffer. Keychain and libsecret may wait for
+ * human approval, so the enclosing consent/link authority owns their lifetime. */
 const readKey = Effect.fn('DesktopSignIn.readKey')(function* (
   browser: SignInBrowser,
   command: string,
@@ -36,7 +37,7 @@ const readKey = Effect.fn('DesktopSignIn.readKey')(function* (
     const child = NodeChildProcess.execFile(
       command,
       args,
-      { signal, timeout: 120_000, maxBuffer: 65_536, windowsHide: true },
+      { signal, maxBuffer: 65_536, windowsHide: true },
       (error, output) =>
         resume(
           error === null

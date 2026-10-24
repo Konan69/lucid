@@ -9,13 +9,13 @@ if (!Object.hasOwn(hosts, alias) || !['provision', 'stop', 'status'].includes(ac
   throw new Error('verify android provision|stop|status <devbox-pick alias>')
 
 /** Boat's proxy has truncated transfers. Check the entire stdin payload before interpreting it,
- * and repeat the hostname check for every SSH invocation, including the tool bootstrap. */
+ * and repeat the sandbox check for every SSH invocation, including the tool bootstrap. */
 async function remote(file, verb) {
   const source = await NodeFSP.readFile(new URL(file, import.meta.url))
   const digest = NodeCrypto.createHash('sha256').update(source).digest('hex')
-  const launcher = `import sys,hashlib,socket
+  const launcher = `import sys,hashlib,os
 source=sys.stdin.buffer.read()
-if socket.gethostname() != '${hosts[alias]}': raise SystemExit('Host identity mismatch')
+if os.environ.get('BOAT_ID') != '${hosts[alias]}': raise SystemExit('Host identity mismatch')
 if hashlib.sha256(source).hexdigest() != '${digest}': raise SystemExit('SSH payload checksum mismatch')
 exec(compile(source, '<verify-android>', 'exec'))`
   const quoted = "'" + launcher.replaceAll("'", "'\\''") + "'"

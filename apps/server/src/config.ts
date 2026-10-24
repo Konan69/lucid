@@ -128,6 +128,37 @@ export const optionalSetting = <A>(
     Effect.mapError(() => configError(name, expected)),
   )
 
+/** One explicit provider choice governs the server's text, embedding and decision requests.
+ * This is independent of Flue's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
+export const ModelProvider = Schema.Literals(['explabs', 'openrouter'])
+const modelProviders = {
+  explabs: {
+    url: 'https://api.experientiallabs.ai/v1',
+    keyVariable: 'EXPLABS_API_KEY',
+    memoryModel: 'glm-5.3-flash',
+  },
+  openrouter: {
+    url: 'https://openrouter.ai/api/v1',
+    keyVariable: 'OPENROUTER_API_KEY',
+    memoryModel: 'z-ai/glm-5.3-flash',
+  },
+} satisfies Record<
+  typeof ModelProvider.Type,
+  { readonly url: string; readonly keyVariable: string; readonly memoryModel: string }
+>
+
+/** Resolve defaults and the selected credential once in each owning Layer; invalid settings
+ * fail launch through the server's redacted configuration error boundary. */
+export const serverModelGateway = Effect.gen(function* () {
+  const provider = Option.getOrElse(
+    yield* optionalSetting('VIVID_SERVER_MODEL_PROVIDER', ModelProvider, 'explabs or openrouter'),
+    () => 'explabs' as const,
+  )
+  const selected = modelProviders[provider]
+  const key = yield* requiredSetting(selected.keyVariable, settingSecret, 'the model provider key')
+  return { provider, url: selected.url, memoryModel: selected.memoryModel, key }
+}).pipe(Effect.withSpan('ServerConfig.modelGateway'))
+
 const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
   const value = yield* requiredSetting('DATABASE_URL', databaseUrl).pipe(
     Effect.mapError(() => configError('DATABASE_URL', 'a PostgreSQL connection URL')),

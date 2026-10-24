@@ -51,7 +51,15 @@ async function launch() {
     crypto.randomUUID().slice(0, 8)
   const evidence = cache + '/' + run
   const scratch = evidence + '/instance'
-  const ports = await freePorts(['database', 'helix', 'server', 'web', 'runtime'])
+  const ports = await freePorts([
+    'database',
+    'helix',
+    'server',
+    'web',
+    'runtime',
+    'executor',
+    'catalog',
+  ])
   await NodeFSP.mkdir(scratch, { recursive: true, mode: 0o700 })
   const state = {
     run,
@@ -71,6 +79,7 @@ async function launch() {
     hostname: NodeOS.hostname(),
     boot,
     helixContainer: 'vivid-verify-helix-' + run,
+    executorExporter: 'vivid-verify-exporter-' + run,
     ready: false,
     cleaned: false,
   }
@@ -156,7 +165,7 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
@@ -213,7 +222,24 @@ try {
             },
           ),
         )
-      else if (action === 'browser')
+      else if (action === 'desktop') {
+        console.log(
+          await command(
+            [
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/desktop.mjs',
+              state.evidence + '/state.json',
+            ],
+            {
+              heavy: true,
+              log: state.evidence + '/desktop-command.json',
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      } else if (action === 'browser')
         console.log(
           await command(
             [

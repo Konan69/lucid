@@ -5,6 +5,7 @@ import * as NodeProcess from 'node:process'
 import type * as NodeStream from 'node:stream'
 import { BrowserAction, DeviceAnswer, type BrowseResult } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Option, Result, Schema } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import { BrowserWindow, app, nativeImage, net, session, type WebContents } from 'electron'
 import { Browser } from '../src/main/browser.ts'
 import { executor } from '../src/main/control.ts'
@@ -117,7 +118,7 @@ const navigation = Effect.fn('Proof.navigation')(function* ({ done }: Stage) {
  * form into its document and counts every key and button the page sees go down and up.
  */
 const input = Effect.fn('Proof.input')(function* (
-  { browser, act, done }: Stage,
+  { browser, act, done, onUsing }: Stage,
   guest: WebContents,
 ) {
   yield* inPage(
@@ -157,19 +158,32 @@ const input = Effect.fn('Proof.input')(function* (
   NodeAssert.match(secret.outline, /"Password" = "\(hidden\)"/u)
   NodeAssert.doesNotMatch(secret.outline, /correct horse/u)
 
-  // A key on a page that is not drawn (it has never been placed on the window): nothing is sent,
-  // and the answer says the step failed. The renderer draws the page Vivid is using; this proof
-  // has no renderer, so the page stays undrawn.
-  NodeAssert.deepEqual(yield* act(BrowserAction.cases.Press.make({ key: 'ArrowLeft' })), failed)
-  const undrawn = yield* seen(guest)
-  NodeAssert.equal(undrawn['keydown'], 0)
-  NodeAssert.equal(undrawn['keyup'], 0)
-
-  // The same page drawn in the panel, as it is when the Person is watching.
-  yield* browser.handle(
-    PagesRequest.cases.Place.make({ placement: { x: 0, y: 0, width: 800, height: 600 } }),
-  )
-  yield* done(BrowserAction.cases.Press.make({ key: 'Enter' }))
+  // Placement can be delayed by the renderer. Advancing controlled time past the old cutoff
+  // must send no input and leave the action waiting for the actual placement receipt.
+  yield* Effect.gen(function* () {
+    const using = yield* Deferred.make<void>()
+    onUsing((now) => {
+      if (UsedTab.guards.Some(now)) Deferred.doneUnsafe(using, Effect.void)
+    })
+    const pressing = yield* act(BrowserAction.cases.Press.make({ key: 'Enter' })).pipe(
+      Effect.forkChild,
+    )
+    yield* Deferred.await(using)
+    onUsing(() => {})
+    // Chromium answers this after the input-enable command ahead of it. The action can then
+    // reach its placement wait before controlled time advances.
+    yield* Effect.promise(() => guest.debugger.sendCommand('Runtime.evaluate', { expression: '0' }))
+    yield* TestClock.adjust('4 seconds')
+    NodeAssert.equal(pressing.pollUnsafe(), undefined)
+    const undrawn = yield* seen(guest)
+    NodeAssert.equal(undrawn['keydown'], 0)
+    NodeAssert.equal(undrawn['keyup'], 0)
+    yield* browser.handle(
+      PagesRequest.cases.Place.make({ placement: { x: 0, y: 0, width: 800, height: 600 } }),
+    )
+    const answer = yield* Fiber.join(pressing)
+    NodeAssert.equal(Option.exists(answer, DeviceAnswer.guards.Done), true)
+  }).pipe(Effect.provide(TestClock.layer()))
   const pressed = yield* seen(guest)
   NodeAssert.equal(pressed['submitted'], 1)
   NodeAssert.equal(pressed['keydown'], 1)
@@ -182,7 +196,7 @@ const input = Effect.fn('Proof.input')(function* (
   NodeAssert.equal(clicked['mousedown'], 1)
   NodeAssert.equal(clicked['mouseup'], 1)
   yield* proved(
-    '5 type, press (drawn), click, password hidden; key on an undrawn page: nothing sent',
+    '5 type, press (drawn), click, password hidden; delayed placement: no early input and no elapsed-time failure',
   )
 })
 

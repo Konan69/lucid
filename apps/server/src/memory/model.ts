@@ -1,12 +1,7 @@
-import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
-import { optionalSetting, settingText } from '../config.ts'
-import {
-  modelGatewayKey,
-  ProviderMalformed,
-  providerResponse,
-  type ProviderFailure,
-} from './embeddings.js'
+import { optionalSetting, serverModelGateway, settingText } from '../config.ts'
+import { ProviderMalformed, providerResponse, type ProviderFailure } from './embeddings.js'
 
 const ChatResponse = Schema.Struct({
   choices: Schema.Array(
@@ -32,7 +27,7 @@ export class MemoryGenerationIncomplete extends Schema.TaggedError<MemoryGenerat
 const complete = Effect.fn('MemoryExtraction.complete')(function* (
   dependencies: {
     readonly client: HttpClient.HttpClient
-    readonly key: Redacted.Redacted
+    readonly gateway: Effect.Success<typeof serverModelGateway>
     readonly model: string
   },
   input: {
@@ -63,7 +58,7 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
     max_tokens: 4096,
   }
   const response = yield* providerResponse(dependencies.client, {
-    key: dependencies.key,
+    gateway: dependencies.gateway,
     path: 'chat/completions',
     body,
   })
@@ -133,14 +128,14 @@ export const memoryModelLayer = Layer.effect(
   MemoryModel,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const key = yield* modelGatewayKey
+    const gateway = yield* serverModelGateway
     const model = Option.getOrElse(
       yield* optionalSetting('VIVID_MEMORY_MODEL', settingText, 'a model name'),
-      () => 'glm-5.3-flash',
+      () => gateway.memoryModel,
     )
     return MemoryModel.of({
       complete: Effect.fn('MemoryModel.complete')((input) =>
-        complete({ client, key, model }, input),
+        complete({ client, gateway, model }, input),
       ),
     })
   }),

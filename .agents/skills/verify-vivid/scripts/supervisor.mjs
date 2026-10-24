@@ -19,6 +19,8 @@ import {
 import { stopCaptured } from './recovery.mjs'
 import { remoteCleanup } from './remote.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
+import { executor } from './executor.mjs'
+import { authSecret } from './settings.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -31,6 +33,8 @@ const cleanEnv = {
   PATH: process.env.PATH,
   HOME: state.scratch,
   LANG: 'C.UTF-8',
+  DO_NOT_TRACK: '1',
+  OTEL_SDK_DISABLED: 'true',
   COREPACK_HOME: process.env.COREPACK_HOME,
   COREPACK_ENABLE_NETWORK: '0',
 }
@@ -265,6 +269,7 @@ async function launch() {
   await helix()
   state.web = `http://127.0.0.1:${state.ports.web}`
   state.server = `http://127.0.0.1:${state.ports.server}`
+  const executorEnv = await executor(state, { run, own, save, cleanEnv })
   const token = crypto.randomUUID()
   await NodeFSP.writeFile(state.scratch + '/runtime-token', token, { mode: 0o600 })
   const providerText = await NodeFSP.readFile(state.scratch + '/provider.json', 'utf8')
@@ -277,7 +282,7 @@ async function launch() {
     ...provider,
     DATABASE_URL: databaseUrl(),
     VIVID_TEST_DATABASE_URL: databaseUrl(),
-    AUTH_SECRET: 'Verify-Auth!0123456789-ABCDefghijklmnop',
+    AUTH_SECRET: authSecret,
     PORT: String(state.ports.server),
     VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime}`,
     VIVID_SERVER_URL: state.server,
@@ -288,9 +293,7 @@ async function launch() {
     VIVID_BUILD_COMMIT: state.head,
     VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
     VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
-    VIVID_EXECUTOR_URL: 'http://127.0.0.1:1',
-    VIVID_EXECUTOR_KEY: 'unconfigured-disposable-verification',
-    VIVID_EXECUTOR_ORGANIZATION: 'verify',
+    ...executorEnv,
     VIVID_PHOTON_PROJECT_ID: 'verify-unconfigured',
     VIVID_PHOTON_PROJECT_SECRET: 'unconfigured-disposable-verification',
     VIVID_PUSH_VAPID_PUBLIC: curve.getPublicKey().toString('base64url'),
@@ -392,6 +395,12 @@ async function clean() {
   cleaning = true
   await NodeFSP.rm(state.scratch + '/provider.json', { force: true })
   const failures = []
+  const { desktopCleanup } = await import('./desktopcleanup.mjs')
+  try {
+    await desktopCleanup(state)
+  } catch (error) {
+    failures.push('desktop cleanup: ' + error.message)
+  }
   for (const captured of Object.values(state.commands ?? {})) {
     if (!runningCommands.has(captured.pid)) await stopCaptured(captured, true)
   }
@@ -400,7 +409,7 @@ async function clean() {
     await terminate(owned, 'SIGTERM', true)
     await closed
   }
-  for (const role of ['browser-tunnel', 'web', 'runtime', 'server']) {
+  for (const role of ['browser-tunnel', 'web', 'runtime', 'server', 'catalog', 'executor-events']) {
     const child = children.get(role)
     if (!child || child.exitCode !== null || child.signalCode !== null) continue
     try {
@@ -419,7 +428,12 @@ async function clean() {
     }
   }
   const containers = (await run(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
-  for (const container of [state.container, state.helixContainer]) {
+  for (const container of [
+    state.container,
+    state.helixContainer,
+    state.executorContainer,
+    state.executorExporter,
+  ].filter(Boolean)) {
     if (containers.includes(container)) {
       try {
         const label = await run([

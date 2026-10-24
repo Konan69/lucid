@@ -2,12 +2,17 @@
   {
     "file": "packages/agent/runtime/src/storage.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["query", "transaction"]
+    "symbols": ["query", "transaction", "close"]
   },
   {
     "file": "apps/server/src/library/extraction/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["extractPages"]
+  },
+  {
+    "file": "apps/server/src/library/fixtures/process/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["preparePdfjs"]
   },
   {
     "file": "packages/agent/runtime/src/app.ts",
@@ -22,12 +27,12 @@
   {
     "file": "packages/agent/runtime/src/tools/scope.ts",
     "classification": "third-party-adapter",
-    "symbols": ["runTool", "runScoped"]
+    "symbols": ["runTool", "runScoped", "runNote"]
   },
   {
     "file": "packages/agent/runtime/src/notes.ts",
     "classification": "third-party-adapter",
-    "symbols": ["opened", "attempt", "noteIndex"]
+    "symbols": ["openStore", "closeStore", "attempt", "noteIndex"]
   },
   {
     "file": "apps/server/src/auth/session.ts",

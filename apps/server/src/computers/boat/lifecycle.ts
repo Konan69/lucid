@@ -1,5 +1,5 @@
 import { ComputerState } from '@vivid/contracts'
-import { Clock, Effect, Match, Option, Semaphore } from 'effect'
+import { Clock, Effect, Match, Option } from 'effect'
 import {
   MachineCreationUnresolved,
   MachineHeld,
@@ -10,6 +10,7 @@ import {
   type MachineKey,
   type MachineFailure,
 } from '../machine.ts'
+import { keyedPermits } from '../../runtime/keyed.ts'
 import { active, observations, type Identity } from './state.ts'
 import type { Transport } from './transport.ts'
 import type { Binding, Bindings } from './bindings.ts'
@@ -212,15 +213,8 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
 ) {
   const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
   const creating = new Set<MachineKey>()
-  const permits = new Map<MachineKey, Semaphore.Semaphore>()
-  /** The app serializes one Person; this also protects direct Machine users within this process. */
-  const permit = (key: MachineKey) => {
-    const found = permits.get(key)
-    if (found !== undefined) return found
-    const value = Semaphore.makeUnsafe(1)
-    permits.set(key, value)
-    return value
-  }
+  // Direct Machine operations share these permits with exec, desktop and browse in boat.ts.
+  const permits = keyedPermits<MachineKey>()
   const ensureUnlocked = Effect.fn('Machine.boat.reconcile')(function* (
     key: MachineKey,
   ): Effect.fn.Return<typeof MachineState.cases.Running.Type, MachineFailure> {
@@ -256,7 +250,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
         Effect.ensuring(Effect.sync(() => creating.delete(key))),
       )
     },
-    (effect, key) => permit(key).withPermit(effect),
+    (effect, key) => permits.withPermit(key, effect),
   )
   const inspect = Effect.fn('Machine.boat.inspect')(function* (key: MachineKey) {
     const row = yield* saved.load(key)
@@ -305,7 +299,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       yield* saved.observe(key, identity.binding, archived.state)
       return undefined
     },
-    (effect, key) => permit(key).withPermit(effect),
+    (effect, key) => permits.withPermit(key, effect),
   )
-  return { ensure, status, inspect, stop, running, permit }
+  return { ensure, status, inspect, stop, running, permits }
 })

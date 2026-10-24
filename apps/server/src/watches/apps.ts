@@ -1,20 +1,23 @@
+import { and, eq, ne } from 'drizzle-orm'
+import { ConnectionId, WatchArguments } from '@vivid/contracts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import * as HttpClient from 'effect/http/HttpClient'
-import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type { Actor } from '../auth/access.ts'
 import {
+  Executor,
   ExecutorAppOwnership,
   ExecutorReferences,
   type ExecutorAppId,
 } from '../connections/executor.ts'
 import { listRecords, type ConnectionRecord } from '../connections/records.ts'
 import { namedAccounts } from '../connections/names.ts'
-import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { ExecutorEventsUnreachable, executorSettings, type ExecutorSettings } from './events.ts'
+import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { ExecutorEvents, ExecutorEventsUnreachable, type Subscription } from './events.ts'
+import { connections } from '../connections/tables.ts'
+import { watches } from './tables.ts'
 
 /**
  * Which Executor app an Integration account runs on, by the name the Person was shown, and
@@ -61,9 +64,16 @@ export class WatchAccountShared extends Schema.TaggedError<WatchAccountShared>()
   { title: 'Watch account shared' },
 ) {}
 
+/** The Connection was removed after resolution or while Executor was granting the subscription. */
+export class WatchConnectionRemoved extends Schema.TaggedError<WatchConnectionRemoved>()(
+  'WatchConnectionRemoved',
+  { connectionId: ConnectionId },
+  { title: 'Watch Integration removed' },
+) {}
+
 /** An account and the slug of the app dedicated to it. */
 export interface WatchedApp {
-  readonly account: string
+  readonly connectionId: ConnectionId
   readonly appSlug: string
 }
 
@@ -128,20 +138,7 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
     GoogleSigningIn: notReady,
   })
 
-/** How long reading an app record may take, its body included, before Executor counts as down. */
-const APP_TIMEOUT = '30 seconds'
-
-/** Only the slug of Executor's app record is read; every other field stays Executor's business. */
-const AppRecord = Schema.Struct({ slug: Schema.NonEmptyString })
-const decodeApp = Schema.decodeUnknownEffect(AppRecord)
-
-/** Build over the database, an HTTP client and Executor's settings. */
-export const makeWatchedApps = (
-  database: Database['Service'],
-  transport: HttpClient.HttpClient,
-  config: ExecutorSettings,
-) => {
-  const client = HttpClient.withScope(transport)
+export const makeWatchedApps = (database: Database['Service'], executor: Executor['Service']) => {
   /**
    * The Actor's OWN Integration accounts, under the names the Integration list shows them by. The
    * whole inventory is named first, a Company's shared Connections included, because each name's
@@ -157,32 +154,6 @@ export const makeWatchedApps = (
       Effect.provideService(Database, database),
     )
 
-  /** GET the app by id under the configured organization, as the Connection adapter addresses it. */
-  const slugOf = Effect.fn('WatchedApps.slugOf')(
-    function* (app: string) {
-      const request = HttpClientRequest.get(
-        `${config.url}/api/organizations/${encodeURIComponent(config.organization)}/apps/${encodeURIComponent(app)}`,
-      ).pipe(HttpClientRequest.bearerToken(config.key), HttpClientRequest.acceptJson)
-      const response = yield* client
-        .execute(request)
-        .pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
-      if (response.status < 200 || response.status >= 300)
-        return yield* new ExecutorEventsUnreachable({})
-      const body = yield* response.json.pipe(
-        Effect.mapError(() => new ExecutorEventsUnreachable({})),
-      )
-      const record = yield* decodeApp(body).pipe(
-        Effect.mapError(() => new ExecutorEventsUnreachable({})),
-      )
-      return record.slug
-    },
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: APP_TIMEOUT,
-      orElse: () => Effect.fail(new ExecutorEventsUnreachable({})),
-    }),
-  )
-
   return WatchedApps.of({
     /** Account names compare as the Connection tools compare them: trimmed, case-insensitive. */
     appOf: Effect.fn('WatchedApps.appOf')(function* (actor, account) {
@@ -190,7 +161,10 @@ export const makeWatchedApps = (
       const found = (yield* accounts(actor)).find((item) => item.account.toLowerCase() === wanted)
       if (found === undefined) return yield* new WatchAccountUnknown({})
       const app = yield* Effect.fromResult(dedicatedApp(found.row))
-      return { account: found.account, appSlug: yield* slugOf(app) }
+      const appSlug = yield* executor
+        .appSlug(app)
+        .pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
+      return { connectionId: found.row.id, appSlug }
     }),
     accountsOf: Effect.fn('WatchedApps.accountsOf')(function* (actor) {
       return (yield* accounts(actor)).flatMap((item) =>
@@ -200,10 +174,74 @@ export const makeWatchedApps = (
   })
 }
 
-/** Requires Database and HttpClient; reads the same three Executor settings as the events client. */
 export const watchedAppsLayer = Layer.effect(
   WatchedApps,
   Effect.gen(function* () {
-    return makeWatchedApps(yield* Database, yield* HttpClient.HttpClient, yield* executorSettings())
+    return makeWatchedApps(yield* Database, yield* Executor)
   }),
 )
+
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+
+/** Creation and removal lock the same identity, so a stale account resolution cannot revive it. */
+export const holdConnection = Effect.fn('WatchedApps.holdConnection')(function* (
+  tx: Transaction,
+  id: ConnectionId,
+) {
+  const rows = yield* tx
+    .select({ id: connections.id })
+    .from(connections)
+    .where(eq(connections.id, id))
+    .for('update')
+  if (rows.length === 0) return yield* new WatchConnectionRemoved({ connectionId: id })
+})
+
+/** Display names depend on the whole inventory, so name it once per owner-facing read. */
+export const accountNames = Effect.fn('WatchedApps.accountNames')(function* (actor: Actor) {
+  return new Map(
+    namedAccounts(yield* listRecords(actor)).map((item) => [item.row.id, item.account]),
+  )
+})
+
+const decodeArguments = decodeStored(WatchArguments, 'Watch arguments')
+
+/** Capture live subscription keys before Connection deletion cascades to the Watch rows. */
+export const disconnectWatches = Effect.fn('WatchedApps.disconnectWatches')(function* (
+  tx: Transaction,
+  id: ConnectionId,
+) {
+  const live = yield* tx
+    .select()
+    .from(watches)
+    .where(and(eq(watches.connectionId, id), ne(watches.state, 'Stopped')))
+  const subscriptions = yield* Effect.forEach(
+    live,
+    Effect.fnUntraced(function* (watch) {
+      return {
+        name: watch.subscribedName,
+        arguments: yield* decodeArguments(watch.arguments),
+        url: watch.callbackUrl,
+      } satisfies Subscription
+    }),
+  )
+  return subscriptions
+})
+
+/** Local removal is authoritative even when unsubscribe fails; signed deliveries now answer 410. */
+export const unsubscribeWatches = Effect.fn('WatchedApps.unsubscribeWatches')(function* (
+  subscriptions: ReadonlyArray<Subscription>,
+) {
+  if (subscriptions.length === 0) return
+  const events = yield* ExecutorEvents
+  yield* Effect.forEach(
+    subscriptions,
+    (subscription) =>
+      events.unsubscribe(subscription).pipe(
+        Effect.tapError((failure) =>
+          Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
+        ),
+        Effect.ignore,
+      ),
+    { discard: true },
+  )
+})

@@ -6,7 +6,10 @@ import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
+import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { noteBrowser } from './notebrowser.mjs'
+import { feedBrowser } from './feedbrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -43,12 +46,13 @@ const missing = {
   deny: 'No connected disposable Integration to produce a pending Approval',
   stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
-  watch: 'No disposable Integration with incoming events',
   library: 'No browser ingestion recipe yet',
-  feed: 'No disposable Watch occurrence',
 }
 const recipes = {
+  notes: { check: 'notes' },
   devices: { check: 'devices' },
+  watch: { check: 'watch' },
+  feed: { check: 'feed' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -65,6 +69,22 @@ const recipes = {
       'Use write_document to create one document titled Verification plan with body # Verification plan\nResearch, writing and review. Only write this one document.',
     rehearsal: 'write a document',
     check: 'document',
+  },
+}
+const specialRecipes = {
+  watch: {
+    drive: watchBrowser,
+    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+  },
+  devices: {
+    drive: deviceBrowser,
+    scope:
+      'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+  },
+  feed: {
+    drive: feedBrowser,
+    scope:
+      'Ordinary Conversation Feed only; see scope.json. Watch delivery and native controls remain unproved.',
   },
 }
 for (const name of features)
@@ -234,11 +254,15 @@ async function journey(state, feature) {
     diffHash: state.diffHash,
     evidence: directory,
   }
-  if (missing[feature]) {
+  const reason =
+    feature === 'notes' && state.modelKind !== 'real'
+      ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
+      : missing[feature]
+  if (reason) {
     const verdict = {
       ...base,
       verdict: 'blocked',
-      reason: 'no browser recipe: ' + missing[feature],
+      reason: missing[feature] ? 'no browser recipe: ' + reason : reason,
     }
     await json(directory + '/verdict.json', verdict)
     console.log(JSON.stringify(verdict))
@@ -280,7 +304,7 @@ async function journey(state, feature) {
           AGENT_BROWSER_DEFAULT_TIMEOUT: '120000',
         },
         log: directory + '/' + String(++sequence).padStart(2, '0') + '-' + args[0] + '.json',
-        redactions: [account.password],
+        redactions: [account.password, 'verify-pulse-local'],
         record: (process) => control(state, { action: 'capture', process }),
       },
     )
@@ -321,14 +345,27 @@ async function journey(state, feature) {
       await run(['find', 'role', 'button', 'click', '--name', 'Sign in', '--exact'])
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
-    if (feature === 'devices') {
-      await deviceBrowser(state, id, directory, { run, capture })
+    if (feature in specialRecipes) {
+      await specialRecipes[feature].drive(state, id, directory, { run, capture })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
+        scope: specialRecipes[feature].scope,
+      }
+    } else if (feature === 'notes') {
+      await noteBrowser(state, id, directory, {
+        run,
+        capture,
+        render: (text) => dom(run, renderedReply(text)),
+        normalise: normaliseReply,
+      })
+      verdict = {
+        ...base,
+        verdict: 'proved',
+        thread: id,
         scope:
-          'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+          'Notes tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
       }
     } else {
       if (existing) {

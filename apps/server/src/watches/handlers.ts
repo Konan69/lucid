@@ -1,5 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Match from 'effect/Match'
+import * as Schema from 'effect/Schema'
 import {
   Conflict,
   FindAppEventsResponse,
@@ -17,11 +18,12 @@ import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import {
   WatchedApps,
+  type WatchConnectionRemoved,
   type WatchAccountNotReady,
   type WatchAccountShared,
   type WatchAccountUnknown,
 } from './apps.ts'
-import type { ExecutorEventsFailure } from './events.ts'
+import { ExecutorEventsFailure } from './events.ts'
 import { Watches, type WatchEventUnknown } from './lifecycle.ts'
 import type { WatchNameTaken } from './store.ts'
 
@@ -71,7 +73,8 @@ const resolved = <A, R>(
     | WatchAccountShared
     | DatabaseInfrastructureError
     | WatchEventUnknown
-    | WatchNameTaken,
+    | WatchNameTaken
+    | WatchConnectionRemoved,
     R
   >,
 ) =>
@@ -84,6 +87,13 @@ const resolved = <A, R>(
               new NotFound({ message: `No Integration account has that name. ${known}` }),
             ),
           ),
+        ),
+      WatchConnectionRemoved: () =>
+        Effect.fail(
+          new InvalidRequest({
+            message:
+              'This Integration was removed while the Watch was starting. Connect it again before watching it.',
+          }),
         ),
       WatchAccountNotReady: () =>
         Effect.fail(
@@ -109,14 +119,10 @@ const resolved = <A, R>(
         Effect.fail(
           new Conflict({ message: 'A Watch with that name already exists. Choose another name.' }),
         ),
-      ExecutorEventMissing: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorEventChanged: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorEventArgumentsInvalid: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorCallbackFailed: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorEventRefused: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorEventsUnsupported: (failure) => Effect.fail(executorFailure(failure)),
-      ExecutorEventsUnreachable: (failure) => Effect.fail(executorFailure(failure)),
     }),
+    Effect.catchIf(Schema.is(ExecutorEventsFailure), (failure) =>
+      Effect.fail(executorFailure(failure)),
+    ),
   )
 
 export const watchHandlers = {

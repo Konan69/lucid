@@ -4,20 +4,20 @@
 
 ## What was run on 10 October 2026
 
-Both candidates were installed against Effect 4.0.2 and driven through the same Integration press flow (press, ask the server, sign in away from the app, come back, key form). Nothing here is from documentation alone.
+Both candidates were installed against Effect 4.0.2 and driven through the same Integration press flow (press, ask the server, sign in away from the app, come back, key form). The original measurements below used Effect Machine 0.40.0. Vivid now pins Effect Machine and its React catalog entry to 0.46.0, whose Effect peer accepts 4.0.2. The measurements have not been repeated for 0.46.0.
 
-| Check                                                                    | `@xstate/effect` 0.1.0-alpha.7 on XState 6.0.0-alpha.65 | Effect Machine 0.40.0   |
-| ------------------------------------------------------------------------ | ------------------------------------------------------- | ----------------------- |
-| An event the state does not take is refused                              | yes                                                     | yes                     |
-| A double press makes one call; cancel interrupts it; late answer ignored | yes                                                     | yes                     |
-| Unknown target state, wrong event payload                                | compile error                                           | compile error           |
-| Entering a state without its data                                        | compile error                                           | compile error           |
-| Reading another state's data                                             | allowed                                                 | not tested              |
-| A call that can fail with no failure transition                          | allowed                                                 | compile error           |
-| "Can this event be sent now" as an atom                                  | not tested                                              | yes (`AtomMachine.can`) |
-| Works through the Effect atom registry                                   | yes                                                     | yes                     |
-| Events per second, one rough run                                         | about 11,000                                            | about 53,000            |
-| Added size, minified / gzip, Effect excluded                             | 170 KB / 53 KB                                          | 166 KB / 45 KB          |
+| Check                                                                    | `@xstate/effect` 0.1.0-alpha.7 on XState 6.0.0-alpha.65 | Effect Machine 0.40.0 (original run) |
+| ------------------------------------------------------------------------ | ------------------------------------------------------- | ------------------------------------ |
+| An event the state does not take is refused                              | yes                                                     | yes                                  |
+| A double press makes one call; cancel interrupts it; late answer ignored | yes                                                     | yes                                  |
+| Unknown target state, wrong event payload                                | compile error                                           | compile error                        |
+| Entering a state without its data                                        | compile error                                           | compile error                        |
+| Reading another state's data                                             | allowed                                                 | not tested                           |
+| A call that can fail with no failure transition                          | allowed                                                 | compile error                        |
+| "Can this event be sent now" as an atom                                  | not tested                                              | yes (`AtomMachine.can`)              |
+| Works through the Effect atom registry                                   | yes                                                     | yes                                  |
+| Events per second, one rough run                                         | about 11,000                                            | about 53,000                         |
+| Added size, minified / gzip, Effect excluded                             | 170 KB / 53 KB                                          | 166 KB / 45 KB                       |
 
 Effect Machine was chosen because it rejects more mistakes at compile time, above all a call whose failure has nowhere to go. What XState has and Effect Machine does not: a maintaining company and nine years of history. Effect Machine is one maintainer and was ten weeks old at the decision, and its README says breaking changes ship in minor releases; the version is pinned in the workspace catalog for that reason.
 
@@ -27,7 +27,7 @@ A static survey the same day found about forty client lifecycles held in `useSta
 
 Two things to know when writing one:
 
-- A state is published before its invoked work starts. A test that answers "the call in flight" the moment it sees the state can answer before the call exists; hand answers through a queue.
+- Since 0.45, an idle local send commits its state before returning, and atom projections update in the same turn. Since 0.46, entered invocations also run until their first suspension in that turn. Outcomes still arrive in a later turn. The atom bridge queues sends during startup, so adapters need no manual wait for a machine reference. The web still reserves its sign-in tab inside the click because the provider address arrives after a network wait.
 - Snapshot restore restarts a state's work from the beginning. A machine is not durable execution and does not replace a database transaction, an idempotency key, or Flue's submission receipts.
 
 Not yet run at the decision: either library inside the Expo app on Hermes.

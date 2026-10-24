@@ -9,7 +9,7 @@ Read the [feature map](features/README.md), the touched feature and [runtime bou
 
 ## Host and credentials
 
-Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, actual hostname and boot identity. Launch checks the alias against SSH-observed hostnames in `./scripts/settings.mjs`; refresh that mapping after a devbox replacement.
+Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, Boat sandbox id, hostname and boot identity. Launch checks the alias against the box's `BOAT_ID` (stable across restarts) in `./scripts/settings.mjs`; refresh that mapping only when a devbox is replaced. Keep provider keys in a private file such as `~/.config/vivid/verify.env` (mode 0600) and pass it as `VIVID_VERIFY_KEY_FILE`.
 
 On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser 0.39.0 or later and Chrome. Install a compatible agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
@@ -43,7 +43,9 @@ Each run owns fresh ports, labelled containers, synthetic Better Auth account, m
 
 The repository workflow uses agent-browser on the selected host with a private namespace, session and profile. Read its installed core skill before use. Set `VIVID_VERIFY_BROWSER` and `VIVID_VERIFY_CHROME` when binaries are elsewhere. Browser processes are recorded from its private PID receipts. Close always runs in finally; cleanup retries retained receipts.
 
-The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. Feed delivery and Watch occurrences remain separate blocked recipes.
+The devices journey uses public enrolment and decision RPCs with no model calls. A separately allowed installation holds the real native request stream. Thread question coexistence uses public `AskInput` with disposable runtime authority. Read [its feature file](features/devices.md) for scope, stream cleanup evidence and restart/native limitations. The Watch recipe checks real event delivery and its Feed card. The broader Feed recipe remains separate.
+
+For Electron changes read the [desktop recipe](features/desktop.md), then run `.agents/skills/verify-vivid/verify desktop flue-<id>` on the devbox. It launches the built app and a private default browser under Xvfb against this disposable server. It drives email sign-in, Google handoff/Cancel, device connectivity and a model browser action, retains `desktop/` evidence and closes native processes in finally. Google grants, egress routing and OS-specific behavior retain the prerequisites in that recipe. Each repetition needs a fresh Launch.
 
 ## Android phone
 
@@ -59,7 +61,7 @@ ps -p <captured-pids> -o pid,ppid,args
 docker ps -a --filter label=vivid.verify --format '{{.Names}} {{.Status}} {{.Ports}}'
 ```
 
-Save cleanup audits beside evidence. Confirm captured generations exited, owned ports closed and both exact containers absent. Cleanup validates canonical paths and labels, stops captured generations only, removes private scratch and volumes, and retains evidence. Never kill by pattern. Delete any private remote key file after cleanup.
+Save cleanup audits beside evidence. Confirm captured generations exited, owned ports closed and all labelled containers and their anonymous volumes absent. Cleanup validates canonical paths and labels, stops captured generations only, removes private scratch and volumes, and retains evidence. Never kill by pattern. Delete any private remote key file after cleanup.
 
 ## Skill checks
 

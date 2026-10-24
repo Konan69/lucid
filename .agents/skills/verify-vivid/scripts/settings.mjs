@@ -3,15 +3,22 @@ import * as os from 'node:os'
 import { parseEnv } from 'node:util'
 import { boot } from './process.mjs'
 
-/** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
+export const authSecret = 'Verify-Auth!0123456789-ABCDefghijklmnop'
+
 import { hosts } from './hosts.mjs'
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
-  if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== os.hostname())
+  if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== process.env.BOAT_ID)
     throw new Error(
-      'Selected devbox does not match the actual host; production and unknown hosts refused',
+      'Selected devbox does not match this Boat sandbox; production and unknown hosts refused',
     )
-  return { devbox, hostBoot: boot, hostSelection: 'devbox-pick; SSH hostname verified' }
+  return {
+    devbox,
+    sandbox: process.env.BOAT_ID,
+    hostname: os.hostname(),
+    hostBoot: boot,
+    hostSelection: 'devbox-pick; Boat sandbox id verified',
+  }
 }
 
 /** Credentials require an explicit file or environment; other tools' auth stores are never read. */
@@ -19,9 +26,7 @@ export async function provider() {
   const candidates = process.env.VIVID_VERIFY_KEY_FILE ? [process.env.VIVID_VERIFY_KEY_FILE] : []
   const names = ['EXPLABS_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
   const env = Object.fromEntries(
-    names.flatMap((name) =>
-      !candidates.length && process.env[name] ? [[name, process.env[name]]] : [],
-    ),
+    names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   )
   const sources = []
   for (const file of new Set(candidates)) {
