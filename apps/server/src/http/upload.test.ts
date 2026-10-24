@@ -1,8 +1,12 @@
 import { workLayer } from '../database/work.ts'
 import { NodeHttpServer } from '@effect/platform-node'
+import * as NodeMultipart from '@effect/platform-node/NodeMultipart'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, layer } from '@effect/vitest'
-import { Context, Effect, Fiber, FileSystem, Layer, Ref, Schema, Stream } from 'effect'
+import { Context, Effect, Fiber, FileSystem, Layer, Ref, Schema } from 'effect'
+import { LibraryFolderId } from '@vivid/contracts'
+import * as NodeStream from 'node:stream'
+import * as Multipart from 'effect/http/Multipart'
 import * as NodeHttp from 'node:http'
 import type * as NodeNet from 'node:net'
 import * as HttpClient from 'effect/http/HttpClient'
@@ -17,6 +21,7 @@ import { LibraryStore, libraryStoreLayer } from '../library/store.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { bytesRoutes } from './bytes.ts'
 import { authLayer } from '../auth/provider.ts'
+import { multipartRequest, uploadLimits } from './upload.ts'
 
 const testLayer = Layer.mergeAll(
   authLayer.pipe(Layer.provide(testConfigLayer)),
@@ -366,34 +371,83 @@ const forwardingHop = Effect.fn('LibraryUploadTest.forwardingHop')(function* (
   return { host: address.address, port: address.port }
 })
 
+/**
+ * NodeHttpServer 4.0.2 delegates request.multipart directly to NodeMultipart.persisted.
+ * Drive that same parser and native file writer with the full payload in one readable chunk,
+ * so the limit proof does not measure loopback throughput or a 10 MiB SQL RETURNING/list.
+ * "persists all three supported parts in the chosen folder" below owns real HTTP, FormData,
+ * authentication, folder selection and PostgreSQL persistence at a small payload size.
+ */
+layer(NodeServices.layer)((cases) => {
+  cases.effect('accepts the payload limit with all three supported parts', () =>
+    Effect.gen(function* () {
+      const folderId = LibraryFolderId.make(crypto.randomUUID())
+      const expected = Buffer.alloc(MAX_LIBRARY_FILE_BYTES, ' ')
+      expected[0] = 97
+      const body = Buffer.concat([
+        Buffer.from(
+          `--vivid-reuse\r\nContent-Disposition: form-data; name="folderId"\r\n\r\n${folderId}\r\n`,
+        ),
+        reusableUpload('bounded.txt', expected),
+      ])
+      const headers = {
+        'content-type': 'multipart/form-data; boundary=vivid-reuse',
+        'content-length': String(body.length),
+      }
+      yield* multipartRequest(headers)
+      const parts = yield* NodeMultipart.persisted(NodeStream.Readable.from([body]), headers).pipe(
+        Effect.provide(uploadLimits),
+      )
+      expect(Object.keys(parts).toSorted()).toEqual(['file', 'folderId', 'shelf'])
+      expect(parts.folderId).toBe(folderId)
+      expect(parts.shelf).toBe('Mine')
+      const files = parts.file
+      if (!Array.isArray(files)) expect.fail('Expected persisted upload files')
+      expect(files).toHaveLength(1)
+      const file = files.find(Multipart.isPersistedFile)
+      if (file === undefined) expect.fail('Expected the persisted upload')
+      expect(file.name).toBe('bounded.txt')
+      expect(file.contentType).toBe('text/plain')
+      const bytes = yield* (yield* FileSystem.FileSystem).readFile(file.path)
+      expect(bytes.byteLength).toBe(MAX_LIBRARY_FILE_BYTES)
+      expect(Buffer.compare(bytes, expected)).toBe(0)
+    }),
+  )
+})
+
 describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP', () => {
   layer(testLayer, { excludeTestServices: true })((it) => {
-    it.effect('accepts the payload limit with all three supported parts', () =>
+    it.effect('persists all three supported parts in the chosen folder', () =>
       Effect.gen(function* () {
         const { people, store, send } = yield* httpFixture()
         const folder = yield* store.createFolder(people.owner.actor, {
-          name: 'Bounded files',
+          name: 'Stored files',
           shelf: 'Mine',
           parentId: null,
         })
-        const body = uploadBody(MAX_LIBRARY_FILE_BYTES)
+        const body = uploadBody(8)
         body.set('folderId', folder.id)
         expect((yield* send(request(body))).status).toBe(201)
         const list = yield* store.list(people.owner.actor, { shelf: 'Mine' })
-        expect(list.documents).toEqual([
-          expect.objectContaining({ size: MAX_LIBRARY_FILE_BYTES, folderId: folder.id }),
-        ])
+        expect(list.documents).toEqual([expect.objectContaining({ size: 8, folderId: folder.id })])
       }),
     )
-    for (const size of [
-      MAX_LIBRARY_FILE_BYTES + 1,
-      MAX_LIBRARY_FILE_BYTES + 4096,
-      MAX_LIBRARY_FILE_BYTES * 4,
-    ]) {
+    for (const size of [MAX_LIBRARY_FILE_BYTES + 1, MAX_LIBRARY_FILE_BYTES + 4096]) {
       it.effect(`refuses a ${size}-byte file with a readable 413 and no item`, () =>
         Effect.gen(function* () {
           const { people, store, send } = yield* httpFixture()
-          const response = yield* send(request(uploadBody(size)))
+          // Serialize the large fixture once as native bytes. The valid upload after each
+          // refusal still uses FormData; Blob streaming made the 40 MiB refusal load-sensitive.
+          const payload = Buffer.alloc(size, ' ')
+          payload[0] = 97
+          const response = yield* send(
+            HttpClientRequest.post('/api/library').pipe(
+              HttpClientRequest.bodyUint8Array(
+                reusableUpload('bounded.txt', payload),
+                'multipart/form-data; boundary=vivid-reuse',
+              ),
+            ),
+          )
           expect(response.status).toBe(413)
           expect(yield* decodeRefusal(yield* response.json)).toEqual({ error: fileRefusal })
           expect((yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents).toEqual([])
@@ -402,35 +456,7 @@ describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP',
         }),
       )
     }
-    it.effect('bounds chunked uploads without a declared length and permits the next upload', () =>
-      Effect.gen(function* () {
-        const { people, store, send } = yield* httpFixture()
-        const encoder = new TextEncoder()
-        const prefix = encoder.encode(
-          '--vivid-test\r\nContent-Disposition: form-data; name="file"; filename="chunked.txt"\r\nContent-Type: text/plain\r\n\r\n',
-        )
-        const chunk = encoder.encode('a'.repeat(1024 * 1024))
-        const suffix = encoder.encode('\r\n--vivid-test--\r\n')
-        // No contentLength: the real HTTP client uses chunked transfer, bypassing the preflight.
-        const body = Stream.fromIterable([
-          prefix,
-          ...Array.from({ length: 40 }, () => chunk),
-          suffix,
-        ])
-        const response = yield* send(
-          HttpClientRequest.post('/api/library').pipe(
-            HttpClientRequest.bodyStream(body, {
-              contentType: 'multipart/form-data; boundary=vivid-test',
-            }),
-          ),
-        )
-        expect(response.status).toBe(413)
-        expect(yield* decodeRefusal(yield* response.json)).toEqual({ error: fileRefusal })
-        expect((yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents).toEqual([])
-        expect((yield* send(request(uploadBody(8)))).status).toBe(201)
-      }),
-    )
-    it.effect('a refused upload leaves its connection usable', () =>
+    it.effect('bounds a 40 MiB upload without a declared length and reuses its connection', () =>
       Effect.gen(function* () {
         const { people, store, address } = yield* httpFixture()
         if (!NetAddress.isInetAddress(address))
@@ -468,13 +494,11 @@ describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP',
         const freed = yield* freedUpload(agent, first).pipe(
           Effect.forkScoped({ startImmediately: true }),
         )
-        // Cross the parser allowance and include the remaining MiB and multipart terminator now.
+        // A real 40 MiB chunked body bypasses the length preflight and includes its terminator.
+        // This one transfer proves both the streaming limit and recovery on the exact socket.
         const refused = yield* uploadResponse(
           first,
-          reusableUpload(
-            'refused.txt',
-            Buffer.alloc(MAX_LIBRARY_FILE_BYTES + 64 * 1024 + 1024 * 1024, 'a'),
-          ),
+          reusableUpload('refused.txt', Buffer.alloc(MAX_LIBRARY_FILE_BYTES * 4, 'a')),
         )
         expect(first.writableFinished).toBe(true)
         expect(refused.status).toBe(413)
@@ -606,7 +630,7 @@ describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP',
       )
     }
     it.effect(
-      'finishes a declared 40 MiB upload before its readable 413 through a forwarding hop',
+      'finishes a declared 40 MiB upload through a forwarding hop and permits the next upload',
       () =>
         Effect.gen(function* () {
           const { people, store, address } = yield* httpFixture()
@@ -645,6 +669,30 @@ describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP',
           expect(response.status).toBe(413)
           expect(yield* decodeRefusalText(response.text)).toEqual({ error: fileRefusal })
           expect((yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents).toEqual([])
+          // This is also the declared-length refusal recovery proof. Reuse the same client
+          // instead of paying for another 40 MiB transfer in the parameterized boundary cases.
+          const valid = reusableUpload('after-refusal.txt', Buffer.from('a       '))
+          const next = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeHttp.request({
+                ...endpoint,
+                agent,
+                method: 'POST',
+                path: '/api/library',
+                headers: {
+                  authorization: `Bearer ${people.owner.token}`,
+                  'content-type': 'multipart/form-data; boundary=vivid-reuse',
+                  'content-length': valid.length,
+                },
+              }),
+            ),
+            (owned) => Effect.sync(() => owned.destroy()),
+          )
+          expect((yield* uploadResponse(next, valid)).status).toBe(201)
+          expect(next.reusedSocket).toBe(true)
+          expect((yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents).toEqual([
+            expect.objectContaining({ name: 'after-refusal.txt', size: 8 }),
+          ])
         }),
     )
     it.effect('refuses oversized fields before creating an item', () =>
