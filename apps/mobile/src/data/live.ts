@@ -6,7 +6,6 @@ import {
   type LibraryShelf,
   type MeResponse,
   type Settings,
-  type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
 import {
@@ -15,10 +14,10 @@ import {
   liveStateOf,
   makeLink,
   makeLive,
+  makeSeenThread,
   makeSnapshots,
   workspaceKey,
   type KeptQueries,
-  type LiveFamily,
   type LiveQuery,
   type LiveResult,
   type ProductFailure,
@@ -65,70 +64,6 @@ import { snapshotStore } from './snapshot'
  */
 const whereaboutsOf = (result: LiveResult<MeResponse>): Option.Option<string> =>
   AsyncResult.isSuccess(result) ? Option.some(workspaceKey(result.value.workspace)) : Option.none()
-
-/**
- * Builds the query a Thread's screen reads while the Person is looking at it: the Thread's live
- * detail, which marks the Thread read each time it moves.
- *
- * Looking at a Thread is what marks it read, so that happens in the atom. It is an event on the
- * data, not something a component has to remember to do after it renders; when nobody is reading
- * the atom, nothing is reported. Being present is `presentIn`.
- *
- * The Thread's own query stays subscribed for minutes after its screen closes, so coming back is
- * instant. This atom does not: it stops the moment nothing reads it, or a reply that arrived after
- * the Person left would be marked read without ever being seen. For the same reason the screen
- * reads it only while it is the one on top and the app is in front (`screen/Chat.tsx`), and the
- * Thread's own query the rest of the time.
- */
-function makeSeenThread(
-  engine: ReturnType<typeof makeLive>,
-  threads: LiveFamily<ThreadId, ThreadDetail>,
-) {
-  const seen = new Map<ThreadId, number>()
-
-  /** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
-  const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
-    if (!AsyncResult.isSuccess(result)) return
-    const moved = result.value.thread.updatedAt
-    const last = seen.get(id)
-    if (last !== undefined && last >= moved) return
-    seen.set(id, moved)
-    void start(
-      engine.run(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          yield* client.MarkThreadRead({ id })
-        }),
-      ),
-    ).then((reported) => {
-      // Forgotten again if the report did not get through, so the next result tries again
-      // instead of leaving read work marked unread.
-      if (Result.isFailure(reported) && seen.get(id) === moved) seen.delete(id)
-    })
-  }
-
-  // One watched query for each Thread's own query, for as long as that one exists.
-  const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
-
-  return (id: ThreadId): LiveQuery<ThreadDetail> => {
-    const base = threads.get(id)
-    const existing = seenQueries.get(base)
-    if (existing !== undefined) return existing
-    const watched: LiveQuery<ThreadDetail> = {
-      expect: base.expect,
-      atom: Atom.setIdleTTL(
-        Atom.readable((get) => {
-          const result = get(base.atom)
-          markSeen(id, result)
-          return result
-        }),
-        0,
-      ),
-    }
-    seenQueries.set(base, watched)
-    return watched
-  }
-}
 
 /**
  * What a session keeps on the phone and carries to the Person's other devices, for as long as
@@ -416,7 +351,10 @@ function makeLiveData(session: SignedIn) {
     ),
   )
 
-  const seenThread = makeSeenThread(engine, live.thread)
+  // Looking at a Thread marks it read (`@vivid/state` `seen.ts`, shared with the browser). The
+  // screen reads this only while it is the one on top and the app is in front
+  // (`screen/Chat.tsx`), and the Thread's own query the rest of the time.
+  const seenThread = makeSeenThread({ engine, threads: live.thread, launch })
 
   // Connecting an Integration is one machine for the session, made here because this is where
   // the session's registry and socket are made: every screen, sheet and card of the session

@@ -1,17 +1,16 @@
 import { useAtomValue } from '@effect/atom-react'
+import { Workspace, type LibraryShelf, type MeResponse, type ThreadId } from '@vivid/contracts'
 import {
-  Workspace,
-  type LibraryShelf,
-  type MeResponse,
-  type ThreadDetail,
-  type ThreadId,
-} from '@vivid/contracts'
-import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option, Result, Stream } from 'effect'
+  LiveState,
+  liveStateOf,
+  makeSeenThread,
+  type LiveQuery,
+  type LiveResult,
+} from '@vivid/state'
+import { Option, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
-import { VividRpcClient } from '@vivid/client-runtime'
-import { change, changing, run } from './app'
+import { change, changing, start } from './app'
 import { router, threadOnScreen } from '../router'
 import { engine } from './runtime'
 import { said, sayWith } from './said'
@@ -182,39 +181,6 @@ export function useLiveValue<Value>(query: LiveQuery<Value>): Option.Option<Valu
 
 export { change, changing }
 
-const seen = new Map<ThreadId, number>()
-
-/** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
-const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
-  if (!AsyncResult.isSuccess(result)) return
-  const moved = result.value.thread.updatedAt
-  const last = seen.get(id)
-  if (last !== undefined && last >= moved) {
-    seen.delete(id)
-    seen.set(id, last)
-    return
-  }
-  seen.delete(id)
-  seen.set(id, moved)
-  if (seen.size > 50) {
-    const oldest = seen.keys().next().value
-    if (oldest !== undefined) seen.delete(oldest)
-  }
-  // Remembered at once so a burst of results reports once, and forgotten again if the report did
-  // not get through, so the next result tries again instead of leaving read work marked unread.
-  const forget = () => {
-    if (seen.get(id) === moved) seen.delete(id)
-  }
-  void run(
-    Effect.gen(function* () {
-      const client = yield* VividRpcClient
-      yield* client.MarkThreadRead({ id })
-    }),
-  ).then((reported) => {
-    if (Result.isFailure(reported)) forget()
-  }, forget)
-}
-
 /** Whether this window is the one being looked at. A tab in the background is not watching. */
 const looking = Atom.make((get) => {
   const hear = () => get.setSelf(document.visibilityState === 'visible')
@@ -243,36 +209,11 @@ export const presentIn = Atom.family((id: ThreadId) =>
   ),
 )
 
-// One watched query for each Thread's own query, for as long as that one exists.
-const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
-
 /**
  * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it read,
- * so that happens here, in the atom, each time the Thread moves while someone has it open. It is
- * an event on the data, not something a component has to remember to do after it renders; when
- * nobody is reading the atom, nothing is reported. Being present is `presentIn`.
- *
- * The Thread's own query stays subscribed for minutes after its screen closes, so coming back is
- * instant. This atom does not: it stops the moment the screen does, or a reply that arrived after
- * the Person left would be marked read without ever being seen.
+ * and the query does it each time the Thread moves while someone has it open (`@vivid/state`
+ * `seen.ts`, shared with the phone). Being present is `presentIn`.
  */
-export function seenThread(id: ThreadId): LiveQuery<ThreadDetail> {
-  const base = live.thread.get(id)
-  const existing = seenQueries.get(base)
-  if (existing !== undefined) return existing
-  const watched: LiveQuery<ThreadDetail> = {
-    expect: base.expect,
-    atom: Atom.setIdleTTL(
-      Atom.readable((get) => {
-        const result = get(base.atom)
-        markSeen(id, result)
-        return result
-      }),
-      0,
-    ),
-  }
-  seenQueries.set(base, watched)
-  return watched
-}
+export const seenThread = makeSeenThread({ engine, threads: live.thread, launch: start })
 
 export { LiveState }

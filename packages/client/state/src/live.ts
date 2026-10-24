@@ -526,3 +526,6 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
 
   return { registry, query, kept, family, ask, hold, run, change, reopen, whenSessionGone }
 }
+
+/** One app's live engine: its registry, its queries and the way it describes a call. */
+export type LiveEngine = ReturnType<typeof makeLive>

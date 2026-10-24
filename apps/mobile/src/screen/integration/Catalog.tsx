@@ -14,7 +14,7 @@ import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Empty } from '../../ui/ui'
 import { Logo } from './Logo'
-import { byPurpose } from './purpose'
+import { byPurpose } from '@vivid/state'
 
 /** How many rows stand in for the catalog while its first answer is on its way. */
 const SLOTS = ['a', 'b', 'c', 'd', 'e', 'f'] as const

@@ -75,17 +75,18 @@ Local evidence:
 
 These are evaluation candidates, not claims that the complete features are implemented.
 
-| Capability                        | Rules a machine could centralize                                                                                              |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Approvals and Input requests      | Pending, answered, rejected, expired, and cancelled states; late responses and competing decisions from multiple devices.     |
-| Computer lifecycle                | Starting, restoring, verifying readiness, capturing changes, stopping, and recovery. Work must wait for verified restoration. |
-| Human takeover                    | Control ownership, when Vivid must stop acting, and what authorizes resumption.                                               |
-| Offline commands and reconnection | Local queueing, submission, acknowledgement, rejection, and safe retry.                                                       |
+| Capability                        | Rules a machine could centralize                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Approvals and Input requests      | Pending, answered, rejected, expired, and cancelled states; late responses and competing decisions from multiple devices. |
+| Computer lifecycle                | Starting, resuming an archived machine, verifying readiness, stopping, and recovery.                                      |
+| Human takeover                    | Control ownership, when Vivid must stop acting, and what authorizes resumption.                                           |
+| Offline commands and reconnection | Local queueing, submission, acknowledgement, rejection, and safe retry.                                                   |
 
-Computer availability, control ownership, and archive synchronization are separate concerns. Model
-their relationships explicitly rather than enumerating every combination in one giant machine.
-Existing [restore verification](../packages/computer/state/src/restore.ts) and
-[capture conflict handling](../packages/computer/state/src/capture.ts) remain authoritative guarantees.
+Computer availability and control ownership are separate concerns. The retired application archive
+has no callers. Boat archives and resumes the machine's disk through the server's
+[Machine boundary](../apps/server/src/computers/machine.ts), with the
+[holder check](../apps/server/src/computers/boat/holder.ts) before a wake opens a connection.
+See the [Computer provider notes](../apps/server/src/computers/README.md).
 
 Related product direction: [Computer](04-computer.md),
 [platform architecture](09-platform-architecture.md).

@@ -166,7 +166,6 @@ const requiredByManifest = Object.freeze({
     'valibot',
     'vite',
   ],
-  'packages/computer/state/package.json': ['@effect/platform-node', '@types/node', 'effect'],
   'packages/contracts/package.json': ['effect'],
 })
 

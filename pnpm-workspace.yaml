@@ -6,7 +6,6 @@ packages:
   - 'packages/compiler'
   - 'packages/contracts'
   - 'packages/client/rpc'
-  - 'packages/computer/state'
   - 'packages/client/state'
   - 'packages/design/marks'
   - 'packages/design/tokens'

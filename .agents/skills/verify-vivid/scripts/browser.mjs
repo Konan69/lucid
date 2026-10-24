@@ -8,6 +8,8 @@ import { rpc, settled, history, chat } from './wire.mjs'
 import { features } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
+import { readBrowser } from './readbrowser.mjs'
+import { settingsBrowser } from './settingsbrowser.mjs'
 import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 
@@ -49,6 +51,8 @@ const missing = {
   library: 'No browser ingestion recipe yet',
 }
 const recipes = {
+  reading: { check: 'reading' },
+  settings: { check: 'settings' },
   notes: { check: 'notes' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
@@ -85,6 +89,16 @@ const specialRecipes = {
     drive: feedBrowser,
     scope:
       'Ordinary Conversation Feed only; see scope.json. Watch delivery and native controls remain unproved.',
+  },
+  reading: {
+    drive: readBrowser,
+    scope:
+      'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  settings: {
+    drive: settingsBrowser,
+    scope:
+      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
   },
 }
 for (const name of features)

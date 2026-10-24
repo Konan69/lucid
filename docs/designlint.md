@@ -35,7 +35,7 @@ This is the first draft for UI-owner review. The executable source is the single
 ^Card$                                        allow: layout, spacing
 
 # Small visual primitives own their treatment; callers place them.
-^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot|ServiceMarks)$ allow: layout
+^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot)$ allow: layout
 
 # All other discovered design-system components.
 default                                      allow: layout
@@ -73,4 +73,7 @@ lower a ceiling when findings disappear.
 
 ## Brand marks keep literal colours
 
-`apps/web/src/ui/Marks.tsx` draws third-party logos (Google, Gmail, Drive, Calendar). Their colours belong to those brands, not to Vivid's theme, so they stay literal hex values and `shadcn/no-raw-colors` is off for that one file. Never point a brand mark at a theme token: it would change when the theme does.
+Third-party logos keep their brand colours in both themes. Service logos live in
+`apps/web/src/screen/integration/logos/` and are drawn by `Mark.tsx`. Google's sign-in mark keeps
+its colours beside its paths in `apps/web/src/screen/welcome/Google.tsx`. The unused `ServiceMarks`
+component and its raw-colour lint exception were removed.

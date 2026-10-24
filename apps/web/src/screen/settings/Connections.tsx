@@ -53,7 +53,7 @@ import { Segmented } from '../../ui/Segmented'
 import { EnterKey } from '../integration/Key'
 import { Mark } from '../integration/Mark'
 import { NameAccount } from '../integration/Name'
-import { byPurpose } from '../integration/purpose'
+import { byPurpose } from '@vivid/state'
 import { DRAW, ENTER, PRESS, stagger } from '../motion'
 import { Awaiting } from './Parts'
 

@@ -11,8 +11,8 @@ import { guarded, scrub, scrubBreadcrumb } from './scrub'
  *
  * The same built pages run in two places, and each reports to its own Sentry project:
  * - In a browser this starts `@sentry/react` with the web project's address below.
- * - In the desktop app the pages are loaded by its shell (`apps/desktop/src/main/renderer.ts`),
- *   whose session refuses every request that is not to the selected Vivid (`secureSession`), so
+ * - In the desktop app the pages are loaded by its shell (`apps/desktop/src/main/window.ts`),
+ *   whose session refuses every request that is not to the selected Vivid (`secureSession` in `apps/desktop/src/main/session.ts`), so
  *   a report could not reach Sentry from the page at all. There this starts
  *   `@sentry/electron/renderer` instead, around the same React SDK: it hands each report to the
  *   desktop's main process, which sends it to the desktop project

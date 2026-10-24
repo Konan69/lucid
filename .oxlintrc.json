@@ -218,7 +218,7 @@
                 "message": "Card owns surface, radius, and elevation; callers may control placement and content spacing."
               },
               {
-                "pattern": "^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot|ServiceMarks)$",
+                "pattern": "^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot)$",
                 "allow": ["layout"],
                 "message": "This primitive owns its visual treatment; callers may control placement only."
               }
@@ -300,12 +300,6 @@
         "vivid/no-direct-process-env": "off",
         "vivid/no-runtime-env-mutation": "off",
         "vivid/no-try-catch": "off"
-      }
-    },
-    {
-      "files": ["apps/web/src/ui/Marks.tsx"],
-      "rules": {
-        "shadcn/no-raw-colors": "off"
       }
     },
     {

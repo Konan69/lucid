@@ -51,7 +51,7 @@ const corrected =
     memories: known.memories.map((memory) => (memory.id === id ? { ...memory, content } : memory)),
   })
 
-/** The list as it stands once a memory is forgotten. The brief is rebuilt by the server later. */
+/** The list as it stands once a fact is forgotten. The server writes the summary again later. */
 const forgotten =
   (id: MemoryId) =>
   (known: MemoryListResponse): MemoryListResponse => ({
@@ -60,9 +60,16 @@ const forgotten =
   })
 
 /**
- * What Vivid knows. Everything it has kept is listed in plain sentences, with where it learned
- * each one, and the Person can correct or remove any of them: memory they cannot see and change
- * would not be theirs. The page at the top is what Vivid reads before each response.
+ * The knowledge Vivid has saved for reference: each fact in a plain sentence, with where it
+ * learned it, and the Person can correct or remove any of them. The page at the top is a summary
+ * the server writes from those same facts.
+ *
+ * This is one of Vivid's two kinds of memory and the screen says so. `WatchMemory` returns the
+ * knowledge base only (`apps/server/src/memory/handlers.ts`), which Vivid searches when it needs
+ * a fact. What is in front of Vivid on every response is the list of its own notes
+ * (`packages/agent/runtime/src/context.ts`), and this query does not return those. So nothing
+ * here is called everything Vivid knows, the summary is not called what Vivid reads before it
+ * answers, and forgetting a fact here is not said to remove it from the notes (docs/25-memory.md).
  *
  * It is the phone's half of the web app's section of the same name, on the same live query. A
  * memory is opened to be changed, the way a Member is in People, because a row on a phone has
@@ -100,9 +107,9 @@ export function Memory() {
 
 /**
  * The live query's three states, kept apart. This screen does not use `ui/Live.tsx` because its
- * failure is not the server's sentence: every Vivid has its memory, so a failure here is memory
- * not answering for a while. That is nothing the Person did or can fix, so it is said plainly,
- * with what stays true (nothing is lost), and not painted as a refusal.
+ * failure is not the server's sentence: a failure here is the knowledge base not answering for a
+ * while. That is nothing the Person did or can fix, so it is said plainly and not painted as a
+ * refusal. It does not say that nothing is lost: a read that failed cannot know that.
  */
 function Shown({
   state,
@@ -118,8 +125,7 @@ function Shown({
     Failed: () => (
       <Card>
         <Label size="label" tone="ink-2">
-          Vivid’s memory is not answering right now. Nothing is lost: what Vivid knows is kept, and
-          it will be here again as soon as memory answers.
+          Unable to load saved knowledge right now. Try again in a moment.
         </Label>
       </Card>
     ),
@@ -127,7 +133,7 @@ function Shown({
   })
 }
 
-/** Prose inside a Section. The brief is a page to read, not a row to press, so it runs on. */
+/** Prose inside a Section. The summary is a page to read, not a row to press, so it runs on. */
 function Passage({ children }: { children: string }) {
   return (
     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -138,7 +144,7 @@ function Passage({ children }: { children: string }) {
   )
 }
 
-/** The brief Vivid reads before it answers, then every memory behind it, each one openable. */
+/** The summary of the saved knowledge, then each fact it was written from, each one openable. */
 function Known({
   known,
   refused,
@@ -151,19 +157,19 @@ function Known({
   const brief = known.brief.text.trim()
   return (
     <>
-      <Section title="In short" detail="What Vivid reads before it answers you.">
+      <Section title="In short" detail="A summary of the saved knowledge below.">
         <Passage>
           {brief.length === 0
-            ? 'Nothing yet. As you work together, Vivid keeps what will matter later.'
+            ? 'Nothing yet. Facts Vivid saves for reference are summed up here.'
             : brief}
         </Passage>
       </Section>
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Section
-        title="Everything it has kept"
-        detail="Correct what is wrong. Remove what it should not keep."
+        title="Saved knowledge"
+        detail="Facts Vivid can look up. Correct what is wrong, or remove what it should not keep. Vivid’s own notes are not shown here."
       >
-        {known.memories.length === 0 && <Row title="Nothing kept yet" />}
+        {known.memories.length === 0 && <Row title="Nothing saved yet" />}
         {known.memories.map((item) => (
           <Row
             key={item.id}
@@ -189,6 +195,7 @@ const Saving = Data.taggedEnum<Saving>()
  * sheet open with the words still in the field and says so; an accepted one closes it. Forgetting
  * asks first, then closes the sheet at once: the memory leaves the list as the question is
  * answered, and comes back with a sentence above the list if the server will not forget it.
+ * Forgetting removes the saved fact only; Vivid's own notes are not reached from here.
  */
 function Kept({
   memory,
@@ -240,13 +247,16 @@ function Kept({
   const askToForget = () =>
     confirmDestructive({
       title: 'Forget this?',
-      detail: 'Vivid stops using it from now on. This cannot be undone.',
+      // Only the saved fact goes. A note of Vivid's own may hold the same thing, and only Vivid
+      // can remove that (`delete_note`), so the Person is told how to ask for it.
+      detail:
+        'This removes it from saved knowledge and cannot be undone. If Vivid still brings it up, ask Vivid to forget it.',
       action: 'Forget',
       onConfirm: () => void forget(),
     })
 
   return (
-    <Sheet title="What Vivid kept" detail={provenance(memory)} onClose={onClose}>
+    <Sheet title="Saved fact" detail={provenance(memory)} onClose={onClose}>
       <Labelled label="What Vivid should know">
         <Field
           accessibilityLabel="What Vivid should know"
