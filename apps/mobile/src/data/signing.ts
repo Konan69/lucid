@@ -73,11 +73,9 @@ const google = makeGoogle(phone, {
  * Starts signing in with Google on a server: write the server to it and the browser opens. How
  * it goes is read from `googleStandingAtom`, not from this atom's own value.
  *
- * It is a plain function atom on purpose. Its run lasts as long as the attempt does, and a plain
- * function atom interrupts its last run when it is written to again (`makeResultFn` in effect
- * 4.0.0-rc.116's `Atom.ts`), which is exactly "a new press replaces the attempt before it". It is
- * kept alive because nothing reads it, and a function atom nobody reads is thrown away with its
- * run.
+ * A plain function atom interrupts an unfinished browser-opening request when another press
+ * replaces it. The attempt itself stays in googleStandingAtom until its return or replacement;
+ * no client clock can expire the human step before the server has issued a trade grant.
  */
 export const googleAtom = Atom.keepAlive(Atom.fn(google.start))
 
@@ -105,7 +103,17 @@ const links = Stream.callback<string>((queue) =>
  * Links are taken one at a time, so a second one that arrives while the first is being traded
  * finds no attempt waiting and is ignored.
  */
-export const googleReturnsAtom = Atom.make(links.pipe(Stream.mapEffect(google.returned)))
+export const googleReturnsAtom = Atom.setIdleTTL(
+  Atom.make(
+    links.pipe(
+      Stream.mapEffect(google.returned),
+      // Leaving the front door owns cancellation and secret disposal, even when email sign-in
+      // replaced an unfinished Google attempt. Retaining a warm listener would retain its secret.
+      Stream.ensuring(Effect.sync(() => door.set(standing, Standing.Idle()))),
+    ),
+  ),
+  0,
+)
 
 /** What the email form holds when it is submitted. Only a new account gives a name. */
 export type EmailEntry = Data.TaggedEnum<{
@@ -136,15 +144,13 @@ export const emailAtom = Atom.fn(
  * (`makeCustody`'s `leave`). A phone that is offline, a server that hangs and a store that
  * refuses must each still be able to sign out, and none of them may hold up the others.
  *
- * Nothing is said when the server gave no answer, as before: the request may or may not have
- * reached it, so that session may still be valid on the server until it expires. A store that
- * refused still holds the token and is on record separately (`forgettingAtom`), which the
- * sign-in screen shows. This atom's value carries no outcome, so an earlier sign-out finishing
- * late has nothing to say over a later one.
+ * A server refusal or missing acknowledgement is recorded as this atom's failure. The token
+ * may still be valid on the server until it expires. A refused store is recorded separately
+ * (`forgettingAtom`) and the sign-in screen already offers its manual retry.
  *
  * It is `concurrent` because a plain function atom interrupts its last run when it is written to
  * again (`makeResultFn` in effect 4.0.0-rc.116's `Atom.ts`). A Person who signs back in and out
- * within the half minute the first sign-out may still be working would otherwise cut off the
+ * while the first sign-out is still working would otherwise cut off the
  * request ending their earlier session.
  */
 export const leaveAtom = Atom.keepAlive(

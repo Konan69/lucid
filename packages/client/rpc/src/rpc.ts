@@ -1,15 +1,75 @@
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Match from 'effect/Match'
+import * as Deferred from 'effect/Deferred'
+import * as Duration from 'effect/Duration'
+import * as Schedule from 'effect/Schedule'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as RpcClient from 'effect/rpc/RpcClient'
-import type * as RpcClientError from 'effect/rpc/RpcClientError'
+import * as RpcClientError from 'effect/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as Socket from 'effect/socket/Socket'
 import { ComputerState, type ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
+
+/** What the protocol exposes to reads waiting for its next usable connection. */
+export interface RpcConnectionService {
+  readonly ready: Effect.Effect<void, RpcClientError.RpcClientError>
+}
+
+/** The live socket's readiness, owned by the same Layer as its protocol and client. */
+export class RpcConnection extends Context.Service<RpcConnection, RpcConnectionService>()(
+  'vivid/RpcConnection',
+) {}
+
+/**
+ * Only socket loss can be recovered by opening another connection. Protocol, decoding, HTTP,
+ * worker and TLS-upgrade failures require their caller to act. Close codes for malformed data,
+ * policy refusals and unsupported protocols are final too, even while the app stays mounted.
+ */
+export const isTransientSocketReason = Match.type<RpcClientError.RpcClientError['reason']>().pipe(
+  Match.tagsExhaustive({
+    SocketReadError: () => true,
+    SocketWriteError: () => true,
+    SocketOpenError: () => true,
+    SocketCloseError: ({ code }) => RECOVERABLE_CLOSES.has(code),
+    SocketUpgradeError: () => false,
+    HttpError: () => false,
+    RpcClientDefect: () => false,
+    WorkerReceiveError: () => false,
+    WorkerSendError: () => false,
+    WorkerSpawnError: () => false,
+    WorkerUnknownError: () => false,
+  }),
+)
+
+/** Normal closure, missing close frames, network loss and server restart/overload permit reconnect. */
+const RECOVERABLE_CLOSES = new Set([1000, 1001, 1005, 1006, 1011, 1012, 1013, 1014])
+
+/**
+ * Reconnect pacing for a socket owned by the app, with no total lifetime cap.
+ * Source: Effect 4.0.2 RpcClient.defaultRetryPolicy, 500 ms times 1.5 capped at five seconds.
+ * Permanent socket refusals end the supervisor and reach each request as RpcClientError.
+ */
+const RECONNECT_FIRST = Duration.millis(500)
+const RECONNECT_GROWTH = 1.5
+const RECONNECT_MAX = Duration.seconds(5)
+/** Stops on a permanent refusal and completes any pending connection wait with that failure. */
+const reconnect = (stopped: (error: RpcClientError.RpcClientError) => Effect.Effect<void>) =>
+  Schedule.min([
+    Schedule.exponential(RECONNECT_FIRST, RECONNECT_GROWTH),
+    Schedule.spaced(RECONNECT_MAX),
+  ]).pipe(
+    Schedule.setInputType<Socket.SocketError>(),
+    Schedule.while(({ input }) =>
+      isTransientSocketReason(input.reason)
+        ? Effect.succeed(true)
+        : Effect.as(stopped(RpcClientError.RpcClientError.make({ reason: input.reason })), false),
+    ),
+  )
 
 /**
  * Keep the schema-derived client named in Context.Service's emitted base class.
@@ -89,22 +149,43 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
     readonly url: string
     readonly onLink: (open: boolean) => void
   }) =>
-    Layer.effect(VividRpcClient, RpcClient.make(VividRpc)).pipe(
-      Layer.provide(
-        RpcClient.layerProtocolSocket({
-          retryTransientErrors: false,
-          pingInterval: '5 seconds',
-          pingTimeout: '10 seconds',
-        }),
-      ),
-      Layer.provide(
-        Layer.succeed(RpcClient.ConnectionHooks)({
-          onConnect: Effect.sync(() => options.onLink(true)),
-          onDisconnect: Effect.sync(() => options.onLink(false)),
-        }),
-      ),
-      Layer.provide(Socket.layerWebSocket(options.url)),
-      Layer.provide(RpcSerialization.layerJson),
+    Layer.unwrap(
+      Effect.gen(function* () {
+        let connected = yield* Deferred.make<void, RpcClientError.RpcClientError>()
+        // Failed opens share the same receipt. Only losing a previously open socket creates a
+        // new one, or a waiter from an earlier failed open would be stranded forever.
+        const lost = Effect.sync(() => {
+          if (Deferred.isDoneUnsafe(connected)) connected = Deferred.makeUnsafe()
+          options.onLink(false)
+        })
+        const client = Layer.effect(VividRpcClient, RpcClient.make(VividRpc)).pipe(
+          Layer.provide(
+            RpcClient.layerProtocolSocket({
+              retryTransientErrors: false,
+              retryPolicy: reconnect((error) => Effect.asVoid(Deferred.fail(connected, error))),
+              pingInterval: '5 seconds',
+              pingTimeout: '10 seconds',
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RpcClient.ConnectionHooks)({
+              // Effect 4.0.2 clears currentError before onConnect and runs onDisconnect before
+              // broadcasting a failed connection. Waiting requests therefore cannot reuse it.
+              onConnect: Effect.andThen(
+                Effect.suspend(() => Deferred.succeed(connected, undefined)),
+                Effect.sync(() => options.onLink(true)),
+              ),
+              onDisconnect: lost,
+            }),
+          ),
+          Layer.provide(Socket.layerWebSocket(options.url)),
+          Layer.provide(RpcSerialization.layerJson),
+        )
+        return Layer.merge(
+          client,
+          Layer.succeed(RpcConnection)({ ready: Effect.suspend(() => Deferred.await(connected)) }),
+        )
+      }),
     )
 }
 

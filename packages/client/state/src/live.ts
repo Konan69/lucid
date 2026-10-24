@@ -1,4 +1,4 @@
-import { VividRpcClient } from '@vivid/client-runtime'
+import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
 import type { SkillReadOnly } from '@vivid/contracts'
 import type { InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
@@ -65,12 +65,10 @@ const productFailure = (cause: Cause.Cause<ProductFailure | Cause.NoSuchElementE
   )
 
 /**
- * What a screen draws for an atom's current value.
- *
- * A product failure that reaches an atom is always a final one (anything else is retried before it
- * gets here), and a final one wins over whatever was on screen: when a session is revoked or a
- * Person is removed from a Company, what they could see a moment ago must stop being shown. Only a
- * failure with no product reason (an interruption, a defect) keeps the last result up.
+ * What a screen draws for an atom's current value. Only dropped-socket failures wait for a
+ * connection receipt before retrying. Every server or permanent transport failure is shown,
+ * including a revoked session whose previous answer must stop being displayed. Interruption
+ * and defects without a product reason retain the previous answer.
  */
 export const liveStateOf = <Value>(result: LiveResult<Value>): LiveState<Value> =>
   AsyncResult.match(result, {
@@ -159,19 +157,27 @@ const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidReque
 /** Whether a failure is one that asking again cannot change, so nothing should ask again. */
 export const isFinal = (failure: ProductFailure): boolean => FINAL.has(failure._tag)
 
+/** Only a transport failure is repaired by reconnecting; server refusals remain visible. */
+const disconnected = (failure: ProductFailure): boolean =>
+  Predicate.isTagged(failure, 'RpcClientError') && isTransientSocketReason(failure.reason)
+
 /**
- * A subscription that outlives a dropped connection. A failure that is not final (the socket
- * closed, the server restarted) re-opens the subscription after a moment, and the atom keeps its
- * last result meanwhile; a final one ends the stream and reaches the screen.
+ * A live subscription survives socket loss until its atom is released. The protocol owns
+ * reconnection and completes `ready` only after clearing its failed connection, so no timer guesses
+ * when replay is safe. Server, schema and protocol failures end the subscription immediately.
  */
 const resilient = <Value, R>(
   open: () => Stream.Stream<Value, ProductFailure, R>,
-): Stream.Stream<Value, ProductFailure, R> =>
-  open().pipe(
-    Stream.catchIf(
-      (failure) => !FINAL.has(failure._tag),
-      () => Stream.unwrap(Effect.as(Effect.sleep('1500 millis'), resilient(open))),
-    ),
+): Stream.Stream<Value, ProductFailure, R | RpcConnection> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const connection = yield* RpcConnection
+      return open().pipe(
+        Stream.catchIf(disconnected, () =>
+          Stream.unwrap(Effect.as(connection.ready, resilient(open))),
+        ),
+      )
+    }),
   )
 
 /** Names each expected change, so the one that settles is the one that is taken down. */
@@ -366,7 +372,7 @@ const IDLE_FOR_MS = 5 * 60_000
  * last reader leaves (the registry's idle TTL), so going back to a screen shows it at once. Nothing
  * here polls and nothing is refetched: the server sends a result when it changes.
  */
-export function makeLive(layer: Layer.Layer<VividRpcClient>) {
+export function makeLive(layer: Layer.Layer<VividRpcClient | RpcConnection>) {
   const registry = AtomRegistry.make({ defaultIdleTTL: IDLE_FOR_MS })
   const runtime = Atom.runtime(layer)
   // The client, and so the socket, lives for as long as the page does.
@@ -431,15 +437,18 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     return runtime.atom((get) => {
       const asked = get(rested)
       return Effect.gen(function* () {
-        return yield* call(yield* VividRpcClient, asked)
+        const client = yield* VividRpcClient
+        const connection = yield* RpcConnection
+        return yield* call(client, asked).pipe(
+          Effect.retry({
+            while: disconnected,
+            schedule: Schedule.forever.pipe(Schedule.tap(() => connection.ready)),
+          }),
+        )
       }).pipe(
         Effect.tapError((failure) =>
           Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
         ),
-        Effect.retry({
-          while: (failure) => !FINAL.has(failure._tag),
-          schedule: Schedule.spaced('1500 millis'),
-        }),
       )
     })
   }
