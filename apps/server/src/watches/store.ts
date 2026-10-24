@@ -18,7 +18,7 @@ import {
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
-import { accountNames, holdConnection } from './apps.ts'
+import { accountNames, holdConnection, WatchConnectionRemoved } from './apps.ts'
 import { watches } from './tables.ts'
 
 /** A live Watch of this Person already has this name; Vivid stops Watches by name, so it must differ. */
@@ -191,7 +191,7 @@ const makeWrites = (database: Database['Service']) => {
   return { insertPending, activate, discard, stop }
 }
 
-/** Missing names violate the Connection FK's promise; never invent an account label. */
+/** Snapshot reads retain the Connection's name alongside every Watch that references it. */
 const withAccount = (record: WatchRecord, names: ReadonlyMap<string, string>) => {
   const account = names.get(record.connectionId)
   if (account === undefined)
@@ -199,7 +199,7 @@ const withAccount = (record: WatchRecord, names: ReadonlyMap<string, string>) =>
   return Effect.succeed({ ...record, watch: Watch.make({ ...record.watch, account }) })
 }
 
-/** One inventory read names the entire result; receiver and renewal never call this projection. */
+/** One inventory read names the entire result. */
 const presentAll = Effect.fn('WatchStore.presentAll')(function* (
   actor: Actor,
   records: ReadonlyArray<WatchRecord>,
@@ -211,6 +211,19 @@ const presentAll = Effect.fn('WatchStore.presentAll')(function* (
 
 /** Reads of Watch rows, for their owner, for the receiver and for renewal. */
 const makeReads = (database: Database['Service']) => {
+  /**
+   * Watch rows and the whole naming inventory must see the same committed state. Drizzle's
+   * Effect adapter shares the transaction connection through fiber context, including the
+   * Database queries in accountNames. A join restricted to Watches would lose name ordinals.
+   */
+  const snapshot = <A, E, R>(read: Effect.Effect<A, E, R>) =>
+    database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* tx.setTransaction({ isolationLevel: 'repeatable read', accessMode: 'read only' })
+        return yield* read
+      }),
+    )
+
   /** The Actor's own live Watches in their workspace, oldest first. */
   const list = Effect.fn('WatchStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
@@ -223,7 +236,7 @@ const makeReads = (database: Database['Service']) => {
     return yield* presentAll(actor, yield* Effect.forEach(rows, record)).pipe(
       Effect.provideService(Database, database),
     )
-  })
+  }, snapshot)
 
   /** One of the Actor's live Watches by its name. */
   const named = Effect.fn('WatchStore.named')(function* (actor: Actor, name: string) {
@@ -238,7 +251,7 @@ const makeReads = (database: Database['Service']) => {
       Effect.provideService(Database, database),
       Effect.map(first),
     )
-  })
+  }, snapshot)
 
   /** A Watch by id, whatever its state, for the receiver: the signature is its only authority. */
   const find = Effect.fn('WatchStore.find')(function* (id: WatchId) {
@@ -272,10 +285,13 @@ const makeReads = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record)
   })
 
-  /** Creation returns a display record only after Executor has answered. */
+  /** A display record, or removal when its Connection has left the current inventory. */
   const present = Effect.fn('WatchStore.present')(function* (actor: Actor, record: WatchRecord) {
     const names = yield* accountNames(actor).pipe(Effect.provideService(Database, database))
-    return yield* withAccount(record, names)
+    const account = names.get(record.connectionId)
+    if (account === undefined)
+      return yield* new WatchConnectionRemoved({ connectionId: record.connectionId })
+    return { ...record, watch: Watch.make({ ...record.watch, account }) }
   })
 
   return { list, named, find, due, present }

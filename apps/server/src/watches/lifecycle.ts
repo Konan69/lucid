@@ -12,6 +12,7 @@ import {
   AppEvent,
   AppEventFilter,
   WatchId,
+  Watch,
   WatchState,
   type CreateWatchRequest,
   type WatchStopReason,
@@ -245,7 +246,7 @@ const make = Effect.fn('Watches.make')(function* () {
       Effect.ignore,
     )
     yield* publish(stopped.value)
-    return { ...stopped.value.watch, account: found.value.watch.account }
+    return Watch.make({ ...stopped.value.watch, account: found.value.watch.account })
   })
 
   /**
