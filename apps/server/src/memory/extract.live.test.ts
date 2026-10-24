@@ -11,7 +11,8 @@ import {
 } from './extract.js'
 
 const enabled =
-  process.env['VIVID_LIVE_MEMORY'] === '1' && process.env['EXPLABS_API_KEY'] !== undefined
+  process.env['VIVID_LIVE_MEMORY'] === '1' &&
+  (process.env['EXPLABS_API_KEY'] !== undefined || process.env['OPENROUTER_API_KEY'] !== undefined)
 /** One real structured model call proves a short answer inherits its subject and stays private without Company intent. */
 describe.skipIf(!enabled)('Contextual memory extraction', () => {
   layer(memoryExtractionLayer.pipe(Layer.provide(NodeHttpClient.layerUndici)), {

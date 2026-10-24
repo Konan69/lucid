@@ -1,4 +1,4 @@
-import { Effect, Exit, Schedule, Scope, Semaphore } from 'effect'
+import { Effect, Exit, Schedule, Scope } from 'effect'
 import {
   type Identity,
   type Link,
@@ -7,6 +7,7 @@ import {
   openLink,
   pruneKeys,
 } from './link.ts'
+import { keyedPermits } from '../../runtime/keyed.ts'
 
 /**
  * Where a machine is now and which key it presents, as its provider reports them, with the key
@@ -49,14 +50,7 @@ export const links = <Key>(authorizedKeys: string) => {
   // connections. Machines do not wait for each other. An opening asks the provider where the
   // machine is and may wait on a machine that has just woken (seen 5 October 2026: minutes), and
   // one lock for all would hold every other machine's calls, open connection or not, for that long.
-  const openings = new Map<Key, Semaphore.Semaphore>()
-  const opening = (key: Key) => {
-    const found = openings.get(key)
-    if (found !== undefined) return found
-    const made = Semaphore.makeUnsafe(1)
-    openings.set(key, made)
-    return made
-  }
+  const openings = keyedPermits<Key>()
   /**
    * The opening under way for each machine, as a token only that opening holds (a symbol: two
    * openings are never the same one). `forget` and
@@ -182,7 +176,8 @@ export const links = <Key>(authorizedKeys: string) => {
     key: Key,
     locate: Effect.Effect<LinkTarget, Failure>,
   ): Effect.Effect<Link, Failure | LinkFailure> =>
-    opening(key).withPermit(
+    openings.withPermit(
+      key,
       Effect.gen(function* () {
         // The owner is closing or has closed: a connection still in the map is on its way out and
         // is not handed to a new caller.

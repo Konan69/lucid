@@ -14,16 +14,18 @@ schema-derived `VividRpcClient`.
   makes every call as that Person (`asActing`).
 - `src/context.ts` — what Vivid is told at the start of a response: the Person's memory brief, the
   skills it can use, their time zone.
+- `src/notes.ts` owns scoped SQLite stores and complete-operation leases.
+- `src/keeping.ts` shares the lazy Notes owner and disposes it on Flue shutdown.
 - `src/db.ts` — Flue's database composition root: configuration and pool construction.
-- `src/storage.ts` — pure `flueStorage(pool)`, the production PostgreSQL runner; Flue owns pool close.
+- `src/storage.ts` — `flueStorage(pool, closing)`, the PostgreSQL runner; Flue closes Notes after submissions settle, then the pool.
 - `src/index.ts` — what another package may import by name (`@vivid/agent-runtime`, plus
   `@vivid/agent-runtime/sandbox`, `@vivid/agent-runtime/scope` and `@vivid/agent-runtime/signins`): only the server's and the desktop app's tests read it. Nothing outside this package reaches a file here by path.
 - `tests/schema.ts` — a disposable schema on explicit test authority, with a separate surviving cleanup connection, and `testDatabaseConfigured` for gating suites; the runtime never imports the server's test database.
 - `tests/routes.ts` — production Hono/Flue route fixture using public start/stop and a controlled faux provider.
 - `tests/setup.ts` — Vitest worker authority, settled before any import because Effect copies the environment once: only the explicit test URL reaches runtime tests and unconfigured workers have no `DATABASE_URL`; no inherited `VIVID_SERVER_URL`; a worker-owned `VIVID_RUNTIME_TOKEN`.
 - `src/providers/` — model-provider registration and adapter setup.
-- `src/tools/` — model tools. Each is a thin, typed call to `VividRpc` through `asActing`; they do
-  not own server stores, schedulers, credentials, or product routes, and they never decide whether
+- `src/tools/` — model tools. Product tools call `VividRpc` through the acting Scope; note tools
+  use the Person's runtime-owned Notes authority. They do not own server stores, schedulers, credentials, or product routes, and they never decide whether
   an action is allowed.
 
 ## Commands

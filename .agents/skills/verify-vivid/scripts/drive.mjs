@@ -7,6 +7,7 @@ import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { privacyBlocked } from './privacy.mjs'
+import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 export const features = [
   'first',
@@ -26,6 +27,7 @@ export const features = [
   'reading',
   'settings',
   'privacy',
+  'notes',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -283,6 +285,7 @@ const recipes = {
   document,
   devices,
   feed,
+  notes,
   reading,
   settings: settingsProof,
 }
@@ -306,7 +309,10 @@ const realBlocked = {
 export async function drive(state, feature) {
   const chosen = feature === 'all' ? features : [feature]
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
-  const unavailable = state.modelKind === 'real' ? realBlocked : blocked
+  const unavailable =
+    state.modelKind === 'real'
+      ? realBlocked
+      : { ...blocked, notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.' }
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name

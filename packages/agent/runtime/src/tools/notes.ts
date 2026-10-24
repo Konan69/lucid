@@ -2,9 +2,9 @@ import { defineTool } from '@flue/runtime'
 import { Tool, MemoryKind } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
-import { deleteNote, Note, NoteFile, NOTE_BODY_LIMIT, readNote, writeNote } from '../notes.ts'
+import { Notes, Note, NoteFile, NOTE_BODY_LIMIT } from '../notes.ts'
 import { summary, text } from './inputs.ts'
-import { Scope, type RunTool } from './scope.ts'
+import type { RunNote } from './scope.ts'
 
 /** The model names a note by its file name; the rule is stated so a refusal explains itself. */
 const file = v.pipe(
@@ -32,7 +32,7 @@ const file = v.pipe(
  * the registry check that requires it (`tests/routes.ts`) never saw these tools, because the tests
  * ran without notes while production ran with them.
  */
-export function noteTools(runTool: RunTool, directory: string) {
+export function noteTools(runTool: RunNote) {
   return [
     defineTool({
       name: Tool.read_note,
@@ -41,14 +41,13 @@ export function noteTools(runTool: RunTool, directory: string) {
       input: v.object({ summary, file }),
       run({ data, signal }) {
         return runTool(
-          Effect.gen(function* () {
-            const { acting } = yield* Scope
-            const note = yield* readNote(
-              { directory, person: acting.personId },
-              NoteFile.make(data.file),
-            )
-            return { output: { kind: note.kind, description: note.description, note: note.body } }
-          }),
+          function (person) {
+            return Effect.gen(function* () {
+              const notes = yield* Notes
+              const note = yield* notes.read(person, NoteFile.make(data.file))
+              return { output: { kind: note.kind, description: note.description, note: note.body } }
+            })
+          },
           { signal, tool: 'read_note' },
         )
       },
@@ -72,19 +71,21 @@ export function noteTools(runTool: RunTool, directory: string) {
       }),
       run({ data, signal }) {
         return runTool(
-          Effect.gen(function* () {
-            const { acting } = yield* Scope
-            const replaced = yield* writeNote(
-              { directory, person: acting.personId },
-              Note.make({
-                file: NoteFile.make(data.file),
-                kind: data.kind,
-                description: data.description,
-                body: data.note,
-              }),
-            )
-            return { output: { ok: true, file: data.file, replaced } }
-          }),
+          function (person) {
+            return Effect.gen(function* () {
+              const notes = yield* Notes
+              const replaced = yield* notes.write(
+                person,
+                Note.make({
+                  file: NoteFile.make(data.file),
+                  kind: data.kind,
+                  description: data.description,
+                  body: data.note,
+                }),
+              )
+              return { output: { ok: true, file: data.file, replaced } }
+            })
+          },
           { signal, tool: 'write_note' },
         )
       },
@@ -96,11 +97,13 @@ export function noteTools(runTool: RunTool, directory: string) {
       input: v.object({ summary, file }),
       run({ data, signal }) {
         return runTool(
-          Effect.gen(function* () {
-            const { acting } = yield* Scope
-            yield* deleteNote({ directory, person: acting.personId }, NoteFile.make(data.file))
-            return { output: { ok: true, deleted: data.file } }
-          }),
+          function (person) {
+            return Effect.gen(function* () {
+              const notes = yield* Notes
+              yield* notes.delete(person, NoteFile.make(data.file))
+              return { output: { ok: true, deleted: data.file } }
+            })
+          },
           { signal, tool: 'delete_note' },
         )
       },
