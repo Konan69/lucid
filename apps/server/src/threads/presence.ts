@@ -2,7 +2,8 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Schedule from 'effect/Schedule'
+import * as RcMap from 'effect/RcMap'
+import * as Stream from 'effect/Stream'
 import type * as Scope from 'effect/Scope'
 import type { PersonId, PersonSummary, Presence as PresenceEntry, ThreadId } from '@vivid/contracts'
 import { Changes, Topic } from '../live/changes.ts'
@@ -16,9 +17,6 @@ import type { Link } from '../rpc/link.ts'
  * gone this much later.
  */
 const LEFT_AFTER = '1 second'
-
-/** How often a link that went silent is looked for (`Link`, `SILENT_AFTER_MS`). */
-const SWEEP_EVERY = '5 seconds'
 
 /** One call holding a Person present in a Thread: what it said, and the link it came on. */
 interface Hold {
@@ -112,12 +110,15 @@ const makePresence = Effect.fn('Presence.make')(function* () {
   })
 
   /** Lets a hold go `LEFT_AFTER` from now, in the service's own scope: its caller has gone. */
-  const release = (threadId: ThreadId, held: Hold) =>
+  const release = (threadId: ThreadId, held: Hold, affected: Set<ThreadId>) =>
     Effect.sleep(LEFT_AFTER).pipe(
       Effect.andThen(
         Effect.suspend(() => {
           const holds = threads.get(threadId)
-          if (holds !== undefined) holds.delete(held)
+          if (holds !== undefined) {
+            holds.delete(held)
+            if (![...holds].some((hold) => hold.link === held.link)) affected.delete(threadId)
+          }
           return settle(threadId)
         }),
       ),
@@ -126,8 +127,25 @@ const makePresence = Effect.fn('Presence.make')(function* () {
       Effect.asVoid,
     )
 
+  /** One observer and heartbeat timer per retained Link, shared across its Thread holds. Closing
+   * the final hold releases the listener; only Threads actually using this Link are invalidated. */
+  const observed = yield* RcMap.make({
+    lookup: (link: Link) =>
+      Effect.gen(function* () {
+        const affected = new Set<ThreadId>()
+        yield* link.activity.pipe(
+          Stream.runForEach(() => Effect.forEach([...affected], settle, { discard: true })),
+          untraced,
+          Effect.forkScoped,
+        )
+        return affected
+      }),
+  })
+
   const hold: PresenceService['hold'] = Effect.fn('Presence.hold')(
     function* (threadId, person, typing, link) {
+      const affected = yield* RcMap.get(observed, link)
+      affected.add(threadId)
       const held: Hold = { person, typing, link }
       yield* Effect.acquireRelease(
         Effect.suspend(() => {
@@ -136,7 +154,7 @@ const makePresence = Effect.fn('Presence.make')(function* () {
           threads.set(threadId, holds)
           return settle(threadId)
         }),
-        () => release(threadId, held),
+        () => release(threadId, held, affected),
       )
     },
   )
@@ -155,11 +173,6 @@ const makePresence = Effect.fn('Presence.make')(function* () {
     }
     return false
   })
-
-  /** Tells each Thread's watchers about anyone whose link went silent since the last look. */
-  const sweep = Effect.suspend(() => Effect.forEach([...threads.keys()], settle, { discard: true }))
-
-  yield* sweep.pipe(untraced, Effect.repeat(Schedule.spaced(SWEEP_EVERY)), Effect.forkScoped)
 
   return Presence.of({ hold, here, watching, present })
 })

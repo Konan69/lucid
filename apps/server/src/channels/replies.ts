@@ -20,6 +20,11 @@ export type ChannelEnding = typeof ChannelEnding.Type
 /** Vivid's conservative chunk budget; Spectrum declares no text-size limit. */
 const replyLimit = ChannelTextLimit.make(4000)
 
+/** Bounds one provider send acceptance, so every completed chunk renews reply progress.
+ * Source: unmeasured. Spectrum exposes no send-progress/cancellation signal; expiry preserves
+ * unknown delivery and never replays a partially dispatched reply. */
+const CHUNK_ACCEPTANCE_LIMIT = '30 seconds'
+
 /** Replies recheck the current link and personal Thread before any external I/O. */
 const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
   const database = yield* Database
@@ -28,7 +33,7 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
   const links = yield* ChannelStore
   const threads = yield* ThreadStore
 
-  /** Bound the whole split reply, preserving unknown after any partial dispatch or timeout. */
+  /** Each accepted chunk is progress; no total deadline cuts off an input-sized reply. */
   const sendReply = Effect.fn('Channels.sendReply')(function* (
     route: ChannelRoute,
     address: ChannelAddress,
@@ -44,15 +49,16 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     yield* Effect.forEach(
       parts,
       Effect.fn('Channels.sendPart')(function* (text) {
-        yield* provider.send({ channel: route.channel, address, text })
+        yield* provider.send({ channel: route.channel, address, text }).pipe(
+          Effect.timeoutOrElse({
+            duration: CHUNK_ACCEPTANCE_LIMIT,
+            orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
+          }),
+        )
         sent++
       }),
       { discard: true },
     ).pipe(
-      Effect.timeoutOrElse({
-        duration: '30 seconds',
-        orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
-      }),
       // Only a refusal before the first part proves the entire reply was not sent.
       Effect.tapError((error) =>
         sent === 0 &&

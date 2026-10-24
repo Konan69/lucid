@@ -8,6 +8,9 @@ import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import type { FromClientEncoded } from 'effect/rpc/RpcMessage'
 import * as RpcServer from 'effect/rpc/RpcServer'
+import * as Queue from 'effect/Queue'
+import * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
 import { isCalled, LiveTally } from '../live/tally.ts'
 
 /**
@@ -35,33 +38,82 @@ export const CLOSED_AFTER_MS = 120_000
  * for as long as TCP takes to give up. A client that is running pings every five seconds, so
  * whether it was heard lately says whether it is still there.
  */
+const LinkActivity = Schema.TaggedUnion({
+  Listening: { heardAt: Schema.Finite },
+  Closed: {},
+})
+
+/** One socket owns activity, and every presence reader observes the same transitions. */
 export class Link {
-  #heardAt: number
-  #open = true
+  #activity: typeof LinkActivity.Type
+  #listeners = new Set<(activity: typeof LinkActivity.Type) => void>()
 
   constructor(heardAt: number) {
-    this.#heardAt = heardAt
+    this.#activity = LinkActivity.cases.Listening.make({ heardAt })
   }
 
-  /** How long the client has sent nothing, at `now`. */
+  /** Closed is terminal, so its silence has no finite next deadline. */
   silentFor(now: number): number {
-    return now - this.#heardAt
+    return LinkActivity.match(this.#activity, {
+      Listening: ({ heardAt }) => now - heardAt,
+      Closed: () => Infinity,
+    })
   }
 
-  /** Whether the client is still connected and was heard within `SILENT_AFTER_MS` of `now`. */
+  /** Only a connected socket heard inside the heartbeat gap is live. */
   live(now: number): boolean {
-    return this.#open && this.silentFor(now) < SILENT_AFTER_MS
+    return this.silentFor(now) < SILENT_AFTER_MS
   }
 
-  /** The client sent something: a call, an acknowledgement, an interruption or a ping. */
+  /** A late frame cannot reopen a closed socket. Publish before the next silence deadline. */
   heard(now: number): void {
-    this.#heardAt = now
+    if (LinkActivity.guards.Closed(this.#activity)) return
+    this.#activity = LinkActivity.cases.Listening.make({ heardAt: now })
+    for (const listener of this.#listeners) listener(this.#activity)
   }
 
-  /** The socket closed. A closed link is never live again; the client opens a new one. */
+  /** Closing the socket immediately wakes every observer, without waiting for a scan. */
   close(): void {
-    this.#open = false
+    this.#activity = LinkActivity.cases.Closed.make({})
+    for (const listener of this.#listeners) listener(this.#activity)
   }
+
+  /** Subscribe before the initial snapshot. Each frame cancels the old silence timer; a silent
+   * peer cannot emit its own departure, so only the heartbeat gap still needs a clock. */
+  readonly activity = Stream.callback<typeof LinkActivity.Type>((queue) => {
+    const emit = (activity: typeof LinkActivity.Type) => {
+      Queue.offerUnsafe(queue, activity)
+    }
+    return Effect.acquireRelease(
+      Effect.sync(() => {
+        this.#listeners.add(emit)
+        emit(this.#activity)
+      }),
+      () =>
+        Effect.sync(() => {
+          this.#listeners.delete(emit)
+        }),
+    )
+  }).pipe(
+    Stream.switchMap((activity) =>
+      LinkActivity.match(activity, {
+        Closed: () => Stream.make(false),
+        Listening: ({ heardAt }) =>
+          Stream.unwrap(
+            Effect.map(Clock.currentTimeMillis, (now) => {
+              const remaining = SILENT_AFTER_MS - (now - heardAt)
+              return remaining <= 0
+                ? Stream.make(false)
+                : Stream.concat(
+                    Stream.make(true),
+                    Stream.fromEffect(Effect.as(Effect.sleep(remaining), false)),
+                  )
+            }),
+          ),
+      }),
+    ),
+    Stream.changes,
+  )
 }
 
 /**
