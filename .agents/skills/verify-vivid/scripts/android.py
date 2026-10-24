@@ -138,13 +138,8 @@ def install():
     return missing
 
 
-def boot(receipt):
-    """Read the actual adb inventory and bind it to our emulator's chosen free console port."""
-    if 'emulator' in receipt and alive(receipt['emulator']):
-        serial = receipt['serial']
-        assert output([ADB, '-s', serial, 'shell', 'getprop', 'sys.boot_completed']) == '1'
-        return
-    capacity()
+def server(receipt):
+    """Reconcile adb before any client can auto-fork a replacement outside our PID receipt."""
     # adb's dedicated server avoids restarting another worktree's system adb daemon.
     if 'adb' not in receipt or not alive(receipt['adb']):
         with socket.socket() as probe:
@@ -159,6 +154,15 @@ def boot(receipt):
             assert time.monotonic() < deadline, 'Owned adb server did not bind within 10 seconds'
             # adb nodaemon has no readiness fd. Only an observed listener permits commands.
             select.select([], [], [], 0.05)
+
+
+def boot(receipt):
+    """A live emulator may outlive adb. Reconnect its observed serial through the owned server."""
+    server(receipt)
+    if 'emulator' in receipt and alive(receipt['emulator']):
+        ready(receipt)
+        return
+    capacity()
     port = None
     for candidate in range(5554, 5680, 2):
         with socket.socket() as first, socket.socket() as second:
@@ -174,6 +178,11 @@ def boot(receipt):
     spawn('emulator', [str(SDK / 'emulator/emulator'), '-avd', NAME, '-port', str(port),
                       '-no-window', '-gpu', 'guest', '-no-audio', '-no-snapshot',
                       '-no-boot-anim', '-cores', '2', '-memory', '3072'], receipt)
+    ready(receipt)
+
+
+def ready(receipt):
+    """Only adb connection, Android's boot property and the current inventory grant readiness."""
     # adb supplies the connection signal. Android exposes no blocking boot-completed API.
     # This bounded platform-property wait fails after 5 minutes; elapsed time never means ready.
     run(['timeout', '300', ADB, '-s', receipt['serial'], 'wait-for-device'])
