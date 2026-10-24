@@ -106,6 +106,11 @@ const RECORD_BYTES = 'bx_'.length + providerLength + 1 + 36 + 1
 /** Put this binding's record in place whole: written beside the record, then moved over it. */
 const publish = `printf '%s\\n' "$mine" > "$record.new" && mv -f "$record.new" "$record" || exit ${UNSETTLED}`
 
+/** Protects holder admission when the current lock owner cannot finish. Source: unmeasured.
+ * Retained from the production ownership fix 39dba6f39; expiry returns UNSETTLED and never
+ * grants a second holder or removes its binding. */
+const HOLDER_LOCK_WAIT_SECONDS = 20
+
 /**
  * The shell that makes this binding the machine's holder, or stops with `HELD`. Both values are
  * checked before they reach here (`ProviderId` by its schema, the intent by `holdable`), and each
@@ -129,7 +134,7 @@ export const holderClaim = (input: { readonly id: ProviderId; readonly intent: s
     'directory="$HOME/.vivid"; record="$directory/holder"',
     `mkdir -p "$directory" && touch "$directory/holder.lock" || exit ${UNSETTLED}`,
     `exec 9>"$directory/holder.lock" || exit ${UNSETTLED}`,
-    `flock 9 || exit ${UNSETTLED}`,
+    `flock -w ${HOLDER_LOCK_WAIT_SECONDS} 9 || exit ${UNSETTLED}`,
     'if [ -e "$record" ] || [ -L "$record" ]; then',
     `  [ "$(wc -c < "$record")" -eq ${RECORD_BYTES} ] || exit ${UNSETTLED}`,
     `  held="$(cat "$record")" || exit ${UNSETTLED}`,

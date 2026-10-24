@@ -359,12 +359,27 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
 type Persistence = Effect.Success<ReturnType<typeof persistence>>
 
 /**
+ * How long one start may take before it is given up.
+ *
+ * It was 90 seconds until 6 October 2026, which is how long a healthy start takes: on the
+ * production machine that day Boat took 51 to 58 seconds from the resume to calling the machine
+ * running, and 37 more before a command reached it. So a start that was about to succeed was
+ * ended and recorded as failed. Three minutes covers that with the wait `boat/holder.ts` allows
+ * the first command (75 seconds). It is bounded for the Person who is waiting, not for the
+ * transport: the runtime's HTTP client waits an hour for an answer (Effect's `NodeHttpClient`
+ * sets undici's `headersTimeout` to an hour and no `bodyTimeout`).
+ */
+// Retained production-fault guard from 8d4736872. A native readiness receipt must
+// replace this before its total bound can be removed; the 75-second holder retry remains.
+const START_DEADLINE = Duration.minutes(3)
+/**
  * How long Vivid's actions leave the provider alone after a start that failed for a standing
  * reason. A start asks up to four sizes and Boat counts starts against 25 an hour for the whole
  * account, so a Computer that cannot start must not be asked about at every action: on 7 October
  * 2026 that spent the account's starts and Boat refused to start any machine at all.
  */
 const STANDING_REST = Duration.minutes(10)
+const startTimedOut = `The Computer did not become ready within ${Duration.toMinutes(START_DEADLINE)} minutes.`
 
 /**
  * The scope owns the worker; a failed start is persisted, and stale generations cannot be
@@ -391,9 +406,13 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
   )
     return { refusal: Option.none<MachineNoCapacity>(), standing: false }
   const began = yield* Clock.currentTimeMillis
-  // The provider owns progress/idle detection. This worker lives until its owner stops it or
-  // the provider reports a real outcome, so a healthy slow wake cannot become a fake failure.
-  const started = yield* machine.ensure(before.machine).pipe(Effect.result)
+  const started = yield* machine.ensure(before.machine).pipe(
+    Effect.timeoutOrElse({
+      duration: START_DEADLINE,
+      orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
+    }),
+    Effect.result,
+  )
   // Said in the log either way, by the failure's name only. A start that failed is a successful
   // answer to whoever asked, so nothing else records it: on 6 October 2026 a Person's Computer
   // failed to start and the log held no line that said so or why.
@@ -405,6 +424,8 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
   })
   const state = Result.match(started, {
     onFailure: (failure): MachineState => {
+      if (failure instanceof ComputerWakeTimedOut)
+        return ComputerState.cases.Failed.make({ since: before.since, reason: startTimedOut })
       // No machine was free on any size: the Computer is stopped and whole, which is what the
       // record says. A failed record would stop Vivid waking it until a Person pressed Start,
       // and this ends by itself, so the next need simply asks the provider again.
@@ -424,7 +445,11 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
       Result.isFailure(started) && started.failure instanceof MachineNoCapacity
         ? Option.some(started.failure)
         : Option.none<MachineNoCapacity>(),
-    standing: Result.isFailure(started) && isStanding(started.failure),
+    // Whether asking again can help; `ComputerWakeTimedOut` is not a provider failure and can.
+    standing:
+      Result.isFailure(started) &&
+      !(started.failure instanceof ComputerWakeTimedOut) &&
+      isStanding(started.failure),
   }
 })
 type StoreError = DatabaseInfrastructureError
@@ -464,7 +489,7 @@ export interface ComputerStoreService {
     input: {
       readonly command: string
       readonly directory: string
-      readonly timeoutSeconds: number
+      readonly timeoutSeconds: number | null
     },
   ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
   readonly read: (
@@ -504,6 +529,13 @@ export interface ComputerAttachment {
   }) => Effect.Effect<void, MachineFailure>
 }
 
+/** A bounded wake wait is distinct from takeover, provider absence and failed startup. */
+export class ComputerWakeTimedOut extends Schema.TaggedError<ComputerWakeTimedOut>()(
+  'ComputerWakeTimedOut',
+  { person: PersonId },
+  { title: 'Computer readiness timed out' },
+) {}
+
 /** Takeover is a human ownership decision, never a reason to retry startup. */
 export class ComputerHeld extends Schema.TaggedError<ComputerHeld>()(
   'ComputerHeld',
@@ -516,7 +548,7 @@ export class ComputerStartFailed extends Schema.TaggedError<ComputerStartFailed>
   { person: PersonId, reason: Schema.String },
   { title: 'Computer startup failed' },
 ) {}
-type ReadinessFailure = ComputerHeld | ComputerStartFailed | ComputerNotReady
+type ReadinessFailure = ComputerHeld | ComputerStartFailed | ComputerNotReady | ComputerWakeTimedOut
 
 /** Execution refusal is not a provider error and keeps the Person's precise lifecycle reason. */
 export class ComputerNotReady extends Schema.TaggedError<ComputerNotReady>()(
@@ -1022,7 +1054,7 @@ const ownMachine = (
       input: {
         readonly command: string
         readonly directory: string
-        readonly timeoutSeconds: number
+        readonly timeoutSeconds: number | null
       },
     ) => execute(person, (key) => machine.run({ key, ...input })),
   ),
@@ -1186,6 +1218,7 @@ export const executionReason = (failure: ExecutionFailure): string =>
     }),
     Match.tag('ComputerHeld', () => 'the Person is using the Computer'),
     Match.tag('ComputerStartFailed', ({ reason }) => `The Computer failed to start. ${reason}`),
+    Match.tag('ComputerWakeTimedOut', () => startTimedOut),
     Match.tag('ComputerNotReady', ({ reason }) => reason),
     Match.orElse(machineFailureReason),
   )
@@ -1236,6 +1269,7 @@ export const executionRefusals = <A>(
     ComputerHeld: handle,
     ComputerStartFailed: handle,
     ComputerNotReady: handle,
+    ComputerWakeTimedOut: handle,
   }
 }
 

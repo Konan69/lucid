@@ -1241,21 +1241,29 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    it.effect('joins a slow start beyond three minutes and hears its actual receipt', () =>
+    it.effect('gives a start up after three minutes, and the next action starts it again', () =>
       Effect.gen(function* () {
         const { first } = yield* fixture()
         const store = yield* ComputerStore
         const evidence = yield* ProviderEvidence
         const boot = yield* Deferred.make<void>()
         yield* Ref.set(evidence.boot, Option.some(boot))
-        const action = yield* store.run(first.id, request).pipe(Effect.forkScoped)
+        const action = yield* store.run(first.id, request).pipe(Effect.result, Effect.forkScoped)
         yield* Queue.take(evidence.started)
-        yield* TestClock.adjust('5 minutes')
-        expect((yield* store.get(first.id)).state._tag).toBe('Starting')
+        yield* TestClock.adjust('3 minutes')
+        const result = yield* Fiber.join(action)
+        // The action waited for the start and hears how it ended.
+        expect(Result.isFailure(result) && result.failure._tag).toBe('ComputerStartFailed')
+        const recorded = (yield* store.get(first.id)).state
+        expect(ComputerState.guards.Failed(recorded) && recorded.reason).toBe(
+          'The Computer did not become ready within 3 minutes.',
+        )
         expect(yield* Ref.get(evidence.calls)).toEqual([])
-        yield* Deferred.succeed(boot, undefined)
-        expect((yield* Fiber.join(action)).stdout).toBe('hello')
-        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+        // Nobody presses Start. The record says the last start failed; the next action starts the
+        // Computer again and runs.
+        yield* Ref.set(evidence.boot, Option.none())
+        expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
         expect((yield* store.get(first.id)).state._tag).toBe('Running')
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
