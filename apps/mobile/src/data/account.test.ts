@@ -25,17 +25,14 @@ const account = Effect.fn('AccountTest.account')(function* (statuses: ReadonlyAr
       }),
     ),
     (server) =>
-      Effect.promise(
-        () =>
-          new Promise<void>((resolve, reject) => {
-            server.close((error) => (error === undefined ? resolve() : reject(error)))
-            server.closeAllConnections()
-          }),
-      ),
+      Effect.callback<void>((resume) => {
+        server.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)))
+        server.closeAllConnections()
+      }),
   )
-  yield* Effect.promise(
-    () => new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)),
-  )
+  yield* Effect.callback<void>((resume) => {
+    server.listen(0, '127.0.0.1', () => resume(Effect.void))
+  })
   const address = server.address()
   if (address === null || typeof address === 'string')
     return yield* Effect.die('Expected TCP listener')
@@ -66,7 +63,7 @@ it.effect(
     Effect.gen(function* () {
       const endpoint = yield* account([502, 503, 429, 200])
       const leaving = yield* endpoint.leave.pipe(Effect.forkScoped)
-      for (const delay of ['1 second', '2 seconds', '4 seconds']) {
+      for (const delay of ['1 second', '2 seconds', '4 seconds'] as const) {
         expect(yield* Queue.take(endpoint.failed)).toBe('AccountUnavailable')
         expect(endpoint.shown()._tag).toBe('SignedOut')
         yield* TestClock.adjust(delay)
@@ -95,7 +92,7 @@ it.effect('records a temporary refusal when all four revocation requests fail', 
   Effect.gen(function* () {
     const endpoint = yield* account([503, 503, 503, 503])
     const leaving = yield* Effect.result(endpoint.leave).pipe(Effect.forkScoped)
-    for (const delay of ['1 second', '2 seconds', '4 seconds']) {
+    for (const delay of ['1 second', '2 seconds', '4 seconds'] as const) {
       expect(yield* Queue.take(endpoint.failed)).toBe('AccountUnavailable')
       yield* TestClock.adjust(delay)
     }
