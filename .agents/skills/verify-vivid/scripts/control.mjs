@@ -49,7 +49,15 @@ async function launch() {
     crypto.randomUUID().slice(0, 8)
   const evidence = cache + '/' + run
   const scratch = evidence + '/instance'
-  const ports = await freePorts(['database', 'helix', 'server', 'web', 'runtime'])
+  const ports = await freePorts([
+    'database',
+    'helix',
+    'server',
+    'web',
+    'runtime',
+    'executor',
+    'catalog',
+  ])
   await NodeFSP.mkdir(scratch, { recursive: true, mode: 0o700 })
   const state = {
     run,
@@ -69,6 +77,7 @@ async function launch() {
     hostname: NodeOS.hostname(),
     boot,
     helixContainer: 'vivid-verify-helix-' + run,
+    executorExporter: 'vivid-verify-exporter-' + run,
     ready: false,
     cleaned: false,
   }

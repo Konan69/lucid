@@ -20,6 +20,16 @@ export async function owned(state) {
     state.helixContainer !== 'vivid-verify-helix-' + state.run
   )
     throw new Error('Helix ownership mismatch')
+  if (
+    state.executorContainer !== undefined &&
+    state.executorContainer !== 'vivid-verify-executor-' + state.run
+  )
+    throw new Error('Executor ownership mismatch')
+  if (
+    state.executorExporter !== undefined &&
+    state.executorExporter !== 'vivid-verify-exporter-' + state.run
+  )
+    throw new Error('Executor exporter ownership mismatch')
   if ((await NodeFSP.realpath(evidence)) !== evidence)
     throw new Error('Evidence directory is a symlink')
   const scratch = await NodeFSP.lstat(state.scratch).catch((error) => {
@@ -124,7 +134,15 @@ export async function recover(state) {
   if (await sameBoot(state)) {
     for (const captured of Object.values(state.commands ?? {}))
       receipts.push(await stopCaptured(captured, true))
-    for (const role of ['browser-tunnel', 'web', 'runtime', 'server', 'database-events']) {
+    for (const role of [
+      'browser-tunnel',
+      'web',
+      'runtime',
+      'server',
+      'database-events',
+      'catalog',
+      'executor-events',
+    ]) {
       const process = state.processes[role]
       if (process)
         receipts.push({ role, ...(await stopCaptured(process, role !== 'database-events')) })
@@ -132,7 +150,12 @@ export async function recover(state) {
   }
   const names = (await command(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
   let container = 'absent'
-  for (const name of [state.container, state.helixContainer].filter(Boolean)) {
+  for (const name of [
+    state.container,
+    state.helixContainer,
+    state.executorContainer,
+    state.executorExporter,
+  ].filter(Boolean)) {
     if (names.includes(name)) {
       const label = await command([
         'docker',
@@ -211,7 +234,14 @@ export async function recoverPrevious(cache) {
       if (error.code === 'ENOENT') return null
       throw error
     })
-    if (state.cleaned && !scratch && !names.includes(state.container)) continue
+    const containers = [
+      state.container,
+      state.helixContainer,
+      state.executorContainer,
+      state.executorExporter,
+    ].filter(Boolean)
+    if (state.cleaned && !scratch && containers.every((container) => !names.includes(container)))
+      continue
     if (await supervisorAlive(state))
       throw new Error('Live verification run ' + name + '; execute verify cleanup ' + name)
     const result = await recover(state)
