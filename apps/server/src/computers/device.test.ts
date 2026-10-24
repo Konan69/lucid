@@ -612,7 +612,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const denied = yield* enrolled(ben, 'Denied later')
         yield* TestClock.adjust('61 seconds')
         expect(
-          (yield* listed(ben)).toSorted(([left], [right]) => left.localeCompare(right)),
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
         ).toEqual([
           ['Allowed later', 'Pending', 'Offline'],
           ['Current computer', 'Allowed', 'Connected'],
@@ -620,7 +620,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         ])
         yield* computerHandlers.RevokeDevice({ id: denied.device.id }).pipe(as(ben))
         expect(
-          (yield* listed(ben)).toSorted(([left], [right]) => left.localeCompare(right)),
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
         ).toEqual([
           ['Allowed later', 'Pending', 'Offline'],
           ['Current computer', 'Allowed', 'Connected'],
@@ -630,7 +630,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
         const decided = yield* computerHandlers.ListDevices().pipe(as(ben))
         expect(
-          (yield* listed(ben)).toSorted(([left], [right]) => left.localeCompare(right)),
+          (yield* listed(ben)).toSorted((left, right) => left.join().localeCompare(right.join())),
         ).toEqual([
           ['Allowed later', 'Allowed', 'Offline'],
           ['Current computer', 'Revoked', 'Offline'],
