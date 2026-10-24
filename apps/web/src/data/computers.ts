@@ -6,10 +6,8 @@ import { Effect, Option } from 'effect'
  * A Person's own computers: the ones the Vivid desktop app has enrolled, which Vivid may use only
  * once their Person allows it. The server keeps the list and the decision, and the list is live
  * (`live.devices`): a computer whose desktop app signs in appears, waiting, in a Settings that is
- * already open on another device. This module knows what a decision does to the list before the
- * server confirms it (`deciding`, `@vivid/state`), what a computer's state is called,
- * and the one thing only the desktop app can say: which of them is the computer this window is
- * running on.
+ * already open on another device. This module names access and presence and asks the desktop
+ * bridge which computer this window runs on. Confirmed decisions belong to `data/devices.ts`.
  */
 
 const bridge = 'vivid' in globalThis ? Option.some(globalThis.vivid.device) : Option.none()

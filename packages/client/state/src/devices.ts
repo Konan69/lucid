@@ -33,7 +33,7 @@ export interface DeviceWaiting {
   readonly since: number
 }
 
-/** The question over the composer for the computer `deviceAsked` names. */
+/** Every pending personal computer asks the same explicit permission question. */
 export const deviceQuestion = (device: Device): string => `Let Vivid use ${device.name}?`
 
 /**
