@@ -8,6 +8,16 @@ import { runIdentifier } from './process.mjs'
  * owner lock admit deletion, so the retention period never bounds active work. */
 const evidenceRetentionDays = 2
 
+/** Idle master retention between gate commands. Source: unmeasured. Expiry closes only an
+ * unused master; active gates keep their connection and durable run identity. */
+const masterIdleSeconds = 120
+/** Peer probes detect a dead SSH connection independently of quiet gate output.
+ * Source: unmeasured. Missed replies close the connection so follow can reconnect. */
+export const peerProbeSeconds = 15
+/** Rebuildable Turbo cache retention limits disk growth. Source: unmeasured.
+ * Expiry causes a cache miss, never deletion of a run's completion receipt. */
+const cacheRetentionDays = 7
+
 /**
  * One connection for the push, the start and the stream: a second `ssh` reuses the first one's
  * socket and skips the handshake, which is most of a focused run's waiting.
@@ -18,9 +28,9 @@ const sshOptions = [
   '-o',
   'ControlPath=~/.ssh/vivid-gate-%C',
   '-o',
-  'ControlPersist=120',
+  `ControlPersist=${masterIdleSeconds}`,
   '-o',
-  'ServerAliveInterval=15',
+  `ServerAliveInterval=${peerProbeSeconds}`,
   '-o',
   'ConnectTimeout=20',
 ]
@@ -90,7 +100,7 @@ while IFS= read -r receipt; do
   owner="$(dirname "$receipt")/$(basename "$receipt" .exit)"
   (flock -n 8 || exit 0; rm -f "$owner.exit" "$owner.log" "$owner.sh" "$owner.pid") 8>"$owner.lock"
 done < <(find "$home/runs" -name '*.exit' -mtime +@EVIDENCE@)
-find "$home/cache" -type f -mtime +7 -delete
+find "$home/cache" -type f -mtime +@CACHE@ -delete
 exec 8>"$home/runs/$run.lock"
 flock -x 8
 cat > "$home/runs/$run.sh" <<'RUN'
@@ -132,6 +142,7 @@ echo $! > "$home/runs/$run.pid"
   .replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
   .replace('@EVIDENCE@', String(evidenceRetentionDays))
   .replace('@CAPACITY@', shellWord(capacityScript))
+  .replace('@CACHE@', String(cacheRetentionDays))
 
 /**
  * Follow log byte offsets until the owner releases its lock, then drain to EOF and read its receipt.

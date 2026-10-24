@@ -101,6 +101,15 @@ const describeRequest = Effect.fn('Provider.describeRequest')(
     ),
 )
 
+/**
+ * Bounds the external gateway's transient empty-body HTTP 400 fault to one immediate replay,
+ * two attempts total. The producer is outside Vivid and supplies no recovery signal.
+ * Source: reference: 99eb74612, which introduced one replay for production empty-400 refusals.
+ * That commit retains no production log excerpt or measured recovery window. There is no wait.
+ * If the replay is refused, Pi receives that refusal unchanged except for credential redaction.
+ */
+const EMPTY_400_REPLAY_ATTEMPT = 2
+
 const identifiers = new Set([
   'x-request-id',
   'request-id',
@@ -157,7 +166,7 @@ const bodyOf = Effect.fn('Provider.body')(function* (
       })
       return Body.cases.Read.make({
         text: scrubbed,
-        empty: text.trim().length === 0,
+        empty: text.length === 0,
         redacted: scrubbed !== text,
       })
     }),
@@ -261,7 +270,7 @@ function delivered(response: Response, body: typeof Body.Type) {
   })
 }
 
-/** Only an empty 400 is replayed, once, before Pi can consume any assistant output. */
+/** Only a zero-byte 400 is replayed, once and immediately, before Pi consumes assistant output. */
 const send = Effect.fn('Provider.send')(function* (
   transport: FetchFunction,
   args: Parameters<FetchFunction>,
@@ -279,25 +288,24 @@ const send = Effect.fn('Provider.send')(function* (
     return delivered(response, body)
   // Without a replayable request, return the actual refusal rather than a consumed-body error.
   if (Option.isNone(retained.replay)) return response
-  yield* Effect.sleep('300 millis')
   const retried = yield* fetchResponse(transport, retained.replay.value)
   if (retried.status < 400) {
     yield* record({
       response: retried,
       metadata,
       body: Body.cases.Uninspected.make({}),
-      attempt: 2,
+      attempt: EMPTY_400_REPLAY_ATTEMPT,
     })
     return retried
   }
   const nextBody = yield* bodyOf(retried, args)
-  yield* record({ response: retried, metadata, body: nextBody, attempt: 2 })
+  yield* record({ response: retried, metadata, body: nextBody, attempt: EMPTY_400_REPLAY_ATTEMPT })
   return delivered(retried, nextBody)
 })
 
 /**
  * Pi requires a Promise-returning FetchFunction, the sole execution boundary. Effect owns the
- * inspection and interruptible wait. Run to Exit so an SDK timeout preserves its AbortError
+ * inspection and replay. Run to Exit so an SDK timeout preserves its AbortError
  * reason: runPromise's generic interruption error would become APIConnectionError instead of
  * APIConnectionTimeoutError in OpenAI 6.40.0. Transport rejections likewise return unchanged.
  */

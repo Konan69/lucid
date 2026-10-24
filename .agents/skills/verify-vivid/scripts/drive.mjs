@@ -5,6 +5,7 @@ import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { notes } from './notes.mjs'
+import { feed } from './feed.mjs'
 export const features = [
   'first',
   'reload',
@@ -269,7 +270,7 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
-const recipes = { first, reload, tool, question, picture, document, devices, notes }
+const recipes = { first, reload, tool, question, picture, document, devices, notes, feed }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
@@ -280,7 +281,6 @@ const blocked = {
     'Needs a connected disposable Integration with observable incoming events. No disposable Integration is connected.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
-  feed: 'Needs a real Watch occurrence. No incoming Integration is configured.',
 }
 const realBlocked = {
   ...blocked,

@@ -200,8 +200,9 @@ export const pressKey = (
 export const seenReports = () => {
   const reported = new Map<FeedCardId, string>()
   return {
-    /** Reserve before delivery so concurrent visibility events cannot send twice. */
+    /** Derived asks have no persisted post to mark. Reserve only posted cards before delivery. */
     claim: (item: Waiting): boolean => {
+      if (item.post === null) return false
       const post = revisionOf(item)
       if (reported.get(item.card) === post) return false
       reported.set(item.card, post)
