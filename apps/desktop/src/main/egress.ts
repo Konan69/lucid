@@ -100,16 +100,15 @@ export const QUEUE_BOUND = 1 << 20
  * How long a target is given to take what was already written to it once the Computer has
  * dropped its stream. The browser's connection is gone, so nothing waits for this; it is a
  * courtesy to the site, and when it runs out the socket is destroyed.
- * Source: unmeasured. Ten seconds is the existing cleanup policy, not a transfer deadline.
  */
 export const DRAIN = Duration.seconds(10)
 
 /**
  * How long a dialled connection may be idle before this computer's TCP asks the far end whether
- * it is still there. Source: unmeasured. The existing forty-five-second policy starts kernel
- * keepalive probes; TCP acknowledgements keep slow connections alive. A peer that stops
- * acknowledging fails through the normal socket error/close path. The Computer's browser
- * cannot probe this leg because its socket ends at the proxy.
+ * it is still there. Forty-five seconds is what Chromium sets on its own sockets
+ * (`kTCPKeepAliveSeconds`; recalled, not read for this port). The Computer's browser would have
+ * asked on a direct connection, and behind the proxy it cannot: the socket that reaches the
+ * site is this one.
  */
 const KEEP_ALIVE_MILLIS = 45_000
 
@@ -151,10 +150,7 @@ export const STEADY = Duration.seconds(30)
  */
 const QUIET_PINGS = EGRESS_DEADLINE_MILLIS / EGRESS_PING_MILLIS
 
-/** Bounds the delay before resuming a target whose Electron WebSocket queue has drained.
- * Electron 44.4.3 exposes bufferedAmount but no drain or send-complete event.
- * Source: unmeasured. The existing 10 ms cadence runs only while a target waits, and stops
- * when its queue drains, the target leaves, or the carrying scope closes. */
+/** How often the queue is looked at again while a target is paused, in milliseconds. */
 const DRAIN_MILLIS = 10
 
 /**
@@ -234,44 +230,29 @@ const messageBytes = (event: Event): Option.Option<Uint8Array> => {
  * Says whether the tunnel's own queue is full (`QUEUE_BOUND`), and calls back when it no longer
  * is.
  *
- * A web socket says nothing when it has sent, so the queue is asked on a timer; the timer is
- * absent while nobody waits, and does not keep the app from quitting.
+ * A web socket says nothing when it has sent, so the queue is asked on a timer; the timer does
+ * nothing while nobody waits, and does not keep the app from quitting.
  */
 const draining = (socket: ExitSocket) => {
   const waiting = new Set<() => void>()
-  let timer = Option.none<ReturnType<typeof setTimeout>>()
-  const stop = () => {
-    Option.map(timer, (pending) => clearTimeout(pending))
-    timer = Option.none()
-  }
-  /** One adapter check, armed only while the public WebSocket API has no receipt to offer. */
-  const check = (): void => {
-    timer = Option.none()
-    if (waiting.size === 0) return
-    if (socket.bufferedAmount > QUEUE_BOUND) return arm()
+  const timer = setInterval(() => {
+    if (waiting.size === 0 || socket.bufferedAmount > QUEUE_BOUND) return
     const ready = [...waiting]
     waiting.clear()
     for (const again of ready) again()
-  }
-  const arm = (): void => {
-    if (Option.isSome(timer)) return
-    const pending = setTimeout(check, DRAIN_MILLIS)
-    pending.unref()
-    timer = Option.some(pending)
-  }
+  }, DRAIN_MILLIS)
+  timer.unref()
   return {
     full: () => socket.bufferedAmount > QUEUE_BOUND,
     /** Calls `again` once, the next time the queue is seen under the bound. */
     wait: (again: () => void) => {
       waiting.add(again)
-      arm()
     },
     forget: (again: () => void) => {
       waiting.delete(again)
-      if (waiting.size === 0) stop()
     },
     stop: () => {
-      stop()
+      clearInterval(timer)
       waiting.clear()
     },
   }
@@ -496,18 +477,7 @@ const dropped = (link: Link, stream: EgressStream, leg: Relaying) => {
   link.flow.forget(leg.again)
   leg.target.resume()
   leg.target.end()
-  const closed = Effect.callback<void>((resume) => {
-    const done = () => resume(Effect.void)
-    leg.target.once('close', done)
-    if (leg.target.closed) done()
-    return Effect.sync(() => leg.target.removeListener('close', done))
-  })
-  link.fork(
-    closed.pipe(
-      Effect.timeoutOption(DRAIN),
-      Effect.andThen(Effect.sync(() => leg.target.destroy())),
-    ),
-  )
+  link.fork(Effect.sleep(DRAIN).pipe(Effect.andThen(Effect.sync(() => leg.target.destroy()))))
   publish(link)
 }
 

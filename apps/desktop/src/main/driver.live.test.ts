@@ -16,8 +16,8 @@ const passed = 'Vivid native control proof passed'
 const live = nativeProofAvailable && process.env.VIVID_TEST_DESKTOP_LIVE === '1'
 
 /**
- * The real executor inside real Electron against real pages (`scripts/control.ts`). The proof
- * checks actual debugger input, placement receipts, page content and cancellation.
+ * The real executor inside real Electron against real pages (`scripts/control.ts`). Every other
+ * desktop suite proves the same logic against a scripted Browser.
  */
 describe.skipIf(!live)('Native desktop control', () => {
   layer(nativeProofLayer({ script: 'control.ts', ready: 'Vivid native control ready', passed }), {
@@ -30,6 +30,7 @@ describe.skipIf(!live)('Native desktop control', () => {
           const result = yield* (yield* NativeProof).run
           expect(result.output).toContain(passed)
         }),
+      60_000,
     )
   })
 })

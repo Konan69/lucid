@@ -9,7 +9,6 @@ import {
   signInStartAddress,
 } from '@vivid/contracts/signin'
 import * as Deferred from 'effect/Deferred'
-import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
@@ -54,10 +53,8 @@ import type { ThemeSurfaces } from './tokens.ts'
  * How long the listener stays after a return, for the browser to follow the redirect to the
  * page it ends on. A browser follows a redirect at once, so this only ever runs out when the
  * tab was closed in that instant or the return was not made by a browser at all.
- * Source: unmeasured. Ten seconds bounds cleanup after the result, never human sign-in time.
- * Expiry closes the orphaned listener; the already delivered result stays valid.
  */
-const LANDING_WAIT = Duration.seconds(10)
+const LANDING_WAIT = '10 seconds'
 
 /**
  * The only host the listener binds: the IPv4 loopback literal, as RFC 8252 section 8.3 asks.
