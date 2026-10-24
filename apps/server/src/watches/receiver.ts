@@ -131,10 +131,8 @@ export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
   ].join('\n\n')
 
 /**
- * Wake Vivid for one event, once. The Thread is opened first so the arrival can name it;
- * an arrival whose Run was admitted makes a redelivery a no-op, and one without a Run (an earlier
- * attempt failed before admission) is delivered again under the same idempotency key, which
- * Conversation turns into the same Run rather than a second one.
+ * Wake Vivid for one event. The stable Thread and idempotency key select Conversation's
+ * durable admission receipt, both while a Run is working and after it has finished.
  */
 const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event: WatchEvent) {
   const watch = record.watch
@@ -146,14 +144,7 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
     personId: record.personId,
     companyId: record.companyId,
   })
-  const store = yield* WatchStore
-  const admitted = yield* store.arrive({
-    watchId: watch.id,
-    eventId: event.eventId,
-    threadId: thread.id,
-  })
-  if (Option.isSome(admitted)) return
-  const run = yield* (yield* Conversation).deliver({
+  yield* (yield* Conversation).deliver({
     // A Watch is the Person's own standing request, delivered as theirs.
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
@@ -166,7 +157,6 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
     origin: StoredRunOrigin.cases.Watch.make({ watchName: watch.name }),
     idempotencyKey: `watch:${watch.id}:${event.eventId}`,
   })
-  yield* store.admitted(watch.id, event.eventId, run.id)
   yield* (yield* Changes).publish([Topic.person(record.personId)])
 })
 

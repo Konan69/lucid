@@ -172,10 +172,7 @@ const make = Effect.fn('Watches.make')(function* () {
     record: WatchRecord,
     grant: { readonly id: string; readonly refreshBefore: Date },
   ) {
-    const active = yield* store.activate(record.watch.id, {
-      subscription: grant.id,
-      refreshBefore: grant.refreshBefore.getTime(),
-    })
+    const active = yield* store.activate(record.watch.id, grant.refreshBefore.getTime())
     return yield* Effect.fromOption(active).pipe(
       Effect.mapError(() => new DatabaseFailure({ message: 'A subscribed Watch was not live' })),
     )
@@ -203,7 +200,7 @@ const make = Effect.fn('Watches.make')(function* () {
       // Person-owned; the Company is the workspace it was made in, as other Person-owned rows keep.
       companyId: companyColumnOf(actor.workspace),
       name: request.name,
-      account: app.account,
+      connectionId: app.connectionId,
       event: request.event,
       subscribedName: `${app.appSlug}.${request.event}`,
       arguments: request.arguments,

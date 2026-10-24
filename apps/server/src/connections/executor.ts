@@ -32,6 +32,11 @@ import type * as HttpBody from 'effect/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
+import {
+  ExecutorEvents,
+  executorEventsLayer,
+  type ExecutorEventsService,
+} from '../watches/events.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
@@ -532,6 +537,10 @@ const SignInInput = Schema.Struct({
  * user, so a dedicated app and exact requirement link isolate each Connection under that user.
  */
 export interface ExecutorService {
+  /** Read the event namespace through the same authenticated app transport as Connection setup. */
+  readonly appSlug: (app: typeof ExecutorAppId.Type) => Effect.Effect<string, ExecutorFailure>
+  /** Connection removal also reclaims subscriptions through the existing MCP events adapter. */
+  readonly unsubscribeEvent: ExecutorEventsService['unsubscribe']
   /** Inspect public service setup without issuing an account grant or starting sign-in. */
   readonly authorization: (input: {
     readonly service: ServiceId
@@ -613,6 +622,7 @@ const Requirement = Schema.Struct({
 })
 const WireApp = Schema.Struct({
   id: ExecutorAppId,
+  slug: Schema.NonEmptyString,
   name: Schema.NonEmptyString,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
 })
@@ -3059,6 +3069,38 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
   return { snapshots, discover }
 })
 
+/** App event namespaces use the Connection adapter's scoped response reader and timeout. */
+function makeAppSlug(http: ExecutorHttp) {
+  return Effect.fn('Executor.appSlug')(function* (app: typeof ExecutorAppId.Type) {
+    const record = yield* http.readApp(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}`)),
+      null,
+    )
+    return record.slug
+  })
+}
+
+// Vivid's own Google services lead the catalogue and need nothing from Executor to be listed,
+// so they stay offered while its public catalogue feed is unavailable.
+const googleCatalog = googleServices.map((service) =>
+  ExecutorServiceEntry.make({
+    id: service.service,
+    name: service.name,
+    description: service.description,
+    domain: service.domain,
+    authorization: ServiceAuthorization.cases.SignIn.make({}),
+  }),
+)
+const keyedCatalog = keyedServices.map((entry) =>
+  ExecutorServiceEntry.make({
+    id: entry.id,
+    name: entry.name,
+    description: entry.policy.instruction,
+    domain: entry.policy.host,
+    authorization: personalKeyAuthorization(),
+  }),
+)
+
 /** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
 const makeExecutor = Effect.fn('Executor.make')(function* (
   url: string,
@@ -3086,33 +3128,13 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       ),
     ),
   )
-  // Vivid's own Google services lead the catalogue and need nothing from Executor to be listed,
-  // so they stay offered while its public catalogue feed is unavailable.
-  const google = googleServices.map((service) =>
-    ExecutorServiceEntry.make({
-      id: service.service,
-      name: service.name,
-      description: service.description,
-      domain: service.domain,
-      authorization: ServiceAuthorization.cases.SignIn.make({}),
-    }),
-  )
-  const authoredKeys = keyedServices.map((entry) =>
-    ExecutorServiceEntry.make({
-      id: entry.id,
-      name: entry.name,
-      description: entry.policy.instruction,
-      domain: entry.policy.host,
-      authorization: personalKeyAuthorization(),
-    }),
-  )
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
     const remote = yield* remoteCatalog().pipe(
       Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),
     )
     return [
-      ...google,
-      ...authoredKeys,
+      ...googleCatalog,
+      ...keyedCatalog,
       ...remote.filter(
         // Upstream still lists refused services; their wire entries carry no address, so by id.
         (entry) =>
@@ -3130,7 +3152,10 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   const call = makeCall(http, toolCache.discover)
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
+  const events = yield* ExecutorEvents
   return Executor.of({
+    appSlug: makeAppSlug(http),
+    unsubscribeEvent: events.unsubscribe,
     catalog: availability.catalog,
     authorization: availability.authorization,
     begin: registration.begin,
@@ -3215,4 +3240,4 @@ export const executorLayer = Layer.effect(
     )
     return yield* makeExecutor(url, key, organization)
   }),
-)
+).pipe(Layer.provide(executorEventsLayer))

@@ -2,31 +2,50 @@ import { expect } from '@effect/vitest'
 import {
   Person,
   PersonId,
-  Run,
-  RunId,
-  RunOrigin,
-  RunState,
+  ConnectionId,
+  ServiceId,
+  type RunId,
   Workspace,
   type WatchArguments,
 } from '@vivid/contracts'
-import { eq } from 'drizzle-orm'
-import { Context, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
+import { and, eq, isNull } from 'drizzle-orm'
+import { Clock, Context, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
+import { ServerConfig } from '../config.ts'
 import { testConfigLayer, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { Conversation, type Delivery } from '../threads/conversation.ts'
 import { threadStoreLayer } from '../threads/store.ts'
-import { WatchedApps } from './apps.ts'
+import { WatchedApps, watchedAppsLayer } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
+import { conversationLayer as realConversationLayer } from '../threads/delivery.ts'
+import { RunStore, runStoreLayer } from '../threads/runs.ts'
+import { Runtime, Admission } from '../runtime/client.ts'
+import { submissionId } from '../runtime/identity.ts'
+import { ThreadTitles } from '../threads/generation.ts'
+import { Presence } from '../threads/presence.ts'
+import { Notifier } from '../notifications/notifier.ts'
+import { silentLearningLayer } from '../memory/testing.ts'
+import { silentChannelRepliesLayer } from '../channels/replies.ts'
+import {
+  Executor as ConnectionExecutor,
+  ExecutorAppId,
+  ExecutorAppOwnership,
+  ExecutorBinding,
+  ExecutorOwnerId,
+  ExecutorReferences,
+} from '../connections/executor.ts'
+import { connections } from '../connections/tables.ts'
+import { encodeReferences } from '../connections/records.ts'
 import { watchesLayer } from './lifecycle.ts'
 import { watchStoreLayer } from './store.ts'
 
 /**
  * Watch test seams. PostgreSQL, the Watch store and the Thread store are always the real ones;
  * what stands in is what lies outside this server (Executor, and the runtime behind
- * Conversation) and the Connection store, which another change is rewriting.
+ * Conversation). Connection resolution and SQL admission use production code.
  */
 
 /** A failed cleanup fails the test rather than leaving the Person's rows behind. */
@@ -61,28 +80,59 @@ export class Delivered extends Context.Service<Delivered, Ref.Ref<ReadonlyArray<
 ) {}
 
 /**
- * Conversation as the runtime's caller sees it: one Run per idempotency key, whatever the number
- * of calls, which is the guarantee the receiver relies on for redeliveries.
+ * Use production Conversation and RunStore. Only the external runtime and observers unrelated
+ * to background Watches stand in. Repeated deliveries must reach the real SQL admission logic.
  */
 export const conversationLayer = Layer.effectContext(
   Effect.gen(function* () {
+    const database = yield* Database
+    const config = yield* ServerConfig
+    const store = yield* RunStore
     const delivered = yield* Ref.make<ReadonlyArray<Delivery>>([])
-    const conversation = Conversation.of({
-      admit: () => Effect.die('Watches never admit through the gateway'),
-      deliver: Effect.fn('Test.WatchConversation.deliver')(function* (delivery) {
-        yield* Ref.update(delivered, (previous) => [...previous, delivery])
-        return Run.make({
-          id: RunId.make(`run-${delivery.idempotencyKey}`),
-          threadId: delivery.threadId,
-          turn: 1,
-          origin: RunOrigin.cases.Watch.make({
-            person: { id: delivery.personId, name: 'Watch owner', image: null },
-            watchName: 'test',
-          }),
-          state: RunState.cases.Working.make({}),
-          startedAt: 0,
+    const admitted = yield* Ref.make<ReadonlyArray<RunId>>([])
+    const runtime = Layer.mock(Runtime, {
+      admit: Effect.fn('WatchTest.admit')(function* (input) {
+        const runId = submissionId(input.threadId, input.idempotencyKey)
+        expect(
+          yield* Ref.get(admitted),
+          'A retry must not reach runtime admission twice',
+        ).not.toContain(runId)
+        yield* Ref.update(admitted, (all) => [...all, runId])
+        return Admission.make({
+          runId,
+          offset: String(input.turn),
+          incarnation: 'test',
+          repeated: false,
         })
       }),
+      settled: () => Effect.never,
+    })
+    const context = yield* Layer.build(
+      realConversationLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(Database, database),
+            Layer.succeed(ServerConfig, config),
+            Layer.succeed(RunStore, store),
+            threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
+            runtime,
+            silentChangesLayer,
+            silentLearningLayer,
+            silentChannelRepliesLayer,
+            Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
+            Layer.mock(Presence, { watching: () => Effect.succeed(false) }),
+            Layer.mock(Notifier, { notify: () => Effect.void }),
+          ),
+        ),
+      ),
+    )
+    const real = yield* Conversation.pipe(Effect.provideContext(context))
+    const conversation = Conversation.of({
+      ...real,
+      deliver: (delivery) =>
+        Ref.update(delivered, (all) => [...all, delivery]).pipe(
+          Effect.andThen(real.deliver(delivery)),
+        ),
     })
     return Context.make(Conversation, conversation).pipe(Context.add(Delivered, delivered))
   }),
@@ -155,15 +205,68 @@ export const executorLayer = Layer.effectContext(
   }),
 )
 
-/** The Person has one ready account, "Mail (Work)", on the `mail` app. */
-export const appsLayer = Layer.succeed(
+/** Create the fixture's dedicated account only when a Watch first asks for it. */
+const fixtureConnection = Effect.fn('WatchTest.fixtureConnection')(function* (actor: Actor) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(connections)
+      .where(and(eq(connections.personId, actor.person.id), isNull(connections.removedAt)))
+      .limit(1),
+  )
+  if (rows.length > 0) return
+  const id = ConnectionId.make(crypto.randomUUID())
+  const app = ExecutorAppId.make(`app-${id}`)
+  const references = ExecutorReferences.cases.Public.make({
+    service: ServiceId.make('mail'),
+    app,
+    owner: ExecutorOwnerId.make(`owner-${actor.person.id}`),
+    binding: ExecutorBinding.cases.Public.make({}),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+  })
+  const now = yield* Clock.currentTimeMillis
+  yield* database.run(
+    database.insert(connections).values({
+      id,
+      personId: actor.person.id,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Mail',
+      name: 'Work',
+      executorApp: app,
+      references: yield* encodeReferences(references),
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }),
+  )
+})
+
+/** Resolve real Connection rows and names; only the foreign app slug stands in. */
+export const appsLayer = Layer.effect(
   WatchedApps,
-  WatchedApps.of({
-    appOf: (_actor, account) =>
-      account.toLowerCase() === 'mail (work)'
-        ? Effect.succeed({ account: 'Mail (Work)', appSlug: 'mail' })
-        : Effect.die(`Unexpected account ${account}`),
-    accountsOf: () => Effect.succeed(['Mail (Work)']),
+  Effect.gen(function* () {
+    const database = yield* Database
+    const context = yield* Layer.build(
+      watchedAppsLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(Database, database),
+            Layer.mock(ConnectionExecutor, { appSlug: () => Effect.succeed('mail') }),
+          ),
+        ),
+      ),
+    )
+    const apps = yield* WatchedApps.pipe(Effect.provideContext(context))
+    return WatchedApps.of({
+      ...apps,
+      appOf: (actor, account) =>
+        fixtureConnection(actor).pipe(
+          Effect.andThen(apps.appOf(actor, account)),
+          Effect.provideService(Database, database),
+        ),
+    })
   }),
 )
 
@@ -182,5 +285,7 @@ export const testLayer = watchesLayer.pipe(
       silentChangesLayer,
     ),
   ),
-  Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, testConfigLayer)),
+  Layer.provideMerge(
+    runStoreLayer.pipe(Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, testConfigLayer))),
+  ),
 )

@@ -1,7 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, CreateWatchRequest, ServiceId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Clock, Effect, Layer, Option, Queue, Ref } from 'effect'
+import { Clock, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import {
   Executor as ConnectionExecutor,
@@ -21,6 +21,7 @@ import type { Actor } from '../auth/access.ts'
 import type { Changes } from '../live/changes.ts'
 import type { Conversation } from '../threads/conversation.ts'
 import type { ThreadStore } from '../threads/store.ts'
+import { ExecutorEvents, ExecutorEventsUnreachable } from './events.ts'
 import { Watches } from './lifecycle.ts'
 import { watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
@@ -85,17 +86,22 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
             }),
           )
           yield* Queue.take(executor.subscribed)
-          yield* removeConnection(connection).pipe(
-            Effect.provide(
-              Layer.mock(ConnectionExecutor, {
-                remove: () => Effect.void,
-              }),
-            ),
+          const events = yield* ExecutorEvents
+          const removal = yield* Layer.build(
+            Layer.mock(ConnectionExecutor, {
+              remove: () => Effect.void,
+              unsubscribeEvent: (subscription) =>
+                events
+                  .unsubscribe(subscription)
+                  .pipe(Effect.andThen(Effect.fail(new ExecutorEventsUnreachable({})))),
+            }),
           )
+          yield* removeConnection(connection).pipe(Effect.provideContext(removal))
           const found = yield* (yield* WatchStore).find(watch.id)
-          expect(Option.map(found, (record) => record.watch.state)).toEqual(
-            Option.some({ _tag: 'Stopped', reason: 'disconnected' }),
+          expect(Option.map(found, (record) => record.watch.state._tag)).toEqual(
+            Option.some('Stopped'),
           )
+          expect(found).toMatchObject({ value: { watch: { state: { reason: 'disconnected' } } } })
           expect((yield* Ref.get(executor.unsubscribed)).slice(before)).toEqual([
             'mail.message.received',
           ])
@@ -146,6 +152,93 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
             ),
           ).toHaveLength(1)
         }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'keeps the Connection identity when account ordinals shift and the account is renamed',
+      () =>
+        Effect.gen(function* () {
+          const actor = yield* person()
+          const first = yield* connect(actor)
+          const second = yield* connect(actor)
+          const database = yield* Database
+          yield* database.run(
+            database.update(connections).set({ name: null }).where(eq(connections.id, first.id)),
+          )
+          const executor = yield* Executor
+          yield* Queue.offer(executor.answers, {
+            id: 'evs_ordinal',
+            refreshBefore: new Date(604800000),
+          })
+          const watching = yield* Watches
+          const watch = yield* watching.create(
+            actor,
+            CreateWatchRequest.make({
+              name: 'Second mail',
+              account: 'Mail (Work)',
+              event: 'message.received',
+              arguments: {},
+              instruction: 'Tell me when a client writes.',
+            }),
+          )
+          yield* Queue.take(executor.subscribed)
+          yield* database.run(
+            database
+              .update(connections)
+              .set({ name: null, createdAt: 1 })
+              .where(eq(connections.id, second.id)),
+          )
+          expect((yield* watching.list(actor)).map((one) => one.account)).toEqual(['Mail (2)'])
+          const removal = yield* Layer.build(
+            Layer.mock(ConnectionExecutor, { remove: () => Effect.void }),
+          )
+          yield* removeConnection(first).pipe(Effect.provideContext(removal))
+          expect((yield* watching.list(actor)).map((one) => one.account)).toEqual(['Mail'])
+          yield* database.run(
+            database
+              .update(connections)
+              .set({ name: 'Personal' })
+              .where(eq(connections.id, second.id)),
+          )
+          expect((yield* watching.list(actor)).map((one) => one.account)).toEqual([
+            'Mail (Personal)',
+          ])
+          const found = yield* (yield* WatchStore).find(watch.id)
+          expect(found).toMatchObject({ value: { connectionId: second.id } })
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('stops a Pending Watch when removal races its subscription grant', () =>
+      Effect.gen(function* () {
+        const actor = yield* person()
+        const connection = yield* connect(actor)
+        const executor = yield* Executor
+        const creating = yield* Effect.forkChild(
+          (yield* Watches).create(
+            actor,
+            CreateWatchRequest.make({
+              name: 'Pending mail',
+              account: 'Mail (Work)',
+              event: 'message.received',
+              arguments: {},
+              instruction: 'Tell me when a client writes.',
+            }),
+          ),
+        )
+        const subscription = yield* Queue.take(executor.subscribed)
+        const events = yield* ExecutorEvents
+        const removal = yield* Layer.build(
+          Layer.mock(ConnectionExecutor, {
+            remove: () => Effect.void,
+            unsubscribeEvent: events.unsubscribe,
+          }),
+        )
+        yield* removeConnection(connection).pipe(Effect.provideContext(removal))
+        expect(yield* (yield* Watches).list(actor)).toEqual([])
+        yield* Queue.offer(executor.answers, { id: 'evs_late', refreshBefore: new Date(604800000) })
+        expect((yield* Effect.flip(Fiber.join(creating)))._tag).toBe('DatabaseFailure')
+        expect(yield* Ref.get(executor.unsubscribed)).toContain(subscription.name)
+      }).pipe(Effect.scoped),
     )
   })
 })

@@ -15,7 +15,6 @@ import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { watchArrivals } from './tables.ts'
 
 /**
  * The whole proactive path on the real stack: a Person asks Vivid in a Thread to watch an
@@ -180,14 +179,6 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
               .where(eq(runs.threadId, item.thread)),
           )
           expect(woke).toEqual([{ origin: 'Watch' }])
-          // Exactly one arrival for the Watch: the filtered-out ping never reached Vivid.
-          const arrivals = yield* database.run(
-            database
-              .select({ thread: watchArrivals.threadId })
-              .from(watchArrivals)
-              .where(eq(watchArrivals.watchId, watch.id)),
-          )
-          expect(arrivals).toEqual([{ thread: item.thread }])
         }).pipe(Effect.scoped),
       { timeout: 420_000 },
     )

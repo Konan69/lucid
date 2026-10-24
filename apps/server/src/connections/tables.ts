@@ -43,6 +43,8 @@ export const connections = pgTable(
     reason: text('reason'),
     createdAt: epoch('created_at').notNull(),
     updatedAt: epoch('updated_at').notNull(),
+    // Removed Connections remain as Watch history, outside every usable inventory.
+    removedAt: epoch('removed_at'),
   },
   (table) => [
     uniqueIndex('vivid_connections_executor_app').on(table.executorApp),
