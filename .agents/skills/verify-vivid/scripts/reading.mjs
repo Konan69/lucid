@@ -3,7 +3,6 @@ import { json, rpc } from './wire.mjs'
 
 export const readLimits = [
   'Failed-claim retry needs a genuine MarkThreadRead refusal while the same Thread remains readable, followed by recovery. No public trigger is configured; never intercept responses.',
-  'An offscreen model reply needs a working real provider and an observable Run/publication. The metadata update recipe does not prove that case.',
   'Phone and desktop native entry points need their own device runs.',
 ]
 

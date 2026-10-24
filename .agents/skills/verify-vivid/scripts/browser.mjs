@@ -88,7 +88,7 @@ const specialRecipes = {
   reading: {
     drive: readBrowser,
     scope:
-      'One web session, 52 empty Threads, repeat suppression, eviction after 50 remembered standings, offscreen update and report on return. See scope.json for blocked subcases.',
+      'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
   },
   settings: {
     drive: settingsBrowser,

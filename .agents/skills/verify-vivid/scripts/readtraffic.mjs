@@ -42,7 +42,7 @@ const decodeRequest = Schema.decodeUnknownOption(Request)
 const decodeChunk = Schema.decodeUnknownOption(Chunk)
 const decodeExit = Schema.decodeUnknownOption(Exit)
 
-/** Keep public read receipts and Thread standings only. Never retain session headers or message text. */
+/** Keep public read receipts and synthetic Thread metadata only. Discard headers and conversation text. */
 function outgoing(value, socket, observed) {
   const request = decodeRequest(value)
   if (Option.isNone(request)) return
@@ -67,6 +67,7 @@ function incoming(value, socket, observed) {
         kind: 'standing',
         thread: detail.thread.id,
         moved: detail.thread.updatedAt,
+        title: detail.thread.title,
       })
     }
   } else if (Option.isSome(exit)) {
