@@ -128,9 +128,15 @@ async function feedDecision(state, directory, run, capture) {
   }
 }
 
-/** A Settings row has no ARIA role; match its exact visible label and its own action button. */
+/** Wait for the dialog's own row and action; Home behind it may already contain the same name. */
 async function settingsChoice(run, name, answer) {
-  const row = `Array.from(document.querySelectorAll('[role="dialog"] div')).find(d => d.textContent === ${JSON.stringify(name)}).parentElement.parentElement`
+  const label = `Array.from(document.querySelectorAll('[role="dialog"] div')).find(d => d.textContent === ${JSON.stringify(name)})`
+  await run([
+    'wait',
+    '--fn',
+    `(() => { const label = ${label}; return Boolean(label && Array.from(label.parentElement.parentElement.querySelectorAll('button')).some(b => b.innerText.trim() === ${JSON.stringify(answer)})); })()`,
+  ])
+  const row = `(${label}).parentElement.parentElement`
   await clickAnswer(run, row, answer)
 }
 
