@@ -44,8 +44,9 @@ const sshOptions = [
  */
 export const snapshotIgnore = ['node_modules/', '.cache/', '.turbo/', 'runs/', 'cache/']
 
-/** Blocking flock waiters compete for every capacity slot. Exec retains only the chosen
- * descriptor; the kernel frees all contenders and the run lease when their owner exits. */
+/** Prefer the first free warm tree to retain deterministic cache reuse. If all are busy,
+ * blocking flock waiters compete for every slot. Exec retains only the chosen descriptor;
+ * the kernel frees all contenders and the run lease when their owner exits. */
 const capacityScript = String.raw`
 import fcntl, os, queue, sys, threading
 home, sha, run, label, *args = sys.argv[1:]
@@ -55,9 +56,19 @@ fds = [os.open(f"{home}/trees/slot-{index}.lock", os.O_CREAT | os.O_WRONLY, 0o60
 def acquire(index, fd):
     fcntl.flock(fd, fcntl.LOCK_EX)
     ready.put((index, fd))
+selected = None
 for index, fd in enumerate(fds):
-    threading.Thread(target=acquire, args=(index, fd), daemon=True).start()
-index, fd = ready.get()
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        continue
+    selected = (index, fd)
+    break
+if selected is None:
+    for index, fd in enumerate(fds):
+        threading.Thread(target=acquire, args=(index, fd), daemon=True).start()
+    selected = ready.get()
+index, fd = selected
 os.dup2(fd, 9, inheritable=True)
 os.environ['VIVID_GATE_SLOT'] = f'slot-{index}'
 os.execvp('bash', ['bash', f'{home}/runs/{run}.sh', sha, run, label, *args])
