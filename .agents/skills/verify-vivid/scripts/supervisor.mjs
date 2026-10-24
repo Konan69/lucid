@@ -391,6 +391,12 @@ async function clean() {
   cleaning = true
   await NodeFSP.rm(state.scratch + '/provider.json', { force: true })
   const failures = []
+  const { desktopCleanup } = await import('./desktopcleanup.mjs')
+  try {
+    await desktopCleanup(state)
+  } catch (error) {
+    failures.push('desktop cleanup: ' + error.message)
+  }
   for (const captured of Object.values(state.commands ?? {})) {
     if (!runningCommands.has(captured.pid)) await stopCaptured(captured, true)
   }

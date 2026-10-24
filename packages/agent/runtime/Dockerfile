@@ -41,6 +41,12 @@ COPY --from=build --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/packages packages
 USER node
 EXPOSE 5173
+# Docker's named health settings apply only to observations, never the lifetime of a Run.
+# --interval=30s paces local /health observations. Source: unmeasured.
+# --timeout=5s bounds one unresponsive local probe; expiry records a failed probe. Source: unmeasured.
+# --start-period=20s ignores failures while Node starts. Source: unmeasured.
+# --retries=3 marks the container unhealthy after consecutive failures. Source: unmeasured.
+# Docker requires literal durations in these instruction options; they cannot reference ENV/ARG.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["node", "packages/agent/runtime/dist/server.mjs"]

@@ -38,7 +38,9 @@ import { Performed, blankTable, perform, type Table } from './windows.ts'
  * module has no list of apps Vivid may or may not use.
  */
 
-/** How long a turn stays open with no work before it is ended and the notice taken down. */
+/** How long a turn stays open with no work before it ends and the notice is taken down.
+ * Source: unmeasured. This existing idle retention policy never caps active work. RunEnded,
+ * Stop and link loss still end the turn immediately. */
 export const IDLE_TURN = Duration.seconds(60)
 
 /** What beginning or ending a turn may take: these do nothing slow in the Computer. */
