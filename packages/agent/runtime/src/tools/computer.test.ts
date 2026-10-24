@@ -250,6 +250,5 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         // none of that became a call: a sleeping Computer is not woken by a conversation.
         expect(yield* Queue.size(transport.requests)).toBe(0)
       }).pipe(Effect.scoped),
-    15000,
   )
 })
