@@ -4,7 +4,7 @@
 
 `scripts/oxlint-plugin-vivid.mjs` (rule `reactNoStateAfterWait`) records setters from `const [x, setX] = useState(...)` and reports a direct call to one inside a function that has passed an `await`, a `yield*`, or an inline `.then`/`.catch`/`.finally` callback. Its tests in `scripts/oxlint-plugin-vivid.test.mjs` pin the blind spots on purpose.
 
-It misses: a setter reached through a helper (`await send(); end()`), a named callback (`.then(renewed)`), a setter passed as a prop or returned from a hook, an alias, `setX(await save())` (the setter is visited before the wait), `Effect.ensuring`/`Effect.sync`/`Effect.map` callbacks, timers, subscriptions and native callbacks, `useReducer` dispatch, Zustand and custom stores, atoms, and status shapes that never wait in the same function. `scripts/find.sh` searches for these shapes.
+It misses: a setter reached through a helper (`await send(); end()`), a named callback (`.then(renewed)`), a setter passed as a prop or returned from a hook, an alias, `setX(await save())` (the setter is visited before the wait), `Effect.ensuring`/`Effect.sync`/`Effect.map` callbacks, timers, subscriptions and native callbacks, `useReducer` dispatch, Zustand and custom stores, atoms, and status shapes that never wait in the same function. `.agents/skills/state-machines/scripts/find.sh` searches for these shapes.
 
 The ceiling in `scripts/gate/ratchets.mjs` is an aggregate count, checked both ways: above it fails, and below it fails too until the ceiling is set to the measured number. It keeps no list of grandfathered sites.
 

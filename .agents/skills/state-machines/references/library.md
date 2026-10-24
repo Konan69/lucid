@@ -1,6 +1,6 @@
 # Effect Machine 0.40.0: what the source says
 
-Read from the installed package (`node_modules/.pnpm/@typeonce+effect-machine@0.40.0_effect@4.0.2/node_modules/@typeonce/effect-machine`), which wins over any doc. The package ships its own guides: `docs/agent-guide.md`, `docs/machine-review.md`, `docs/effect-atom-react.md`, `docs/root-api.md`. Read them for anything below that is not enough. Where they recommend pure planner tests, Vivid's `AGENTS.md` overrides them.
+Read from the installed package (find it with `ls node_modules/.pnpm | grep effect-machine`), whose source wins over any doc. The package ships its own guides in its docs folder: agent-guide.md, machine-review.md, effect-atom-react.md and root-api.md. Read them for anything below that is not enough. Where they recommend pure planner tests, Vivid's `AGENTS.md` overrides them.
 
 ## Declarations
 

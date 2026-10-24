@@ -15,7 +15,7 @@ Give this to the reviewer with the diff. Each finding cites file and line, names
 - Does it carry the facts the machine cannot know (attempt id, time, idempotency key), and nothing it already knows?
 - Is its transition pure: no clock, randomness, id, service call or await?
 
-## Boundaries (from the library's `docs/machine-review.md`)
+## Boundaries (from the library's machine-review.md)
 
 | Layer | Owns |
 | --- | --- |
