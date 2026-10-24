@@ -7,6 +7,7 @@ import { Broken } from './screen/Broken'
 import { Recover } from './ui/Recover'
 import { TooltipProvider } from './ui/tooltip'
 import { arrival } from './data/arrival'
+import { page } from './data/build'
 import { engine } from './data/runtime'
 import { sidebar } from './data/sidebar'
 import { FeedPlace } from './place/Feed'
@@ -53,8 +54,15 @@ router.subscribe('onResolved', () => {
 })
 
 // A deploy replaces every build file, so a tab opened before it cannot fetch a chunk it has not
-// loaded yet (lucide's icons are each one). Vite's documented answer: load the new build.
-window.addEventListener('vite:preloadError', () => window.location.reload())
+// loaded yet (lucide's icons are each one). Vite's documented answer: load the new build. Once per
+// build: a chunk the new build cannot fetch either would otherwise reload the page forever, so the
+// second failure is left to the import, and an icon falls back to its blank space.
+window.addEventListener('vite:preloadError', () => {
+  const build = page.built.toISOString()
+  if (sessionStorage.getItem('vivid:reloaded') === build) return
+  sessionStorage.setItem('vivid:reloaded', build)
+  window.location.reload()
+})
 
 // Before the first draw, so an error while drawing the first screen is reported.
 startTelemetry()
