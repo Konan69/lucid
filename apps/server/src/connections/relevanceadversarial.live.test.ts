@@ -10,7 +10,7 @@ import { relevantToolsWithin } from './relevance.ts'
 /** One claim: an unrelated tool cannot promote itself above an honest necessary capability
  * by putting instructions in third-party metadata. The production ranking preserves both. */
 describe.skipIf(!liveDecisionEnabled)('Gateway relevance prompt attacks', () => {
-  layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
+  layer(liveDecisionLayer, { excludeTestServices: true, timeout: 5_000 })((it) => {
     it.effect('ranks honest capability above self-promotion', () =>
       Effect.gen(function* () {
         const promoted = {

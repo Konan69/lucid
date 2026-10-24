@@ -23,80 +23,85 @@ const decodeAnother = Schema.decodeUnknownOption(AnotherAccountMessage)
 describe.skipIf(process.env['VIVID_LIVE_TOLD_ACCOUNT'] !== '1')(
   'told to connect another account live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true })((it) => {
-      it.effect('offers the card for one more account when told to connect another', () =>
-        Effect.gen(function* () {
-          const fixture = yield* chainFixture('Told to connect another account proof')
-          const found = yield* fixture.rpc.FindServices({ query: 'DeepWiki' })
-          if (!ServiceCatalog.guards.Ready(found))
-            return yield* Effect.sync(() => expect.fail('Executor catalog must be available'))
-          const wiki = found.services.find((service) => /deepwiki/i.test(service.name))
-          if (wiki === undefined)
-            return yield* Effect.sync(() => expect.fail('The catalogue must list DeepWiki'))
-          yield* Effect.addFinalizer(() =>
-            Effect.gen(function* () {
-              const current = yield* fixture.rpc.ListConnections()
-              for (const connection of current.connections)
-                yield* fixture.rpc.RemoveConnection({ id: connection.id })
-            }).pipe(
-              Effect.catch(() =>
-                Effect.sync(() => expect.fail('Proof Integration cleanup failed')),
+    layer(chainLayer, { excludeTestServices: true, timeout: 180_000 })((it) => {
+      it.effect(
+        'offers the card for one more account when told to connect another',
+        () =>
+          Effect.gen(function* () {
+            const fixture = yield* chainFixture('Told to connect another account proof')
+            const found = yield* fixture.rpc.FindServices({ query: 'DeepWiki' })
+            if (!ServiceCatalog.guards.Ready(found))
+              return yield* Effect.sync(() => expect.fail('Executor catalog must be available'))
+            const wiki = found.services.find((service) => /deepwiki/i.test(service.name))
+            if (wiki === undefined)
+              return yield* Effect.sync(() => expect.fail('The catalogue must list DeepWiki'))
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                const current = yield* fixture.rpc.ListConnections()
+                for (const connection of current.connections)
+                  yield* fixture.rpc.RemoveConnection({ id: connection.id })
+              }).pipe(
+                Effect.catch(() =>
+                  Effect.sync(() => expect.fail('Proof Integration cleanup failed')),
+                ),
               ),
-            ),
-          )
-          const first = yield* fixture.rpc.BeginConnection({
-            from: 'Web',
-            service: wiki.id,
-            name: 'Personal',
-            shared: false,
-          })
-          if (!ConnectionStep.guards.Done(first))
-            return yield* Effect.sync(() => expect.fail('DeepWiki must connect without a sign-in'))
-
-          const told = yield* fixture.send(`Connect another ${wiki.name} account for me.`)
-          const waiting = yield* completeRun(fixture, told)
-          const cards = toolParts(waiting).flatMap((part) =>
-            part.toolName === 'connect' && part.state === 'output-available'
-              ? Option.toArray(decodeAnother(part.output))
-              : [],
-          )
-          expect(cards).toHaveLength(1)
-          const [card] = cards
-          if (card === undefined)
-            return yield* Effect.sync(() =>
-              expect.fail('Vivid must start one more account with the connect card when told to'),
             )
-          expect(card.service).toBe(wiki.id)
-          expect(card.ready).toBe(false)
-          // The account that is already there does not settle the card.
-          expect(first.connection.createdAt).toBeLessThanOrEqual(card.another.askedAt)
+            const first = yield* fixture.rpc.BeginConnection({
+              from: 'Web',
+              service: wiki.id,
+              name: 'Personal',
+              shared: false,
+            })
+            if (!ConnectionStep.guards.Done(first))
+              return yield* Effect.sync(() =>
+                expect.fail('DeepWiki must connect without a sign-in'),
+              )
 
-          // The Person presses the card: one more account, begun after Vivid asked.
-          const second = yield* fixture.rpc.BeginConnection({
-            from: 'Web',
-            service: wiki.id,
-            name: 'Work',
-            shared: false,
-          })
-          expect(ConnectionState.guards.Ready(second.connection.state)).toBe(true)
-          expect(second.connection.createdAt).toBeGreaterThan(card.another.askedAt)
+            const told = yield* fixture.send(`Connect another ${wiki.name} account for me.`)
+            const waiting = yield* completeRun(fixture, told)
+            const cards = toolParts(waiting).flatMap((part) =>
+              part.toolName === 'connect' && part.state === 'output-available'
+                ? Option.toArray(decodeAnother(part.output))
+                : [],
+            )
+            expect(cards).toHaveLength(1)
+            const [card] = cards
+            if (card === undefined)
+              return yield* Effect.sync(() =>
+                expect.fail('Vivid must start one more account with the connect card when told to'),
+              )
+            expect(card.service).toBe(wiki.id)
+            expect(card.ready).toBe(false)
+            // The account that is already there does not settle the card.
+            expect(first.connection.createdAt).toBeLessThanOrEqual(card.another.askedAt)
 
-          // What the card sends once it is settled: it names the account that was added.
-          const carried = yield* fixture.send(
-            `Another ${wiki.name} account is connected: ${second.connection.account}. Carry on.`,
-          )
-          const done = yield* completeRun(fixture, carried)
-          // Vivid says which account is new, and does not call the old one the new one.
-          const reply = replyText(done)
-          expect(reply).toContain('Work')
-          expect(reply).not.toMatch(/new[^.]*\(Personal\)/iu)
-          const listed = yield* fixture.rpc.ListConnections()
-          expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
-            `${wiki.name} (Personal)`,
-            `${wiki.name} (Work)`,
-          ])
-          return yield* Effect.void
-        }).pipe(Effect.scoped),
+            // The Person presses the card: one more account, begun after Vivid asked.
+            const second = yield* fixture.rpc.BeginConnection({
+              from: 'Web',
+              service: wiki.id,
+              name: 'Work',
+              shared: false,
+            })
+            expect(ConnectionState.guards.Ready(second.connection.state)).toBe(true)
+            expect(second.connection.createdAt).toBeGreaterThan(card.another.askedAt)
+
+            // What the card sends once it is settled: it names the account that was added.
+            const carried = yield* fixture.send(
+              `Another ${wiki.name} account is connected: ${second.connection.account}. Carry on.`,
+            )
+            const done = yield* completeRun(fixture, carried)
+            // Vivid says which account is new, and does not call the old one the new one.
+            const reply = replyText(done)
+            expect(reply).toContain('Work')
+            expect(reply).not.toMatch(/new[^.]*\(Personal\)/iu)
+            const listed = yield* fixture.rpc.ListConnections()
+            expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
+              `${wiki.name} (Personal)`,
+              `${wiki.name} (Work)`,
+            ])
+            return yield* Effect.void
+          }).pipe(Effect.scoped),
+        { timeout: 180_000 },
       )
     })
   },

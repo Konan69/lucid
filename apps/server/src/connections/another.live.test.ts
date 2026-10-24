@@ -29,7 +29,7 @@ const decodeToolResult = Schema.decodeUnknownEffect(
 describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
   'another account live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true })((it) => {
+    layer(chainLayer, { excludeTestServices: true, timeout: 180_000 })((it) => {
       it.effect(
         'asks for one more account instead of using the wrong one, then uses the new one',
         () =>
@@ -125,6 +125,7 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
             ).toBe(true)
             return yield* Effect.void
           }).pipe(Effect.scoped),
+        { timeout: 180_000 },
       )
     })
   },

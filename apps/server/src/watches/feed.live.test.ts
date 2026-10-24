@@ -77,7 +77,7 @@ const ping = Effect.fn('WatchProof.ping')(function* (app: string, channel: strin
 const fromWatch = (item: FeedItem) => item.thread.startsWith('watch-')
 
 describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed live chain', () => {
-  layer(chainLayer, { excludeTestServices: true })((test) => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 420_000 })((test) => {
     test.effect(
       'an event Vivid was asked to watch wakes it in the background and reaches the Feed',
       () =>
@@ -189,6 +189,7 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
           )
           expect(arrivals).toEqual([{ thread: item.thread }])
         }).pipe(Effect.scoped),
+      { timeout: 420_000 },
     )
   })
 })

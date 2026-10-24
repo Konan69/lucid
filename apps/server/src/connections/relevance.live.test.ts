@@ -11,7 +11,7 @@ import { relevantToolsWithin } from './relevance.ts'
 /** One behavioral claim: the real production ranking promotes the three necessary DeepWiki
  * tools while retaining every lexical candidate. Payload timings live in latency.live.test.ts. */
 describe.skipIf(!liveDecisionEnabled)('Gateway tool relevance', () => {
-  layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
+  layer(liveDecisionLayer, { excludeTestServices: true, timeout: 5_000 })((it) => {
     it.effect('promotes necessary tools in one bounded request', () =>
       Effect.gen(function* () {
         const { ordered } = yield* relevantToolsWithin(

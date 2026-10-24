@@ -43,69 +43,72 @@ const configured = executorLayer.pipe(
  * GitHub with their own token. Only the credential submission receives the redacted token.
  */
 describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
-  layer(configured, { excludeTestServices: true })((it) => {
-    it.effect('reads the authenticated GitHub account with a personal token', () =>
-      Effect.gen(function* () {
-        const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
-        const expectedLogin = NodeProcess.env['VIVID_TEST_GITHUB_LOGIN']
-        const expectedId = NodeProcess.env['VIVID_TEST_GITHUB_ACCOUNT_ID']
-        if (
-          token === undefined ||
-          expectedLogin === undefined ||
-          expectedId === undefined ||
-          !/^\d+$/u.test(expectedId)
-        )
-          expect.fail(
-            'Supply token authority and independently known GitHub login and numeric account id',
+  layer(configured, { excludeTestServices: true, timeout: 120_000 })((it) => {
+    it.effect(
+      'reads the authenticated GitHub account with a personal token',
+      () =>
+        Effect.gen(function* () {
+          const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
+          const expectedLogin = NodeProcess.env['VIVID_TEST_GITHUB_LOGIN']
+          const expectedId = NodeProcess.env['VIVID_TEST_GITHUB_ACCOUNT_ID']
+          if (
+            token === undefined ||
+            expectedLogin === undefined ||
+            expectedId === undefined ||
+            !/^\d+$/u.test(expectedId)
           )
+            expect.fail(
+              'Supply token authority and independently known GitHub login and numeric account id',
+            )
 
-        const executor = yield* Executor
-        const input = {
-          connectionId: ConnectionId.make(crypto.randomUUID()),
-          service: ServiceId.make('curated/github-com-mcp'),
-          owner: ExecutorOwnerId.make(`github-personal-proof-${crypto.randomUUID()}`),
-          subject: `github-personal-proof-${crypto.randomUUID()}`,
-          label: 'GitHub personal proof',
-          returnAddress: 'https://vivid.example.test/api/connections/return',
-        }
-        const step = yield* executor.begin(input)
-        const removed = yield* Ref.make(false)
-        // Register cleanup before assertions or token submission can fail.
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            if (yield* Ref.get(removed)) return
-            const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
-            expect(cleanup._tag).toBe('Success')
-          }),
-        )
-        expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
-        if (!ExecutorStep.guards.EnterKey(step))
-          return expect.fail('GitHub must offer personal token entry')
-        const references = yield* executor.complete({
-          references: step.references,
-          fields: { token: Redacted.make(token) },
-        })
-        const tools = yield* executor.tools(references)
-        expect(tools.length).toBeGreaterThan(0)
-        const tool = tools.find((candidate) => /(?:^|\.)get_me$/u.test(candidate.name))
-        if (tool === undefined)
-          return expect.fail('GitHub must expose its authenticated account read')
-        const outcome = yield* executor.call({ references, tool: tool.name, input: {} })
-        if (!ExecutorCallOutcome.guards.Completed(outcome))
-          expect.fail('Expected authenticated account data')
-        const content = yield* decodeContent(outcome.value)
-        const [answer] = content.content
-        if (answer === undefined) expect.fail('Expected account response text')
-        const account = yield* decodeAccount(answer.text)
-        expect(account).toEqual({ login: expectedLogin, id: Number(expectedId) })
-        yield* executor.remove(references)
-        yield* Ref.set(removed, true)
-        const unavailable = yield* executor.tools(references).pipe(Effect.flip)
-        // beta.8 masks a deleted app as organization access denial, before its tool route.
-        expect(unavailable._tag).toBe('ExecutorAccessDenied')
-        NodeProcess.stdout.write(`GitHub read tools=${tools.length} reads=1 removed-app=1\n`)
-        return yield* Effect.void
-      }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
+          const executor = yield* Executor
+          const input = {
+            connectionId: ConnectionId.make(crypto.randomUUID()),
+            service: ServiceId.make('curated/github-com-mcp'),
+            owner: ExecutorOwnerId.make(`github-personal-proof-${crypto.randomUUID()}`),
+            subject: `github-personal-proof-${crypto.randomUUID()}`,
+            label: 'GitHub personal proof',
+            returnAddress: 'https://vivid.example.test/api/connections/return',
+          }
+          const step = yield* executor.begin(input)
+          const removed = yield* Ref.make(false)
+          // Register cleanup before assertions or token submission can fail.
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(removed)) return
+              const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
+              expect(cleanup._tag).toBe('Success')
+            }),
+          )
+          expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+          if (!ExecutorStep.guards.EnterKey(step))
+            return expect.fail('GitHub must offer personal token entry')
+          const references = yield* executor.complete({
+            references: step.references,
+            fields: { token: Redacted.make(token) },
+          })
+          const tools = yield* executor.tools(references)
+          expect(tools.length).toBeGreaterThan(0)
+          const tool = tools.find((candidate) => /(?:^|\.)get_me$/u.test(candidate.name))
+          if (tool === undefined)
+            return expect.fail('GitHub must expose its authenticated account read')
+          const outcome = yield* executor.call({ references, tool: tool.name, input: {} })
+          if (!ExecutorCallOutcome.guards.Completed(outcome))
+            expect.fail('Expected authenticated account data')
+          const content = yield* decodeContent(outcome.value)
+          const [answer] = content.content
+          if (answer === undefined) expect.fail('Expected account response text')
+          const account = yield* decodeAccount(answer.text)
+          expect(account).toEqual({ login: expectedLogin, id: Number(expectedId) })
+          yield* executor.remove(references)
+          yield* Ref.set(removed, true)
+          const unavailable = yield* executor.tools(references).pipe(Effect.flip)
+          // beta.8 masks a deleted app as organization access denial, before its tool route.
+          expect(unavailable._tag).toBe('ExecutorAccessDenied')
+          NodeProcess.stdout.write(`GitHub read tools=${tools.length} reads=1 removed-app=1\n`)
+          return yield* Effect.void
+        }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
+      { timeout: 120_000 },
     )
   })
 })
