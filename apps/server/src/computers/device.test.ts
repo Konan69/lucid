@@ -595,9 +595,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           expect(watch.initial).toEqual({ devices: [device], asking: [device.id] })
           const notices = yield* (yield* PgClient).listen(CHANNEL)
           yield* TestClock.adjust('61 seconds')
+          expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(watch.initial)
           yield* silent(notices)
           expect(yield* Queue.size(watch.values)).toBe(0)
-          expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(watch.initial)
           return watch.initial
         }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
         yield* TestClock.adjust('1 day')
