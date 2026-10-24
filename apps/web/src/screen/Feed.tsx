@@ -1,14 +1,23 @@
 import type { FeedResponse, MeResponse, ThreadId } from '@vivid/contracts'
-import { draftPlace, feed, greetingAt, makeWhen, thisReader, workspaceKey } from '@vivid/state'
+import {
+  draftPlace,
+  feed,
+  greetingAt,
+  makeWhen,
+  thisReader,
+  workspaceKey,
+  type DeviceList,
+} from '@vivid/state'
 import { Check } from 'lucide-react'
 import { Option } from 'effect'
 import { useState } from 'react'
 import { answer, close, pressOn, seenWhenShown, usePleased, usePresses } from '../data/feed'
-import { live, LiveState, useLive } from '../data/live'
+import { live, LiveState, useLive, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
 import { Card, Answers } from './feed/Card'
+import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
 
 const when = makeWhen(thisReader())
@@ -37,20 +46,23 @@ const today = new Intl.DateTimeFormat(thisReader().locale, {
 export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId) => void }) {
   const state = useLive(live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
-  return <FeedView me={me} items={items} onOpen={onOpen} />
+  const devices = useLiveValue(live.devices)
+  return <FeedView me={me} items={items} devices={devices} onOpen={onOpen} />
 }
 
 /** The Feed drawn from its items: everything above, with no query of its own. */
 export function FeedView({
   me,
   items,
+  devices,
   onOpen,
 }: {
   me: MeResponse
   items: (typeof FeedResponse.Type)['items']
+  devices: Option.Option<DeviceList>
   onOpen: (thread: ThreadId) => void
 }) {
-  const view = feed.feedView(items)
+  const view = feed.feedView(items, devices)
   const pleased = usePleased((now) => now.pleased)
   const { name } = useAppearance()
   // Read once: a greeting that changed while someone was looking at it would be a glitch.
@@ -62,8 +74,10 @@ export function FeedView({
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
   const presses = usePresses((now) => now.presses)
   const standing = feed.standingOf(
-    view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
-      .length,
+    view.computers.length +
+      view.waiting.filter(
+        (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
+      ).length,
   )
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
@@ -94,6 +108,11 @@ export function FeedView({
         </div>
 
         <div className="mt-6 flex min-w-0 flex-col lg:col-span-3">
+          {view.computers.map((waiting) => (
+            <div key={waiting.device.id} className="pb-3">
+              <Computer waiting={waiting} now={now} />
+            </div>
+          ))}
           {view.waiting.map((item) => (
             <Waiting
               // A new post is a new card: the display's own choices start again with it.

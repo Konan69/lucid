@@ -3,9 +3,8 @@ import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { ThreadId } from '@vivid/contracts'
 import { randomUUID } from 'expo-crypto'
-import { useCallback, useState, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
-import { useSharedValue } from 'react-native-reanimated'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
 import { again, begin, startedWith } from '../data/first'
@@ -136,11 +135,9 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
  * and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
  */
 function Writing({ me, mood, starting, placeholder }: WritingProps) {
-  // The composer's dock, measured, which a banner over it stands on (`chat/Banner.tsx`).
-  const [dock, setDock] = useState<Option.Option<number>>(Option.none())
-  const covered = useSharedValue(0)
   return (
     <View style={{ flex: 1 }}>
+      <DeviceAsk />
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -148,14 +145,7 @@ function Writing({ me, mood, starting, placeholder }: WritingProps) {
       >
         <First me={me} mood={mood} />
       </ScrollView>
-      {/* A computer waiting to be allowed is asked about where the Person starts. */}
-      {Option.isSome(dock) && <DeviceAsk free dock={dock.value} covered={covered} />}
-      <View
-        onLayout={(event) => {
-          const height = event.nativeEvent.layout.height
-          setDock((now) => (Option.contains(now, height) ? now : Option.some(height)))
-        }}
-      >
+      <View>
         <Composer
           value={starting.draft}
           autoFocus={false}

@@ -1,20 +1,11 @@
-import {
-  DeviceAccess,
-  DevicePresence,
-  type Device,
-  type DeviceId,
-  type DeviceListResponse,
-} from '@vivid/contracts'
-import { Option } from 'effect'
+import { DeviceAccess, type Device, type DeviceId, type DeviceListResponse } from '@vivid/contracts'
+import { Array as Arr, Option, Order } from 'effect'
 
-/** What `WatchDevices` answers with: the Person's own computers, and which are asking. */
+/** What `WatchDevices` answers with: the Person's own computers and their durable access decisions. */
 export type DeviceList = typeof DeviceListResponse.Type
 
 /** Whether Vivid may use this computer now. */
 export const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)
-
-/** Whether the computer's desktop app is listening right now. */
-const connected = (device: Device): boolean => DevicePresence.guards.Connected(device.presence)
 
 const withAccess = (device: Device, access: DeviceAccess): Device => ({
   id: device.id,
@@ -31,7 +22,6 @@ const withAccess = (device: Device, access: DeviceAccess): Device => ({
 export const allowing =
   (id: DeviceId, at: number) =>
   (current: DeviceList): DeviceList => ({
-    asking: current.asking.filter((each) => each !== id),
     devices: current.devices.map((device) => {
       if (device.id === id) {
         return withAccess(device, DeviceAccess.cases.Allowed.make({ since: at }))
@@ -46,7 +36,6 @@ export const allowing =
 export const stopping =
   (id: DeviceId, at: number) =>
   (current: DeviceList): DeviceList => ({
-    asking: current.asking.filter((each) => each !== id),
     devices: current.devices.map((device) =>
       device.id === id
         ? withAccess(device, DeviceAccess.cases.Revoked.make({ since: at }))
@@ -60,33 +49,32 @@ export interface DeviceAsked {
   readonly instead: Option.Option<Device>
 }
 
-/**
- * The computer Vivid asks this Person about where they already are, over the composer: one that
- * nobody has answered for yet (`Pending`) and whose desktop app is open and asking to be allowed
- * now (`DeviceListResponse.asking`, which the server keeps from the app enrolling). A row left by
- * an app that was closed or removed is not asked about.
- *
- * It is asked only while no allowed computer is listening: with one already in use there is
- * nothing Vivid is waiting on, and a second app signed in somewhere is not a reason to interrupt.
- * `instead` is the allowed computer that would stop being allowed, because Vivid uses one at a
- * time. A computer answered "Don't allow" is `Revoked` on the server, so it is not asked again on
- * any surface; it can still be allowed from Settings.
- *
- * Until 16 October 2026 the only place this was decided was Settings > Computers, where a
- * computer sat "Waiting for you to allow it" without saying so anywhere the Person looks. The
- * owner: "why is it waitong forme to allow it? and why is this so hidden".
- */
-export const deviceAsked = (list: DeviceList): Option.Option<DeviceAsked> => {
-  const { devices, asking } = list
-  if (devices.some((device) => allowed(device) && connected(device))) return Option.none()
-  return Option.map(
-    Option.fromUndefinedOr(
-      devices.find(
-        (device) => DeviceAccess.guards.Pending(device.access) && asking.includes(device.id),
-      ),
+/** Pending access is the only reason a computer needs an answer, even when another is connected. */
+export const deviceAsked = (list: DeviceList): Option.Option<DeviceAsked> =>
+  Option.fromUndefinedOr(devicesWaiting(list)[0])
+
+/** Every Pending personal computer stays actionable until an explicit server decision. */
+export const devicesWaiting = (list: DeviceList): ReadonlyArray<DeviceWaiting> => {
+  const instead = Option.fromUndefinedOr(list.devices.find(allowed))
+  return Arr.sort(
+    list.devices.flatMap((device) =>
+      DeviceAccess.guards.Pending(device.access)
+        ? [{ device, instead, since: device.access.since }]
+        : [],
     ),
-    (device) => ({ device, instead: Option.fromUndefinedOr(devices.find(allowed)) }),
+    newestFirst,
   )
+}
+
+/** Newest first, by when each computer began to wait. */
+const newestFirst: Order.Order<DeviceWaiting> = Order.mapInput(
+  Order.flip(Order.Number),
+  (waiting: DeviceWaiting) => waiting.since,
+)
+
+/** A computer waiting for its answer, and since when it has waited, epoch milliseconds. */
+export interface DeviceWaiting extends DeviceAsked {
+  readonly since: number
 }
 
 /** The question over the composer for the computer `deviceAsked` names. */
@@ -106,5 +94,5 @@ export const deviceAnswers = (instead: Option.Option<Device>) =>
       }),
       allow: true,
     },
-    { label: 'Don’t allow', detail: 'You can allow it later in Settings.', allow: false },
+    { label: 'Deny', detail: 'You can allow it later in Settings.', allow: false },
   ] as const

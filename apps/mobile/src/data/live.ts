@@ -29,6 +29,7 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
+import { makeDeviceDecisions } from './devices'
 import { makeConnecting } from './connecting'
 import { door } from './door'
 import { sessionExpiry } from './account'
@@ -421,6 +422,7 @@ function makeLiveData(session: SignedIn) {
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
+  const devices = makeDeviceDecisions(engine)
 
   followLook(engine, live)
 
@@ -474,6 +476,7 @@ function makeLiveData(session: SignedIn) {
     ...catalog,
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
+    devices,
     gone,
     seenThread,
     typingIn,

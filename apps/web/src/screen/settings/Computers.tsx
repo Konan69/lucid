@@ -1,10 +1,11 @@
-import type { Device } from '@vivid/contracts'
-import { Effect, Option, Result } from 'effect'
+import { DeviceAccess, type Device } from '@vivid/contracts'
+import { Option } from 'effect'
 import { Suspense, use, useState } from 'react'
-import { allowed, allowing, stopping } from '@vivid/state'
-import { nudgeThisComputer, standing, thisComputer } from '../../data/computers'
+import { deciding } from '@vivid/state'
+import { standing, thisComputer } from '../../data/computers'
 import { act } from '../../data/app'
-import { changing, live, LiveState, useLive } from '../../data/live'
+import { live, LiveState, useLive } from '../../data/live'
+import { answerDevice, useDeviceDecision } from '../../data/devices'
 import { Button } from '../../ui/button'
 import { Empty, Refusal, Row, Section } from './Parts'
 
@@ -24,33 +25,21 @@ const QUIET = {
  *
  * A computer appears here when the Vivid desktop app on it is signed in; appearing grants nothing.
  * Allowing one stops allowing any other, because Vivid acts on one computer at a time. This is
- * the only place that decision is made on the web, and it is the same list on every surface.
+ * the same decision offered on the Feed and in persistent request sections.
  *
  * The list is live. It used to be asked for once when Settings opened and again after each
  * decision, so a desktop app signing in on another machine did not show until the page was
  * reloaded. Now it is a `Watch…` query like every other list: a new computer appears, waiting,
- * while this is open, and a decision is shown at once and taken back if the server refuses it.
+ * while this is open. A request stays visible until the server confirms the decision.
  */
 export function YourComputers() {
   const state = useLive(live.devices)
-  const [refused, setRefused] = useState<string | null>(null)
   // Which computer this window is running on. Only the desktop app can say, and it says once.
   const [here] = useState(() => act(thisComputer))
-
-  /** Shows a decision at once, sends it, and says so when the server would not take it. */
-  function decide(made: ReturnType<typeof changing<{ readonly device: Device }>>, words: string) {
-    return Effect.gen(function* () {
-      const result = yield* made
-      setRefused(Result.isFailure(result) ? words : null)
-      // The desktop app hears of the decision now, instead of on its next scheduled look.
-      yield* nudgeThisComputer
-    })
-  }
 
   const devices = LiveState.$is('Ready')(state) ? state.value.devices : []
   return (
     <>
-      <Refusal message={refused} />
       <Section
         title="Your computers"
         detail="Vivid can open and use pages in the Vivid desktop app on one computer you allow. A page Vivid is using shows a Stop button."
@@ -59,32 +48,7 @@ export function YourComputers() {
           <Empty>{QUIET[state._tag]}</Empty>
         ) : (
           <Suspense fallback={<Empty>Looking…</Empty>}>
-            <ComputerList
-              devices={devices}
-              here={here}
-              onAllow={(device) =>
-                void act(
-                  decide(
-                    changing(
-                      (client) => client.AllowDevice({ id: device.id }),
-                      () => live.devices.expect(allowing(device.id, Date.now())),
-                    ),
-                    `${device.name} could not be allowed. Try again.`,
-                  ),
-                )
-              }
-              onStop={(device) =>
-                void act(
-                  decide(
-                    changing(
-                      (client) => client.RevokeDevice({ id: device.id }),
-                      () => live.devices.expect(stopping(device.id, Date.now())),
-                    ),
-                    `${device.name} is still allowed. Try again.`,
-                  ),
-                )
-              }
-            />
+            <ComputerList devices={devices} here={here} />
           </Suspense>
         )}
       </Section>
@@ -92,16 +56,13 @@ export function YourComputers() {
   )
 }
 
+/** Each row reads its attempt from the same machine as Feed and the persistent request section. */
 function ComputerList({
   devices,
   here,
-  onAllow,
-  onStop,
 }: {
   devices: ReadonlyArray<Device>
   here: Promise<Option.Option<string>>
-  onAllow: (device: Device) => void
-  onStop: (device: Device) => void
 }) {
   const mine = use(here)
   return (
@@ -112,17 +73,51 @@ function ComputerList({
           label={Option.contains(mine, device.id) ? `${device.name} · this computer` : device.name}
           detail={standing(device)}
         >
-          {allowed(device) ? (
-            <Button size="sm" variant="ghost" onClick={() => onStop(device)}>
-              Stop allowing
-            </Button>
-          ) : (
-            <Button size="sm" onClick={() => onAllow(device)}>
-              Allow
-            </Button>
-          )}
+          <ComputerActions device={device} />
         </Row>
       ))}
+    </>
+  )
+}
+
+/** Builds action elements before matching access so the match selects controls without defining components. */
+function ComputerActions({ device }: { device: Device }) {
+  const reading = useDeviceDecision()
+  const held = deciding.isWaiting(reading)
+  const allow = (
+    <Button size="sm" disabled={held} onClick={() => answerDevice(device, true)}>
+      Allow
+    </Button>
+  )
+  const deny = (
+    <Button
+      size="sm"
+      variant="secondary"
+      disabled={held}
+      onClick={() => answerDevice(device, false)}
+    >
+      Deny
+    </Button>
+  )
+  const stop = (
+    <Button size="sm" variant="ghost" disabled={held} onClick={() => answerDevice(device, false)}>
+      Stop allowing
+    </Button>
+  )
+  const pending = (
+    <>
+      {deny}
+      {allow}
+    </>
+  )
+  return (
+    <>
+      <Refusal message={Option.getOrNull(deciding.refusalFor(reading, device.id))} />
+      {DeviceAccess.match(device.access, {
+        Allowed: () => stop,
+        Pending: () => pending,
+        Revoked: () => allow,
+      })}
     </>
   )
 }
