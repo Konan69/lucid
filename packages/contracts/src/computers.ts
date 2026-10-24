@@ -232,8 +232,9 @@ export type DeviceName = typeof DeviceName.Type
 
 /**
  * Whether the Person lets Vivid use this computer. Enrolling never grants anything: a computer
- * waits as `Pending` until its Person allows it, and at most one of a Person's computers is
- * `Allowed` at a time. `since` is epoch milliseconds for the moment that state began.
+ * waits as `Pending` until its Person explicitly allows or denies it, even while offline or
+ * after a server restart. At most one personal computer is `Allowed` at a time.
+ * `since` is epoch milliseconds for the moment that state began.
  */
 export const DeviceAccess = Schema.TaggedUnion({
   Pending: { since: Schema.Finite },
@@ -267,26 +268,13 @@ export const Device = Schema.Struct({
 export interface Device extends Schema.Schema.Type<typeof Device> {}
 
 export const DeviceResponse = Schema.Struct({ device: Device })
-/**
- * How long a waiting computer counts as asking after its desktop app last enrolled. A desktop app
- * waiting to be allowed enrols again at least every thirty seconds (`apps/desktop/src/main/device.ts`,
- * its retry schedule), so two of those are a minute: an app that is open is never missed, and
- * one that was closed stops being asked about within a minute.
- */
-export const DEVICE_ASKING_MILLIS = 60_000
 
 /**
- * The Person's computers, and which of the waiting ones are asking to be allowed right now: their
- * desktop app is open and enrolled within `DEVICE_ASKING_MILLIS`. A computer waiting to be
- * allowed may not listen (only an allowed one is `Connected`), so this is the only way a surface
- * can tell an app that is open and waiting from a row left by an app that was closed or removed.
- *
- * It is beside the list and not a case of `DevicePresence` on purpose: the desktop app decodes
- * its own `Device` when it enrols, and an installed app would refuse a case it does not know.
+ * The Person's personal computers. `DeviceAccess.Pending` is the durable outstanding request;
+ * presence describes connectivity only and never changes whether a decision is owed.
  */
 export const DeviceListResponse = Schema.Struct({
   devices: Schema.Array(Device),
-  asking: Schema.Array(DeviceId),
 })
 
 /** What the desktop app sends once it is signed in. Repeating it changes nothing. */

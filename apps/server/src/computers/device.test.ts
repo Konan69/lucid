@@ -46,7 +46,6 @@ import {
   ThreadId,
   Workspace,
   type Device,
-  DEVICE_ASKING_MILLIS,
   DeviceListResponse,
   DeviceRequest,
   CopySignInRequest,
@@ -556,8 +555,6 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             presence: DevicePresence.cases.Offline.make({}),
           },
         ])
-        // Its app enrolled just now and it is waiting: it is asking to be allowed.
-        expect(enrolledNotice.asking).toEqual([device.id])
         // Each nextValue advances the debounce clock by 20 ms; access dates precede that advance.
         const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
         const allowedNotice = yield* nextValue(watch)
@@ -570,7 +567,6 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           },
         ])
         expect(allowedNotice.devices).toEqual([allowed.device])
-        expect(allowedNotice.asking).toEqual([])
         const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
         const live = yield* nextValue(watch)
         expect(live.devices).toMatchObject([
@@ -586,24 +582,76 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    it.effect('a waiting computer asks only while its app keeps enrolling', () =>
-      Effect.gen(function* () {
-        const ada = yield* somebody(farFuture)
-        const { device, installation } = yield* enrolled(ada, 'Laptop')
-        const asking = computerHandlers.ListDevices().pipe(
-          as(ada),
-          Effect.map((list) => list.asking),
-        )
-        expect(yield* asking).toEqual([device.id])
-        yield* TestClock.adjust(DEVICE_ASKING_MILLIS - 1)
-        expect(yield* asking).toEqual([device.id])
-        // The app was closed: a minute without enrolling and it is no longer asked about.
-        yield* TestClock.adjust(1)
-        expect(yield* asking).toEqual([])
-        // The same app enrolling again is asking again.
-        yield* computerHandlers.EnrolDevice({ installation, name: 'Laptop' }).pipe(as(ada))
-        expect(yield* asking).toEqual([device.id])
-      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    /** Closing the first registry discards all process memory while retaining the actual device row. */
+    it.effect(
+      'a pending request survives the former deadline, offline time and registry restart',
+      () =>
+        Effect.gen(function* () {
+          const ada = yield* somebody(farFuture)
+          const persisted = yield* Effect.gen(function* () {
+            const { device } = yield* enrolled(ada, 'Laptop')
+            const watch = yield* watchingDevices(ada)
+            expect(watch.initial).toEqual({ devices: [device] })
+            const notices = yield* (yield* PgClient).listen(CHANNEL)
+            yield* TestClock.adjust('61 seconds')
+            yield* silent(notices)
+            expect(yield* Queue.size(watch.values)).toBe(0)
+            expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(watch.initial)
+            return watch.initial
+          }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+          yield* TestClock.adjust('1 day')
+          yield* Effect.gen(function* () {
+            const watch = yield* watchingDevices(ada)
+            expect(watch.initial).toEqual(persisted)
+            expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
+            expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(persisted)
+          }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** Connectivity and another allowance cannot answer either outstanding request. */
+    it.effect(
+      'only explicit Allow or Deny resolves pending requests and the decisions survive restart',
+      () =>
+        Effect.gen(function* () {
+          const ada = yield* somebody(farFuture)
+          const current = yield* enrolled(ada, 'Current computer')
+          yield* computerHandlers.AllowDevice({ id: current.device.id }).pipe(as(ada))
+          const link = yield* listen(ada, current.device, current.installation)
+          const allowed = yield* enrolled(ada, 'Allowed later')
+          const denied = yield* enrolled(ada, 'Denied later')
+          yield* TestClock.adjust('61 seconds')
+          expect((yield* listed(ada)).toSorted()).toEqual([
+            ['Allowed later', 'Pending', 'Offline'],
+            ['Current computer', 'Allowed', 'Connected'],
+            ['Denied later', 'Pending', 'Offline'],
+          ])
+          yield* computerHandlers.RevokeDevice({ id: denied.device.id }).pipe(as(ada))
+          expect((yield* listed(ada)).toSorted()).toEqual([
+            ['Allowed later', 'Pending', 'Offline'],
+            ['Current computer', 'Allowed', 'Connected'],
+            ['Denied later', 'Revoked', 'Offline'],
+          ])
+          yield* computerHandlers.AllowDevice({ id: allowed.device.id }).pipe(as(ada))
+          expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
+          const decided = yield* computerHandlers.ListDevices().pipe(as(ada))
+          expect((yield* listed(ada)).toSorted()).toEqual([
+            ['Allowed later', 'Allowed', 'Offline'],
+            ['Current computer', 'Revoked', 'Offline'],
+            ['Denied later', 'Revoked', 'Offline'],
+          ])
+          yield* TestClock.adjust('1 day')
+          yield* Effect.gen(function* () {
+            yield* computerHandlers
+              .EnrolDevice({ installation: allowed.installation, name: 'Allowed later' })
+              .pipe(as(ada))
+            yield* computerHandlers
+              .EnrolDevice({ installation: denied.installation, name: 'Denied later' })
+              .pipe(as(ada))
+            expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(decided)
+            expect((yield* watchingDevices(ada)).initial).toEqual(decided)
+          }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('WatchDevices emits desktop connection and scoped disconnection', () =>
