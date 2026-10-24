@@ -64,7 +64,6 @@ layer(pageNetworkLayer)((tests) => {
         const responses = yield* Queue.unbounded<NodeHttp.ServerResponse>()
         const server = NodeHttp.createServer((_request, response) => {
           response.setHeader('Content-Type', 'text/plain')
-          response.flushHeaders()
           Queue.offerUnsafe(responses, response)
         })
         yield* Effect.acquireRelease(
@@ -99,23 +98,12 @@ layer(pageNetworkLayer)((tests) => {
             family: 4,
           })
           .pipe(Effect.provideService(Clock.Clock, observed))
-        const reading = yield* request.pipe(Effect.forkScoped)
-        yield* Queue.take(armed)
-        const response = yield* Queue.take(responses)
-        yield* Queue.take(armed)
-        for (const part of ['one', 'two', 'three']) {
-          yield* TestClock.adjust('9 seconds')
-          response.write(part)
-          yield* Queue.take(armed)
-        }
-        response.end()
-        expect((yield* Fiber.join(reading)).body).toBe('onetwothree')
+        // Keep the first response's headers unsent: its request receipt proves a silent
+        // connection exists, without depending on the new watchdog to signal readiness.
         const stalled = yield* request.pipe(Effect.result, Effect.forkScoped)
-        yield* Queue.take(armed)
         const idle = yield* Queue.take(responses)
         const idleClosed = yield* Deferred.make<void>()
         idle.once('close', () => Deferred.doneUnsafe(idleClosed, Effect.void))
-        yield* Queue.take(armed)
         yield* TestClock.adjust('10 seconds')
         idle.end('late body')
         const expired = yield* Fiber.join(stalled)
@@ -126,6 +114,19 @@ layer(pageNetworkLayer)((tests) => {
           }),
         ).toBe('could not be reached')
         yield* Deferred.await(idleClosed)
+        yield* Queue.takeAll(armed)
+        const reading = yield* request.pipe(Effect.forkScoped)
+        yield* Queue.take(armed)
+        const response = yield* Queue.take(responses)
+        response.flushHeaders()
+        yield* Queue.take(armed)
+        for (const part of ['one', 'two', 'three']) {
+          yield* TestClock.adjust('9 seconds')
+          response.write(part)
+          yield* Queue.take(armed)
+        }
+        response.end()
+        expect((yield* Fiber.join(reading)).body).toBe('onetwothree')
       }).pipe(Effect.scoped),
   )
 })

@@ -151,7 +151,7 @@ const lifetime = Effect.fn('LinkTest.lifetime')(function* (home: string, link: L
   const path = NodePath.join(home, 'alive')
   NodeChildProcess.execFileSync('mkfifo', [path, NodePath.join(home, 'hold')])
   const ended = yield* link
-    .run({ command: 'cat alive; echo gone', directory: home, timeoutSeconds: null })
+    .run({ command: 'cat alive; echo gone', directory: home, timeoutSeconds: 20 })
     .pipe(Effect.forkScoped)
   return ended
 })
@@ -191,7 +191,7 @@ it.live.skipIf(!peerAvailable)(
         link.run({
           command: heldCommand,
           directory: server.home,
-          timeoutSeconds: null,
+          timeoutSeconds: 600,
         }),
       )
       yield* created(NodePath.join(server.home, 'started'))
@@ -238,9 +238,9 @@ it.live.skipIf(!peerAvailable)(
       const running = yield* Effect.forkChild(
         Effect.flip(
           link.run({
-            command: 'touch started; read line',
+            command: 'touch started; sleep 300',
             directory: server.home,
-            timeoutSeconds: null,
+            timeoutSeconds: 600,
           }),
         ),
       )
@@ -371,7 +371,7 @@ it.live.skipIf(!peerAvailable)(
       const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
       const old = yield* held.get('machine', locate)
       yield* server.disconnect
-      yield* Effect.flip(old.run({ command: 'true', directory: server.home, timeoutSeconds: null }))
+      yield* Effect.flip(old.run({ command: 'true', directory: server.home, timeoutSeconds: 10 }))
       const fresh = yield* held.get('machine', locate)
       expect(fresh).not.toBe(old)
       // A second call that was on the old connection reports its loss only now.

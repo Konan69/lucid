@@ -1196,25 +1196,32 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
       'refuses a busy Device immediately and admits new work after its owner completes',
       () =>
         Effect.gen(function* () {
-          const test = yield* native()
-          const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-          const request = yield* Queue.take(test.link.requests)
-          const queuedRun = yield* working(test.who.person, test.who.person)
-          expect(yield* useWindow(test.who, queuedRun.threadId, look)).toEqual(
-            WindowOutcome.cases.Busy.make({}),
+          const subject = yield* native()
+          const first = yield* useWindow(subject.who, subject.threadId, look).pipe(
+            Effect.forkScoped,
           )
-          expect(yield* Queue.size(test.link.requests)).toBe(0)
-          expect((yield* windowLedger(test)).map((row) => [row.id, row.status])).toEqual([
+          const request = yield* Queue.take(subject.link.requests)
+          const queuedRun = yield* working(subject.who.person, subject.who.person)
+          const waiting = yield* useWindow(subject.who, queuedRun.threadId, look).pipe(
+            Effect.forkScoped,
+          )
+          yield* TestClock.adjust('9 seconds')
+          expect(Option.isSome(yield* Fiber.poll(waiting))).toBe(true)
+          expect(yield* Fiber.join(waiting)).toEqual(WindowOutcome.cases.Busy.make({}))
+          expect(yield* Queue.size(subject.link.requests)).toBe(0)
+          expect((yield* windowLedger(subject)).map((row) => [row.id, row.status])).toEqual([
             [request.id, 'Dispatched'],
           ])
-          yield* answerWindow(test, request.id)
+          yield* answerWindow(subject, request.id)
           expect(yield* Fiber.join(first)).toEqual(
             WindowOutcome.cases.Completed.make({ result: seen }),
           )
-          const next = yield* useWindow(test.who, queuedRun.threadId, look).pipe(Effect.forkScoped)
-          const admitted = yield* Queue.take(test.link.requests)
+          const next = yield* useWindow(subject.who, queuedRun.threadId, look).pipe(
+            Effect.forkScoped,
+          )
+          const admitted = yield* Queue.take(subject.link.requests)
           expect(admitted.runId).toBe(queuedRun.runId)
-          yield* answerWindow(test, admitted.id)
+          yield* answerWindow(subject, admitted.id)
           expect(yield* Fiber.join(next)).toEqual(
             WindowOutcome.cases.Completed.make({ result: seen }),
           )

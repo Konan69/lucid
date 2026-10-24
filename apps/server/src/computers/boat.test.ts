@@ -1637,7 +1637,7 @@ if record.exists():
             )
           })
           yield* Effect.addFinalizer(() => stoppedProxy)
-          yield* machine.ensure(key)
+          expect(yield* machine.ensure(key).pipe(Effect.isSuccess)).toBe(true)
           const action = BrowserAction.cases.Open.make({ address: 'https://example.com' })
           yield* Ref.set(evidence.browserClosed, true)
           yield* machine.browse({ key, egress: true, action })
