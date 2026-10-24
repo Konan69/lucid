@@ -1,6 +1,0 @@
-audited_site	verdict	status	resolution
-packages/agent/runtime/Dockerfile:44	keep	documented	Docker instruction option names are the constants; HEALTHCHECK duration flags do not expand ENV/ARG. Source: unmeasured for all four settings. Expiry changes only health observations.
-packages/agent/runtime/src/providers/rehearsal/script.test.ts:29	root-cause	fixed	Scoped asynchronous ChildProcess waits for exit and output EOF; Vite closes in finally. Remove child kill timeout.
-packages/agent/runtime/src/providers/rehearsal/script.test.ts:50	root-cause	fixed	Separate opt-out cases and await owned process completion; remove multiplied runner limit.
-packages/agent/runtime/src/providers/rehearsal/script.test.ts:59	root-cause	fixed	Await owned process completion and remove custom runner limit.
-packages/agent/runtime/src/tools/computer.test.ts:253	replace	fixed	Existing Flue read and RPC reply receipts complete the scoped integration test; remove custom runner limit.
