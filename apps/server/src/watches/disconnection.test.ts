@@ -21,12 +21,13 @@ import type { Actor } from '../auth/access.ts'
 import type { Changes } from '../live/changes.ts'
 import type { Conversation } from '../threads/conversation.ts'
 import type { ThreadStore } from '../threads/store.ts'
+import { RunStore } from '../threads/runs.ts'
 import { ExecutorEvents, ExecutorEventsUnreachable } from './events.ts'
 import { Watches } from './lifecycle.ts'
-import { watchRoutes } from './receiver.ts'
+import { threadOf, watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
 import { WatchStore } from './store.ts'
-import { Delivered, Executor, person, testLayer } from './testing.ts'
+import { Executor, person, testLayer } from './testing.ts'
 
 /** The real removal path receives a ready dedicated Connection, as Settings supplies it. */
 const connect = Effect.fn('WatchDisconnectTest.connect')(function* (actor: Actor) {
@@ -161,11 +162,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
             ),
           )
           expect([401, 404]).toContain(forged.status)
-          expect(
-            (yield* Ref.get(yield* Delivered)).filter((delivery) =>
-              delivery.idempotencyKey.startsWith(`watch:${watch.id}:`),
-            ),
-          ).toEqual([])
+          expect(yield* (yield* RunStore).list(threadOf(watch.id, 'after-removal'))).toEqual([])
           const database = yield* Database
           expect(
             yield* database.run(
