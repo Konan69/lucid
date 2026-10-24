@@ -136,7 +136,9 @@ const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
     }),
   )
 
-layer(dependencies, { excludeTestServices: true })((it) => {
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
+layer(dependencies, { excludeTestServices: true, timeout: 180_000 })((it) => {
   it.effect.skipIf(!enabled)(
     'runs, writes, reads and cancels on a real Computer, with a key of its own for each opening',
     () =>
@@ -208,6 +210,7 @@ layer(dependencies, { excludeTestServices: true })((it) => {
 
         // Scoped directory/connection finalizers run before destruction of this owned machine.
       }).pipe(Effect.scoped),
+    180_000,
   )
 
   /**
@@ -277,5 +280,6 @@ return {note: await files.readFile("note.txt", "utf8"), platform: process.platfo
         expect(yield* spoken.ended).toEqual({ exitCode: 0, timedOut: false })
         // Scoped cleanup also runs when runner assertions fail or this case is interrupted.
       }).pipe(Effect.scoped),
+    180_000,
   )
 })

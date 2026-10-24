@@ -13,8 +13,10 @@ import { computerMachineKey } from './store.ts'
  * refused binding, and leave the holder bytes unchanged. Provider destruction is scoped to the
  * captured create receipt; no installation's existing Computer can be adopted by this proof.
  */
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine, live', () => {
-  layer(chainLayer, { excludeTestServices: true })((it) => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'refuses a different holder, releases its binding and leaves the guest holder unchanged',
       () =>
@@ -53,6 +55,7 @@ describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine,
           expect(after).toMatchObject({ exitCode: 0, timedOut: false })
           expect(after.stdout).toBe(before.stdout)
         }).pipe(Effect.scoped),
+      { timeout: 120_000 },
     )
   })
 })

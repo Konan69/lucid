@@ -67,11 +67,13 @@ const timed = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
     return result
   })
 
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(!enabled)('Programs on a real Boat machine', () => {
   // One Layer for both: the machine is woken once, and the second program finds the runner
   // the first one installed.
   // The real clock: the machine is waited for and the provider answers in real time.
-  layer(supervised, { excludeTestServices: true })((it) => {
+  layer(supervised, { timeout: '10 minutes', excludeTestServices: true })((it) => {
     it.effect(
       'runs on the Computer, has two calls answered at the same time, and returns what it computed',
       () =>

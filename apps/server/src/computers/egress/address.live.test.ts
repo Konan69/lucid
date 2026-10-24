@@ -110,8 +110,10 @@ const computerIs = (fixture: ChainFixture, accepts: (state: ComputerState) => bo
     Stream.runHead,
   )
 
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => {
-  layer(NodeHttpClient.layerUndici, { excludeTestServices: true })((it) => {
+  layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 900_000 })((it) => {
     it.effect(
       'a page on the Computer sees the desktop app’s address with egress on, and the Computer’s with it off',
       () =>
@@ -150,6 +152,7 @@ describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => 
             expect(direct).not.toBe(known.value)
           }
         }).pipe(Effect.scoped),
+      { timeout: 900_000 },
     )
   })
 })

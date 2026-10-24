@@ -139,6 +139,8 @@ const inject = Effect.fn('SignInProof.inject')((pid: number) =>
   }),
 )
 
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(!enabled)('cookie injection into a real isolated Chrome', () => {
   it.live(
     'sets and reads back host-only session and capped persistent cookies through the private command',
@@ -155,5 +157,6 @@ describe.skipIf(!enabled)('cookie injection into a real isolated Chrome', () => 
           expect(yield* inject(yield* chrome(directory))).toBe('{"cookies":2}')
         }),
       ),
+    40_000,
   )
 })
