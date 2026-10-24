@@ -1,0 +1,750 @@
+# Public export and option index
+
+READER: agent
+
+This is the named-declaration index for upstream commit `6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc`, version 0.46.0. `/tmp/em-stress/generate-inventory.cjs` traversed TypeScript export declarations and namespace members. `/tmp/em-stress/public.json` is its output. Re-exports are included. A type and value may share a name. Multiple linked lines preserve those declarations.
+
+[capabilities.md](capabilities.md) describes runtime capability groups, general good-for and not-good-for judgments, observed limits, and separate Vivid usage. The type names below describe contracts and extractors. They are good for preserving those contracts in generic tooling. They are not alternative runtime constructors. Use the constructor described by their capability group. Dedicated runtime probes of the type utilities are unverified.
+
+## Package entry points
+
+The core package exports `Machine` from its root, `AtomMachine` from `/reactivity`, `ClusterMachine` from `/cluster`, `MachineTest` from `/testing`, and `/package.json`. These names come from the four index.ts files and [effect-machine package.json:24](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/package.json#L24). There is no core default export.
+
+The React package root re-exports MachineAtom.ts. It also exports `/package.json`. The oxlint package root exports default and recommended. Devtools exports its root namespaces and the `/DevToolsProtocol`, `/MachineDocument`, `/MachineWalkthrough`, and `/package.json` paths. Devtools blocks `/internal/*`. See [effect-machine-react package.json](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/package.json), [oxlint-plugin package.json](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/oxlint-plugin/package.json), and [devtools package.json:25](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/package.json#L25) at the pinned upstream commit.
+
+## packages/effect-machine/src/Machine.ts
+
+- `TypeId`. Source lines [42](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L42), [50](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L50).
+- `InitialEventTypeId`. Source lines [70](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L70).
+- `InitialEvent`. Source lines [79](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L79), [89](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L89).
+- `isInitialEvent`. Source lines [97](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L97).
+- `Machine`. Source lines [143](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L143), [2566](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2566).
+- `Definition`. Source lines [267](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L267), [344](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L344).
+- `Definition.Any`. Source lines [351](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L351).
+- `ChildAlreadyExistsError`. Source lines [364](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L364).
+- `InfiniteTransitionError`. Source lines [372](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L372).
+- `MachineSchemaDecodeError`. Source lines [380](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L380).
+- `MachineSchemaEncodeError`. Source lines [388](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L388).
+- `ProcessLocalError`. Source lines [396](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L396).
+- `StartupError`. Source lines [404](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L404).
+- `StoppedError`. Source lines [412](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L412).
+- `ActionRequirement`. Source lines [426](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L426).
+- `ActionError`. Source lines [439](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L439).
+- `ActionServices`. Source lines [447](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L447).
+- `PlanningServices`. Source lines [456](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L456).
+- `ExecutionServices`. Source lines [464](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L464).
+- `Runtime`. Source lines [475](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L475), [619](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L619).
+- `MachineTarget`. Source lines [503](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L503).
+- `ParentMode`. Source lines [515](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L515).
+- `Parent`. Source lines [524](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L524), [536](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L536).
+- `Parent.Any`. Source lines [538](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L538).
+- `MachineReferences`. Source lines [547](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L547).
+- `Enqueue`. Source lines [575](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L575).
+- `Command`. Source lines [602](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L602).
+- `Runtime.Protocol`. Source lines [626](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L626).
+- `Runtime.Events`. Source lines [637](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L637).
+- `Runtime.Emits`. Source lines [645](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L645).
+- `Runtime.Requirement`. Source lines [653](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L653).
+- `State`. Source lines [892](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L892).
+- `RuntimeSnapshot`. Source lines [1780](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1780).
+- `Inspection`. Source lines [1814](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1814).
+- `Inspection.Endpoint`. Source lines [1816](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1816).
+- `Inspection.Subject`. Source lines [1822](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1822).
+- `Inspection.Origin`. Source lines [1827](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1827).
+- `Inspection.Causation`. Source lines [1840](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1840).
+- `Inspection.Command`. Source lines [1846](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1846).
+- `Inspection.Microstep`. Source lines [1858](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1858).
+- `Inspection.Base`. Source lines [1870](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1870).
+- `Inspection.Created`. Source lines [1880](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1880).
+- `Inspection.Initialized`. Source lines [1889](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1889).
+- `Inspection.StartFailed`. Source lines [1897](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1897).
+- `Inspection.EventSent`. Source lines [1903](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1903).
+- `Inspection.EventProcessed`. Source lines [1913](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1913).
+- `Inspection.StateChanged`. Source lines [1927](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1927).
+- `Inspection.Emitted`. Source lines [1935](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1935).
+- `Inspection.Activity`. Source lines [1942](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1942).
+- `Inspection.ActivityStarted`. Source lines [1951](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1951).
+- `Inspection.ActivityStopped`. Source lines [1957](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1957).
+- `Inspection.Terminated`. Source lines [1965](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1965).
+- `Inspection.Event`. Source lines [1971](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1971).
+- `RuntimeOutcome`. Source lines [1990](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L1990).
+- `Prepared`. Source lines [2034](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2034).
+- `MachineRef`. Source lines [2085](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2085).
+- `Logic`. Source lines [2148](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2148), [2169](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2169).
+- `Logic.Address`. Source lines [2176](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2176).
+- `Logic.Spawn`. Source lines [2196](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2196).
+- `Logic.Scope`. Source lines [2236](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2236).
+- `Logic.Context`. Source lines [2265](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2265).
+- `ChildMachine`. Source lines [2301](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2301), [2320](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2320).
+- `ChildMachine.Any`. Source lines [2327](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2327).
+- `ChildMachine.Family`. Source lines [2336](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2336).
+- `ChildMachine.ParentCompatibility`. Source lines [2347](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2347).
+- `ChildMachine.Executable`. Source lines [2369](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2369).
+- `ChildMachine.SpawnArgs`. Source lines [2382](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2382).
+- `ChildMachine.StartError`. Source lines [2392](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2392).
+- `ChildMachine.StartRequirements`. Source lines [2408](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2408).
+- `ChildMachine.Ref`. Source lines [2424](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2424).
+- `ChildMachine.Event`. Source lines [2443](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2443).
+- `ChildOwner`. Source lines [2454](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2454).
+- `ChildAddress`. Source lines [2481](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2481), [2489](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2489).
+- `ChildAddress.Variance`. Source lines [2496](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2496).
+- `ChildAddress.Event`. Source lines [2508](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2508).
+- `ChildAddress.Compatibility`. Source lines [2517](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2517).
+- `ChildAddress.OptionsCompatibility`. Source lines [2533](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2533).
+- `SpawnOptions`. Source lines [2546](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2546).
+- `SpawnIdOptions`. Source lines [2556](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2556).
+- `Machine.TypeCarrier`. Source lines [2572](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2572).
+- `Machine.ParentEventSchemas`. Source lines [2605](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2605).
+- `Machine.ParentModeOf`. Source lines [2611](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2611).
+- `Machine.ParentEventsOf`. Source lines [2617](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2617).
+- `Machine.ParentDeclarationOf`. Source lines [2624](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2624).
+- `Machine.RootCompatible`. Source lines [2641](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2641).
+- `Machine.Any`. Source lines [2659](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2659).
+- `Machine.States`. Source lines [2687](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2687).
+- `Machine.Events`. Source lines [2695](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2695).
+- `Machine.InputSchema`. Source lines [2703](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2703).
+- `Machine.Input`. Source lines [2714](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2714).
+- `Machine.UnhandledStates`. Source lines [2725](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2725).
+- `Machine.Error`. Source lines [2733](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2733).
+- `Machine.Services`. Source lines [2741](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2741).
+- `Machine.InitialError`. Source lines [2749](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2749).
+- `Machine.InitialServices`. Source lines [2757](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2757).
+- `Machine.FinalStates`. Source lines [2765](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2765).
+- `Machine.Output`. Source lines [2773](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2773).
+- `Machine.EmittedEvents`. Source lines [2781](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2781).
+- `Machine.OutputStates`. Source lines [2789](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2789).
+- `Machine.InputEvents`. Source lines [2797](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2797).
+- `Machine.ParentEvents`. Source lines [2800](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2800).
+- `Machine.ParentAvailability`. Source lines [2803](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2803).
+- `Machine.InternalEventSchemas`. Source lines [2806](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2806).
+- `Machine.InternalEvents`. Source lines [2816](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2816).
+- `Machine.Event`. Source lines [2824](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2824).
+- `Machine.InputEvent`. Source lines [2832](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2832).
+- `Machine.EventConstruction`. Source lines [2841](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2841).
+- `Machine.EmittedEventConstruction`. Source lines [2847](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2847).
+- `Machine.EventInput`. Source lines [2853](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2853).
+- `Machine.EmittedEventInput`. Source lines [2858](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2858).
+- `Machine.EventInputOf`. Source lines [2863](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2863).
+- `Machine.EventProtocolKind`. Source lines [2866](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2866).
+- `Machine.EventConstructors`. Source lines [2904](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2904).
+- `Machine.EventProtocol`. Source lines [2920](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2920), [2930](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2930).
+- `Machine.EventProtocol.Any`. Source lines [2932](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2932).
+- `Machine.EventProtocolInput`. Source lines [2941](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2941).
+- `Machine.EventProtocolInputSchemasOf`. Source lines [2951](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2951).
+- `Machine.EventProtocolSchemas`. Source lines [2961](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2961).
+- `Machine.EmittedEvent`. Source lines [2969](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2969).
+- `Machine.TaggedSchema`. Source lines [2981](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2981).
+- `Machine.StateNodeAnnotations`. Source lines [2994](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2994).
+- `Machine.SchemaLessStateAnnotations`. Source lines [3004](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3004).
+- `Machine.AtomicStateNodeConfig`. Source lines [3018](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3018).
+- `Machine.CompoundStateNodeConfig`. Source lines [3059](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3059).
+- `Machine.ParallelStateNodeConfig`. Source lines [3086](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3086).
+- `Machine.HistoryStateNodeConfig`. Source lines [3120](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3120).
+- `Machine.ChoiceStateNodeConfig`. Source lines [3144](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3144).
+- `Machine.StateNodeConfig`. Source lines [3157](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3157).
+- `Machine.StateTree`. Source lines [3173](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3173).
+- `Machine.StateSchemas`. Source lines [3181](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3181).
+- `Machine.StateAccessors`. Source lines [3210](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3210).
+- `Machine.ValidateStateSchemas`. Source lines [3318](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3318).
+- `Machine.StateNodeBase`. Source lines [3321](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3321).
+- `Machine.AtomicStateNode`. Source lines [3330](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3330).
+- `Machine.CompoundStateNode`. Source lines [3343](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3343).
+- `Machine.ParallelStateNode`. Source lines [3359](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3359).
+- `Machine.FinalStateNode`. Source lines [3373](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3373).
+- `Machine.HistoryStateNode`. Source lines [3386](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3386).
+- `Machine.ChoiceStateNode`. Source lines [3399](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3399).
+- `Machine.ActiveStateNode`. Source lines [3420](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3420).
+- `Machine.StateNode`. Source lines [3426](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3426).
+- `Machine.StateNodes`. Source lines [3441](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3441).
+- `Machine.TransitionTrigger`. Source lines [3456](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3456).
+- `Machine.TransitionTargetSelection`. Source lines [3477](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3477).
+- `Machine.TransitionBranch`. Source lines [3488](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3488).
+- `Machine.InitialDefinition`. Source lines [3505](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3505).
+- `Machine.TransitionDefinition`. Source lines [3523](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3523).
+- `Machine.ActivityDefinition`. Source lines [3545](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3545).
+- `Machine.RetainedTransition`. Source lines [3554](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3554).
+- `Machine.InputArgs`. Source lines [3583](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3583).
+- `Machine.TagOf`. Source lines [3592](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3592).
+- `Machine.NodeSchema`. Source lines [3600](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3600).
+- `Machine.JoinPath`. Source lines [3610](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3610).
+- `Machine.StateIdentifier`. Source lines [3618](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3618).
+- `Machine.ValuedStateIdentifier`. Source lines [3621](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3621).
+- `Machine.StructuralStateIdentifier`. Source lines [3628](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3628).
+- `Machine.StateIdentifierWithPrefix`. Source lines [3640](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3640).
+- `Machine.HistoryIdentifier`. Source lines [3659](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3659).
+- `Machine.ChoiceIdentifier`. Source lines [3662](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3662).
+- `Machine.StateNodeIdentifier`. Source lines [3670](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3670).
+- `Machine.HistoryIdentifierWithPrefix`. Source lines [3676](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3676).
+- `Machine.ChoiceIdentifierWithPrefix`. Source lines [3687](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3687).
+- `Machine.ActiveStateKey`. Source lines [3698](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3698).
+- `Machine.HistoryStateKey`. Source lines [3705](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3705).
+- `Machine.ChoiceStateKey`. Source lines [3710](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3710).
+- `Machine.RequiredHistoryInitializers`. Source lines [3721](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3721).
+- `Machine.HistoryParentIdentifier`. Source lines [3726](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3726).
+- `Machine.ChoiceParentIdentifier`. Source lines [3731](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3731).
+- `Machine.MissingHistoryImplementations`. Source lines [3736](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3736).
+- `Machine.MissingChoiceImplementations`. Source lines [3742](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3742).
+- `Machine.EnsureChoiceImplementations`. Source lines [3748](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3748).
+- `Machine.EnsureHistoryImplementations`. Source lines [3758](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3758).
+- `Machine.RequiredInitializers`. Source lines [3770](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3770).
+- `Machine.EnsureInitialImplementations`. Source lines [3775](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3775).
+- `Machine.NodeByIdentifier`. Source lines [3790](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3790).
+- `Machine.SchemaByIdentifier`. Source lines [3816](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3816).
+- `Machine.StateOf`. Source lines [3827](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3827).
+- `Machine.EventOf`. Source lines [3838](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3838).
+- `Machine.EmittedEventOf`. Source lines [3847](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3847).
+- `Machine.LifecycleEvent`. Source lines [3855](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3855).
+- `Machine.StateByIdentifier`. Source lines [3863](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3863).
+- `Machine.ParentStateIdentifier`. Source lines [3874](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3874).
+- `Machine.ImmediateParentStateIdentifier`. Source lines [3887](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3887).
+- `Machine.ParentStateValues`. Source lines [3899](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3899).
+- `Machine.ParentStateValue`. Source lines [3916](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3916).
+- `Machine.StateWithParents`. Source lines [3933](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3933).
+- `Machine.OutputByIdentifier`. Source lines [3953](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3953).
+- `Machine.CompletionOutputByIdentifier`. Source lines [3987](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3987).
+- `Machine.TerminalOutput`. Source lines [4017](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4017).
+- `Machine.DeclaredOutputState`. Source lines [4038](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4038).
+- `Machine.EnsureOutputImplementations`. Source lines [4053](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4053).
+- `Machine.SnapshotDecodingServices`. Source lines [4078](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4078).
+- `Machine.SnapshotEncodingServices`. Source lines [4092](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4092).
+- `Machine.EncodedSnapshotState`. Source lines [4105](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4105).
+- `Machine.EncodedSnapshotCompletion`. Source lines [4119](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4119).
+- `Machine.EncodedSnapshotHistoryEntry`. Source lines [4125](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4125).
+- `Machine.EncodedSnapshot`. Source lines [4144](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4144).
+- `Machine.SnapshotCompletion`. Source lines [4158](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4158).
+- `Machine.SnapshotHistoryEntry`. Source lines [4164](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4164).
+- `Machine.SnapshotMetadata`. Source lines [4186](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4186).
+- `Machine.AtomicSnapshot`. Source lines [4198](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4198).
+- `Machine.CompoundSnapshot`. Source lines [4210](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4210).
+- `Machine.ParallelSnapshot`. Source lines [4223](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4223).
+- `Machine.SnapshotByIdentifier`. Source lines [4236](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4236).
+- `Machine.SnapshotWithPrefix`. Source lines [4262](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4262).
+- `Machine.SnapshotRegionsWithPrefix`. Source lines [4276](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4276).
+- `Machine.SnapshotByIdentifierWithPath`. Source lines [4289](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4289).
+- `Machine.CompleteSnapshotContaining`. Source lines [4318](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4318).
+- `Machine.Snapshot`. Source lines [4330](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4330).
+- `Machine.RootStateIdentifier`. Source lines [4340](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4340).
+- `Machine.SnapshotContainingFinal`. Source lines [4348](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4348).
+- `Machine.FinalStateFromDefinition`. Source lines [4365](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4365).
+- `Machine.EventByTag`. Source lines [4379](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4379).
+- `Machine.StateConstruction`. Source lines [4402](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4402).
+- `Machine.Target`. Source lines [4412](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4412).
+- `Machine.StateUpdate`. Source lines [4434](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4434).
+- `Machine.CombinedTarget`. Source lines [4451](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4451).
+- `Machine.NoTarget`. Source lines [4484](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4484).
+- `Machine.Declined`. Source lines [4499](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4499).
+- `Machine.TransitionAcceptance`. Source lines [4504](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4504).
+- `Machine.HistoryTarget`. Source lines [4516](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4516).
+- `Machine.InitialTarget`. Source lines [4532](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4532).
+- `Machine.ChoiceTargetInstruction`. Source lines [4543](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4543).
+- `Machine.ChoiceTarget`. Source lines [4551](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4551).
+- `Machine.HistoryTargetBuilder`. Source lines [4559](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4559).
+- `Machine.FullTargetBuilder`. Source lines [4572](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4572).
+- `Machine.HistoryDefaultTargetBuilder`. Source lines [4582](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4582).
+- `Machine.LocalTargetBuilder`. Source lines [4600](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4600).
+- `Machine.BranchTargetBuilder`. Source lines [4619](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4619).
+- `Machine.TargetBuilder`. Source lines [4647](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4647).
+- `Machine.TargetSelection`. Source lines [4705](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4705).
+- `Machine.HandlerContext`. Source lines [4740](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4740).
+- `Machine.StateActionContext`. Source lines [4772](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4772).
+- `Machine.InvokeContext`. Source lines [4796](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4796).
+- `Machine.InvokeSnapshotContext`. Source lines [4824](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4824).
+- `Machine.InvokeDoneContext`. Source lines [4855](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4855).
+- `Machine.InvokeElementContext`. Source lines [4881](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4881).
+- `Machine.InvokeFailureContext`. Source lines [4907](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4907).
+- `Machine.AlwaysContext`. Source lines [4938](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4938).
+- `Machine.DoneContext`. Source lines [4967](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4967).
+- `Machine.ChoiceContext`. Source lines [4993](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L4993).
+- `Machine.FinalOutputContext`. Source lines [5025](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5025).
+- `Machine.ParallelOutputRegions`. Source lines [5046](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5046).
+- `Machine.ParallelOutputContext`. Source lines [5064](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5064).
+- `Machine.StateActionResult`. Source lines [5087](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5087).
+- `Machine.InitialResult`. Source lines [5095](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5095).
+- `Machine.HandlerResult`. Source lines [5111](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5111).
+- `Machine.ChoiceResult`. Source lines [5132](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5132).
+- `Machine.HandlerEffect`. Source lines [5150](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5150).
+- `Machine.HandlerError`. Source lines [5157](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5157).
+- `Machine.HandlerServices`. Source lines [5164](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5164).
+- `Machine.InitialReturn`. Source lines [5171](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5171).
+- `Machine.StateActionReturn`. Source lines [5178](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5178).
+- `Machine.HistoryDefaultReturn`. Source lines [5182](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5182).
+- `Machine.ChoiceReturn`. Source lines [5190](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5190).
+- `Machine.EventTransitionReturn`. Source lines [5198](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5198).
+- `Machine.EventHandlerReturn`. Source lines [5207](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5207).
+- `Machine.InvokeReturn`. Source lines [5218](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5218).
+- `Machine.InvokeResolvedSource`. Source lines [5232](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5232).
+- `Machine.InvokeLogic`. Source lines [5258](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5258).
+- `Machine.InvokeInitialError`. Source lines [5286](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5286).
+- `Machine.InvokeRuntimeError`. Source lines [5296](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5296).
+- `Machine.InvokeOutput`. Source lines [5306](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5306).
+- `Machine.InvokeServices`. Source lines [5316](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5316).
+- `Machine.InvokeEmits`. Source lines [5326](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5326).
+- `Machine.InvokeParentEvents`. Source lines [5333](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5333).
+- `Machine.InvokeOutcomeReturn`. Source lines [5340](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5340).
+- `Machine.InvokeError`. Source lines [5375](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5375).
+- `Machine.InvokeRequirements`. Source lines [5386](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5386).
+- `Machine.AlwaysReturn`. Source lines [5397](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5397).
+- `Machine.DoneReturn`. Source lines [5406](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5406).
+- `Machine.FinalOutputReturn`. Source lines [5415](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5415).
+- `Machine.ConfigServices`. Source lines [5425](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5425).
+- `Machine.SelectionBuilder`. Source lines [5447](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5447).
+- `Machine.SelectionKind`. Source lines [5449](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5449).
+- `Machine.SelectionPath`. Source lines [5450](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5450).
+- `Machine.TargetBuilderResult`. Source lines [5451](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5451).
+- `Machine.SelectedTargetResult`. Source lines [5455](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5455).
+- `Machine.UpdatingStateConstruction`. Source lines [5466](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5466).
+- `Machine.TransitionResolveContext`. Source lines [5506](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5506).
+- `Machine.DeclineCapability`. Source lines [5514](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5514).
+- `Machine.TransitionBranchInput`. Source lines [5520](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5520).
+- `Machine.SelectedBranch`. Source lines [5530](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5530).
+- `Machine.SelectedBranchBuilder`. Source lines [5573](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5573).
+- `Machine.BranchSelectors`. Source lines [5577](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5577).
+- `Machine.BranchSelectionResult`. Source lines [5584](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5584).
+- `Machine.TransitionBranchesResolveContext`. Source lines [5591](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5591).
+- `Machine.InvokeTransition`. Source lines [5596](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5596).
+- `Machine.InvokeSource`. Source lines [5604](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5604).
+- `Machine.LogicStateOf`. Source lines [5730](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5730).
+- `Machine.LogicEventOf`. Source lines [5731](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5731).
+- `Machine.LogicErrorOf`. Source lines [5736](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5736).
+- `Machine.LogicServicesOf`. Source lines [5737](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5737).
+- `Machine.LogicOutputOf`. Source lines [5738](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5738).
+- `Machine.LogicInitialErrorOf`. Source lines [5739](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5739).
+- `Machine.HistoryDefaultContext`. Source lines [5796](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5796).
+- `Machine.HistoryDefaultHandler`. Source lines [5817](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5817).
+- `Machine.HistoryDefaultConfig`. Source lines [5849](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5849).
+- `Machine.Program`. Source lines [6439](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6439).
+- `Machine.EffectSources`. Source lines [6440](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6440).
+- `Machine.StreamSources`. Source lines [6441](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6441).
+- `Machine.TimerSources`. Source lines [6442](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6442).
+- `Machine.LogicSources`. Source lines [6443](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6443).
+- `Machine.ValidateLogicSources`. Source lines [6444](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6444).
+- `Machine.ChildSources`. Source lines [6453](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6453).
+- `Machine.ValidatePrograms`. Source lines [6454](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6454).
+- `Machine.BranchDeclaration`. Source lines [6470](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6470).
+- `Machine.BranchDefinitions`. Source lines [6550](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6550).
+- `Machine.Registrations`. Source lines [6554](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6554).
+- `Machine.ConstructionObject`. Source lines [6597](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6597).
+- `Machine.Transition`. Source lines [6925](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6925).
+- `Machine.Invocation`. Source lines [7116](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7116).
+- `Machine.StateHandler`. Source lines [7334](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7334).
+- `Machine.Handler`. Source lines [7671](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7671).
+- `Machine.AnyStateConfig`. Source lines [7731](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7731).
+- `Machine.EventHandlerMap`. Source lines [7741](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7741).
+- `Machine.StateConfig`. Source lines [7770](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7770).
+- `Machine.StateConfigs`. Source lines [7825](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7825).
+- `Snapshot`. Source lines [7855](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7855), [7862](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7862).
+- `Snapshot.Node`. Source lines [7864](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7864).
+- `Snapshot.Path`. Source lines [7874](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7874).
+- `Snapshot.At`. Source lines [7878](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7878).
+- `Value`. Source lines [7892](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7892).
+- `SnapshotAt`. Source lines [7907](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7907).
+- `isMachine`. Source lines [7918](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7918).
+- `isFinal`. Source lines [7926](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7926).
+- `state`. Source lines [7997](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7997).
+- `make`. Source lines [8230](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8230).
+- `EventOf`. Source lines [8238](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8238).
+- `events`. Source lines [8293](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8293).
+- `eventsFromSchemas`. Source lines [8301](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8301).
+- `parent`. Source lines [8317](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8317).
+- `optionalParent`. Source lines [8330](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8330).
+- `internalEvents`. Source lines [8360](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8360).
+- `internalEventsFromSchemas`. Source lines [8371](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8371).
+- `emittedEvents`. Source lines [8397](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8397).
+- `emittedEventsFromSchemas`. Source lines [8408](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8408).
+- `encodeSnapshot`. Source lines [8469](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8469).
+- `decodeSnapshot`. Source lines [8557](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8557).
+- `planInitial`. Source lines [8670](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8670).
+- `stateNodes`. Source lines [8761](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8761).
+- `initialDefinition`. Source lines [8779](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8779).
+- `inputEventSchemas`. Source lines [8796](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8796).
+- `transitionDefinitions`. Source lines [8814](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8814).
+- `activityDefinitions`. Source lines [8834](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8834).
+- `configuration`. Source lines [8851](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8851).
+- `enabled`. Source lines [8872](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8872).
+- `can`. Source lines [8959](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8959).
+- `plan`. Source lines [9095](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9095).
+- `logic`. Source lines [9200](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9200).
+- `child`. Source lines [9229](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9229).
+- `childFamily`. Source lines [9241](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9241).
+- `childAddress`. Source lines [9252](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9252).
+- `spawn`. Source lines [9274](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9274).
+- `sendTo`. Source lines [9320](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9320).
+- `stopChild`. Source lines [9337](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9337).
+- `watch`. Source lines [9348](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9348).
+- `waitFor`. Source lines [9376](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9376).
+- `prepare`. Source lines [9424](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9424).
+- `start`. Source lines [9546](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9546).
+- `resume`. Source lines [9669](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L9669).
+
+## packages/effect-machine/src/unstable/reactivity/AtomMachine.ts
+
+- `ChildNotActiveError`. Source lines [28](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L28).
+- `MachineAtom`. Source lines [81](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L81), [156](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L156).
+- `MachineAtom.Any`. Source lines [163](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L163).
+- `MachineAtom.State`. Source lines [171](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L171).
+- `MachineAtom.Event`. Source lines [180](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L180).
+- `isMachineAtom`. Source lines [195](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L195).
+- `emissions`. Source lines [213](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L213).
+- `inspection`. Source lines [225](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L225).
+- `childEmissions`. Source lines [235](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L235).
+- `ChildMachineAtom`. Source lines [261](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L261), [349](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L349).
+- `ChildMachineAtom.Any`. Source lines [356](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L356).
+- `ChildMachineAtom.State`. Source lines [364](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L364).
+- `ChildOf`. Source lines [380](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L380).
+- `select`. Source lines [499](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L499).
+- `selectSnapshot`. Source lines [553](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L553).
+- `selectChild`. Source lines [614](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L614).
+- `selectSnapshotChild`. Source lines [669](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L669).
+- `matches`. Source lines [742](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L742).
+- `can`. Source lines [808](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L808).
+- `matchesChild`. Source lines [823](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L823).
+- `Bound`. Source lines [1029](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1029).
+- `family`. Source lines [1130](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1130).
+- `familyChild`. Source lines [1175](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1175).
+- `make`. Source lines [1224](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1224).
+- `factory`. Source lines [1298](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1298).
+- `resume`. Source lines [1316](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1316).
+- `bind`. Source lines [1338](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1338).
+
+## packages/effect-machine/src/testing/MachineTest.ts
+
+- `advanceCommand`. Source lines [27](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L27).
+- `CausalRuntimeAssertionContext`. Source lines [28](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L28).
+- `CausalRuntimeCommandActual`. Source lines [29](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L29).
+- `CausalRuntimeCommandFailure`. Source lines [30](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L30).
+- `CausalRuntimeCommandRecord`. Source lines [31](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L31).
+- `CausalRuntimeCommandResult`. Source lines [32](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L32).
+- `CausalRuntimeInspectionContext`. Source lines [33](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L33).
+- `CausalRuntimeModelOptions`. Source lines [34](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L34).
+- `CausalRuntimeModelStep`. Source lines [35](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L35).
+- `CausalRuntimeTranscript`. Source lines [36](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L36).
+- `CausalVerificationAwaitContext`. Source lines [37](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L37).
+- `CausalVerificationOptions`. Source lines [38](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L38).
+- `CausalVerificationTranscript`. Source lines [39](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L39).
+- `checkpointCommand`. Source lines [40](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L40).
+- `EnqueuedRuntimeAssertionContext`. Source lines [41](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L41).
+- `EnqueuedRuntimeCommandActual`. Source lines [42](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L42).
+- `EnqueuedRuntimeCommandRecord`. Source lines [43](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L43).
+- `EnqueuedRuntimeInspectionContext`. Source lines [44](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L44).
+- `EnqueuedRuntimeModelOptions`. Source lines [45](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L45).
+- `EnqueuedRuntimeModelStep`. Source lines [46](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L46).
+- `EnqueuedRuntimeTranscript`. Source lines [47](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L47).
+- `formatCausalTranscript`. Source lines [48](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L48).
+- `formatEnqueuedTranscript`. Source lines [49](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L49).
+- `formatRuntimeTranscript`. Source lines [50](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L50).
+- `runCausalCommands`. Source lines [51](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L51).
+- `runEnqueuedCommands`. Source lines [52](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L52).
+- `runRuntimeCommands`. Source lines [53](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L53).
+- `RuntimeAssertionContext`. Source lines [54](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L54).
+- `RuntimeAwait`. Source lines [55](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L55).
+- `RuntimeCommand`. Source lines [56](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L56).
+- `RuntimeCommandActual`. Source lines [57](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L57).
+- `RuntimeCommandFailure`. Source lines [58](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L58).
+- `RuntimeCommandRecord`. Source lines [59](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L59).
+- `RuntimeCommandResult`. Source lines [60](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L60).
+- `RuntimeCommands`. Source lines [61](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L61).
+- `runtimeCommands`. Source lines [62](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L62).
+- `RuntimeCommandsDiagnostics`. Source lines [63](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L63).
+- `RuntimeCommandsOptions`. Source lines [64](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L64).
+- `RuntimeInspectionContext`. Source lines [65](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L65).
+- `RuntimeModelOptions`. Source lines [66](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L66).
+- `RuntimeModelStep`. Source lines [67](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L67).
+- `RuntimeObservationError`. Source lines [68](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L68).
+- `RuntimeSynchronization`. Source lines [69](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L69).
+- `RuntimeTranscript`. Source lines [70](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L70).
+- `sendCommand`. Source lines [71](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L71).
+- `stopCommand`. Source lines [72](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L72).
+- `verifyCausalCommands`. Source lines [73](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L73).
+- `SchemaArbitraryOpaqueFilterWarning`. Source lines [77](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L77).
+- `SchemaArbitraryReport`. Source lines [78](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L78).
+- `SchemaArbitraryWarning`. Source lines [79](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L79).
+- `compileModel`. Source lines [83](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L83).
+- `FiniteAtomicState`. Source lines [84](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L84).
+- `FiniteAutomaticTransition`. Source lines [85](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L85).
+- `FiniteCompoundState`. Source lines [86](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L86).
+- `FiniteEventTransition`. Source lines [87](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L87).
+- `FiniteFinalState`. Source lines [88](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L88).
+- `FiniteHistoryMutation`. Source lines [89](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L89).
+- `FiniteHistoryScenario`. Source lines [90](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L90).
+- `FiniteHistoryState`. Source lines [91](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L91).
+- `FiniteHistoryTransfer`. Source lines [92](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L92).
+- `FiniteModel`. Source lines [93](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L93).
+- `FiniteModelDiagnostics`. Source lines [94](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L94).
+- `FiniteModelOptions`. Source lines [95](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L95).
+- `FiniteModels`. Source lines [96](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L96).
+- `finiteModels`. Source lines [97](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L97).
+- `FiniteParallelState`. Source lines [98](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L98).
+- `FiniteState`. Source lines [99](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L99).
+- `FiniteTransition`. Source lines [100](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L100).
+- `FiniteTransitionTrigger`. Source lines [101](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L101).
+- `ModelVerificationError`. Source lines [105](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L105).
+- `ModelVerificationField`. Source lines [106](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L106).
+- `ModelVerificationLocation`. Source lines [107](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L107).
+- `ModelVerificationMismatch`. Source lines [108](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L108).
+- `ReferenceCompletion`. Source lines [109](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L109).
+- `ReferenceHistoryRecord`. Source lines [110](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L110).
+- `ReferenceInitialStep`. Source lines [111](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L111).
+- `ReferenceMicrostep`. Source lines [112](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L112).
+- `ReferenceState`. Source lines [113](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L113).
+- `ReferenceStateValue`. Source lines [114](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L114).
+- `ReferenceStep`. Source lines [115](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L115).
+- `ReferenceTrace`. Source lines [116](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L116).
+- `ReferenceTransition`. Source lines [117](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L117).
+- `interpretModel`. Source lines [127](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L127).
+- `Scenario`. Source lines [161](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L161).
+- `ScenarioOptions`. Source lines [178](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L178).
+- `SchemaArbitraryDiagnostic`. Source lines [197](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L197).
+- `ScenarioDiagnostics`. Source lines [209](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L209).
+- `Scenarios`. Source lines [221](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L221).
+- `scenarios`. Source lines [264](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L264).
+- `PlanCompletion`. Source lines [273](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L273).
+- `Microstep`. Source lines [289](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L289).
+- `InitialPlan`. Source lines [316](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L316).
+- `EventPlan`. Source lines [335](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L335).
+- `InitialTrace`. Source lines [351](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L351).
+- `TraceStep`. Source lines [365](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L365).
+- `Trace`. Source lines [381](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L381).
+- `ProbeMicrostep`. Source lines [399](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L399).
+- `ProbePlan`. Source lines [407](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L407).
+- `ProbeStep`. Source lines [429](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L429).
+- `Probe`. Source lines [448](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L448).
+- `ProbeUnavailableError`. Source lines [485](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L485).
+- `probe`. Source lines [523](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L523).
+- `RuntimeInvariantErrorChannel`. Source lines [539](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L539).
+- `CausalRuntimeEvidenceRecord`. Source lines [552](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L552).
+- `CausalRuntimeEvidence`. Source lines [564](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L564).
+- `RuntimeSnapshotObservationMode`. Source lines [577](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L577).
+- `RuntimeSnapshotObservation`. Source lines [585](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L585).
+- `RuntimeInvariantRecord`. Source lines [593](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L593).
+- `RuntimeInvariantTranscript`. Source lines [617](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L617).
+- `RuntimeSnapshotInvariantContext`. Source lines [638](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L638).
+- `RuntimeCommandInvariantContext`. Source lines [656](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L656).
+- `RuntimeTranscriptInvariantContext`. Source lines [674](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L674).
+- `RuntimeSnapshotInvariantOptions`. Source lines [685](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L685).
+- `RuntimeSnapshotInvariant`. Source lines [697](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L697).
+- `RuntimeCommandInvariant`. Source lines [712](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L712).
+- `RuntimeTranscriptInvariant`. Source lines [726](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L726).
+- `RuntimeInvariant`. Source lines [740](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L740).
+- `RuntimeInvariantBuilder`. Source lines [751](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L751).
+- `runtimeInvariants`. Source lines [775](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L775).
+- `RuntimeInvariantScope`. Source lines [784](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L784).
+- `RuntimeInvariantCheckResult`. Source lines [792](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L792).
+- `RuntimeInvariantReport`. Source lines [806](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L806).
+- `RuntimeInvariantViolation`. Source lines [816](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L816).
+- `RuntimeInvariantError`. Source lines [834](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L834).
+- `checkRuntimeInvariants`. Source lines [842](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L842).
+- `assertRuntimeInvariants`. Source lines [855](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L855).
+- `PlannerRuntimeAgreementViolation`. Source lines [867](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L867).
+- `PlannerRuntimeAgreementError`. Source lines [889](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L889).
+- `assertPlannerRuntimeAgreement`. Source lines [897](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L897).
+- `InvariantOutcome`. Source lines [912](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L912).
+- `StateObservationMode`. Source lines [925](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L925).
+- `StateObservation`. Source lines [933](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L933).
+- `StateInvariantContext`. Source lines [941](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L941).
+- `StepInvariantContext`. Source lines [959](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L959).
+- `TraceInvariantContext`. Source lines [978](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L978).
+- `InvariantOptions`. Source lines [992](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L992).
+- `StateInvariantOptions`. Source lines [1005](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1005).
+- `StateInvariant`. Source lines [1015](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1015).
+- `StepInvariant`. Source lines [1028](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1028).
+- `TraceInvariant`. Source lines [1040](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1040).
+- `Invariant`. Source lines [1052](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1052), [1085](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1085).
+- `InvariantBuilder`. Source lines [1060](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1060).
+- `invariants`. Source lines [1141](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1141).
+- `InvariantScope`. Source lines [1149](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1149).
+- `InvariantStatus`. Source lines [1160](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1160).
+- `InvariantCheckResult`. Source lines [1168](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1168).
+- `InvariantReport`. Source lines [1182](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1182).
+- `InvariantViolation`. Source lines [1192](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1192).
+- `InvariantError`. Source lines [1212](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1212).
+- `checkInvariants`. Source lines [1224](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1224).
+- `assertInvariants`. Source lines [1240](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1240).
+- `ExplorationKey`. Source lines [1256](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1256).
+- `ExplorationLimits`. Source lines [1267](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1267).
+- `ResolvedExplorationLimits`. Source lines [1279](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1279).
+- `ExplorationStateContext`. Source lines [1291](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1291).
+- `ExplorationNode`. Source lines [1307](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1307).
+- `ExplorationEdge`. Source lines [1319](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1319).
+- `ExplorationFrontier`. Source lines [1331](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1331).
+- `ExplorationCompleteness`. Source lines [1360](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1360).
+- `ExplorationStats`. Source lines [1376](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1376).
+- `Exploration`. Source lines [1389](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1389).
+- `ExploreOptions`. Source lines [1427](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1427).
+- `explore`. Source lines [1486](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1486).
+- `ExplorationPredicate`. Source lines [1501](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1501).
+- `ReachabilityFailure`. Source lines [1511](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1511).
+- `ReachabilityError`. Source lines [1519](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1519).
+- `findShortest`. Source lines [1528](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1528).
+- `assertReachable`. Source lines [1542](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1542).
+- `assertUnreachable`. Source lines [1557](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1557).
+- `verifyModel`. Source lines [1574](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1574).
+- `RunFailure`. Source lines [1586](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1586).
+- `RunError`. Source lines [1614](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1614).
+- `RunServices`. Source lines [1631](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1631).
+- `run`. Source lines [1669](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1669).
+- `CoverageSummary`. Source lines [1680](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1680).
+- `StateCoverageItem`. Source lines [1694](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1694).
+- `StateCoverage`. Source lines [1705](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1705).
+- `TransitionDefinitionCoverageItem`. Source lines [1717](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1717).
+- `TransitionBranchCoverageItem`. Source lines [1738](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1738).
+- `TransitionCoverage`. Source lines [1760](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1760).
+- `EventCoverageItem`. Source lines [1775](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1775).
+- `EventCoverage`. Source lines [1786](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1786).
+- `ScenarioCoverage`. Source lines [1817](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1817).
+- `LogicalConfigurationCoverage`. Source lines [1829](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1829).
+- `MicrostepCoverageEvidence`. Source lines [1841](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1841).
+- `CompletionCoverageEvidence`. Source lines [1861](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1861).
+- `HistoryCoverageEvidence`. Source lines [1873](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1873).
+- `Coverage`. Source lines [1889](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1889).
+- `coverage`. Source lines [1940](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1940).
+- `ObservedGraphNodeObservations`. Source lines [1951](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1951).
+- `ObservedGraphNode`. Source lines [1964](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1964).
+- `ObservedGraphMicrostep`. Source lines [1979](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1979).
+- `ObservedGraphEdge`. Source lines [1996](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1996).
+- `ObservedGraph`. Source lines [2018](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2018).
+- `observedGraph`. Source lines [2038](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2038).
+- `VerificationLawGroup`. Source lines [2053](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2053).
+- `VerificationLaw`. Source lines [2066](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2066).
+- `VerificationViolation`. Source lines [2104](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2104).
+- `VerificationError`. Source lines [2119](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2119).
+- `VerifyOptions`. Source lines [2127](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2127).
+- `verify`. Source lines [2171](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2171).
+- `formatTrace`. Source lines [2187](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2187).
+
+## packages/effect-machine/src/unstable/cluster/ClusterMachine.ts
+
+- `Checkpoint`. Source lines [33](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L33).
+- `LoadResult`. Source lines [59](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L59).
+- `CommitResult`. Source lines [73](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L73), [81](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L81), [92](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L92).
+- `CommitResult.Committed`. Source lines [99](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L99).
+- `CommitResult.Duplicate`. Source lines [109](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L109).
+- `Storage`. Source lines [134](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L134).
+- `Accepted`. Source lines [143](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L143).
+- `RejectionReason`. Source lines [152](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L152), [160](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L160).
+- `Rejected`. Source lines [169](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L169).
+- `SendResult`. Source lines [177](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L177).
+- `ClusterMachine`. Source lines [201](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L201).
+- `makeMemory`. Source lines [304](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L304).
+- `layerMemory`. Source lines [312](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L312).
+- `make`. Source lines [367](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/cluster/ClusterMachine.ts#L367).
+
+## packages/effect-machine-react/src/MachineAtom.ts
+
+- `useMachineAtom`. Source lines [24](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L24).
+- `useMachineResult`. Source lines [43](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L43).
+- `MachineStateProps`. Source lines [51](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L51), [71](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L71).
+- `MachineStateProps.Bridge`. Source lines [78](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L78).
+- `MachineStateProps.State`. Source lines [87](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L87).
+- `MachineState`. Source lines [118](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L118).
+- `MachineContext`. Source lines [129](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L129), [140](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L140).
+- `MachineContext.Options`. Source lines [149](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L149).
+- `MachineContext.Args`. Source lines [160](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L160).
+- `MachineContext.ProviderProps`. Source lines [169](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L169).
+- `MachineContext.EnsureOptions`. Source lines [181](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L181).
+- `createMachineContext`. Source lines [225](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L225).
+
+## packages/devtools/src/DevToolsProtocol.ts
+
+- `protocolVersion`. Source lines [15](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L15).
+- `Location`. Source lines [21](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L21), [31](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L31).
+- `Diagnostic`. Source lines [39](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L39), [51](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L51).
+- `Ready`. Source lines [64](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L64), [75](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L75).
+- `Partial`. Source lines [83](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L83), [94](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L94).
+- `Failed`. Source lines [102](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L102), [114](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L114).
+- `MachineResult`. Source lines [122](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L122), [128](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L128).
+- `RegistrySnapshot`. Source lines [136](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L136), [146](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/DevToolsProtocol.ts#L146).
+
+## packages/devtools/src/MachineDocument.ts
+
+- `schemaVersion`. Source lines [16](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L16).
+- `Source`. Source lines [24](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L24), [33](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L33).
+- `Selection`. Source lines [41](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L41), [51](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L51).
+- `Initial`. Source lines [57](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L57), [66](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L66).
+- `InputSchema`. Source lines [74](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L74), [84](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L84).
+- `State`. Source lines [90](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L90), [112](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L112).
+- `Trigger`. Source lines [118](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L118), [134](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L134).
+- `Branch`. Source lines [147](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L147), [161](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L161).
+- `Transition`. Source lines [167](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L167), [180](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L180).
+- `Activity`. Source lines [192](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L192), [222](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L222).
+- `Snapshot`. Source lines [228](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L228), [237](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L237).
+- `EventInput`. Source lines [245](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L245), [254](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L254).
+- `Inputs`. Source lines [262](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L262), [271](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L271).
+- `MachineDocument`. Source lines [279](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L279), [297](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L297).
+- `MakeOptions`. Source lines [305](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L305).
+- `make`. Source lines [318](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L318).
+
+## packages/devtools/src/MachineWalkthrough.ts
+
+- `Session`. Source lines [21](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L21).
+- `Decision`. Source lines [31](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L31).
+- `UnavailableReason`. Source lines [43](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L43).
+- `Choice`. Source lines [51](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L51).
+- `Snapshot`. Source lines [74](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L74).
+- `Frame`. Source lines [84](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L84).
+- `ChoiceNotFound`. Source lines [100](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L100).
+- `ChoiceUnavailable`. Source lines [113](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L113).
+- `StepNotFound`. Source lines [127](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L127).
+- `start`. Source lines [143](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L143).
+- `current`. Source lines [151](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L151).
+- `timeline`. Source lines [159](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L159).
+- `cursor`. Source lines [167](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L167).
+- `choices`. Source lines [176](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L176).
+- `take`. Source lines [185](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L185).
+- `seek`. Source lines [196](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineWalkthrough.ts#L196).
+
+## packages/oxlint-plugin/src/index.ts
+
+- `recommended`. Source lines [25](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/oxlint-plugin/src/index.ts#L25).
+
+## Configuration fields
+
+The following field sets are extracted from the source type declarations by `/tmp/em-stress/options.cjs`. A question mark marks an optional property in at least one variant. Opposite variants may require it or forbid it. `never` fields reject combinations. These sets do not flatten the union into one allowed options bag. Follow the linked union for each signature and its exact value type.
+
+Use options from the declaration owning the call. Public legacy and storage types below are inspection contracts, not permission to pass raw `effect` or `after` into the registered-source `.handle` API. The current API uses make registries and invoke src. See `Machine.Invocation`.
+
+- `SpawnOptions` accepts or discriminates `id?`. Source [packages/effect-machine/src/Machine.ts:2546](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2546).
+- `SpawnIdOptions` accepts or discriminates `id`. Source [packages/effect-machine/src/Machine.ts:2556](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L2556).
+- `Machine.AtomicStateNodeConfig` accepts or discriminates `schema`, `type?`, `output?`, `annotations?`, `type`, `schema?`. Source [packages/effect-machine/src/Machine.ts:3018](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3018).
+- `Machine.CompoundStateNodeConfig` accepts or discriminates `schema`, `type?`, `states`, `annotations?`, `schema?`. Source [packages/effect-machine/src/Machine.ts:3059](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3059).
+- `Machine.ParallelStateNodeConfig` accepts or discriminates `schema`, `type`, `output?`, `states`, `annotations?`, `schema?`. Source [packages/effect-machine/src/Machine.ts:3086](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3086).
+- `Machine.HistoryStateNodeConfig` accepts or discriminates `type`, `history?`, `annotations?`. Source [packages/effect-machine/src/Machine.ts:3120](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3120).
+- `Machine.ChoiceStateNodeConfig` accepts or discriminates `type`, `annotations?`. Source [packages/effect-machine/src/Machine.ts:3144](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L3144).
+- `Machine.StoredInvokeConfig` accepts or discriminates `id`, `effect`, `stream?`, `after?`, `logic?`, `child?`, `address?`, `onDone?`, `onFailure?`, `onElement?`, `onSnapshot?`, `stream`, `effect?`, `onDone`, `after`, `address`, `logic`, `child`, `input?`, `id?`. Source [packages/effect-machine/src/Machine.ts:5620](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5620).
+- `Machine.OutputHandlerConfig` accepts or discriminates `output`, `output?`. Source [packages/effect-machine/src/Machine.ts:5742](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5742).
+- `Machine.ActiveOutputHandlerConfig` accepts or discriminates `type`, `output?`. Source [packages/effect-machine/src/Machine.ts:5755](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5755).
+- `Machine.ChoiceStateConfig` accepts or discriminates `choice`, `entry?`, `exit?`, `invoke?`, `always?`, `on?`, `onDone?`, `output?`. Source [packages/effect-machine/src/Machine.ts:5860](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5860).
+- `Machine.HandlerNodeChildrenConfig` accepts or discriminates `states?`. Source [packages/effect-machine/src/Machine.ts:5891](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L5891).
+- `Machine.Transition` accepts or discriminates `history`, `target?`, `update?`, `initial?`, `none?`, `branches?`, `resolve?`, `from?`, `decoded?`, `declinable?`, `none`, `history?`. Source [packages/effect-machine/src/Machine.ts:6925](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L6925).
+- `Machine.Invocation` accepts or discriminates `src`, `id?`, `address?`, `id`, `address`. Source [packages/effect-machine/src/Machine.ts:7116](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7116).
+- `Machine.InitialData` accepts or discriminates `data?`, `decoded?`, `data`, `decoded`. Source [packages/effect-machine/src/Machine.ts:7187](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7187).
+- `Machine.RootConstruction` accepts or discriminates `root?`, `input`, `root`. Source [packages/effect-machine/src/Machine.ts:7266](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7266).
+- `Machine.StateHandler` accepts or discriminates `root`, `input`, `choice`, `on?`, `always?`, `onDone?`, `invoke?`, `states?`, `history?`, `type`, `choice?`, `src?`, `states`. Source [packages/effect-machine/src/Machine.ts:7334](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7334).
+- `Machine.StateConfig` accepts or discriminates `entry?`, `exit?`, `invoke?`, `always?`, `onDone?`, `output?`, `on?`. Source [packages/effect-machine/src/Machine.ts:7770](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L7770).
+- `MakeConfig` accepts or discriminates `effects?`, `streams?`, `timers?`, `logic?`, `children?`, `branches?`, `id?`, `root`, `[StateTypeId]`, `node`, `events`, `internalEvents?`, `emittedEvents?`, `parent?`, `input?`. Source [packages/effect-machine/src/Machine.ts:8010](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/Machine.ts#L8010).
+- `FamilyOptions` accepts or discriminates `atoms`, `label?`. Source [packages/effect-machine/src/unstable/reactivity/AtomMachine.ts:1005](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/unstable/reactivity/AtomMachine.ts#L1005).
+- `ScenarioOptions` accepts or discriminates `minEvents?`, `maxEvents?`, `eventsArbitrary?`, `inputArbitrary?`. Source [packages/effect-machine/src/testing/MachineTest.ts:178](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L178).
+- `RuntimeSnapshotInvariantOptions` accepts or discriminates `observe?`. Source [packages/effect-machine/src/testing/MachineTest.ts:685](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L685).
+- `InvariantOptions` accepts or discriminates `when?`, `require?`, `minObservations`. Source [packages/effect-machine/src/testing/MachineTest.ts:992](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L992).
+- `StateInvariantOptions` accepts or discriminates `observe?`. Source [packages/effect-machine/src/testing/MachineTest.ts:1005](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1005).
+- `ExplorationLimits` accepts or discriminates `maxDepth?`, `maxStates?`, `maxTransitions?`. Source [packages/effect-machine/src/testing/MachineTest.ts:1267](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1267).
+- `ResolvedExplorationLimits` accepts or discriminates `maxDepth`, `maxStates`, `maxTransitions`. Source [packages/effect-machine/src/testing/MachineTest.ts:1279](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1279).
+- `ExploreOptionsBase` accepts or discriminates `events`, `stateKey`, `limits?`, `invariants?`. Source [packages/effect-machine/src/testing/MachineTest.ts:1410](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1410).
+- `ExploreOptions` accepts or discriminates `input?`, `input`. Source [packages/effect-machine/src/testing/MachineTest.ts:1427](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L1427).
+- `VerifyOptions` accepts or discriminates `laws?`. Source [packages/effect-machine/src/testing/MachineTest.ts:2127](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/testing/MachineTest.ts#L2127).
+- `CausalRuntimeModelOptions` accepts or discriminates `initialModel`, `observationTimeout?`, `transition`, `inspect?`, `assert`. Source [packages/effect-machine/src/internal/testing/machine/runtime.ts:276](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/internal/testing/machine/runtime.ts#L276).
+- `CausalVerificationOptions` accepts or discriminates `invariants`, `observationTimeout?`, `await?`. Source [packages/effect-machine/src/internal/testing/machine/runtime.ts:334](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/internal/testing/machine/runtime.ts#L334).
+- `RuntimeModelOptions` accepts or discriminates `initialModel`, `observationTimeout?`, `transition`, `inspect?`, `assert`. Source [packages/effect-machine/src/internal/testing/machine/runtime.ts:400](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/internal/testing/machine/runtime.ts#L400).
+- `RuntimeCommandsOptions` accepts or discriminates `minCommands?`, `maxCommands?`, `eventArbitrary?`, `advanceArbitrary?`, `includeAdvance?`, `includeStop?`, `includeCheckpoint?`, `additionalCommands?`. Source [packages/effect-machine/src/internal/testing/machine/runtime.ts:1462](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/internal/testing/machine/runtime.ts#L1462).
+- `FiniteModelOptions` accepts or discriminates `maxRoots?`, `maxDepth?`, `maxChildren?`, `maxParallelRegions?`, `maxEvents?`, `maxTransitions?`, `maxHistoryStates?`, `maxChoiceStates?`. Source [packages/effect-machine/src/internal/testing/machine/finiteModel.ts:253](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine/src/internal/testing/machine/finiteModel.ts#L253).
+- `MachineContext.Options` accepts or discriminates `input?`, `layer?`. Source [packages/effect-machine-react/src/MachineAtom.ts:149](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/effect-machine-react/src/MachineAtom.ts#L149).
+- `MakeOptions` accepts or discriminates `revision?`, `source?`, `snapshot?`. Source [packages/devtools/src/MachineDocument.ts:305](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/devtools/src/MachineDocument.ts#L305).
+
+Transition fields distributed across helper types also include `guard`, `reenter`, `initialize`, `target`, `update`, `data`, `decoded`, `branches`, `resolve`, `declinable`, `none`, `history`, and subtree `states`. Initial declarations use `target`, `data`, and `decoded`, or region constructors for a parallel owner. They are not event transitions. `Machine.ts:5901` through `Machine.ts:7368` contains their conditional type definitions.
+
+`ExploreOptions` combines optional or required input with `ExploreOptionsBase`. The caller supplies `events(context)` and `stateKey(context)`. Optional invariants and limits complete the configuration. Limits are maxDepth, maxStates, and maxTransitions. Defaults are 20, 1,000, and 10,000 respectively. See `MachineTest.ts:1264` and `MachineTest.ts:1402`.
+
+Runtime command constructors are `sendCommand(event)`, `stopCommand()`, `advanceCommand(duration)`, and `checkpointCommand(label)`. A runtime probe exposes machine, ref, sendAndAwait, and await.none or await.until(predicate). Causal command runners add clock and observation coordination. Observation timeouts bound the testing tool, not production state timing. See `internal/testing/machine/runtime.ts` and `MachineTest.ts:332`.
+
+`MachineDocument.make` takes optional revision, source, and snapshot. Walkthrough take selects a choice identity. Seek selects a timeline step. Those tools operate on a document, not a live ref. See `MachineDocument.ts:305` and `MachineWalkthrough.ts:185`.
+
+All seven oxlint rule metadata objects declare `schema: []`. There are no rule-specific option values. See [the rule metadata](https://github.com/typeonce-dev/effect-machine/blob/6aed0d3b7edef3fce403b8543fb8ebc403b0c0bc/packages/oxlint-plugin/src/internal/rules/noAsyncPlanningCallback.ts#L13).
