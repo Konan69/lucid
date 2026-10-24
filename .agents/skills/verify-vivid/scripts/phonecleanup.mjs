@@ -1,5 +1,5 @@
 import * as NodeFSP from 'node:fs/promises'
-import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
 import { command, json, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { readPhone, required } from './phonewire.mjs'
@@ -20,9 +20,12 @@ export async function phoneCleanup(state) {
   )
     throw new Error('Phone ownership mismatch')
   const directory = state.evidence + '/phone'
-  const cache = NodeOS.homedir() + '/.cache/vivid-android'
+  // The supervisor isolates HOME in scratch. The captured SDK locates the real host tool cache.
+  const home = NodePath.dirname(phone.device.sdk)
+  const cache = home + '/.cache/vivid-android'
   const env = {
     ...process.env,
+    HOME: home,
     AGENT_DEVICE_STATE_DIR: phone.stateDir,
     PATH: cache + '/node/bin:' + phone.device.sdk + '/platform-tools:' + process.env.PATH,
     ANDROID_ADB_SERVER_PORT: '15037',
