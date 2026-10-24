@@ -53,7 +53,7 @@ export const pageOf = Schema.decodeUnknownOption(Page)
 const Place = Schema.Struct({
   thread: Schema.OptionFromNullOr(ThreadId),
   pages: Schema.Array(Page),
-  at: Schema.Number,
+  at: Schema.Finite,
 })
 export type Place = typeof Place.Type
 
@@ -94,7 +94,7 @@ const PlacesText = Schema.fromJsonString(Places)
 const KeptPlace = Schema.Struct({
   thread: Schema.OptionFromNullOr(ThreadId),
   pages: Schema.Array(Schema.Unknown),
-  at: Schema.Number,
+  at: Schema.Finite,
 })
 const KeptText = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Record(Schema.String, KeptPlace)),

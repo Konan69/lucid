@@ -131,32 +131,32 @@ export function Drawer({
         />
       </GestureDetector>
       <GestureDetector gesture={shutting}>
-      <Animated.View
-        accessibilityViewIsModal={opened}
-        accessibilityElementsHidden={!opened}
-        importantForAccessibility={opened ? 'auto' : 'no-hide-descendants'}
-        style={[
-          {
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            left: 0,
-            width: span,
-            backgroundColor: c.drawer,
-            borderRightWidth: 1,
-            borderRightColor: c['drawer-border'],
-            shadowColor: '#000000',
-            // The theme's `drawer-shadow` strength; Android's elevation cannot be tinted, so there
-            // the border alone is the edge.
-            shadowOpacity: Platform.OS === 'ios' ? 0.32 : 0,
-            shadowRadius: 24,
-            shadowOffset: { width: 8, height: 0 },
-          },
-          slid,
-        ]}
-      >
-        {panel}
-      </Animated.View>
+        <Animated.View
+          accessibilityViewIsModal={opened}
+          accessibilityElementsHidden={!opened}
+          importantForAccessibility={opened ? 'auto' : 'no-hide-descendants'}
+          style={[
+            {
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: span,
+              backgroundColor: c.drawer,
+              borderRightWidth: 1,
+              borderRightColor: c['drawer-border'],
+              shadowColor: '#000000',
+              // The theme's `drawer-shadow` strength; Android's elevation cannot be tinted, so there
+              // the border alone is the edge.
+              shadowOpacity: Platform.OS === 'ios' ? 0.32 : 0,
+              shadowRadius: 24,
+              shadowOffset: { width: 8, height: 0 },
+            },
+            slid,
+          ]}
+        >
+          {panel}
+        </Animated.View>
       </GestureDetector>
     </View>
   )

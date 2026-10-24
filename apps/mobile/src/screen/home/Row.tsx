@@ -192,24 +192,24 @@ export function ThreadRow({
   ])
 
   return (
-      <HoldMenu
-        title={thread.title}
-        actions={[
-          { id: 'rename', title: 'Rename' },
-          { id: 'retitle', title: 'Regenerate title' },
-          ...filing,
-          { id: 'shelve', title: shelveLabel },
-          { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
-        ]}
-        onChoose={(id) => {
-          const act = chosen.get(id)
-          if (act !== undefined) act()
-        }}
-        onPress={() => onOpen(thread)}
-      >
-        {({ pressed }) => (
-          <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
-        )}
-      </HoldMenu>
+    <HoldMenu
+      title={thread.title}
+      actions={[
+        { id: 'rename', title: 'Rename' },
+        { id: 'retitle', title: 'Regenerate title' },
+        ...filing,
+        { id: 'shelve', title: shelveLabel },
+        { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
+      ]}
+      onChoose={(id) => {
+        const act = chosen.get(id)
+        if (act !== undefined) act()
+      }}
+      onPress={() => onOpen(thread)}
+    >
+      {({ pressed }) => (
+        <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
+      )}
+    </HoldMenu>
   )
 }

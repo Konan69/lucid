@@ -1,4 +1,8 @@
-import { StackActions, type NavigationHelpers, type NavigationState } from '@react-navigation/native'
+import {
+  StackActions,
+  type NavigationHelpers,
+  type NavigationState,
+} from '@react-navigation/native'
 import type { Thread } from '@vivid/contracts'
 import { Data, Effect, Option } from 'effect'
 import { useState } from 'react'

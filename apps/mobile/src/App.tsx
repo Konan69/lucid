@@ -283,9 +283,7 @@ type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>
  */
 const underMenu = ({ children, state, navigation }: StackLayout) => (
   <Drawer
-    reachable={
-      state.index === 0 || standsForHome(state.routes[state.index].name, state.index)
-    }
+    reachable={state.index === 0 || standsForHome(state.routes[state.index].name, state.index)}
     panel={<Panel go={navigation} stack={state} />}
   >
     {children}
