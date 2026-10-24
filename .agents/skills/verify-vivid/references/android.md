@@ -32,9 +32,11 @@ Follow [the phone feature](../features/phone.md) for the journey. The key file c
 
 ## Build or reuse an APK
 
-`verify phone thread` builds in its private `~/.cache/vivid-android/source` checkout. The proof checkout's product source stays untouched. Expo's shipped `scripts/native.mjs android --prebuild-only` pins the native template. Gradle uses x86_64, two workers, a 4 GiB heap, 1536 MiB metaspace, no persistent daemon, and in-process Kotlin compilation.
+`verify phone thread` builds in its private `~/.cache/vivid-android/source` checkout. The proof checkout's product source stays untouched. Expo's shipped `scripts/native.mjs android --prebuild-only` pins the native template. Gradle uses x86_64, two workers, a 4 GiB heap, 1536 MiB metaspace, no persistent daemon, and in-process Kotlin compilation. The skill supplies an AGP init script with CMake job pools, because two Gradle workers alone do not limit Ninja compiler subprocesses.
 
 The APK cache verifies bytes against SHA-256 before reuse. Its native fingerprint includes dependency manifests, the lockfile, patches, phone config, plugins and assets. A changed native fingerprint builds a fresh APK. When only JavaScript changes, Expo exports a new bundle and the shipped Hermes compiler compiles it. Repacking replaces only the embedded bundle, aligns the APK and signs with the generated React Native debug keystore. Asset changes require a full build. The generated test manifest permits cleartext only to 127.0.0.1 and disables OTA loading, so the embedded commit remains the code under test. This overlay is part of the native fingerprint. Cached APKs are test artifacts, never phone releases.
+
+The pool uses [AGP finalizeDsl](https://developer.android.com/reference/tools/gradle-api/8.13/com/android/build/api/variant/AndroidComponentsExtension) and [CMake job pools](https://cmake.org/cmake/help/v3.22/variable/CMAKE_JOB_POOLS.html), without patching SDK internals.
 
 The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. The dedicated adb server uses port 15037, leaving the host's ordinary adb server alone.
 

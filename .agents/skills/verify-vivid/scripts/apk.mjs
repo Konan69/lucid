@@ -112,6 +112,8 @@ export async function apk(state) {
       [
         './gradlew',
         'assembleRelease',
+        '--init-script',
+        skill + '/scripts/native.gradle',
         '--max-workers=2',
         '--no-daemon',
         '-PreactNativeArchitectures=x86_64',
