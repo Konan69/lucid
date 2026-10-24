@@ -71,6 +71,15 @@ export async function equivalent(head, artifact) {
   )
 }
 
+/** The cache distinguishes a missing receipt from malformed metadata or corrupted bytes. */
+async function stored(file) {
+  const text = await NodeFSP.readFile(file, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  return text === null ? null : Result.getOrThrow(readApk(text))
+}
+
 /** Content-addressed native builds survive runs; only a matching byte receipt permits reuse. */
 export async function apk(state, record) {
   const directory = cache + '/apks'
@@ -78,25 +87,14 @@ export async function apk(state, record) {
   const fingerprint = await inputs(state.head, root)
   const target = directory + '/' + state.head + '.apk'
   const receipt = target + '.json'
-  const text = await NodeFSP.readFile(receipt, 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return null
-    throw error
-  })
-  if (text !== null) {
-    const prior = Result.getOrThrow(readApk(text))
-    if (prior.fingerprint === fingerprint && prior.sha256 === (await apkHash(target)))
-      return { ...prior, mode: 'reuse' }
+  const prior = await stored(receipt)
+  if (prior !== null) {
+    if (await equivalent(state.head, prior)) return { ...prior, mode: 'reuse' }
     throw new Error('APK cache receipt mismatch; retain evidence and inspect the cached artifact')
   }
   const foundation = directory + '/' + fingerprint + '.json'
-  const foundationText = await NodeFSP.readFile(foundation, 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return null
-    throw error
-  })
-  if (foundationText !== null) {
-    const artifact = Result.getOrThrow(readApk(foundationText))
-    if (await equivalent(state.head, artifact)) return { ...artifact, mode: 'reuse' }
-  }
+  const base = await stored(foundation)
+  if (base !== null && (await equivalent(state.head, base))) return { ...base, mode: 'reuse' }
   if (NodeOS.loadavg()[0] > NodeOS.availableParallelism())
     throw new Error('Devbox busy; warm the APK on an idle devbox before launching the proof')
   const memory = await NodeFSP.readFile('/proc/meminfo', 'utf8')
@@ -124,14 +122,9 @@ export async function apk(state, record) {
     })
   await run([...pnpm, 'install', '--frozen-lockfile', '--filter', '@vivid/mobile...'], 'install')
   const app = source + '/apps/mobile'
-  const native = directory + '/' + fingerprint + '.json'
-  const base = await NodeFSP.readFile(native, 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return null
-    throw error
-  })
   let mode
   if (base !== null) {
-    const artifact = Result.getOrThrow(readApk(base))
+    const artifact = base
     if ((await apkHash(artifact.file)) !== artifact.sha256)
       throw new Error('Native APK checksum mismatch')
     await repack(run, app, artifact, target)
@@ -173,7 +166,7 @@ export async function apk(state, record) {
     mode,
   }
   await json(receipt, result)
-  if (mode === 'build') await json(native, result)
+  await json(foundation, result)
   return result
 }
 
