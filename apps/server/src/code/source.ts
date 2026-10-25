@@ -17,6 +17,10 @@ import { Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
 import type { Database, DatabaseInfrastructureError } from '../database/client.ts'
 
+/** UX policy for bursts of display draws. Reuse one snapshot for two seconds; a missing
+ * message forces a new fetch and failed reads are never cached. */
+const HISTORY_FRESHNESS = Duration.seconds(2)
+
 /** Flue identifies final assistant responses by their submission's durable settlement. */
 const History = Schema.Struct({
   incarnation: Schema.String,
@@ -192,7 +196,7 @@ export const codeSourceLayer = Layer.effect(
   Effect.gen(function* () {
     const histories = yield* Cache.makeWith(readHistory, {
       capacity: 256,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.seconds(2) : Duration.zero),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? HISTORY_FRESHNESS : Duration.zero),
       requireServicesAt: 'lookup',
     })
     return CodeSource.of({

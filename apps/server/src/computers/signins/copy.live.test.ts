@@ -35,6 +35,8 @@ const page = Schema.decodeUnknownOption(
  * therefore prove delivery without putting any real sign-in value into the model or logs.
  * The operator registers deletion of this exact named cookie and Computer restoration before
  * starting; all app/runtime/database fixtures live on Cloudbox, never on the Computer. */
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_SIGNIN_COPY'] !== '1')('sign-in copy, live', () => {
   layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 300_000 })((it) => {
     it.effect(

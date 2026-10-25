@@ -6,6 +6,8 @@ export const signInGuest = String.raw`
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),childProcess=require('node:child_process');
 const session='Vivid-signin-'+require('node:crypto').randomUUID(),nativeCalls=new Set();
 let failureStage=10,nativeUsed=false,finishing=false,consentAttempt;
+// Post-work native cleanup allocation. Source: unmeasured. Expiry rejects cleanup only.
+const CLEANUP_CALL_MILLIS=2500;
 const deadline=setTimeout(()=>finish(2),20000);
 // Native preparation can enable Chrome's consent server without a launch flag. Its
 // DevToolsActivePort file supplies the exact route; /json/version deliberately returns 404.
@@ -151,9 +153,9 @@ async function finish(code){
  const attempt=consentAttempt;consentAttempt=undefined;
  if(attempt){
   attempt.socket.close();
-  try{await consentAction(attempt.window,'Cancel',2500);}catch{}
+  try{await consentAction(attempt.window,'Cancel',CLEANUP_CALL_MILLIS);}catch{}
  }
- if(nativeUsed){try{await native('end_session',{},2500);}catch{}}
+ if(nativeUsed){try{await native('end_session',{},CLEANUP_CALL_MILLIS);}catch{}}
  process.exit(code);
 }
 main().then(()=>finish(0),()=>finish(failureStage));

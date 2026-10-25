@@ -37,13 +37,8 @@ class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
   'Test/RunningLoops',
 ) {}
 
-/**
- * Every execution here starts the production runner with the production start command: a shell, a
- * Node process and a worker thread per program. A case runs up to three of them, and the gate
- * runs this file beside every other suite, so the ceiling is the time three real processes can
- * take on a loaded machine and not the default five seconds. Nothing here waits on a clock.
- */
-describe('Supervised programs', { timeout: 30_000 }, () => {
+/** Every execution runs the production shell, Node process and worker, and awaits their receipts. */
+describe('Supervised programs', () => {
   const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
     return yield* (yield* CodeProcess).run(
       {
@@ -109,68 +104,65 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         'inherited',
       ),
   )
-  standalone.effect(
-    'round-trips production discovery expressions through the real guest',
-    () =>
-      scopedCase(
-        supervised,
-        Effect.gen(function* () {
-          const names = [
-            'quote"',
-            'back\\slash',
-            'has.dot',
-            '__proto__',
-            'constructor',
-            'toString',
-            '123',
-            '日本語',
-            'not-an-identifier',
-            'then',
-            'line\u2028separator',
-            'line\u2029separator',
-          ]
-          const expected: Schema.Json[] = []
-          const expressions: string[] = []
-          for (const account of names) {
-            for (const name of names) {
-              const tool = yield* discoveredTool({
-                account,
-                name,
-                input: {},
-                output: Option.none(),
-              })
-              expected.push({ account, tool: name, input: {}, summary: 'Read', rationale: 'Test' })
-              expressions.push(
-                account === 'then' || name === 'then'
-                  ? `await ${tool.call};`
-                  : `await ${tool.call}(input, {summary, rationale});`,
-              )
-            }
-          }
-          // Keep each batch below source and call budgets; use the public supervised run seam.
-          for (let offset = 0; offset < expressions.length; offset += 40) {
-            const frames = yield* Ref.make<Schema.Json[]>([])
-            const dispatch: Dispatch = Effect.fn('Test.exactDiscoveredCall')(function* (call) {
-              expect(call.kind).toBe('use_tool')
-              yield* Ref.update(frames, (items) => items.concat([call.input]))
-              return CallOutcome.cases.Returned.make({
-                value: null,
-                summary: 'Read',
-                end: 'completed',
-              })
+  standalone.effect('round-trips production discovery expressions through the real guest', () =>
+    scopedCase(
+      supervised,
+      Effect.gen(function* () {
+        const names = [
+          'quote"',
+          'back\\slash',
+          'has.dot',
+          '__proto__',
+          'constructor',
+          'toString',
+          '123',
+          '日本語',
+          'not-an-identifier',
+          'then',
+          'line\u2028separator',
+          'line\u2029separator',
+        ]
+        const expected: Schema.Json[] = []
+        const expressions: string[] = []
+        for (const account of names) {
+          for (const name of names) {
+            const tool = yield* discoveredTool({
+              account,
+              name,
+              input: {},
+              output: Option.none(),
             })
-            const code =
-              'const input={},summary="Read",rationale="Test";' +
-              expressions.slice(offset, offset + 40).join('') +
-              'return true;'
-            const outcome = yield* run(code, dispatch)
-            expect(outcome).toHaveProperty('result', true)
-            expect(yield* Ref.get(frames)).toEqual(expected.slice(offset, offset + 40))
+            expected.push({ account, tool: name, input: {}, summary: 'Read', rationale: 'Test' })
+            expressions.push(
+              account === 'then' || name === 'then'
+                ? `await ${tool.call};`
+                : `await ${tool.call}(input, {summary, rationale});`,
+            )
           }
-        }),
-        'inherited',
-      ),
-    { timeout: 20_000 },
+        }
+        // Keep each batch below source and call budgets; use the public supervised run seam.
+        for (let offset = 0; offset < expressions.length; offset += 40) {
+          const frames = yield* Ref.make<Schema.Json[]>([])
+          const dispatch: Dispatch = Effect.fn('Test.exactDiscoveredCall')(function* (call) {
+            expect(call.kind).toBe('use_tool')
+            yield* Ref.update(frames, (items) => items.concat([call.input]))
+            return CallOutcome.cases.Returned.make({
+              value: null,
+              summary: 'Read',
+              end: 'completed',
+            })
+          })
+          const code =
+            'const input={},summary="Read",rationale="Test";' +
+            expressions.slice(offset, offset + 40).join('') +
+            'return true;'
+          const outcome = yield* run(code, dispatch)
+          expect(outcome).toHaveProperty('result', true)
+          expect(yield* Ref.get(frames)).toEqual(expected.slice(offset, offset + 40))
+        }
+      }),
+      'inherited',
+    ),
   )
   standalone.effect('names summary and rationale when account metadata is omitted', () =>
     scopedCase(
@@ -488,29 +480,26 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       'inherited',
     ),
   )
-  standalone.effect(
-    'bounds the exact final aggregate including its receipts',
-    () =>
-      scopedCase(
-        supervised,
-        Effect.gen(function* () {
-          const empty = CodeOutcome.cases.Completed.make({
-            result: '',
-            calls: [],
-            truncated: false,
-            logs: [],
-            logsTruncated: false,
-          })
-          const size = budgets.result - Buffer.byteLength(JSON.stringify(empty))
-          const accepted = yield* run(`return "x".repeat(${size});`, reply)
-          expect(CodeOutcome.guards.Completed(accepted)).toBe(true)
-          expect(Buffer.byteLength(JSON.stringify(accepted))).toBe(budgets.result)
-          const refused = yield* run(`return "x".repeat(${size + 1});`, reply)
-          expect(refused).toHaveProperty('failure.limit', 'result')
-        }),
-        'inherited',
-      ),
-    { timeout: 10_000 },
+  standalone.effect('bounds the exact final aggregate including its receipts', () =>
+    scopedCase(
+      supervised,
+      Effect.gen(function* () {
+        const empty = CodeOutcome.cases.Completed.make({
+          result: '',
+          calls: [],
+          truncated: false,
+          logs: [],
+          logsTruncated: false,
+        })
+        const size = budgets.result - Buffer.byteLength(JSON.stringify(empty))
+        const accepted = yield* run(`return "x".repeat(${size});`, reply)
+        expect(CodeOutcome.guards.Completed(accepted)).toBe(true)
+        expect(Buffer.byteLength(JSON.stringify(accepted))).toBe(budgets.result)
+        const refused = yield* run(`return "x".repeat(${size + 1});`, reply)
+        expect(refused).toHaveProperty('failure.limit', 'result')
+      }),
+      'inherited',
+    ),
   )
   standalone.effect('runs the calls of one Promise.all at the same time', () =>
     scopedCase(
@@ -683,7 +672,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         }),
         'inherited',
       ),
-    { timeout: 15_000 },
   )
   standalone.effect(
     'a process that dies after dispatch leaves the call it was waiting for unknown',
@@ -746,7 +734,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         // The first program leaves a child behind and says which. The second reads that process's
         // record: gone, or ended and waiting to be collected (state Z), is ended.
         const outcome = yield* run(
-          'const {spawn} = await import("node:child_process"); return spawn("sleep", ["600"]).pid;',
+          'const {spawn} = await import("node:child_process"); return spawn(process.execPath, ["-e", "require(\'node:net\').createServer().listen(0, \'127.0.0.1\')"], {stdio:"ignore"}).pid;',
           reply,
         )
         const started = CodeOutcome.guards.Completed(outcome)
@@ -1061,5 +1049,4 @@ standalone.effect(
         })
       }).pipe(Effect.provide(caseContext))
     }).pipe(Effect.scoped),
-  { timeout: 20_000 },
 )

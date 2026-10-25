@@ -99,6 +99,8 @@ const removeFromComputer = Effect.fn('ProgramProof.removeFromComputer')(function
  * Boat machine, makes two calls that the server checks and answers, and leaves a file there that
  * holds what those calls returned. Public pages only: no account and nothing changed outside.
  */
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
   'Thread program live chain',
   () => {

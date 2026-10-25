@@ -1,4 +1,4 @@
-import { Effect, Exit, Schedule, Scope } from 'effect'
+import { Duration, Effect, Exit, Schedule, Scope } from 'effect'
 import {
   type Identity,
   type Link,
@@ -8,6 +8,14 @@ import {
   pruneKeys,
 } from './link.ts'
 import { keyedPermits } from '../../runtime/keyed.ts'
+
+/** Bounded backoff for LinkUnreachable only. Host-key and authentication refusals stop
+ * immediately. Source: unmeasured. Exhaustion leaves the opening unreachable. */
+const OPEN_RETRY_DELAY = Duration.seconds(2)
+const OPEN_RETRY_TIMES = 30
+/** Silent handshake attempts only, before commands. Source: unmeasured. Expiry closes
+ * the attempt scope and returns LinkUnreachable. */
+const OPEN_DEADLINE = Duration.seconds(75)
 
 /**
  * Where a machine is now and which key it presents, as its provider reports them, with the key
@@ -135,13 +143,13 @@ export const links = <Key>(authorizedKeys: string) => {
       Effect.retry({
         while: (failure: LinkFailure) =>
           failure instanceof LinkUnreachable && pending.get(key) === token,
-        schedule: Schedule.spaced('2 seconds'),
-        times: 30,
+        schedule: Schedule.spaced(OPEN_RETRY_DELAY),
+        times: OPEN_RETRY_TIMES,
       }),
       // Each try may itself wait fifteen seconds for a host that does not answer, so the tries
       // are bounded by the clock as well: the caller hears "unreachable", never a hang.
       Effect.timeoutOrElse({
-        duration: '75 seconds',
+        duration: OPEN_DEADLINE,
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )

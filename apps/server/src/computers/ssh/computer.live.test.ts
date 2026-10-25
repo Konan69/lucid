@@ -136,6 +136,8 @@ const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
     }),
   )
 
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 layer(dependencies, { excludeTestServices: true, timeout: 180_000 })((it) => {
   it.effect.skipIf(!enabled)(
     'runs, writes, reads and cancels on a real Computer, with a key of its own for each opening',

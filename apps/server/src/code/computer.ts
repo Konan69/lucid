@@ -14,6 +14,12 @@ import {
   WorkerMessage,
 } from './protocol.ts'
 
+/** Post-cancellation write grace. Source: unmeasured. Expiry lets the enclosing scope
+ * close the SSH command even when its stdin callback never arrives. */
+const CANCEL_WRITE_GRACE = CodeTiming.stopMs
+/** Post-cancellation exit grace. Source: unmeasured. A missing final receipt is Unavailable. */
+const CANCEL_EXIT_GRACE = CodeTiming.endMs
+
 /**
  * A program running on a Computer, as the server that supervises it sees it.
  *
@@ -194,10 +200,10 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
   const stop = Effect.fn('Code.stopGuest')(function* () {
     if (!(known.final || (yield* Deferred.isDone(ended))))
       yield* send(ParentMessage.cases.Cancel.make({})).pipe(
-        Effect.timeout(CodeTiming.stopMs),
+        Effect.timeout(CANCEL_WRITE_GRACE),
         Effect.ignore,
       )
-    yield* Deferred.await(ended).pipe(Effect.timeout(CodeTiming.endMs), Effect.ignore)
+    yield* Deferred.await(ended).pipe(Effect.timeout(CANCEL_EXIT_GRACE), Effect.ignore)
     if (yield* Deferred.isDone(ended)) return yield* Deferred.await(ended)
     return CodeFailure.cases.Unavailable.make({})
   })

@@ -110,6 +110,8 @@ const computerIs = (fixture: ChainFixture, accepts: (state: ComputerState) => bo
     Stream.runHead,
   )
 
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_EGRESS'] !== '1')('Egress, live', () => {
   layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 900_000 })((it) => {
     it.effect(

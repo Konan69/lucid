@@ -99,6 +99,8 @@ const desktopPicture = Effect.fn('ThreadProof.desktopPicture')(function* (
 /** One real Thread request drives Boat browser input and desktop sight. Public Selenium input
  * has no account or external side effects, and no model judge or retry consumes extra calls.
  */
+/** Opt-in work has no progress-aware in-test bound yet. Retain the existing runner
+ * overrides until that migration. Source: unmeasured existing allocations. */
 describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
   'Thread Computer live chain',
   () => {
