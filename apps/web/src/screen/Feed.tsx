@@ -74,7 +74,7 @@ export function FeedView({
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
   const presses = usePresses((now) => now.presses)
   const standing = feed.standingOf(
-    view.computers.length +
+    Option.toArray(view.computer).length +
       view.waiting.filter(
         (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
       ).length,
@@ -108,7 +108,7 @@ export function FeedView({
         </div>
 
         <div className="mt-6 flex min-w-0 flex-col lg:col-span-3">
-          {view.computers.map((waiting) => (
+          {Option.toArray(view.computer).map((waiting) => (
             <div key={waiting.device.id} className="pb-3">
               <Computer waiting={waiting} now={now} />
             </div>

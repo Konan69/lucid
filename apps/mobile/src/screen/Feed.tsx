@@ -92,11 +92,11 @@ export function Feed() {
     (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
   )
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
-  const standing = feed.standingOf(view.computers.length + shown.length)
+  const standing = feed.standingOf(Option.toArray(view.computer).length + shown.length)
   // Every waiting card stays in the list, a folded one drawn as nothing (`Waiting`), so what the
   // Person chose in its display is still there if the send fails and the card comes back.
   const rows: ReadonlyArray<Row> = [
-    ...view.computers.map((waiting) => Row.Computer({ waiting })),
+    ...Option.toArray(view.computer).map((waiting) => Row.Computer({ waiting })),
     ...view.waiting.map((item) => Row.Waiting({ item })),
     ...view.working.map((item) => Row.Working({ item })),
     ...(view.settled.length > 0 ? [Row.Handled({ items: view.settled })] : []),

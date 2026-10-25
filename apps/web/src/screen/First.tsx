@@ -10,7 +10,6 @@ import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
 import { AboutHome } from './thread/About'
 import { Composer } from './thread/Composer'
-import { DeviceAsk } from './thread/Device'
 import { HeroButton } from './thread/Header'
 
 /**
@@ -117,8 +116,6 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
             </p>
           </div>
         </div>
-        {/* A computer waiting to be allowed is asked about where the Person starts. */}
-        <DeviceAsk />
         <Composer
           place={placeOf(me)}
           placeholder={`Message ${name}`}

@@ -1,15 +1,15 @@
 import {
   deciding,
+  DEVICE_QUESTION,
   deviceAnswers,
-  deviceQuestion,
-  devicesWaiting,
+  deviceWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
 } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
-import { ScrollView, View } from 'react-native'
+import { View } from 'react-native'
 import { answerDevice, useDeviceDecision } from '../../data/devices'
 import { useLiveData, useLiveValue } from '../../data/live'
 import { useTheme } from '../../theme'
@@ -20,21 +20,12 @@ const when = makeWhen(thisReader())
 /** Independent of chat questions and approvals, with no hide or dismiss control. */
 export function DeviceAsk() {
   const data = useLiveData()
-  const devices = useLiveValue(data.live.devices)
-  const waiting = Option.match(devices, { onNone: () => [], onSome: devicesWaiting })
+  const waiting = Option.flatMap(useLiveValue(data.live.devices), deviceWaiting)
   const [now] = useState(() => Date.now())
-  if (waiting.length === 0) return null
+  if (Option.isNone(waiting)) return null
   return (
-    <View style={{ maxHeight: 240, flexShrink: 0 }}>
-      <ScrollView
-        accessibilityLabel="Pending device requests"
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ padding: 12, gap: 12 }}
-      >
-        {waiting.map((request) => (
-          <Computer key={request.device.id} waiting={request} now={now} />
-        ))}
-      </ScrollView>
+    <View style={{ padding: 12, flexShrink: 0 }}>
+      <Computer waiting={waiting.value} now={now} />
     </View>
   )
 }
@@ -44,7 +35,7 @@ export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number
   const data = useLiveData()
   const reading = useDeviceDecision()
   const { colors: c } = useTheme()
-  const [allow, deny] = deviceAnswers(waiting.instead)
+  const [allow, deny] = deviceAnswers(waiting.device, waiting.instead)
   const refusal = deciding.refusalFor(reading, waiting.device.id)
   const held = deciding.isWaiting(reading)
   return (
@@ -61,15 +52,15 @@ export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number
       }}
     >
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Label size="label" tone="ink-2" style={{ flex: 1 }}>
-          Your computers
+        <Label size="label" tone="ink-2" numberOfLines={1} style={{ flex: 1 }}>
+          {waiting.device.name}
         </Label>
         <Label size="label" tone="ink-3">
           {when(waiting.since, now)}
         </Label>
       </View>
       <Label accessibilityRole="header" size="headline">
-        {deviceQuestion(waiting.device)}
+        {DEVICE_QUESTION}
       </Label>
       <Label size="footnote" tone="ink-2">
         {allow.detail}

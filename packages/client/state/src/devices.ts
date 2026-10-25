@@ -7,16 +7,23 @@ export type DeviceList = typeof DeviceListResponse.Type
 /** Whether Vivid may use this computer now. */
 export const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)
 
-/** Every Pending personal computer stays actionable until an explicit server decision. */
-export const devicesWaiting = (list: DeviceList): ReadonlyArray<DeviceWaiting> => {
+/**
+ * The one computer Vivid asks about: the newest Pending one. A desktop app that is installed again
+ * enrols as a new computer, so one PC can leave several Pending rows behind (one account held
+ * two from 5 and 13 October 2026 beside the allowed one); asking about each drew two prompts.
+ * The older ones stay Pending and are answered in Settings → Devices, never prompted.
+ */
+export const deviceWaiting = (list: DeviceList): Option.Option<DeviceWaiting> => {
   const instead = Option.fromUndefinedOr(list.devices.find(allowed))
-  return Arr.sort(
-    list.devices.flatMap((device) =>
-      DeviceAccess.guards.Pending(device.access)
-        ? [{ device, instead, since: device.access.since }]
-        : [],
+  return Arr.head(
+    Arr.sort(
+      list.devices.flatMap((device) =>
+        DeviceAccess.guards.Pending(device.access)
+          ? [{ device, instead, since: device.access.since }]
+          : [],
+      ),
+      newestFirst,
     ),
-    newestFirst,
   )
 }
 
@@ -33,20 +40,28 @@ export interface DeviceWaiting {
   readonly since: number
 }
 
-/** Every pending personal computer asks the same explicit permission question. */
-export const deviceQuestion = (device: Device): string => `Let Vivid use ${device.name}?`
+/**
+ * The question every surface asks. A computer's name is its host name, which is often the Person's
+ * own name, so the question names the device by what it is and the card's head line
+ * carries the host name.
+ */
+export const DEVICE_QUESTION = 'Let Vivid use your device?'
 
 /**
  * The two answers, in the order they are drawn, each with its second line. Allowing says what
  * else changes when another computer was allowed; not allowing says where to change it later.
  */
-export const deviceAnswers = (instead: Option.Option<Device>) =>
+export const deviceAnswers = (asking: Device, instead: Option.Option<Device>) =>
   [
     {
       label: 'Allow',
       detail: Option.match(instead, {
         onNone: () => 'A notice shows on it while Vivid works there.',
-        onSome: (other) => `Vivid stops using ${other.name}.`,
+        // An install made again on one PC carries the same host name as the one it replaces.
+        onSome: (other) =>
+          other.name === asking.name
+            ? `Vivid stops using the earlier install on ${other.name}.`
+            : `Vivid stops using ${other.name}.`,
       }),
       allow: true,
     },

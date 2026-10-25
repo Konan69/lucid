@@ -1,8 +1,8 @@
 import {
   deciding,
+  DEVICE_QUESTION,
   deviceAnswers,
-  deviceQuestion,
-  devicesWaiting,
+  deviceWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
@@ -16,21 +16,15 @@ import { Button } from '../../ui/button'
 
 const when = makeWhen(thisReader())
 
-/** A separate section keeps device decisions available while a chat question or approval is open. */
+/** A separate section keeps the device decision available while a chat question or approval is open. */
 export function DeviceAsk() {
-  const devices = useLiveValue(live.devices)
-  const waiting = Option.match(devices, { onNone: () => [], onSome: devicesWaiting })
+  const waiting = Option.flatMap(useLiveValue(live.devices), deviceWaiting)
   const [now] = useState(() => Date.now())
-  if (waiting.length === 0) return null
+  if (Option.isNone(waiting)) return null
   return (
-    <section
-      aria-label="Pending device requests"
-      className="max-h-60 shrink-0 overflow-y-auto px-4 py-2"
-    >
-      <div className="mx-auto flex w-full max-w-180 flex-col gap-3">
-        {waiting.map((request) => (
-          <Computer key={request.device.id} waiting={request} now={now} />
-        ))}
+    <section aria-label="Pending device request" className="shrink-0 px-4 py-2">
+      <div className="mx-auto w-full max-w-180">
+        <Computer waiting={waiting.value} now={now} />
       </div>
     </section>
   )
@@ -39,7 +33,7 @@ export function DeviceAsk() {
 /** The accepted Feed device card, without a conversation post or an independent dismiss action. */
 export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number }) {
   const reading = useDeviceDecision()
-  const [allow, deny] = deviceAnswers(waiting.instead)
+  const [allow, deny] = deviceAnswers(waiting.device, waiting.instead)
   const refusal = deciding.refusalFor(reading, waiting.device.id)
   const held = deciding.isWaiting(reading)
   return (
@@ -48,7 +42,7 @@ export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number
       className="overflow-hidden rounded-composer bg-surface-3 p-4 edge"
     >
       <div className="flex min-h-5.5 items-center gap-2 text-label text-ink-2">
-        <span>Your computers</span>
+        <span className="min-w-0 truncate">{waiting.device.name}</span>
         <time
           className="ms-auto text-ink-3 tabular-nums"
           dateTime={new Date(waiting.since).toISOString()}
@@ -62,7 +56,7 @@ export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number
           className="cursor-pointer rounded-row text-start text-section font-strong tracking-tight text-balance text-ink underline-offset-4 hover:underline focus-visible:outline-offset-2"
           onClick={() => void openSettings('devices')}
         >
-          {deviceQuestion(waiting.device)}
+          {DEVICE_QUESTION}
         </button>
       </h2>
       <p className="mt-1 text-title text-pretty text-ink-2">{allow.detail}</p>
