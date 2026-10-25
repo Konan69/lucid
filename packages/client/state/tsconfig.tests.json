@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "rootDir": ".",
+    "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": [],
+  "references": [
+    {
+      "path": "./tsconfig.types.json"
+    }
+  ]
+}

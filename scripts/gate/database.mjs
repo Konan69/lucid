@@ -110,7 +110,9 @@ async function awaitPostgres() {
     ])
   } finally {
     for (const lines of streams) lines.close()
-    logs.kill()
+    // This child only follows logs; it owns no PostgreSQL work to drain. Docker can retain
+    // its follow request after SIGTERM, so close this owned subscription unconditionally.
+    logs.kill('SIGKILL')
     await closed
   }
 }

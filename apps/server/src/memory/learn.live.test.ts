@@ -1,7 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { layer } from '@effect/vitest'
 import { AuditEvent, MemoryScope, Person, PersonId, RunId, ThreadId } from '@vivid/contracts'
-import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { eq } from 'drizzle-orm'
 import { ConfigProvider, Effect, Layer, Ref, Stream } from 'effect'
 import { TestConsole } from 'effect/testing'
@@ -20,7 +19,7 @@ import { memoryExtractionLayer } from './extract.js'
 import { HelixMemory, helixMemoryLayer, MemoryPartition, MemoryScopeKey } from './helix.js'
 import { Learning, learningLayer } from './learn.js'
 import { memoryAccessLayer, MemoryStore, memoryStoreLayer } from './store.js'
-import { Runtime } from '../runtime/client.ts'
+import { Runtime, RuntimeTransportFailed } from '../runtime/client.ts'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
@@ -177,9 +176,9 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
                   ),
                   Layer.provide(
                     Layer.mock(Runtime, {
-                      read: Effect.fn('MemoryTest.noHistory')(() =>
+                      conversation: Effect.fn('MemoryTest.noHistory')(() =>
                         Effect.fail(
-                          RuntimeUnavailable.make({ message: 'No conversation in this fixture' }),
+                          RuntimeTransportFailed.make({ personId: person.id, threadId: thread.id }),
                         ),
                       ),
                     }),

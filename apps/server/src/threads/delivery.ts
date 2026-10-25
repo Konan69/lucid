@@ -1,4 +1,6 @@
+import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
@@ -20,30 +22,33 @@ import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from './key.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
-import { Runtime, Settlement } from '../runtime/client.ts'
+import { AdmissionUncertain, Runtime, Settlement } from '../runtime/client.ts'
+import { runLossAllowance } from '../runtime/settlement.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
   Conversation,
   DeliveryMessage,
   DeliverySpeaker,
   movesThreadOn,
-  type Admitted,
+  Admitted,
+  type AdmissionOutcome,
   type ConversationService,
   type Delivery,
   type ServerDelivery,
 } from './conversation.ts'
-import { keyedPermits } from '../runtime/keyed.ts'
-import { flueMessage } from './message.ts'
 import { notifiesFrom } from './place.ts'
+import { withAdmission } from './admissions.ts'
+import { runtimeMessage } from './message.ts'
 import { Presence } from './presence.ts'
 import {
   RunStore,
   RunEnding,
   TurnReservation,
+  ReservationNotice,
   automaticallyNotifies,
-  type WorkingRun,
+  WorkingRun,
 } from './runs.ts'
 import { ThreadTitles } from './generation.ts'
 import { ThreadStore } from './store.ts'
@@ -71,8 +76,27 @@ interface Followed {
   readonly id: RunId
   readonly threadId: ThreadId
   readonly person: Person
+  readonly creator: PersonId
+  readonly outcome: Effect.Effect<Settlement>
   readonly said: Option.Option<string>
 }
+
+/** The persisted receipt and creator identify the runtime observation; the speaker identifies attribution. */
+const followed =
+  (runtime: Runtime['Service']) =>
+  (
+    receipt: Admitted,
+    thread: StoredThread,
+    person: Person,
+    said: Option.Option<string>,
+  ): Followed => ({
+    id: receipt.runId,
+    threadId: thread.id,
+    creator: thread.personId,
+    person,
+    outcome: runtime.settled(thread.personId, thread.id, receipt.submissionId),
+    said,
+  })
 
 /**
  * Builds the observer of one Run: it waits for the Run to end and writes down how. It runs for as
@@ -81,7 +105,6 @@ interface Followed {
  */
 const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const database = yield* Database
-  const runtime = yield* Runtime
   const threads = yield* ThreadStore
   const runs = yield* RunStore
   const changes = yield* Changes
@@ -122,7 +145,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   })
 
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
-    const settlement = yield* runtime.settled(run.threadId, run.id)
+    const settlement = yield* run.outcome
     const changed = yield* runs.end(run.id, endingOf(settlement))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
     if (changed && Settlement.guards.Failed(settlement))
@@ -178,25 +201,11 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-/** The current Conversation wire contract maps precise admission errors until durable observation owns uncertainty. */
-const admitRuntime = Effect.fn('Conversation.admitRuntime')(
-  (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
-    runtime
-      .admit(input)
-      .pipe(
-        Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
-          Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
-        ),
-      ),
-)
-
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
   Effect.fn('Conversation.deliver')(function* (delivery: ServerDelivery) {
     const admitted = yield* admit(delivery)
-    const recorded = yield* runs.list(delivery.threadId)
-    const run = recorded.find((candidate) => candidate.id === admitted.runId)
-    return run === undefined ? yield* threadMissing() : run
+    return yield* runs.get(admitted.runId)
   })
 
 /** Resolve attribution at the persistence boundary; a missing Person cannot start a Run. */
@@ -233,10 +242,201 @@ const resolveSpeaker = (database: Database['Service']) => {
   })
 }
 
+/** A linked personal channel never widens its reach into a Company or a shared Thread. */
+const deliveryThread = Effect.fn('Conversation.thread')(function* (
+  database: Database['Service'],
+  threads: ThreadStore['Service'],
+  delivery: Delivery,
+) {
+  const withDatabase = Effect.provideService(Database, database)
+  const found = yield* findThread(delivery.threadId).pipe(withDatabase)
+  if (Option.isNone(found)) return yield* threadMissing()
+  const thread = found.value
+  if (DeliveryMessage.guards.ChannelText(delivery.message)) {
+    const visible = yield* threads.view(thread, delivery.personId)
+    if (thread.companyId !== null || !ThreadAudience.guards.Private(visible.audience))
+      return yield* threadMissing()
+  }
+  if (!(yield* canSee(thread.id, delivery.personId).pipe(withDatabase)))
+    return yield* threadMissing()
+  return thread
+})
+
+/** Admission receives server-owned authorities once; it does not own observer lifetime. */
+interface AdmissionServices {
+  readonly lossAllowance: number
+  readonly database: Database['Service']
+  readonly runtime: Runtime['Service']
+  readonly threads: ThreadStore['Service']
+  readonly runs: RunStore['Service']
+  readonly changes: Changes['Service']
+  readonly follow: (run: Followed) => Effect.Effect<void>
+}
+
+/** A locked reservation carries the identities and attribution already resolved at ingress. */
+interface ReservedDelivery {
+  readonly delivery: Delivery
+  readonly thread: StoredThread
+  readonly speaker: Person
+  readonly creator: Person
+  readonly from: string
+  readonly id: RunId
+  readonly turn: number
+  readonly said: Option.Option<string>
+}
+
+/** Only a reservation rechecked under the gate may reach Pi; no database transaction spans I/O. */
+const submitReserved = Effect.fn('Conversation.submitReserved')(
+  function* (services: AdmissionServices, reserved: ReservedDelivery) {
+    const { database, runtime, threads, runs, changes, follow } = services
+    const { delivery, thread, speaker, creator, from, id, turn, said } = reserved
+    const withDatabase = Effect.provideService(Database, database)
+    const addressed = {
+      threadId: thread.id,
+      message: runtimeMessage(thread.audience, from, delivery.message, turn),
+      origin: { creator: creator.id, creatorName: creator.name },
+      idempotencyKey: delivery.idempotencyKey,
+      turn,
+      scope: yield* runs.scope({ threadId: thread.id, turn }),
+    }
+    const input =
+      delivery.clientKey === undefined ? addressed : { ...addressed, clientKey: delivery.clientKey }
+    const deadline = (yield* Clock.currentTimeMillis) + services.lossAllowance
+    let attempts = 0
+    /** All attempts share a key, an absolute loss deadline and a maximum of three calls.
+     * Interruption runs the remaining attempts in this request's finalizer, never a follower. */
+    const submit = Effect.gen(function* () {
+      const remaining = deadline - (yield* Clock.currentTimeMillis)
+      if (remaining <= 0 || attempts === 3)
+        return yield* AdmissionUncertain.make({ threadId: thread.id, reason: 'Interrupted' })
+      const admission = yield* Effect.suspend(() => {
+        attempts += 1
+        return runtime.admit(input)
+      }).pipe(
+        Effect.retry({
+          while: (error) => Predicate.isTagged(error, 'AdmissionUncertain') && attempts < 3,
+        }),
+        Effect.timeoutOrElse({
+          duration: remaining,
+          orElse: () =>
+            Effect.fail(AdmissionUncertain.make({ threadId: thread.id, reason: 'TimedOut' })),
+        }),
+      )
+      const receipt = Admitted.make({ runId: id, submissionId: admission.submissionId })
+      yield* runs.admitted(receipt)
+      if (movesThreadOn(delivery))
+        yield* withdrawWaiting(thread.id, speaker.id).pipe(
+          withDatabase,
+          Effect.provideService(Changes, changes),
+        )
+      yield* threads.touch(thread.id, said)
+      yield* threads
+        .markRead(speaker.id, thread.id)
+        .pipe(
+          Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing),
+        )
+      yield* changes.publish(
+        audienceTopics(thread, yield* threads.participants(thread.id)).map(Topic.part('activity')),
+      )
+      yield* follow(followed(runtime)(receipt, thread, speaker, said))
+      return receipt
+    }).pipe(
+      Effect.mapError((error) =>
+        Predicate.isTagged(error, 'AdmissionRefused') ||
+        Predicate.isTagged(error, 'AdmissionUncertain')
+          ? RuntimeUnavailable.make({ message: 'Vivid could not be reached' })
+          : error,
+      ),
+    )
+    return yield* submit.pipe(
+      Effect.onInterrupt(() =>
+        submit.pipe(Effect.catchTag('RuntimeUnavailable', () => Effect.void)),
+      ),
+    )
+  },
+  // Cleanup covers the scope read and every admission write, including a failed interruption
+  // retry. Only receiptless work belongs to this request; admitted work retains its recovery receipt.
+  (effect, services, reserved) =>
+    effect.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : Effect.gen(function* () {
+              const run = yield* services.runs.get(reserved.id)
+              if (run.submissionId === undefined)
+                yield* services.runs.end(
+                  reserved.id,
+                  RunEnding.cases.Failed.make({ reason: 'Delivery' }),
+                )
+            }),
+      ),
+    ),
+)
+
+/** Read Busy and replays before waiting; reserve under the admission gate and SQL Thread lock.
+ * Pi may hold and answer a delivery even if retries end Failed('Delivery'). The state link then
+ * shows the reply with no Run attached. A client retry must keep its original key. */
+function makeAdmit(services: AdmissionServices): ConversationService['admit'] {
+  const { database, runtime, threads, runs, follow } = services
+  const personOf = resolvePerson(database)
+  const speakerName = resolveSpeaker(database)
+  /**
+   * The server never joins a different Person's delivery into a response in progress. The locked
+   * reservation refuses it with the first Person's name before any message or signal reaches Pi.
+   */
+  return Effect.fn('Conversation.admit')(function* (delivery: Delivery) {
+    const thread = yield* deliveryThread(database, threads, delivery)
+    const speaker = yield* personOf(delivery.personId)
+    const from = yield* speakerName(delivery, thread, speaker)
+    const creator = yield* personOf(thread.personId)
+    const id = deliveryRunId(thread.id, delivery.idempotencyKey)
+    const said = previewOf(delivery.message)
+    const input = {
+      id,
+      threadId: thread.id,
+      personId: speaker.id,
+      origin: delivery.origin,
+    }
+    /** Replays and refusals are read-only outcomes; only Reserved reaches the runtime. */
+    const replay = (notice: ReservationNotice): Effect.Effect<AdmissionOutcome, Conflict> =>
+      ReservationNotice.match(notice, {
+        Unfollowed: ({ runId }) => Effect.succeed({ runId }),
+        Replayed: (replayed) =>
+          follow(followed(runtime)(replayed.receipt, thread, speaker, said)).pipe(
+            Effect.as(replayed.receipt),
+          ),
+        Busy: ({ person }) =>
+          Effect.fail(
+            Conflict.make({
+              message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
+            }),
+          ),
+      })
+    const notice = yield* runs.check(input)
+    if (Option.isSome(notice)) return yield* replay(notice.value)
+    // The preflight writes nothing, so canceling a queued request cannot strand a reservation.
+    // Start checks again under the gate and SQL lock, after any preceding admission or Stop.
+    return yield* withAdmission(
+      Effect.gen(function* () {
+        const reservation = yield* runs.start(input)
+        return yield* TurnReservation.match<ReturnType<ConversationService['admit']>>(reservation, {
+          Reserved: ({ turn }) =>
+            submitReserved(services, { delivery, thread, speaker, creator, from, id, turn, said }),
+          Unfollowed: replay,
+          Replayed: replay,
+          Busy: replay,
+        })
+      }),
+      thread.id,
+    )
+  })
+}
+
 /** Admission owns reservation, runtime acceptance, input settlement and scoped Run observation. */
 const makeConversation = Effect.fn('Conversation.make')(function* () {
   const database = yield* Database
   const runtime = yield* Runtime
+  const lossAllowance = yield* runLossAllowance
   const threads = yield* ThreadStore
   const runs = yield* RunStore
   const changes = yield* Changes
@@ -244,10 +444,9 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const observe = yield* makeObserve()
   // Serialize reservation through Flue receipt, never the response itself. Pending admissions
   // recheck under one Thread permit; SQL still protects turn allocation without spanning runtime I/O.
-  const admissions = keyedPermits<ThreadId>()
   const withDatabase = Effect.provideService(Database, database)
 
-  // Runs with an observer in this process. A delivery Flue recognises as a repeat does not mean
+  // Runs with an observer in this process. A delivery Pi recognises as a repeat does not mean
   // someone is watching it: the first attempt may have failed between admission and observation.
   // Whether to observe is decided by this set, never by what the runtime says about repeats.
   const observed = new Set<RunId>()
@@ -266,114 +465,57 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   const personOf = resolvePerson(database)
 
-  const speakerName = resolveSpeaker(database)
-
-  /**
-   * The server never joins a different Person's delivery into a response in progress. The locked
-   * reservation refuses it with the first Person's name before any message or signal reaches Flue.
-   */
-  const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(
-    function* (delivery: Delivery) {
-      const found = yield* findThread(delivery.threadId).pipe(withDatabase)
-      if (Option.isNone(found)) return yield* threadMissing()
-      const thread = found.value
-      // A channel can never widen phone ownership into a Company or shared Thread's authority.
-      if (DeliveryMessage.guards.ChannelText(delivery.message)) {
-        const visible = yield* threads.view(thread, delivery.personId)
-        if (thread.companyId !== null || !ThreadAudience.guards.Private(visible.audience))
-          return yield* threadMissing()
-      }
-      if (!(yield* canSee(thread.id, delivery.personId).pipe(withDatabase)))
-        return yield* threadMissing()
-      const speaker = yield* personOf(delivery.personId)
-      const from = yield* speakerName(delivery, thread, speaker)
-      const creator = yield* personOf(thread.personId)
-      const id = submissionId(thread.id, delivery.idempotencyKey)
-      const reservation = yield* runs.start({
-        id,
-        threadId: thread.id,
-        personId: speaker.id,
-        origin: delivery.origin,
-      })
-      const said = previewOf(delivery.message)
-      // Replay completes inside the reservation match; only a new reserved turn reaches Flue.
-      const turn = yield* TurnReservation.match<Effect.Effect<number | Admitted, Conflict>>(
-        reservation,
-        {
-          Reserved: (reserved) => Effect.succeed(reserved.turn),
-          Replayed: (replayed) =>
-            follow({ id, threadId: thread.id, person: speaker, said }).pipe(
-              Effect.as(replayed.receipt),
-            ),
-          Busy: ({ person }) =>
-            Effect.fail(
-              Conflict.make({
-                message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
-              }),
-            ),
-        },
-      )
-      if (!Predicate.isNumber(turn)) return turn
-      const admission = yield* Effect.gen(function* () {
-        const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
-        return yield* admitRuntime(runtime, {
-          threadId: thread.id,
-          message: flueMessage(thread.audience, from, delivery.message, turn),
-          origin: { creator: creator.id, creatorName: creator.name },
-          idempotencyKey: delivery.idempotencyKey,
-          turn,
-          scope: deliveryScope,
-        })
-      }).pipe(
-        Effect.tapError(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
-        Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
-      )
-      // Replays returned above. Only a newly reserved ordinary message accepted by the runtime
-      // closes questions; refusals and every server-produced delivery leave them waiting.
-      if (movesThreadOn(delivery))
-        yield* withdrawWaiting(thread.id, speaker.id).pipe(
-          withDatabase,
-          Effect.provideService(Changes, changes),
-        )
-      yield* runs.admitted(admission)
-      yield* threads.touch(thread.id, said)
-      // What a Person just sent is not unread for them. They were just shown to be able to see the
-      // Thread, so the only failures left here are the database's own.
-      yield* threads
-        .markRead(speaker.id, thread.id)
-        .pipe(
-          Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing),
-        )
-      // A message admitted: a Run, the Thread's last words and the speaker's read mark.
-      yield* changes.publish(
-        audienceTopics(thread, yield* threads.participants(thread.id)).map(Topic.part('activity')),
-      )
-      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
-      return {
-        runId: admission.runId,
-        offset: admission.offset,
-        incarnation: admission.incarnation,
-      } satisfies Admitted
-    },
-    (effect, delivery) => admissions.withPermit(delivery.threadId, effect),
-  )
+  const services = { database, runtime, threads, runs, changes, follow, lossAllowance }
+  const admit = makeAdmit(services)
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 
-  // A server restarting while Runs are in progress picks each one back up: Flue still knows
+  // A server restarting while Runs are in progress picks each one back up: Pi still knows
   // how they ended, or says it does not, and either way the row stops claiming it is working.
   yield* Effect.forEach(yield* runs.working, resume, { discard: true })
 
+  /** Reattach only admitted work; RunStore.working has already ended legacy and receiptless work. */
   function resume(run: WorkingRun) {
-    return personOf(run.personId).pipe(
-      Effect.flatMap((person) =>
-        follow({ id: run.id, threadId: run.threadId, person, said: Option.none() }),
-      ),
-      Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')),
-    )
+    return Effect.gen(function* () {
+      const person = yield* personOf(run.personId)
+      const thread = yield* findThread(run.threadId).pipe(withDatabase)
+      if (Option.isNone(thread)) return yield* threadMissing()
+      const found = thread.value
+      return yield* follow({
+        id: run.id,
+        threadId: run.threadId,
+        person,
+        creator: found.personId,
+        outcome: runtime.settled(found.personId, found.id, run.submissionId),
+        said: Option.none(),
+      })
+    }).pipe(Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')))
   }
 
-  return Conversation.of({ deliver, admit })
+  /** Observation and Stop share the conditional write and every settlement effect. */
+  const stopped: ConversationService['stopped'] = Effect.fn('Conversation.stopped')(
+    function* (ids) {
+      yield* Effect.forEach(
+        ids,
+        Effect.fn('Conversation.stopRun')(function* (id) {
+          const run = yield* runs.get(id)
+          const person = yield* personOf(run.origin.person.id)
+          const thread = yield* findThread(run.threadId).pipe(withDatabase)
+          if (Option.isNone(thread)) return yield* threadMissing()
+          return yield* observe({
+            id,
+            threadId: run.threadId,
+            person,
+            creator: thread.value.personId,
+            outcome: Effect.succeed(Settlement.cases.Stopped.make({})),
+            said: Option.none(),
+          })
+        }),
+        { discard: true },
+      )
+    },
+  )
+  return Conversation.of({ deliver, admit, stopped })
 })
 
 /** Needs a `Scope`: the Runs it observes live as long as the server does. */

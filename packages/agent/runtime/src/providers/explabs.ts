@@ -1,6 +1,5 @@
 import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai'
-import { setProvider } from '@flue/runtime'
-import { budgeted } from './budget.ts'
+import { witnessed } from './budget.ts'
 
 /**
  * The Experiential Labs gateway, which speaks OpenAI's Chat Completions. It was Vivid's default
@@ -55,7 +54,5 @@ export const provider = createProvider({
     }),
     glm('glm-5.3-flash', 'GLM 5.3 Flash', { input: 0.075, output: 0.25, cacheRead: 0.015 }),
   ],
-  api: budgeted,
+  api: witnessed,
 })
-
-setProvider(provider)

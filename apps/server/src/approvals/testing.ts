@@ -13,8 +13,10 @@ import * as Ref from 'effect/Ref'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
-import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import {
+  ConversationState,
+  ConversationMessage,
+  RuntimeSubmissionId,
   ActionTarget,
   ConnectionId,
   Company,
@@ -49,7 +51,7 @@ import { Changes, type Topic } from '../live/changes.ts'
 import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { RuleJudge, RulesNotJudged } from '../rules/judge.ts'
 import { ruleStoreLayer } from '../rules/store.ts'
-import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
+import { Admitted, Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
@@ -147,6 +149,7 @@ const ports = Layer.effectContext(
       }),
     })
     const conversation = Conversation.of({
+      stopped: () => Effect.void,
       /** The replay worker admits immediately; injected failures leave real SQL debt behind. */
       admit: Effect.fn('TrustTest.admit')(function* (delivery) {
         if (yield* Ref.get(state.deliveryDefect))
@@ -159,8 +162,7 @@ const ports = Layer.effectContext(
         if (Option.isSome(failure)) return yield* failure.value
         return {
           runId: RunId.make(`test-${delivery.idempotencyKey}`),
-          offset: '0',
-          incarnation: 'test',
+          submissionId: RuntimeSubmissionId.make(1),
         }
       }),
       /** Delivery returns a test Run while recording the exact signal and idempotency key. */
@@ -365,9 +367,10 @@ export const desktopAction = ProposedAction.make({
 })
 export const JudgmentMode = Judgment
 
-// Run records and Flue history, for tests of what the reviewer is shown as the Person's request.
+// Run records and Pi state, for tests of what the reviewer is shown as the Person's request.
 
 const encodeOrigin = encodeStored(StoredRunOrigin, 'Run origin')
+const encodeAdmission = encodeStored(Admitted, 'Run admission')
 
 export interface RecordedRun {
   readonly id: string
@@ -384,6 +387,14 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
 ) {
   const database = yield* Database
   const origins = yield* Effect.forEach(recorded, (run) => encodeOrigin(run.origin))
+  const receipts = yield* Effect.forEach(recorded, (run) =>
+    encodeAdmission(
+      Admitted.make({
+        runId: testRunId(threadId, run.id),
+        submissionId: testSubmission(threadId, run.id),
+      }),
+    ),
+  )
   yield* database.run(
     database.insert(runs).values(
       Arr.zip(recorded, origins).map(([run, origin], index) => ({
@@ -392,6 +403,7 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
         personId: run.personId,
         turn: after + index + 1,
         origin,
+        receipt: receipts[index],
         state: run.working ? 'working' : 'completed',
         startedAt: index + 1,
         admittedAt: index + 1,
@@ -402,48 +414,88 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
 
 /** A test Run id, or the real derived id when the name is already one (an answer's Run). */
 export const testRunId = (threadId: ThreadId, name: string) =>
-  RunId.make(name.startsWith('sub_ik_') ? name : `${threadId}-${name}`)
+  RunId.make(name.startsWith('run_') ? name : `${threadId}-${name}`)
 
-/** One finished text part, as Flue's history holds a message's words. */
-export const textPart = (value: string) => [{ type: 'text', text: value, state: 'done' }]
+/** Each fixture Run has a distinct Pi submission number; words never supply the mapping. */
+const submissions = new Map<string, number>()
 
-/** A delivery as Flue's history projects it: a signal carries its tag, a private turn none. */
-export const delivery = (threadId: ThreadId, run: string, tagName: string | null, value: string) =>
-  tagName === null
-    ? {
-        role: 'user',
-        purpose: 'user',
-        submissionId: testRunId(threadId, run),
-        parts: textPart(value),
-      }
-    : {
-        role: 'user',
-        purpose: 'dispatch',
-        submissionId: testRunId(threadId, run),
-        signal: { tagName, attributes: { from: 'Somebody' } },
-        parts: textPart(value),
-      }
+/** Allocate fixture submissions independently of the product Run key and retain retry identity. */
+export const testSubmission = (threadId: ThreadId, name: string) => {
+  const key = testRunId(threadId, name)
+  const before = submissions.get(key)
+  if (before !== undefined) return RuntimeSubmissionId.make(before)
+  const id = submissions.size + 1
+  submissions.set(key, id)
+  return RuntimeSubmissionId.make(id)
+}
+
+/** Only finished text parts count as the Person's words. */
+export const textPart = (value: string): ConversationMessage['parts'] => [
+  { type: 'text', text: value, state: 'done' },
+]
+
+/** Signals match the real projection's system role and diagnostic display. */
+export const delivery = (
+  threadId: ThreadId,
+  run: string,
+  tagName: string | null,
+  value: string,
+): ConversationMessage => {
+  const submissionId = String(testSubmission(threadId, run))
+  const id = `entry-${submissionId}`
+  if (tagName === null)
+    return {
+      id,
+      role: 'user',
+      purpose: 'user',
+      display: 'visible',
+      submissionId,
+      parts: textPart(value),
+    }
+  return {
+    id,
+    role: 'system',
+    purpose: 'dispatch',
+    display: 'diagnostic',
+    submissionId,
+    signal: { tagName, attributes: { from: 'Somebody' } },
+    parts: textPart(value),
+  }
+}
+
+/** Typed runtime state replaces the obsolete HTTP history fixture; persisted receipts above
+ * are still real PostgreSQL records, so request tests exercise submission-to-Run correlation. */
+const decodeFixtureMessage = Schema.decodeUnknownResult(ConversationMessage)
 
 export const history = (
-  messages: ReadonlyArray<unknown>,
+  messages: ReadonlyArray<{
+    readonly id?: string
+    readonly role: string
+    readonly parts: ReadonlyArray<unknown>
+    readonly submissionId?: string
+    readonly purpose?: string
+    readonly display?: string
+    readonly signal?: unknown
+    readonly metadata?: unknown
+  }>,
   settled: ReadonlyArray<string> = [],
-  incarnation = 'test-runtime-incarnation',
 ) => ({
-  read: () =>
+  conversation: () =>
     Effect.succeed(
-      HttpClientResponse.fromWeb(
-        HttpClientRequest.get('http://runtime.test/agents/vivid/thread?view=history'),
-        new Response(
-          JSON.stringify({
-            v: 1,
-            incarnation,
-            messages,
-            settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
-          }),
-          {
-            headers: { 'content-type': 'application/json' },
-          },
+      ConversationState.make({
+        messages: messages.map((message, index) =>
+          Result.getOrThrow(
+            decodeFixtureMessage({
+              id: `fixture-${index}`,
+              purpose: message.role === 'assistant' ? 'assistant' : 'user',
+              display: 'visible',
+              ...message,
+            }),
+          ),
         ),
-      ),
+        settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
+        working: false,
+        queued: 0,
+      }),
     ),
 })

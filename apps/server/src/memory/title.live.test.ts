@@ -1,10 +1,10 @@
 import * as NodeCrypto from 'node:crypto'
 import { NodeHttpClient } from '@effect/platform-node'
 import { layer } from '@effect/vitest'
-import { PersonId, ThreadId } from '@vivid/contracts'
+import { ConversationState, PersonId, ThreadId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Effect, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { describe, expect } from 'vitest'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -46,29 +46,25 @@ const observedClient = Layer.effect(
 
 /** Recorded Flue history isolates this live claim to title generation and its real guarded SQL write. */
 const history = Layer.mock(Runtime, {
-  read: () =>
+  conversation: () =>
     Effect.succeed(
-      HttpClientResponse.fromWeb(
-        HttpClientRequest.get('http://runtime.test'),
-        new Response(
-          JSON.stringify({
-            v: 1,
-            messages: [
-              {
-                role: 'user',
-                purpose: 'user',
-                parts: [
-                  { type: 'text', state: 'done', text: 'Plan a holiday in Florence, Italy.' },
-                ],
-              },
-            ],
-            settlements: [],
-          }),
-          { headers: { 'content-type': 'application/json' } },
-        ),
-      ),
+      ConversationState.make({
+        messages: [
+          {
+            id: 'holiday',
+            role: 'user',
+            purpose: 'user',
+            display: 'visible',
+            parts: [{ type: 'text', state: 'done', text: 'Plan a holiday in Florence, Italy.' }],
+          },
+        ],
+        settlements: [],
+        working: false,
+        queued: 0,
+      }),
     ),
 })
+
 const dependencies = Layer.mergeAll(
   testDatabaseLayer,
   threadStoreLayer.pipe(Layer.provide(testDatabaseLayer)),

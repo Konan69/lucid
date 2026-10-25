@@ -8,7 +8,7 @@
     "rootDir": ".",
     "tsBuildInfoFile": ".cache/typescript/tests.tsbuildinfo"
   },
-  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "include": ["src"],
   "exclude": [],
   "references": [
     {

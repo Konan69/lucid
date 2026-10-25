@@ -8,7 +8,7 @@
 pnpm infra:dev
   ├─ Docker: PostgreSQL 18 → 127.0.0.1:55433
   ├─ ordered Drizzle migrations: server auth → server product
-  ├─ Command.Dev: Flue runtime → 127.0.0.1:5173 (one long-lived instance)
+  ├─ Command.Dev: Pi Durable runtime → 127.0.0.1:5173 (one long-lived instance)
   ├─ Command.Dev: application server → 127.0.0.1:8787
   └─ Command.Dev: Vite web proxy → 127.0.0.1:5178
 ```
@@ -22,11 +22,11 @@ skips recovery for it; beta.79 does not know the mark, keeps the same state vers
 recover and then delete the renamed resource's predecessor.
 PostgreSQL uses database/user/password `vivid` and the named volume
 `vivid-postgres-local-data`. `infra/database.ts` is the database seam and returns a `Redacted`
-URL. `scripts/migrate.mjs` applies the server's auth then product chains; Flue `2.2.2` migrates
-its own PostgreSQL storage when the runtime starts.
+URL. `scripts/migrate.mjs` applies the server's auth then product chains. Pi Durable `1.2.0`
+keeps conversations in per-Person SQLite stores and needs no PostgreSQL migration.
 
 `preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, persistent
-HelixDB, the private Flue runtime, and the public application server. `pnpm infra:deploy` selects
+HelixDB, the private Pi Durable runtime, and the public application server. `pnpm infra:deploy` selects
 that graph; local development keeps the Command/Docker graph above. Railway PostgreSQL and
 Helix were reported healthy on 3 October 2026; application deployment still needs the container
 fixes and remote verification described below.
@@ -409,7 +409,7 @@ Required by the stack:
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
 - `EXPLABS_API_KEY` — the Experiential Labs model gateway: memory, embeddings and decisions.
-- `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
+- `VIVID_RUNTIME_TOKEN` — shared only between the application server and Pi Durable runtime.
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
   from (`infra/computer/prepare.py` prints it).
@@ -441,10 +441,17 @@ sign-in. `pnpm infra:verify` fails when a setting the server requires is not sen
 forwarded to the hosted server when set (`apps/server/src/computers/README.md` says what each
 does).
 
-The runtime has one required setting of its own, `VIVID_MEMORY_DIR`, the directory of Vivid's
-notes. The hosted stack sets it to a volume and the local stack to `.state/notes` beside the
-runtime. `VIVID_MODEL`
-defaults to `opencode-go/glm-5.3-flash`; pi `0.87.1` and the provider at
+The runtime requires `VIVID_MEMORY_DIR` for notes and `VIVID_RUNTIME_STATE_DIR` for Pi's
+conversation stores. The local graph uses `.state/notes` and `.state/conversations` beside the
+runtime, both ignored by Git. Railway retains the existing RuntimeMemory volume at
+`/var/lib/vivid/memory`: notes stay at that root and conversations use its `conversations`
+subdirectory. `VIVID_RUNTIME_IDLE_MS` defaults to 600000. The graph supplies no `DATABASE_URL`
+to the runtime. An existing Railway variable must be removed before deploy; Alchemy only upserts
+the declared variables (`ServiceProvider.ts`, `syncEnv`).
+Exactly one replica is required. A second process holding a Person's directory causes 503;
+Alchemy beta.81 observes replica count but cannot declare it, so the deployment owner must verify
+one replica before deploying. Zero deployment overlap releases locks before replacement starts.
+`VIVID_MODEL` defaults to `opencode-go/glm-5.3-flash`; pi-ai `1.2.0` and the provider at
 `packages/agent/runtime/src/providers/opencode.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
@@ -471,9 +478,9 @@ docker build -f packages/agent/runtime/Dockerfile -t vivid-runtime .
 
 Both images use Node 24 and the root manifest's pinned pnpm through Corepack, preserve the
 installed workspace dependency layout, and run as the non-root `node` user. The server runs
-`pnpm --filter @vivid/server start` (tsx); the runtime runs its built `dist/server.mjs`.
-The runtime image bundles Vivid's TypeScript workspace exports into JavaScript for Node;
-third-party dependencies retain Flue's external dependency layout. Local build config is unchanged.
+`pnpm --filter @vivid/server start` (tsx); the runtime runs
+`pnpm --filter @vivid/agent-runtime start` (tsx). The runtime has no Flue build step or bundled
+entry. Its image installs util-linux for `flock`, which owns each Person's conversation directory.
 No credential or application origin is supplied at build time. Container health checks use
 `GET /health` on the configured `PORT`.
 
@@ -483,7 +490,7 @@ API routes, WebSocket upgrades, and health retain priority; other GET/HEAD reque
 or the SPA document. Content-hashed assets cache immutably; the document revalidates. Traversal
 and symlinks outside the static root are refused. Without `VIVID_WEB_DIST`, local startup serves
 no static app; without `HOST`, it retains `127.0.0.1`. The runtime defaults to `PORT=5173` in its
-image; Flue's production Node listener omits a hostname and accepts non-loopback connections.
+image with `HOST=0.0.0.0`; Railway overrides the host to `::` for its private mesh.
 
 The same image carries the mobile app's JavaScript as an over-the-air update
 (`VIVID_MOBILE_UPDATES=/app/apps/mobile/updates`, exported by `apps/mobile/scripts/publish.mjs`
@@ -517,12 +524,13 @@ build from `RAILWAY_GIT_COMMIT_SHA` (`apps/server/Dockerfile`); the run-time `VI
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
-`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `OPENCODE_API_KEY`
-for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
+`VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `OPENCODE_API_KEY` for model calls,
+plus `VIVID_MEMORY_DIR` for notes and `VIVID_RUNTIME_STATE_DIR` for conversations on its volume. The server also needs every setting
 under "Credentials and external services": the Computer, memory, Integrations, texting, away
 notifications and Google sign-in are required, and it does not start without them. Model
 settings keep their defaults. Apply the auth then product
-migrations before starting the server; Flue migrates its own runtime schema at startup.
+migrations before starting the server; Pi Durable keeps conversations on the runtime volume and
+needs no database migration.
 
 Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
 Computer: the server starts its runner there over its SSH connection to the Computer, reads what
@@ -534,13 +542,11 @@ requirement is the one every Vivid already has: a Computer provider.
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.
 
-Railway uploads the repository root through Alchemy's filtered context packer, selecting each
-checked-in Dockerfile. It does not bundle an application through `main` or `extraFiles`.
+Railway builds the repository root from GitHub `main`, selecting each checked-in Dockerfile.
+Alchemy declares the services; it does not upload code or bundle through `main` or `extraFiles`.
 Both Services pin `startCommand` to the image's `CMD`; the offline verifier rejects drift.
-The runtime build also rejects external Vivid workspace imports or TypeScript file imports in
-its output, and prints `Vivid workspace bundle verified for bare Node`. A deployed image must
-contain that build step; an older upload of the ordinary Flue build externalizes workspace
-TypeScript sources and fails under bare Node.
+The runtime executes its workspace TypeScript through tsx. It has no bundle-verification build
+step. Pi creates conversation storage on the mounted directory at startup.
 
 Server and Runtime remain independent nodes, using literal private addresses rather than each
 other's resource outputs. Alchemy reconciles them concurrently and collects sibling failures;
@@ -549,6 +555,39 @@ auth then product migrations inside its image; Runtime has no pre-deploy command
 Metal scheduling log does not establish a migration or application failure: obtain the Server
 deployment's detailed builder/platform error separately. A Dockerfile fix lands when it is pushed
 to `main`, which rebuilds the image; `pnpm infra:deploy` reconciles the graph itself.
+
+## Flue to Pi Durable cutover
+
+Treat this as one maintenance window. An ordinary push and an ordinary stack deploy are each
+insufficient on their own. The old runtime image starts Flue's bundled `dist/server.mjs`, while
+this image runs `pnpm --filter @vivid/agent-runtime start`. Changing that command before the new
+image is built would try to start the old image with Pi's command.
+
+1. Finish the branch's merge gate and independent review. Verify the Runtime service has exactly
+   one replica and no deployment overlap. Announce the maintenance window before the push.
+2. Push the reviewed cutover commit to `main`. Railway builds both checked-in Dockerfiles.
+   Wait for the **new Runtime image build** to complete and verify its source commit matches that
+   push. The first runtime start with the old command can fail during this window; the server
+   may already be speaking Pi's routes, so conversation requests are unavailable until step 3.
+   Do not roll back the new image merely because that old start command failed.
+3. From that same commit, run `pnpm infra:deploy --yes`, which runs `alchemy deploy --stage
+production` with the production deployment target. It installs the new runtime start command,
+   clears the runtime pre-deploy command and sets `VIVID_RUNTIME_STATE_DIR` to the conversations
+   subdirectory of the existing memory volume. Reconcile against the image built in step 2.
+   Remove the Runtime service's old `DATABASE_URL` variable through Railway's variable controls;
+   Alchemy beta.81 does not remove an omitted variable. Keep the Server's database setting.
+4. Verify the Runtime deployment runs the new commit with the new command and state directory,
+   still at one replica. Then verify server health, a new conversation admission and reply,
+   picture reads and stop. End the maintenance window only after those checks pass.
+
+The server accepts receipts from before the cutover. Old admitted Runs have no Pi submission id
+and are not followed. Old Runs still working at startup become Unknown, so one in-flight Flue
+Run cannot prevent the server from starting.
+
+Conversations held in Flue's PostgreSQL tables are **not read by the new runtime**. Existing
+Threads retain product metadata and Runs, but their old conversation is absent from Pi's SQLite
+store. Moving those conversations is a separate decision that has not been made. Retain the old
+tables; this cutover neither migrates nor deletes their conversation data.
 
 ## Outside the current stack
 

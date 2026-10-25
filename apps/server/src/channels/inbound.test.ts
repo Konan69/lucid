@@ -1,5 +1,6 @@
+import { ResponseId } from '../runtime/settlement.ts'
 import { describe, expect, layer } from '@effect/vitest'
-import { RunId, RunState, ThreadId } from '@vivid/contracts'
+import { RunState, ThreadId } from '@vivid/contracts'
 import { Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Settlement } from '../runtime/client.ts'
@@ -16,7 +17,7 @@ import {
 } from '../threads/conversation.ts'
 import { RunStore } from '../threads/runs.ts'
 import { ThreadStore } from '../threads/store.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { ChannelReceiver } from './inbound.ts'
 import { ChannelReplies, channelRepliesLayer } from './replies.ts'
 import { ChannelStore } from './store.ts'
@@ -71,7 +72,10 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             const first = yield* started(test)
             expect(
               Option.isSome(
-                yield* (yield* ChannelLedger).claim(first.run.id, Option.some(first.run.id)),
+                yield* (yield* ChannelLedger).claim(
+                  first.run.id,
+                  Option.some(ResponseId.make(first.run.id)),
+                ),
               ),
             ).toBe(true)
             const event = yield* test.finish(first.run.id, 'A reply that must not be retried')
@@ -214,7 +218,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
         }).pipe(Effect.scoped),
       ),
     )
-    it.effect('two quick texts sharing a Flue response send that response exactly once', () =>
+    it.effect('two quick texts sharing a Pi response send that response exactly once', () =>
       withChannels(
         Effect.gen(function* () {
           const test = yield* linked()
@@ -227,10 +231,11 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
           const second = present(submissions[1])
           const response = Settlement.cases.Completed.make({
             reply: 'One combined answer',
-            responseId: first.run.id,
+            responseId: ResponseId.make(first.run.id),
+            toolCalls: 0,
           })
           yield* control.finish(first.run.id, response)
-          yield* control.finish(submissionId(first.threadId, second.idempotencyKey), response)
+          yield* control.finish(deliveryRunId(first.threadId, second.idempotencyKey), response)
           yield* Queue.take(control.endings)
           yield* Queue.take(control.endings)
           expect((yield* Ref.get(control.sends)).map((send) => send.text)).toEqual([
@@ -248,7 +253,11 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             Settlement.cases.Failed.make({ reason: 'NoAnswer' }),
             Settlement.cases.Stopped.make({}),
             Settlement.cases.Unknown.make({}),
-            Settlement.cases.Completed.make({ reply: '', responseId: RunId.make('empty-reply') }),
+            Settlement.cases.Completed.make({
+              reply: '',
+              responseId: ResponseId.make('empty-reply'),
+              toolCalls: 0,
+            }),
           ]) {
             yield* test.receive('next attempt')
             const first = yield* started(test)
@@ -283,7 +292,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
               projectId: null,
             })
             yield* store.attach(test.actor, found.value, thread.id)
-            const runId = submissionId(thread.id, 'before-restart')
+            const runId = deliveryRunId(thread.id, 'before-restart')
             yield* (yield* ChannelLedger).route({
               runId,
               threadId: thread.id,
@@ -303,7 +312,8 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
                 threadId: thread.id,
                 settlement: Settlement.cases.Completed.make({
                   reply: 'Resumed reply',
-                  responseId: runId,
+                  responseId: ResponseId.make(runId),
+                  toolCalls: 0,
                 }),
               })
             }).pipe(Effect.provideContext(resumed))
@@ -356,7 +366,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             message: DeliveryMessage.cases.Said.make({ body: 'app text' }),
             idempotencyKey: key,
           })
-          yield* test.finish(submissionId(first.threadId, key), 'App result')
+          yield* test.finish(deliveryRunId(first.threadId, key), 'App result')
           expect(yield* Ref.get((yield* ChannelControl).sends)).toEqual([])
         }).pipe(Effect.scoped),
       ),

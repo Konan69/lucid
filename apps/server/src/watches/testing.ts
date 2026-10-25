@@ -1,5 +1,6 @@
 import { expect } from '@effect/vitest'
 import {
+  RuntimeSubmissionId,
   Person,
   PersonId,
   ConnectionId,
@@ -23,7 +24,7 @@ import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from
 import { conversationLayer as realConversationLayer } from '../threads/delivery.ts'
 import { RunStore, runStoreLayer } from '../threads/runs.ts'
 import { Runtime, Admission } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId as submissionId } from '../threads/key.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -99,9 +100,7 @@ export const conversationLayer = Layer.effectContext(
         ).not.toContain(runId)
         yield* Ref.update(admitted, (all) => [...all, runId])
         return Admission.make({
-          runId,
-          offset: String(input.turn),
-          incarnation: 'test',
+          submissionId: RuntimeSubmissionId.make(input.turn),
           repeated: false,
         })
       }),

@@ -25,7 +25,9 @@ const offLayer = gateLayer.pipe(
   Layer.provideMerge(ruleJudgeLayer),
   Layer.provideMerge(disabledDecisionLayer),
   Layer.provideMerge(
-    Layer.mock(Runtime, { read: () => Effect.die('History is not read while decisions are off') }),
+    Layer.mock(Runtime, {
+      conversation: () => Effect.die('History is not read while decisions are off'),
+    }),
   ),
   Layer.provideMerge(storeServices),
 )

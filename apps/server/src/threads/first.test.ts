@@ -30,7 +30,6 @@ import { silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime, runtimeLayer } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
 import { Conversation } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
 import { threadHandlers } from './handlers.ts'
@@ -121,15 +120,14 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
       )
       yield* Ref.update(deliveries, (all) => [...all, delivery])
       // A missing receipt exercises the production RuntimeUnavailable path after reservation.
-      if (yield* Ref.getAndSet(refuseAdmission, false))
+      if (yield* Ref.get(refuseAdmission))
         return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
       return HttpClientResponse.fromWeb(
         request,
         new Response(
           JSON.stringify({
-            submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-            offset: '1',
-            uid: 'first-test',
+            submissionId: 42,
+            repeated: false,
           }),
           { headers: { 'content-type': 'application/json' }, status: 202 },
         ),
@@ -213,24 +211,30 @@ layer(stores)((it) => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('the no-Run guard retains a failed unadmitted reservation after a Flue refusal', () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        yield* Ref.set(test.refuseAdmission, true)
-        const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
-        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
-          'RuntimeUnavailable',
-        )
-        const [thread] = yield* recorded(test.actor.person.id)
-        if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
-        const [run] = yield* (yield* RunStore).list(thread.id)
-        if (run === undefined) expect.fail('Expected the failed reservation')
-        expect(RunState.guards.Failed(run.state)).toBe(true)
-        expect(yield* test.open(test.actor.workspace)).toEqual(
-          OpenFirstThreadResult.cases.Existing.make({ thread: thread.id }),
-        )
-        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-      }).pipe(Effect.scoped),
+    it.effect(
+      'the no-Run guard retains a failed reservation after uncertain admission is exhausted',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          yield* Ref.set(test.refuseAdmission, true)
+          const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
+          expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
+            'RuntimeUnavailable',
+          )
+          const [thread] = yield* recorded(test.actor.person.id)
+          if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
+          const [run] = yield* (yield* RunStore).list(thread.id)
+          if (run === undefined) expect.fail('Expected the retained reservation')
+          if (!RunState.guards.Failed(run.state)) expect.fail('Expected a failed delivery')
+          expect(run.state.reason).toBe('Delivery')
+          expect(yield* test.open(test.actor.workspace)).toEqual(
+            OpenFirstThreadResult.cases.Existing.make({ thread: thread.id }),
+          )
+          expect(
+            new Set((yield* Ref.get(test.deliveries)).map((delivery) => delivery.idempotencyKey))
+              .size,
+          ).toBe(1)
+        }).pipe(Effect.scoped),
     )
 
     it.effect(

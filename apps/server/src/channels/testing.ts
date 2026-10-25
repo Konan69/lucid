@@ -1,3 +1,4 @@
+import { ResponseId } from '../runtime/settlement.ts'
 import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
@@ -7,12 +8,13 @@ import {
   Person,
   PersonId,
   RunId,
+  RuntimeSubmissionId,
+  emptyConversation,
   SessionId,
   Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Clock, Context, Deferred, Effect, Layer, Option, Queue, Ref, Stream } from 'effect'
-import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { auditLayer } from '../audit/record.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { type Actor } from '../auth/access.ts'
@@ -22,7 +24,7 @@ import { changesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { conversationLayer } from '../threads/delivery.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
@@ -85,6 +87,8 @@ const ports = Layer.effectContext(
     const admitted = yield* Queue.unbounded<RuntimeInput>()
     const admissions = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
     const settlements = new Map<RunId, Deferred.Deferred<Settlement>>()
+    const submissions = new Map<RunId, RuntimeSubmissionId>()
+    const admittedRuns = new Map<RuntimeSubmissionId, RunId>()
     const control = ChannelControl.of({
       endings,
       sends,
@@ -136,30 +140,33 @@ const ports = Layer.effectContext(
     })
     const runtime = Runtime.of({
       admit: Effect.fn('Channels.test.admit')(function* (input) {
-        const id = submissionId(input.threadId, input.idempotencyKey)
+        const id = deliveryRunId(input.threadId, input.idempotencyKey)
         const repeated = settlements.has(id)
-        if (!repeated) settlements.set(id, yield* Deferred.make<Settlement>())
+        if (!repeated) {
+          settlements.set(id, yield* Deferred.make<Settlement>())
+          const piId = RuntimeSubmissionId.make(submissions.size + 1)
+          submissions.set(id, piId)
+          admittedRuns.set(piId, id)
+        }
         yield* Ref.update(admissions, (all) => [...all, input])
         yield* Queue.offer(admitted, input)
+        const piId = submissions.get(id)
+        if (piId === undefined)
+          return yield* Effect.sync(() => expect.fail('Admission must reserve a Pi submission'))
         return Admission.make({
-          runId: id,
-          offset: String(input.turn),
-          incarnation: 'channels-test',
+          submissionId: piId,
           repeated,
         })
       }),
-      settled: (_, id) => {
-        const waiting = settlements.get(id)
+      settled: (_person, _thread, submissionId) => {
+        const id = admittedRuns.get(submissionId)
+        const waiting = id === undefined ? undefined : settlements.get(id)
         return waiting === undefined ? Effect.never : Deferred.await(waiting)
       },
       stop: () => Effect.succeed(false),
-      read: () =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            HttpClientRequest.get('http://runtime.test'),
-            new Response('{}'),
-          ),
-        ),
+      conversation: () => Effect.succeed(emptyConversation),
+      watch: () => Stream.empty,
+      attachment: () => Effect.die('Channel fixtures have no attachments'),
     })
     return Context.make(ChannelControl, control).pipe(
       Context.add(ChannelProvider, provider),
@@ -268,7 +275,10 @@ export const fixture = Effect.fn('Channels.test.fixture')(function* () {
   /** Wait on the real observer's reply receipt, including app Runs which correctly send nothing. */
   const finish = Effect.fn('Channels.test.observedFinish')(function* (id: RunId, reply: string) {
     const control = yield* ChannelControl
-    yield* control.finish(id, Settlement.cases.Completed.make({ reply, responseId: id }))
+    yield* control.finish(
+      id,
+      Settlement.cases.Completed.make({ reply, responseId: ResponseId.make(id), toolCalls: 0 }),
+    )
     const event = yield* Queue.take(control.endings)
     expect(event.runId).toBe(id)
     return event

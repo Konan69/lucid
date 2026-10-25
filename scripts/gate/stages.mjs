@@ -39,7 +39,7 @@ export const stages = [
   {
     name: 'build',
     lane: 'checks',
-    tasks: ['@vivid/web#build', '@vivid/agent-runtime#build', '@vivid/mobile#build:updates'],
+    tasks: ['@vivid/web#build', '@vivid/mobile#build:updates'],
   },
   // Tooling integration proofs run compilers on small fixtures beside the application tests.
   { name: 'tooling', lane: 'tests', tasks: ['test:tooling'] },

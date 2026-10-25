@@ -1,10 +1,10 @@
-import type { FlueConversationMessage } from '@flue/react'
 import {
   DisplaySource,
   InputRequestId,
   InputRequestState,
   textOf,
   type Approval,
+  type ConversationMessage,
   type InputRequest,
   type PersonId,
   type Run,
@@ -14,6 +14,8 @@ import {
   asking,
   makeFullWhen,
   makeWhen,
+  pictureAddress,
+  runOf,
   Source,
   sourceOf,
   speakerOfTurn,
@@ -35,12 +37,6 @@ import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from '
 import { Asked } from './Question'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
-const Metadata = Schema.Struct({
-  finishedAt: Schema.optionalKey(Schema.Finite),
-  startedAt: Schema.optionalKey(Schema.Finite),
-})
-const decodeMetadata = Schema.decodeUnknownOption(Metadata)
-
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
   readonly thread: ThreadId
@@ -56,8 +52,8 @@ const when = makeWhen(reader)
 const fullWhen = makeFullWhen(reader)
 
 /** When a message was finished, or failing that begun, where the conversation stamps it. */
-const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+const momentOf = (message: ConversationMessage): Option.Option<number> =>
+  Option.flatMap(Option.fromUndefinedOr(message.metadata), (metadata) =>
     Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
       Option.fromUndefinedOr(metadata.startedAt),
     ),
@@ -68,7 +64,7 @@ const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
  * is said against today (only the time today, "Yesterday", a date before that), with the whole
  * date and time on hover for when that is not enough.
  */
-function timeOf(message: FlueConversationMessage) {
+function timeOf(message: ConversationMessage) {
   return Option.map(momentOf(message), (moment) => ({
     said: when(moment, Date.now()),
     full: fullWhen(moment),
@@ -79,16 +75,14 @@ function timeOf(message: FlueConversationMessage) {
 const decodeRequest = Schema.decodeUnknownOption(InputRequestId)
 
 /** The request a message is the delivered answer to, when it is that signal. */
-function answeredBy(message: FlueConversationMessage): Option.Option<InputRequestId> {
+function answeredBy(message: ConversationMessage): Option.Option<InputRequestId> {
   const signal = message.signal
-  if (signal === undefined || signal.tagName !== 'answer' || signal.attributes === undefined) {
-    return Option.none()
-  }
+  if (signal === undefined || signal.tagName !== 'answer') return Option.none()
   return decodeRequest(signal.attributes.request)
 }
 
 /** What each message came to, kept against the message itself (`spokenOf`). */
-const spoken = new WeakMap<FlueConversationMessage, asking.Spoken>()
+const spoken = new WeakMap<ConversationMessage, asking.Spoken>()
 
 /**
  * One message of the conversation as placing answers needs it (`asking.linesOf`, `@vivid/state`):
@@ -98,10 +92,11 @@ const spoken = new WeakMap<FlueConversationMessage, asking.Spoken>()
  * when it was said, where the conversation stamps it.
  *
  * It is read once for each message object. A Thread asks for every message again at each
- * streamed token, and reading one decodes its tool results; Flue hands back the same object for
- * a message that did not change, so only the reply being written is read again.
+ * change, and reading one decodes its tool results; a message that did not change is the same
+ * object it was (`changed`, `@vivid/state` `conversation.ts`), so only the reply being written
+ * is read again.
  */
-export function spokenOf(message: FlueConversationMessage): asking.Spoken {
+export function spokenOf(message: ConversationMessage): asking.Spoken {
   const known = spoken.get(message)
   if (known !== undefined) return known
   const read: asking.Spoken = {
@@ -123,16 +118,16 @@ export function spokenOf(message: FlueConversationMessage): asking.Spoken {
  * writes one when a model call ends without producing anything. The Run's own state says what
  * happened and is drawn in its place, so the empty shell (a face and a time beside nothing) is not.
  */
-export const isBlank = (message: FlueConversationMessage) =>
+export const isBlank = (message: ConversationMessage) =>
   message.role === 'assistant' &&
   textOf(message).trim().length === 0 &&
   !message.parts.some((part) => part.type === 'dynamic-tool')
 
 /**
- * The fields of a message a row draws from. Flue hands back the same object for a message that
- * did not change, with one exception: a message this page sent is copied on every snapshot to
- * keep the id it was first drawn under (`converge` in `@flue/react` 2.2.2 `dist/index.mjs`,
- * `{ ...message, id: localId }`). The copy is shallow, so its fields are the same values.
+ * The fields of a message a row draws from. A message that did not change is the same object it
+ * was, with one exception: a message this page sent is a copy that keeps the id its words were
+ * first drawn under (`saidWith`, `@vivid/state` `sending.ts`). The copy is shallow, so its fields
+ * are the same values.
  */
 const DRAWN = [
   'id',
@@ -142,14 +137,14 @@ const DRAWN = [
   'settlement',
   'submissionId',
   'metadata',
-] as const satisfies ReadonlyArray<keyof FlueConversationMessage>
+] as const satisfies ReadonlyArray<keyof ConversationMessage>
 
 /** Whether two messages draw the same row: the same object, or a copy with the same fields. */
-const sameMessage = (was: FlueConversationMessage, now: FlueConversationMessage) =>
+const sameMessage = (was: ConversationMessage, now: ConversationMessage) =>
   was === now || DRAWN.every((field) => was[field] === now[field])
 
 interface MessageProps {
-  readonly message: FlueConversationMessage
+  readonly message: ConversationMessage
   readonly context: ThreadContext
   /** Whether Vivid is working on this message right now; only the newest can be worked on. */
   readonly working: boolean
@@ -187,7 +182,7 @@ export const Message = memo(function Message({
   onContinue,
 }: MessageProps) {
   if (message.role === 'user') {
-    return <Said text={textOf(message)} mine pictures={picturesOf(message)} />
+    return <Said text={textOf(message)} mine pictures={picturesOf(message, context.thread)} />
   }
   if (message.role === 'system') return <Signal message={message} context={context} />
   return (
@@ -327,13 +322,17 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
   })
 }
 
-/** A message's image files, in conversation order; other files are not shown as pictures. */
-function picturesOf(message: FlueConversationMessage) {
+/**
+ * A message's image files, in conversation order; other files are not shown as pictures. Where
+ * the bytes are read is the app's own address for them (`pictureAddress`, `@vivid/state`): the
+ * page's origin, with the page's own session.
+ */
+function picturesOf(message: ConversationMessage, thread: ThreadId) {
   return message.parts.flatMap((part) => {
     if (part.type !== 'file' || !part.mediaType.startsWith('image/') || part.url === undefined) {
       return []
     }
-    return [{ url: part.url, name: part.filename ?? '' }]
+    return [{ url: pictureAddress(thread, part.url), name: part.filename ?? '' }]
   })
 }
 
@@ -351,13 +350,7 @@ const SIGNAL_LINE = {
  * (`Replied`), and what the runtime says to itself and the model (its instructions were
  * reloaded, its tools changed) is for no Person.
  */
-function Signal({
-  message,
-  context,
-}: {
-  message: FlueConversationMessage
-  context: ThreadContext
-}) {
+function Signal({ message, context }: { message: ConversationMessage; context: ThreadContext }) {
   return Source.$match(sourceOf(message), {
     Failed: () => (
       <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3">
@@ -497,10 +490,11 @@ function ToolCards({
 }
 
 /** Who Vivid was answering, in a shared Thread where that is not obvious. */
-function answering(message: FlueConversationMessage, context: ThreadContext) {
+function answering(message: ConversationMessage, context: ThreadContext) {
   if (!context.shared) return Option.none<string>()
-  const run = context.runs.find((candidate) => candidate.id === message.submissionId)
-  return run === undefined ? Option.none<string>() : Option.some(run.origin.person.name)
+  // A reply names the delivery it answers by the Run's number in the runtime
+  // (`Run.submissionId`), never by the Run's own id.
+  return Option.map(runOf(context.runs, message), (run) => run.origin.person.name)
 }
 
 /** What the copy control says for each thing that can have happened to the last press. */
@@ -558,7 +552,7 @@ function CopyWords({ read }: { read: () => string }) {
 }
 
 /** When a reply was finished, when Vivid said so. */
-function Stamp({ message }: { message: FlueConversationMessage }) {
+function Stamp({ message }: { message: ConversationMessage }) {
   const time = timeOf(message)
   return Option.isNone(time) ? null : <time title={time.value.full}>{time.value.said}</time>
 }
@@ -576,7 +570,7 @@ function FromVivid({
   settled,
   onContinue,
 }: {
-  message: FlueConversationMessage
+  message: ConversationMessage
   context: ThreadContext
   working: boolean
   latest: boolean
@@ -649,7 +643,7 @@ function ReplyFace({
   latest,
   making,
 }: {
-  message: FlueConversationMessage
+  message: ConversationMessage
   latest: boolean
   making: boolean
 }) {
@@ -669,7 +663,7 @@ function Settled({
   text,
   latest,
 }: {
-  message: FlueConversationMessage
+  message: ConversationMessage
   text: string
   latest: boolean
 }) {

@@ -1,6 +1,15 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { Person, PersonId, RunId, RunState, SessionId, ThreadId, Workspace } from '@vivid/contracts'
+import {
+  Person,
+  PersonId,
+  RunId,
+  RuntimeSubmissionId,
+  RunState,
+  SessionId,
+  ThreadId,
+  Workspace,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Array as Arr, Effect, Layer, Option, Order, Result } from 'effect'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -23,6 +32,7 @@ const reserve = Effect.fn('Run.test.reserve')(function* (
   return yield* TurnReservation.match(reservation, {
     Reserved: ({ turn }) => Effect.succeed(turn),
     Replayed: ({ turn }) => Effect.succeed(turn),
+    Unfollowed: ({ turn }) => Effect.succeed(turn),
     Busy: () => Effect.sync(() => expect.fail('Fixture Thread unexpectedly busy')),
   })
 })
@@ -91,6 +101,40 @@ layer(testLayer)((it) => {
     )
   })
 
+  describe.skipIf(!testDatabaseConfigured)('receipt cutover', () => {
+    it.effect('reads and replays old receipts and settles old working Runs at startup', () =>
+      Effect.gen(function* () {
+        const { personId, threadId } = yield* fixture()
+        const store = yield* RunStore
+        const database = yield* Database
+        const id = RunId.make(NodeCrypto.randomUUID())
+        const input = {
+          id,
+          personId,
+          threadId,
+
+          origin: StoredRunOrigin.cases.Message.make({}),
+        }
+        yield* reserve(input)
+        yield* database.run(
+          database
+            .update(runs)
+            .set({
+              admittedAt: 1,
+              receipt: { runId: id, offset: 'old-offset', incarnation: 'old-incarnation' },
+            })
+            .where(eq(runs.id, id)),
+        )
+        expect((yield* store.get(id)).submissionId).toBeUndefined()
+        expect((yield* store.list(threadId)).map((run) => run.submissionId)).toEqual([undefined])
+        const replay = yield* store.start(input)
+        expect(replay._tag).toBe('Unfollowed')
+        expect(yield* store.working).not.toContainEqual(expect.objectContaining({ id }))
+        expect((yield* store.get(id)).state._tag).toBe('Unknown')
+      }).pipe(Effect.scoped),
+    )
+  })
+
   /** Real PostgreSQL transactions prove that two deliveries cannot claim the same place in a Thread. */
   describe.skipIf(!testDatabaseConfigured)('Delivery turn authority', () => {
     /** The gate uses the host turn; checking all rows prevents a later foreign Run lending authority. */
@@ -118,7 +162,7 @@ layer(testLayer)((it) => {
               threadId,
               origin: StoredRunOrigin.cases.Message.make({}),
             })
-            yield* store.admitted({ runId: id, offset: '0', incarnation: 'test' })
+            yield* store.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(42) })
           }
           expect(yield* actionOrigin(actor)).toEqual(
             ActionOrigin.cases.Run.make({ threadId, runId: host }),
@@ -130,7 +174,7 @@ layer(testLayer)((it) => {
             threadId,
             origin: StoredRunOrigin.cases.Message.make({}),
           })
-          yield* store.admitted({ runId: foreign, offset: '0', incarnation: 'test' })
+          yield* store.admitted({ runId: foreign, submissionId: RuntimeSubmissionId.make(42) })
           // Admission prevents this state normally; old or inconsistent rows must still fail closed.
           yield* database.run(
             database.update(runs).set({ personId: other.personId }).where(eq(runs.id, foreign)),
@@ -147,7 +191,31 @@ layer(testLayer)((it) => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('allocates racing turns once and retains acting authority on replay', () =>
+    it.effect('receiptless work ends Unknown once at boot and its key is never re-admitted', () =>
+      Effect.gen(function* () {
+        const { personId, threadId } = yield* fixture()
+        const store = yield* RunStore
+        const id = RunId.make(NodeCrypto.randomUUID())
+        const input = {
+          id,
+          threadId,
+          personId,
+
+          origin: StoredRunOrigin.cases.Message.make({}),
+        }
+        yield* reserve(input)
+        expect((yield* store.get(id)).state._tag).toBe('Working')
+        expect(yield* store.working).not.toContainEqual(expect.objectContaining({ id }))
+        const ended = yield* store.get(id)
+        expect(ended.state._tag).toBe('Unknown')
+        expect(ended.submissionId).toBeUndefined()
+        yield* store.working
+        expect((yield* store.get(id)).state).toEqual(ended.state)
+        expect((yield* store.start(input))._tag).toBe('Unfollowed')
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('allocates racing turns once and retains confinement on replay', () =>
       Effect.gen(function* () {
         const { personId, threadId } = yield* fixture()
         const store = yield* RunStore

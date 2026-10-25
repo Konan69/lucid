@@ -1,3 +1,4 @@
+import type { ResponseId } from '../runtime/settlement.ts'
 import { and, eq } from 'drizzle-orm'
 import { Channel, PersonId, RunId, ThreadId } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Option, Schema } from 'effect'
@@ -57,11 +58,11 @@ const makeLedger = Effect.fn('Channels.makeLedger')(function* () {
    * unknown and never retried: Spectrum 12.10.1 Space.send cannot deduplicate a caller's key.
    * PersistedQueue retries and Workflow activities would resend that uncertain external effect;
    * neither fits this deliberately at-most-once delivery policy (rc.116 persistence source).
-   * A unique response id also claims a coalesced Flue answer once across its joined Runs.
+   * A unique response id also claims a coalesced answer once across its joined Runs.
    */
   const claim = Effect.fn('Channels.claimReply')(function* (
     runId: RunId,
-    responseId: Option.Option<RunId>,
+    responseId: Option.Option<ResponseId>,
   ) {
     const rows = yield* database
       .run(

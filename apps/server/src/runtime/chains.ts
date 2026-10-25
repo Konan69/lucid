@@ -1,5 +1,4 @@
 import * as NodeCrypto from 'node:crypto'
-import { createFlueClient, type FlueClient, type FlueConversationState } from '@flue/sdk'
 import { NodeHttpClient } from '@effect/platform-node'
 import { expect } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -8,21 +7,19 @@ import {
   PersonId,
   RunId,
   RunState,
-  SendMessageRequest,
+  ConversationState,
+  ConversationFrame,
   ThreadId,
   RuntimeUnavailable,
 } from '@vivid/contracts'
-import { Config, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from 'effect'
+import { Config, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect'
 import { eq } from 'drizzle-orm'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
-import { observeRun, Settlement } from './settlement.ts'
 
 const Account = Schema.Struct({ user: Schema.Struct({ id: PersonId }) })
-const Receipt = Schema.Struct({ submissionId: RunId })
-const sendBody = HttpClientRequest.schemaBodyJson(SendMessageRequest)
 
 const cleanupFailed = () => Effect.sync(() => expect.fail('Thread proof cleanup failed'))
 export const chainLayer = Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)
@@ -91,46 +88,35 @@ const chainPerson = Effect.fn('ThreadProof.person')(function* () {
 })
 type ChainPerson = Effect.Success<ReturnType<typeof chainPerson>>
 
-/** One of that Person's Threads: Flue's view of its conversation, and the Person's way to speak in it. */
-const chainThread = Effect.fn('ThreadProof.thread')(function* (
-  person: ChainPerson,
-  threadId: ThreadId,
-) {
-  const { server, cookie } = person
-  const http = yield* HttpClient.HttpClient
-  const conversation = createFlueClient({
-    url: new URL(`/api/vivid/${threadId}`, server).href,
-    headers: { cookie },
-  })
-  /** The gateway, rather than the runtime token, admits exactly the Person's public message shape. */
-  const send = Effect.fn('ThreadProof.send')(function* (body: string) {
-    // Built from the contract the route decodes: the route answered 400 to every proof once
-    // `kind` became required and this body was still written by hand.
-    const sent = yield* sendBody(
-      HttpClientRequest.post(new URL(`/api/vivid/${threadId}`, server)).pipe(
-        HttpClientRequest.setHeader('cookie', cookie),
-      ),
-      SendMessageRequest.make({ kind: 'user', body, idempotencyKey: NodeCrypto.randomUUID() }),
-    )
-    const accepted = yield* http
-      .execute(sent)
-      .pipe(
-        Effect.mapError(() =>
-          RuntimeUnavailable.make({ message: 'Proof Thread could not be reached' }),
-        ),
-      )
-    expect(accepted.status).toBe(202)
-    return (yield* HttpClientResponse.schemaBodyJson(Receipt)(accepted)).submissionId
+/** A proof reads projected state over the same product socket contract as the apps. */
+const chainThread = (person: ChainPerson, threadId: ThreadId) => {
+  const frames = person.rpc.WatchConversation({ threadId })
+  const conversation = {
+    frames,
+    attachmentUrl: (attachmentId: string) =>
+      new URL(
+        `/api/vivid/${encodeURIComponent(threadId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        person.server,
+      ).href,
+  }
+  const send = Effect.fn('ThreadProof.send')(function* (text: string) {
+    const { run } = yield* person.rpc.SendToThread({
+      threadId,
+      text,
+      pictures: [],
+      key: NodeCrypto.randomUUID(),
+    })
+    return run.id
   })
   return { ...person, threadId, conversation, send }
-})
+}
 
 /** A Person with one private Thread they started themselves, in which nothing has been said. */
 export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: string) {
   const person = yield* chainPerson()
   const threadId = ThreadId.make(NodeCrypto.randomUUID())
   yield* person.rpc.CreateThread({ id: threadId, title, projectId: null })
-  return yield* chainThread(person, threadId)
+  return chainThread(person, threadId)
 })
 export type ChainFixture = Effect.Success<ReturnType<typeof chainFixture>>
 
@@ -159,7 +145,7 @@ export const chainSession = Effect.fn('ThreadProof.session')(function* (
   const { personId } = yield* rpc.GetSettings()
   const threadId = ThreadId.make(NodeCrypto.randomUUID())
   yield* rpc.CreateThread({ id: threadId, title, projectId: null })
-  return yield* chainThread({ personId, rpc, server, origin, cookie: session }, threadId)
+  return chainThread({ personId, rpc, server, origin, cookie: session }, threadId)
 })
 
 /**
@@ -172,63 +158,71 @@ export const chainArrival = Effect.fn('ThreadProof.arrival')(function* () {
   const opened = yield* person.rpc.OpenFirstThread()
   if (!OpenFirstThreadResult.guards.Opened(opened))
     return yield* Effect.sync(() => expect.fail('A new Person must have a first Thread opened'))
-  return yield* chainThread(person, opened.thread)
+  return chainThread(person, opened.thread)
 })
 
-/** Wait on Flue's maintained SSE state; no sleeps, HTTP polling or second model submission. */
+/** A fresh link returns its Whole. Live proofs do not keep or apply a second conversation in the server. */
+const currentState = <E, R>(frames: Stream.Stream<ConversationFrame, E, R>) =>
+  frames.pipe(
+    Stream.filter(ConversationFrame.guards.Whole),
+    Stream.map((frame) => frame.state),
+    Stream.runHead,
+    Effect.flatMap((state) =>
+      Option.isSome(state)
+        ? Effect.succeed(state.value)
+        : Effect.sync(() => expect.fail('Conversation link ended before Whole')),
+    ),
+  )
+
+/** Changes are signals to read a fresh Whole through RPC, without a timed history poll. */
 export const waitForState = Effect.fn('ThreadProof.waitForState')(function* (
-  client: FlueClient,
-  accepts: (state: FlueConversationState) => boolean,
+  reader: Pick<ChainFixture['conversation'], 'frames'>,
+  accepts: (state: ConversationState) => boolean,
 ) {
-  const states = yield* Queue.unbounded<FlueConversationState>()
-  const observation = yield* Effect.acquireRelease(
-    Effect.sync(() => client.observe({ live: 'sse' })),
-    (source) => Effect.sync(() => source.close()),
+  const found = yield* reader.frames.pipe(
+    Stream.mapEffect((frame) =>
+      ConversationFrame.match(frame, {
+        Whole: ({ state }) => Effect.succeed(state),
+        Changes: () => currentState(reader.frames),
+      }),
+    ),
+    Stream.filter(accepts),
+    Stream.runHead,
   )
-  /** SDK decoding owns the stream ingress; only typed conversation snapshots enter the queue. */
-  const changed = () => {
-    const state = observation.getSnapshot().conversation
-    if (state !== undefined) Queue.offerUnsafe(states, state)
-  }
-  yield* Effect.acquireRelease(
-    Effect.sync(() => observation.subscribe(changed)),
-    (unsubscribe) => Effect.sync(unsubscribe),
-  )
-  changed()
-  const found = yield* Stream.fromQueue(states).pipe(Stream.filter(accepts), Stream.runHead)
   if (Option.isNone(found)) return yield* Effect.sync(() => expect.fail('Thread stream ended'))
   return found.value
-}, Effect.scoped)
+})
 
-/** Assert runtime settlement first, then its published product Run through the real live RPC. */
+/** The published product Run, rather than an inferred conversation message, proves settlement. */
 export const completeRun = Effect.fn('ThreadProof.completeRun')(function* (
   fixture: ChainFixture,
   runId: RunId,
 ) {
-  const outcome = yield* observeRun(fixture.conversation, runId, 90_000)
-  expect(Settlement.guards.Completed(outcome), 'The real model Run must settle successfully').toBe(
-    true,
-  )
-  yield* fixture.rpc.WatchThread({ id: fixture.threadId }).pipe(
-    Stream.filter((detail) =>
-      detail.runs.some((run) => run.id === runId && RunState.guards.Completed(run.state)),
-    ),
+  const ended = yield* fixture.rpc.WatchThread({ id: fixture.threadId }).pipe(
+    Stream.map((detail) => detail.runs.find((run) => run.id === runId)),
+    Stream.filter((run) => run !== undefined && !RunState.guards.Working(run.state)),
     Stream.runHead,
   )
+  if (Option.isNone(ended) || ended.value === undefined)
+    return yield* Effect.sync(() => expect.fail('Run ended without a record'))
+  const run = ended.value
+  expect(RunState.guards.Completed(run.state), 'The real model Run must settle successfully').toBe(
+    true,
+  )
   return yield* waitForState(fixture.conversation, (state) =>
-    state.settlements.some((settled) => settled.submissionId === runId),
+    state.settlements.some((settled) => settled.submissionId === run.submissionId),
   )
 })
 
 /** Tool receipts stay SDK-typed until their arbitrary provider output is decoded by each proof. */
-export function toolParts(state: FlueConversationState) {
+export function toolParts(state: ConversationState) {
   return state.messages.flatMap((message) =>
     message.parts.flatMap((part) => (part.type === 'dynamic-tool' ? [part] : [])),
   )
 }
 
 /** Require a final, observable answer; tool receipts alone must not be called an answered request. */
-export function replyText(state: FlueConversationState) {
+export function replyText(state: ConversationState) {
   return state.messages
     .filter((message) => message.role === 'assistant')
     .flatMap((message) =>

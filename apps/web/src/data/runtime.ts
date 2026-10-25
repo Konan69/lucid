@@ -4,7 +4,7 @@ import type { Effect } from 'effect'
 import { Layer } from 'effect'
 import * as RpcClientError from 'effect/rpc/RpcClientError'
 import * as Socket from 'effect/socket/Socket'
-import { catchUpConversations } from './conversation'
+import { reopenConversations as catchUpConversations } from './sending'
 
 export type { ProductFailure }
 

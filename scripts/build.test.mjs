@@ -6,7 +6,8 @@ import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
-import { runLocal } from './gate/local.mjs'
+import { runStages } from './gate/local.mjs'
+import { runIdentifier } from './gate/process.mjs'
 import { stageOfTask, stages } from './gate/stages.mjs'
 
 const assert = NodeAssert
@@ -96,15 +97,21 @@ void NodeTest.test(
       SENTRY_AUTH_TOKEN: 'fixture-must-not-reach-builds',
       VIVID_GATE_CACHE: NodePath.join(directory, '.turbo/cache'),
     }
-    const run = () => runLocal(directory, { stages: ['build'], base: undefined }, environment)
+    // These bundlers only write fixture files. The enclosing gate already owns capacity;
+    // reacquiring it here deadlocks when the other machine slots belong to concurrent gates.
+    const run = () => {
+      const runId = runIdentifier()
+      const evidence = NodePath.join(directory, '.cache/gate/runs', runId)
+      NodeFS.mkdirSync(evidence, { recursive: true })
+      return runStages(directory, { stages: ['build'], base: undefined }, environment, {
+        runId,
+        directory: evidence,
+      })
+    }
     const built = await run()
     assert.equal(built.results.length, 1)
     assert.deepEqual(built.results[0].failed, [], built.results[0].output)
-    const artifacts = [
-      'apps/web/dist/result',
-      'packages/agent/runtime/dist/result',
-      'apps/mobile/.cache/updates/result',
-    ]
+    const artifacts = ['apps/web/dist/result', 'apps/mobile/.cache/updates/result']
     for (const file of artifacts) {
       assert.equal(NodeFS.readFileSync(NodePath.join(directory, file), 'utf8'), 'built artifact')
       NodeFS.rmSync(NodePath.join(directory, file))
@@ -114,7 +121,7 @@ void NodeTest.test(
     const cached = await run()
     assert.match(
       cached.results[0].detail,
-      /^3\/3 cached$/u,
+      /^2\/2 cached$/u,
       built.results[0].output + cached.results[0].output,
     )
     for (const file of artifacts)
@@ -124,7 +131,7 @@ void NodeTest.test(
       '// changed shared input\n',
     )
     const changed = await run()
-    assert.match(changed.results[0].detail, /^0\/3 cached$/u)
+    assert.match(changed.results[0].detail, /^0\/2 cached$/u)
     environment.VIVID_COMMIT = 'reject-web'
     const failed = await run()
     assert.deepEqual(failed.results[0].failed, ['@vivid/web#build'])

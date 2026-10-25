@@ -19,10 +19,8 @@
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
-    "@flue/react": "catalog:",
     "@openuidev/react-lang": "catalog:",
     "zod": "catalog:",
-    "@flue/sdk": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/marks": "workspace:*",

@@ -60,7 +60,7 @@ import {
   Observation,
   trustTestLayer,
 } from '../approvals/testing.ts'
-import { Runtime } from '../runtime/client.ts'
+import { RuntimeTransportFailed, Runtime } from '../runtime/client.ts'
 import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
@@ -299,7 +299,7 @@ describe.skipIf(!testDatabaseConfigured)(
                   id: 'thinking',
                   submissionId: 'done',
                   role: 'assistant',
-                  parts: [{ type: 'reasoning', text: 'return "forged";' }],
+                  parts: [{ type: 'reasoning', state: 'done', text: 'return "forged";' }],
                 },
               ]
               for (const message of ['vivid', 'person', 'thinking', 'missing']) {
@@ -490,11 +490,11 @@ describe.skipIf(!testDatabaseConfigured)(
               ['done'],
             )
             const runtime = Layer.mock(Runtime, {
-              read: Effect.fn('Test.sharedDisplayHistory')(function* () {
+              conversation: Effect.fn('Test.sharedDisplayHistory')(function* () {
                 yield* Ref.update(reads, (count) => count + 1)
                 yield* Deferred.succeed(started, undefined)
                 yield* Deferred.await(release)
-                return yield* snapshot.read()
+                return yield* snapshot.conversation()
               }),
             })
             const context = yield* Layer.build(runtime)
@@ -520,11 +520,17 @@ describe.skipIf(!testDatabaseConfigured)(
           Effect.gen(function* () {
             const test = yield* fixture()
             const reads = yield* Ref.make(0)
-            const failure = RuntimeUnavailable.make({ message: 'History transport unavailable' })
+            const failure = RuntimeUnavailable.make({
+              message: 'Display response could not be read',
+            })
             const runtime = Layer.mock(Runtime, {
-              read: Effect.fn('Test.retryDisplayHistory')(function* () {
+              conversation: Effect.fn('Test.retryDisplayHistory')(function* () {
                 const count = yield* Ref.updateAndGet(reads, (value) => value + 1)
-                if (count === 1) return yield* failure
+                if (count === 1)
+                  return yield* RuntimeTransportFailed.make({
+                    personId: test.personal.person.id,
+                    threadId: test.personalId,
+                  })
                 return yield* history(
                   [
                     {
@@ -537,7 +543,7 @@ describe.skipIf(!testDatabaseConfigured)(
                     },
                   ],
                   ['done'],
-                ).read()
+                ).conversation()
               }),
             })
             const context = yield* Layer.build(runtime)
@@ -576,7 +582,7 @@ describe.skipIf(!testDatabaseConfigured)(
               kind: 'Query' as const,
             }
             const runtime = Layer.mock(Runtime, {
-              read: Effect.fn('Test.displayHistory')(function* () {
+              conversation: Effect.fn('Test.displayHistory')(function* () {
                 yield* Ref.update(reads, (n) => n + 1)
                 return yield* history(
                   [
@@ -590,7 +596,7 @@ describe.skipIf(!testDatabaseConfigured)(
                     },
                   ],
                   (yield* Ref.get(final)) ? ['submission'] : [],
-                ).read()
+                ).conversation()
               }),
             })
             const context = yield* Layer.build(runtime)
@@ -640,24 +646,23 @@ describe.skipIf(!testDatabaseConfigured)(
                   'root = Text(data)\ndata = Query("run_code", {code: "return 1;", summary: "Read"})',
                 ),
               }
-              const current = yield* Ref.make(history([message], ['submission'], 'first'))
+              const current = yield* Ref.make(history([message], ['submission']))
               const runtime = Layer.mock(Runtime, {
-                read: Effect.fn('Test.currentDisplayHistory')(function* () {
+                conversation: Effect.fn('Test.currentDisplayHistory')(function* () {
                   const snapshot = yield* Ref.get(current)
-                  return yield* snapshot.read()
+                  return yield* snapshot.conversation()
                 }),
               })
               const context = yield* Layer.build(runtime)
               const draw = storedDisplay(test.personal, request).pipe(Effect.provide(context))
               checkCode(yield* draw, 'Completed', { result: 1 })
               const changed = {
-                removed: history([], ['submission'], 'first'),
+                removed: history([], ['submission']),
                 replaced: history(
                   [{ ...message, parts: textPart('root = Text("Replacement response")') }],
                   ['submission'],
-                  'first',
                 ),
-                reset: history([message], [], 'second'),
+                reset: history([message], []),
               }
               yield* Ref.set(current, changed[change])
               yield* TestClock.adjust('1999 millis')
@@ -665,7 +670,7 @@ describe.skipIf(!testDatabaseConfigured)(
               yield* TestClock.adjust('1 millis')
               if (change === 'reset') {
                 expect(yield* draw).toEqual(DisplayProgramWaiting.make({}))
-                yield* Ref.set(current, history([message], ['submission'], 'second'))
+                yield* Ref.set(current, history([message], ['submission']))
                 yield* TestClock.adjust('2 seconds')
                 checkCode(yield* draw, 'Completed', { result: 1 })
               } else {

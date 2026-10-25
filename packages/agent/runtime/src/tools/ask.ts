@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import * as Arr from 'effect/Array'
 import * as Effect from 'effect/Effect'
 import { Tool, INPUT_QUESTIONS_MOST } from '@vivid/contracts'

@@ -37,23 +37,51 @@ const waitForDatabase = Effect.fn('migrate.waitForDatabase')(function* () {
   return yield* Effect.fail(new Error('PostgreSQL did not accept connections within 30 seconds'))
 })
 
+/**
+ * Every migration owner, in order, with the service that deploys it. Each service migrates its own
+ * tables in its own pre-deploy step (`infra/railway.ts`): `node scripts/migrate.mjs server` in the
+ * server's image, the runtime's `db:migrate` in the runtime's. Run with no argument (root
+ * `pnpm db:migrate`, the local stack) it applies all of them in this order.
+ */
 const migrations = [
   {
     name: 'server',
+    service: 'server',
     cwd: 'apps/server',
     args: ['exec', 'drizzle-kit', 'migrate', '--config', 'drizzle.config.ts'],
   },
   {
     name: 'server-product',
+    service: 'server',
     cwd: 'apps/server',
     args: ['exec', 'drizzle-kit', 'migrate', '--config', 'product-drizzle.config.ts'],
   },
+  /**
+   * The conversation runtime's stores (`packages/agent/runtime/src/storage/tables.ts`): their own
+   * `runtime` schema and their own ledger (`runtime_migrations`), nothing of the server's.
+   */
+  {
+    name: 'runtime',
+    service: 'runtime',
+    cwd: 'packages/agent/runtime',
+    args: ['exec', 'drizzle-kit', 'migrate', '--config', 'drizzle.config.ts'],
+  },
 ]
+
+const services = process.argv.slice(2)
+for (const service of services) {
+  if (!migrations.some((migration) => migration.service === service))
+    throw new Error(`No migration owner belongs to service ${service}`)
+}
+const selected =
+  services.length === 0
+    ? migrations
+    : migrations.filter((migration) => services.includes(migration.service))
 
 // This executable owns the Effect runtime terminal for its startup boundary.
 // oxlint-disable-next-line vivid/no-runpromise-in-library
 await Effect.runPromise(waitForDatabase())
-for (const migration of migrations) {
+for (const migration of selected) {
   console.log(`Applying ${migration.name} migrations`)
   const result = NodeChildProcess.spawnSync('pnpm', migration.args, {
     cwd: migration.cwd,

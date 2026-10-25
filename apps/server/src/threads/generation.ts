@@ -1,12 +1,12 @@
 import { Cause, Context, Effect, Layer, Option, Schema } from 'effect'
-import type { NotFound, PersonId, ThreadId } from '@vivid/contracts'
+import type { ConversationState, NotFound, PersonId, ThreadId } from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
   ThreadTitleModelUnavailable,
   ThreadTitleOutputInvalid,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { readConversationHistory, textOf } from '../memory/history.ts'
+import { textOf } from '../memory/history.ts'
 import { MemoryModel } from '../memory/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { findThread, requireThread, type StoredThread } from './access.ts'
@@ -44,18 +44,16 @@ export interface ThreadTitlesService {
   ) => Effect.Effect<string, TitleFailure | DatabaseInfrastructureError | NotFound>
 }
 
-/** Thread naming owns generation policy. The store owns guarded writes and publication; Flue and MemoryModel own I/O. */
+/** Thread naming owns generation policy. The store owns guarded writes and publication; Pi and MemoryModel own I/O. */
 export class ThreadTitles extends Context.Service<ThreadTitles, ThreadTitlesService>()(
   'vivid/ThreadTitles',
 ) {}
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#formatThreadTitleContext adapted to Flue purposes: scheduled/approval
+/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#formatThreadTitleContext adapted to Pi purposes: scheduled/approval
  * dispatches are not Person messages. Shared Person messages are dispatches tagged message, and a
  * Person's answer to one of Vivid's questions is a dispatch tagged answer: in the Thread Vivid
  * opens itself those answers are the only Person words there are, so they must count. */
-function titleMessages(
-  history: Effect.Success<ReturnType<typeof readConversationHistory>>,
-): ReadonlyArray<TitleMessage> {
+function titleMessages(history: ConversationState): ReadonlyArray<TitleMessage> {
   return history.messages.flatMap((message): ReadonlyArray<TitleMessage> => {
     if (
       message.purpose === 'user' ||
@@ -81,11 +79,11 @@ export const threadTitlesLayer = Layer.effect(
     const withDatabase = Effect.provideService(Database, database)
 
     /** History failures never fall back to a partial or invented conversation. */
-    const contents = Effect.fn('ThreadTitles.contents')(function* (thread: ThreadId) {
-      const history = yield* readConversationHistory(runtime, thread).pipe(
+    const contents = Effect.fn('ThreadTitles.contents')(function* (thread: StoredThread) {
+      const history = yield* runtime.conversation(thread.personId, thread.id).pipe(
         Effect.scoped,
         Effect.timeout('5 seconds'),
-        Effect.mapError(() => ThreadTitleHistoryUnavailable.make({ thread })),
+        Effect.mapError(() => ThreadTitleHistoryUnavailable.make({ thread: thread.id })),
       )
       return titleMessages(history)
     })
@@ -117,7 +115,7 @@ export const threadTitlesLayer = Layer.effect(
       function* (id: ThreadId) {
         const found = yield* findThread(id).pipe(withDatabase)
         if (Option.isNone(found) || !canReplaceThreadTitle(found.value.titleSource)) return
-        const messages = yield* contents(id)
+        const messages = yield* contents(found.value)
         if (!messages.some((message) => message.role === 'user')) return
         const title = yield* generate(id, formatThreadTitleContext(messages), Option.none())
         if (title === DEFAULT_THREAD_TITLE) return
@@ -140,7 +138,7 @@ export const threadTitlesLayer = Layer.effect(
       thread: StoredThread,
       person: PersonId,
     ) {
-      const messages = yield* contents(thread.id)
+      const messages = yield* contents(thread)
       const context = formatThreadTitleContext(messages)
       if (context.length === 0) return thread.title
       const title = yield* generate(thread.id, context, Option.some(thread.title))

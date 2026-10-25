@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import type { FlueConversationState } from '@flue/sdk'
+import type { ConversationState as FlueConversationState } from '@vivid/contracts'
 import { ComputerState, EgressStatus, PatchSettingsRequest } from '@vivid/contracts'
 import { Array as Arr, Config, Effect, Option, Schema, Stream } from 'effect'
 import { type ChainFixture, chainSession, completeRun, toolParts } from '../../runtime/chains.ts'

@@ -24,6 +24,7 @@ import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { computerSandbox, machineTools } from '@vivid/agent-runtime/sandbox'
 import { Scope as ToolScope, scopedRunner } from '@vivid/agent-runtime/scope'
+import { roundTrip } from '@vivid/agent-runtime/tooltesting'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -51,7 +52,7 @@ import {
  * A Computer for tests that is a real SSH server on this machine (`ssh/peer.ts`): its shell and
  * its files are real, and they are reached through the same connection code a Boat machine is.
  * It starts asleep; `ensure` wakes it and is counted, so a test can say what woke it. It replaces
- * only the provider: the store, the takeover and idle rules, the outcomes and Flue's own tools
+ * only the provider: the store, the takeover and idle rules, the outcomes and Pi runtime tools
  * are the ones production uses. What it cannot show is Boat: authorizing the key, an address
  * that changes on resume, and a machine that refuses SSH just after a wake.
  */
@@ -154,7 +155,7 @@ const textOf = (result: { readonly content: ReadonlyArray<{ readonly type: strin
 describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer tools", () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect(
-      'writes, edits and reads a file and runs a command with Flue’s own tools, and only then wakes the Computer',
+      'constructs Pi runtime tools without waking the Computer, then writes, edits, reads and runs commands',
       () =>
         Effect.gen(function* () {
           const { server, wakes, machine } = yield* standIn()
@@ -211,52 +212,43 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
           )
           // The stand-in's home is its own fresh directory; on a Computer it is the user's home.
           const sandbox = computerSandbox(scopedRunner(scope), server.home)
-          // Flue's workspace discovery asks these when a conversation starts; none reaches the
-          // machine, so nothing has woken it.
-          expect(yield* Effect.promise(() => sandbox.exists('AGENTS.md'))).toBe(false)
-          expect(yield* Ref.get(wakes)).toBe(0)
-
           const [read, write, edit, bash, grep, glob] = machineTools(sandbox)
-          const said = <A extends { readonly content: ReadonlyArray<{ readonly type: string }> }>(
-            result: () => Promise<A>,
-          ) => Effect.promise(result).pipe(Effect.map(textOf))
+          // Offering tools to Pi must not discover a workspace or wake the Computer.
+          expect(yield* Ref.get(wakes)).toBe(0)
+          expect(yield* Queue.size(requests)).toBe(0)
+
+          const signal = yield* Effect.abortSignal
+          // A real Pi turn validates, executes and persists the tool result before it is read.
+          const said = (tool: ReturnType<typeof machineTools>[number], args: Schema.JsonObject) =>
+            Effect.promise(() => roundTrip(tool, args, signal)).pipe(
+              Effect.map(({ message }) => textOf(message)),
+            )
 
           // Relative paths are under the Computer's home, as they are for a person at a shell.
-          yield* said(() =>
-            write.execute('call', { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' }),
-          )
+          yield* said(write, { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' })
           expect(yield* Ref.get(wakes)).toBe(1)
           const notes = NodePath.join(server.home, 'work/notes.md')
           expect(NodeFS.readFileSync(notes, 'utf8')).toBe('Buy milk\nCall Ada\n')
 
-          yield* said(() =>
-            edit.execute('call', {
-              path: 'work/notes.md',
-              oldText: 'Call Ada',
-              newText: 'Call Grace',
-            }),
-          )
-          expect(yield* said(() => read.execute('call', { path: 'work/notes.md' }))).toContain(
-            'Call Grace',
-          )
-          const counted = yield* said(() =>
-            bash.execute('call', {
-              command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md',
-            }),
-          )
+          yield* said(edit, {
+            path: 'work/notes.md',
+            oldText: 'Call Ada',
+            newText: 'Call Grace',
+          })
+          expect(yield* said(read, { path: 'work/notes.md' })).toContain('Call Grace')
+          const counted = yield* said(bash, {
+            command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md',
+          })
           expect(counted.trim().split(/\s+/)).toEqual([server.home, '2', '1'])
-          expect(yield* said(() => grep.execute('call', { pattern: 'Grace' }))).toContain(
-            'notes.md',
-          )
-          expect(yield* said(() => glob.execute('call', { pattern: '*.md' }))).toContain(
-            'work/notes.md',
-          )
+          expect(yield* said(grep, { pattern: 'Grace' })).toContain('notes.md')
+          expect(yield* said(glob, { pattern: '*.md' })).toContain('work/notes.md')
 
           // A refusal by the machine is a sentence for the model, not a crash.
-          const missing = yield* Effect.tryPromise(() =>
-            read.execute('call', { path: 'absent.txt' }),
-          ).pipe(Effect.flip)
-          expect(String(missing.cause)).toContain('There is no file at that path.')
+          const missing = yield* Effect.promise(() =>
+            roundTrip(read, { path: 'absent.txt' }, signal),
+          )
+          expect(missing.message.isError).toBe(true)
+          expect(textOf(missing.message)).toContain('There is no file at that path.')
           // One wake served every call.
           expect(yield* Ref.get(wakes)).toBe(1)
         }).pipe(Effect.scoped),

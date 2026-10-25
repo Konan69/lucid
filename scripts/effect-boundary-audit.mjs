@@ -36,10 +36,12 @@ const effectOperationKinds = new Map([
   ['async', 'effect-async-adapter'],
 ])
 
-/** Production TypeScript only; tests, declarations, generated files, and migration state are separate gates. */
+/** Production TypeScript only. The tests directory also excludes server proof fixtures such as
+ * computers/tests/proof.ts and apps/server/tests; those execute through their own test gates. */
 export function isProductionTypeScript(relativePath) {
   if (!/\.[cm]?tsx?$/u.test(relativePath)) return false
-  if (/(?:^|[/\\])(?:node_modules|dist|build|drizzle)(?:[/\\]|$)/u.test(relativePath)) return false
+  if (/(?:^|[/\\])(?:node_modules|dist|build|drizzle|tests)(?:[/\\]|$)/u.test(relativePath))
+    return false
   if (/(?:\.test|\.spec|\.gen|worker-test-entry)\.[cm]?tsx?$/u.test(relativePath)) return false
   if (/\.d\.[cm]?ts$/u.test(relativePath)) return false
   return (
@@ -151,10 +153,23 @@ function declaredFunctionName(node, parents) {
   return parent.type === 'CallExpression' ? routeName(parent) : undefined
 }
 
+/** Callback signatures belong to the member, so one SDK port never exempts a whole module. */
+function interfaceMember(node, parents) {
+  if (node.type !== 'TSPropertySignature') return undefined
+  const body = parents.get(node)
+  const owner = body === undefined ? undefined : parents.get(body)
+  const name = keyName(node)
+  return owner !== undefined && owner.type === 'TSInterfaceDeclaration' && name !== undefined
+    ? `${owner.id.name}.${name}`
+    : undefined
+}
+
 function owningSymbol(node, parents) {
   let current = node
   let moduleBinding
   while (current !== undefined) {
+    const member = interfaceMember(current, parents)
+    if (member !== undefined) return member
     if (current.type === 'VariableDeclarator' && current.id.type === 'Identifier')
       moduleBinding = current.id.name
     if (isFunction(current)) {

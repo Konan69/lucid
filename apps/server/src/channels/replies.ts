@@ -1,3 +1,4 @@
+import type { ResponseId } from '../runtime/settlement.ts'
 import { ChannelAddress, RunId, ThreadAudience, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option, Predicate, Schema } from 'effect'
 import { Database } from '../database/client.ts'
@@ -73,13 +74,13 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
 
   /**
    * Claim before sending: crashes, partial sends and timeouts remain unknown and are never retried.
-   * Spectrum 12.10.1 cannot deduplicate caller keys. Flue's coalesced response identity is claimed
+   * Spectrum 12.10.1 cannot deduplicate caller keys. The runtime's coalesced response identity is claimed
    * once across joined Runs; app Runs have no route. Proven no-dispatch outcomes are not-sent.
    */
   const ended = Effect.fn('Channels.replyEnded')(function* (event: ChannelEnding) {
     const responseId = Settlement.guards.Completed(event.settlement)
       ? Option.some(event.settlement.responseId)
-      : Option.none<RunId>()
+      : Option.none<ResponseId>()
     const claimed = yield* ledger.claim(event.runId, responseId)
     if (Option.isNone(claimed)) return
     const route = claimed.value

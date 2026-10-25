@@ -1,58 +1,33 @@
-'use agent'
-
 import {
-  useDelivery,
-  useInitialData,
-  useModel,
-  useSkill,
-  useResponseFinish,
-  useResponseStart,
-  useTool,
-} from '@flue/runtime'
+  defineExtension,
+  section,
+  type Extension,
+  type HookRegistration,
+} from '@earendil-works/pi-durable'
+import type { ConversationId, ToolRegistration } from '@earendil-works/pi-durable'
 import * as Option from 'effect/Option'
-import { actingFor, threadOriginOf } from '../client.ts'
-import '../providers/explabs.ts'
-import '../providers/openrouter.ts'
-import { DEFAULT_MODEL } from '../providers/opencode.ts'
-import { namedAs, useVividContext } from '../context.ts'
-import { notesLayer } from '../keeping.ts'
-import { DISPLAYS } from './displays.ts'
-import { askTools } from '../tools/ask.ts'
-import { mountComputer } from '../tools/computer.ts'
-import { documentTools } from '../tools/documents.ts'
-import { codeTools } from '../tools/code.ts'
+import { Tool } from '@vivid/contracts'
+import { contextInstruction, emptyContext, namedAs } from '../context.ts'
+import type { Kept } from '../deliveries.ts'
+import { ACTIVATE_SKILL } from '../skills.ts'
 import { connectionTools } from '../tools/connections.ts'
-import { libraryTools } from '../tools/library.ts'
-import { memoryTools } from '../tools/memory.ts'
-import { noteTools } from '../tools/notes.ts'
-import { notifyTools } from '../tools/notify.ts'
-import { feedTools } from '../tools/feed.ts'
-import { watchTools } from '../tools/watches.ts'
-import { projectTools } from '../tools/projects.ts'
-import { skillTools } from '../tools/skills.ts'
-import {
-  scopeLayer,
-  scopedRunner,
-  toolRunner,
-  noteRunner,
-  type RunTool,
-  type RunNote,
-} from '../tools/scope.ts'
-
-import { nativeSkillsInOrder } from '@vivid/skills/native'
+import { documentTools } from '../tools/documents.ts'
+import { DISPLAYS } from './displays.ts'
 
 /**
- * Day granularity on purpose: the instruction must stay identical across the renders of one
- * response, or Flue narrates "instructions updated" every turn and the model never settles.
+ * Day granularity on purpose, and the day of the instant the response's context was read: the
+ * instruction must stay identical across the requests of one response, or Pi writes a system
+ * update into the transcript at every turn and the model never settles. Main read the wall clock
+ * at each render, which gave the same text except for a response running across midnight.
  */
-function today(timezone: string) {
+function today(timezone: string, at: number) {
   return new Intl.DateTimeFormat('en-GB', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
     timeZone: timezone,
-  }).format(Date.now())
+  }).format(at)
 }
 
 /**
@@ -139,66 +114,20 @@ const KNOWING = [
 ]
 
 /**
- * The memory tools. The note tools carry memory, and the knowledge base adds search and add
- * (`tools/memory.ts`). Notes are always mounted: the runtime does not start without their
- * directory (`settings.ts`).
+ * The instruction for one response, from the context frozen for it. The lines and their order
+ * are main's `Vivid()`: the voice, the name line, the date line, then every rule.
  */
-function remembering(runTool: RunTool, runNote: RunNote) {
-  return [noteTools(runNote), memoryTools(runTool)]
-}
-
-/** Render one response with the fixed public native catalogue, while saved
- * procedures remain on the Person-scoped RPC path and never enter Flue’s durable skill catalogue. */
-export function Vivid({ id }: { id: string }) {
-  const model = process.env.VIVID_MODEL ?? DEFAULT_MODEL
-  const delivery = useDelivery()
-  // Flue 2.1 joins a delivery into a response already in progress and rerenders at its turn
-  // boundary, so the tools that follow act for the joined delivery's Person. That is only safe
-  // because one response is for one Person: the server refuses a different Person's delivery
-  // while a Run is working in the Thread (`apps/server/src/threads`), so whoever joins is the
-  // Person already being answered. Flue itself has no queue-only dispatch to rely on.
-  const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
-  const scope = scopeLayer(id, delivery, threadOriginOf(useInitialData()))
-  const runTool = toolRunner(scope)
-  const runNote = noteRunner(id, delivery, threadOriginOf(useInitialData()), notesLayer)
-  const context = useVividContext(acting)
+export function instructions(response: Pick<Kept, 'acting' | 'context'>) {
+  const { context } = response
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'
-
-  // Only public built-ins enter Flue’s durable catalogue (2.2.2 conversation-stream-store,
-  // resourceSnapshotRecord). Saved names stay on the existing per-Person context/read path.
-  for (const skill of nativeSkillsInOrder) useSkill(skill)
-
-  useModel(model)
-  mountComputer(runTool, scopedRunner(scope))
-  for (const tools of [
-    libraryTools(runTool),
-    connectionTools(runTool),
-    askTools(runTool),
-    ...remembering(runTool, runNote),
-    notifyTools(runTool),
-    skillTools(runTool),
-    watchTools(runTool),
-    feedTools(runTool),
-    projectTools(runTool),
-    codeTools(runTool),
-    documentTools(runTool),
-  ]) {
-    for (const tool of tools) useTool(tool)
-  }
-  useResponseStart(() => ({ model, startedAt: Date.now() }))
-  useResponseFinish(({ response }) => ({
-    finishedAt: Date.now(),
-    toolCallCount: response.toolCalls.length,
-    usage: response.usage,
-  }))
-
+  const at = Option.getOrElse(context.asOf, () => Date.now())
   return [
     ...VOICE,
     // The name this Person or their Company gave Vivid, as text; nothing while it is still Vivid.
     ...namedAs(context.name),
-    Option.isSome(acting)
-      ? `Today is ${today(timezone)} in the ${timezone} time zone.`
+    response.acting
+      ? `Today is ${today(timezone, at)} in the ${timezone} time zone.`
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',
     ...ABILITIES,
     ...DECIDING,
@@ -212,17 +141,67 @@ export function Vivid({ id }: { id: string }) {
   ].join('\n')
 }
 
-Vivid.agentName = 'vivid'
-Vivid.durability = {
-  // How many times Flue may pick an interrupted Run up again. Each interruption (a deploy, a
-  // restart, a crash) consumes one attempt, and with one attempt the first interruption failed
-  // the Run. A later attempt does not replay the Run: Flue keeps every recorded tool result and
-  // never runs that call again, does not re-execute a call whose result was not recorded (the
-  // model reads an unknown-outcome error for it and decides), and continues a partial answer from
-  // what was persisted (`flue docs guide/durability`, "Recovery" and "Retry budget and timeout",
-  // Flue 2.2.2). Within an attempt, Pi retries request establishment and Flue independently
-  // retries some failed model turns. Neither budget is controlled by maxAttempts; Flue has no
-  // public option for its turn retry policy. The timeout below is the total for all attempts.
-  maxAttempts: 3,
-  timeoutMs: 60 * 60 * 1000,
+/** A response nobody prepared reads this, as main's unprepared render did: nothing borrowed. */
+const unprepared = { acting: false, context: emptyContext }
+
+export interface DefinitionInput {
+  /** Every model tool, in main's order (`tools/index.ts`). */
+  readonly tools: ReadonlyArray<ToolRegistration>
+  readonly hooks: ReadonlyArray<HookRegistration>
+  /** The context frozen for the response now answering in a conversation, when it can be found. */
+  readonly frozen: (conversationId: ConversationId) => Promise<Option.Option<Kept>>
+}
+
+/**
+ * Vivid's definition: what a conversation runs with, apart from its model. Pi calls a bundle of
+ * tools, prompt sections and hooks an "extension"; this is the only one, beside the built-in
+ * skills.
+ *
+ * The two sections are the two parts of main's agent document: the text `Vivid()` returned, and
+ * the context instruction `useVividContext` added after it. Pi joins sections with a blank line
+ * (pi-ai `getSystemMessageText`), as Flue joined the two (`composeAgentDocument`), and neither is
+ * wrapped in a tag, so the model reads the same characters. Both render from the one context
+ * frozen for the response, so every request of a response carries the same text and Pi writes
+ * no system update between them.
+ *
+ * What Flue appended on its own is gone with Flue: an "Available Agents" section about a `task`
+ * tool Vivid never offered, a `Date:` line that changed every day, and a working directory.
+ */
+export function definition(input: DefinitionInput): Extension {
+  const response = (conversationId: ConversationId) =>
+    input.frozen(conversationId).then(Option.getOrElse(() => unprepared))
+  return defineExtension({
+    name: 'vivid',
+    tools: Array.from(input.tools),
+    hooks: Array.from(input.hooks),
+    sections: [
+      section('vivid', (prompt) => response(prompt.conversationId).then(instructions), {
+        tag: false,
+      }),
+      section(
+        'context',
+        (prompt) =>
+          response(prompt.conversationId).then((frozen) => contextInstruction(frozen.context)),
+        { tag: false },
+      ),
+    ],
+  })
+}
+
+/**
+ * The order the model is offered its tools in, which is main's: the Computer's tools, then the
+ * skill tool Flue mounted itself, then every product tool. Pi lists an extension's tools before
+ * the next extension's, which would put the skill tool last, so the order is stated to Pi by name
+ * (`AgentChange.tools`) each time a delivery is admitted. `copy_signin` is the last of the
+ * Computer tools (`tools/computer.ts` `computerTools`).
+ */
+export function offered(
+  tools: ReadonlyArray<ToolRegistration>,
+  skills: Extension,
+): ReadonlyArray<ToolRegistration> {
+  const last = tools.findIndex((tool) => tool.name === Tool.copy_signin)
+  const skill = (skills.tools === undefined ? [] : skills.tools).filter(
+    (tool) => tool.name === ACTIVATE_SKILL,
+  )
+  return [...tools.slice(0, last + 1), ...skill, ...tools.slice(last + 1)]
 }

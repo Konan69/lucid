@@ -1,21 +1,24 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
+import {
+  ConversationFrame,
+  CompanyId,
+  PersonId,
+  ThreadId,
+  emptyConversation,
+} from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
-import { Context, Effect, Exit, Fiber, Layer, Predicate, PubSub, Queue, Stream } from 'effect'
+import { Context, Effect, Exit, Fiber, Layer, PubSub, Queue, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import * as HttpClientRequest from 'effect/http/HttpClientRequest'
-import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import * as HttpRouter from 'effect/http/HttpRouter'
-import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
-import { Conversation } from './conversation.ts'
-import { gatewayRoutes } from './gateway.ts'
+import { authenticate } from '../auth/session.ts'
+import { AuthContext } from '@vivid/contracts/auth'
+import { watchConversation } from './socket.ts'
 import { threads } from './tables.ts'
 import { authLayer } from '../auth/provider.ts'
 
@@ -120,66 +123,40 @@ const removeSession = Effect.fn('GatewayTest.removeSession')(function* (test: Fi
   yield* database.run(database.delete(sessionTable).where(eq(sessionTable.id, test.sessionId)))
 })
 
-const hello = new TextEncoder().encode('data: hello\n\n')
+const hello = ConversationFrame.cases.Whole.make({ state: emptyConversation })
 
-/** Flue's updates stream as the runtime hands it over: one event, then open for good. */
-const updates = () =>
-  HttpClientResponse.fromWeb(
-    HttpClientRequest.get('http://runtime.test'),
-    new Response(
-      new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(hello) }),
-      { headers: { 'content-type': 'text/event-stream' } },
-    ),
-  )
-
-/**
- * Opens through the real route, authentication and access check. `whileOpening` runs inside the
- * runtime read, after admission but before the response is returned to the client.
- */
+/** A lazy runtime link can revoke access during opening, before a buffered frame is returned. */
 const requestRead = Effect.fn('GatewayTest.requestRead')(function* (
   test: Fixture,
   whileOpening: Effect.Effect<void, DatabaseInfrastructureError, Database>,
 ) {
   const database = yield* Database
-  const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-  const response = yield* Effect.gen(function* () {
-    // Each scoped read owns its mock ports and bus subscriptions.
-    const context = yield* Layer.build(
-      Layer.mock(Runtime, {
-        read: Effect.fn('GatewayTest.read')(function* () {
-          yield* whileOpening.pipe(
+  const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
+  const context = yield* Layer.build(
+    Layer.mock(Runtime, {
+      watch: () =>
+        Stream.unwrap(
+          whileOpening.pipe(
             Effect.provideService(Database, database),
             Effect.catch(() => Effect.sync(() => expect.fail('The test could not change state'))),
-          )
-          return updates()
-        }),
-      }).pipe(Layer.provideMerge(Layer.mock(Conversation, {}))),
-    )
-    return yield* handle.pipe(
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(
-          new Request(`http://gateway.test/api/vivid/${test.threadId}?view=updates`, {
-            headers: { authorization: `Bearer ${test.token}`, host: 'gateway.test' },
-          }),
+            Effect.as(Stream.concat(Stream.make(hello), Stream.never)),
+          ),
         ),
-      ),
-      Effect.provide(context),
-    )
-  })
-  return response
+    }),
+  )
+  return watchConversation({ threadId: test.threadId }).pipe(
+    Stream.provideService(AuthContext, auth),
+    Stream.provideContext(context),
+  )
 })
 
 /** Body consumption starts separately, allowing removal after headers but before its first pull. */
 const consumeRead = Effect.fn('GatewayTest.consumeRead')(function* (
   response: Effect.Success<ReturnType<typeof requestRead>>,
 ) {
-  expect(response.status).toBe(200)
-  if (!Predicate.isTagged(response.body, 'Stream'))
-    return expect.fail('An updates read answers with a stream')
-  const received = yield* Queue.unbounded<Uint8Array>()
-  const ended = yield* response.body.stream.pipe(
-    Stream.runForEach((bytes) => Queue.offer(received, bytes)),
+  const received = yield* Queue.unbounded<ConversationFrame>()
+  const ended = yield* response.pipe(
+    Stream.runForEach((frame) => Queue.offer(received, frame)),
     Effect.forkScoped,
   )
   return { received, ended }
@@ -212,8 +189,9 @@ layer(foundation, { excludeTestServices: true })((it) => {
       Effect.gen(function* () {
         const test = yield* fixture()
         const response = yield* requestRead(test, removeMembership(test))
-        expect(response.status).toBe(404)
-        expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+        const read = yield* consumeRead(response)
+        expect(Exit.isFailure(yield* Fiber.await(read.ended))).toBe(true)
+        expect(yield* Queue.size(read.received)).toBe(0)
       }).pipe(Effect.scoped),
     )
 
@@ -221,8 +199,9 @@ layer(foundation, { excludeTestServices: true })((it) => {
       Effect.gen(function* () {
         const test = yield* fixture()
         const response = yield* requestRead(test, removeSession(test))
-        expect(response.status).toBe(401)
-        expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+        const read = yield* consumeRead(response)
+        expect(Exit.isFailure(yield* Fiber.await(read.ended))).toBe(true)
+        expect(yield* Queue.size(read.received)).toBe(0)
       }).pipe(Effect.scoped),
     )
 
@@ -235,7 +214,9 @@ layer(foundation, { excludeTestServices: true })((it) => {
             const response = yield* requestRead(test, Effect.void)
             yield* removal(test)
             const read = yield* consumeRead(response)
-            expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+            expect(Exit.isFailure(yield* Fiber.await(read.ended))).toBe(
+              removal === removeMembership,
+            )
             expect(yield* Queue.size(read.received)).toBe(0)
           }).pipe(Effect.scoped),
       )

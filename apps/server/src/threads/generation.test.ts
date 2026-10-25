@@ -1,8 +1,16 @@
+import { ResponseId } from '../runtime/settlement.ts'
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { Person, PersonId, RunId, RunState, ThreadId, Workspace } from '@vivid/contracts'
+import { Person, Workspace } from '@vivid/contracts'
+import {
+  ConversationState,
+  PersonId,
+  RunState,
+  RuntimeSubmissionId,
+  ThreadId,
+} from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
   ThreadTitleModelUnavailable,
@@ -24,7 +32,6 @@ import {
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -33,8 +40,7 @@ import { ProviderMalformed } from '../memory/embeddings.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Completion, MemoryModel } from '../memory/model.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { Admission, Runtime, Settlement } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { RuntimeTransportFailed, Admission, Runtime, Settlement } from '../runtime/client.ts'
 import { findThread } from './access.ts'
 import { Conversation, DeliveryMessage, DeliverySpeaker, StoredRunOrigin } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
@@ -44,6 +50,8 @@ import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import type { TitleSource } from './title.ts'
 import { threads } from './tables.ts'
+
+const decodeConversation = Schema.decodeUnknownEffect(ConversationState)
 
 const databaseLayer = Layer.mergeAll(runStoreLayer, threadStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -109,11 +117,15 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
   })
   const messages = yield* Ref.make<ReadonlyArray<Schema.Json>>([
     {
+      id: 'title-message',
+      display: 'visible',
       role: 'user',
       purpose: 'user',
       parts: [{ type: 'text', text: 'Please plan a holiday in Italy', state: 'done' }],
     },
     {
+      id: 'title-message',
+      display: 'visible',
       role: 'assistant',
       purpose: 'assistant',
       parts: [{ type: 'text', text: 'We can explore Florence.', state: 'done' }],
@@ -127,27 +139,25 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       ),
   })
   const runtime = Runtime.of({
-    admit: (input) =>
+    admit: () =>
       Effect.succeed(
-        Admission.make({
-          runId: submissionId(input.threadId, input.idempotencyKey),
-          offset: '1',
-          incarnation: 'test',
-          repeated: false,
-        }),
+        Admission.make({ submissionId: RuntimeSubmissionId.make(42), repeated: false }),
       ),
     settled: () => Deferred.await(settlement),
     stop: () => Effect.succeed(false),
-    read: () =>
+    watch: () => Stream.never,
+    attachment: () => Effect.never,
+    conversation: () =>
       Ref.get(messages).pipe(
-        Effect.map((history) =>
-          HttpClientResponse.fromWeb(
-            HttpClientRequest.get('http://runtime.test'),
-            new Response(JSON.stringify({ v: 1, messages: history, settlements: [] }), {
-              headers: { 'content-type': 'application/json' },
-            }),
-          ),
+        Effect.flatMap((history) =>
+          decodeConversation({
+            messages: history,
+            working: false,
+            queued: 0,
+            settlements: [],
+          }),
         ),
+        Effect.mapError(() => RuntimeTransportFailed.make({ personId, threadId })),
       ),
   })
   const changes = Changes.of({
@@ -246,8 +256,9 @@ layer(databaseLayer)((it) => {
             yield* Deferred.succeed(
               test.settlement,
               Settlement.cases.Completed.make({
+                toolCalls: 0,
                 reply: 'Florence could work.',
-                responseId: RunId.make('title-test-response'),
+                responseId: ResponseId.make('title-test-response'),
               }),
             )
             const input = yield* Queue.take(test.requests)
@@ -287,8 +298,9 @@ layer(databaseLayer)((it) => {
           yield* Deferred.succeed(
             test.settlement,
             Settlement.cases.Completed.make({
+              toolCalls: 0,
               reply: 'Done',
-              responseId: RunId.make('title-test-response'),
+              responseId: ResponseId.make('title-test-response'),
             }),
           )
           yield* Queue.take(test.requests)
@@ -317,8 +329,9 @@ layer(databaseLayer)((it) => {
           yield* Deferred.succeed(
             test.settlement,
             Settlement.cases.Completed.make({
+              toolCalls: 0,
               reply: 'Done',
-              responseId: RunId.make('title-test-response'),
+              responseId: ResponseId.make('title-test-response'),
             }),
           )
           yield* Deferred.await(test.finished)
@@ -336,8 +349,9 @@ layer(databaseLayer)((it) => {
         yield* Deferred.succeed(
           test.settlement,
           Settlement.cases.Completed.make({
+            toolCalls: 0,
             reply: 'Done',
-            responseId: RunId.make('title-test-response'),
+            responseId: ResponseId.make('title-test-response'),
           }),
         )
         // Both observers reach the model before either may write, forcing the guarded SQL race.
@@ -393,8 +407,9 @@ layer(databaseLayer)((it) => {
             yield* Deferred.succeed(
               test.settlement,
               Settlement.cases.Completed.make({
+                toolCalls: 0,
                 reply: 'Done',
-                responseId: RunId.make('title-test-response'),
+                responseId: ResponseId.make('title-test-response'),
               }),
             )
             yield* Queue.take(test.requests)
@@ -428,8 +443,9 @@ layer(databaseLayer)((it) => {
         yield* Deferred.succeed(
           test.settlement,
           Settlement.cases.Completed.make({
+            toolCalls: 0,
             reply: 'Done',
-            responseId: RunId.make('title-test-response'),
+            responseId: ResponseId.make('title-test-response'),
           }),
         )
         yield* Queue.take(test.requests)
@@ -456,8 +472,9 @@ layer(databaseLayer)((it) => {
         yield* Deferred.succeed(
           test.settlement,
           Settlement.cases.Completed.make({
+            toolCalls: 0,
             reply: 'Done',
-            responseId: RunId.make('title-test-response'),
+            responseId: ResponseId.make('title-test-response'),
           }),
         )
         yield* Deferred.await(test.finished)
@@ -473,8 +490,9 @@ layer(databaseLayer)((it) => {
         yield* Deferred.succeed(
           test.settlement,
           Settlement.cases.Completed.make({
+            toolCalls: 0,
             reply: 'Done',
-            responseId: RunId.make('title-test-response'),
+            responseId: ResponseId.make('title-test-response'),
           }),
         )
         yield* Queue.take(test.requests)
@@ -497,6 +515,8 @@ layer(databaseLayer)((it) => {
         const test = yield* harness('Please plan a holiday', 'Seed')
         yield* Ref.set(test.messages, [
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'assistant',
             purpose: 'assistant',
             parts: [{ type: 'text', text: 'Where should we plan your holiday?', state: 'done' }],
@@ -508,6 +528,8 @@ layer(databaseLayer)((it) => {
         yield* Ref.update(test.messages, (messages) => [
           ...messages,
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'user',
             purpose: 'user',
             parts: [{ type: 'text', text: 'Italy', state: 'done' }],
@@ -592,12 +614,16 @@ layer(databaseLayer)((it) => {
         const test = yield* harness('Please plan a holiday', 'Seed')
         yield* Ref.set(test.messages, [
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'system',
             purpose: 'dispatch',
-            signal: { tagName: 'schedule' },
+            signal: { tagName: 'schedule', attributes: {} },
             parts: [{ type: 'text', text: 'Scheduled instructions', state: 'done' }],
           },
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'system',
             purpose: 'dispatch',
             signal: { tagName: 'message', attributes: { from: 'Ada' } },
@@ -628,14 +654,18 @@ layer(databaseLayer)((it) => {
         const test = yield* harness('Please plan a holiday', 'Seed')
         yield* Ref.set(test.messages, [
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'assistant',
             purpose: 'assistant',
             parts: [{ type: 'text', text: 'What takes most of your day?', state: 'done' }],
           },
           {
+            id: 'title-message',
+            display: 'visible',
             role: 'system',
             purpose: 'dispatch',
-            signal: { tagName: 'answer' },
+            signal: { tagName: 'answer', attributes: {} },
             parts: [{ type: 'text', text: 'Client building work', state: 'done' }],
           },
         ])

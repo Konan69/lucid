@@ -109,7 +109,7 @@ const runtimeTestLayer = Layer.effectContext(
   Effect.gen(function* () {
     const calls = yield* Queue.unbounded<ThreadId>()
     const runtime = Layer.mock(Runtime, {
-      stop: Effect.fn('DeviceTest.abort')((thread) =>
+      stop: Effect.fn('DeviceTest.abort')((_personId, thread) =>
         Queue.offer(calls, thread).pipe(Effect.as(true)),
       ),
     })

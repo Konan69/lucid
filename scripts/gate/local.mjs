@@ -279,7 +279,10 @@ function lintWorkers(environment) {
   }
 }
 
-async function runStages(root, selection, environment, { runId, directory }) {
+/** Execute stages inside an owned run directory. Production callers enter through runLocal's
+ * capacity lease; lightweight tooling fixtures use this seam so they cannot deadlock their
+ * parent gate by requesting another machine slot while every slot is occupied. */
+export async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
   // Proof exercises the gate's own database leases against the same disposable server.
   const needsDatabase = selected.some((stage) => stage.name === 'test' || stage.name === 'proof')

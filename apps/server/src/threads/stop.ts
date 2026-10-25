@@ -1,15 +1,53 @@
 import { and, eq } from 'drizzle-orm'
-import { NotFound, type PersonId, type RunId, type ThreadId } from '@vivid/contracts'
-import { Clock, Effect, Option } from 'effect'
+import {
+  RuntimeUnavailable,
+  NotFound,
+  type PersonId,
+  type RunId,
+  type ThreadId,
+} from '@vivid/contracts'
+import { Array, Clock, Effect, Option, Result } from 'effect'
 import { Database } from '../database/client.ts'
 import { announceFeed } from '../feed/changes.ts'
 import { Runtime } from '../runtime/client.ts'
+import { requireThread, findThread } from './access.ts'
 import { runs, threads } from './tables.ts'
+import { Conversation } from './conversation.ts'
+import { withAdmission } from './admissions.ts'
 
-/** Thread Stop and a computer Stop use the same runtime abort adapter. */
-export const abortThread = Effect.fn('Threads.abort')(function* (threadId: ThreadId) {
-  yield* (yield* Runtime).stop(threadId)
+/** Abort names the creator's runtime store, independently from the Person whose Run was stopped. */
+const abortThread = Effect.fn('Threads.abort')(function* (threadId: ThreadId) {
+  const thread = yield* findThread(threadId)
+  if (Option.isNone(thread)) return yield* new NotFound({ message: 'Thread not found' })
+  return yield* (yield* Runtime)
+    .stop(thread.value.personId, threadId)
+    .pipe(Effect.mapError(() => RuntimeUnavailable.make({ message: 'Vivid could not be reached' })))
 })
+
+/** Stop only this Person's work, including reservations with no receipt to abort.
+ * Admission's gate excludes a late receipt, so receiptless work can settle directly. Admitted
+ * work still needs a successful abort; otherwise its observer retains the completed outcome. */
+export const stopThread = Effect.fn('Threads.stop')(
+  function* (personId: PersonId, threadId: ThreadId) {
+    yield* requireThread(threadId, personId)
+    const database = yield* Database
+    const working = yield* database.run(
+      database
+        .select({ id: runs.id, receipt: runs.receipt })
+        .from(runs)
+        .where(
+          and(eq(runs.threadId, threadId), eq(runs.personId, personId), eq(runs.state, 'working')),
+        ),
+    )
+    const [reserved, admitted] = Array.partition(working, (run) =>
+      run.receipt === null ? Result.succeed(run.id) : Result.fail(run.id),
+    )
+    if (reserved.length > 0) yield* (yield* Conversation).stopped(reserved)
+    if (admitted.length > 0 && (yield* abortThread(threadId)))
+      yield* (yield* Conversation).stopped(admitted)
+  },
+  (effect, _personId, threadId) => withAdmission(effect, threadId),
+)
 
 /**
  * A Device can stop only its Person's exact Run. Revoke dispatch authority before aborting,

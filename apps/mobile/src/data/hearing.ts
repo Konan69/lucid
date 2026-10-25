@@ -1,5 +1,4 @@
-import type { FlueClient } from '@flue/sdk'
-import type { ThreadId } from '@vivid/contracts'
+import type { ConversationState, ThreadId } from '@vivid/contracts'
 import { Effect, Option, Semaphore } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
@@ -137,31 +136,12 @@ const keep = (whose: Whose, thread: ThreadId, kept: Kept) => {
 }
 
 /**
- * A Thread's conversation client whose reading is also kept. It is the real client, with
- * `observe` handing out the real observation and one more listener on it: each time the
- * conversation speaks, what it now says is kept (`keep`). The listener ends when the observation
- * is closed, which is when the hook that reads it lets go (`useFlueAgent`). Everything used is
- * Flue's public client; nothing of the hook or the SDK is reached into.
+ * Keeps what a Thread's conversation now says. The session's conversation query calls it each
+ * time the conversation speaks (`data/live.ts`), for as long as something is following the
+ * conversation and no longer; only what is settled in it is kept (`settledOf`).
  */
-export const heardThrough = (whose: Whose, thread: ThreadId, client: FlueClient): FlueClient => ({
-  ...client,
-  observe: (options) => {
-    const observation = client.observe(options)
-    const stop = observation.subscribe(() => {
-      const { conversation } = observation.getSnapshot()
-      if (conversation !== undefined) keep(whose, thread, settledOf(conversation))
-    })
-    return {
-      getSnapshot: () => observation.getSnapshot(),
-      subscribe: (listener) => observation.subscribe(listener),
-      refresh: () => observation.refresh(),
-      close: (reason) => {
-        stop()
-        observation.close(reason)
-      },
-    }
-  },
-})
+export const hearIn = (whose: Whose, thread: ThreadId, conversation: ConversationState): void =>
+  keep(whose, thread, settledOf(conversation))
 
 /**
  * The session ended: what its Person was told leaves the phone. Memory is emptied at once, and

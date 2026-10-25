@@ -12,10 +12,17 @@ export const PictureMediaType = Schema.Literals([
 ] as const)
 export type PictureMediaType = typeof PictureMediaType.Type
 
-/** Flue's image wire shape. The gateway also checks decoded size and the bytes' signature. */
+/** The image wire shape. The gateway also checks decoded size and the bytes' signature. */
+export const pictureByteLimit = 5 * 1024 * 1024
+export const pictureEncodedLimit = 4 * Math.ceil(pictureByteLimit / 3)
+export const pictureCountLimit = 4
+
+// Transport bounds leave ordinary product oversize to the gateway's actionable refusals.
+const pictureTransportLimit = 28 * 1024 * 1024
+
 export const MessageAttachment = Schema.Struct({
   type: Schema.Literal('image'),
-  data: Schema.String,
+  data: Schema.String.check(Schema.isMaxLength(pictureTransportLimit)),
   mimeType: PictureMediaType,
   filename: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(255))),
 })
@@ -31,6 +38,35 @@ export const SendMessageRequest = Schema.Struct({
   ),
 })
 export interface SendMessageRequest extends Schema.Schema.Type<typeof SendMessageRequest> {}
+
+/** Decode caps serialized JSON at 28 Mi characters, using main's body allowance as the reference.
+ * Looser count and per-picture
+ * bounds let product checks answer TooManyAttachments and AttachmentTooLarge. */
+export const SendToThreadRequest = Schema.Struct({
+  threadId: ThreadId,
+  text: SendMessageRequest.fields.body,
+  pictures: Schema.Array(MessageAttachment).check(
+    Schema.isMaxLength(16),
+    Schema.makeFilter(
+      (pictures) =>
+        pictures.reduce((total, picture) => total + picture.data.length, 0) <=
+        pictureTransportLimit,
+    ),
+  ),
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+}).check(
+  // Picture totals exclude text escaping and envelope fields; retain the serialized ceiling.
+  Schema.makeFilter((request) => JSON.stringify(request).length <= pictureTransportLimit),
+)
+export interface SendToThreadRequest extends Schema.Schema.Type<typeof SendToThreadRequest> {}
+
+/** A Whole larger than the relay ceiling cannot open on any device. The runtime has no paging;
+ * this is a known limit, without server repair or a second conversation transport. */
+export class ConversationTooLarge extends Schema.TaggedError<ConversationTooLarge>()(
+  'ConversationTooLarge',
+  { threadId: ThreadId, limit: Schema.Int },
+  { title: 'Thread conversation exceeds the relay limit' },
+) {}
 
 /** Invalid formats and mismatched signatures need the Person to choose another image. */
 export class UnsupportedAttachment extends Schema.TaggedError<UnsupportedAttachment>()(
@@ -60,7 +96,7 @@ export class TooManyAttachments extends Schema.TaggedError<TooManyAttachments>()
   { title: 'Too many pictures' },
 ) {}
 
-/** Flue cannot preserve attachments on the attributed signals used by shared Threads. */
+/** Attributed signals in shared Threads carry words only. */
 export class PicturesRequirePrivateThread extends Schema.TaggedError<PicturesRequirePrivateThread>()(
   'PicturesRequirePrivateThread',
   { threadId: ThreadId, message: Schema.String },
@@ -208,6 +244,8 @@ export type RunState = typeof RunState.Type
 /** One bounded attempt by Vivid to advance a Thread. */
 export const Run = Schema.Struct({
   id: RunId,
+  /** Absent until admitted. Pi numbers are local to a Person; product ids stay globally unique. */
+  submissionId: Schema.optional(Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u))),
   threadId: ThreadId,
   /**
    * The Run's place in its Thread, counted from one. It is what the delivery that started the Run
@@ -220,6 +258,10 @@ export const Run = Schema.Struct({
   startedAt: Schema.Finite,
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/** Admission returns the reserved product Run, with its decimal runtime submission id attached. */
+export const SendToThreadResponse = Schema.Struct({ run: Run })
+export interface SendToThreadResponse extends Schema.Schema.Type<typeof SendToThreadResponse> {}
 
 /** Someone with a Thread open right now, and whether they are writing. */
 export const Presence = Schema.Struct({
@@ -303,6 +345,13 @@ export const RuntimeRunRequest = Schema.Struct({
   attributes: Schema.Record(Schema.String, Schema.String),
   turn: Schema.Finite,
   scope: DeliveryScope,
+  /**
+   * The key the sending client made for a message it sent (`SendToThreadRequest.key`), passed
+   * through so the conversation state can give it back on that message. It is not the
+   * idempotency key: admission dedupes on `idempotencyKey` alone, and this is never shown to the
+   * model. Absent on deliveries the server makes itself.
+   */
+  clientKey: Schema.optionalKey(SendToThreadRequest.fields.key),
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 

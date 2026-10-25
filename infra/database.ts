@@ -29,7 +29,7 @@ const configuredDatabaseUrl = (target: DeploymentTarget) =>
   )
 
 /**
- * Resolve the one database seam used by migrations and both Node processes.
+ * Resolve the one database seam used by server migrations and the application server.
  * PostgreSQL 18+ images place PGDATA at /var/lib/postgresql/<major>/docker, so the
  * volume mounts the parent directory and survives a major upgrade side by side.
  * Docker props match `alchemy/lib/Docker/{RemoteImage,Volume,Container}.d.ts`.

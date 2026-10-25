@@ -1,4 +1,5 @@
-import { abortThread } from './stop.ts'
+import { stopThread } from './stop.ts'
+import { watchConversation, sendToThread } from './socket.ts'
 import { ThreadTitles } from './generation.ts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
@@ -73,6 +74,8 @@ const announceShare = Effect.fn('Threads.announceShare')(function* (
 })
 
 export const threadHandlers = {
+  WatchConversation: watchConversation,
+  SendToThread: sendToThread,
   /** First arrival is a signed-in Person's act; scope comes exclusively from authentication. */
   OpenFirstThread: Effect.fn('Rpc.OpenFirstThread')(function* () {
     yield* requirePerson()
@@ -158,7 +161,7 @@ export const threadHandlers = {
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
-    yield* abortThread(id)
+    yield* stopThread(auth.person.id, id)
   }),
   /**
    * Presence is the call itself: held for as long as the client keeps it open on its live link

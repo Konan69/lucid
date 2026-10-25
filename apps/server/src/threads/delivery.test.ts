@@ -1,10 +1,11 @@
+import * as TestClock from 'effect/testing/TestClock'
+import { RuntimeRejected } from '../runtime/client.ts'
+import { ResponseId } from '../runtime/settlement.ts'
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { DeviceRegistry } from '../computers/device.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
-import { createFlueClient } from '@flue/sdk'
-import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   InputAnswer,
@@ -17,13 +18,16 @@ import {
   WindowAction,
   WindowResult,
   Conflict,
+  DatabaseFailure,
+  InvalidAttachment,
   PersonId,
   Company,
   Workspace,
   RunId,
   RunState,
-  RuntimeUnavailable,
-  RuntimeRunRequest,
+  RuntimeSubmissionId,
+  SendToThreadRequest,
+  emptyConversation,
   ThreadId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
@@ -33,11 +37,11 @@ import {
   Fiber,
   Layer,
   Logger,
+  Match,
   Queue,
   Ref,
   Result,
   Option,
-  Predicate,
   Schema,
   Stream,
 } from 'effect'
@@ -46,8 +50,6 @@ import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import * as HttpClient from 'effect/http/HttpClient'
-import * as HttpServer from 'effect/http/HttpServer'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -64,9 +66,11 @@ import {
   AdmissionUncertain,
   Runtime,
   Settlement,
-  runtimeLayer,
 } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId as submissionId } from './key.ts'
+import { authenticate } from '../auth/session.ts'
+import { AuthContext } from '@vivid/contracts/auth'
+import { sendToThread } from './socket.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -82,9 +86,9 @@ import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer, TurnReservation } from './runs.ts'
 import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
+import { stopThread } from './stop.ts'
 
 const databaseLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
-const decodeRuntimeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeRunRequest))
 
 const png = {
   type: 'image',
@@ -171,7 +175,14 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const failure = yield* Ref.make(Option.none<AdmissionRefused | AdmissionUncertain>())
+  const stalled = yield* Ref.make(false)
   const reads = yield* Ref.make(0)
+  const stops = yield* Ref.make<ReadonlyArray<{ personId: PersonId; threadId: ThreadId }>>([])
+  const aborted = yield* Ref.make(false)
+  const readFailure = yield* Ref.make(Option.none<RuntimeRejected>())
+  const attempted = yield* Queue.unbounded<RuntimeInput>()
+  // A held Thread isolates an in-flight admission without withholding other Threads' receipts.
+  const held = new Map<ThreadId, Deferred.Deferred<void>>()
   const readHeaders = yield* Ref.make({
     'content-type': 'image/png',
     'content-disposition': 'attachment; filename="unsafe.html"',
@@ -179,9 +190,14 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   })
   const settlements = new Map<RunId, Deferred.Deferred<Settlement>>()
   const observers = new Map<RunId, Fiber.Fiber<unknown, unknown>>()
+  const identifiers = new Map<RunId, RuntimeSubmissionId>()
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
       yield* Ref.update(requests, (all) => [...all, input])
+      yield* Queue.offer(attempted, input)
+      const holding = held.get(input.threadId)
+      if (holding !== undefined) yield* Deferred.await(holding)
+      if (yield* Ref.get(stalled)) return yield* Effect.never
       const rejected = yield* Ref.getAndSet(failure, Option.none())
       if (Option.isSome(rejected)) return yield* rejected.value
       const id = submissionId(input.threadId, input.idempotencyKey)
@@ -190,24 +206,33 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
         settlements.set(id, yield* Deferred.make<Settlement>())
         yield* Ref.update(admitted, (all) => [...all, input])
       }
-      return Admission.make({
-        runId: id,
-        offset: repeated ? '-1' : String(input.turn),
-        incarnation: 'test',
-        repeated,
-      })
+      let runtimeId = identifiers.get(id)
+      if (runtimeId === undefined) {
+        runtimeId = RuntimeSubmissionId.make(identifiers.size + 1)
+        identifiers.set(id, runtimeId)
+      }
+      return Admission.make({ submissionId: runtimeId, repeated })
     }),
-    settled: Effect.fn('Delivery.test.settled')(function* (_threadId, id) {
+    conversation: () => Effect.succeed(emptyConversation),
+    watch: () => Stream.never,
+    settled: Effect.fn('Delivery.test.settled')(function* (_personId, _threadId, runtimeId) {
+      const found = [...identifiers].find(([_key, value]) => value === runtimeId)
+      const id = found === undefined ? undefined : found[0]
+      if (id === undefined) return yield* Effect.never
       const settlement = settlements.get(id)
-      // Other integration suites may own working rows; this runtime cannot settle their Runs.
       return yield* Effect.withFiber((fiber) => {
         observers.set(id, fiber)
         return settlement === undefined ? Effect.never : Deferred.await(settlement)
       })
     }),
-    stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
-    read: Effect.fn('Delivery.test.read')(function* () {
+    stop: Effect.fn('Delivery.test.stop')(function* (personId, threadId) {
+      yield* Ref.update(stops, (calls) => [...calls, { personId, threadId }])
+      return yield* Ref.get(aborted)
+    }),
+    attachment: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
+      const rejected = yield* Ref.get(readFailure)
+      if (Option.isSome(rejected)) return yield* rejected.value
       return HttpClientResponse.fromWeb(
         HttpClientRequest.get('http://runtime.test'),
         new Response(NodeBuffer.Buffer.from(png.data, 'base64'), {
@@ -226,17 +251,68 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
     return yield* Deferred.succeed(settlement, result)
   })
   const finish = (id: RunId) =>
-    settle(id, Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }))
-  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders, observers }
+    settle(
+      id,
+      Settlement.cases.Completed.make({
+        toolCalls: 0,
+        reply: 'Finished',
+        responseId: ResponseId.make(id),
+      }),
+    )
+  return {
+    runtime,
+    admitted,
+    requests,
+    finish,
+    settle,
+    failure,
+    reads,
+    readHeaders,
+    readFailure,
+    attempted,
+    held,
+    stalled,
+    observers,
+    stops,
+    aborted,
+  }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
 const runFixture = Effect.fn('Delivery.test.runs')(function* () {
   const store = yield* RunStore
   const blocked = yield* Queue.unbounded<RunId>()
+  const checked = yield* Queue.unbounded<RunId>()
   const ended = yield* Queue.unbounded<RunId>()
+  const scoping = yield* Deferred.make<void>()
+  const scopeGate = yield* Ref.make(Option.none<Deferred.Deferred<void>>())
+  const receiptFailure = yield* Ref.make(Option.none<DatabaseFailure>())
   const observed = RunStore.of({
     ...store,
+    // Fault only these store boundaries; reservation and settlement still use real PostgreSQL.
+    scope: Effect.fn('Delivery.test.scope')(function* (input) {
+      const gate = yield* Ref.get(scopeGate)
+      if (Option.isSome(gate)) {
+        yield* Deferred.succeed(scoping, undefined)
+        yield* Deferred.await(gate.value)
+      }
+      return yield* store.scope(input)
+    }),
+    admitted: Effect.fn('Delivery.test.admitted')(function* (receipt) {
+      const failure = yield* Ref.getAndSet(receiptFailure, Option.none())
+      if (Option.isSome(failure)) return yield* failure.value
+      return yield* store.admitted(receipt)
+    }),
+    check: Effect.fn('Delivery.test.check')((input) =>
+      store.check(input).pipe(
+        Effect.tap(() => Queue.offer(checked, input.id)),
+        Effect.tap((notice) =>
+          Option.isSome(notice) && TurnReservation.guards.Busy(notice.value)
+            ? Queue.offer(blocked, input.id)
+            : Effect.void,
+        ),
+      ),
+    ),
     start: Effect.fn('Delivery.test.start')((input) =>
       store
         .start(input)
@@ -252,7 +328,7 @@ const runFixture = Effect.fn('Delivery.test.runs')(function* () {
         .pipe(Effect.tap((changed) => (changed ? Queue.offer(ended, id) : Effect.void))),
     ),
   })
-  return { observed, blocked, ended }
+  return { observed, blocked, checked, ended, scoping, scopeGate, receiptFailure }
 })
 
 /** Each test owns a scoped production Conversation and independent rows, not a mock delivery seam. */
@@ -291,7 +367,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     }),
   )
   const context = yield* Layer.build(
-    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
+    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provideMerge(services)),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
   const devices = yield* DeviceRegistry.pipe(Effect.provideContext(context))
@@ -310,8 +386,10 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     ...runtime,
     ...recorded,
     conversation,
+    context,
     devices,
     finish,
+    finishRuntime: runtime.finish,
     services,
     topics,
     notices,
@@ -392,20 +470,43 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
   )
 })
 
-/** Tests send precisely the JSON and session a web or mobile client would use. */
-const post = (test: Harness, body: Schema.JsonObject) =>
-  gateway(
-    test,
-    new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${test.token}`,
-        host: 'gateway.test',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }),
+const decodeSent = Schema.decodeUnknownEffect(SendToThreadRequest)
+/** The same error codec as the public response, compiled once outside the scenario. */
+const encodeConflict = Schema.encodeEffect(Conflict)
+
+/** RPC messages retain the real auth, picture checks, Conversation and database reservation. */
+const post = Effect.fn('Socket.test.send')(function* (test: Harness, body: Schema.JsonObject) {
+  const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
+  const request = yield* decodeSent({
+    threadId: test.threadId,
+    text: body.body,
+    pictures: body.attachments === undefined ? [] : body.attachments,
+    key: body.idempotencyKey === undefined ? NodeCrypto.randomUUID() : body.idempotencyKey,
+  }).pipe(
+    Effect.mapError(
+      () => new InvalidAttachment({ message: 'Send a picture with valid attachment fields.' }),
+    ),
   )
+  return yield* sendToThread(request).pipe(
+    Effect.provideService(AuthContext, auth),
+    Effect.provideService(Conversation, test.conversation),
+    Effect.map((result) => HttpServerResponse.jsonUnsafe(result, { status: 202 })),
+    Effect.catch((error) =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe(
+          { error: { _tag: error._tag, message: error.message } },
+          {
+            status: Match.value(error).pipe(
+              Match.tag('Conflict', () => 409),
+              Match.tag('AttachmentTooLarge', () => 413),
+              Match.orElse(() => 400),
+            ),
+          },
+        ),
+      ),
+    ),
+  )
+})
 
 /** Stable tags and Person-facing sentences are observable without decoding internal Effect errors. */
 const expectPictureRefusal = (
@@ -519,6 +620,30 @@ layer(
     )
 
     it.effect(
+      'a sent message carries its client’s own key to the runtime, beside the server’s key',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* inputHarness()
+          // A shared Thread: the Person's words reach the runtime as an attributed signal.
+          const shared = yield* post(test, {
+            kind: 'user',
+            body: 'Hello, everyone.',
+            idempotencyKey: 'client-made-key',
+          })
+          expect(shared.status).toBe(202)
+          const [signal] = yield* Ref.get(test.admitted)
+          expect(signal).toMatchObject({
+            clientKey: 'client-made-key',
+            message: { kind: 'signal' },
+          })
+          // Admission still dedupes on the server's key, which is not the client's.
+          expect(signal === undefined ? undefined : signal.idempotencyKey).not.toBe(
+            'client-made-key',
+          )
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
       'an answer stays Answered and leaves other questions waiting through real admission',
       () =>
         Effect.gen(function* () {
@@ -600,7 +725,6 @@ layer(
           Option.some(
             AdmissionRefused.make({
               threadId: test.threadId,
-              runId: submissionId(test.threadId, delivery.idempotencyKey),
               reason: 'Rejected',
             }),
           ),
@@ -749,56 +873,245 @@ layer(
           }),
         ),
     )
-    // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
-    const admissionFailures = [
-      {
-        name: 'refused',
-        make: (threadId: ThreadId, runId: RunId) =>
-          AdmissionRefused.make({ threadId, runId, reason: 'Rejected' }),
-      },
-      {
-        name: 'uncertain',
-        make: (threadId: ThreadId, runId: RunId) =>
-          AdmissionUncertain.make({ threadId, runId, reason: 'Transport' }),
-      },
-    ]
     layer(
       databaseLayer.pipe(
         Layer.provideMerge(silentChangesLayer),
         Layer.provideMerge(testConfigLayer),
       ),
-    )('Clock case 1', (clockIt) => {
+    )('Admission certainty', (clockIt) => {
+      clockIt.effect('an explicit refusal fails Delivery and frees the Thread for Ben', () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          yield* Ref.set(
+            test.failure,
+            Option.some(AdmissionRefused.make({ threadId: test.threadId, reason: 'Rejected' })),
+          )
+          const result = yield* test.conversation
+            .admit(said(test.threadId, test.ada))
+            .pipe(Effect.result)
+          expect(Result.isFailure(result) && result.failure._tag).toBe('RuntimeUnavailable')
+          expect(
+            (yield* (yield* RunStore).list(test.threadId)).map((run) => run.state._tag),
+          ).toEqual(['Failed'])
+          yield* test.conversation.admit(said(test.threadId, test.ben))
+        }).pipe(Effect.scoped),
+      )
       clockIt.effect(
-        'refused and uncertain admission end the Run with Delivery and release it for Ben',
+        'uncertainty retries in the request and a slow answer outlasts the loss allowance',
         () =>
           Effect.gen(function* () {
-            for (const failure of admissionFailures) {
-              yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const test = yield* harness()
-                  // The error names the Run its request would have started, as the real client's does.
-                  const message = said(test.threadId, test.ada)
-                  const runId = submissionId(test.threadId, message.idempotencyKey)
-                  yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
-                  const rejected = yield* Effect.result(test.conversation.admit(message))
-                  expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
-                    RuntimeUnavailable,
-                  )
-                  const recorded = yield* (yield* RunStore).list(test.threadId)
-                  expect(recorded.map((run) => run.state)).toEqual([
-                    RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
-                  ])
-                  expect(yield* Ref.get(test.requests)).toHaveLength(1)
-                  expect(yield* Ref.get(test.admitted)).toEqual([])
-                  yield* test.conversation.admit(said(test.threadId, test.ben))
-                  expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-                  expect(yield* Ref.get(test.requests)).toHaveLength(2)
-                }),
-              )
-            }
-          }),
+            const test = yield* harness()
+            const message = said(test.threadId, test.ada)
+            yield* Ref.set(
+              test.failure,
+              Option.some(
+                AdmissionUncertain.make({ threadId: test.threadId, reason: 'Transport' }),
+              ),
+            )
+            const receipt = yield* test.conversation.admit(message)
+            const attempted = yield* Queue.take(test.attempted)
+            expect(yield* Queue.take(test.attempted)).toEqual(attempted)
+            expect(attempted.idempotencyKey).toBe(message.idempotencyKey)
+            expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Working')
+            yield* TestClock.adjust('91 seconds')
+            expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Working')
+            yield* test.finish(receipt.runId)
+            expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Completed')
+          }).pipe(Effect.scoped),
+      )
+
+      clockIt.effect(
+        'a stalled admission exhausts the loss allowance and a keyed retry reopens its Run',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness()
+            const message = said(test.threadId, test.ada)
+            yield* Ref.set(test.stalled, true)
+            const sending = yield* test.conversation
+              .admit(message)
+              .pipe(Effect.result, Effect.forkScoped)
+            yield* Queue.take(test.attempted)
+            yield* TestClock.adjust('91 seconds')
+            const result = yield* Fiber.join(sending)
+            expect(Result.isFailure(result) && result.failure._tag).toBe('RuntimeUnavailable')
+            const [run] = yield* (yield* RunStore).list(test.threadId)
+            if (run === undefined) expect.fail('Missing failed reservation')
+            if (!RunState.guards.Failed(run.state)) expect.fail('Expected a failed delivery')
+            expect(run.state.reason).toBe('Delivery')
+            expect(run.submissionId).toBeUndefined()
+            expect(yield* Ref.get(test.requests)).toHaveLength(1)
+            expect(yield* Queue.take(test.ended)).toBe(run.id)
+            yield* Ref.set(test.stalled, false)
+            const receipt = yield* test.conversation.admit(message)
+            expect(receipt.runId).toBe(run.id)
+            yield* test.finish(run.id)
+            expect((yield* (yield* RunStore).get(run.id)).state._tag).toBe('Completed')
+          }).pipe(Effect.scoped),
+      )
+
+      clockIt.effect(
+        'interruption retries in the request with only the remaining loss allowance',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness()
+            const message = said(test.threadId, test.ada)
+            yield* Ref.set(test.stalled, true)
+            const sending = yield* test.conversation.admit(message).pipe(Effect.forkScoped)
+            const first = yield* Queue.take(test.attempted)
+            yield* TestClock.adjust('45 seconds')
+            const leaving = yield* Fiber.interrupt(sending).pipe(Effect.forkScoped)
+            expect(yield* Queue.take(test.attempted)).toEqual(first)
+            yield* TestClock.adjust('45 seconds')
+            yield* Fiber.join(leaving)
+            const [run] = yield* (yield* RunStore).list(test.threadId)
+            if (run === undefined || !RunState.guards.Failed(run.state))
+              expect.fail('Interrupted admission must end as a failed delivery')
+            expect(run.state.reason).toBe('Delivery')
+            expect(yield* Ref.get(test.requests)).toHaveLength(2)
+            expect(yield* Ref.get(test.notices)).toEqual([])
+          }).pipe(Effect.scoped),
       )
     })
+
+    it.effect('canceling a request queued behind admission leaves no receiptless Run', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const holding = yield* Deferred.make<void>()
+        test.held.set(test.threadId, holding)
+        const sending = yield* test.conversation
+          .admit(said(test.threadId, test.ada))
+          .pipe(Effect.forkScoped)
+        // Release the transport before interrupting admission's finalizer on assertion failure.
+        yield* Effect.addFinalizer(() => Deferred.succeed(holding, undefined))
+        const first = yield* Queue.take(test.attempted)
+        expect(yield* Queue.take(test.checked)).toBe(
+          submissionId(test.threadId, first.idempotencyKey),
+        )
+        const message = { ...said(test.threadId, test.ada), idempotencyKey: 'queued-canceled' }
+        const pending = yield* test.conversation.admit(message).pipe(Effect.forkScoped)
+        expect(yield* Queue.take(test.checked)).toBe(
+          submissionId(test.threadId, message.idempotencyKey),
+        )
+        yield* Fiber.interrupt(pending)
+        expect((yield* (yield* RunStore).list(test.threadId)).map((run) => run.id)).toEqual([
+          submissionId(test.threadId, first.idempotencyKey),
+        ])
+        yield* Deferred.succeed(holding, undefined)
+        const admitted = yield* Fiber.join(sending)
+        yield* test.finish(admitted.runId)
+        expect(yield* Ref.get(test.requests)).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('interruption after reservation before the runtime call fails Delivery', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const message = said(test.threadId, test.ada)
+        const id = submissionId(test.threadId, message.idempotencyKey)
+        yield* Ref.set(test.scopeGate, Option.some(yield* Deferred.make<void>()))
+        const sending = yield* test.conversation.admit(message).pipe(Effect.forkScoped)
+        yield* Deferred.await(test.scoping)
+        expect((yield* (yield* RunStore).get(id)).state._tag).toBe('Working')
+        yield* Fiber.interrupt(sending)
+        expect((yield* Fiber.await(sending))._tag).toBe('Failure')
+        const run = yield* (yield* RunStore).get(id)
+        if (!RunState.guards.Failed(run.state)) expect.fail('Expected a failed delivery')
+        expect(run.state.reason).toBe('Delivery')
+        expect(run.submissionId).toBeUndefined()
+        expect(yield* Ref.get(test.requests)).toEqual([])
+        expect(yield* Queue.take(test.ended)).toBe(id)
+        yield* Ref.set(test.scopeGate, Option.none())
+        const receipt = yield* test.conversation.admit(said(test.threadId, test.ben))
+        yield* test.finish(receipt.runId)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a receipt write failure after runtime acceptance fails Delivery', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const message = said(test.threadId, test.ada)
+        const id = submissionId(test.threadId, message.idempotencyKey)
+        const failure = DatabaseFailure.make({ message: 'Receipt write failed' })
+        yield* Ref.set(test.receiptFailure, Option.some(failure))
+        const result = yield* test.conversation.admit(message).pipe(Effect.result)
+        expect(result).toEqual(Result.fail(failure))
+        expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+        const run = yield* (yield* RunStore).get(id)
+        if (!RunState.guards.Failed(run.state)) expect.fail('Expected a failed delivery')
+        expect(run.state.reason).toBe('Delivery')
+        expect(run.submissionId).toBeUndefined()
+        expect(yield* Queue.take(test.ended)).toBe(id)
+        // Pi can still answer its accepted delivery even though the server lost the receipt.
+        yield* test.finishRuntime(id)
+        expect((yield* (yield* RunStore).get(id)).state).toEqual(run.state)
+        const receipt = yield* test.conversation.admit(said(test.threadId, test.ben))
+        yield* test.finish(receipt.runId)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'Stop settles a receiptless reservation without the runtime and frees the shared Thread',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const store = yield* RunStore
+          const id = submissionId(test.threadId, 'receiptless')
+          yield* store.start({
+            id,
+            threadId: test.threadId,
+            personId: test.ada,
+            origin: StoredRunOrigin.cases.Message.make({}),
+          })
+          const busy = yield* test.conversation
+            .admit(said(test.threadId, test.ben))
+            .pipe(Effect.result)
+          expect(Result.isFailure(busy) && busy.failure._tag).toBe('Conflict')
+          // A different Member's Stop cannot release Ada's reservation.
+          yield* stopThread(test.ben, test.threadId).pipe(Effect.provideContext(test.context))
+          expect((yield* store.get(id)).state._tag).toBe('Working')
+          yield* Ref.set(test.topics, [])
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            yield* stopThread(test.ada, test.threadId).pipe(Effect.provideContext(test.context))
+          }
+          expect((yield* store.get(id)).state._tag).toBe('Stopped')
+          expect((yield* store.get(id)).submissionId).toBeUndefined()
+          expect(yield* Ref.get(test.stops)).toEqual([])
+          expect(yield* Ref.get(test.topics)).toContain(
+            Topic.part('activity')(Topic.thread(test.threadId)),
+          )
+          expect(yield* Queue.take(test.ended)).toBe(id)
+          expect(yield* Queue.size(test.ended)).toBe(0)
+          yield* test.conversation.admit(said(test.threadId, test.ben))
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('Stop leaves an admitted answer to its observer when abort took no work', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const receipt = yield* test.conversation.admit(said(test.threadId, test.ben))
+        yield* stopThread(test.ben, test.threadId).pipe(Effect.provideContext(test.context))
+        expect(yield* Ref.get(test.stops)).toEqual([
+          { personId: test.ada, threadId: test.threadId },
+        ])
+        expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Working')
+        yield* test.finish(receipt.runId)
+        expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Completed')
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('Stop settles admitted work only after the runtime abort took work', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const receipt = yield* test.conversation.admit(said(test.threadId, test.ben))
+        yield* Ref.set(test.aborted, true)
+        yield* stopThread(test.ben, test.threadId).pipe(Effect.provideContext(test.context))
+        expect(yield* Ref.get(test.stops)).toEqual([
+          { personId: test.ada, threadId: test.threadId },
+        ])
+        expect((yield* (yield* RunStore).get(receipt.runId)).state._tag).toBe('Stopped')
+        expect(yield* Queue.take(test.ended)).toBe(receipt.runId)
+      }).pipe(Effect.scoped),
+    )
 
     it.effect('refuses Ben with Ada’s name, then admits him after Ada settles', () =>
       Effect.gen(function* () {
@@ -815,7 +1128,7 @@ layer(
         expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         yield* test.finish(ada.runId)
         const ben = yield* test.conversation.admit(message)
-        expect(ben.offset).toBe('2')
+        expect(ben.submissionId).toBe(2)
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
           test.ada,
           test.ben,
@@ -866,7 +1179,7 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('names the decider as speaker while Flue acts for the original Person', () =>
+    it.effect('names the decider as speaker while Vivid acts for the original Person', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         const delivery: SignalDelivery = {
@@ -980,83 +1293,15 @@ layer(
         }),
     )
 
-    it.effect(
-      'the gateway repeats one client key with one Run, one turn and the same receipt',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness()
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          const send = Effect.fn('Gateway.test.send')(function* () {
-            return yield* handle.pipe(
-              Effect.provideService(Conversation, test.conversation),
-              Effect.provideService(Runtime, test.runtime),
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                HttpServerRequest.fromWeb(
-                  new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                    method: 'POST',
-                    headers: {
-                      authorization: `Bearer ${test.token}`,
-                      host: 'gateway.test',
-                      'content-type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      kind: 'user',
-                      body: 'Please help',
-                      idempotencyKey: 'lost-http-response',
-                    }),
-                  }),
-                ),
-              ),
-            )
-          })
-          const first = yield* send()
-          // Discarding the first response represents admission succeeding before HTTP delivery fails.
-          const repeated = yield* send()
-          expect(first.status).toBe(202)
-          expect(repeated.status).toBe(202)
-          expect(repeated.body).toEqual(first.body)
-          const recorded = yield* (yield* RunStore).list(test.threadId)
-          expect(recorded).toHaveLength(1)
-          expect(recorded.map((run) => run.turn)).toEqual([1])
-          expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-          const requests = yield* Ref.get(test.requests)
-          expect(requests).toHaveLength(1)
-        }).pipe(Effect.scoped),
-    )
-
-    it.effect('the shared HTTP gateway returns 409 and the exact Conflict message', () =>
+    it.effect('RPC repeats a lost response with one Run and one admitted delivery', () =>
       Effect.gen(function* () {
         const test = yield* harness()
-        yield* test.conversation.admit(said(test.threadId, test.ada))
-        const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-        const response = yield* handle.pipe(
-          Effect.provideService(Conversation, test.conversation),
-          Effect.provideService(Runtime, test.runtime),
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(
-              new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                method: 'POST',
-                headers: {
-                  authorization: `Bearer ${test.token}`,
-                  host: 'gateway.test',
-                  'content-type': 'application/json',
-                },
-                body: JSON.stringify({ kind: 'user', body: 'Please help' }),
-              }),
-            ),
-          ),
-        )
-        expect(response.status).toBe(409)
-        expect(response.body).toHaveProperty(
-          'text',
-          JSON.stringify({
-            error: {
-              message: 'Vivid is still answering Ada. Send this again when it has finished.',
-            },
-          }),
-        )
+        const body = { body: 'Please help', idempotencyKey: 'lost-response' }
+        const first = yield* post(test, body)
+        const repeated = yield* post(test, body)
+        expect(first.status).toBe(202)
+        expect(repeated.body).toEqual(first.body)
+        expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         expect(yield* Ref.get(test.admitted)).toHaveLength(1)
       }).pipe(Effect.scoped),
     )
@@ -1064,113 +1309,6 @@ layer(
 
   /** Pictures exercise the gateway's public HTTP seam, including real auth, access and Run persistence. */
   describe.skipIf(!testDatabaseConfigured)('Pictures through the gateway', () => {
-    it.effect(
-      'preserves private pictures through the production server-to-runtime HTTP adapter',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness()
-          yield* privateThread(test)
-          const sent = yield* Ref.make<ReadonlyArray<RuntimeRunRequest>>([])
-          // Only the remote network is simulated; the actual Runtime adapter builds and encodes the request.
-          const http = HttpClient.make(
-            Effect.fn('Gateway.test.runtimeHttp')(function* (request) {
-              if (!Predicate.isTagged(request.body, 'Uint8Array'))
-                return yield* Effect.sync(() => expect.fail('Expected encoded runtime JSON'))
-              const delivery = yield* decodeRuntimeRequest(
-                new TextDecoder().decode(request.body.body),
-              ).pipe(Effect.catch(() => Effect.sync(() => expect.fail('Invalid runtime JSON'))))
-              yield* Ref.update(sent, (all) => [...all, delivery])
-              return HttpClientResponse.fromWeb(
-                request,
-                new Response(
-                  JSON.stringify({
-                    submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-                    offset: '1',
-                    uid: 'test',
-                  }),
-                  { status: 202, headers: { 'content-type': 'application/json' } },
-                ),
-              )
-            }),
-          )
-          const runtimeContext = yield* Layer.build(
-            runtimeLayer.pipe(
-              Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-              Layer.provide(testConfigLayer),
-            ),
-          )
-          const transport = yield* Runtime.pipe(Effect.provideContext(runtimeContext))
-          // The admission under test uses production HTTP; settlement stays controllable in the fixture.
-          const runtime = Runtime.of({ ...transport, settled: test.runtime.settled })
-          const context = yield* Layer.build(
-            conversationLayer.pipe(
-              Layer.provide(silentChannelRepliesLayer),
-              Layer.provide(Layer.merge(test.services, Layer.succeed(Runtime, runtime))),
-            ),
-          )
-          const conversation = yield* Conversation.pipe(Effect.provideContext(context))
-          const response = yield* post(
-            { ...test, conversation, runtime },
-            {
-              kind: 'user',
-              body: 'Look',
-              attachments: [png],
-            },
-          )
-          expect(response.status).toBe(202)
-          expect(yield* Ref.get(sent)).toMatchObject([
-            { body: 'Look', attributes: {}, attachments: [png] },
-          ])
-        }).pipe(Effect.scoped),
-    )
-    it.effect(
-      'accepts the installed Flue client’s image wire shape through the private gateway',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness()
-          yield* privateThread(test)
-          const serverContext = yield* Layer.build(NodeHttpServer.layerTest)
-          const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(serverContext))
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          yield* server
-            .serve(
-              handle.pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.provideService(Runtime, test.runtime),
-              ),
-            )
-            .pipe(Effect.provideContext(serverContext))
-          const url = new URL(HttpServer.formatAddress(server.address))
-          url.hostname = '127.0.0.1'
-          url.pathname = `/api/vivid/${test.threadId}`
-          const client = createFlueClient({
-            url: url.href,
-            token: test.token,
-          })
-          const receipt = yield* Effect.tryPromise(() =>
-            client.send({
-              message: {
-                kind: 'user',
-                body: 'Look',
-                attachments: [
-                  {
-                    type: 'image',
-                    mimeType: png.mimeType,
-                    data: png.data,
-                    filename: png.filename,
-                  },
-                ],
-              },
-            }),
-          )
-          expect(yield* (yield* RunStore).list(test.threadId)).toMatchObject([
-            { id: receipt.submissionId },
-          ])
-          expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
-            message: { kind: 'user', attachments: [png] },
-          })
-        }).pipe(Effect.scoped),
-    )
     it.effect('accepts four pictures and a picture exactly at the decoded 5 MB limit', () =>
       Effect.gen(function* () {
         const test = yield* harness()
@@ -1194,22 +1332,6 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('refuses malformed attachment lists with an actionable tag', () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        yield* privateThread(test)
-        for (const attachments of [null, 'picture', { image: png }]) {
-          const response = yield* post(test, { kind: 'user', body: 'Look', attachments })
-          expect(response.status).toBe(400)
-          expectPictureRefusal(
-            response,
-            'InvalidAttachment',
-            'Pictures must be sent as an attachment list.',
-          )
-        }
-        expect(yield* Ref.get(test.admitted)).toHaveLength(0)
-      }).pipe(Effect.scoped),
-    )
     it.effect(
       'carries a private picture with the ordinary user message and preserves its keyed receipt',
       () =>
@@ -1253,13 +1375,6 @@ layer(
 
     const refusals = [
       {
-        name: 'missing attachment fields',
-        attachments: [{ type: 'image' }],
-        tag: 'InvalidAttachment',
-        message: 'Send a picture with valid attachment fields.',
-        status: 400,
-      },
-      {
         name: 'high-bit bytes imitating GIF magic',
         attachments: [
           {
@@ -1270,20 +1385,6 @@ layer(
         ],
         tag: 'UnsupportedAttachment',
         message: 'The picture type does not match its contents.',
-        status: 400,
-      },
-      {
-        name: 'unsupported type',
-        attachments: [{ ...png, mimeType: 'application/pdf' }],
-        tag: 'UnsupportedAttachment',
-        message: 'Choose a PNG, JPEG, WebP or GIF picture.',
-        status: 400,
-      },
-      {
-        name: 'document attachment',
-        attachments: [{ ...png, type: 'document' }],
-        tag: 'UnsupportedAttachment',
-        message: 'Choose a PNG, JPEG, WebP or GIF picture.',
         status: 400,
       },
       {
@@ -1336,11 +1437,8 @@ layer(
         Effect.gen(function* () {
           const test = yield* harness()
           yield* privateThread(test)
-          const response = yield* post(test, {
-            kind: 'user',
-            body: 'Look',
-            attachments: refusal.attachments,
-          })
+          const request = { kind: 'user', body: 'Look', attachments: refusal.attachments }
+          const response = yield* post(test, request)
           expect(response.status).toBe(refusal.status)
           expectPictureRefusal(response, refusal.tag, refusal.message)
           expect(yield* Ref.get(test.admitted)).toHaveLength(0)
@@ -1349,40 +1447,26 @@ layer(
       )
     }
 
-    it.effect('refuses a message that declares more than four pictures can weigh, unread', () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        yield* privateThread(test)
-        let reads = 0
-        const body = new ReadableStream<Uint8Array>(
-          {
-            pull(controller) {
-              reads += 1
-              controller.enqueue(new TextEncoder().encode('{"kind":"user","body":"Look"}'))
-              controller.close()
-            },
-          },
-          { highWaterMark: 0 },
-        )
-        const requestOptions = {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${test.token}`,
-            host: 'gateway.test',
-            'content-type': 'application/json',
-            'content-length': String(29 * 1024 * 1024),
-          },
-          body,
-          duplex: 'half' as const,
-        }
-        const response = yield* gateway(
-          test,
-          new Request(`http://gateway.test/api/vivid/${test.threadId}`, requestOptions),
-        )
-        expect(response.status).toBe(413)
-        expect(reads).toBe(0)
-        expect(yield* Ref.get(test.admitted)).toHaveLength(0)
-      }).pipe(Effect.scoped),
+    it.effect(
+      'the RPC decoder refuses an absurd picture count or aggregate body before reservation',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          for (const pictures of [
+            Array.from({ length: 17 }, () => png),
+            [{ ...png, data: 'A'.repeat(28 * 1024 * 1024) }, png],
+          ]) {
+            const result = yield* decodeSent({
+              threadId: test.threadId,
+              text: 'Look',
+              pictures,
+              key: 'absurd',
+            }).pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+          }
+          expect(yield* Ref.get(test.admitted)).toHaveLength(0)
+          expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(0)
+        }).pipe(Effect.scoped),
     )
 
     const secondPicture = { ...png, filename: 'second.png' }
@@ -1432,14 +1516,17 @@ layer(
               attachments: change.attachments,
             },
           )
+          const conflict = yield* encodeConflict(
+            Conflict.make({
+              message:
+                'This message key was already used for different text or pictures. Send it with a new key.',
+            }),
+          )
           expect(response.status).toBe(409)
           expect(response.body).toHaveProperty(
             'text',
             JSON.stringify({
-              error: {
-                message:
-                  'This message key was already used for different text or pictures. Send it with a new key.',
-              },
+              error: conflict,
             }),
           )
           // A second rejection on this reconstructed key must not replace its original receipt.
@@ -1488,6 +1575,34 @@ layer(
           expect(NodeBuffer.Buffer.from(bytes).toString('base64')).toBe(png.data)
         }).pipe(Effect.scoped),
     )
+
+    for (const error of ['Unavailable', 'Unauthorized', 'NotFound', 'UnknownThread'] as const) {
+      it.effect(`picture refusal ${error} preserves unavailable versus missing`, () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          yield* privateThread(test)
+          yield* Ref.set(
+            test.readFailure,
+            Option.some(
+              RuntimeRejected.make({
+                personId: test.ada,
+                threadId: test.threadId,
+                refusal: { error },
+              }),
+            ),
+          )
+          const response = yield* gateway(
+            test,
+            new Request(`http://gateway.test/api/vivid/${test.threadId}/attachments/picture`, {
+              headers: { authorization: `Bearer ${test.token}` },
+            }),
+          )
+          expect(response.status).toBe(
+            error === 'NotFound' || error === 'UnknownThread' ? 404 : 503,
+          )
+        }).pipe(Effect.scoped),
+      )
+    }
 
     it.effect('refuses upstream attachment bytes with an unsafe content type', () =>
       Effect.gen(function* () {

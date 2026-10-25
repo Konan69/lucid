@@ -1,5 +1,10 @@
-import type { FlueConversationMessage } from '@flue/sdk'
-import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import {
+  DisplaySource,
+  textOf,
+  type ConversationMessage,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -54,7 +59,7 @@ export function Message({
   onContinue,
 }: {
   thread: ThreadId
-  message: FlueConversationMessage
+  message: ConversationMessage
   around: Around
   detail: Option.Option<ThreadDetail>
   working: boolean
@@ -83,13 +88,17 @@ export function Message({
       <Arriving arrival={fresh ? 'said' : 'there'}>
         <Said
           text={textOf(message)}
-          pictures={picturesOf(message)}
+          pictures={picturesOf(message, around.hosted)}
           voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()}
         />
       </Arriving>
     ),
     Member: ({ name }) => (
-      <Said text={textOf(message)} pictures={picturesOf(message)} voice={Voice.Theirs({ name })} />
+      <Said
+        text={textOf(message)}
+        pictures={picturesOf(message, around.hosted)}
+        voice={Voice.Theirs({ name })}
+      />
     ),
     Vivid: ({ answering }) => (
       <Arriving arrival={fresh ? 'answered' : 'there'}>
@@ -310,7 +319,7 @@ function FromVivid({
   onContinue,
 }: {
   thread: ThreadId
-  message: FlueConversationMessage
+  message: ConversationMessage
   answering: Option.Option<string>
   detail: Option.Option<ThreadDetail>
   around: Around

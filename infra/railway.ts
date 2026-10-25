@@ -179,7 +179,7 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
 })
 
 /**
- * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
+ * The hosted product on Railway: PostgreSQL, the Pi Durable runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
@@ -297,14 +297,14 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
 
   /**
-   * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
-   * Person's notes: one SQLite file each (`packages/agent/runtime/src/notes.ts`), which sits beside
-   * the runtime because that is the part of Vivid that later runs on the Person's own device. The
-   * volume below holds them across deployments, and `VIVID_MEMORY_DIR` is what turns notes on.
-   *
-   * The image runs as `node` and a fresh Railway volume is owned by root, so `RAILWAY_RUN_UID`
-   * makes the directory writable without changing the image, as it does for Helix. One volume
-   * means exactly one runtime instance.
+   * Person notes survive deployments on the existing RuntimeMemory volume; keep its identity and
+   * mount. Pi's conversations live in the product database (`DATABASE_URL`), one logical store
+   * per Person in the `runtime` schema, which the runtime's own pre-deploy step migrates. One runtime process owns every store:
+   * it holds a PostgreSQL advisory lock and a generation every write is fenced by, and a second
+   * process refuses to start while the first holds the lock. Exactly one replica must be
+   * configured: Alchemy beta.81 observes replicas but offers no prop to set the count
+   * (Service.d.ts). Zero overlap stops the old runtime before its replacement claims the lock.
+   * RAILWAY_RUN_UID gives the process write access to a fresh, root-owned mount.
    */
   const runtime = yield* Railway.Service('Runtime', {
     project,
@@ -315,12 +315,18 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     port: ports.runtime,
     publicDomain: false,
     healthcheckPath: '/health',
-    /** Bare Node runs the bundled workspace sources; a retained dashboard command cannot bypass it. */
-    startCommand: 'node packages/agent/runtime/dist/server.mjs',
-    /** Flue migrates its own schema at startup; clear any inherited pre-deploy command. */
-    preDeploy: { command: null },
+    /** Source execution matches image CMD; there is no conversation build. */
+    startCommand: 'pnpm --filter @vivid/agent-runtime start',
+    overlapSeconds: 0,
+    /**
+     * The runtime's own tables (schema `runtime`, ledger `runtime_migrations`), migrated by the
+     * runtime's owner alone, in the freshly built runtime image before the new process starts; a
+     * failure keeps the previous deployment serving. They depend on nothing of the server's, so
+     * the two services migrate independently. The process itself never migrates and refuses to
+     * start without this migration (`MigrationsPending`).
+     */
+    preDeploy: { command: 'pnpm --filter @vivid/agent-runtime db:migrate' },
     env: {
-      DATABASE_URL: databaseUrl,
       HOST: listenHost,
       PORT: String(ports.runtime),
       /** The runtime answers with OpenCode Go; the old gateway's key keeps its models selectable. */
@@ -334,6 +340,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),
       VIVID_MODEL: environment.model,
       VIVID_MEMORY_DIR: memoryPath,
+      DATABASE_URL: databaseUrl,
       RAILWAY_RUN_UID: '0',
     },
   })
@@ -357,11 +364,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /** Pin the image entry: omitting this prop preserves an existing Railway override. */
     startCommand: 'pnpm --filter @vivid/server start',
     /**
-     * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
-     * in the freshly built image before the new server takes traffic; a failure keeps the previous
-     * deployment serving.
+     * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns; only the server's
+     * owners (the runtime migrates its own). Railway runs this in the freshly built image before
+     * the new server takes traffic; a failure keeps the previous deployment serving.
      */
-    preDeploy: { command: 'node scripts/migrate.mjs' },
+    preDeploy: { command: 'node scripts/migrate.mjs server' },
     env: {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,

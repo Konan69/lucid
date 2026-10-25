@@ -1,70 +1,27 @@
-import { createFlueClient, type FlueClient } from '@flue/sdk'
 import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Redacted, Result, Schema } from 'effect'
+import { sending } from '@vivid/state'
+import { Data, Effect, Option } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { draft } from './drafts'
-import { firstKey, type Way } from './first'
-import { refusalOf, type LiveData } from './live'
-import { threadAddress } from './server'
-import type { SignedIn } from './session'
-import { streamingFetch } from './transport'
+import { FirstDelivery, type Way } from './first'
+import type { LiveData } from './live'
 
 /**
  * Starting, speaking in and changing Threads.
  *
- * A Thread has two sides. Its record (title, audience, attention) is a product call on the live
- * socket. Its conversation is Flue's stream, reached only through the server's gateway at
- * `/api/vivid/<thread>`, which is what knows who is speaking; there is no other way to it.
+ * A Thread has two sides, both on the live socket. Its record (title, audience, attention) is
+ * one live query, and its conversation another (`live.conversation`, `data/live.ts`). What is
+ * said in it goes to the server as a delivery (`SendToThread`), and the server, which knows who
+ * is speaking, hands it to the runtime.
  */
 
 /** The title a Thread has until its first message names it; `openThread` on the web sets it. */
 export const UNTITLED = 'New thread'
 
-/** A Thread's conversation, opened as the signed-in Person. */
-export const conversation = (session: SignedIn, id: ThreadId): FlueClient =>
-  createFlueClient({
-    url: threadAddress(session.server, id),
-    token: Redacted.value(session.token),
-    fetch: streamingFetch,
-  })
-
-/** A message was handed to the app and the server did not take it. */
-export class Undelivered extends Schema.TaggedError<Undelivered>()(
-  'Undelivered',
-  { message: Schema.String },
-  { title: 'Message undelivered' },
-) {}
-
 /** What a Person is told when a message left the phone and is not known to have arrived. */
 export const UNDELIVERED =
   'That message did not reach Vivid. Check your connection and send it again.'
-
-/**
- * Delivers one message into a Thread, described and not yet started. The gateway turns it into an
- * attributed message when the Thread is shared, so the same call serves a private Thread and a
- * shared one. It answers as soon as the server has admitted the message, not when Vivid has
- * replied.
- *
- * `key` names the delivery: sending again with the same key after a lost answer converges on the
- * first delivery instead of saying the same thing twice.
- */
-export const say = (
-  data: LiveData,
-  delivery: { readonly id: ThreadId; readonly body: string; readonly key: string },
-) =>
-  data.running(
-    Effect.tryPromise({
-      try: (signal) =>
-        conversation(data.session, delivery.id).send({
-          message: { kind: 'user', body: delivery.body },
-          idempotencyKey: delivery.key,
-          signal,
-        }),
-      catch: () => new Undelivered({ message: UNDELIVERED }),
-    }),
-  )
 
 /**
  * How far starting a Thread got.
@@ -80,40 +37,33 @@ export type Start = Data.TaggedEnum<{
 }>
 export const Start = Data.taggedEnum<Start>()
 
-/** Makes an empty Thread under an id chosen here, named after the message it is started with. */
-const createThread = (
-  data: LiveData,
-  thread: { readonly id: ThreadId; readonly message: string; readonly projectId: ProjectId | null },
-) =>
-  data.changing((client) =>
-    client.CreateThread({
-      id: thread.id,
-      title: titleFromMessage(thread.message),
-      projectId: thread.projectId,
-    }),
-  )
-
-/**
- * Starts a Thread with its first message and answers when both are done: a Library item's "ask
- * about this", which stays on its own sheet until the Thread can be opened.
- *
- * The Thread must exist before the gateway will accept a message for it, so it is created first
- * and the message sent once that is confirmed. The first screen does the same two steps, but
- * shows the Thread while they run (`firstWay`).
- */
+/** The Library waits on the same creation and sending owner as a greeting's first words. */
 export const startThread = Effect.fn('Threads.start')(function* (
   data: LiveData,
   start: { readonly message: string; readonly projectId: ProjectId | null },
 ) {
   const id = ThreadId.make(randomUUID())
-  const created = yield* createThread(data, { id, ...start })
-  if (Result.isFailure(created)) return Start.NotCreated({ message: created.failure.message })
-  // The Thread's id is also the delivery's name: a first message is said at most once.
-  const said = yield* say(data, { id, body: start.message, key: firstKey(id) })
-  return Result.isFailure(said)
-    ? Start.NotSaid({ id, message: said.failure.message })
-    : Start.Started({ id })
+  const admitted = yield* Effect.promise(() =>
+    data.sending.beginFirst(id, {
+      words: start.message,
+      projectId: start.projectId,
+    }),
+  )
+  return sending.Admission.match<Start>(admitted, {
+    Accepted: () => Start.Started({ id }),
+    Uncreated: ({ why }) => Start.NotCreated({ message: Option.getOrElse(why, () => UNDELIVERED) }),
+    Unanswered: () => Start.NotSaid({ id, message: UNDELIVERED }),
+  })
 })
+
+/** Admission belongs to the shared machine. This adapter supplies the phone's existing sentences. */
+const firstResult = (admission: sending.Admission): FirstDelivery =>
+  sending.Admission.match<FirstDelivery>(admission, {
+    Accepted: ({ submission }) => FirstDelivery.Accepted({ submission }),
+    Uncreated: ({ why }) =>
+      FirstDelivery.Uncreated({ why: Option.getOrElse(why, () => UNDELIVERED) }),
+    Unanswered: () => FirstDelivery.Unanswered({ why: UNDELIVERED }),
+  })
 
 /**
  * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
@@ -125,12 +75,11 @@ export const startThread = Effect.fn('Threads.start')(function* (
  * Vivid they are taken out of it again, when they are still what it holds.
  */
 export const firstWay = (data: LiveData): Way => ({
-  make: (id, start) =>
-    createThread(data, { id, message: start.words, projectId: start.projectId }).pipe(
-      Effect.map(refusalOf),
-    ),
-  say: (id, start) =>
-    say(data, { id, body: start.words, key: firstKey(id) }).pipe(Effect.map(refusalOf)),
+  registry: data.registry,
+  stateIn: data.sending.stateIn,
+  unanswered: UNDELIVERED,
+  begin: (id, first) => data.sending.beginFirst(id, first).then(firstResult),
+  again: (id) => data.sending.againFirst(id).then(firstResult),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
   },

@@ -1,6 +1,5 @@
 import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai'
-import { setProvider } from '@flue/runtime'
-import { budgeted } from './budget.ts'
+import { witnessed } from './budget.ts'
 
 /**
  * OpenRouter, which speaks OpenAI's Chat Completions and routes the same GLM 5.3 Flash Vivid
@@ -8,7 +7,7 @@ import { budgeted } from './budget.ts'
  * out of credits (`429 insufficient_credits`) and the OpenCode Go key expired
  * (`401 api_key_expired`), so production Vivid could not answer at all. One base address, one key
  * (`OPENROUTER_API_KEY`), and the model named by OpenRouter's own id, which itself holds a slash:
- * `VIVID_MODEL` is `openrouter/z-ai/glm-5.3-flash` (Flue splits a specifier at its first slash).
+ * `VIVID_MODEL` is `openrouter/z-ai/glm-5.3-flash` (the model catalog splits a specifier at its first slash).
  *
  * A model Vivid may be pointed at is declared below with the limits Pi needs to run it. To use
  * another of OpenRouter's models, add it here with its id exactly as `GET /v1/models` returns it.
@@ -49,7 +48,5 @@ export const provider = createProvider({
   baseUrl,
   auth: { apiKey: envApiKeyAuth('OpenRouter API key', ['OPENROUTER_API_KEY']) },
   models: [glm('z-ai/glm-5.3-flash', 'GLM 5.3 Flash')],
-  api: budgeted,
+  api: witnessed,
 })
-
-setProvider(provider)

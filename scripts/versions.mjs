@@ -17,12 +17,6 @@ export const versions = Object.freeze({
   '@effect/platform-node': '4.0.2',
   '@effect/sql-pg': '4.0.2',
   '@effect/vitest': '4.0.2',
-  '@flue/cli': '2.2.2',
-  '@flue/postgres': '2.2.2',
-  '@flue/react': '2.2.2',
-  '@flue/runtime': '2.2.2',
-  '@flue/sdk': '2.2.2',
-  '@flue/vite': '2.2.2',
   '@react-native/metro-config': '0.86.3',
   '@react-navigation/native': '7.4.1',
   '@react-navigation/native-stack': '7.19.2',
@@ -71,6 +65,15 @@ export const versions = Object.freeze({
   vitest: '5.0.1',
 })
 
+/** Pi Durable's runtime pins its three packages together. The old Pi catalog is still used
+ * by the skills package's retained development dependency, outside this port's removal scope. */
+export const runtimeVersions = Object.freeze({
+  '@earendil-works/chord': '1.2.0',
+  '@earendil-works/pi-ai': '1.2.0',
+  '@earendil-works/pi-durable': '1.2.0',
+  '@valibot/to-json-schema': '1.7.1',
+})
+
 const forcedVersions = Object.freeze({
   '@effect/platform-node': versions['@effect/platform-node'],
   '@effect/sql-pg': versions['@effect/sql-pg'],
@@ -100,8 +103,6 @@ const requiredByManifest = Object.freeze({
     'vitest',
   ],
   'apps/mobile/package.json': [
-    '@flue/react',
-    '@flue/sdk',
     '@react-native/metro-config',
     '@react-navigation/native',
     '@react-navigation/native-stack',
@@ -138,8 +139,6 @@ const requiredByManifest = Object.freeze({
     'tsx',
   ],
   'apps/web/package.json': [
-    '@flue/react',
-    '@flue/sdk',
     '@tailwindcss/vite',
     '@types/react',
     '@types/react-dom',
@@ -151,20 +150,11 @@ const requiredByManifest = Object.freeze({
     'vite',
   ],
   'packages/agent/runtime/package.json': [
-    '@earendil-works/pi-ai',
     '@effect/platform-node',
-    '@flue/cli',
-    '@flue/postgres',
-    '@flue/runtime',
-    '@flue/vite',
     '@types/node',
-    '@types/pg',
-    'drizzle-orm',
     'effect',
-    'hono',
-    'pg',
+    'tsx',
     'valibot',
-    'vite',
   ],
   'packages/contracts/package.json': ['effect'],
 })
@@ -284,7 +274,11 @@ const manifestSections = (manifest) => [
 function dependencySectionErrors(relativePath, section, dependencies, catalog) {
   if (dependencies === undefined) return []
   const errors = []
-  for (const [name, expected] of Object.entries(versions)) {
+  const expectedVersions =
+    relativePath === 'packages/agent/runtime/package.json'
+      ? { ...versions, ...runtimeVersions }
+      : versions
+  for (const [name, expected] of Object.entries(expectedVersions)) {
     const declared = dependencies[name]
     const actual = resolveWorkspaceVersion(name, declared, catalog)
     if (declared !== undefined && actual !== expected) {
@@ -375,6 +369,18 @@ export function typeScriptConfigErrors(root) {
   return errors
 }
 
+/** Refuse a missing Pi package as well as a version mismatch, at the runtime's manifest seam. */
+export function runtimeDependencyErrors(root) {
+  const path = 'packages/agent/runtime/package.json'
+  const manifest = readPackageManifest(root, path)
+  const production = manifest.dependencies === undefined ? {} : manifest.dependencies
+  return Object.entries(runtimeVersions).flatMap(([name, expected]) =>
+    production[name] === expected
+      ? []
+      : [`${path}: ${name} must be ${expected}; found ${production[name]}`],
+  )
+}
+
 /** Validate dependency lockstep and the native TypeScript/Effect compiler path. */
 export function validateVersions(root) {
   const rootManifest = readPackageManifest(root, 'package.json')
@@ -386,6 +392,7 @@ export function validateVersions(root) {
       manifestErrors(relativePath, readPackageManifest(root, relativePath), catalog),
     ),
     ...requiredDependencyErrors(root, catalog),
+    ...runtimeDependencyErrors(root),
     ...overrideErrors(overrides, catalog),
     ...rootManifestErrors(rootManifest),
     ...typeScriptConfigErrors(root),

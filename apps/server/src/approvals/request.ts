@@ -74,7 +74,7 @@ interface Said {
 /**
  * Every instruction in the history that a recorded Run attributes to the acting Person.
  *
- * A Run is the turn in progress only while its row says `working` and Flue has not settled it.
+ * A Run is the turn in progress only while its row says `working` and Pi has not settled it.
  * The row alone is not enough: when writing a settlement fails, the row stays `working`
  * (`threads/delivery.ts`), and words that were already acted on would keep counting as current.
  */
@@ -84,9 +84,9 @@ const saidBy = (
   answered: ReadonlySet<string>,
 ) => {
   const mine = new Map<string, RequestRun>(runs.map((run) => [run.id, run]))
-  const settled = new Set(history.settlements.map((settlement) => settlement.submissionId))
+  const settled = new Set(history.settlements.map((settlement) => settlement.runId))
   return history.messages.flatMap((message): ReadonlyArray<Said> => {
-    const run = message.submissionId === undefined ? undefined : mine.get(message.submissionId)
+    const run = message.runId === undefined ? undefined : mine.get(message.runId)
     if (run === undefined || !spoken(run, message, answered)) return []
     const text = textOf(message).trim()
     return text.length === 0 ? [] : [{ current: run.working && !settled.has(run.id), text }]
@@ -111,8 +111,8 @@ const split = (said: ReadonlyArray<Said>): Option.Option<PersonRequest> => {
 /**
  * What the acting Person asked for, in their own words, for the reviewer of a proposed action.
  *
- * The working model's summary of the request cannot vouch for itself. Flue's history has the
- * words and the server's records have the attribution Flue does not keep: a history message
+ * The working model's summary of the request cannot vouch for itself. The runtime's projected state has the
+ * words and the server's records have the attribution the runtime does not keep: a history message
  * counts only when its submission is a Run recorded as acting for the acting Person
  * (`threads/runs.ts`) and that Person wrote it (`spoken`). Names in the conversation are never
  * compared.
@@ -122,7 +122,7 @@ const split = (said: ReadonlyArray<Said>): Option.Option<PersonRequest> => {
  * never fails; the action is then unreviewed (`policy.ts`).
  */
 export const personRequest = Effect.fn('Review.personRequest')(
-  function* (runtime: Pick<RuntimeService, 'read'>, actor: Actor) {
+  function* (runtime: Pick<RuntimeService, 'conversation'>, actor: Actor) {
     if (Option.isNone(actor.threadId)) return Option.none<PersonRequest>()
     const threadId = actor.threadId.value
     const runs = yield* requestRuns(threadId, actor.person.id)

@@ -5,6 +5,9 @@ import {
   AttachmentTooLarge,
   InvalidAttachment,
   MessageAttachment,
+  pictureByteLimit,
+  pictureEncodedLimit,
+  pictureCountLimit,
   PictureMediaType,
   PicturesRequirePrivateThread,
   SendMessageRequest,
@@ -30,8 +33,8 @@ const Candidate = Schema.Struct({
 const decodeCandidate = Schema.decodeUnknownEffect(Candidate)
 const decodeCandidates = Schema.decodeUnknownEffect(Schema.Array(Schema.Json))
 const decodeMediaType = Schema.decodeUnknownOption(PictureMediaType)
-const maxBytes = 5 * 1024 * 1024
-const maxEncodedLength = 4 * Math.ceil(maxBytes / 3)
+const maxBytes = pictureByteLimit
+const maxEncodedLength = pictureEncodedLimit
 // A repeated four-character group over a 5 MB picture overflows V8's regexp stack.
 // This flat scan checks the alphabet; the decoded round-trip below checks padding and trailing bits.
 const base64 = /^[A-Za-z0-9+/]*={0,2}$/u
@@ -95,7 +98,7 @@ export const messagePictures = Effect.fn('Pictures.message')(function* (
       threadId: thread.id,
       message: 'Pictures can only be sent in a private thread for now.',
     })
-  if (attachments.length > 4)
+  if (attachments.length > pictureCountLimit)
     return yield* new TooManyAttachments({ message: 'Send at most four pictures in one message.' })
   return yield* Effect.forEach(attachments, (attachment) => checkedAttachment(attachment))
 })

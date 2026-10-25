@@ -1,3 +1,4 @@
+import { VividRpcClient } from '@vivid/client-runtime'
 import { useAtomValue } from '@effect/atom-react'
 import type { FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
@@ -6,7 +7,6 @@ import { AsyncResult, Atom } from 'effect/reactivity'
 import { randomUUID } from 'expo-crypto'
 import { confirm } from './haptics'
 import type { LiveData } from './live'
-import { say } from './threads'
 
 type Presses = { readonly presses: ReadonlyMap<FeedCardId, feed.Press> }
 type Pleased = { readonly pleased: boolean }
@@ -54,7 +54,14 @@ const sending = (data: LiveData) =>
       const sent = yield* feed.Settling.$match(pressed.how, {
         // `say` is an Effect that answers with how the delivery went, never failing itself.
         Said: ({ words, key }) =>
-          Effect.map(say(data, { id: thread, body: words, key }), Result.isSuccess),
+          Effect.map(
+            data.running(
+              Effect.flatMap(VividRpcClient, (client) =>
+                client.SendToThread({ threadId: thread, text: words, key, pictures: [] }),
+              ),
+            ),
+            Result.isSuccess,
+          ),
         Done: () =>
           Effect.map(
             Effect.promise(() =>

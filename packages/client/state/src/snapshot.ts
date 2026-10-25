@@ -57,7 +57,7 @@ import { workspaceKey } from './threads.js'
  *
  * Never kept: the session or any token; an Integration's fields (`WatchConnections`); the
  * Computer (`WatchComputer`), whose viewer address is a short-lived permission; a Thread's
- * conversation, which is Flue's and is large; anything searched.
+ * conversation, which is the runtime's and is large; anything searched.
  */
 
 /**

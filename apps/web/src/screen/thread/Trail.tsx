@@ -1,4 +1,4 @@
-import type { FlueConversationMessage } from '@flue/react'
+import type { ConversationMessage } from '@vivid/contracts'
 import { describeToolCall, readAnswered, readAsked, summarizeSteps } from '@vivid/state'
 import { Option } from 'effect'
 import {
@@ -31,7 +31,7 @@ import { Peek } from '../computer/Peek'
  * afterwards they fold to one quiet line under the answer that opens into the same list.
  */
 
-export type ToolPart = Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>
+export type ToolPart = Extract<ConversationMessage['parts'][number], { type: 'dynamic-tool' }>
 
 type StepState = 'running' | 'done' | 'failed'
 
@@ -134,7 +134,7 @@ const currentOf = (tools: ReadonlyArray<ToolPart>) =>
  * row: the step in progress ("Using Gmail (Work)"), or nothing when no tool is running and the
  * only true thing to say is that it is thinking.
  */
-export const doingIn = (message: FlueConversationMessage): Option.Option<string> =>
+export const doingIn = (message: ConversationMessage): Option.Option<string> =>
   Option.map(
     currentOf(message.parts.filter((part) => part.type === 'dynamic-tool')),
     (tool) => stepOf(tool).label,

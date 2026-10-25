@@ -38,7 +38,10 @@ const stalled = (
       Layer.mock(
         Runtime,
         phase === 'history'
-          ? { read: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) }
+          ? {
+              conversation: () =>
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+            }
           : history([delivery(threadId, 'now', null, 'Update the project')]),
       ),
     ),

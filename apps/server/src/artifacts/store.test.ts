@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  ConversationState,
   ArtifactAuthor,
   ArtifactChanged,
   ReadDocumentOutcome,
@@ -13,13 +14,12 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Ref, Result, Schema, Stream } from 'effect'
-import * as HttpClientRequest from 'effect/http/HttpClientRequest'
-import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
+import { testSubmission } from '../approvals/testing.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threadParticipants, threads } from '../threads/tables.ts'
@@ -47,35 +47,36 @@ const runtimeHistoryLayer = Layer.effectContext(
       admit: () => Effect.die('Artifact tests do not admit deliveries'),
       settled: () => Effect.never,
       stop: () => Effect.die('Artifact tests do not stop responses'),
-      read: Effect.fn('Artifacts.test.history')(function* ({ threadId }) {
+      watch: () => Stream.never,
+      attachment: () => Effect.die('Artifact tests do not read pictures'),
+      conversation: Effect.fn('Artifacts.test.history')(function* (_personId, threadId) {
         const history = (yield* Ref.get(responses)).filter((entry) => entry.threadId === threadId)
-        return HttpClientResponse.fromWeb(
-          HttpClientRequest.get('https://runtime.example.test'),
-          new Response(
-            JSON.stringify({
-              messages: history.map((entry) => ({
-                role: 'assistant',
-                submissionId: entry.runId,
-                parts: [
-                  {
-                    type: 'dynamic-tool',
-                    toolName: 'write_document',
-                    toolCallId: entry.toolCallId,
-                    state: 'input-available',
-                    input: {},
-                  },
-                ],
-              })),
-              settlements: history
-                .filter((entry) => entry.settled)
-                .map((entry) => ({
-                  submissionId: entry.runId,
-                  outcome: 'completed',
-                })),
-            }),
-            { headers: { 'content-type': 'application/json' } },
-          ),
-        )
+        return ConversationState.make({
+          messages: history.map((entry) => ({
+            id: `reply-${entry.runId}`,
+            role: 'assistant',
+            purpose: 'assistant',
+            display: 'visible',
+            submissionId: String(testSubmission(entry.threadId, entry.runId)),
+            parts: [
+              {
+                type: 'dynamic-tool',
+                toolName: 'write_document',
+                toolCallId: entry.toolCallId,
+                state: 'input-available',
+                input: {},
+              },
+            ],
+          })),
+          settlements: history
+            .filter((entry) => entry.settled)
+            .map((entry) => ({
+              submissionId: String(testSubmission(entry.threadId, entry.runId)),
+              outcome: 'completed',
+            })),
+          working: false,
+          queued: 0,
+        })
       }),
     })
     return Context.make(Runtime, runtime).pipe(Context.add(Responses, responses))
@@ -169,6 +170,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
       origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
       startedAt: yield* Clock.currentTimeMillis,
       admittedAt: yield* Clock.currentTimeMillis,
+      receipt: { runId, submissionId: testSubmission(threadId, runId) },
     }),
   )
   yield* Ref.update(yield* Responses, (entries) => [
@@ -354,6 +356,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
               startedAt: 2,
               admittedAt: 2,
+              receipt: { runId: theirs, submissionId: testSubmission(threadId, theirs) },
             }),
           )
           yield* Ref.update(yield* Responses, (entries) => [
@@ -409,6 +412,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             origin: encodeOrigin(StoredRunOrigin.cases.Decision.make({})),
             startedAt: 2,
             admittedAt: 2,
+            receipt: { runId: later, submissionId: testSubmission(threadId, later) },
           }),
         )
         yield* Ref.update(yield* Responses, (entries) => [

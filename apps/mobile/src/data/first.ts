@@ -1,6 +1,7 @@
-import type { FlueConversationMessage } from '@flue/sdk'
-import type { ProjectId, ThreadId } from '@vivid/contracts'
-import { Data, Effect, Option } from 'effect'
+import type { ConversationMessage, ProjectId, ThreadId } from '@vivid/contracts'
+import { sending } from '@vivid/state'
+import { Data, Effect, Equal, Option } from 'effect'
+import type { Atom, AtomRegistry } from 'effect/reactivity'
 
 /**
  * A Thread's first words, from the moment they leave the composer on the first screen until they
@@ -20,23 +21,23 @@ import { Data, Effect, Option } from 'effect'
  *   nothing asks the server about it until its first words are with Vivid (`First.Said`): a query
  *   for a Thread that is not there ends for good (`data/live.ts`).
  * - The conversation names a Person's message itself, so the echo has another id. The first words
- *   keep the key they were drawn under (`withFirst`, `@vivid/state`), which is what Flue's own hook does for the
- *   messages it sends (`converge`, `@flue/react`).
+ *   keep the key they were drawn under (`withFirst`), which is what a Thread's own sending does
+ *   for the messages it sends (`saidWith`, `@vivid/state` `sending.ts`).
  */
 
 /**
  * Where a Thread's first words stand.
  *
  * - `Sending`: on their way. The Thread is being made, or the words are being handed to it.
- * - `Unsent`: they did not arrive, and `why` is what to tell the Person. `born` says whether the
- *   Thread was made, which is where sending again starts from.
+ * - `Unsent`: the receipt is unanswered, and `why` is what to tell the Person. The shared
+ *   owner knows whether creation must be retried and retains all queued deliveries.
  * - `Said`: with Vivid. Kept, so the words keep their place in the list for as long as the Thread
  *   is on this phone's screen.
  */
 export type First = Data.TaggedEnum<{
   Sending: { readonly start: Start }
-  Unsent: { readonly start: Start; readonly born: boolean; readonly why: string }
-  Said: { readonly start: Start }
+  Unsent: { readonly start: Start; readonly why: string }
+  Said: { readonly start: Start; readonly submission: Option.Option<string> }
 }>
 export const First = Data.taggedEnum<First>()
 
@@ -54,9 +55,9 @@ export interface Start {
 export const firstKey = (id: ThreadId): string => `first:${id}`
 
 /**
- * The first words of every Thread started in one workspace, as an external store. The shell makes
- * one beside what the first screen shows (`makeFront`), so it outlives the greeting that started
- * the Thread and the Thread's own screen: the send goes on whichever of them is drawn.
+ * The first screen keeps composer metadata and a cached projection of the shared machine.
+ * Publications come only from that owner, including a later send that discards refused words.
+ * The cached map gives useSyncExternalStore a stable snapshot between those publications.
  */
 export function makeFirsts() {
   let firsts: ReadonlyMap<ThreadId, First> = new Map()
@@ -68,12 +69,25 @@ export function makeFirsts() {
         listeners.delete(listener)
       }
     },
-    /** Every Thread's first words. The same map until one of them changes. */
     all: () => firsts,
     of: (id: ThreadId): Option.Option<First> => Option.fromUndefinedOr(firsts.get(id)),
-    put: (id: ThreadId, first: First) => {
-      firsts = new Map(firsts).set(id, first)
-      for (const listener of listeners) listener()
+    /** Follow this delivery's owner until it releases the first words and their metadata. */
+    follow: (way: Way, id: ThreadId, start: Start) => {
+      const atom = way.stateIn(id)
+      const refresh = () => {
+        const next = firstOf(way.registry.get(atom), firstKey(id), start, way.unanswered)
+        if (Equal.equals(next, Option.fromUndefinedOr(firsts.get(id)))) return
+        const changed = new Map(firsts)
+        Option.match(next, {
+          onNone: () => changed.delete(id),
+          onSome: (first) => changed.set(id, first),
+        })
+        firsts = changed
+        if (Option.isNone(next)) stop()
+        for (const listener of listeners) listener()
+      }
+      const stop = way.registry.subscribe(atom, refresh)
+      refresh()
     },
   }
 }
@@ -85,60 +99,86 @@ export type Firsts = ReturnType<typeof makeFirsts>
  * `firstWay` (`data/threads.ts`); it is named here so the order of a first send can be read and
  * tested without a server, a device store or a screen.
  *
- * `make` and `say` answer with why they did not go through, when they did not.
+ * `begin` and `again` observe the shared owner after an explicit press. They never hand words
+ * from a separate creation lifecycle into the sender.
  */
+/** The shared owner's first-delivery outcome, translated to the phone's existing copy. */
+export type FirstDelivery = Data.TaggedEnum<{
+  Accepted: { readonly submission: Option.Option<string> }
+  Uncreated: { readonly why: string }
+  Unanswered: { readonly why: string }
+}>
+export const FirstDelivery = Data.taggedEnum<FirstDelivery>()
+
 export interface Way {
-  readonly make: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
-  readonly say: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
-  /** The words did not arrive: they are the Person's again. */
+  readonly registry: AtomRegistry.AtomRegistry
+  readonly stateIn: (id: ThreadId) => Atom.Atom<Option.Option<sending.SendingState>>
+  readonly unanswered: string
+  readonly begin: (id: ThreadId, start: Start) => Promise<FirstDelivery>
+  readonly again: (id: ThreadId, start: Start) => Promise<FirstDelivery>
   readonly returned: (start: Start) => void
-  /** The words are with Vivid: nothing of them is left to send. */
   readonly taken: (start: Start) => void
 }
 
-/**
- * Makes the Thread when it has not been made, then hands it its first words, and records how far
- * that got. Sending again starts where the last attempt stopped: a Thread that was made is never
- * made twice, and the words go out under the Thread's own key (`firstKey`), so the server takes a
- * second attempt as the same delivery and never as a second message.
- */
-export const deliver = Effect.fn('First.deliver')(function* (
+/** The first delivery has exactly the standing its machine gives every other delivery. */
+const firstOf = (
+  state: Option.Option<sending.SendingState>,
+  key: string,
+  start: Start,
+  unanswered: string,
+): Option.Option<First> => {
+  // Begin is already queued when this projection is installed. The machine's startup Idle
+  // snapshot precedes that event, so creation is still pending until its barrier speaks.
+  // Publishing those words immediately also keeps the screen from querying an uncreated Thread.
+  if (!sending.createdHere(state) && !sending.isCreating(state))
+    return Option.some(First.Sending({ start }))
+  if (
+    Option.isNone(sending.deliveryOf(state, key)) &&
+    Option.isNone(sending.recognisedOf(state, key))
+  )
+    return Option.none()
+  return Option.match(sending.admissionOf(state, key), {
+    onNone: () => Option.map(sending.deliveryOf(state, key), () => First.Sending({ start })),
+    onSome: (admitted) =>
+      Option.some(
+        sending.Admission.match<First>(admitted, {
+          Accepted: ({ submission }) => First.Said({ start, submission }),
+          Uncreated: ({ why }) =>
+            First.Unsent({ start, why: Option.getOrElse(why, () => unanswered) }),
+          Unanswered: () => First.Unsent({ start, why: unanswered }),
+        }),
+      ),
+  })
+}
+
+/** Only composer handback follows the awaited answer; standing always comes from the machine. */
+const record = (way: Way, start: Start, result: FirstDelivery): void =>
+  FirstDelivery.$match(result, {
+    Accepted: () => way.taken(start),
+    Uncreated: () => way.returned(start),
+    Unanswered: () => way.returned(start),
+  })
+
+/** Subscribe to the owner when starting first words, retaining only their composer metadata. */
+export const begin = Effect.fn('First.begin')(function* (
   way: Way,
   firsts: Firsts,
   id: ThreadId,
-  attempt: { readonly start: Start; readonly born: boolean },
+  start: Start,
 ) {
-  const { start } = attempt
-  firsts.put(id, First.Sending({ start }))
-  const unsent = (born: boolean) => (why: string) => {
-    way.returned(start)
-    firsts.put(id, First.Unsent({ start, born, why }))
-  }
-  if (!attempt.born) {
-    const refused = yield* way.make(id, start)
-    if (Option.isSome(refused)) {
-      unsent(false)(refused.value)
-      return
-    }
-  }
-  const refused = yield* way.say(id, start)
-  if (Option.isSome(refused)) {
-    unsent(true)(refused.value)
-    return
-  }
-  way.taken(start)
-  firsts.put(id, First.Said({ start }))
+  const sent = way.begin(id, start)
+  firsts.follow(way, id, start)
+  record(way, start, yield* Effect.promise(() => sent))
 })
 
-/** Starts a Thread with its first words. `firsts` says how it goes. */
-export const begin = (way: Way, firsts: Firsts, id: ThreadId, start: Start): Effect.Effect<void> =>
-  deliver(way, firsts, id, { start, born: false })
-
-/** Sends first words that did not arrive again, from where they stopped. */
+/** A stale retry has no work once the machine has released the original words. */
 export const again = (way: Way, firsts: Firsts, id: ThreadId): Effect.Effect<void> =>
   Option.match(Option.filter(firsts.of(id), First.$is('Unsent')), {
     onNone: () => Effect.void,
-    onSome: (unsent) => deliver(way, firsts, id, unsent),
+    onSome: ({ start }) =>
+      Effect.promise(() => way.again(id, start)).pipe(
+        Effect.map((result) => record(way, start, result)),
+      ),
   })
 
 /**
@@ -178,18 +218,62 @@ export const isOnItsWay = (first: Option.Option<First>, spoken: boolean): boolea
     }),
   )
 
+/** The first words as the conversation draws a Person's own message, before it has its own. */
+const standIn = (id: ThreadId, start: Start): ConversationMessage => ({
+  id: firstKey(id),
+  role: 'user',
+  purpose: 'user',
+  display: 'visible',
+  parts: [{ type: 'text', text: start.words, state: 'done' }],
+})
+
 /**
- * The first words as the conversation draws a Person's own message, before it has its own, under
- * the key they keep once it has (`withFirst`, `@vivid/state`). None for a Thread not started here.
+ * A first message keeps its original row only with admission proof. Private input keys also
+ * cover a lost receipt. Shared dispatch keys identify no Person, so uncertain words stay held
+ * beside canonical messages until a receipt can identify the submission.
  */
-export const standInOf = (
+export const withFirst = (
   id: ThreadId,
   first: Option.Option<First>,
-): Option.Option<FlueConversationMessage> =>
-  Option.map(first, ({ start }) => ({
-    id: firstKey(id),
-    role: 'user',
-    purpose: 'user',
-    display: 'visible',
-    parts: [{ type: 'text', text: start.words, state: 'done' }],
-  }))
+  messages: ReadonlyArray<ConversationMessage>,
+  ownership: { readonly privateThread: boolean; readonly recognised: Option.Option<string> },
+): ReadonlyArray<ConversationMessage> =>
+  Option.match(first, {
+    onNone: () => messages,
+    onSome: (held) => {
+      const key = firstKey(id)
+      const submission = First.$match(held, {
+        Said: (said) => said.submission,
+        Sending: () => Option.none<string>(),
+        Unsent: () => Option.none<string>(),
+      })
+      const admitted = messages.find(
+        (message) =>
+          message.submissionId !== undefined &&
+          Option.contains(submission, message.submissionId) &&
+          (message.purpose === 'user' ||
+            (message.purpose === 'dispatch' &&
+              message.signal !== undefined &&
+              message.signal.tagName === 'message')),
+      )
+      const recognised = messages.find((message) =>
+        Option.contains(ownership.recognised, message.id),
+      )
+      const privateEcho = ownership.privateThread
+        ? messages.find(
+            (message) =>
+              message.role === 'user' && message.purpose === 'user' && message.key === key,
+          )
+        : undefined
+      const echo = recognised ?? admitted ?? privateEcho
+      // An accepted row is already supplied by the sending machine while placement is pending.
+      // Recreating it here would restore a delivery withdrawn by an ended Run.
+      if (echo === undefined) {
+        if (First.$is('Said')(held)) return messages
+        return [standIn(id, held.start), ...messages]
+      }
+      return messages.map((message) =>
+        message === echo ? Object.assign({}, message, { id: key }) : message,
+      )
+    },
+  })

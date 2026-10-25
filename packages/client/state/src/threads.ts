@@ -1,4 +1,11 @@
-import { Workspace, type PersonSummary, type Run, type Thread } from '@vivid/contracts'
+import {
+  Workspace,
+  type ConversationMessage,
+  type PersonSummary,
+  type Run,
+  type Thread,
+  type ThreadId,
+} from '@vivid/contracts'
 import { Option } from 'effect'
 
 export type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
@@ -19,6 +26,46 @@ export function plainPreview(markdown: string) {
 export function titleFromMessage(message: string) {
   const firstLine = message.trim().split('\n', 1)[0] ?? 'New conversation'
   return firstLine.length > 46 ? `${firstLine.slice(0, 45).trimEnd()}…` : firstLine
+}
+
+/**
+ * The Run a message of the conversation belongs to: the one that placed a delivery, or wrote the
+ * reply.
+ *
+ * A message names its delivery by the runtime's own number for it
+ * (`ConversationMessage.submissionId`), and a Run carries that number beside its own id
+ * (`Run.submissionId`). The two ids are different things: a Run's id is the product's, made
+ * before the runtime has seen the delivery, and is never what a message carries. A message
+ * without a number, or a Run the runtime has not numbered yet, pairs with nothing.
+ */
+export const runOf = (
+  runs: ReadonlyArray<Run>,
+  message: Pick<ConversationMessage, 'submissionId'>,
+): Option.Option<Run> =>
+  Option.flatMap(Option.fromUndefinedOr(message.submissionId), (submission) =>
+    Option.fromUndefinedOr(runs.find((run) => run.submissionId === submission)),
+  )
+
+/** A stored picture as the conversation names it: relative to its Thread. */
+const STORED = /^attachments\/(.+)$/u
+
+/**
+ * Where a picture in a Thread's message is read from, as a path on the app's own server.
+ *
+ * The conversation names a stored picture relative to its Thread (`attachments/<id>`,
+ * `ConversationPart` in `@vivid/contracts`), and the server serves it at
+ * `/api/vivid/<thread>/attachments/<id>` to whoever may read the Thread
+ * (`apps/server/src/threads/gateway.ts`). It is asked for with the app's own credentials: a
+ * browser's session cookie, a phone's token. Any other address is left as it is, which is a
+ * picture this client is sending, drawn from the bytes it holds (`data:`).
+ */
+export const pictureAddress = (thread: ThreadId, url: string): string => {
+  const stored = STORED.exec(url)
+  if (stored === null) return url
+  const [, id] = stored
+  return id === undefined
+    ? url
+    : `/api/vivid/${encodeURIComponent(thread)}/attachments/${encodeURIComponent(id)}`
 }
 
 /**

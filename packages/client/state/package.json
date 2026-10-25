@@ -7,11 +7,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json",
+    "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
-    "types": "node ../../../scripts/types.mjs tsconfig.types.json"
+    "types": "node ../../../scripts/types.mjs tsconfig.types.json",
+    "test": "node ../../../scripts/test.mjs"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.2.0",
     "@typeonce/effect-machine": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",

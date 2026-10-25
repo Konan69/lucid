@@ -1,3 +1,5 @@
+import { ConversationTooLarge } from './threads.js'
+export { ConversationTooLarge } from './threads.js'
 import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
@@ -15,6 +17,7 @@ import {
   WriteDocumentOutcome,
   WriteDocumentRequest,
 } from './artifacts.js'
+import { ConversationFrame } from './conversation.js'
 import { AuditListResponse } from './audit.js'
 import { ServerBuild } from './build.js'
 import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
@@ -196,6 +199,13 @@ import {
   PresenceRequest,
   ShareThreadRequest,
   ThreadDetail,
+  SendToThreadRequest,
+  SendToThreadResponse,
+  UnsupportedAttachment,
+  InvalidAttachment,
+  AttachmentTooLarge,
+  TooManyAttachments,
+  PicturesRequirePrivateThread,
   ThreadListResponse,
   ThreadResponse,
   ThreadTitleHistoryUnavailable,
@@ -229,6 +239,7 @@ export { InvalidRequest, RuntimeUnavailable, ServiceUnavailable } from './failur
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([
+  ConversationTooLarge,
   Unauthenticated,
   Forbidden,
   NotFound,
@@ -355,6 +366,25 @@ const WatchThread = Rpc.make('WatchThread', {
   ...live,
   payload: { id: ThreadId },
   success: ThreadDetail,
+})
+/** Relay projected runtime frames, starting with a fresh Whole on every subscription. */
+const WatchConversation = Rpc.make('WatchConversation', {
+  ...live,
+  payload: { threadId: ThreadId },
+  success: ConversationFrame,
+})
+/** A delivery answers at admission, with its product Run and decimal Pi submission link. */
+const SendToThread = Rpc.make('SendToThread', {
+  payload: SendToThreadRequest,
+  success: SendToThreadResponse,
+  error: Schema.Union([
+    RpcFailure,
+    UnsupportedAttachment,
+    InvalidAttachment,
+    AttachmentTooLarge,
+    TooManyAttachments,
+    PicturesRequirePrivateThread,
+  ]),
 })
 const CreateThread = Rpc.make('CreateThread', {
   ...call,
@@ -963,6 +993,8 @@ export const VividRpc = RpcGroup.make(
   WatchThreads,
   GetThread,
   WatchThread,
+  WatchConversation,
+  SendToThread,
   CreateThread,
   OpenFirstThread,
   PatchThread,

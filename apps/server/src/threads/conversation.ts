@@ -9,8 +9,9 @@ import {
   PersonId,
   type Run,
   RunId,
+  RuntimeSubmissionId,
   type RuntimeUnavailable,
-  type ThreadId,
+  ThreadId,
 } from '@vivid/contracts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -39,7 +40,7 @@ export type DeliveryMessage = typeof DeliveryMessage.Type
  * the Person Vivid acts for, whatever started it.
  */
 export const StoredRunOrigin = Schema.TaggedUnion({
-  // The immutable message fingerprint lives with its reservation, not in Flue-owned history.
+  // The immutable message fingerprint lives with its reservation, not in Pi-owned history.
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
   FirstConversation: {},
@@ -66,6 +67,12 @@ export interface Delivery {
   readonly origin: StoredRunOrigin
   /** Repeating a delivery with the same key starts nothing new and returns the same Run. */
   readonly idempotencyKey: string
+  /**
+   * The key the sending client made, when a client's send is what this delivery is. It is passed
+   * to the runtime untouched so the conversation state can give it back on the placed message;
+   * nothing in the server reads it. A delivery the server makes itself has none.
+   */
+  readonly clientKey?: string
 }
 
 /** Only the ordinary chat path moves past questions; server signals and channel text do not. */
@@ -87,17 +94,37 @@ export interface ChannelDelivery extends Delivery {
 }
 export type ServerDelivery = SignalDelivery | ChannelDelivery
 
-/** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
+/** The product reservation and the Pi receipt remain distinct across retries and restarts. */
 export const Admitted = Schema.Struct({
   runId: RunId,
-  /** Where this delivery's events begin in the Thread's stream. */
-  offset: Schema.String,
-  /** The conversation's incarnation in the runtime. */
-  incarnation: Schema.String,
+  /** Encode as a decimal string in the existing JSON receipt, without a database migration. */
+  submissionId: Schema.FiniteFromString.pipe(Schema.decodeTo(RuntimeSubmissionId)),
 })
 export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 
+/** Untagged historical JSON decodes to explicit variants without rewriting old receipts. */
+export const StoredReceipt = Schema.Union([
+  Schema.Struct({ _tag: Schema.tagDefaultOmit('Pi'), ...Admitted.fields }),
+  Schema.Struct({
+    _tag: Schema.tagDefaultOmit('Legacy'),
+    runId: RunId,
+    offset: Schema.String,
+    incarnation: Schema.String,
+  }),
+]).pipe(Schema.toTaggedUnion('_tag'))
+export type StoredReceipt = typeof StoredReceipt.Type
+
+/** A legacy replay identifies its product Run but has no Pi submission to follow. */
+export type AdmissionOutcome =
+  | Admitted
+  | { readonly runId: RunId; readonly submissionId?: undefined }
+
 export interface ConversationService {
+  /** A successful abort settles each named Run through the same conditional transition as observation. */
+  readonly stopped: (
+    ids: ReadonlyArray<RunId>,
+  ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError>
+
   /**
    * Delivers a server signal and records its Run. Watch events, Approval outcomes and
    * answers share the admission policy used by Person messages, so every Run records whose
@@ -111,7 +138,7 @@ export interface ConversationService {
   readonly admit: (
     delivery: Delivery,
   ) => Effect.Effect<
-    Admitted,
+    AdmissionOutcome,
     Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError
   >
 }

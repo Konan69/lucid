@@ -1,12 +1,13 @@
+import { VividRpcClient } from '@vivid/client-runtime'
 import { useAtomValue } from '@effect/atom-react'
-import { createFlueClient } from '@flue/sdk'
 import { FeedItem, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { Atom, AsyncResult } from 'effect/reactivity'
 import { create } from 'zustand'
 import { change } from './app'
-import { changing, live } from './live'
+import { live } from './live'
+import { changing } from './app'
 import { say } from './said'
 import { engine } from './runtime'
 
@@ -34,15 +35,17 @@ const sending = Layer.succeed(feed.Sending, {
     please()
     yield* feed.Settling.$match(pressed.how, {
       Said: ({ words, key }) =>
-        Effect.tryPromise({
-          try: (signal) =>
-            createFlueClient({ url: `/api/vivid/${encodeURIComponent(thread)}` }).send({
-              message: { kind: 'user', body: words },
-              idempotencyKey: key,
-              signal,
-            }),
-          catch: () => new feed.SendRefused({ card }),
-        }).pipe(Effect.asVoid),
+        engine
+          .run(
+            Effect.flatMap(VividRpcClient, (client) =>
+              client.SendToThread({ threadId: thread, text: words, pictures: [], key }),
+            ),
+          )
+          .pipe(
+            Effect.flatMap((result) =>
+              Result.isSuccess(result) ? Effect.void : Effect.fail(new feed.SendRefused({ card })),
+            ),
+          ),
       Done: () =>
         Effect.gen(function* () {
           const title = Option.fromUndefinedOr(closing.get(card))

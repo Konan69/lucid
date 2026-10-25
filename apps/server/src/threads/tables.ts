@@ -19,8 +19,7 @@ import { projectTable } from '../projects/tables.ts'
 export const titleSource = pgEnum('vivid_thread_title_source', TitleSource.literals)
 
 /**
- * One row per Thread. The table keeps its first name because Flue's history is keyed by the same
- * id and renaming a table is not worth a rewrite of every installation's data.
+ * One row per Thread. The persisted table name survives the conversation runtime cutover.
  *
  * `person_id` is the creator, on whose behalf Vivid acts in a private Thread. `audience` widens who
  * may read and send: `private` (the creator), `people` (the creator and the rows in
@@ -90,8 +89,8 @@ export const threadReads = pgTable(
 )
 
 /**
- * One row per Run. The id is Flue's submission id, so a Message in Flue's history joins to the
- * Run that carried it and through it to the Person Vivid acted for.
+ * One row per product Run. Its global id reserves a delivery independently from Pi's Person-local
+ * submission number. The admission receipt holds that number as a decimal string.
  *
  * `origin` is the encoded `RunOrigin` without its Person, who is `person_id`; `state` is one of
  * `working`, `completed`, `failed`, `stopped`, `unknown`, and `finished_at` is set for every state
@@ -109,7 +108,7 @@ export const runs = pgTable(
     origin: jsonb('origin').notNull(),
     state: text('state').notNull(),
     startedAt: epoch('started_at').notNull(),
-    /** Flue's receipt has arrived; reservations alone never count as answering a Person. */
+    /** The runtime's receipt has arrived; reservations alone never count as answering a Person. */
     admittedAt: epoch('admitted_at'),
     /** The original receipt survives keyed retries without depending on runtime availability. */
     receipt: jsonb('receipt'),

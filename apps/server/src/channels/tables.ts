@@ -1,3 +1,4 @@
+import type { ResponseId } from '../runtime/settlement.ts'
 import { pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { Channel, ChannelAddress, RunId } from '@vivid/contracts'
 import { epoch, personColumn, threadColumn } from '../database/owner.ts'
@@ -45,7 +46,7 @@ export const channelReplies = pgTable('vivid_channel_replies', {
   personId: personColumn().notNull(),
   channel: text('channel').$type<Channel>().notNull(),
   since: epoch('since').notNull(),
-  responseId: text('response_id').$type<RunId>().unique(),
+  responseId: text('response_id').$type<ResponseId>().unique(),
   threadId: threadColumn('thread_id')
     .notNull()
     .references(() => threads.id, { onDelete: 'cascade' }),

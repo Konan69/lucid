@@ -10,6 +10,8 @@ import {
 } from '@vivid/contracts'
 import {
   draftScopeOf,
+  following,
+  Following,
   LiveState,
   liveStateOf,
   makeLink,
@@ -30,6 +32,7 @@ import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
 import { makeConnecting } from './connecting'
+import { makeSending } from './sending'
 import { door } from './door'
 import { sessionExpiry } from './account'
 import { followDrafts, forgetDrafts } from './drafts'
@@ -40,7 +43,7 @@ import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { launch, start } from './app'
-import { forgetHeard } from './hearing'
+import { forgetHeard, hearIn } from './hearing'
 import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
 
@@ -245,8 +248,9 @@ function makeLiveData(session: SignedIn) {
   const kept = engine.kept
   const family = engine.family
 
+  const me = kept((client) => client.WatchMe())
   const live = {
-    me: kept((client) => client.WatchMe()),
+    me,
     settings: kept((client) => client.WatchSettings()),
     /** What Vivid is called and how its face is drawn where the Person is working. */
     appearance: kept((client) => client.WatchAppearance()),
@@ -266,6 +270,8 @@ function makeLiveData(session: SignedIn) {
           ),
         ),
     ),
+    /** The typed Pi conversation is kept with its settlement state for the next opening. */
+    conversation: followConversations(engine, session, me),
     projects: kept((client) => client.WatchProjects()),
     library: family(
       (shelf: LibraryShelf) => shelf,
@@ -415,6 +421,11 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices,
+    /**
+     * Sending in a Thread: one machine for each Thread of the session (`data/sending.ts`), made
+     * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
+     */
+    sending: makeSending(engine),
     gone,
     seenThread,
     typingIn,
@@ -522,3 +533,22 @@ export const refusalOf = <Value, Failure extends { readonly message: string }>(
   Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
 
 export { LiveState }
+
+function followConversations(
+  engine: ReturnType<typeof makeLive>,
+  session: SignedIn,
+  me: LiveQuery<MeResponse>,
+) {
+  const keep = (thread: ThreadId, heard: Following) => {
+    const signedIn = engine.registry.get(me.atom)
+    if (!Following.$is('Live')(heard) || !AsyncResult.isSuccess(signedIn)) return
+    hearIn({ origin: session.server, person: signedIn.value.person.id }, thread, heard.state)
+  }
+  return engine.followed<ThreadId, Following>(
+    (id) => id,
+    (client, threadId, last, ready) =>
+      following(() => client.WatchConversation({ threadId }), last, ready).pipe(
+        Stream.tap((heard) => Effect.sync(() => keep(threadId, heard))),
+      ),
+  )
+}

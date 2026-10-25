@@ -97,7 +97,7 @@ function checkTestEnvironment(tasks) {
 /** Shipping overrides keep the production hash while excluding source-map upload authority. */
 function checkBuild(tasks) {
   const web = read(Turbo, '../apps/web/turbo.json').tasks.build
-  for (const task of [tasks['@vivid/agent-runtime#build'], web]) {
+  for (const task of [web]) {
     for (const field of ['inputs', 'outputs', 'passThroughEnv'])
       assert.deepEqual(
         task[field],
