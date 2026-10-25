@@ -71,7 +71,7 @@ Shared wire contracts and `VividRpc` live in `packages/contracts`; the RPC clien
 
 A TypeScript annotation does not make a network boundary safe. `response.json()` and generic `request<T>()` casts are unknown input, not proof. Validate route params, search, headers, and bodies at every server boundary; validate response payloads at the consumer with the same Effect schema from `packages/contracts`.
 
-Flue owns conversation/turn transport, durable conversation history, model interaction, and its runtime lifecycle. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Routines, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into Flue state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
+Flue owns conversation/turn transport, durable conversation history, model interaction, and its runtime lifecycle. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Watches, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into Flue state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
 
 Edit the Drizzle TypeScript schema first, run `pnpm --filter @vivid/server db:generate` for auth or `pnpm --filter @vivid/server db:generate:product` for product tables, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
 
@@ -200,8 +200,9 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Run**: one bounded attempt by Vivid to advance a Thread.
 - **Input request**: a durable question that a Run cannot safely answer alone.
 - **Approval**: authorization for one consequential action, preserving action, risk, rationale, scope, and decision.
-- **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
-- **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
+- **Watch**: a subscription to an Integration event; an event wakes Vivid and may start a Run.
+- **Check-in**: Vivid taking up open work by itself, at a time it chooses or one the Person asked for in words.
+- **Library item**: reusable knowledge or a learned procedure. Storing a procedure does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
 - **Connection**: an authorized relationship with an external account or service; credential values never enter model context. People see it as an **Integration**: that is the word in every string a Person or the model reads, while code, contracts and tests keep `Connection`.
 

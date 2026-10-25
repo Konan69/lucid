@@ -426,6 +426,8 @@ Vivid is a character the Person works with, and the surface is built so that rea
 - **Follow procedures.** A starter set of skills ships with Vivid; a saved one of the same name
   replaces it for whoever saved it.
 - **React to events.** A Watch subscribes to an Integration app event through Executor. Events wake Vivid in a background Thread and useful findings reach the Person through the Feed.
+- **Check in.** Vivid takes up open work by itself and decides when; a Person can ask for a fixed
+  time in words. See [docs/23](23-product-definition.md).
 
 ## Build order
 
@@ -448,10 +450,6 @@ Each step leaves a product that runs.
 
 ## Not in this build
 
-- **Browser input on the hosted machine.** The Boat provider is proven against real Boat for
-  creating, looking, opening a page, files, archive and resume (3 October 2026). Clicking and
-  typing inside the guest's browser is refused by the guest driver, and the viewer has not been
-  opened inside the app.
 - **Voice.** No calls in this build, and the page loads nothing for them.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
