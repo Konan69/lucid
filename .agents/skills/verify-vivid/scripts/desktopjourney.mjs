@@ -103,13 +103,14 @@ export async function signIn(state, page, directory) {
   await capture(page, directory, 'signed-in')
 }
 
-/** Allow the real enrolled installation through the visible card, then require native stream presence. */
+/** Device requests live on Feed; allow the native installation there before requiring its stream. */
 export async function linked(state, page, directory) {
   const pending = await deviceState(state, directory, 'native-pending', (list) =>
     list.devices.some((d) => d.access._tag === 'Pending'),
   )
   const device = pending.devices.find((d) => d.access._tag === 'Pending')
   await capture(page, directory, 'device-pending')
+  await page.navigate(() => page.send('Page.navigate', { url: state.web + '/feed' }))
   await click(page, button('Allow'))
   await deviceState(state, directory, 'native-connected', (list) =>
     list.devices.some((d) => d.id === device.id && d.presence._tag === 'Connected'),
@@ -136,6 +137,8 @@ export async function browse(state, page, directory) {
   await capture(page, directory, 'before-browser-action')
   await click(page, 'document.querySelector("button[aria-label=Send]")')
   try {
+    await wait(page, '/Working · \\d/u.test(document.body.innerText)')
+    await capture(page, directory, 'thread-working')
     await settled(state, id, 1, 'Completed', directory)
   } catch (error) {
     const detail = await rpc(state, 'GetThread', { id }, directory, 'browser-failure')
@@ -173,6 +176,10 @@ export async function browse(state, page, directory) {
     'No successful browse tool receipt',
   )
   await json(directory + '/browse-receipts.json', steps)
+  await wait(
+    page,
+    `document.body.innerText.includes("Seen") && /Worked \\d/u.test(document.body.innerText) && document.querySelector('button[aria-label="Copy message"]')`,
+  )
   await capture(page, directory, 'after-browser-action')
   await json(directory + '/browser-action.json', {
     thread: id,

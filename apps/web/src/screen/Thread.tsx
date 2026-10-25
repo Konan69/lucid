@@ -10,6 +10,8 @@ import {
 import {
   asking,
   draftPlace,
+  makeTurns,
+  thisReader,
   inThread,
   lasting,
   QUIET_MS,
@@ -36,7 +38,6 @@ import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Asks, useAsks } from './thread/Allow'
-import { DeviceAsk } from './thread/Device'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
@@ -228,6 +229,8 @@ const standingOf = (
  * look every few seconds, and at the first key the Person types), and each time used to build
  * every row again.
  */
+const turnsOf = makeTurns(thisReader())
+
 const Rows = memo(function Rows({
   said,
   visible,
@@ -246,6 +249,18 @@ const Rows = memo(function Rows({
 }) {
   const newest = visible.at(-1)
   const drawn = new Map(visible.map((message) => [message.id, message]))
+  const turns = turnsOf(
+    said.map((message) => ({
+      id: message.id,
+      mine: message.role === 'user',
+      at: spokenOf(message).at,
+    })),
+    Date.now(),
+  )
+  // The Person's newest message, and whether Vivid has taken it up: it is working, or it has
+  // already said something after it.
+  const mine = [...visible].reverse().find((message) => message.role === 'user')
+  const takenUp = mine !== undefined && (working || newest !== mine)
   return asking.linesOf(said.map(spokenOf), context.requests).map((line) =>
     asking.Line.$match(line, {
       Answer: ({ request }) => (
@@ -259,8 +274,12 @@ const Rows = memo(function Rows({
         const message = drawn.get(key)
         if (message === undefined) return null
         const latest = message === newest
+        const turn = turns.get(key)
         return (
           <li key={key} data-arrives>
+            {turn !== undefined && (
+              <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
+            )}
             <Message
               message={message}
               context={context}
@@ -272,6 +291,11 @@ const Rows = memo(function Rows({
               settled={message.submissionId === undefined || settled.has(message.submissionId)}
               onContinue={onContinue}
             />
+            {/* Under the Person's newest message only, as a messenger keeps "Read" under the last
+                thing sent: Vivid has it. An unsent message has its own dashed look instead. */}
+            {message === mine && takenUp && (
+              <p className="mt-1 pe-1 text-end text-meta font-meta text-ink-3">Seen</p>
+            )}
           </li>
         )
       },
@@ -595,7 +619,6 @@ function Column({
   const footer = useOnward(asked.progress, asked.answering, onward, backward)
   return (
     <>
-      <DeviceAsk />
       {children}
       <Asks allowing={allowing} asked={asked} />
       <Composer

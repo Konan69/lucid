@@ -1,5 +1,5 @@
 import type { FlueConversationMessage } from '@flue/react'
-import { describeToolCall, readAnswered, readAsked, summarizeSteps } from '@vivid/state'
+import { describeToolCall, readAnswered, readAsked, spanOf, summarizeSteps } from '@vivid/state'
 import { Option } from 'effect'
 import {
   BookOpen,
@@ -17,9 +17,10 @@ import {
   Terminal,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { cn } from '../../ui/cn'
+import { useNow } from '../../ui/clock'
 import { Peek } from '../computer/Peek'
 
 /**
@@ -151,10 +152,13 @@ const KEPT = 3
 export function Doing({
   tools,
   wordless,
+  since,
 }: {
   tools: ReadonlyArray<ToolPart>
   /** Whether the reply has no words yet, so between steps the list is the only sign of life. */
   wordless: boolean
+  /** When Vivid began this reply, when the stream says; the head line counts up from it. */
+  since: Option.Option<number>
 }) {
   if (tools.length === 0) return null
   const steps = tools.map(stepOf)
@@ -166,6 +170,7 @@ export function Doing({
   const onComputer = tools.some((tool) => ON_COMPUTER.has(tool.toolName))
   return (
     <div className="mb-2">
+      {Option.isSome(since) && <Working since={since.value} />}
       <ol className="flex flex-col gap-1.5 text-label" aria-live="polite">
         {earlier > 0 && (
           <li className="pl-7 text-meta font-meta text-ink-3">
@@ -193,26 +198,47 @@ export function Doing({
  * The steps of a finished reply, under the answer: one line saying what was done, which opens
  * into each step. It is quiet on purpose; the answer is the thing, and this is how it was got.
  */
-export function Trail({ tools }: { tools: ReadonlyArray<ToolPart> }) {
+export function Trail({
+  tools,
+  took,
+  lead,
+}: {
+  tools: ReadonlyArray<ToolPart>
+  /** How long the reply took, when the stream stamped both its start and its end. */
+  took: Option.Option<number>
+  /**
+   * What shares the line before it: the reply's time and its copy button. One quiet line under
+   * an answer reads as its footnote; two stacked lines read as clutter.
+   */
+  lead: ReactNode
+}) {
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
   const steps = tools.map(stepOf)
   return (
-    <div className="mt-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className="-ml-1 inline-flex max-w-full cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:bg-wash-hover focus-visible:text-ink"
-      >
-        <ChevronRight
-          className={cn(
-            'size-3.5 shrink-0 transition-transform duration-(--dur-fast)',
-            open && 'rotate-90',
-          )}
-        />
-        <span className="truncate">{summarizeSteps(steps, Option.none())}</span>
-      </button>
+    <div className="mt-1">
+      <div className="flex h-6 min-w-0 items-center gap-1.5 text-meta text-ink-3">
+        {lead}
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="-ml-1 inline-flex max-w-full cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:bg-wash-hover focus-visible:text-ink"
+        >
+          <ChevronRight
+            className={cn(
+              'size-3.5 shrink-0 transition-transform duration-(--dur-fast)',
+              open && 'rotate-90',
+            )}
+          />
+          <span className="truncate">
+            {Option.isSome(took) && (
+              <span className="tabular-nums">Worked {spanOf(took.value)} · </span>
+            )}
+            {summarizeSteps(steps, Option.none())}
+          </span>
+        </button>
+      </div>
       {open && (
         <ol className="mt-1.5 flex animate-fade-in flex-col gap-1.5 text-label">
           {steps.map((step) => (
@@ -221,6 +247,20 @@ export function Trail({ tools }: { tools: ReadonlyArray<ToolPart> }) {
         </ol>
       )}
     </div>
+  )
+}
+
+/**
+ * The head of the steps while Vivid works: how long it has been at it, counting up each second.
+ * The steps under it say what; this says that the work is alive and for how long, the way the
+ * finished line keeps "Worked 41s". The count is not announced: it would speak every second.
+ */
+function Working({ since }: { since: number }) {
+  const now = useNow()
+  return (
+    <p className="mb-1.5 pl-7 text-meta font-meta text-ink-3 tabular-nums" aria-hidden>
+      Working · {spanOf(now - since)}
+    </p>
   )
 }
 

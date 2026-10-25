@@ -1,7 +1,8 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { Option } from 'effect'
-import { useState, type ReactNode } from 'react'
+import { clock, spanOf } from '@vivid/state'
+import { Data, Option } from 'effect'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
 import { AlarmClock, ChevronDown, ChevronRight, Monitor } from 'lucide-react-native'
@@ -17,8 +18,10 @@ import {
   Speaker,
   speakerOf,
   stepsOf,
+  startOf,
   stepsSummary,
   toolsOf,
+  tookOf,
   type Around,
   type Step,
 } from '../../data/message'
@@ -174,13 +177,22 @@ const STEP_TONE = {
 } as const satisfies Record<Step['standing'], 'ink-2' | 'status-danger'>
 
 /** What Vivid did while answering, collapsed to one line that opens into each step. */
-function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolean }) {
+function Steps({
+  steps,
+  working,
+  timing,
+}: {
+  steps: ReadonlyArray<Step>
+  working: boolean
+  /** How long Vivid has been at it (`Working`) or took (`Worked`), when the stream stamped it. */
+  timing: Timing
+}) {
   const { colors: c, dark } = useTheme()
   const go = useGo()
   const data = useLiveData()
   const [open, setOpen] = useState(false)
   if (steps.length === 0) return null
-  const summary = stepsSummary(steps, working)
+  const summary = said(stepsSummary(steps, working), timing)
   const current = currentStepOf(steps, working)
   const busy = Option.isSome(current)
   const Chevron = open ? ChevronDown : ChevronRight
@@ -215,6 +227,7 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
           <Label size="label" tone="ink-2" style={{ flexShrink: 1 }}>
             {summary}
           </Label>
+          {Timing.$is('Working')(timing) && <Counting since={timing.since} />}
         </Press>
         {Option.exists(current, (step) => step.onComputer) && (
           <Press
@@ -297,6 +310,43 @@ function Spoken(props: {
   return props.text.length === 0 ? null : <Reply {...props} />
 }
 
+/**
+ * How long a reply's work has gone on: counting while it is made, said once when it is done, or
+ * nothing to say when the stream did not stamp it. The web says the same (`Trail.tsx`).
+ */
+type Timing = Data.TaggedEnum<{
+  Working: { readonly since: number }
+  Worked: { readonly took: number }
+  Untimed: {}
+}>
+const Timing = Data.taggedEnum<Timing>()
+
+/** The steps' line with its time: "Reading lobste.rs · 12s", "Worked 41s · Used its browser". */
+const said = (summary: string, timing: Timing) =>
+  Timing.$is('Worked')(timing) ? `Worked ${spanOf(timing.took)} · ${summary}` : summary
+
+/** The count beside a reply still being made, ticking each second while it is on screen. */
+function Counting({ since }: { since: number }) {
+  const now = useSyncExternalStore(clock.watch, clock.read, clock.read)
+  return (
+    <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+      · {spanOf(now - since)}
+    </Label>
+  )
+}
+
+/** Where a reply's time stands: counting while it is made, said once it is done. */
+const timingOf = (message: FlueConversationMessage, making: boolean): Timing =>
+  making
+    ? Option.match(startOf(message), {
+        onNone: () => Timing.Untimed(),
+        onSome: (since) => Timing.Working({ since }),
+      })
+    : Option.match(tookOf(message), {
+        onNone: () => Timing.Untimed(),
+        onSome: (took) => Timing.Worked({ took }),
+      })
+
 /** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
   thread,
@@ -339,7 +389,7 @@ function FromVivid({
             Answering {answering.value}
           </Label>
         )}
-        <Steps steps={stepsOf(tools)} working={working} />
+        <Steps steps={stepsOf(tools)} working={working} timing={timingOf(message, making)} />
         {awaited && <Dots />}
         <Spoken
           // Flue streams every step of a reply under the id of its first step, the id its history

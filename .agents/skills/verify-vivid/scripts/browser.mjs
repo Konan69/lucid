@@ -110,10 +110,10 @@ async function dom(run, expression) {
   return typeof value === 'string' ? JSON.parse(value) : value
 }
 
-/** FromVivid places settled Markdown beside the Copy message control (Message.tsx).
- * Count assistant messages, not descendants or Person text that happens to contain the reply. */
+/** Copy sits in either a plain footer or the combined work footer (Message.tsx). Scope to its
+ * assistant row so footer depth cannot hide Markdown; count messages, not matching descendants. */
 function replyCount(text) {
-  return `Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).filter(button => Array.from(button.parentElement.parentElement.children).some(element => element !== button.parentElement && (${normaliseReply.toString()})(element.innerText) === ${JSON.stringify(text)})).length`
+  return `Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).filter(button => Array.from(button.closest('li').querySelectorAll('div')).some(element => !element.contains(button) && (${normaliseReply.toString()})(element.innerText) === ${JSON.stringify(text)})).length`
 }
 
 /** The same presence assertion must reject the pre-follow-up DOM and pass after rendering. */

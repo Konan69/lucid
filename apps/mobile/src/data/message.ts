@@ -155,6 +155,20 @@ const Metadata = Schema.Struct({
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
+/** When Vivid began a message, when the stream stamped it. */
+export const startOf = (message: FlueConversationMessage): Option.Option<number> =>
+  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+    Option.fromUndefinedOr(metadata.startedAt),
+  )
+
+/** How long a finished message took, when the stream stamped both ends of it. */
+export const tookOf = (message: FlueConversationMessage): Option.Option<number> =>
+  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+    metadata.startedAt !== undefined && metadata.finishedAt !== undefined
+      ? Option.some(metadata.finishedAt - metadata.startedAt)
+      : Option.none(),
+  )
+
 /** When a message was finished, when Vivid said so; an unstamped message simply has no time. */
 export const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
   Option.flatMap(decodeMetadata(message.metadata), (metadata) =>

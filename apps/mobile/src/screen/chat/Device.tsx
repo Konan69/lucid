@@ -2,33 +2,18 @@ import {
   deciding,
   DEVICE_QUESTION,
   deviceAnswers,
-  deviceWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { useState } from 'react'
 import { View } from 'react-native'
 import { answerDevice, useDeviceDecision } from '../../data/devices'
-import { useLiveData, useLiveValue } from '../../data/live'
+import { useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
 import { Button, EDGE, Label, Notice } from '../../ui/ui'
 
 const when = makeWhen(thisReader())
-
-/** Independent of chat questions and approvals, with no hide or dismiss control. */
-export function DeviceAsk() {
-  const data = useLiveData()
-  const waiting = Option.flatMap(useLiveValue(data.live.devices), deviceWaiting)
-  const [now] = useState(() => Date.now())
-  if (Option.isNone(waiting)) return null
-  return (
-    <View style={{ padding: 12, flexShrink: 0 }}>
-      <Computer waiting={waiting.value} now={now} />
-    </View>
-  )
-}
 
 /** The accepted device Feed card uses explicit access controls and never impersonates a Feed post. */
 export function Computer({ waiting, now }: { waiting: DeviceWaiting; now: number }) {
