@@ -96,6 +96,10 @@ export const draftAt = (where: string) => (state: Typed) =>
 const held = () => useDrafts.getState().drafts
 
 /** How long changed drafts may wait in memory before the store is written, in milliseconds. */
+/**
+ * Batches synchronous local draft writes. Source: UX policy, at most 300 ms of unsaved typing.
+ * Expiry stores the current document; pagehide and backgrounding flush immediately.
+ */
 const REST_MS = 300
 
 /** The write that is waiting for `REST_MS` to pass. None when the store has what memory has. */

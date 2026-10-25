@@ -178,9 +178,9 @@ export interface Handoff {
 }
 
 /**
- * How long the trade may take. It is one small request to the server this window was loaded
- * from, so a quarter of a minute without an answer means it is not coming; the card then says so
- * instead of resting on "Signing you in…" over a window that never is.
+ * Bounds one sign-in code exchange that can hold a socket with no answer.
+ * Source: unmeasured, retained fifteen-second request bound. Expiry is TradeUnanswered,
+ * which the hand-off shows as unreachable. Cancellation aborts request and body together.
  */
 export const TRADE_WITHIN = Duration.seconds(15)
 

@@ -178,9 +178,9 @@ export const attemptName = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => LETTERS_AND_DIGITS.charAt(byte % 62)).join('')
 
 /**
- * How long the trade may take. It is one small request, so a quarter of a minute without an
- * answer means it is not coming, and the button stops saying it is signing the Person in. The
- * desktop window gives its trade the same (`TRADE_WITHIN` in the web app's `data/signin.ts`).
+ * Bounds one sign-in code exchange that can hold a socket with no answer.
+ * Source: unmeasured, retained fifteen-second request bound. Expiry is TradeUnanswered and
+ * shows Unreachable. The attempt owner cancels request and body together.
  */
 export const TRADE_WITHIN = Duration.seconds(15)
 

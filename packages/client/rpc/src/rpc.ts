@@ -80,6 +80,13 @@ const reconnect = (stopped: (error: RpcClientError.RpcClientError) => Effect.Eff
   )
 
 /**
+ * Protocol heartbeat cadence. Source: Effect 4.0.2 RpcClient.makePinger's five-second default.
+ * A quiet connection is pinged; two missed intervals close it so its owner can reconnect.
+ */
+const PING_INTERVAL = Duration.seconds(5)
+const PING_IDLE = Duration.times(PING_INTERVAL, 2)
+
+/**
  * Keep the schema-derived client named in Context.Service's emitted base class.
  * A mapped type alias expands every RPC method there (6,000 declaration lines),
  * forcing each consumer to parse another expanded copy of the contract.
@@ -171,8 +178,8 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
             RpcClient.layerProtocolSocket({
               retryTransientErrors: false,
               retryPolicy: reconnect((error) => Effect.asVoid(Deferred.fail(connected, error))),
-              pingInterval: '5 seconds',
-              pingTimeout: '10 seconds',
+              pingInterval: PING_INTERVAL,
+              pingTimeout: PING_IDLE,
             }),
           ),
           Layer.provide(

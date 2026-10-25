@@ -414,9 +414,13 @@ function makeLeaving() {
 /**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
  * moving between Threads, Projects and the Library in the course of a piece of work is instant
- * and current. It costs the server an open subscription, not a refetch.
+ * and current. Source: UX retention policy, five minutes without readers. Expiry releases the
+ * subscription; an active reader never expires.
  */
 const IDLE_FOR_MS = 5 * 60_000
+
+/** Search waits for 120 ms of quiet typing to avoid a request per key. Source: UX policy. */
+const SEARCH_REST = '120 millis'
 
 /**
  * The live data layer for one client: one Atom registry, one runtime atom that owns the socket,
@@ -488,7 +492,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient | RpcConnection>) {
     argument: Atom.Atom<Argument>,
     call: (client: Client, argument: Argument) => Effect.Effect<Value, ProductFailure>,
   ): Atom.Atom<LiveResult<Value>> => {
-    const rested = Atom.debounce(argument, '120 millis')
+    const rested = Atom.debounce(argument, SEARCH_REST)
     return runtime.atom((get) => {
       const asked = get(rested)
       return Effect.gen(function* () {
