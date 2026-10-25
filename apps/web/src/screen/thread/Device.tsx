@@ -2,15 +2,12 @@ import {
   deciding,
   DEVICE_QUESTION,
   deviceAnswers,
-  deviceWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { useState } from 'react'
 import { answerDevice, useDeviceDecision } from '../../data/devices'
-import { live, useLiveValue } from '../../data/live'
 import { openSettings } from '../../router'
 import { Button } from '../../ui/button'
 

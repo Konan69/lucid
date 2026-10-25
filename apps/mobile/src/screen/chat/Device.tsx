@@ -2,16 +2,14 @@ import {
   deciding,
   DEVICE_QUESTION,
   deviceAnswers,
-  deviceWaiting,
   makeWhen,
   thisReader,
   type DeviceWaiting,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { useState } from 'react'
 import { View } from 'react-native'
 import { answerDevice, useDeviceDecision } from '../../data/devices'
-import { useLiveData, useLiveValue } from '../../data/live'
+import { useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
 import { Button, EDGE, Label, Notice } from '../../ui/ui'
 

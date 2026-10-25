@@ -1,3 +1,4 @@
+import { Option } from 'effect'
 import { useSyncExternalStore } from 'react'
 
 /**
@@ -7,7 +8,7 @@ import { useSyncExternalStore } from 'react'
  * tick together and nothing ticks when no count is shown.
  */
 const readers = new Set<() => void>()
-let timer: ReturnType<typeof setInterval> | undefined
+let timer: Option.Option<ReturnType<typeof setInterval>> = Option.none()
 let now = Date.now()
 
 const tick = () => {
@@ -17,16 +18,16 @@ const tick = () => {
 
 const watch = (reader: () => void) => {
   readers.add(reader)
-  if (timer === undefined) {
+  if (Option.isNone(timer)) {
     // A reader arriving after a pause would otherwise see the time the clock last stopped at.
     now = Date.now()
-    timer = setInterval(tick, 1000)
+    timer = Option.some(setInterval(tick, 1000))
   }
   return () => {
     readers.delete(reader)
-    if (readers.size === 0 && timer !== undefined) {
-      clearInterval(timer)
-      timer = undefined
+    if (readers.size === 0 && Option.isSome(timer)) {
+      clearInterval(timer.value)
+      timer = Option.none()
     }
   }
 }

@@ -283,7 +283,7 @@ const Rows = memo(function Rows({
   const turns = turnsOf(said, Date.now())
   // The Person's newest message, and whether Vivid has taken it up: it is working, or it has
   // already said something after it.
-  const mine = visible.findLast((message) => message.role === 'user')
+  const mine = [...visible].reverse().find((message) => message.role === 'user')
   const takenUp = mine !== undefined && (working || newest !== mine)
   return asking.linesOf(said.map(spokenOf), context.requests).map((line) =>
     asking.Line.$match(line, {
