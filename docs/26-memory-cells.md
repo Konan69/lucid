@@ -156,5 +156,6 @@ Memory stops being the reason the server and runtime run as one copy each.
 
 ## Open decisions
 
-- **Runtime placement** is changing in another thread (Pi Durable). This design does not depend on
-  it: the runtime only calls the server.
+- **Runtime placement** is now [one cell per Person](27-runtime-cells.md). If that lands, the
+  runtime runs in the Person's cell and the notes become tables in the same database, so the
+  separate `Memory` class and the server's `MemoryCells` client are not needed.
