@@ -39,6 +39,7 @@ it.effect(
           transport.execute(HttpClientRequest.setUrl(request, origin.href)),
         )
         const layer = gatewayDecisionLayer({
+          url: origin.href,
           key: Redacted.make('test-rejected-key'),
           model: 'jev-latest',
         }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)))
