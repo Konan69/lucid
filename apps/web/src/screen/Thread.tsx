@@ -302,9 +302,7 @@ const Rows = memo(function Rows({
         return (
           <li key={key} data-arrives>
             {turn !== undefined && (
-              <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">
-                {turn}
-              </p>
+              <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
             )}
             <Message
               message={message}

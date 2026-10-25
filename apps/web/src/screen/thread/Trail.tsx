@@ -224,7 +224,9 @@ export function Trail({
           )}
         />
         <span className="truncate">
-          {Option.isSome(took) && <span className="tabular-nums">Worked {spanOf(took.value)} · </span>}
+          {Option.isSome(took) && (
+            <span className="tabular-nums">Worked {spanOf(took.value)} · </span>
+          )}
           {summarizeSteps(steps, Option.none())}
         </span>
       </button>

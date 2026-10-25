@@ -614,9 +614,7 @@ function FromVivid({
             Answering {forWhom.value}
           </span>
         )}
-        {making && (
-          <Doing tools={tools} wordless={text.length === 0} since={startOf(message)} />
-        )}
+        {making && <Doing tools={tools} wordless={text.length === 0} since={startOf(message)} />}
         {text.length > 0 && (
           <Written
             // Flue streams every step of a reply under the id of its first step, the id its history
