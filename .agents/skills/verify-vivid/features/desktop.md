@@ -10,7 +10,7 @@ The egress socket is separate from the device stream. A successful WebSocket upg
 
 ## How to get to it (user POV)
 
-Open a new desktop installation. Enter the server address and choose Connect. Choose Continue with Google, then Cancel in Vivid. Choose I already have an account and sign in. Allow this computer above the composer. Open a Thread and ask Vivid to open Example Domain on your computer.
+Open a new desktop installation. Enter the server address and choose Connect. Choose Continue with Google, then Cancel in Vivid. Choose I already have an account and sign in. Open Feed and Allow this computer. Open a Thread and ask Vivid to open Example Domain on your computer.
 
 ## Driving it with verify-vivid
 

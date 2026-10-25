@@ -103,13 +103,14 @@ export async function signIn(state, page, directory) {
   await capture(page, directory, 'signed-in')
 }
 
-/** Allow the real enrolled installation through the visible card, then require native stream presence. */
+/** Device requests live on Feed; allow the native installation there before requiring its stream. */
 export async function linked(state, page, directory) {
   const pending = await deviceState(state, directory, 'native-pending', (list) =>
     list.devices.some((d) => d.access._tag === 'Pending'),
   )
   const device = pending.devices.find((d) => d.access._tag === 'Pending')
   await capture(page, directory, 'device-pending')
+  await page.navigate(() => page.send('Page.navigate', { url: state.web + '/feed' }))
   await click(page, button('Allow'))
   await deviceState(state, directory, 'native-connected', (list) =>
     list.devices.some((d) => d.id === device.id && d.presence._tag === 'Connected'),
