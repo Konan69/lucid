@@ -8,7 +8,7 @@ import {
 } from '@vivid/contracts'
 import { Context, Data, Effect, type Layer, Option, Predicate, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
-import { devicesWaiting, type DeviceList, type DeviceWaiting } from './devices.js'
+import { deviceWaiting, type DeviceList, type DeviceWaiting } from './devices.js'
 import type { FormState } from './display.js'
 
 /**
@@ -40,7 +40,7 @@ export const revisionOf = (item: Waiting): string => JSON.stringify([item.post, 
 
 /** The three stages, each newest first, and how many things wait on the Person. */
 export interface FeedView {
-  readonly computers: ReadonlyArray<DeviceWaiting>
+  readonly computer: Option.Option<DeviceWaiting>
   readonly waiting: ReadonlyArray<Waiting>
   readonly working: ReadonlyArray<Working>
   readonly settled: ReadonlyArray<Settled>
@@ -51,7 +51,7 @@ export const feedView = (
   items: FeedResponse['items'],
   devices: Option.Option<DeviceList>,
 ): FeedView => ({
-  computers: Option.match(devices, { onNone: () => [], onSome: devicesWaiting }),
+  computer: Option.flatMap(devices, deviceWaiting),
   waiting: items.filter(FeedItem.guards.Waiting),
   working: items.filter(FeedItem.guards.Working),
   settled: items.filter(FeedItem.guards.Settled),
@@ -80,7 +80,7 @@ export const feedFace = (
 ): 'done' | 'working' | 'waiting' | 'idle' => {
   if (pleased) return 'done'
   if (view.working.length > 0) return 'working'
-  if (view.waiting.length > 0 || view.computers.length > 0) return 'waiting'
+  if (view.waiting.length > 0 || Option.isSome(view.computer)) return 'waiting'
   return 'idle'
 }
 

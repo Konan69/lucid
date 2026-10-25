@@ -24,17 +24,25 @@ async function choose(run, name, answer) {
   await clickAnswer(run, question(name), answer)
 }
 
-/** Actual UI decisions and semantic publications prove Home, Thread, Feed and Settings together.
+/** Actual UI decisions and semantic publications prove Thread, Feed and Settings together, that
+ * only the newest Pending computer asks, and that the empty start screen carries no request.
  * The caller owns browser acquisition, authentication, process receipts and finally cleanup. */
 export async function deviceBrowser(state, id, directory, browser) {
   const { run, capture } = browser
   await connectedOther(state, directory, async (other) => {
+    // Enrolled first, so it waits longer: a reinstalled app leaves such a row, and it must not ask.
+    const older = await enrol(state, directory, 'Older pending computer')
     const { device } = await enrol(state, directory, 'Browser pending computer')
     try {
       const before = await rpc(state, 'ListDevices', undefined, directory, 'before-surfaces')
       NodeAssert.equal(before.devices.find((d) => d.id === other.id).presence._tag, 'Connected')
-      await pendingOn({ run, capture }, state.web + '/', device.name, 'home')
       await pendingOn({ run, capture }, state.web + '/t/' + id, device.name, 'thread')
+      NodeAssert.equal(JSON.parse(await run(['eval', `Boolean(${question(older.device.name)})`])), false)
+      await capture('thread-one-ask')
+      await run(['open', state.web + '/'])
+      await run(['wait', '--fn', `Boolean(document.querySelector('textarea'))`])
+      NodeAssert.equal(JSON.parse(await run(['eval', `Boolean(${question(device.name)})`])), false)
+      await capture('home-no-request')
       await pendingOn({ run, capture }, state.web + '/feed', device.name, 'feed')
       await run(['open', state.web + '/?settings=devices'])
       await run([
@@ -74,6 +82,7 @@ export async function deviceBrowser(state, id, directory, browser) {
       await feedDecision(state, directory, run, capture)
     } finally {
       await rpc(state, 'RevokeDevice', { id: device.id }, directory, 'cleanup-pending')
+      await rpc(state, 'RevokeDevice', { id: older.device.id }, directory, 'cleanup-older')
     }
   })
   await json(directory + '/scope.json', {
@@ -81,11 +90,10 @@ export async function deviceBrowser(state, id, directory, browser) {
     questionSource:
       'public AskInput with disposable runtime authority; no model generation claimed',
     scope:
-      'Home, Thread and Feed pending after reload while another device is Connected; Settings pending and Allow/revoke; Thread question coexistence and Deny; Feed Allow',
+      'Thread and Feed pending after reload while another device is Connected; only the newest Pending computer asks; Home carries no request; Settings pending and Allow/revoke; Thread question coexistence and Deny; Feed Allow',
     unsupported: [
       'server process restart control',
       'native phone and desktop controls',
-      'Home structured question has no public entry point',
       'general Feed delivery and Watch occurrences',
     ],
   })
