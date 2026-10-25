@@ -35,7 +35,8 @@ import { ExecutorTool } from './executor.ts'
 export const READ_PROBABILITY_THRESHOLD = 0.95
 /** Bound process memory while retaining several large provider catalogs. */
 const EFFECT_CACHE_CAPACITY = 4096
-/** Successful metadata judgments survive discovery and execution for one day. */
+/** Bounds reuse of a successful metadata judgment for identical input. Source: unmeasured.
+ * Expiry asks the Layer-captured model again; the capacity still bounds retained entries. */
 const EFFECT_CACHE_TTL = '24 hours'
 /** One minute suppresses outage storms without remembering failure as an answer. */
 const EFFECT_FAILURE_TTL = '1 minute'

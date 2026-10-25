@@ -45,23 +45,20 @@ describe('Embedding HTTP failures', () => {
       ),
     ),
   )((it) => {
-    it.effect(
-      'retains Retry-After on a memory unavailable response',
-      () =>
-        Effect.gen(function* () {
-          const embeddings = yield* Embeddings
-          const result = yield* embeddings.embed(['a rate-limited request']).pipe(Effect.result)
-          if (Result.isSuccess(result)) expect.fail('Expected a rate limit')
-          expect(result.failure).toBeInstanceOf(MemoryRateLimited)
-          if (result.failure instanceof MemoryRateLimited) {
-            expect(result.failure.service).toBe('memory')
-            expect(result.failure.retryAfter).toBe('7')
-            const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
-            expect(publicFailure).toBeInstanceOf(ServiceUnavailable)
-            expect(Object.hasOwn(publicFailure, 'retryAfter')).toBe(false)
-          }
-        }),
-      { timeout: 10000 },
+    it.effect('retains Retry-After on a memory unavailable response', () =>
+      Effect.gen(function* () {
+        const embeddings = yield* Embeddings
+        const result = yield* embeddings.embed(['a rate-limited request']).pipe(Effect.result)
+        if (Result.isSuccess(result)) expect.fail('Expected a rate limit')
+        expect(result.failure).toBeInstanceOf(MemoryRateLimited)
+        if (result.failure instanceof MemoryRateLimited) {
+          expect(result.failure.service).toBe('memory')
+          expect(result.failure.retryAfter).toBe('7')
+          const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
+          expect(publicFailure).toBeInstanceOf(ServiceUnavailable)
+          expect(Object.hasOwn(publicFailure, 'retryAfter')).toBe(false)
+        }
+      }),
     )
   })
 
@@ -85,22 +82,19 @@ describe('Embedding HTTP failures', () => {
       ),
     ),
   )((it) => {
-    it.effect(
-      'reports actual and configured vector dimensions',
-      () =>
-        Effect.gen(function* () {
-          const embeddings = yield* Embeddings
-          const result = yield* embeddings
-            .embed(['a dimension-mismatched request'])
-            .pipe(Effect.result)
-          if (Result.isSuccess(result)) expect.fail('Expected a dimension mismatch')
-          expect(result.failure).toBeInstanceOf(EmbeddingDimensionMismatch)
-          if (result.failure instanceof EmbeddingDimensionMismatch) {
-            expect(result.failure.expected).toBe(2)
-            expect(result.failure.actual).toBe(3)
-          }
-        }),
-      { timeout: 10000 },
+    it.effect('reports actual and configured vector dimensions', () =>
+      Effect.gen(function* () {
+        const embeddings = yield* Embeddings
+        const result = yield* embeddings
+          .embed(['a dimension-mismatched request'])
+          .pipe(Effect.result)
+        if (Result.isSuccess(result)) expect.fail('Expected a dimension mismatch')
+        expect(result.failure).toBeInstanceOf(EmbeddingDimensionMismatch)
+        if (result.failure instanceof EmbeddingDimensionMismatch) {
+          expect(result.failure.expected).toBe(2)
+          expect(result.failure.actual).toBe(3)
+        }
+      }),
     )
   })
 })
