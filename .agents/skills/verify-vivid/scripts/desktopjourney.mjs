@@ -136,6 +136,8 @@ export async function browse(state, page, directory) {
   await capture(page, directory, 'before-browser-action')
   await click(page, 'document.querySelector("button[aria-label=Send]")')
   try {
+    await wait(page, '/Working · \\d/u.test(document.body.innerText)')
+    await capture(page, directory, 'thread-working')
     await settled(state, id, 1, 'Completed', directory)
   } catch (error) {
     const detail = await rpc(state, 'GetThread', { id }, directory, 'browser-failure')
@@ -173,6 +175,10 @@ export async function browse(state, page, directory) {
     'No successful browse tool receipt',
   )
   await json(directory + '/browse-receipts.json', steps)
+  await wait(
+    page,
+    `document.body.innerText.includes("Seen") && /Worked \\d/u.test(document.body.innerText) && document.querySelector('button[aria-label="Copy message"]')`,
+  )
   await capture(page, directory, 'after-browser-action')
   await json(directory + '/browser-action.json', {
     thread: id,
