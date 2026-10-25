@@ -17,7 +17,7 @@ import {
   Terminal,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { cn } from '../../ui/cn'
 import { spanOf, useNow } from '../../ui/clock'

@@ -633,22 +633,14 @@ function FromVivid({
             onSay={onContinue}
           />
         )}
-        {!making && tools.length > 0 ? (
-          <Trail
+        {!making && (
+          <Footer
+            message={message}
             tools={tools}
-            took={tookOf(message)}
-            lead={
-              !streaming &&
-              text.length > 0 && (
-                <>
-                  <Stamp message={message} />
-                  <CopyWords read={() => text} />
-                </>
-              )
-            }
+            text={text}
+            streaming={streaming}
+            latest={latest}
           />
-        ) : (
-          !streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />
         )}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
@@ -663,6 +655,43 @@ function FromVivid({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * The one quiet line under a finished reply: when it was said and its copy button, then, when
+ * Vivid used anything to get there, how long it worked and what it did, which opens into the
+ * steps. A reply with no steps keeps the time and copy alone.
+ */
+function Footer({
+  message,
+  tools,
+  text,
+  streaming,
+  latest,
+}: {
+  message: FlueConversationMessage
+  tools: ReadonlyArray<ToolPart>
+  text: string
+  streaming: boolean
+  latest: boolean
+}) {
+  const said = !streaming && text.length > 0
+  if (tools.length === 0)
+    return said ? <Settled message={message} text={text} latest={latest} /> : null
+  return (
+    <Trail
+      tools={tools}
+      took={tookOf(message)}
+      lead={
+        said && (
+          <>
+            <Stamp message={message} />
+            <CopyWords read={() => text} />
+          </>
+        )
+      }
+    />
   )
 }
 
