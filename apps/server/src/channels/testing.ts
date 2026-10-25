@@ -11,7 +11,7 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Context, Deferred, Effect, Layer, Option, Queue, Ref, Stream } from 'effect'
+import { Clock, Context, Deferred, Effect, Layer, Option, Queue, Ref, Stream } from 'effect'
 import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { auditLayer } from '../audit/record.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -259,7 +259,7 @@ export const fixture = Effect.fn('Channels.test.fixture')(function* () {
       channel: 'iMessage',
       sender: address,
       text,
-      receivedAt: 0,
+      receivedAt: yield* Clock.currentTimeMillis,
     })
   })
   const receive = Effect.fn('Channels.test.receive')(function* (text: string) {

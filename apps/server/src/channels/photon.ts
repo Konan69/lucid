@@ -5,7 +5,7 @@ import {
   type ChannelAddress,
 } from '@vivid/contracts'
 import { Effect, Filter, Layer, Option, Redacted, Schema, Stream } from 'effect'
-import { Spectrum, type Message, type Space } from 'spectrum-ts'
+import { Spectrum, SpectrumCloudError, type Message, type Space } from 'spectrum-ts'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { imessage } from 'spectrum-ts/providers/imessage'
 import { normalizeChannelAddress } from './address.ts'
@@ -13,6 +13,7 @@ import {
   ChannelEnrolment,
   type ChannelEnrolmentId,
   ChannelDisconnected,
+  ChannelConnectionRefused,
   ChannelInbound,
   ChannelMessageId,
   ChannelProvider,
@@ -108,7 +109,14 @@ const Envelope = Schema.Struct({
 })
 const decodeEnvelope = Schema.decodeUnknownEffect(Envelope)
 
-const disconnected = () => new ChannelDisconnected({ channel: 'iMessage' })
+/** Only 401 proves that Layer-captured credentials are refused. Other 4xx statuses can be
+ * temporary project/provider state and must keep reconnecting under the worker's capped backoff. */
+// The SDK rejects with unknown input. Classify its exported error once at this boundary.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters
+export const disconnected = (error: unknown) =>
+  error instanceof SpectrumCloudError && error.status === 401
+    ? new ChannelConnectionRefused({ channel: 'iMessage' })
+    : new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })
 
 /** Spectrum lacks cancellation input; dispose late acquisition when the reply deadline interrupts it. */
@@ -132,12 +140,15 @@ const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredent
 
 type PhotonApplication = Effect.Success<ReturnType<typeof connectPhoton>>
 
-/** SDK stop cascades iterator cancellation and closes provider clients; a cleanup failure cannot leak content. */
+/** Keep the bounded disposal guard added by 11369b9a1: Spectrum stop can outlive its stream
+ * grace while awaiting provider cleanup. Removing this needs an SDK disposal completion fix,
+ * including applications acquired only for sending. Source: production shutdown safeguard. */
+const PHOTON_DISPOSAL_LIMIT = '5 seconds'
 const closePhoton = Effect.fn('Channels.closePhoton')((application: PhotonApplication) =>
   Effect.tryPromise({ try: () => application.stop(), catch: disconnected }).pipe(
     Effect.interruptible,
-    Effect.timeout('5 seconds'),
-    Effect.catchTag(['ChannelDisconnected', 'TimeoutError'], () =>
+    Effect.timeout(PHOTON_DISPOSAL_LIMIT),
+    Effect.catchTag(['ChannelDisconnected', 'ChannelConnectionRefused', 'TimeoutError'], () =>
       Effect.logError('iMessage connection cleanup failed'),
     ),
   ),

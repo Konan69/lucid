@@ -2,12 +2,14 @@ import { Duration, Effect, Layer, Schedule, Stream } from 'effect'
 import { ChannelReceiver } from './inbound.ts'
 import { ChannelProvider, type ChannelInbound } from './provider.ts'
 
-/** Capped exponential jitter avoids hammering a refused project; actual inbound progress resets it. */
-const backoff = Schedule.exponential('2 seconds').pipe(
+/** Paces a scoped connection supervisor, reset only by actual inbound progress. Permanent
+ * project refusals stop it. Source: unmeasured. Exponential jitter starts at two seconds and
+ * caps at one minute; shutdown interrupts recovery rather than imposing a daemon lifetime. */
+const RECONNECT_INITIAL = '2 seconds'
+const RECONNECT_CEILING = Duration.seconds(60)
+const backoff = Schedule.exponential(RECONNECT_INITIAL).pipe(
   Schedule.jittered,
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(60))),
-  ),
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, RECONNECT_CEILING))),
 )
 /** Progress is the reconnect input; reset the policy without losing the scoped connection lifetime. */
 export const channelReconnect = Schedule.fromStep(
@@ -51,11 +53,17 @@ export const channelWorkerLayer = Layer.effectDiscard(
       ).pipe(
         Effect.scoped,
         Effect.catchTag('ChannelDisconnected', (error) =>
-          Effect.logWarning('Channel disconnected; reconnecting', { channel: error.channel }),
+          Effect.logError('Channel disconnected; reconnecting', { channel: error.channel }),
         ),
       )
       return received
     })
-    yield* consume().pipe(Effect.repeat(channelReconnect), Effect.forkScoped)
+    yield* consume().pipe(
+      Effect.repeat(channelReconnect),
+      Effect.tapError(() =>
+        Effect.logError('Channel connection refused; configuration repair required'),
+      ),
+      Effect.forkScoped,
+    )
   }).pipe(Effect.withSpan('Channels.worker')),
 )

@@ -1,7 +1,8 @@
 import { PgClient, layer as pgClientLayer } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import { makeWithDefaults as makeDrizzle } from 'drizzle-orm/effect-postgres'
-import { Clock, Config, Effect, Layer, Option, Queue, Schema, Stream } from 'effect'
+import { Clock, Config, Effect, Layer, Logger, Option, Queue, Schema, Stream } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import * as SqlClient from 'effect/sql/SqlClient'
 import { DatabaseFailure, PersonId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
@@ -190,6 +191,55 @@ describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
           expect(Option.isSome(yield* Stream.runHead(subscription))).toBe(true)
         }).pipe(Effect.provide(context))
       }).pipe(Effect.scoped),
+    )
+
+    /** Kill only this test's uniquely named listener. The driver's failure log is the restart
+     * signal; EVERYTHING is the confirmed re-LISTEN receipt before a second real publish. */
+    it.effect(
+      'resumes subscriber delivery after pg_terminate_backend kills its LISTEN connection',
+      () =>
+        Effect.gen(function* () {
+          const applicationName = `listen-recovery-${crypto.randomUUID()}`
+          const failures = yield* Queue.unbounded<string>()
+          const capture = Logger.make(({ message, logLevel }) => {
+            if (JSON.stringify(message).toLowerCase().includes('listener'))
+              Queue.offerUnsafe(failures, logLevel)
+          })
+          const listenerClient = Layer.unwrap(
+            Config.Redacted('VIVID_TEST_DATABASE_URL').pipe(
+              Effect.map((url) => pgClientLayer({ url, applicationName, types: postgresCodecs() })),
+            ),
+          ).pipe(Layer.provide(Layer.succeed(Clock.Clock, Clock.Clock.defaultValue())))
+          const context = yield* Layer.build(
+            changesLayer.pipe(
+              Layer.provide(listenerClient),
+              Layer.provide(Logger.layer([capture])),
+            ),
+          )
+          const changes = yield* Effect.provide(Changes, context)
+          const topic = Topic.person(PersonId.make(crypto.randomUUID()))
+          const notices = yield* Queue.unbounded<void>()
+          const subscription = yield* changes.subscribe([topic], everyPart)
+          yield* Stream.runForEach(subscription, () => Queue.offer(notices, undefined)).pipe(
+            Effect.forkScoped,
+          )
+          // Startup readiness must prevent a publish immediately after acquisition from being lost.
+          yield* changes.publish([topic])
+          yield* Queue.take(notices)
+          const sql = yield* SqlClient.SqlClient
+          const killed = yield* sql<{ stopped: boolean }>`
+          SELECT pg_terminate_backend(pid) AS stopped FROM pg_stat_activity
+          WHERE datname = current_database() AND application_name = ${applicationName}
+          AND query ILIKE 'LISTEN%'
+        `
+          expect(killed).toEqual([{ stopped: true }])
+          expect(yield* Queue.take(failures)).toBe('Error')
+          yield* TestClock.adjust('2 seconds')
+          yield* Queue.take(notices)
+          yield* changes.publish([topic])
+          yield* Queue.take(notices)
+          expect(yield* Queue.size(notices)).toBe(0)
+        }).pipe(Effect.scoped),
     )
 
     /**

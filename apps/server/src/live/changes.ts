@@ -219,6 +219,11 @@ const kindOf = (topic: string) => Option.fromUndefinedOr(kinds.get(topic.slice(0
 
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')
 
+/** Paces the scope-owned LISTEN supervisor after completion or any SqlError. PostgreSQL
+ * restarts (57P01) and connection exhaustion (53300) are UnknownError in @effect/sql-pg 4.0.2,
+ * so a ConnectionError-only filter loses live updates. Source: unmeasured, retained recovery pace. */
+const LISTEN_RECONNECT_DELAY = '2 seconds'
+
 /** Scoped listener acquisition confirms its first LISTEN before exposing a subscribable bus. */
 const makeChanges = Effect.fn('Changes.make')(function* () {
   const sql = yield* PgClient
@@ -257,13 +262,14 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
     )
   }).pipe(Effect.scoped)
 
-  // The listener is supervised for the life of the server: a dropped connection is logged and
-  // re-opened, never left dead with every live query quietly going stale.
+  // The queue may end successfully too. Only the Layer scope ends this supervisor.
   const listener = yield* listen.pipe(
-    Effect.catchTag('SqlError', () =>
-      Effect.logWarning('The change listener lost its connection; reconnecting'),
+    Effect.catchTag('SqlError', (error) =>
+      Effect.logError('The change listener disconnected; reconnecting', {
+        failure: error.reason._tag,
+      }),
     ),
-    Effect.repeat(Schedule.spaced('2 seconds')),
+    Effect.repeat(Schedule.spaced(LISTEN_RECONNECT_DELAY)),
     Effect.forkScoped,
   )
   // Propagate startup defects instead of awaiting a latch that a dead listener cannot open.

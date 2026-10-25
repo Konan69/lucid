@@ -151,6 +151,38 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
           }).pipe(Effect.scoped),
         ),
     )
+    /** Each chunk has a completion receipt. Productive multi-part replies may exceed one chunk's bound. */
+    it.effect('delivers a progressing split reply beyond the former whole-reply deadline', () =>
+      withChannels(
+        Effect.gen(function* () {
+          const test = yield* linked()
+          const control = yield* ChannelControl
+          const accepted = yield* Queue.unbounded<void>()
+          yield* Ref.set(control.dispatch, Queue.take(accepted))
+          yield* test.receive('please give the full answer')
+          const first = yield* started(test)
+          const finished = yield* test
+            .finish(first.run.id, 'word '.repeat(1000))
+            .pipe(Effect.forkScoped)
+          yield* Queue.take(control.sending)
+          yield* TestClock.adjust('20 seconds')
+          yield* Queue.offer(accepted, undefined)
+          yield* Queue.take(control.sending)
+          yield* TestClock.adjust('20 seconds')
+          yield* Queue.offer(accepted, undefined)
+          yield* Fiber.join(finished)
+          expect(yield* Ref.get(control.sends)).toHaveLength(2)
+          const rows = yield* (yield* Database).run(
+            (yield* Database)
+              .select()
+              .from(channelReplies)
+              .where(eq(channelReplies.runId, first.run.id)),
+          )
+          expect(present(rows[0]).status).toBe('sent')
+        }).pipe(Effect.scoped),
+      ),
+    )
+
     it.effect('a channel Run sends its plain final text once, split into bounded parts', () =>
       withChannels(
         Effect.gen(function* () {

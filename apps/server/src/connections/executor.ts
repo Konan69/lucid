@@ -3113,13 +3113,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ),
   )
   const http = makeHttp(client, yield* loadGoogleClient())
-  const remoteCatalog = yield* retainCatalog(
-    makeCatalog(http)().pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'connections', message: 'The catalog is unavailable.' }),
-      ),
-    ),
-  )
+  const remoteCatalog = yield* retainCatalog(makeCatalog(http)())
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
     const remote = yield* remoteCatalog().pipe(
       Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),

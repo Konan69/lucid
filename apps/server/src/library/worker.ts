@@ -31,11 +31,16 @@ export const takeIngestion = (
     ),
   )
 
+/** Paces restarts after any non-interrupt failure or defect. A driver's unclassified store
+ * failure must not strand owed ingestion until server restart. Source: Effect 4.0.2
+ * PersistedQueue's 500 ms supervision cadence. Only the owning scope stops the taker. */
+const QUEUE_RECONNECT_DELAY = '500 millis'
+
 /**
  * Adoption completes in Layer acquisition, so a typed database fault prevents request handling.
  * One scoped taker claims one row (rc.116 PQ:1598) and starts at most one extraction process.
- * Supervision ports the SDK poller's tapCause/sandbox/retry sequence (PQ:1612-1616); it restarts
- * taking after native acknowledgement, while retry/backoff of an obligation remains SDK-owned.
+ * The SDK persists item retries before this consumer continues. This supervisor restarts
+ * the taker after store, item or code failures; shutdown interruption is never recovered.
  */
 export const libraryIngestionLayer = (
   retrySchedule: Schedule.Schedule<unknown, number>,
@@ -53,13 +58,11 @@ export const libraryIngestionLayer = (
       )
       yield* takeIngestion(queue, ingestOwed(operations, extract)).pipe(
         Effect.forever,
-        Effect.tapCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.void
-            : Effect.logWarning('Library ingestion taker restarting'),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterrupts(cause),
+          () => Effect.logError('Library ingestion consumer failed; restarting'),
         ),
-        Effect.sandbox,
-        Effect.retry(Schedule.spaced('500 millis')),
+        Effect.repeat(Schedule.spaced(QUEUE_RECONNECT_DELAY)),
         Effect.forkScoped,
       )
     }),
