@@ -10,7 +10,7 @@ import {
 import {
   asking,
   draftPlace,
-  makeTurnWhen,
+  makeTurns,
   thisReader,
   inThread,
   lasting,
@@ -229,38 +229,7 @@ const standingOf = (
  * look every few seconds, and at the first key the Person types), and each time used to build
  * every row again.
  */
-/** How long a conversation goes quiet before the next turn is marked with its time. */
-const QUIET_TURN_MS = 60 * 60 * 1000
-
-const turnWhen = makeTurnWhen(thisReader())
-
-/**
- * The time line drawn above a Person's message that opens a turn: the first one, and any that
- * comes after an hour or more of quiet or on another day ("Today 3:58 PM"). A Person's message
- * carries no time of its own, so a turn is timed by Vivid's reply to it, which the stream stamps
- * when it starts; a turn with no stamped reply yet has no line. After Grok Bot's transcript time
- * separators (`ConversationTranscript`, `time-separator` rows).
- */
-const turnsOf = (said: ReadonlyArray<FlueConversationMessage>, now: number) => {
-  const spoken = said.map(spokenOf)
-  const lines = new Map<string, string>()
-  let last: Option.Option<number> = Option.none()
-  said.forEach((message, at) => {
-    if (message.role !== 'user') return
-    const timed = spoken.slice(at).find((later) => Option.isSome(later.at))
-    if (timed === undefined || Option.isNone(timed.at)) return
-    const moment = timed.at.value
-    const quiet = Option.match(last, {
-      onNone: () => true,
-      onSome: (before) =>
-        moment - before >= QUIET_TURN_MS ||
-        new Date(moment).toDateString() !== new Date(before).toDateString(),
-    })
-    if (quiet) lines.set(message.id, turnWhen(moment, now))
-    last = Option.some(moment)
-  })
-  return lines
-}
+const turnsOf = makeTurns(thisReader())
 
 const Rows = memo(function Rows({
   said,
@@ -280,7 +249,14 @@ const Rows = memo(function Rows({
 }) {
   const newest = visible.at(-1)
   const drawn = new Map(visible.map((message) => [message.id, message]))
-  const turns = turnsOf(said, Date.now())
+  const turns = turnsOf(
+    said.map((message) => ({
+      id: message.id,
+      mine: message.role === 'user',
+      at: spokenOf(message).at,
+    })),
+    Date.now(),
+  )
   // The Person's newest message, and whether Vivid has taken it up: it is working, or it has
   // already said something after it.
   const mine = [...visible].reverse().find((message) => message.role === 'user')

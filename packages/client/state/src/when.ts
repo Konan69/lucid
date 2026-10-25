@@ -1,3 +1,5 @@
+import { Option } from 'effect'
+
 /**
  * A moment, said the way a person would say it today.
  *
@@ -87,6 +89,46 @@ export function makeTurnWhen(reader: Reader) {
   return (moment: number, now: number): string => {
     const said = when(moment, now)
     return dayOf(moment, reader).day === dayOf(now, reader).day ? `Today ${said}` : said
+  }
+}
+
+/** How long a conversation goes quiet before the next turn is marked with its time. */
+const QUIET_TURN_MS = 60 * 60 * 1000
+
+/** One message as the turn lines read it: whose it is, and when it was stamped, if it was. */
+export interface Turned {
+  readonly id: string
+  readonly mine: boolean
+  readonly at: Option.Option<number>
+}
+
+/**
+ * The time lines a conversation draws above a Person's messages that open a turn, by message id:
+ * the first one, and any after an hour or more of quiet or on another day ("Today 3:58 PM"). A
+ * Person's message carries no time of its own, so a turn is timed by the next stamped message
+ * after it, which is Vivid's reply as the stream starts it; a turn with nothing stamped yet has no
+ * line. After Grok Bot's transcript time separators (`ConversationTranscript`, `time-separator`).
+ */
+export function makeTurns(reader: Reader) {
+  const said = makeTurnWhen(reader)
+  return (messages: ReadonlyArray<Turned>, now: number): ReadonlyMap<string, string> => {
+    const lines = new Map<string, string>()
+    let last: Option.Option<number> = Option.none()
+    messages.forEach((message, place) => {
+      if (!message.mine) return
+      const timed = messages.slice(place).find((later) => Option.isSome(later.at))
+      if (timed === undefined || Option.isNone(timed.at)) return
+      const moment = timed.at.value
+      const quiet = Option.match(last, {
+        onNone: () => true,
+        onSome: (before) =>
+          moment - before >= QUIET_TURN_MS ||
+          dayOf(moment, reader).day !== dayOf(before, reader).day,
+      })
+      if (quiet) lines.set(message.id, said(moment, now))
+      last = Option.some(moment)
+    })
+    return lines
   }
 }
 

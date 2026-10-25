@@ -1,5 +1,5 @@
 import type { FlueConversationMessage } from '@flue/react'
-import { describeToolCall, readAnswered, readAsked, summarizeSteps } from '@vivid/state'
+import { describeToolCall, readAnswered, readAsked, spanOf, summarizeSteps } from '@vivid/state'
 import { Option } from 'effect'
 import {
   BookOpen,
@@ -20,7 +20,7 @@ import {
 import { useState, type ReactNode } from 'react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { cn } from '../../ui/cn'
-import { spanOf, useNow } from '../../ui/clock'
+import { useNow } from '../../ui/clock'
 import { Peek } from '../computer/Peek'
 
 /**

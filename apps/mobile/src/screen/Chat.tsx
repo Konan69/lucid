@@ -27,6 +27,8 @@ import {
   withFirst,
   workspaceKey,
   type ApprovalUp,
+  makeTurns,
+  thisReader,
 } from '@vivid/state'
 import { type Array as Arr, Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
@@ -54,7 +56,7 @@ import { inFront, onCatchUp } from '../data/foreground'
 import type { Kept, Whose } from '../data/heard'
 import { heardIn, heardThrough } from '../data/hearing'
 import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
-import { isShown, lastWordsOf, Speaker, speakerOf, type Around } from '../data/message'
+import { isShown, lastWordsOf, momentOf, Speaker, speakerOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
@@ -1594,6 +1596,9 @@ function useEndRoom(covered: SharedValue<number>, atEnd: boolean) {
 /** What is kept clear under the newest words while nothing floats there. */
 const END_ROOM = 10
 
+/** The time lines above the turns of the conversation (`makeTurns`, `@vivid/state`). */
+const turnsOf = makeTurns(thisReader())
+
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`): each
  * message, and each answer to a question of Vivid's as a row of its own where it was given. An
@@ -1630,13 +1635,40 @@ function Rows({
 }) {
   const newest = messages[messages.length - 1]
   const byKey = new Map(messages.map((message) => [message.id, message]))
+  const turns = turnsOf(
+    messages.map((message) => ({
+      id: message.id,
+      mine: message.role === 'user',
+      at: momentOf(message),
+    })),
+    Date.now(),
+  )
+  // The Person's newest message, and whether Vivid has taken it up: it is working, or it has
+  // already said something after it. Under that message only, it says "Seen", as a messenger
+  // keeps "Read" under the last thing sent (the web does the same, `Thread.tsx`).
+  const mine = [...messages].reverse().find((message) => message.role === 'user')
+  const takenUp = mine !== undefined && (working || newest !== mine)
   // Each message row sits in a plain view that only reports where it is laid out. It carries the
   // row's key, so a row is never drawn again for it, and no style, so the column's gap and
   // alignment fall on it as they fell on the row. Places are kept by message (`data/reading.ts`);
   // an answer's row above or below one moves it like any other row.
-  const placed = (key: string, row: ReactNode) => (
+  const placed = (key: string, row: ReactNode, turn: Option.Option<string>, seen: boolean) => (
     <View key={key} onLayout={(event) => onRow(key, event.nativeEvent.layout)}>
+      {Option.isSome(turn) && (
+        <Label size="caption" tone="ink-3" style={{ textAlign: 'center', marginBottom: 14 }}>
+          {turn.value}
+        </Label>
+      )}
       {row}
+      {seen && (
+        <Label
+          size="caption"
+          tone="ink-3"
+          style={{ textAlign: 'right', marginTop: 4, marginRight: 4 }}
+        >
+          Seen
+        </Label>
+      )}
     </View>
   )
   return lines.map((line) =>
@@ -1664,6 +1696,8 @@ function Rows({
                 settled={message.submissionId === undefined || settled.has(message.submissionId)}
                 onContinue={onContinue}
               />,
+              Option.fromUndefinedOr(turns.get(key)),
+              message === mine && takenUp,
             )
       },
     }),
