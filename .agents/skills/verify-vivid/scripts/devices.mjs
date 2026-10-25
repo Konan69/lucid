@@ -201,7 +201,7 @@ export async function devices(state, _thread, directory) {
 
 /** AskInput is the shipped runtime RPC, authenticated for the disposable Person and Thread.
  * This creates a real question through its owning handler, without a model or database fixture.
- * It proves coexistence of controls only, not model question generation or answer delivery. */
+ * Feed recipes use the question to prove its projection, not model generation or answer delivery. */
 export async function askQuestion(state, thread, directory) {
   const procedure = VividRpc.requests.get('AskInput')
   NodeAssert.ok(procedure)
@@ -232,7 +232,7 @@ export async function askQuestion(state, thread, directory) {
     signal: AbortSignal.timeout(90_000),
   })
   const text = await response.text()
-  await json(directory + '/coexisting-question.json', {
+  await json(directory + '/asked-question.json', {
     status: response.status,
     payload,
     body: text,

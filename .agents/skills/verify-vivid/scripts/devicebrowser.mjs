@@ -1,6 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import { DeviceAccess } from '@vivid/contracts'
-import { enrol, connectedOther, deviceState, askQuestion } from './devices.mjs'
+import { enrol, connectedOther, deviceState } from './devices.mjs'
 import { rpc, json } from './wire.mjs'
 
 /** Scope DOM assertions to the accessible question section, never hidden source or API text. */
@@ -24,8 +24,8 @@ async function choose(run, name, answer) {
   await clickAnswer(run, question(name), answer)
 }
 
-/** Actual UI decisions and semantic publications prove Thread, Feed and Settings together, that
- * only the newest Pending computer asks, and that the empty start screen carries no request.
+/** Actual UI decisions and semantic publications prove Feed and Settings requests, that only
+ * the newest Pending computer asks, and that Threads and the empty start screen carry no request.
  * The caller owns browser acquisition, authentication, process receipts and finally cleanup. */
 export async function deviceBrowser(state, id, directory, browser) {
   const { run, capture } = browser
@@ -36,14 +36,40 @@ export async function deviceBrowser(state, id, directory, browser) {
     try {
       const before = await rpc(state, 'ListDevices', undefined, directory, 'before-surfaces')
       NodeAssert.equal(before.devices.find((d) => d.id === other.id).presence._tag, 'Connected')
-      await pendingOn({ run, capture }, state.web + '/t/' + id, device.name, 'thread')
-      NodeAssert.equal(JSON.parse(await run(['eval', `Boolean(${question(older.device.name)})`])), false)
-      await capture('thread-one-ask')
+      await run(['open', state.web + '/t/' + id])
+      await run(['wait', '--fn', `Boolean(document.querySelector('textarea'))`])
+      NodeAssert.equal(
+        JSON.parse(
+          await run([
+            'eval',
+            `Boolean(document.querySelector('article[aria-label^="Device request for "]'))`,
+          ]),
+        ),
+        false,
+      )
+      await capture('thread-no-request')
+      await run(['reload'])
+      await run(['wait', '--fn', `Boolean(document.querySelector('textarea'))`])
+      NodeAssert.equal(
+        JSON.parse(
+          await run([
+            'eval',
+            `Boolean(document.querySelector('article[aria-label^="Device request for "]'))`,
+          ]),
+        ),
+        false,
+      )
+      await capture('thread-no-request-reloaded')
       await run(['open', state.web + '/'])
       await run(['wait', '--fn', `Boolean(document.querySelector('textarea'))`])
       NodeAssert.equal(JSON.parse(await run(['eval', `Boolean(${question(device.name)})`])), false)
       await capture('home-no-request')
       await pendingOn({ run, capture }, state.web + '/feed', device.name, 'feed')
+      NodeAssert.equal(
+        JSON.parse(await run(['eval', `Boolean(${question(older.device.name)})`])),
+        false,
+      )
+      await capture('feed-one-ask')
       await run(['open', state.web + '/?settings=devices'])
       await run([
         'wait',
@@ -60,24 +86,13 @@ export async function deviceBrowser(state, id, directory, browser) {
       await capture('settings-pending-reloaded')
       const unchanged = await rpc(state, 'ListDevices', undefined, directory, 'after-reloads')
       NodeAssert.deepEqual(unchanged.devices.find((d) => d.id === device.id).access, device.access)
-      const asked = await askQuestion(state, id, directory)
-      await run(['open', state.web + '/t/' + id])
-      await run(['wait', '--text', asked.questions[0].question])
-      await run(['wait', '--fn', `Boolean(${question(device.name)})`])
-      await capture('thread-alongside-question')
-      await run(['reload'])
-      await run(['wait', '--text', asked.questions[0].question])
-      await run(['wait', '--fn', `Boolean(${question(device.name)})`])
-      await capture('thread-question-reloaded')
+      await pendingOn({ run, capture }, state.web + '/feed', device.name, 'feed-deny')
       await choose(run, device.name, 'Deny')
       await deviceState(state, directory, 'ui-denied', (list) =>
         list.devices.some((d) => d.id === device.id && DeviceAccess.guards.Revoked(d.access)),
       )
       await run(['wait', '--fn', `!(${question(device.name)})`])
-      await run(['wait', '--text', asked.questions[0].question])
-      await capture('denied-question-remains')
-      const detail = await rpc(state, 'GetThread', { id }, directory, 'question-remains')
-      NodeAssert.equal(detail.requests.find((r) => r.id === asked.id).state._tag, 'Waiting')
+      await capture('feed-denied')
       await settingsDecisions(state, directory, run, capture)
       await feedDecision(state, directory, run, capture)
     } finally {
@@ -87,10 +102,8 @@ export async function deviceBrowser(state, id, directory, browser) {
   })
   await json(directory + '/scope.json', {
     modelCalls: 0,
-    questionSource:
-      'public AskInput with disposable runtime authority; no model generation claimed',
     scope:
-      'Thread and Feed pending after reload while another device is Connected; only the newest Pending computer asks; Home carries no request; Settings pending and Allow/revoke; Thread question coexistence and Deny; Feed Allow',
+      'Threads carry no request before or after reload while a device is Pending; Home carries no request; Feed and Settings pending after reload while another device is Connected; only the newest Pending computer asks on Feed; Settings Allow/revoke; Feed Allow and Deny',
     unsupported: [
       'server process restart control',
       'native phone and desktop controls',
