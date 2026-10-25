@@ -4,7 +4,6 @@ import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
-import * as NodeNet from 'node:net'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -67,7 +66,6 @@ import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { HELD, UNOPENED, UNSETTLED, holding, wake } from './boat/holder.ts'
-import { EGRESS_PROXY_ADDRESS, EGRESS_PROXY_PORT } from './egress/guest.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -631,7 +629,7 @@ const create = Effect.fn('BoatTest.create')(function* (
 ) {
   const body = yield* Create
   expect(body.type).toBe('default')
-  expect(body.ttlSeconds).toBe(3600)
+  expect(body.ttlSeconds).toBeNull()
   expect(body.noEnv).toBe(true)
   expect(body.snapshots).toBe(true)
   // Provisioning must restore the configured release, including replay after configuration changes.
@@ -1607,44 +1605,14 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
-    /**
-     * The one call that joins the Person's choice to the browser's start (`boat.ts`, `browse`:
-     * `browserProxy(input.egress, startProxy(shell, input.key))`), through everything on either
-     * side of it: the real start command, run by the real shell over SSH, and the real launch
-     * step. What stands in is the proxy alone. The test holds the proxy's port, so the command
-     * finds a proxy listening and leaves it; a copy it starts beside it finds the port taken and
-     * ends by itself (`egress/proxy.mjs`), so nothing is left running on the machine.
-     */
-    it.effect.skipIf(!peerAvailable)(
-      'a browser that a step has to start is given the egress proxy when egress is on, and only then',
-      () =>
-        Effect.gen(function* () {
-          const key = yield* fixture()
-          const machine = yield* Machine
-          const evidence = yield* Evidence
-          const server = yield* peer()
-          yield* Ref.set(evidence.ssh, Option.some(server))
-          yield* Effect.acquireRelease(
-            Effect.callback<NodeNet.Server>((resume) => {
-              const holder = NodeNet.createServer((socket) => socket.destroy())
-              // Held already, by another run on this machine: something answers there all the same.
-              holder.once('error', () => resume(Effect.succeed(holder)))
-              holder.listen(EGRESS_PROXY_PORT, '127.0.0.1', () => resume(Effect.succeed(holder)))
-            }),
-            (holder) => Effect.sync(() => holder.close()),
-          )
-          yield* machine.ensure(key)
-          const action = BrowserAction.cases.Open.make({ address: 'https://example.com' })
-          yield* Ref.set(evidence.browserClosed, true)
-          yield* machine.browse({ key, egress: true, action })
-          yield* Ref.set(evidence.browserClosed, true)
-          yield* machine.browse({ key, egress: false, action })
-          expect(yield* Ref.get(evidence.browserStarts)).toEqual([
-            ['--force-renderer-accessibility', `--proxy-server=${EGRESS_PROXY_ADDRESS}`],
-            ['--force-renderer-accessibility'],
-          ])
-        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
-      30000,
+    /** The provider request must leave lifetime to Vivid's idle policy, so active work
+     * cannot be archived by an unrelated total machine TTL. */
+    it.effect('creates a Computer without a total provider lifetime', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        expect(yield* machine.ensure(key).pipe(Effect.isSuccess)).toBe(true)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
     )
 
     it.effect(

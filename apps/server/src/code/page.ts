@@ -85,17 +85,13 @@ const read = Effect.fn('Code.readPublicPage')(function* (request: ReadPageReques
   return yield* new PageFailure({ reason: 'could not be reached' })
 })
 
-/** One ten-second deadline includes all DNS, redirects and body bytes. */
+/** DNS and HTTP own their silent-exchange bounds; productive body bytes extend the read. */
 const makePageReader = Effect.fn('Code.makePageReader')(function* () {
   const context = yield* Effect.context<PageNetwork | import('./address.ts').PageResolver>()
   return PageReader.of({
     read: Effect.fn('Code.ReadPage')((request) =>
       read(request).pipe(
         Effect.provide(context),
-        Effect.timeoutOrElse({
-          duration: `${budgets.pageSeconds} seconds`,
-          orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
-        }),
         Effect.catchTag(
           'PageFailure',
           Effect.fnUntraced(function* ({ reason }) {

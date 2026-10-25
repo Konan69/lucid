@@ -1,8 +1,13 @@
 import * as NodeHttp from 'node:http'
 import * as NodeHttps from 'node:https'
-import { Context, Effect, Layer, Option } from 'effect'
+import { Context, Duration, Effect, Layer, Option, Queue } from 'effect'
 import { budgets } from './budgets.ts'
 import { PageFailure, type PageAddress } from './address.ts'
+
+/** Bounds silence while connecting, waiting for headers or reading a body. Every received
+ * header/body chunk renews it, so a progressing transfer has no total duration limit.
+ * Source: unmeasured. Expiry destroys the owned request and returns PageFailure. */
+const PAGE_IDLE = Duration.seconds(10)
 
 export interface PageResponse {
   readonly status: number
@@ -23,6 +28,7 @@ export class PageNetwork extends Context.Service<PageNetwork, PageNetworkService
 function receive(
   response: NodeHttp.IncomingMessage,
   resume: (effect: Effect.Effect<PageResponse, PageFailure>) => void,
+  progress: () => void,
 ) {
   const chunks: Buffer[] = []
   let size = 0
@@ -46,6 +52,7 @@ function receive(
       response.destroy()
       return
     }
+    progress()
     size += input.length
     chunks.push(input)
   })
@@ -71,8 +78,19 @@ function receive(
 export const pageNetworkLayer = Layer.succeed(
   PageNetwork,
   PageNetwork.of({
-    request: Effect.fn('Code.fetchPage')((url, destination) =>
-      Effect.callback<PageResponse, PageFailure>((resume) => {
+    request: Effect.fn('Code.fetchPage')(function* (url, destination) {
+      const activity = yield* Queue.sliding<void>(1)
+      const progress = () => {
+        Queue.offerUnsafe(activity, undefined)
+      }
+      const waiting = Queue.take(activity).pipe(
+        Effect.timeoutOrElse({
+          duration: PAGE_IDLE,
+          orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
+        }),
+        Effect.forever,
+      )
+      const received = Effect.callback<PageResponse, PageFailure>((resume) => {
         const request = (url.protocol === 'https:' ? NodeHttps : NodeHttp).request(
           url,
           {
@@ -89,14 +107,18 @@ export const pageNetworkLayer = Layer.succeed(
               callback(null, destination.address, destination.family)
             },
           },
-          (response) => receive(response, resume),
+          (response) => {
+            progress()
+            receive(response, resume, progress)
+          },
         )
         request.on('error', () =>
           resume(Effect.fail(new PageFailure({ reason: 'could not be reached' }))),
         )
         request.end()
         return Effect.sync(() => request.destroy())
-      }),
-    ),
+      })
+      return yield* Effect.raceFirst(received, waiting)
+    }),
   }),
 )

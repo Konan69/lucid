@@ -1,7 +1,7 @@
 import * as NodeDns from 'node:dns'
 import * as NodeNet from 'node:net'
 import ipaddr from 'ipaddr.js'
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Duration, Effect, Layer, Schema } from 'effect'
 
 /** Parsing, DNS and transport failures have different public refusals without leaking driver text. */
 export class PageFailure extends Schema.TaggedError<PageFailure>()(
@@ -90,6 +90,11 @@ function records(addresses: readonly NodeDns.LookupAddress[]): PageAddress[] {
   )
 }
 
+/** Bounds one silent libc DNS exchange. DNS has no partial progress callback and cannot
+ * be cancelled by libc; expiry releases the caller and its late callback is ignored.
+ * Source: unmeasured. The page is refused as unreachable. */
+const LOOKUP_DEADLINE = Duration.seconds(10)
+
 /** lookup(all) is cancellable at the Effect boundary even though libc DNS itself is not cancellable. */
 const lookup = Effect.fn('Code.lookupPage')((hostname: string) =>
   Effect.callback<readonly PageAddress[], PageFailure>((resume) => {
@@ -98,7 +103,12 @@ const lookup = Effect.fn('Code.lookupPage')((hostname: string) =>
         return resume(Effect.fail(new PageFailure({ reason: 'could not be reached' })))
       resume(Effect.succeed(records(addresses)))
     })
-  }),
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: LOOKUP_DEADLINE,
+      orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
+    }),
+  ),
 )
 
 export const pageResolverLayer = Layer.succeed(PageResolver, PageResolver.of({ resolve: lookup }))

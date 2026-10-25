@@ -78,7 +78,7 @@ export const boatConfiguration = Effect.fn('Machine.boat.configuration')(functio
     ),
     'whole seconds from 0 to 2592000',
   )
-  const seconds = Option.getOrElse(lifetime, () => 3600)
+  const seconds = Option.getOrElse(lifetime, () => 0)
   const machine = {
     type: Option.getOrElse(size, () => 'default' as const),
     ttlSeconds: seconds === 0 ? null : seconds,

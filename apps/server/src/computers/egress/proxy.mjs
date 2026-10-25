@@ -45,7 +45,7 @@ const GRANT_AT = WINDOW / 2
 const STREAM_BUDGET = 32 * 1024 * 1024
 const LINK_BUDGET = 96 * 1024 * 1024
 
-const [tunnelPort, proxyPort, pidFile] = process.argv.slice(2)
+const [tunnelPort, proxyPort, pidFile, readyDescriptor] = process.argv.slice(2)
 
 /** The attached tunnel: its socket, the streams open over it, and the last stream number. */
 let attached = null
@@ -444,6 +444,13 @@ proxy.on('error', taken)
 tunnels.listen(Number(tunnelPort), '127.0.0.1', () => {
   proxy.listen(Number(proxyPort), '127.0.0.1', () => {
     if (pidFile !== undefined) NodeFS.writeFileSync(pidFile, `${process.pid}\n`)
-    say({ tunnel: tunnels.address().port, proxy: proxy.address().port })
+    const bound = { tunnel: tunnels.address().port, proxy: proxy.address().port }
+    // An inherited descriptor is owned by the launcher until both listeners have answered.
+    // Closing it also makes an early child exit an EOF receipt for the launcher.
+    if (readyDescriptor !== undefined) {
+      NodeFS.writeSync(Number(readyDescriptor), `${JSON.stringify(bound)}\n`)
+      NodeFS.closeSync(Number(readyDescriptor))
+    }
+    say(bound)
   })
 })

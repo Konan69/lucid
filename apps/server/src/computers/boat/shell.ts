@@ -135,8 +135,8 @@ export const machineLinks = (api: Transport) => {
     return {
       run: Effect.fn('Machine.boat.run')(function* (input) {
         if (
-          !Number.isInteger(input.timeoutSeconds) ||
-          input.timeoutSeconds < 1 ||
+          (input.timeoutSeconds !== null &&
+            (!Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds < 1)) ||
           input.command.length < 1
         )
           return yield* new MachineInputInvalid()
@@ -155,8 +155,8 @@ export const machineLinks = (api: Transport) => {
        */
       converse: Effect.fn('Machine.boat.converse')(function* (input) {
         if (
-          !Number.isInteger(input.timeoutSeconds) ||
-          input.timeoutSeconds < 1 ||
+          (input.timeoutSeconds !== null &&
+            (!Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds < 1)) ||
           input.command.length < 1
         )
           return yield* new MachineInputInvalid()

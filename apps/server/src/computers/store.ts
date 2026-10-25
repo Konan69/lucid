@@ -134,6 +134,8 @@ export const machineFailureReason = (failure: MachineFailure): string =>
       MachineCapabilityUnavailable: ({ capability }) =>
         `The configured Computer provider does not support ${capability}.`,
       MachineNotRunning: () => 'The Computer is no longer running.',
+      MachineLifecycleStalled: () =>
+        'The Computer stopped making progress while starting or saving its disk.',
       MachineOperationFailed: () => 'The Computer provider could not finish the operation.',
       MachineUnreachable: () => notAnswering,
       MachineResponseInvalid: () => 'The Computer provider returned an invalid response.',
@@ -367,6 +369,8 @@ type Persistence = Effect.Success<ReturnType<typeof persistence>>
  * transport: the runtime's HTTP client waits an hour for an answer (Effect's `NodeHttpClient`
  * sets undici's `headersTimeout` to an hour and no `bodyTimeout`).
  */
+// Retained production-fault guard from 8d4736872. A native readiness receipt must
+// replace this before its total bound can be removed; the 75-second holder retry remains.
 const START_DEADLINE = Duration.minutes(3)
 /**
  * How long Vivid's actions leave the provider alone after a start that failed for a standing
@@ -485,7 +489,7 @@ export interface ComputerStoreService {
     input: {
       readonly command: string
       readonly directory: string
-      readonly timeoutSeconds: number
+      readonly timeoutSeconds: number | null
     },
   ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
   readonly read: (
@@ -517,7 +521,7 @@ export interface ComputerAttachment {
   /** A command in the Computer's home that is spoken with while it runs; the scope ends it. */
   readonly converse: (input: {
     readonly command: string
-    readonly timeoutSeconds: number
+    readonly timeoutSeconds: number | null
   }) => Effect.Effect<MachineConversation, MachineFailure, Scope.Scope>
   readonly write: (input: {
     readonly path: string
@@ -809,30 +813,23 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
  * `STANDING_REST` after such a start the action is refused with the recorded reason and the
  * provider is left alone; a Person's Start still tries at once.
  */
-const prepare = Effect.fn('ComputerStore.prepare')(
-  function* (state: Effect.Success<ReturnType<typeof lifecycle>>, person: PersonId) {
-    const current = yield* state.inspect(person)
-    if (current.heldByPerson) return
-    // A start already under way is held here, before anything else is awaited: it forgets itself
-    // when it ends, and an action that joined it must still hear how it ended.
-    const joined = state.workers.get(person)
-    if (!MachineState.guards.Running(current.state)) yield* state.wake(person)
-    const worker = state.workers.get(person) ?? joined
-    if (worker === undefined) return
-    const ended = yield* Fiber.await(worker)
-    // The start this action waited for found no machine free. The record only says "stopped",
-    // so the action is refused with the provider's own reason, and the next one asks again.
-    if (Exit.isSuccess(ended) && Option.isSome(ended.value)) return yield* ended.value.value
-  },
-  // A little longer than the start it waits for, so the start's own end is what the action hears.
-  (effect, _state, person) =>
-    effect.pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.sum(START_DEADLINE, Duration.seconds(15)),
-        orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
-      }),
-    ),
-)
+const prepare = Effect.fn('ComputerStore.prepare')(function* (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  person: PersonId,
+) {
+  const current = yield* state.inspect(person)
+  if (current.heldByPerson) return
+  // A start already under way is held here, before anything else is awaited: it forgets itself
+  // when it ends, and an action that joined it must still hear how it ended.
+  const joined = state.workers.get(person)
+  if (!MachineState.guards.Running(current.state)) yield* state.wake(person)
+  const worker = state.workers.get(person) ?? joined
+  if (worker === undefined) return
+  const ended = yield* Fiber.await(worker)
+  // The start this action waited for found no machine free. The record only says "stopped",
+  // so the action is refused with the provider's own reason, and the next one asks again.
+  if (Exit.isSuccess(ended) && Option.isSome(ended.value)) return yield* ended.value.value
+})
 
 /** Resolve a running provider handle after the permit is acquired; each terminal refusal has its own tag. */
 const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
@@ -1057,7 +1054,7 @@ const ownMachine = (
       input: {
         readonly command: string
         readonly directory: string
-        readonly timeoutSeconds: number
+        readonly timeoutSeconds: number | null
       },
     ) => execute(person, (key) => machine.run({ key, ...input })),
   ),
@@ -1254,6 +1251,7 @@ export const executionRefusals = <A>(
   return {
     MachineNotRunning: handle,
     MachineOperationFailed: handle,
+    MachineLifecycleStalled: handle,
     MachineUnreachable: handle,
     MachineResponseInvalid: handle,
     MachineInputInvalid: handle,

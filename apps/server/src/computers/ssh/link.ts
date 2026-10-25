@@ -117,7 +117,7 @@ export interface Link {
   readonly run: (input: {
     readonly command: string
     readonly directory: string
-    readonly timeoutSeconds: number
+    readonly timeoutSeconds: number | null
   }) => Effect.Effect<LinkRun, LinkUnreachable | LinkRunLost>
   /**
    * Starts `command` as `run` does, and holds it for the scope: closing the scope ends the
@@ -126,7 +126,7 @@ export interface Link {
   readonly converse: (input: {
     readonly command: string
     readonly directory: string
-    readonly timeoutSeconds: number
+    readonly timeoutSeconds: number | null
   }) => Effect.Effect<LinkConversation, LinkUnreachable, Scope.Scope>
   /**
    * A byte stream to a port on the machine's own loopback, as a channel on this connection, held
@@ -242,7 +242,7 @@ export const pruneKeys = Effect.fn('Link.pruneKeys')(function* (
     'mv "$next" "$file" || { rm -f "$next"; exit 1; }',
   ].join('\n')
   const run = yield* Effect.result(
-    link.run({ command: script, directory: '/', timeoutSeconds: 20 }),
+    link.run({ command: script, directory: '/', timeoutSeconds: null }),
   )
   return Result.isSuccess(run) && run.success.exitCode === 0
 })
@@ -400,8 +400,22 @@ const files = (sftp: SFTPWrapper, calls: Waiting) => {
   return { read, put }
 }
 
-/** How long after its deadline a command that ignores the polite signal is killed. */
+/** Post-cancellation grace for a process group that ignores TERM. Source: unmeasured.
+ * coreutils sends KILL after this grace, including when the caller interrupts an owned command. */
 const GRACE_SECONDS = 2
+
+/** Bounds only the fallback after a requested deadline, when SSH never reports process exit.
+ * Source: unmeasured. Expiry stops the channel and reports the requested timeout. */
+const EXIT_RECEIPT_GRACE_SECONDS = 3
+
+/** Bounds a silent SSH handshake, before any productive command starts. Source: unmeasured.
+ * ssh2 destroys the socket on expiry and the caller receives LinkUnreachable. */
+const HANDSHAKE_MILLIS = 15_000
+
+/** Peer detection policy. Three unanswered probes close a silent connection. Any incoming
+ * SSH packet resets ssh2's missed-probe count. Source: unmeasured. */
+const KEEPALIVE_MILLIS = 15_000
+const KEEPALIVE_MISSES = 3
 
 /**
  * One command on its own channel.
@@ -413,7 +427,9 @@ const GRACE_SECONDS = 2
  * cancelled, the request ended) sends that same `timeout` a TERM over the channel, which it
  * passes to the group in the same way; if the channel opens only after the caller has gone, it is
  * ended the moment it opens. This side also stops waiting a little after the deadline, so a
- * machine that never answers cannot hold the caller.
+ * machine that never answers cannot hold the caller. A null deadline disables the coreutils
+ * clock but preserves its process group and TERM handling. SSH keepalives detect peer loss
+ * while the owning fiber can cancel a productive command at any time.
  *
  * A command has ended only when the machine said so (an exit status or a signal). A channel that
  * closes without either is a connection that went: the command may be running still, which is
@@ -439,7 +455,7 @@ const runner =
     return calls
       .call<LinkRun, LinkUnreachable | LinkRunLost>(new LinkRunLost(), (settle) => {
         const done = (exitCode: number | null, timedOut: boolean) => {
-          clearTimeout(timer)
+          Option.map(timer, clearTimeout)
           const out = stdout.text()
           const err = stderr.text()
           settle(
@@ -452,18 +468,23 @@ const runner =
             }),
           )
         }
-        const timer = setTimeout(
-          () => {
-            stop()
-            done(null, true)
-          },
-          (timeoutSeconds + GRACE_SECONDS + 3) * 1000,
-        )
+        const timer =
+          timeoutSeconds === null
+            ? Option.none<ReturnType<typeof setTimeout>>()
+            : Option.some(
+                setTimeout(
+                  () => {
+                    stop()
+                    done(null, true)
+                  },
+                  (timeoutSeconds + GRACE_SECONDS + EXIT_RECEIPT_GRACE_SECONDS) * 1000,
+                ),
+              )
         client.exec(
-          `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
+          `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds === null ? 0 : timeoutSeconds} bash -lc ${shellWord(script)}`,
           (error, opened) => {
             if (error !== undefined && error !== null) {
-              clearTimeout(timer)
+              Option.map(timer, clearTimeout)
               return settle(Effect.fail(new LinkUnreachable()))
             }
             channel = Option.some(opened)
@@ -477,13 +498,15 @@ const runner =
               ended = Option.some(Predicate.isNumber(code) ? code : null)
             })
             opened.on('close', () => {
-              clearTimeout(timer)
+              Option.map(timer, clearTimeout)
               if (Option.isNone(ended)) return settle(Effect.fail(new LinkRunLost()))
               const code = ended.value
               // `timeout` answers 124 when it ended the command, 137 when it had to kill it. A
               // command may exit with those codes itself, so the clock decides which it was.
               const expired =
-                (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
+                timeoutSeconds !== null &&
+                (code === 124 || code === 137) &&
+                Date.now() - started >= timeoutSeconds * 1000
               return done(code, expired)
             })
             return undefined
@@ -516,7 +539,7 @@ const conversation =
       const channel = yield* Effect.acquireRelease(
         calls.call<ClientChannel, LinkUnreachable>(new LinkUnreachable(), (settle) => {
           client.exec(
-            `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
+            `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds === null ? 0 : timeoutSeconds} bash -lc ${shellWord(script)}`,
             (error, opened) => {
               if (error !== undefined && error !== null)
                 return settle(Effect.fail(new LinkUnreachable()))
@@ -551,7 +574,9 @@ const conversation =
         // `timeout` answers 124 or 137 when it ended the command; the clock tells that from a
         // command that exits with those codes itself (see `runner`).
         const timedOut =
-          (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
+          timeoutSeconds !== null &&
+          (code === 124 || code === 137) &&
+          Date.now() - started >= timeoutSeconds * 1000
         Deferred.doneUnsafe(end, Effect.succeed({ exitCode: timedOut ? null : code, timedOut }))
         return Queue.endUnsafe(pieces)
       })
@@ -676,11 +701,11 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
       port: input.port,
       username: input.user,
       privateKey: Redacted.value(input.identity.privateKey),
-      readyTimeout: 15_000,
+      readyTimeout: HANDSHAKE_MILLIS,
       // A connection that idles through a NAT or a proxy is dropped silently; a probe every
       // fifteen seconds keeps it, and three lost ones end it so the next call dials afresh.
-      keepaliveInterval: 15_000,
-      keepaliveCountMax: 3,
+      keepaliveInterval: KEEPALIVE_MILLIS,
+      keepaliveCountMax: KEEPALIVE_MISSES,
       hostVerifier: (presented: NodeBuffer.Buffer) => {
         mismatch = !sameHost(input.hostKey, presented)
         return !mismatch

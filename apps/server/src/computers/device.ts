@@ -9,7 +9,6 @@ import {
   Match,
   Option,
   Queue,
-  Ref,
   Schema,
   type Semaphore,
   Scope,
@@ -71,13 +70,7 @@ const REQUEST_BUDGET_MILLIS = 30_000
 // Consent and an OS key prompt take human time; other device actions keep their existing budget.
 const SIGN_IN_BUDGET_MILLIS = 300_000
 
-/**
- * How long a request waits for the computer to finish an earlier one before giving up. Shorter
- * than the budget so a request that does get its turn still has time to be carried out.
- */
-const TURN_WAIT_MILLIS = 10_000
-
-/** The Person's computer is still carrying out an earlier request, and this one stopped waiting. */
+/** The Person's computer is carrying out another request; no new work was dispatched. */
 export class DeviceBusy extends Schema.TaggedError<DeviceBusy>()(
   'DeviceBusy',
   { device: DeviceId },
@@ -321,22 +314,23 @@ const makePresence = (links: Map<DeviceId, Subscription>) => {
 
 type Presence = ReturnType<typeof makePresence>
 
+/** Decode a persisted Device at ingress, then project presence from this registry generation. */
+const toDevice = Effect.fn('Device.toDevice')(function* (presence: Presence, row: DeviceRow) {
+  const stored = yield* decodeStoredDevice({
+    id: row.id,
+    name: row.name,
+    access: { _tag: row.access, since: row.accessSince },
+  })
+  return Device.make({
+    id: stored.id,
+    name: stored.name,
+    access: stored.access,
+    presence: presence.presenceOf(stored.id),
+  })
+})
+
 /** The record of a Person's computers and who may be used: enrolling, listing, allowing, revoking. */
 const makeRegistry = (database: DatabaseService, presence: Presence) => {
-  const toDevice = Effect.fn('Device.toDevice')(function* (row: DeviceRow) {
-    const stored = yield* decodeStoredDevice({
-      id: row.id,
-      name: row.name,
-      access: { _tag: row.access, since: row.accessSince },
-    })
-    return Device.make({
-      id: stored.id,
-      name: stored.name,
-      access: stored.access,
-      presence: presence.presenceOf(stored.id),
-    })
-  })
-
   const owned = (personId: PersonId, id: DeviceId) =>
     and(eq(devices.id, id), eq(devices.personId, personId))
 
@@ -380,7 +374,7 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
     )
     if (row === undefined)
       return yield* new DatabaseFailure({ message: 'Enrolled computer not found' })
-    return yield* toDevice(row)
+    return yield* toDevice(presence, row)
   })
 
   const list = Effect.fn('Device.list')(function* (personId: PersonId) {
@@ -391,7 +385,7 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
         .where(eq(devices.personId, personId))
         .orderBy(devices.enrolledAt, devices.id),
     )
-    return yield* Effect.forEach(rows, toDevice)
+    return yield* Effect.forEach(rows, (row) => toDevice(presence, row))
   })
 
   /**
@@ -431,7 +425,7 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
       }),
     )
     yield* Effect.forEach(replaced, (other) => presence.end(other.id), { discard: true })
-    return yield* toDevice(yield* find(personId, id))
+    return yield* toDevice(presence, yield* find(personId, id))
   })
 
   /** The write comes first and the link ends after it, so a link can never outlive its access. */
@@ -445,7 +439,7 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
     )
     const row = yield* find(personId, id)
     yield* presence.end(id)
-    return yield* toDevice(row)
+    return yield* toDevice(presence, row)
   })
 
   /** The computer Vivid may use for this Person right now: the allowed one, when it is listening. */
@@ -629,35 +623,15 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
 
 type Ledger = ReturnType<typeof makeLedger>
 
-/**
- * Waits its turn on one computer, for a bounded time. The wait is the only part that may be cut
- * short here; once the turn is taken it is always given back, whatever happens to the work.
- */
+/** A Device has one active request. Refuse contention immediately, before creating a durable
+ * request, rather than guessing when the current owner will finish. Semaphore owns release
+ * on every exit, including cancellation between acquisition and the first instruction. */
 const takeTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.Effect<A, E>) =>
-  Effect.uninterruptibleMask((restore) =>
-    Effect.gen(function* () {
-      const held = yield* Ref.make(false)
-      // The race takes in a child. Record ownership under its mask before reporting success:
-      // cancellation or timeout can win after the permit is taken but before the parent hears it.
-      const take = Effect.uninterruptibleMask((allow) =>
-        allow(turn.take(1)).pipe(Effect.andThen(Ref.set(held, true))),
-      )
-      return yield* Effect.gen(function* () {
-        // Restore the entire race, including its deadline branch, so a queued Stop is prompt.
-        const taken = yield* restore(take.pipe(Effect.timeoutOption(TURN_WAIT_MILLIS)))
-        if (Option.isNone(taken)) return yield* new DeviceBusy({ device })
-        return yield* restore(work)
-      }).pipe(
-        // This owns every exit, including losing the race after acquisition. Releasing only
-        // around work would leak that permit and leave the Device permanently Busy.
-        Effect.ensuring(
-          Ref.get(held).pipe(Effect.flatMap((mine) => (mine ? turn.release(1) : Effect.void))),
-        ),
-      )
-    }),
-  )
+  turn
+    .withPermitsIfAvailable(1)(work)
+    .pipe(Effect.flatMap((taken) => Effect.fromOption(taken, () => new DeviceBusy({ device }))))
 
-/** Keep one keyed entry through the bounded wait and the existing raced-take release. */
+/** Hold one keyed entry until immediate admission and any accepted work finish. */
 const inTurn = <A, E>(turns: KeyedPermits<DeviceId>, device: DeviceId, work: Effect.Effect<A, E>) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1030,8 +1004,15 @@ export const deviceLayer = Layer.effect(
     // The first thing this service does is write to its ledger, so it is also the first thing
     // to meet a database whose migrations are behind. That is said by name before anything runs.
     yield* requireLedger(database)
-    // Reconcile abandoned work now, after the ordinary budget and after the longer consent
-    // budget. Page/window recovery keeps its existing timing while sign-in work stays bounded.
+    // Capture the prior generation before exposing this registry. Each old row owns its exact
+    // durable expiry, including budgets added by future work variants. No maximum-budget guess
+    // is evidence that every abandoned request has become due.
+    const abandoned = yield* database.run(
+      database
+        .select({ expiresAt: deviceRequests.expiresAt })
+        .from(deviceRequests)
+        .where(eq(deviceRequests.status, 'Dispatched')),
+    )
     yield* ledger.reconcile()
     const reconcile = ledger
       .reconcile()
@@ -1040,12 +1021,11 @@ export const deviceLayer = Layer.effect(
           Effect.logError('Abandoned device requests could not be closed', failure._tag),
         ),
       )
-    yield* Effect.gen(function* () {
-      yield* Effect.sleep(REQUEST_BUDGET_MILLIS)
-      yield* reconcile
-      yield* Effect.sleep(SIGN_IN_BUDGET_MILLIS - REQUEST_BUDGET_MILLIS)
-      yield* reconcile
-    }).pipe(Effect.forkScoped)
+    for (const expiresAt of new Set(abandoned.map((row) => row.expiresAt))) {
+      const remaining = Math.max(0, expiresAt - (yield* Clock.currentTimeMillis))
+      if (remaining > 0)
+        yield* Effect.sleep(remaining).pipe(Effect.andThen(reconcile), Effect.forkScoped)
+    }
 
     const dispatch = makeDispatch({
       database,

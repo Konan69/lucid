@@ -23,7 +23,6 @@ export const budgets = {
   pages: 8,
   pageBytes: 524_288,
   pageText: 24_576,
-  pageSeconds: 10,
   redirects: 5,
 } as const
 
