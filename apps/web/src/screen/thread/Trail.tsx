@@ -201,35 +201,44 @@ export function Doing({
 export function Trail({
   tools,
   took,
+  lead,
 }: {
   tools: ReadonlyArray<ToolPart>
   /** How long the reply took, when the stream stamped both its start and its end. */
   took: Option.Option<number>
+  /**
+   * What shares the line before it: the reply's time and its copy button. One quiet line under
+   * an answer reads as its footnote; two stacked lines read as clutter.
+   */
+  lead: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
   const steps = tools.map(stepOf)
   return (
-    <div className="mt-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className="-ml-1 inline-flex max-w-full cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:bg-wash-hover focus-visible:text-ink"
-      >
-        <ChevronRight
-          className={cn(
-            'size-3.5 shrink-0 transition-transform duration-(--dur-fast)',
-            open && 'rotate-90',
-          )}
-        />
-        <span className="truncate">
-          {Option.isSome(took) && (
-            <span className="tabular-nums">Worked {spanOf(took.value)} · </span>
-          )}
-          {summarizeSteps(steps, Option.none())}
-        </span>
-      </button>
+    <div className="mt-1">
+      <div className="flex h-6 min-w-0 items-center gap-1.5 text-meta text-ink-3">
+        {lead}
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="-ml-1 inline-flex max-w-full cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:bg-wash-hover focus-visible:text-ink"
+        >
+          <ChevronRight
+            className={cn(
+              'size-3.5 shrink-0 transition-transform duration-(--dur-fast)',
+              open && 'rotate-90',
+            )}
+          />
+          <span className="truncate">
+            {Option.isSome(took) && (
+              <span className="tabular-nums">Worked {spanOf(took.value)} · </span>
+            )}
+            {summarizeSteps(steps, Option.none())}
+          </span>
+        </button>
+      </div>
       {open && (
         <ol className="mt-1.5 flex animate-fade-in flex-col gap-1.5 text-label">
           {steps.map((step) => (

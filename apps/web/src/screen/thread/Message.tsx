@@ -633,8 +633,23 @@ function FromVivid({
             onSay={onContinue}
           />
         )}
-        {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
-        {!making && <Trail tools={tools} took={tookOf(message)} />}
+        {!making && tools.length > 0 ? (
+          <Trail
+            tools={tools}
+            took={tookOf(message)}
+            lead={
+              !streaming &&
+              text.length > 0 && (
+                <>
+                  <Stamp message={message} />
+                  <CopyWords read={() => text} />
+                </>
+              )
+            }
+          />
+        ) : (
+          !streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />
+        )}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
             the layout. */}
