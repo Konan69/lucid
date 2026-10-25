@@ -57,6 +57,20 @@ const openOnDevice = Effect.fn('Documents.openOnDevice')(function* (
   })
 })
 
+/**
+ * Browsers expose no receipt for consuming a download's blob URL. Keep each address with its
+ * Document instead of guessing adoption time. Page disposal releases them; persisted pagehide
+ * keeps them valid while the document is in the back/forward cache.
+ */
+const downloads = new Set<string>()
+if (Platform.OS === 'web') {
+  window.addEventListener('pagehide', (event) => {
+    if (event.persisted) return
+    for (const address of downloads) URL.revokeObjectURL(address)
+    downloads.clear()
+  })
+}
+
 /** In the browser preview the file is fetched and saved through a link, as a browser downloads. */
 const openInBrowser = Effect.fn('Documents.openInBrowser')(function* (
   session: SignedIn,
@@ -78,12 +92,11 @@ const openInBrowser = Effect.fn('Documents.openInBrowser')(function* (
   })
   return yield* Effect.sync(() => {
     const address = URL.createObjectURL(blob)
+    downloads.add(address)
     const anchor = document.createElement('a')
     anchor.href = address
     anchor.download = name
     anchor.click()
-    // The download reads the address after the click returns; a minute is ample for it to start.
-    setTimeout(() => URL.revokeObjectURL(address), 60_000)
   })
 })
 

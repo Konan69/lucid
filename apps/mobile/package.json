@@ -14,7 +14,8 @@
     "updates": "node scripts/publish.mjs",
     "build:updates": "node scripts/export.mjs",
     "typecheck": "node ../../scripts/types.mjs tsconfig.types.json tsconfig.tests.json",
-    "lint": "node ../../scripts/lint.mjs"
+    "lint": "node ../../scripts/lint.mjs",
+    "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",

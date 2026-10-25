@@ -1,9 +1,10 @@
-import { VividRpcClient } from '@vivid/client-runtime'
+import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
 import type { SkillReadOnly } from '@vivid/contracts'
 import type { InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
   Data,
+  Duration,
   Effect,
   Exit,
   Layer,
@@ -65,12 +66,10 @@ const productFailure = (cause: Cause.Cause<ProductFailure | Cause.NoSuchElementE
   )
 
 /**
- * What a screen draws for an atom's current value.
- *
- * A product failure that reaches an atom is always a final one (anything else is retried before it
- * gets here), and a final one wins over whatever was on screen: when a session is revoked or a
- * Person is removed from a Company, what they could see a moment ago must stop being shown. Only a
- * failure with no product reason (an interruption, a defect) keeps the last result up.
+ * What a screen draws for an atom's current value. Recoverable failures stay inside their
+ * supervisor, preserving the latest answer while it recovers. Permanent failures are shown,
+ * including a revoked session whose previous answer must stop being displayed. Interruption
+ * and defects without a product reason retain the previous answer.
  */
 export const liveStateOf = <Value>(result: LiveResult<Value>): LiveState<Value> =>
   AsyncResult.match(result, {
@@ -153,25 +152,87 @@ export interface LiveFamily<Argument, Value> {
   readonly get: (argument: Argument) => LiveQuery<Value>
 }
 
-/** Failures that mean "this is not yours to see", which asking again will not change. */
-const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidRequest'])
-
-/** Whether a failure is one that asking again cannot change, so nothing should ask again. */
-export const isFinal = (failure: ProductFailure): boolean => FINAL.has(failure._tag)
+/** Permanent product failures require a different request, authority, or installation fix. */
+const FINAL = {
+  Unauthenticated: true,
+  Forbidden: true,
+  NotFound: true,
+  InvalidRequest: true,
+  Conflict: true,
+  DatabaseFailure: true,
+  DatabaseConstraintViolation: true,
+  SkillReadOnly: true,
+  InputAnswerCountMismatch: true,
+  InputAnswerEmptyWords: true,
+  InputAnswerRepeatedLabel: true,
+  InputAnswerSeveralForbidden: true,
+  InputAnswerUnknownLabel: true,
+  InputAnswerWrittenForbidden: true,
+} as const satisfies Partial<Record<ProductFailure['_tag'], true>>
 
 /**
- * A subscription that outlives a dropped connection. A failure that is not final (the socket
- * closed, the server restarted) re-opens the subscription after a moment, and the atom keeps its
- * last result meanwhile; a final one ends the stream and reaches the screen.
+ * Temporary infrastructure failures can recover while the view remains mounted. Together with
+ * FINAL and the separately classified transport, this must cover every ProductFailure tag.
+ */
+const TRANSIENT = {
+  DatabaseUnavailable: true,
+  ServiceUnavailable: true,
+  RuntimeUnavailable: true,
+} as const satisfies Record<
+  Exclude<ProductFailure['_tag'], keyof typeof FINAL | 'RpcClientError'>,
+  true
+>
+
+/** Whether a failure is one that asking again cannot change, so nothing should ask again. */
+export const isFinal = (failure: ProductFailure): boolean =>
+  Predicate.hasProperty(FINAL, failure._tag)
+
+/** Only a transport failure is repaired by reconnecting; server recovery uses its own backoff. */
+const disconnected = (failure: ProductFailure): boolean =>
+  Predicate.isTagged(failure, 'RpcClientError') && isTransientSocketReason(failure.reason)
+
+/**
+ * Preserve the catalog's production recovery pacing (the original live.ts retry was 1.5 s).
+ * The server retains a failed first catalog download until its own retry; no readiness event
+ * crosses that boundary. Start at the existing 1.5 s and cap at Effect's reconnect ceiling of
+ * 5 s (Effect 4.0.2 RpcClient.defaultRetryPolicy), so recovery cannot spin or overload a restart.
+ * A live view owns this supervisor; only its release or a permanent failure ends it.
+ */
+const SERVER_RETRY_FIRST = Duration.millis(1500)
+const SERVER_RETRY_MAX = Duration.seconds(5)
+
+/** Socket retries wait on protocol readiness without a delay; typed server outages back off. */
+const recovery = (connection: RpcConnection['Service']) =>
+  Schedule.min([
+    Schedule.exponential(SERVER_RETRY_FIRST, 1.5),
+    Schedule.spaced(SERVER_RETRY_MAX),
+  ]).pipe(
+    Schedule.setInputType<ProductFailure>(),
+    Schedule.while(({ input }) =>
+      Effect.succeed(disconnected(input) || Predicate.hasProperty(TRANSIENT, input._tag)),
+    ),
+    Schedule.modifyDelay(({ input, duration }) =>
+      disconnected(input) ? Effect.as(connection.ready, Duration.zero) : Effect.succeed(duration),
+    ),
+  )
+
+/**
+ * Live subscriptions remain owned by their atoms. A socket loss waits for the protocol receipt;
+ * a typed server outage retries with bounded backoff; a permanent refusal reaches the screen.
+ * A server that ends a Watch successfully is reopened at the retained retry cadence too: only
+ * releasing the atom or a permanent failure may end a scope-owned subscription.
  */
 const resilient = <Value, R>(
   open: () => Stream.Stream<Value, ProductFailure, R>,
-): Stream.Stream<Value, ProductFailure, R> =>
-  open().pipe(
-    Stream.catchIf(
-      (failure) => !FINAL.has(failure._tag),
-      () => Stream.unwrap(Effect.as(Effect.sleep('1500 millis'), resilient(open))),
-    ),
+): Stream.Stream<Value, ProductFailure, R | RpcConnection> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const connection = yield* RpcConnection
+      return Stream.suspend(open).pipe(
+        Stream.retry(recovery(connection)),
+        Stream.repeat(Schedule.spaced(SERVER_RETRY_FIRST)),
+      )
+    }),
   )
 
 /** Names each expected change, so the one that settles is the one that is taken down. */
@@ -366,7 +427,7 @@ const IDLE_FOR_MS = 5 * 60_000
  * last reader leaves (the registry's idle TTL), so going back to a screen shows it at once. Nothing
  * here polls and nothing is refetched: the server sends a result when it changes.
  */
-export function makeLive(layer: Layer.Layer<VividRpcClient>) {
+export function makeLive(layer: Layer.Layer<VividRpcClient | RpcConnection>) {
   const registry = AtomRegistry.make({ defaultIdleTTL: IDLE_FOR_MS })
   const runtime = Atom.runtime(layer)
   // The client, and so the socket, lives for as long as the page does.
@@ -431,15 +492,13 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     return runtime.atom((get) => {
       const asked = get(rested)
       return Effect.gen(function* () {
-        return yield* call(yield* VividRpcClient, asked)
+        const client = yield* VividRpcClient
+        const connection = yield* RpcConnection
+        return yield* call(client, asked).pipe(Effect.retry(recovery(connection)))
       }).pipe(
         Effect.tapError((failure) =>
           Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
         ),
-        Effect.retry({
-          while: (failure) => !FINAL.has(failure._tag),
-          schedule: Schedule.spaced('1500 millis'),
-        }),
       )
     })
   }

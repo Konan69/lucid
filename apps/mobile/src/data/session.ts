@@ -1,4 +1,15 @@
-import { Data, Effect, Option, Redacted, Result, Schedule, Schema, Semaphore } from 'effect'
+import {
+  Data,
+  Duration,
+  Effect,
+  Option,
+  Redacted,
+  Result,
+  Schedule,
+  Schema,
+  Semaphore,
+} from 'effect'
+import { AccountUnavailable, AccountUnreachable } from './refusal'
 import { parseServer, type ServerAddress } from './server'
 
 /**
@@ -105,19 +116,35 @@ export type Forgetting = Data.TaggedEnum<{
 }>
 export const Forgetting = Data.taggedEnum<Forgetting>()
 
+/** No acknowledgement arrived for the request ending a session. Its server authority is unknown. */
+export class SignOutUnanswered extends Schema.TaggedError<SignOutUnanswered>()(
+  'SignOutUnanswered',
+  {},
+  { title: 'Sign-out unanswered' },
+) {}
+
 /**
- * How long the server is given to answer one request to end a session, and how many more times
- * it is asked. Ending a session twice is the same as ending it once (Better Auth's `/sign-out`
- * answers 200 with or without a live session; `better-auth/dist/api/routes/sign-out.mjs`, 1.7.5),
- * so asking again is safe. Four requests of eight seconds with 1, 2 and 4 seconds between them is
- * 39 seconds at most, after which the server is not asked again.
- *
- * Running out of time says nothing certain about the session. A request can end it on the server
- * and lose its answer on the way back, and a request can fail to arrive at all: when no answer
- * came, the session may still be valid on the server until it expires, or may already be ended.
+ * Bounds one remote sign-out exchange whose server can hold a socket without an answer.
+ * Source: unmeasured, retained eight-second request bound. Expiry records SignOutUnanswered
+ * in the action atom; the app has already signed out and protected-store cleanup still runs.
  */
-const SERVER_ANSWER = '8 seconds'
+const SERVER_ANSWER = Duration.seconds(8)
+
+/**
+ * Retains the production recovery from fbfba5ed9: four idempotent sign-out requests, separated
+ * by 1, 2 and 4 seconds, tolerate a lost answer without delaying release of app authority.
+ * Source: unmeasured retry pacing; unanswered exchanges, rate limits and server outages retry; permanent refusals stop.
+ */
 const SERVER_ASKED_AGAIN = 3
+const SERVER_RETRY = Schedule.exponential(Duration.seconds(1))
+
+/**
+ * Retains the locked-store recovery from 5ef00287f: six writes over about half a minute.
+ * Source: unmeasured retry pacing. StorageUnavailable still conflates locked and full storage;
+ * until its producer distinguishes them, preserve this bounded production safeguard.
+ */
+const STORE_ASKED_AGAIN = 5
+const STORE_RETRY = Schedule.exponential(Duration.seconds(1))
 
 /** What taking up and letting go of a session needs from the device it is done on. */
 export interface Keeper<Refusal> {
@@ -200,13 +227,13 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
   )
 
   /**
-   * Makes the store catch up, trying again by itself for about half a minute: a store that is
-   * locked is usually one the phone has not been unlocked for yet. After that it is left as
-   * `Refused`, which the sign-in screen shows with the way to try again.
+   * Preserves bounded recovery when the protected store is temporarily locked. Each retry
+   * checks the debt under inTurn, so a later sign-in cannot be overwritten by an old sign-out.
+   * Refused and the existing manual retry remain available when the bounded attempts run out.
    */
-  const forget = Effect.fn('Session.forget')(function* () {
-    yield* forgetOnce.pipe(Effect.retry({ schedule: Schedule.exponential('1 second'), times: 5 }))
-  })
+  const forget = Effect.fn('Session.forget')(() =>
+    forgetOnce.pipe(Effect.retry({ schedule: STORE_RETRY, times: STORE_ASKED_AGAIN })),
+  )
 
   /**
    * Takes the token out of the app, in this turn: every screen and the live socket stop acting as
@@ -230,43 +257,40 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
   })
 
   /**
-   * Signs out: the app first, then the server and the store, each on its own.
-   *
-   * `revoke` is the one request that tells the server, made with the token being given up. It
-   * used to be awaited before anything else, so a server that never answered left the Person
-   * signed in, on every screen and on the live socket, for as long as the request hung. Running
-   * the store first instead would only move the fault: a store that refuses takes half a minute
-   * to give up, and the server would not be told until it had.
-   *
-   * So the app is released in this turn, and the two that remain run side by side. Neither can
-   * stop or delay the other, and neither can fail this. A store that refused is on record as
-   * `Forgetting.Refused`, and until it takes the change it still holds the token. A server that
-   * gave no answer is left as it was before this change, unreported: the session may still be
-   * valid there (`SERVER_ANSWER`).
-   *
-   * The server is asked for a bounded time. The store is not bounded by a clock (`inTurn`), so
-   * this ends when the store has answered or been refused for the last time.
+   * Releases the app immediately, then asks the server and protected store independently.
+   * Neither delays the start of the other. A refused store remains recorded as Forgetting,
+   * and a refused or unanswered revocation reaches the action atom after both have settled.
+   * Lost or timed-out exchanges, rate limits and server outages use the existing bounded
+   * recovery policy. Permanent account refusals stop immediately.
    */
   const leave = Effect.fn('Session.leave')(function* <Unanswered>(
     session: Outside,
     revoke: Effect.Effect<void, Unanswered>,
   ) {
     yield* release(session)
-    yield* Effect.all(
+    const [revoked] = yield* Effect.all(
       [
-        Effect.ignore(
+        Effect.result(
           revoke.pipe(
-            Effect.timeout(SERVER_ANSWER),
+            Effect.timeoutOrElse({
+              duration: SERVER_ANSWER,
+              orElse: () => Effect.fail(new SignOutUnanswered({})),
+            }),
             Effect.retry({
-              schedule: Schedule.exponential('1 second'),
+              schedule: SERVER_RETRY,
               times: SERVER_ASKED_AGAIN,
+              while: (error) =>
+                error instanceof SignOutUnanswered ||
+                error instanceof AccountUnreachable ||
+                error instanceof AccountUnavailable,
             }),
           ),
         ),
         Effect.ignore(forget()),
       ],
-      { concurrency: 'unbounded', discard: true },
+      { concurrency: 'unbounded' },
     )
+    return yield* Effect.fromResult(revoked)
   })
 
   return { adopt, drop, forget, leave }

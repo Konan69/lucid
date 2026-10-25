@@ -178,14 +178,6 @@ export const attemptName = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => LETTERS_AND_DIGITS.charAt(byte % 62)).join('')
 
 /**
- * How long an attempt is held while the Person is at the browser. It is the life of the server's
- * own record of the sign-in it started with Google: after five minutes the server would refuse
- * what comes back, so the secret is dropped and a link that arrives later is not this app's to
- * answer.
- */
-export const ATTEMPT_LASTS = Duration.minutes(5)
-
-/**
  * How long the trade may take. It is one small request, so a quarter of a minute without an
  * answer means it is not coming, and the button stops saying it is signing the Person in. The
  * desktop window gives its trade the same (`TRADE_WITHIN` in the web app's `data/signin.ts`).
@@ -272,24 +264,10 @@ const trading = Effect.fn('Google.trading')(
  * one. Neither ever fails; every way it can go is a `Standing`, shown as it is reached.
  */
 export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
-  /** Whether the attempt the app is away on is still this one. */
-  const awayOn = (attempt: Attempt): boolean => {
-    const standing = desk.standing()
-    return Standing.$is('Away')(standing) && standing.attempt.state === attempt.state
-  }
-
   /**
-   * The press. It makes a new attempt, keeps it, opens the browser on the server's start address,
-   * and then holds the attempt for `ATTEMPT_LASTS`, after which it is dropped if it is still the
-   * one being waited on.
-   *
-   * It starts from `Idle`, so a sentence an earlier attempt left is gone before the browser
-   * covers the app. A press while a code is being traded does nothing: that sign-in is seconds
-   * from an answer, and the screen does not offer the button then.
-   *
-   * It runs for as long as the attempt lasts, so whoever runs it stops the last press's run when
-   * there is a new one (a function atom does). A run that was not stopped is harmless too: when
-   * it wakes it finds another attempt, or none, being waited on and leaves it alone.
+   * Opens the browser and retains the attempt until its own return, a new press or the front
+   * door leaving. Google's human step has no client deadline: the server creates its expiring
+   * trade grant after the browser callback, not when this press begins.
    */
   const start = Effect.fn('Google.start')(
     function* (server: ServerAddress) {
@@ -298,8 +276,6 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
       const { attempt, challenge } = yield* beginning(phone, server)
       desk.show(Standing.Away({ attempt }))
       yield* phone.open(phoneSignInStartAddress(server, { challenge, state: attempt.state }))
-      yield* Effect.sleep(ATTEMPT_LASTS)
-      if (awayOn(attempt)) desk.show(Standing.Idle())
     },
     Effect.catchTag('PhoneUnable', () => Effect.sync(() => desk.show(Standing.Failed()))),
   )

@@ -1,5 +1,10 @@
 import { Effect, Option, Redacted, Schema } from 'effect'
-import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
+import {
+  AccountRefused,
+  AccountUnavailable,
+  AccountUnreachable,
+  type RefusalReason,
+} from './refusal'
 import { accountAddress, type ServerAddress } from './server'
 import type { SignedIn } from './session'
 import { bearer, request } from './transport'
@@ -36,7 +41,9 @@ const REASONS = new Map<number, { reason: RefusalReason; message: string }>([
 ])
 
 /** The refusal for an answer: the known reason for its status, else what the server said. */
-const refusalFor = (status: number, body: string): AccountRefused => {
+const refusalFor = (status: number, body: string): AccountRefused | AccountUnavailable => {
+  if (status === 429 || (status >= 500 && status <= 599))
+    return new AccountUnavailable({ status, message: UNREACHABLE })
   const known = REASONS.get(status)
   if (known !== undefined) return new AccountRefused(known)
   return new AccountRefused({
@@ -57,26 +64,24 @@ interface Posting {
 
 /** Posts one account request and hands back the answer unread: its status, text and token. */
 const post = Effect.fn('Account.post')(function* (posting: Posting) {
-  const response = yield* Effect.tryPromise({
+  return yield* Effect.tryPromise({
+    // The request's cancellation owns the body too, including a sign-out body that never ends.
     try: (signal) =>
       request(accountAddress(posting.server, posting.path), {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...posting.headers },
         body: JSON.stringify(posting.fields),
         signal,
-      }),
+      }).then((response) =>
+        response.text().then((body) => ({
+          ok: response.ok,
+          status: response.status,
+          body,
+          token: Option.fromNullOr(response.headers.get('set-auth-token')),
+        })),
+      ),
     catch: () => new AccountUnreachable({ message: UNREACHABLE }),
   })
-  const body = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-  })
-  return {
-    ok: response.ok,
-    status: response.status,
-    body,
-    token: Option.fromNullOr(response.headers.get('set-auth-token')),
-  }
 })
 
 /** Starts a session with email and password and returns its token. */

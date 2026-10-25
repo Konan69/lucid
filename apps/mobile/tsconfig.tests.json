@@ -7,7 +7,7 @@
     "types": ["react", "node"]
   },
   "files": [],
-  "include": ["app.config.ts", "design-reference/**/*.ts"],
+  "include": ["app.config.ts", "design-reference/**/*.ts", "src/**/*.test.ts"],
   "exclude": [],
   "references": [
     {
