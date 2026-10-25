@@ -20,6 +20,7 @@ import {
 import { useState } from 'react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { cn } from '../../ui/cn'
+import { spanOf, useNow } from '../../ui/clock'
 import { Peek } from '../computer/Peek'
 
 /**
@@ -151,10 +152,13 @@ const KEPT = 3
 export function Doing({
   tools,
   wordless,
+  since,
 }: {
   tools: ReadonlyArray<ToolPart>
   /** Whether the reply has no words yet, so between steps the list is the only sign of life. */
   wordless: boolean
+  /** When Vivid began this reply, when the stream says; the head line counts up from it. */
+  since: Option.Option<number>
 }) {
   if (tools.length === 0) return null
   const steps = tools.map(stepOf)
@@ -166,6 +170,7 @@ export function Doing({
   const onComputer = tools.some((tool) => ON_COMPUTER.has(tool.toolName))
   return (
     <div className="mb-2">
+      {Option.isSome(since) && <Working since={since.value} />}
       <ol className="flex flex-col gap-1.5 text-label" aria-live="polite">
         {earlier > 0 && (
           <li className="pl-7 text-meta font-meta text-ink-3">
@@ -193,7 +198,14 @@ export function Doing({
  * The steps of a finished reply, under the answer: one line saying what was done, which opens
  * into each step. It is quiet on purpose; the answer is the thing, and this is how it was got.
  */
-export function Trail({ tools }: { tools: ReadonlyArray<ToolPart> }) {
+export function Trail({
+  tools,
+  took,
+}: {
+  tools: ReadonlyArray<ToolPart>
+  /** How long the reply took, when the stream stamped both its start and its end. */
+  took: Option.Option<number>
+}) {
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
   const steps = tools.map(stepOf)
@@ -211,7 +223,10 @@ export function Trail({ tools }: { tools: ReadonlyArray<ToolPart> }) {
             open && 'rotate-90',
           )}
         />
-        <span className="truncate">{summarizeSteps(steps, Option.none())}</span>
+        <span className="truncate">
+          {Option.isSome(took) && <span className="tabular-nums">Worked {spanOf(took.value)} · </span>}
+          {summarizeSteps(steps, Option.none())}
+        </span>
       </button>
       {open && (
         <ol className="mt-1.5 flex animate-fade-in flex-col gap-1.5 text-label">
@@ -221,6 +236,20 @@ export function Trail({ tools }: { tools: ReadonlyArray<ToolPart> }) {
         </ol>
       )}
     </div>
+  )
+}
+
+/**
+ * The head of the steps while Vivid works: how long it has been at it, counting up each second.
+ * The steps under it say what; this says that the work is alive and for how long, the way the
+ * finished line keeps "Worked 41s". The count is not announced: it would speak every second.
+ */
+function Working({ since }: { since: number }) {
+  const now = useNow()
+  return (
+    <p className="mb-1.5 pl-7 text-meta font-meta text-ink-3 tabular-nums" aria-hidden>
+      Working · {spanOf(now - since)}
+    </p>
   )
 }
 

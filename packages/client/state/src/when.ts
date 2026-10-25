@@ -78,6 +78,18 @@ export function makeWhen(reader: Reader) {
   }
 }
 
+/**
+ * Makes the line a conversation draws between turns ("Today 3:58 PM"): `makeWhen`, with today
+ * named as well, since a line standing alone in a Thread reads as a bare clock otherwise.
+ */
+export function makeTurnWhen(reader: Reader) {
+  const when = makeWhen(reader)
+  return (moment: number, now: number): string => {
+    const said = when(moment, now)
+    return dayOf(moment, reader).day === dayOf(now, reader).day ? `Today ${said}` : said
+  }
+}
+
 /** The whole date and time, for a tooltip: nothing left to work out. */
 export function makeFullWhen(reader: Reader) {
   const full = new Intl.DateTimeFormat(reader.locale, {

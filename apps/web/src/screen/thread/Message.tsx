@@ -63,6 +63,20 @@ const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
     ),
   )
 
+/** When Vivid began a message, when the stream stamped it. */
+const startOf = (message: FlueConversationMessage): Option.Option<number> =>
+  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+    Option.fromUndefinedOr(metadata.startedAt),
+  )
+
+/** How long a finished message took, when the stream stamped both ends of it. */
+const tookOf = (message: FlueConversationMessage): Option.Option<number> =>
+  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+    metadata.startedAt !== undefined && metadata.finishedAt !== undefined
+      ? Option.some(metadata.finishedAt - metadata.startedAt)
+      : Option.none(),
+  )
+
 /**
  * When a message was finished, when Vivid said so; an unstamped message simply shows no time. It
  * is said against today (only the time today, "Yesterday", a date before that), with the whole
@@ -600,7 +614,9 @@ function FromVivid({
             Answering {forWhom.value}
           </span>
         )}
-        {making && <Doing tools={tools} wordless={text.length === 0} />}
+        {making && (
+          <Doing tools={tools} wordless={text.length === 0} since={startOf(message)} />
+        )}
         {text.length > 0 && (
           <Written
             // Flue streams every step of a reply under the id of its first step, the id its history
@@ -620,7 +636,7 @@ function FromVivid({
           />
         )}
         {!streaming && text.length > 0 && <Settled message={message} text={text} latest={latest} />}
-        {!making && <Trail tools={tools} />}
+        {!making && <Trail tools={tools} took={tookOf(message)} />}
         {/* A card Vivid produces while it is making this reply rises into place; the cards of a
             reply that is already finished are simply there. `contents` keeps the wrapper out of
             the layout. */}

@@ -1,0 +1,46 @@
+import { useSyncExternalStore } from 'react'
+
+/**
+ * One clock for the whole page that ticks once a second, only while something on screen is
+ * reading it: the first reader starts it and the last one to leave stops it. A count that has to
+ * move ("Working · 12s") reads it instead of keeping a timer of its own, so two counts on screen
+ * tick together and nothing ticks when no count is shown.
+ */
+const readers = new Set<() => void>()
+let timer: ReturnType<typeof setInterval> | undefined
+let now = Date.now()
+
+const tick = () => {
+  now = Date.now()
+  for (const reader of readers) reader()
+}
+
+const watch = (reader: () => void) => {
+  readers.add(reader)
+  if (timer === undefined) {
+    // A reader arriving after a pause would otherwise see the time the clock last stopped at.
+    now = Date.now()
+    timer = setInterval(tick, 1000)
+  }
+  return () => {
+    readers.delete(reader)
+    if (readers.size === 0 && timer !== undefined) {
+      clearInterval(timer)
+      timer = undefined
+    }
+  }
+}
+
+const read = () => now
+
+/** The time now, to the second, kept moving while the component that asks for it is mounted. */
+export const useNow = () => useSyncExternalStore(watch, read, read)
+
+/** A span of time as Vivid says it beside work: "8s", "1m 4s", "12m". */
+export const spanOf = (ms: number) => {
+  const seconds = Math.max(1, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const left = seconds % 60
+  return left === 0 ? `${minutes}m` : `${minutes}m ${left}s`
+}
