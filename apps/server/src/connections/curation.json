@@ -3,6 +3,10 @@
   "worksNowRule": "worksNow is true for the six Google services on the installed operator client, for MCP servers that declare OAuth (sign-in on the service, no key), for entries that declare no sign-in, and for entries that take a Person-supplied API key. Other Google and Microsoft services need an operator client first; token-only and undeclared sign-in are false. Hidden entries are always false. Live provider health was not tested.",
   "catalog": [
     {
+      "id": "vivid/discord",
+      "name": "Discord"
+    },
+    {
       "id": "google/gmail",
       "name": "Gmail"
     },
@@ -14441,6 +14445,19 @@
     "mcp/invideo"
   ],
   "entries": [
+    {
+      "id": "vivid/discord",
+      "name": "Discord",
+      "tier": "Useful",
+      "kind": "chat",
+      "why": "Read channels and messages, send replies, create threads and edit your messages.",
+      "auth": "PersonKey",
+      "operator": null,
+      "worksNow": true,
+      "authScheme": null,
+      "sourceKind": "openapi",
+      "classifier": "Reviewed"
+    },
     {
       "id": "google/gmail",
       "name": "Gmail",
