@@ -93,7 +93,7 @@ const why = dictating.Why.cases
  * The audio session for recording, as T3 sets it: nothing else plays while the Person talks, and
  * it records with the ringer switch off.
  */
-const openSession = Effect.gen(function* () {
+const openSession = Effect.fn('Dictation.openSession')(function* () {
   yield* Effect.tryPromise(() =>
     setAudioModeAsync({
       allowsRecording: true,
@@ -110,12 +110,12 @@ const openSession = Effect.gen(function* () {
  * explicit deactivation lets the music the recording paused carry on (T3's
  * `releaseVoiceRecordingAudio`).
  */
-const closeSession = Effect.gen(function* () {
+const closeSession = Effect.fn('Dictation.closeSession')(function* () {
   yield* Effect.tryPromise(() => setAudioModeAsync({ allowsRecording: false }))
   yield* Effect.tryPromise(() => setIsAudioActiveAsync(false))
-}).pipe(Effect.ignore)
+}, Effect.ignore)
 
-const start: Effect.Effect<string, dictating.Why> = Effect.gen(function* () {
+const start = Effect.fn('Dictation.start')(function* () {
   const locale = language()
   if (!canDictate()) return yield* Effect.fail(why.Unavailable.make({}))
   const allowed = yield* Effect.tryPromise(() => requestRecordingPermissionsAsync()).pipe(
@@ -126,7 +126,7 @@ const start: Effect.Effect<string, dictating.Why> = Effect.gen(function* () {
   yield* Effect.tryPromise(() => AppleTranscription.prepare(locale)).pipe(
     Effect.mapError(() => why.Unavailable.make({})),
   )
-  yield* openSession.pipe(Effect.mapError(() => why.Unprepared.make({})))
+  yield* openSession().pipe(Effect.mapError(() => why.Unprepared.make({})))
   const microphone = recorder()
   yield* Effect.tryPromise(() => microphone.prepareToRecordAsync()).pipe(
     Effect.mapError(() => why.Unprepared.make({})),
@@ -160,26 +160,25 @@ const listen: Effect.Effect<void, dictating.Why> = Effect.callback<void, dictati
 )
 
 /** Stops the recording and makes it into words, joined as T3 joins SpeechAnalyzer's segments. */
-const finish = (locale: string): Effect.Effect<string, dictating.Why> =>
-  Effect.gen(function* () {
-    const microphone = recorder()
-    yield* Effect.tryPromise(() => microphone.stop()).pipe(Effect.ignore)
-    yield* closeSession
-    const uri = yield* Effect.fromNullishOr(microphone.uri).pipe(
-      Effect.mapError(() => why.Untranscribed.make({})),
-    )
-    held.files.add(uri)
-    const audio = yield* Effect.tryPromise(() => new File(uri).arrayBuffer()).pipe(
-      Effect.mapError(() => why.Untranscribed.make({})),
-    )
-    const heard = yield* Effect.tryPromise(() => AppleTranscription.transcribe(audio, locale)).pipe(
-      Effect.mapError(() => why.Untranscribed.make({})),
-    )
-    return heard.segments
-      .map((segment) => segment.text)
-      .join(' ')
-      .trim()
-  })
+const finish = Effect.fn('Dictation.finish')(function* (locale: string) {
+  const microphone = recorder()
+  yield* Effect.tryPromise(() => microphone.stop()).pipe(Effect.ignore)
+  yield* closeSession()
+  const uri = yield* Effect.fromNullishOr(microphone.uri).pipe(
+    Effect.mapError(() => why.Untranscribed.make({})),
+  )
+  held.files.add(uri)
+  const audio = yield* Effect.tryPromise(() => new File(uri).arrayBuffer()).pipe(
+    Effect.mapError(() => why.Untranscribed.make({})),
+  )
+  const heard = yield* Effect.tryPromise(() => AppleTranscription.transcribe(audio, locale)).pipe(
+    Effect.mapError(() => why.Untranscribed.make({})),
+  )
+  return heard.segments
+    .map((segment) => segment.text)
+    .join(' ')
+    .trim()
+})
 
 /**
  * The words put after what is already in the draft. In English a space goes between them when
@@ -197,7 +196,7 @@ const write = (owner: string, words: string, locale: string) =>
   Effect.sync(() => draft.keep(owner, joined(draft.in(owner), words, locale)))
 
 /** Stops a recording still running, lets the session go, and deletes every recording kept. */
-const release: Effect.Effect<void> = Effect.gen(function* () {
+const release = Effect.fn('Dictation.release')(function* () {
   yield* Option.match(held.recorder, {
     onNone: () => Effect.void,
     onSome: (microphone) =>
@@ -205,13 +204,19 @@ const release: Effect.Effect<void> = Effect.gen(function* () {
         ? Effect.tryPromise(() => microphone.stop()).pipe(Effect.ignore)
         : Effect.void,
   })
-  yield* closeSession
+  yield* closeSession()
   for (const uri of held.files) yield* Effect.try(() => new File(uri).delete()).pipe(Effect.ignore)
   held.files.clear()
 })
 
 const machine = dictating.makeDictating(
-  Layer.succeed(dictating.Dictation, { start, listen, finish, write, release }),
+  Layer.succeed(dictating.Dictation, {
+    start: start(),
+    listen,
+    finish,
+    write,
+    release: release(),
+  }),
 )
 
 const EMPTY = dictating.Reading.cases.Ready.make({})

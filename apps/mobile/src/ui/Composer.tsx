@@ -226,17 +226,7 @@ export function Composer({
             GLASS_SUPPORTED ? cast('md') : lifted('md', c.border),
           ]}
         >
-          <GlassMaterial
-            style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              bottom: 0,
-              left: 0,
-              borderRadius: CORNER,
-              borderCurve: 'continuous',
-            }}
-          />
+          <GlassMaterial style={GLASS_FILL} />
           <Refusal dictation={dictation} />
           <Files attachments={attachments} />
           {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
@@ -290,6 +280,17 @@ export function Composer({
     </View>
   )
 }
+
+/** The glass under the whole composer, filling it to its rounded edge. */
+const GLASS_FILL = {
+  position: 'absolute',
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+  borderRadius: CORNER,
+  borderCurve: 'continuous',
+} as const
 
 /** What a composer that takes files is given: its tray and what to do with files. */
 export interface Attachments {

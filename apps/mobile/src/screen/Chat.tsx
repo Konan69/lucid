@@ -740,10 +740,7 @@ function Conversation({
   const wake = useMemo(() => onCatchUp(() => agent.refresh()), [agent])
   // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
   // in the composer after leaving the Thread or closing the app.
-  const place = draftPlace(me.person.id, {
-    workspace: workspaceKey(me.workspace),
-    thread: Option.some(id),
-  })
+  const place = threadPlace(me, id)
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
@@ -1029,6 +1026,10 @@ function Foot({
     </>
   )
 }
+
+/** Where a Thread's unsent words are kept on this phone, for this Person and workspace. */
+const threadPlace = (me: ReturnType<typeof useMe>, id: ThreadId) =>
+  draftPlace(me.person.id, { workspace: workspaceKey(me.workspace), thread: Option.some(id) })
 
 /**
  * Whether words must wait in the composer: until the Thread's first words are with Vivid, and
