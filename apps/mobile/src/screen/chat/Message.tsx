@@ -258,12 +258,7 @@ function FromVivid({
           {Option.isSome(moment) && <Stamp moment={moment.value} />}
         </View>
       </View>
-      {offered.length > 0 && (
-        // In the column the bubbles are read in, clear of the face (24 wide, 8 apart).
-        <View style={{ marginLeft: 32 }}>
-          <Replies replies={offered} onSay={onContinue} />
-        </View>
-      )}
+      {offered.length > 0 && <Replies replies={offered} onSay={onContinue} />}
     </View>
   )
 }
