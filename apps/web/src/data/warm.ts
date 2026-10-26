@@ -1,6 +1,6 @@
 import type { ThreadId } from '@vivid/contracts'
 import type { LiveQuery } from '@vivid/state'
-import { warmConversation } from './conversation'
+import { warmConversation } from './sending'
 import { live } from './live'
 import { engine } from './runtime'
 
