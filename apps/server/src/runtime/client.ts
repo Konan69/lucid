@@ -1,5 +1,4 @@
 import { createFlueClient } from '@flue/sdk'
-import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -312,10 +311,6 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const config = yield* ServerConfig
   const http = yield* HttpClient.HttpClient
   const token = Redacted.value(config.RUNTIME_TOKEN)
-  const firstTokenMillis = yield* Config.schema(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0)),
-    'VIVID_RUN_FIRST_TOKEN_TIMEOUT_MS',
-  ).pipe(Config.withDefault(90_000))
   const conversationUrl = (threadId: ThreadId) =>
     new URL(`/agents/vivid/${encodeURIComponent(threadId)}`, config.RUNTIME_URL)
   const flue = (threadId: ThreadId) =>
@@ -379,7 +374,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
 
   const settled: RuntimeService['settled'] = Effect.fn('Runtime.settled')(
     function* (threadId, runId) {
-      return yield* observeRun(flue(threadId), runId, firstTokenMillis)
+      return yield* observeRun(flue(threadId), runId)
     },
   )
 
