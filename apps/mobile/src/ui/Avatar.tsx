@@ -1,5 +1,6 @@
 import type { Person, PersonSummary } from '@vivid/contracts'
-import { Image, View } from 'react-native'
+import { Image } from 'expo-image'
+import { View } from 'react-native'
 import { useTheme } from '../theme'
 import { Label } from './ui'
 

@@ -1,6 +1,7 @@
 import { Data, Option } from 'effect'
 import { useState } from 'react'
-import { Image, View } from 'react-native'
+import { Image } from 'expo-image'
+import { View } from 'react-native'
 import type { MessagePicture } from '../../data/message'
 import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
@@ -126,7 +127,7 @@ function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
           >
             <Image
               source={{ uri: picture.url }}
-              resizeMode="cover"
+              contentFit="cover"
               style={{ width: side, height: side, borderRadius: radius.row }}
             />
           </Press>
@@ -140,7 +141,7 @@ function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
           <Image
             source={{ uri: opened.value.url }}
             accessibilityLabel={Option.getOrUndefined(opened.value.name)}
-            resizeMode="contain"
+            contentFit="contain"
             style={{ width: '100%', aspectRatio: 1 }}
           />
         </Sheet>

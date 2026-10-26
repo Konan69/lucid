@@ -1,7 +1,7 @@
 import { AuditEvent, ConnectionState, type Connection, type ThreadId } from '@vivid/contracts'
 import { makeWhen, thisReader } from '@vivid/state'
 import { Option } from 'effect'
-import { Laptop, Plug, Plus } from 'lucide-react'
+import { Laptop, Plus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { live, LiveState, useLive, useLiveValue } from '../../data/live'
 import { pages } from '../../data/pages'
@@ -16,6 +16,7 @@ import { holdFocus } from '../../ui/Layer'
 import { SkeletonList } from '../../ui/skeleton'
 import { auditSentence } from '../settings/Record'
 import { Customise } from '../vivid/Customise'
+import { Mark } from '../integration/Mark'
 import { Heading, Refused, Row, TextButton } from './Rows'
 import { Screen } from './Screen'
 import { Sides } from './Sides'
@@ -325,7 +326,7 @@ function Integrations({ onOpen }: { onOpen: () => void }) {
         <Row
           key={connection.id}
           entry={{
-            icon: <Plug className="size-4" />,
+            icon: <Mark service={{ name: connection.serviceName }} size={16} />,
             // The account's own name ("Gmail (Work)"), which is also what Vivid calls it.
             title: connection.account,
             detail: integrationStanding(connection),

@@ -1,6 +1,5 @@
-import { View } from 'react-native'
+import { Text, View } from 'react-native'
 import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg'
-import { Plug } from 'lucide-react-native'
 import {
   MARK_VIEW_BOX,
   SERVICE_MARKS,
@@ -69,9 +68,10 @@ function Figure({ figure }: { figure: MarkFigure }) {
 }
 
 /**
- * One service's mark, sized for a Connection row. A service Vivid has no artwork for falls back to
- * a plug outline: unlike the dense web row this is a single tile with its own slot, so leaving it
- * empty would read as a broken image.
+ * One service's mark, sized for a Connection row. A service Vivid has no artwork for gets its
+ * initial on a well, as the web's `Mark` does: unlike the dense web row this is a single tile with
+ * its own slot, so leaving it empty would read as a broken image. It was a plug outline until 26
+ * October 2026, which the developer asked to be removed.
  */
 export function ServiceMark({ service, size = 24 }: { service: string; size?: number }) {
   const { colors: c } = useTheme()
@@ -89,7 +89,20 @@ export function ServiceMark({ service, size = 24 }: { service: string; size?: nu
           ))}
         </Svg>
       ) : (
-        <Plug size={size} color={c['foreground-secondary']} />
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: c['surface-well'],
+          }}
+        >
+          <Text
+            style={{ fontSize: size * 0.5, fontWeight: '600', color: c['foreground-secondary'] }}
+          >
+            {service.trim().slice(0, 1).toLocaleUpperCase()}
+          </Text>
+        </View>
       )}
     </View>
   )

@@ -4,9 +4,10 @@ import { ConnectionState } from '@vivid/contracts'
 import { attaching } from '@vivid/state'
 import { Option } from 'effect'
 import { AsyncResult } from 'effect/reactivity'
-import { Blocks, Camera, FileUp, Images, type LucideIcon } from 'lucide-react-native'
+import { Camera, FileUp, Images, type LucideIcon } from 'lucide-react-native'
 import { useState } from 'react'
-import { ActivityIndicator, Image, ScrollView, View } from 'react-native'
+import { Image } from 'expo-image'
+import { ActivityIndicator, ScrollView, View } from 'react-native'
 import { start } from '../../data/app'
 import { addRecent, chooseFrom, recentPhotos } from '../../data/attach'
 import { useLiveData, useLiveValue } from '../../data/live'
@@ -99,40 +100,42 @@ export function Add({ route, navigation }: NativeStackScreenProps<Routes, 'Add'>
               onPress={() => choose('Files')}
             />
           )}
-          <Integrations key="integrations" onOpen={() => navigation.replace('Integrations')} />
         </Section>
       )}
+      {picked.length === 0 && <Integrations onOpen={() => navigation.replace('Integrations')} />}
     </FittedSheet>
   )
 }
 
 /**
- * The Integrations row and how many are connected. It opens the Integrations page as a new
- * visit, as Settings does: the search starts empty and the shell's flow from rest.
+ * The Person's Integrations as a group of their own, with no glyph: the developer asked on 26
+ * October 2026 for the plug to go. The row says how many are connected and opens the
+ * Integrations page as a new visit, as Settings does: the search starts empty and the shell's
+ * flow from rest.
  */
 function Integrations({ onOpen }: { onOpen: () => void }) {
   const data = useLiveData()
   const flow = useFlow()
   const setSearch = useAtomSet(data.serviceSearch)
   const connections = useLiveValue(data.live.connections)
-  const ready = Option.match(connections, {
-    onNone: () => Option.none<number>(),
-    onSome: (value) =>
-      Option.some(
-        value.connections.filter((item) => ConnectionState.guards.Ready(item.state)).length,
-      ),
-  })
+  const ready = Option.map(
+    connections,
+    (value) => value.connections.filter((item) => ConnectionState.guards.Ready(item.state)).length,
+  )
   return (
-    <Row
-      leading={<Mark icon={Blocks} />}
-      title="Integrations"
-      detail={Option.getOrUndefined(Option.map(ready, (count) => `${count} connected`))}
-      onPress={() => {
-        setSearch('')
-        flow.rest()
-        onOpen()
-      }}
-    />
+    <Section title="Integrations">
+      <Row
+        title={Option.match(ready, {
+          onNone: () => 'Your Integrations',
+          onSome: (count) => (count === 0 ? 'None connected yet' : `${count} connected`),
+        })}
+        onPress={() => {
+          setSearch('')
+          flow.rest()
+          onOpen()
+        }}
+      />
+    </Section>
   )
 }
 

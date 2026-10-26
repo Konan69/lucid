@@ -1,6 +1,7 @@
 import { Option } from 'effect'
 import { useState } from 'react'
-import { Image, ScrollView, View } from 'react-native'
+import { Image } from 'expo-image'
+import { ScrollView, View } from 'react-native'
 import { tick } from '../data/haptics'
 import { useTheme } from '../theme'
 import { Sheet } from './Sheet'
@@ -49,7 +50,7 @@ export function Pictures({ pictures }: { pictures: ReadonlyArray<Picture> }) {
             >
               <Image
                 source={{ uri: picture.address }}
-                resizeMode="cover"
+                contentFit="cover"
                 style={{
                   width: 128,
                   height: 128,
@@ -76,7 +77,7 @@ export function Pictures({ pictures }: { pictures: ReadonlyArray<Picture> }) {
           <Image
             source={{ uri: opened.value.address }}
             accessibilityLabel={Option.getOrUndefined(opened.value.caption)}
-            resizeMode="contain"
+            contentFit="contain"
             style={{ flex: 1, width: '100%' }}
           />
         </Sheet>

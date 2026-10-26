@@ -1,6 +1,7 @@
 import { attaching } from '@vivid/state'
 import { FileText, X } from 'lucide-react-native'
-import { ActivityIndicator, Image, ScrollView, View } from 'react-native'
+import { Image } from 'expo-image'
+import { ActivityIndicator, ScrollView, View } from 'react-native'
 import { useTheme } from '../theme'
 import { Label, Press } from './ui'
 

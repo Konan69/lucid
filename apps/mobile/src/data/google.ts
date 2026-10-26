@@ -24,13 +24,13 @@ import type { ServerAddress } from './server'
  * server's sign-in, and read what it hands back on a link in the app's scheme. Three things
  * differ, and each is stated because the reference is otherwise the guide:
  *
- * 1. The reference opens the platform's sign-in sheet (`Browser.openAuthSessionAsync(url, to)`),
- *    which closes itself on the app's link and answers with it. The installed app has no browser
- *    module, and a native module needs a new binary. So the system browser is opened with React
- *    Native's own `Linking.openURL`, and the same link (`vivid://signin`, a scheme the installed
- *    binary registers) makes the system open the app, which hears it as a `url` event. When a
- *    binary is next built, the sheet replaces `Linking.openURL` and nothing on the server
- *    changes.
+ * 1. As the reference does, the platform's sign-in sheet is opened
+ *    (`WebBrowser.openAuthSessionAsync(url, PHONE_SIGN_IN_RETURN)`, since runtime 0.3.13), which
+ *    closes itself on the app's link and answers with it; that link is finished here at once
+ *    (`start`). Binaries before 0.3.13 had no browser module and opened the system browser with
+ *    `Linking.openURL`; the system then opened the app on the link as a `url` event, and that
+ *    listener stays (`googleReturnsAtom`), so a link that arrives that way is still heard. The
+ *    same link arriving both ways is answered once (`returned`).
  * 2. The browser opens the server's own start address (`PHONE_SIGN_IN_PLACES.start`). The
  *    reference first asks the server for Google's address and opens it through an
  *    `/expo-authorization-proxy` hop that sets a cookie; here the start address is that one step.
@@ -80,8 +80,11 @@ export interface Phone {
   readonly random: (count: number) => Effect.Effect<Uint8Array, PhoneUnable>
   /** The SHA-256 digest of a text, in standard base64 with padding, as `expo-crypto` writes it. */
   readonly digest: (text: string) => Effect.Effect<string, PhoneUnable>
-  /** Opens an address in the system browser. It answers once the browser has been asked. */
-  readonly open: (address: string) => Effect.Effect<void, PhoneUnable>
+  /**
+   * Opens an address in the platform's sign-in sheet. It answers when the sheet closes: with the
+   * link it closed on, or with nothing when the Person closed it.
+   */
+  readonly open: (address: string) => Effect.Effect<Option.Option<string>, PhoneUnable>
   /** Posts a JSON body to an address, with no cookie and no token. */
   readonly post: (address: string, body: string) => Effect.Effect<Answer, TradeUnanswered>
 }
@@ -275,7 +278,10 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
       desk.show(Standing.Idle())
       const { attempt, challenge } = yield* beginning(phone, server)
       desk.show(Standing.Away({ attempt }))
-      yield* phone.open(phoneSignInStartAddress(server, { challenge, state: attempt.state }))
+      const back = yield* phone.open(
+        phoneSignInStartAddress(server, { challenge, state: attempt.state }),
+      )
+      if (Option.isSome(back)) yield* returned(back.value)
     },
     Effect.catchTag('PhoneUnable', () => Effect.sync(() => desk.show(Standing.Failed()))),
   )

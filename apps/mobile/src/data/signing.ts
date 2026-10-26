@@ -1,6 +1,8 @@
-import { Data, Effect, Queue, Stream } from 'effect'
+import { PHONE_SIGN_IN_RETURN } from '@vivid/contracts/signin'
+import { Data, Effect, Option, Queue, Stream } from 'effect'
 import * as Atom from 'effect/reactivity/Atom'
 import * as Crypto from 'expo-crypto'
+import * as WebBrowser from 'expo-web-browser'
 import { Linking } from 'react-native'
 import { signIn, signOut, signUp } from './account'
 import { door } from './door'
@@ -24,8 +26,9 @@ const unable = () => new PhoneUnable({})
  * crypto and React Native's own `Linking`. This is the one place those are called for it, each
  * wrapped where its Promise or its exception is.
  *
- * `open` is `Linking.openURL`, which hands the address to the system browser and answers once
- * the system has taken it; it rejects when nothing on the phone opens web addresses.
+ * `open` is the platform's sign-in sheet (`expo-web-browser`: `ASWebAuthenticationSession` on
+ * iOS, a Custom Tab on Android). It answers when the sheet closes, with the `vivid://signin` link
+ * it closed on when there is one.
  */
 const phone: Phone = {
   random: (count) => Effect.try({ try: () => Crypto.getRandomBytes(count), catch: unable }),
@@ -38,7 +41,14 @@ const phone: Phone = {
       catch: unable,
     }),
   open: (address) =>
-    Effect.asVoid(Effect.tryPromise({ try: () => Linking.openURL(address), catch: unable })),
+    Effect.tryPromise({
+      try: () => WebBrowser.openAuthSessionAsync(address, PHONE_SIGN_IN_RETURN),
+      catch: unable,
+    }).pipe(
+      Effect.map((result) =>
+        result.type === 'success' ? Option.some(result.url) : Option.none<string>(),
+      ),
+    ),
   post: (address, body) =>
     Effect.tryPromise({
       // The body is read inside the same attempt as the request, so the one abort signal covers
