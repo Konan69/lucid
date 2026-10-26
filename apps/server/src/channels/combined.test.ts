@@ -1,7 +1,8 @@
+import { Buffer } from 'node:buffer'
 import { describe, expect, it } from '@effect/vitest'
 import { ChannelAddress, ChannelUnavailable, type Channel } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Option, Stream } from 'effect'
-import { FetchHttpClient } from 'effect/http'
+import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http'
 import { channelProviderLayer, combineChannels } from './combined.ts'
 import {
   ChannelDisconnected,
@@ -53,6 +54,51 @@ describe('channel composition', () => {
       expect((yield* ChannelProvider.pipe(Effect.provide(context))).channels).toEqual(['iMessage'])
     }).pipe(Effect.scoped),
   )
+  it.effect(
+    'composes without Discord network I/O and keeps Photon usable during Discord 503s',
+    () =>
+      Effect.gen(function* () {
+        const discordRequests: string[] = []
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.url.startsWith('https://discord.com')) {
+              discordRequests.push(request.url)
+              return HttpClientResponse.fromWeb(request, new Response('', { status: 503 }))
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                succeed: true,
+                data: { id: 'photon-enrolment', assignedPhoneNumber: '+12025550100' },
+              }),
+            )
+          }),
+        )
+        const context = yield* Layer.build(
+          channelProviderLayer.pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  VIVID_PHOTON_PROJECT_ID: 'test',
+                  VIVID_PHOTON_PROJECT_SECRET: 'test',
+                  VIVID_DISCORD_BOT_TOKEN: `${Buffer.from('123456789012345678').toString('base64url')}.test.token`,
+                }),
+              ),
+            ),
+          ),
+        )
+        const combined = yield* ChannelProvider.pipe(Effect.provide(context))
+        expect(Option.getOrThrow(combined.codeAddress('Discord'))).toBe(
+          'discord:123456789012345678',
+        )
+        expect(discordRequests).toEqual([])
+        expect((yield* combined.enrol('iMessage', ChannelAddress.make('+12025550123'))).id).toBe(
+          'photon-enrolment',
+        )
+      }).pipe(Effect.scoped),
+  )
+
   it.effect(
     'keeps the other inbound stream alive during a disconnect and routes sends by channel',
     () =>

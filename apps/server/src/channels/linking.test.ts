@@ -5,7 +5,9 @@ import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { RunStore } from '../threads/runs.ts'
 import { ChannelReceiver } from './inbound.ts'
-import { ChannelStore } from './store.ts'
+import { ChannelStore, channelStoreLayer } from './store.ts'
+import { channelReceiverLayer } from './inbound.ts'
+import { Database } from '../database/client.ts'
 import { ChannelControl, channelTestLayer, fixture } from './testing.ts'
 
 const email = 'discord-channel@example.test'
@@ -101,6 +103,95 @@ describe.skipIf(!testDatabaseConfigured)('Discord channel linking', () => {
           return expect.fail('Expected a new code')
         yield* store.disconnect(test.actor, 'Discord')
         expect(yield* store.redeem('Discord', sender, renewed.standing.code)).toBe(false)
+      }).pipe(Effect.provide(context), Effect.scoped)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('a redeem between disconnect database operations cannot leave a link', () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(allowedLayer)
+      yield* Effect.gen(function* () {
+        const test = yield* fixture(email)
+        const store = yield* ChannelStore
+        const database = yield* Database
+        const pending = yield* store.connect(test.actor, 'Discord')
+        if (!ChannelStanding.guards.Awaiting(pending.standing))
+          return expect.fail('Expected a code')
+        const code = pending.standing.code
+        const raced = yield* Ref.make(false)
+        const redeem = Ref.getAndSet(raced, true).pipe(
+          Effect.flatMap((done) => (done ? Effect.void : store.redeem('Discord', sender, code))),
+          Effect.asVoid,
+        )
+        const interleaved = Database.of({
+          _: database._,
+          query: database.query,
+          $with: database.$with,
+          $cache: database.$cache,
+          $count: database.$count.bind(database),
+          with: database.with.bind(database),
+          select: database.select.bind(database),
+          selectDistinct: database.selectDistinct.bind(database),
+          selectDistinctOn: database.selectDistinctOn.bind(database),
+          insert: database.insert.bind(database),
+          update: database.update.bind(database),
+          delete: database.delete.bind(database),
+          refreshMaterializedView: database.refreshMaterializedView.bind(database),
+          execute: database.execute.bind(database),
+          run: (operation) => database.run(operation).pipe(Effect.tap(() => redeem)),
+          transaction: (operation) =>
+            database.transaction(operation).pipe(Effect.tap(() => redeem)),
+        })
+        const disconnectContext = yield* Layer.build(
+          Layer.fresh(channelStoreLayer).pipe(
+            Layer.provide(Layer.succeed(Database, interleaved)),
+            Layer.provide(Layer.succeedContext(context)),
+            Layer.provide(
+              ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ VIVID_DISCORD_PEOPLE: email }), {
+                asPrimary: true,
+              }),
+            ),
+          ),
+        )
+        const other = yield* ChannelStore.pipe(Effect.provide(disconnectContext))
+        const result = yield* other.disconnect(test.actor, 'Discord')
+        expect(result.standing._tag).toBe('NotConnected')
+        expect(yield* Ref.get(raced)).toBe(true)
+        expect(Option.isNone(yield* store.byPerson(test.actor.person.id, 'Discord'))).toBe(true)
+        expect(yield* store.redeem('Discord', sender, code)).toBe(false)
+      }).pipe(Effect.provide(context), Effect.scoped)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('revoked early access blocks pending redemption and linked inbound messages', () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(allowedLayer)
+      yield* Effect.gen(function* () {
+        const test = yield* fixture(email)
+        const store = yield* ChannelStore
+        const pending = yield* store.connect(test.actor, 'Discord')
+        if (!ChannelStanding.guards.Awaiting(pending.standing))
+          return expect.fail('Expected a code')
+        const revokedContext = yield* Layer.build(
+          Layer.fresh(channelReceiverLayer.pipe(Layer.provideMerge(channelStoreLayer))).pipe(
+            Layer.provide(Layer.succeedContext(context)),
+            Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+          ),
+        )
+        const revokedStore = yield* ChannelStore.pipe(Effect.provide(revokedContext))
+        expect(yield* revokedStore.redeem('Discord', sender, pending.standing.code)).toBe(false)
+        const renewed = yield* store.connect(test.actor, 'Discord')
+        if (!ChannelStanding.guards.Awaiting(renewed.standing))
+          return expect.fail('Expected a renewed code')
+        expect(yield* store.redeem('Discord', sender, renewed.standing.code)).toBe(true)
+        const receiver = yield* ChannelReceiver.pipe(Effect.provide(revokedContext))
+        yield* receiver.receive({ ...(yield* test.message('hello')), channel: 'Discord', sender })
+        expect(yield* Ref.get((yield* ChannelControl).admissions)).toEqual([])
+        expect(
+          Option.isNone(
+            Option.getOrThrow(yield* store.byPerson(test.actor.person.id, 'Discord')).threadId,
+          ),
+        ).toBe(true)
       }).pipe(Effect.provide(context), Effect.scoped)
     }).pipe(Effect.scoped),
   )
