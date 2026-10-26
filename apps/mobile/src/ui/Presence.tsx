@@ -4,19 +4,18 @@ import { nativeMetrics as m } from '@vivid/tokens/native'
 import { Option } from 'effect'
 import { ChevronDown } from 'lucide-react-native'
 import { useSyncExternalStore, type ReactNode } from 'react'
-import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native'
+import { Platform, useWindowDimensions, View } from 'react-native'
 import Animated, { FadeIn, LayoutAnimationConfig, ReduceMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { cast, lifted } from './elevation'
-import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { APPEAR, LEAVE } from './motion/morph'
 import { Face, Label, TARGET, type Tone } from './ui'
 
 /**
- * Vivid at the top centre of a Thread: its face, large, with its name in a small glass pill under
+ * Vivid at the top centre of a Thread: its face, large, with its name in a small pill under
  * it, between the bar's own buttons. The pill says how Vivid stands with the Person: under its
  * own name, waiting for them, or who else is writing. That Vivid is at work is said just above
  * the composer (`ui/Thinking.tsx`); here it only changes the mood of the face. Pressing either
@@ -197,11 +196,11 @@ export function VividMenu({ menu, children }: { menu: Menu; children: ReactNode 
 /**
  * The avatar and the pill under it.
  *
- * The pill is built as the reference builds its composer's shape (T3 Code mobile
- * `ComposerSurface`, `src/features/threads/ThreadComposer.tsx`): an outline that clips, the
- * passive glass material behind, and the content in front as the material's sibling. The words
- * are keyed by what they say, so the old ones fade out as the new ones fade in; the face only
- * changes its expression.
+ * The pill is an opaque bubble in the colour of the Person's own messages, with the compact
+ * tier's ring and stack. It was the system's clear glass, as the composer is, and the
+ * conversation that runs behind it showed through so much that the owner read it as fully
+ * transparent (26 October 2026). The words are keyed by what they say, so the old ones fade out
+ * as the new ones fade in; the face only changes its expression.
  *
  * The pill takes its new width at once. It used to ease to it on a layout transition, as the
  * reference's shape does, and on a device that sometimes left it at the old width with the new
@@ -241,15 +240,11 @@ function Avatar({ stand }: { stand: Stand }) {
             maxWidth: window - 96,
             borderRadius: PILL / 2,
             borderCurve: 'continuous',
-            overflow: 'hidden',
+            backgroundColor: c['user-bubble'],
           },
-          // The system's glass has an edge of its own; without it the ring is the edge.
-          GLASS_SUPPORTED ? cast('sm') : lifted('sm', c.border),
+          lifted('sm', c.border),
         ]}
       >
-        <GlassMaterial
-          style={[StyleSheet.absoluteFill, { borderRadius: PILL / 2, borderCurve: 'continuous' }]}
-        />
         <View
           style={{
             height: PILL,

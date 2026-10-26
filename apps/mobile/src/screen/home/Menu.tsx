@@ -8,15 +8,8 @@ import {
 } from '@vivid/contracts'
 import { projects } from '@vivid/state'
 import { Option } from 'effect'
-import { useRef, useState, type ReactNode } from 'react'
-import {
-  KeyboardAvoidingView,
-  Platform,
-  TextInput,
-  View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from 'react-native'
+import { useState, type ReactNode } from 'react'
+import { KeyboardAvoidingView, Platform, TextInput, View } from 'react-native'
 import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
@@ -31,12 +24,10 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react-native'
-import { collapseAt, RESTING } from '../../data/collapse'
 import { useKeyboardShowing } from '../../data/keyboard'
 import { LiveState, useLive, useLiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { useAppearance } from '../../data/vivid'
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { useTheme } from '../../theme'
 import { Avatar, pictureOf } from '../../ui/Avatar'
 import { Face } from '../../ui/Face'
@@ -227,34 +218,22 @@ function Group({
 const ACTION = 56
 
 /**
- * The way to a new Thread: its mark and its words at rest, the mark alone while the list is
- * moving down under it, so it never covers the row being read.
- *
- * The behaviour is T3 Code mobile's Android home button
- * (`src/components/MaterialFloatingActionButton.android.tsx`, driven by
- * `src/features/home/material-fab-scroll.ts`): extended at rest, collapsed while scrolling. The
- * reference draws a Compose button through `@expo/ui`; Vivid draws its own pill on both
- * platforms and changes its width with a layout transition, which needs no new native module.
+ * The way to a new Thread: one round button with its mark, beside Search. It used to carry the
+ * words "New thread" at rest and fold to the mark while the list moved, after T3 Code mobile's
+ * Android home button; the owner found the words obvious and the folding a bounce on every scroll
+ * (26 October 2026), so it is the mark alone and never changes shape.
  */
-function Fresh({ expanded, onPress }: { expanded: boolean; onPress: () => void }) {
+function Fresh({ onPress }: { onPress: () => void }) {
   const { colors: c } = useTheme()
   return (
-    <Press
-      accessibilityRole="button"
-      accessibilityLabel="New thread"
-      onPress={onPress}
-      layout={MORPH}
-    >
+    <Press accessibilityRole="button" accessibilityLabel="New thread" onPress={onPress}>
       <Glass radius={ACTION / 2} style={{ backgroundColor: c.primary, borderColor: c.primary }}>
         <View
           style={{
+            width: ACTION,
             height: ACTION,
-            minWidth: ACTION,
-            paddingHorizontal: expanded ? 20 : 0,
-            flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 10,
             backgroundColor: c.primary,
           }}
         >
@@ -264,13 +243,6 @@ function Fresh({ expanded, onPress }: { expanded: boolean; onPress: () => void }
             strokeWidth={1.9}
             color={c['primary-foreground']}
           />
-          {expanded && (
-            <Animated.View entering={APPEAR} exiting={LEAVE}>
-              <Label size="footnote" tone="ink-on-accent" style={{ fontWeight: '600' }}>
-                New thread
-              </Label>
-            </Animated.View>
-          )}
         </View>
       </Glass>
     </Press>
@@ -352,36 +324,6 @@ function Seek({
   )
 }
 
-/** How far up from the list's foot the fade reaches: the floating actions and the gap above them. */
-const FOOT_FADE = ACTION + 12 + 20
-
-/**
- * The list fades out under the floating Search and New thread, so a row passing behind them is
- * not read through Search's glass beside the button's edge (seen on an iPhone, 26 October 2026,
- * "Fix Gmail conne…" across the round button). It is the scroll edge effect the reference's
- * floating chrome uses instead of a divider, and it takes no touch: a row under it still opens.
- */
-function FootFade() {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: FOOT_FADE }}
-    >
-      <Svg width="100%" height={FOOT_FADE}>
-        <Defs>
-          <LinearGradient id="drawer-foot" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={c.drawer} stopOpacity={0} />
-            <Stop offset="0.55" stopColor={c.drawer} stopOpacity={1} />
-            <Stop offset="1" stopColor={c.drawer} stopOpacity={1} />
-          </LinearGradient>
-        </Defs>
-        <Rect width="100%" height={FOOT_FADE} fill="url(#drawer-foot)" />
-      </Svg>
-    </View>
-  )
-}
-
 /**
  * The foot of the drawer: the Person, who is also the way to change workspace, and Settings. It
  * is hidden while the keyboard is up so searching has the room.
@@ -444,8 +386,8 @@ function scopedThreads(
 }
 
 /**
- * The top of the drawer: Vivid's face beside where the Person is, and the scope beside that
- * while there is one. For someone who may change Vivid here the face and name are the way in to
+ * The top of the drawer: Vivid's face beside where the Person is, the scope beside that while
+ * there is one, and at its end the way to Notifications. For someone who may change Vivid here the face and name are the way in to
  * the Customise sheet; for a member of a Company they are only a heading.
  */
 function Head({
@@ -453,11 +395,13 @@ function Head({
   here,
   scoped,
   onProject,
+  onNotifications,
 }: {
   me: MeResponse
   here: string
   scoped: Option.Option<Project>
   onProject: (id: ProjectId) => void
+  onNotifications: () => void
 }) {
   const editable = mayChangeAppearance(me.workspace)
   const [customising, setCustomising] = useState(false)
@@ -498,6 +442,7 @@ function Head({
           <ScopeChip project={scoped.value} onOpen={() => onProject(scoped.value.id)} />
         </Animated.View>
       )}
+      <NotificationsButton onOpen={onNotifications} />
       {customising && <Customise onClose={() => setCustomising(false)} />}
     </View>
   )
@@ -510,36 +455,66 @@ function Head({
 const count = new Intl.NumberFormat()
 
 /**
- * The way to Notifications, first among the places because it is the one that changes while the
- * Person is away. What is unread is counted at its trailing edge, in the ink and the place a
- * Project's waiting Threads are counted (`Group`), so the drawer has one way of saying "this
- * many things want you". It reads the live query itself, so only this line redraws when a
- * notice arrives.
+ * The badge's height with its ring, and so its narrowest width: a round for one digit, a capsule
+ * for more.
  */
-function NotificationsLine({ onOpen }: { onOpen: () => void }) {
+const BADGE = 18
+
+/**
+ * The way to Notifications: a bell at the end of the drawer's head, beside Vivid's name, with what
+ * is unread counted on a small badge at its corner, in the accent the drawer counts waiting
+ * Threads in. It was a full row at the top of the places, which the owner found was a bar where a
+ * button would do (26 October 2026). It reads the live query itself, so only this button redraws
+ * when a notice arrives.
+ */
+function NotificationsButton({ onOpen }: { onOpen: () => void }) {
+  const { colors: c } = useTheme()
   const data = useLiveData()
   const state = useLive(data.live.notifications)
   const unread = LiveState.$is('Ready')(state) ? state.value.unreadCount : 0
   return (
-    <Line
-      icon={Bell}
-      label="Notifications"
-      accessibilityLabel={
-        unread > 0 ? `Notifications. ${count.format(unread)} unread` : 'Notifications'
-      }
-      trailing={
-        unread > 0 ? (
+    <View>
+      <IconButton
+        icon={Bell}
+        label={unread > 0 ? `Notifications. ${count.format(unread)} unread` : 'Notifications'}
+        tone="ink"
+        onPress={onOpen}
+      />
+      {unread > 0 && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 4,
+            minWidth: BADGE,
+            height: BADGE,
+            paddingHorizontal: 4,
+            borderRadius: BADGE / 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: c.primary,
+            // A ring in the drawer's own colour, so the badge stands off the bell's stroke.
+            borderWidth: 2,
+            borderColor: c.drawer,
+          }}
+        >
           <Label
-            size="label"
-            tone="status-attention"
-            style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}
+            size="caption"
+            tone="ink-on-accent"
+            maxFontSizeMultiplier={1.2}
+            style={{
+              fontSize: 10,
+              lineHeight: 12,
+              fontWeight: '700',
+              fontVariant: ['tabular-nums'],
+            }}
           >
-            {count.format(unread)}
+            {unread > 99 ? '99+' : count.format(unread)}
           </Label>
-        ) : undefined
-      }
-      onPress={onOpen}
-    />
+        </View>
+      )}
+    </View>
   )
 }
 
@@ -567,8 +542,8 @@ function Beside({
     onProject(id)
   }
   return (
-    <View style={{ paddingBottom: 4 }}>
-      <NotificationsLine onOpen={() => onGo('Notifications')} />
+    // Room between the head and the first place, so Feed does not sit against Vivid's name.
+    <View style={{ paddingTop: 8, paddingBottom: 4 }}>
       {PLACES.map(({ route, label, icon }) => (
         <Line key={route} icon={icon} label={label} onPress={() => onGo(route)} />
       ))}
@@ -639,22 +614,12 @@ export function Menu({
   const scopedId = Option.map(scoped, (project) => project.id)
   const listed = scopedThreads(threads, filed, scopedId)
   const [query, setQuery] = useState<Option.Option<string>>(Option.none())
-  // The scroll position is tracked in a ref: only the moment the button changes shape is state,
-  // so a moving list renders nothing.
-  const scroll = useRef(RESTING)
-  const [expanded, setExpanded] = useState(true)
   // In a personal space the drawer is headed by Vivid itself, under the name the Person gave it.
   const vivid = useAppearance()
   const here = Workspace.match(me.workspace, {
     Personal: () => vivid.name,
     Company: ({ company }) => company.name,
   })
-
-  function scrolled({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) {
-    const furthest = nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height
-    scroll.current = collapseAt(scroll.current, nativeEvent.contentOffset.y, furthest)
-    if (scroll.current.expanded !== expanded) setExpanded(scroll.current.expanded)
-  }
 
   return (
     // The search field has to stay above the keyboard. The drawer is outside Home's own
@@ -665,7 +630,13 @@ export function Menu({
       enabled={Platform.OS !== 'android' || keyboard}
       style={{ flex: 1, paddingTop: insets.top + 10, paddingLeft: insets.left }}
     >
-      <Head me={me} here={here} scoped={scoped} onProject={onProject} />
+      <Head
+        me={me}
+        here={here}
+        scoped={scoped}
+        onProject={onProject}
+        onNotifications={() => onGo('Notifications')}
+      />
       {Option.isSome(refused) && (
         <View style={{ paddingHorizontal: GUTTER - 8, paddingBottom: 8 }}>
           <Notice message={refused.value} />
@@ -679,7 +650,6 @@ export function Menu({
           onRename={onRename}
           onFile={Option.some(onFile)}
           onRefused={onRefused}
-          onScroll={scrolled}
           header={
             <Beside
               all={filed}
@@ -694,7 +664,6 @@ export function Menu({
             onSome: (project) => Option.some(`No threads in ${project.name} yet.`),
           })}
         />
-        <FootFade />
         <View
           pointerEvents="box-none"
           style={{
@@ -708,7 +677,7 @@ export function Menu({
           }}
         >
           <Seek query={query} onChange={setQuery} />
-          {Option.isNone(query) && <Fresh expanded={expanded} onPress={onFresh} />}
+          {Option.isNone(query) && <Fresh onPress={onFresh} />}
         </View>
       </View>
       {!keyboard && <Foot me={me} here={here} onSwitch={onSwitch} onGo={onGo} />}
