@@ -75,7 +75,7 @@ import { HANG } from '../ui/Presence'
 import { Floating } from '../ui/Floating'
 import { THINKING, THINKING_ROOM } from '../ui/Thinking'
 import { Logo } from './integration/Logo'
-import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { Button, Empty, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useFirst, useFront, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
@@ -1322,7 +1322,6 @@ function Transcript(props: MessagesProps) {
   const [awayAt, setAwayAt] = useState(() => Option.flatMap(opened, () => newestOf(messages)))
   const arrived = arrivedOf(awayAt, messages)
   const { known, moved } = useKnown(messages, rising)
-  const doing = useDoing(messages, working)
 
   function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
     // Before it is first put on its newest words it is at its oldest, which is not the Person
@@ -1370,7 +1369,6 @@ function Transcript(props: MessagesProps) {
     setAwayAt(Option.none())
     if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
-
 
   return (
     // The scroller's box is written first and drawn second: see the note above.
@@ -1463,7 +1461,7 @@ function Transcript(props: MessagesProps) {
         </Animated.ScrollView>
         <Floating
           thinking={thinking}
-          doing={doing}
+          doing={useDoing(messages, working)}
           away={Option.isSome(awayAt)}
           arrived={arrived > 0}
           label={newestWords(arrived)}
@@ -1499,7 +1497,6 @@ function useDoing(messages: ReadonlyArray<FlueConversationMessage>, working: boo
     )),
   }
 }
-
 
 /** Whether the list draws a row for the message `key` (`Rows` draws none for a silent one). */
 const drawsRow = (
@@ -1820,4 +1817,3 @@ function Tail({
     </View>
   )
 }
-

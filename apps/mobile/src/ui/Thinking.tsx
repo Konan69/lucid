@@ -19,7 +19,7 @@ import { APPEAR, LEAVE } from './motion/morph'
 import { Pill, PILL } from './Pill'
 import { Label } from './ui'
 
-/** What the bubble says while Vivid is on no step. The web says the same (`apps/web/src/screen/Thread.tsx`). */
+/** What the bubble says while Vivid is on no step. The web says the same (`apps/web/src/screen/thread/Doing.tsx`). */
 export const THINKING = 'Thinking'
 
 /** The orb is one of the library's two tuned sizes; its slot is as tall as a line of the word. */

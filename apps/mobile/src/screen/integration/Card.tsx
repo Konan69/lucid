@@ -1,13 +1,5 @@
 import { ConnectionAuthorization, type ConnectionRequestMessage } from '@vivid/contracts'
-import {
-  answered,
-  answering,
-  Awaited,
-  awaitedWords,
-  CardPress,
-  cardPress,
-  type connecting,
-} from '@vivid/state'
+import { answered, answering, Awaited, awaitedWords, CardPress, cardPress } from '@vivid/state'
 import { Option } from 'effect'
 import { View } from 'react-native'
 import { commit } from '../../data/haptics'
@@ -163,12 +155,7 @@ export function IntegrationCard({
           <Label numberOfLines={1} size="footnote" style={{ fontWeight: '600' }}>
             {words.title}
           </Label>
-          <Label
-            accessibilityLiveRegion="polite"
-            numberOfLines={1}
-            size="label"
-            tone={row.tone}
-          >
+          <Label accessibilityLiveRegion="polite" numberOfLines={1} size="label" tone={row.tone}>
             {row.line}
           </Label>
         </View>
@@ -222,7 +209,12 @@ const rowOf = (card: {
       // Reached when the account was connected somewhere else (the Integrations page, another
       // device), where no press here was waiting for it; a press here carries on by itself.
       action: card.current
-        ? Option.some({ label: 'Carry on', kind: 'primary', disabled: false, onPress: card.onCarryOn })
+        ? Option.some({
+            label: 'Carry on',
+            kind: 'primary',
+            disabled: false,
+            onPress: card.onCarryOn,
+          })
         : Option.none(),
     }
   const { button, line, carryOn } = card.said
@@ -338,4 +330,3 @@ const wayIn = (authorization: Option.Option<Authorization>, awaited: Awaited): W
         }),
       }),
   })
-

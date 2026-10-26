@@ -162,20 +162,23 @@ export const Segment = Data.taggedEnum<Segment>()
  * joined as `textOf` joins them; tool calls that follow one another are one piece of work. Empty
  * words make no segment, so a reply that has only begun has none.
  */
-export const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segment> =>
-  message.parts.reduce<ReadonlyArray<Segment>>((segments, part) => {
+export const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segment> => {
+  const segments: Array<Segment> = []
+  for (const part of message.parts) {
     const last = segments.at(-1)
     if (part.type === 'text') {
-      if (part.text.trim().length === 0) return segments
-      return last !== undefined && Segment.$is('Words')(last)
-        ? [...segments.slice(0, -1), Segment.Words({ text: `${last.text}\n\n${part.text}` })]
-        : [...segments, Segment.Words({ text: part.text })]
+      if (part.text.trim().length === 0) continue
+      if (last !== undefined && Segment.$is('Words')(last))
+        segments[segments.length - 1] = Segment.Words({ text: `${last.text}\n\n${part.text}` })
+      else segments.push(Segment.Words({ text: part.text }))
+    } else if (part.type === 'dynamic-tool') {
+      if (last !== undefined && Segment.$is('Work')(last))
+        segments[segments.length - 1] = Segment.Work({ tools: [...last.tools, part] })
+      else segments.push(Segment.Work({ tools: [part] }))
     }
-    if (part.type !== 'dynamic-tool') return segments
-    return last !== undefined && Segment.$is('Work')(last)
-      ? [...segments.slice(0, -1), Segment.Work({ tools: [...last.tools, part] })]
-      : [...segments, Segment.Work({ tools: [part] })]
-  }, [])
+  }
+  return segments
+}
 
 /** Whether Vivid is still writing this message. */
 export const isStreaming = (message: FlueConversationMessage): boolean =>
