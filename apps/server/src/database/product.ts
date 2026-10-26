@@ -20,6 +20,7 @@ export { notifications } from '../notifications/tables.ts'
 export { pushTargets, pushDeliveries } from '../push/tables.ts'
 export {
   firstThreads,
+  messageKeys,
   runs,
   threadParticipants,
   threadReads,

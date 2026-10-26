@@ -12,7 +12,6 @@ import * as Headers from 'effect/http/Headers'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import type * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
   AttachmentTooLarge,
   Conflict,
@@ -146,7 +145,7 @@ const SCHEMES = new Set(['http', 'https'])
 const HOST = /^[a-z0-9.-]+(?::\d{1,5})?$|^\[[0-9a-f:]+\](?::\d{1,5})?$/iu
 
 /** Client keys belong to one Person and cannot collide with server-produced signal keys. */
-const messageKey = (personId: PersonId, key: string) =>
+export const messageKey = (personId: PersonId, key: string) =>
   `message-${NodeCrypto.createHash('sha256')
     .update(JSON.stringify([personId, key]))
     .digest('hex')}`
@@ -221,8 +220,8 @@ const HOP_HEADERS = ['connection', 'keep-alive', 'transfer-encoding', 'content-l
  * before a buffered runtime event is exposed. Subsequent removals and silent expiry stop the
  * open body, and its scope releases the watcher on disconnect or finite-body completion.
  */
-const authorizedBody = (
-  response: HttpClientResponse.HttpClientResponse,
+export const authorizedBody = <A, E, R>(
+  response: { readonly stream: Stream.Stream<A, E, R> },
   thread: StoredThread,
   authority: { readonly personId: PersonId; readonly sessionId: SessionId },
 ) =>

@@ -123,3 +123,16 @@ export const runs = pgTable(
     uniqueIndex('vivid_runs_thread_turn').on(table.threadId, table.turn),
   ],
 )
+
+/**
+ * Client echoes must survive a server restart. Flue hashes the admission key, so it cannot
+ * recover the client's key. Write this mapping before admission, when the Run does not yet
+ * exist, and let Thread deletion remove it even when admission failed.
+ */
+export const messageKeys = pgTable('vivid_message_keys', {
+  runId: text('run_id').$type<RunId>().primaryKey(),
+  threadId: threadColumn('thread_id')
+    .notNull()
+    .references(() => threads.id, { onDelete: 'cascade' }),
+  key: text('key').notNull(),
+})
