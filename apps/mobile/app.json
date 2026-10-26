@@ -55,6 +55,12 @@
           "microphonePermission": "Vivid listens while you hold to talk.",
           "recordAudioAndroid": true
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": false
+        }
       ]
     ],
     "web": {

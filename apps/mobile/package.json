@@ -51,6 +51,7 @@
     "expo-image-picker": "catalog:",
     "expo-location": "catalog:",
     "expo-media-library": "catalog:",
+    "expo-notifications": "catalog:",
     "expo-secure-store": "catalog:",
     "expo-sharing": "catalog:",
     "expo-system-ui": "catalog:",
