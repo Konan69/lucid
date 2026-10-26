@@ -26,6 +26,7 @@ import { Database, decodeStored } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { CHANNEL, changesLayer, Topic } from '../live/changes.ts'
 import { nextValue, observing, payload, silent } from '../live/testing.ts'
+import { notifications as notificationTable } from '../notifications/tables.ts'
 import { projectTable } from '../projects/tables.ts'
 import { ProjectStore, projectStoreLayer } from '../projects/store.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
@@ -426,6 +427,45 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
           database.select().from(threadReads).where(eq(threadReads.threadId, test.id)),
         )
         expect(reads).toEqual([expect.objectContaining({ personId: test.ben.id })])
+        yield* silent(notifications)
+      }),
+    )
+    it.effect("case11b markRead reads only that Person's notices about the Thread", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        yield* seed(test, 'people', [test.ben.id, test.cy.id])
+        const database = yield* Database
+        const notice = (personId: PersonId, conversationId: string | null) => ({
+          id: crypto.randomUUID(),
+          kind: 'thread',
+          title: 'Vivid replied',
+          conversationId,
+          createdAt: 0,
+          personId,
+          companyId: test.company.id,
+        })
+        const mine = notice(test.ben.id, test.id)
+        const elsewhere = notice(test.ben.id, null)
+        const theirs = notice(test.cy.id, test.id)
+        yield* database.run(database.insert(notificationTable).values([mine, elsewhere, theirs]))
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        yield* (yield* ThreadStore).markRead(test.ben.id, test.id)
+        const rows = yield* database.run(
+          database
+            .select({ id: notificationTable.id, readAt: notificationTable.readAt })
+            .from(notificationTable)
+            .where(inArray(notificationTable.id, [mine.id, elsewhere.id, theirs.id])),
+        )
+        const readAt = new Map(rows.map((row) => [row.id, row.readAt]))
+        expect(readAt.get(mine.id)).toEqual(expect.any(Number))
+        expect(readAt.get(elsewhere.id)).toBeNull()
+        expect(readAt.get(theirs.id)).toBeNull()
+        yield* payload(notifications, [
+          Topic.part('activity')(Topic.person(test.ben.id)),
+          Topic.part('notifications')(Topic.person(test.ben.id)),
+        ])
+        yield* (yield* ThreadStore).markRead(test.ben.id, test.id)
+        yield* payload(notifications, [Topic.part('activity')(Topic.person(test.ben.id))])
         yield* silent(notifications)
       }),
     )
