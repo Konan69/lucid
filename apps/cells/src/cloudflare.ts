@@ -5,14 +5,26 @@
  */
 export type SqlValue = ArrayBuffer | string | number | null
 
+/** `SqlStorageCursor`: Pi 1.4.0's adapter reads one row with `next()`, many with `toArray()`. */
+export interface SqlCursor {
+  next():
+    | { readonly done?: false; readonly value: Record<string, SqlValue> }
+    | { readonly done: true; readonly value?: undefined }
+  toArray(): Array<Record<string, SqlValue>>
+}
+
 export interface CellStorage {
   readonly sql: {
-    exec(query: string, ...bindings: Array<SqlValue>): { toArray(): Array<Record<string, SqlValue>> }
+    exec(query: string, ...bindings: Array<SqlValue>): SqlCursor
   }
   /** Commits when the closure resolves and rolls back when it rejects; 30 s cap on celld. */
   transaction<T>(closure: () => Promise<T>): Promise<T>
   /** Resolves once every earlier committed write is durable (followers or the object store). */
   sync(): Promise<void>
+  /** One alarm per object; celld answers only once a durable wake entry covers it. */
+  getAlarm(): Promise<number | null>
+  setAlarm(scheduledTime: number): Promise<void>
+  deleteAlarm(): Promise<void>
 }
 
 export interface CellState {
