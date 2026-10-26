@@ -46,3 +46,35 @@ export const IMPORTED = 'url:'
 export function connectionLogo(service: string): string | null {
   return service.startsWith(IMPORTED) ? serviceLogo(service.slice(IMPORTED.length)) : null
 }
+
+/**
+ * Where the catalog's Google services keep their pages, which the catalog itself does not say
+ * (Executor beta.23 entries carry an icon and no site, `ExecutorServiceEntry.domain`). A path
+ * tells apart the services that share a host.
+ */
+const GOOGLE_SITES = new Map([
+  ['google/gmail', 'mail.google.com'],
+  ['google/calendar', 'calendar.google.com'],
+  ['google/drive', 'drive.google.com'],
+  ['google/docs', 'docs.google.com/document'],
+  ['google/sheets', 'docs.google.com/spreadsheets'],
+  ['google/tasks', 'tasks.google.com'],
+])
+
+/**
+ * A curated server's id names its site with dots as dashes and an `-mcp` suffix
+ * (`curated/notion-com-mcp`, `curated/linear-app-mcp` in `curation.json`).
+ */
+const CURATED = /^curated\/([a-z0-9-]+)-([a-z]+)-mcp$/u
+
+/**
+ * Where links to a service live (`Connection.site`): an added server's registrable domain, a
+ * Google service's page, or a curated server's site. Null for every other catalog entry.
+ */
+export function connectionSite(service: string): string | null {
+  if (service.startsWith(IMPORTED)) return getDomain(service.slice(IMPORTED.length))
+  const google = GOOGLE_SITES.get(service)
+  if (google !== undefined) return google
+  const curated = CURATED.exec(service)
+  return curated === null ? null : `${curated[1]}.${curated[2]}`
+}

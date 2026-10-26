@@ -73,6 +73,14 @@ export const Connection = Schema.Struct({
    * server's site. Null for a catalog service, which each client draws from its bundled logos.
    */
   mark: Schema.NullOr(Schema.String),
+  /**
+   * Where links to this service live, as a registrable domain or a host with a path prefix
+   * ("grain.com", "mail.google.com", "docs.google.com/spreadsheets"), so a reply's link to it can
+   * be drawn with the service's mark (`apps/mobile/src/ui/Prose.tsx`). An added server's domain
+   * comes from its address; a catalog service's from Vivid's own list of the services people
+   * connect most (`apps/server/src/connections/logo.ts`). Null when neither knows.
+   */
+  site: Schema.NullOr(Schema.String),
   /** What the Person called this account: "Work". Null until they name it. */
   name: Schema.NullOr(AccountName),
   /** Who the service says signed in: "ada@example.com". Null when the service does not say. */

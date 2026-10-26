@@ -1,15 +1,38 @@
 import type { DisplaySource } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { stretches } from '@vivid/state'
-import { memo, useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
-import { useLiveData } from '../../data/live'
-import { openWebLink, Prose } from '../../ui/Prose'
+import { useLiveData, useLiveValue } from '../../data/live'
+import { openWebLink, Prose, type SiteMark } from '../../ui/Prose'
 import { useRevealed } from '../../ui/reveal'
 import { Display } from '../../parts/display'
 import { useTheme } from '../../theme'
 import { EDGE, Label, radius } from '../../ui/ui'
+
+/**
+ * The Person's Integrations that name both a site and a mark, for drawing links to them as chips.
+ * Read from the live list, so a newly connected service's links take its mark at once; one array
+ * per list, so the renderer is sent a new style only when the list changes.
+ */
+function useSiteMarks(): ReadonlyArray<SiteMark> {
+  const data = useLiveData()
+  const connections = useLiveValue(data.live.connections)
+  return useMemo(
+    () =>
+      Option.match(connections, {
+        onNone: () => [],
+        onSome: ({ connections: all }) =>
+          all.flatMap((connection) =>
+            connection.site === null || connection.mark === null
+              ? []
+              : [{ site: connection.site, icon: connection.mark }],
+          ),
+      }),
+    [connections],
+  )
+}
 
 /**
  * Vivid's words as formatted text. A citation of something in the Library is a link the Thread
@@ -21,6 +44,7 @@ import { EDGE, Label, radius } from '../../ui/ui'
 function Formatted({ text, fresh }: { text: string; fresh: boolean }) {
   const data = useLiveData()
   const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
+  const marks = useSiteMarks()
 
   function open(address: string) {
     setUnopened(Option.none())
@@ -40,7 +64,7 @@ function Formatted({ text, fresh }: { text: string; fresh: boolean }) {
 
   return (
     <>
-      <Prose text={linkCitations(text)} plain={text} fresh={fresh} onLink={open} />
+      <Prose text={linkCitations(text)} plain={text} fresh={fresh} marks={marks} onLink={open} />
       {Option.isSome(unopened) && (
         <Label size="label" tone="status-danger">
           {unopened.value}
