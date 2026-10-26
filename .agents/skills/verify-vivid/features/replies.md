@@ -8,7 +8,7 @@ Vivid may end a reply with one to three short replies the Person can tap instead
 
 ## How to get to it (user POV)
 
-Ask for something that leaves one obvious next step, such as a note Vivid could send. The pills appear under the reply; tap one.
+Ask something whose reply invites a short answer, such as whether to bring a jacket somewhere. The pills appear under the reply; tap one.
 
 ## Driving it with verify-vivid
 
@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature replies` after Launch and Doctor
 
 ## Gotchas
 
-The model chooses whether to offer; a reply with no obvious next step offers none, and the recipe's prompt is written so one exists. The prompt is in a Person's words and never names the tool. The phone draws the same offer through `apps/mobile/src/screen/chat/Replies.tsx`; this recipe does not prove it.
+The model chooses whether to offer; a reply with no obvious next step offers none, and the recipe's prompt is written so one exists. A draft is drawn as a letter whose own Send button is the next step, so it offers no pills; the recipe avoids drafts. The prompt is in a Person's words and never names the tool. The phone draws the same offer through `apps/mobile/src/screen/chat/Replies.tsx`; this recipe does not prove it.

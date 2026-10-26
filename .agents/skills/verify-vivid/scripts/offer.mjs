@@ -2,9 +2,12 @@ import * as NodeAssert from 'node:assert/strict'
 import { Result, Schema } from 'effect'
 import { chat, history, json, settled } from './wire.mjs'
 
-/** Words a Person would send when a reply leaves one obvious next step. No tool is named. */
-export const asked =
-  'Write a two-line note to my landlord saying the rent will be two days late. I will tell you whether to send it.'
+/**
+ * Words a Person would send when the reply invites a short answer and no display fits: a draft
+ * would be drawn as a letter whose own Send button is the next step, so the pills would not show.
+ * No tool is named.
+ */
+export const asked = 'Do I need a jacket in Lagos this weekend?'
 
 /**
  * The replies Vivid offered under its newest reply, read from the stored conversation
