@@ -462,7 +462,7 @@ function Written({
     // Only the space between two displays: nothing to put in a bubble.
     if (stretch.text.trim().length === 0) return null
     return (
-      <div key={stretch.from} className={BUBBLE}>
+      <div key={stretch.from} className={BUBBLE} data-vivid-bubble="">
         <Markdown content={stretch.text} fresh={fresh} />
       </div>
     )
