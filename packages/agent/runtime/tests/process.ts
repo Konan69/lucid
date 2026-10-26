@@ -20,7 +20,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { routes } from '../src/app.ts'
 import { productLayer, type Acting } from '../src/client.ts'
 import { Models } from '../src/models.ts'
-import { Persons, personsLayer } from '../src/persons.ts'
+import { Persons, personsLayer, runtimeNotesLayer } from '../src/persons.ts'
 import { RuntimeSettings } from '../src/settings.ts'
 import { builtinSkillsLayer } from '../src/skills.ts'
 import { storesLayer } from '../src/storage/stores.ts'
@@ -204,6 +204,7 @@ export const personsOn = (given: World, options: { readonly idleMillis: number }
       Layer.mergeAll(
         productLayer.pipe(Layer.provide(serverLayer(given.asked))),
         builtinSkillsLayer,
+        runtimeNotesLayer,
         Layer.succeed(
           Models,
           Models.of({

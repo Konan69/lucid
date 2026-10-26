@@ -7,7 +7,7 @@ import { routes } from './app.ts'
 import { productLayer } from './client.ts'
 import { whileOwned } from './lifetime.ts'
 import { modelsLayer } from './models.ts'
-import { personsLayer } from './persons.ts'
+import { personsLayer, runtimeNotesLayer } from './persons.ts'
 import { RuntimeSettings, settingsLayer } from './settings.ts'
 import { builtinSkillsLayer } from './skills.ts'
 import { storesLayer } from './storage/stores.ts'
@@ -37,7 +37,9 @@ const serving = Layer.unwrap(
 ).pipe(
   Layer.provideMerge(
     personsLayer.pipe(
-      Layer.provideMerge(Layer.mergeAll(productLayer, modelsLayer, builtinSkillsLayer)),
+      Layer.provideMerge(
+        Layer.mergeAll(productLayer, modelsLayer, builtinSkillsLayer, runtimeNotesLayer),
+      ),
     ),
   ),
 )

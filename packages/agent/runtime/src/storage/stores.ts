@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
+import type { Storage } from '@earendil-works/pi-durable'
 import { RuntimePersonId, type PersonId } from '@vivid/contracts'
 import { Context, Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { Client, Pool } from 'pg'
@@ -26,7 +27,7 @@ export const POOL = 10
 
 export interface StoresService {
   /** Open a Person's store, making it the first time that Person is seen. */
-  readonly open: (personId: PersonId) => Effect.Effect<PostgresStore, StoreUnavailable>
+  readonly open: (personId: PersonId) => Effect.Effect<Storage, StoreUnavailable>
   /**
    * The Persons whose stores hold unfinished work: a task that is not terminal, or a submission
    * still queued. These are what a restart must open and resume; nothing else is opened until a

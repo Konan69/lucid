@@ -72,7 +72,15 @@ export const ACTIVATE_SKILL = 'activate_skill'
  * interrupted may simply run again.
  */
 export const skillsExtension = Effect.fn('Skills.extension')(function* () {
-  const skills = yield* loadSkills()
+  return extensionOf(yield* loadSkills())
+})
+
+/**
+ * The extension over skills already parsed. A host without the package's files on disk (a cell,
+ * whose `node:fs` reads only its own bundle) parses texts bundled with it and builds the same
+ * extension here.
+ */
+export function extensionOf(skills: ReadonlyArray<LoadedSkill>) {
   return defineExtension({
     name: 'skills',
     sections: [section('skills', () => skillsSection(skills), { tag: false })],
@@ -95,7 +103,7 @@ export const skillsExtension = Effect.fn('Skills.extension')(function* () {
       }),
     ],
   })
-})
+}
 
 /**
  * The built-in skills, read from the installation once when the process starts: every Person's

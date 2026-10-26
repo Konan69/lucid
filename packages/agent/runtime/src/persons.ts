@@ -194,7 +194,11 @@ export const runtimeNotesLayer = Layer.unwrap(
   }),
 )
 
-/** Own every open Person and recover unfinished work while the process holds storage authority. */
+/**
+ * Own every open Person and recover unfinished work while the process holds storage authority.
+ * `Notes` is the host's: the Node process provides `runtimeNotesLayer` (AgentFS files), a cell its
+ * own table in the cell's SQLite.
+ */
 export const personsLayer = Layer.effect(
   Persons,
   Effect.gen(function* () {
@@ -307,4 +311,4 @@ export const personsLayer = Layer.effect(
 
     return Persons.of({ use, watch: SubscriptionRef.changes(listed) })
   }),
-).pipe(Layer.provideMerge(runtimeNotesLayer))
+)

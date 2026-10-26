@@ -337,6 +337,8 @@ describe.skipIf(!databaseConfigured)('stores side by side', () => {
       Effect.gen(function* () {
         const database = yield* disposableDatabase()
         const made = yield* (yield* storesOn(database)).open(PersonId.make('person-ada'))
+        // `Stores.open` answers Pi's `Storage`; this suite reopens the PostgreSQL store by its id.
+        if (!(made instanceof PostgresStore)) throw new Error('Stores opened a store that is not PostgreSQL')
         const [owner] = yield* query(
           database,
           'SELECT generation::text AS generation, process FROM runtime.owner',
