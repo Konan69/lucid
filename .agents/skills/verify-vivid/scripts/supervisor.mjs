@@ -300,6 +300,7 @@ async function launch() {
     VIVID_PUSH_VAPID_PRIVATE: curve.getPrivateKey().toString('base64url'),
     VIVID_PUSH_SUBJECT: 'mailto:verify@example.test',
     VIVID_DECISIONS: 'off',
+    VIVID_DISCORD_PEOPLE: state.run + '@example.test',
     GOOGLE_CLIENT_ID: 'rehearsal',
     GOOGLE_CLIENT_SECRET: 'unused-google-rehearsal-authority',
     GOOGLE_REDIRECT_URI: state.web + '/api/auth/callback/google',

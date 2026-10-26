@@ -1,9 +1,55 @@
 import * as NodeCrypto from 'node:crypto'
-import { ServiceId } from '@vivid/contracts'
-import type { Schema } from 'effect'
+import { Forbidden, ServiceCatalog, ServiceId, type Person } from '@vivid/contracts'
+import { Effect, Option, type Schema } from 'effect'
+import { optionalSetting, settingText } from '../config.ts'
 import { googleAppsVersion } from './google.ts'
 
 export const discordServiceId = ServiceId.make('vivid/discord')
+
+/** Discord is in early access: only the Persons whose emails VIVID_DISCORD_PEOPLE lists (comma
+ * separated) see or connect it. Unset hides it from everyone. Read once while the server is
+ * composed, so a malformed value stops launch. */
+export const loadDiscordPeople = optionalSetting(
+  'VIVID_DISCORD_PEOPLE',
+  settingText,
+  'comma-separated emails',
+).pipe(
+  Effect.map(
+    Option.match({
+      onNone: (): ReadonlySet<string> => new Set(),
+      onSome: (list): ReadonlySet<string> =>
+        new Set(list.split(',').map((email) => email.trim().toLowerCase())),
+    }),
+  ),
+)
+
+const allowed = (people: ReadonlySet<string>, person: Person) =>
+  people.has(person.email.toLowerCase())
+
+/** The catalog a Person outside early access sees: the same answer without Discord. */
+export function withoutDiscord(
+  people: ReadonlySet<string>,
+  person: Person,
+  catalog: ServiceCatalog,
+): ServiceCatalog {
+  if (!ServiceCatalog.guards.Ready(catalog) || allowed(people, person)) return catalog
+  const services = catalog.services.filter((service) => service.id !== discordServiceId)
+  return ServiceCatalog.cases.Ready.make({
+    services,
+    total: catalog.total - (catalog.services.length - services.length),
+  })
+}
+
+/** Begin and Offer refuse Discord outside early access, so a hidden entry cannot be reached by id. */
+export function requireDiscordAccess(
+  people: ReadonlySet<string>,
+  person: Person,
+  service: ServiceId,
+): Effect.Effect<void, Forbidden> {
+  return service === discordServiceId && !allowed(people, person)
+    ? Effect.fail(new Forbidden({ message: 'Choose an integration from the current catalogue.' }))
+    : Effect.void
+}
 
 const snowflake = { type: 'string', pattern: '^(0|[1-9][0-9]*)$', format: 'snowflake' }
 const securitySchemes = { discord: { type: 'apiKey', in: 'header', name: 'Authorization' } }
