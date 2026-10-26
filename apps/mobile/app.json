@@ -3,8 +3,8 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.4.0",
-    "runtimeVersion": "0.3.13",
+    "version": "0.4.1",
+    "runtimeVersion": "0.3.14",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -60,6 +60,14 @@
         "expo-notifications",
         {
           "enableBackgroundRemoteNotifications": false
+        }
+      ],
+      "expo-quick-actions",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Vivid uses the camera so you can send a photo you take in a Thread.",
+          "microphonePermission": "Vivid listens while you hold to talk."
         }
       ]
     ],

@@ -18,7 +18,9 @@
     "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "15.0.2",
     "@effect/atom-react": "catalog:",
+    "@expo/ui": "catalog:",
     "@flue/react": "catalog:",
     "@flue/sdk": "catalog:",
     "@openuidev/react-lang": "catalog:",
@@ -39,6 +41,7 @@
     "expo": "catalog:",
     "expo-audio": "catalog:",
     "expo-blur": "catalog:",
+    "expo-clipboard": "catalog:",
     "expo-constants": "catalog:",
     "expo-crypto": "catalog:",
     "expo-dev-client": "catalog:",
@@ -52,11 +55,15 @@
     "expo-location": "catalog:",
     "expo-media-library": "catalog:",
     "expo-notifications": "catalog:",
+    "expo-quick-actions": "6.0.2",
     "expo-secure-store": "catalog:",
     "expo-sharing": "catalog:",
+    "expo-sqlite": "catalog:",
+    "expo-symbols": "catalog:",
     "expo-system-ui": "catalog:",
     "expo-updates": "catalog:",
     "expo-web-browser": "catalog:",
+    "expo-widgets": "catalog:",
     "lucide-react-native": "catalog:",
     "punycode": "^2.3.1",
     "react": "catalog:",
@@ -64,11 +71,13 @@
     "react-native": "catalog:",
     "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.11.tgz",
     "react-native-gesture-handler": "catalog:",
+    "react-native-keyboard-controller": "1.21.9",
     "react-native-reanimated": "catalog:",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.26.2",
     "react-native-svg": "15.15.4",
     "react-native-web": "catalog:",
+    "react-native-webrtc": "155.0.1",
     "react-native-webview": "13.16.1",
     "react-native-worklets": "catalog:",
     "thinking-orbs": "^0.3.2",
@@ -87,7 +96,8 @@
   "expo": {
     "install": {
       "exclude": [
-        "react-native-enriched-markdown"
+        "react-native-enriched-markdown",
+        "@sentry/react-native"
       ]
     }
   }

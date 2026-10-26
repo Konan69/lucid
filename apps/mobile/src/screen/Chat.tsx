@@ -47,6 +47,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { clearTray, pastePictures, removeFile, useTray } from '../data/attach'
+import { useMicrophone } from '../data/dictation'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { readingPlace, type Anchor } from '../data/reading'
@@ -739,10 +740,7 @@ function Conversation({
   const wake = useMemo(() => onCatchUp(() => agent.refresh()), [agent])
   // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
   // in the composer after leaving the Thread or closing the app.
-  const place = draftPlace(me.person.id, {
-    workspace: workspaceKey(me.workspace),
-    thread: Option.some(id),
-  })
+  const place = threadPlace(me, id)
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
@@ -850,6 +848,7 @@ function Conversation({
           undecided={allowing.refused}
           stopping={stopping}
           thread={id}
+          place={place}
           onType={type}
           onSpeak={sayWith}
           onDock={onDock}
@@ -894,6 +893,7 @@ const aroundOf = (
  */
 function Foot({
   thread,
+  place,
   typed,
   writing,
   shared,
@@ -907,6 +907,8 @@ function Foot({
   onDock,
 }: {
   thread: ThreadId
+  /** Where this Thread's draft is kept, which is also whose dictation this composer shows. */
+  place: string
   typed: string
   writing: boolean
   shared: boolean
@@ -931,6 +933,7 @@ function Foot({
   const data = useLiveData()
   const go = useGo()
   const tray = useTray(thread)
+  const microphone = useMicrophone(place)
   /**
    * Sends what was typed, as what it means now (`replyOf`). Nearly always that is an ordinary
    * message. For a question that offers no options it is that question's answer: the words
@@ -1017,11 +1020,16 @@ function Foot({
             onRemove: (key: string) => removeFile(data, thread, shared, key),
             onPaste: (uris: ReadonlyArray<string>) => pastePictures(data, thread, shared, uris),
           })}
+          dictation={microphone}
         />
       </View>
     </>
   )
 }
+
+/** Where a Thread's unsent words are kept on this phone, for this Person and workspace. */
+const threadPlace = (me: ReturnType<typeof useMe>, id: ThreadId) =>
+  draftPlace(me.person.id, { workspace: workspaceKey(me.workspace), thread: Option.some(id) })
 
 /**
  * Whether words must wait in the composer: until the Thread's first words are with Vivid, and
