@@ -330,6 +330,7 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
     Forbidden: () => 'You do not have permission to run this display.',
     Unauthenticated: () => 'Sign in again to use this display.',
     Conflict: () => 'The Integration changed. Refresh this display and try again.',
+    ConversationTooLarge: () => 'This conversation is too large to open. Start a new Thread.',
     InvalidRequest: () => 'This display sent a request Vivid could not accept.',
     RuntimeUnavailable: () => 'Vivid is unavailable. Try again shortly.',
     ServiceUnavailable: ({ service }) =>

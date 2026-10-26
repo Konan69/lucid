@@ -108,6 +108,11 @@ export type Settle = (accepted: boolean) => void
  * and then nothing the server sent afterwards, which is the opposite of live.
  */
 export interface LiveQuery<Value> {
+  /**
+   * What a screen reads. Refreshing it in its registry opens the subscription again, with the
+   * last result kept on screen until the new one's first answer: how a screen asks again for a
+   * query the server refused, or one it wants current now (a phone back in front).
+   */
   readonly atom: Atom.Atom<LiveResult<Value>>
   /**
    * Shows a change now, before the server has confirmed it. Call the returned function when the
@@ -154,6 +159,7 @@ export interface LiveFamily<Argument, Value> {
 
 /** Permanent product failures require a different request, authority, or installation fix. */
 const FINAL = {
+  ConversationTooLarge: true,
   Unauthenticated: true,
   Forbidden: true,
   NotFound: true,
@@ -258,15 +264,22 @@ function expecting<Value>(
     )
   // The changes are functions of the current value, so a new result from the server is never
   // hidden behind an old guess: the guess is re-made from what the server just said.
-  const view = Atom.make((get): LiveResult<Value> => {
-    const result = get(source)
-    const expected = get(pending)
-    if (expected.length === 0 || !AsyncResult.isSuccess(result)) return result
-    return AsyncResult.success(
-      expected.reduce((value, next) => next.change(value), result.value),
-      { waiting: result.waiting, timestamp: result.timestamp },
-    )
-  })
+  //
+  // Asking for the view again is asking the server again (`registry.refresh(query.atom)`): the
+  // refresh is passed on to what the view is drawn from. Left to itself a derived atom only
+  // works itself out again from the same answer, which asks nobody anything.
+  const view = Atom.readable(
+    (get): LiveResult<Value> => {
+      const result = get(source)
+      const expected = get(pending)
+      if (expected.length === 0 || !AsyncResult.isSuccess(result)) return result
+      return AsyncResult.success(
+        expected.reduce((value, next) => next.change(value), result.value),
+        { waiting: result.waiting, timestamp: result.timestamp },
+      )
+    },
+    (refresh) => refresh(source),
+  )
   return {
     atom: view,
     expect: (change) => {
@@ -307,14 +320,18 @@ function keeping<Value>(
   // Kept alive: a seed is written once, at launch, and must still be there when the first
   // screen that reads its query mounts.
   const seed = Atom.keepAlive(Atom.make(Option.none<Value>()))
-  const source = Atom.make((get): LiveResult<Value> => {
-    const result = get(answers)
-    if (!AsyncResult.isInitial(result)) return result
-    return Option.match(get(seed), {
-      onNone: () => result,
-      onSome: (value) => AsyncResult.success(value, { waiting: true }),
-    })
-  })
+  const source = Atom.readable(
+    (get): LiveResult<Value> => {
+      const result = get(answers)
+      if (!AsyncResult.isInitial(result)) return result
+      return Option.match(get(seed), {
+        onNone: () => result,
+        onSome: (value) => AsyncResult.success(value, { waiting: true }),
+      })
+    },
+    // Asking again is asking the subscription again, as for any query (`expecting`).
+    (refresh) => refresh(answers),
+  )
   const made = expecting(registry, source)
   const origin = Atom.make((get): Origin => {
     if (AsyncResult.isSuccess(get(answers))) return 'server'
@@ -409,6 +426,58 @@ function makeLeaving() {
       }
     },
   }
+}
+
+/**
+ * Every query of one kind that is costly to hold: a subscription the server keeps something
+ * open for, or one that carries a great deal. It differs from `family` in three ways.
+ *
+ * - It is let go the moment nothing reads or holds its atom, not after the layer's idle time.
+ *   Whoever wants one kept for a screen that has gone holds it (`registry.mount`).
+ * - `watch` is given what the query last said, when it is being asked for again
+ *   (`registry.refresh`), so it can go on from that and say that it is no longer current.
+ * - `watch` opens its own subscription again when one is lost. It is not reopened here on a
+ *   fixed wait as the others are (`resilient`): how long to wait is its own to say.
+ */
+function followedIn(at: {
+  readonly registry: AtomRegistry.AtomRegistry
+  readonly runtime: Atom.AtomRuntime<VividRpcClient | RpcConnection>
+  /** Every query by its subscription atom (`makeLive`). */
+  readonly sources: WeakMap<object, object>
+  /** Tells whoever listens that the server no longer accepts this session (`makeLeaving`). */
+  readonly gone: Effect.Effect<void>
+}) {
+  const { registry, runtime, sources, gone } = at
+  return <Argument, Value>(
+    key: (argument: Argument) => string,
+    watch: (
+      client: Client,
+      argument: Argument,
+      last: Option.Option<Value>,
+      ready: RpcConnection['Service']['ready'],
+    ) => Stream.Stream<Value, ProductFailure>,
+  ) =>
+    familyOf(key, (argument: Argument): LiveQuery<Value> => {
+      const source = Atom.setIdleTTL(
+        runtime.atom((get) => {
+          const last = Option.flatMap(get.self<LiveResult<Value>>(), AsyncResult.value)
+          return Stream.unwrap(
+            Effect.gen(function* () {
+              return watch(yield* VividRpcClient, argument, last, (yield* RpcConnection).ready)
+            }),
+          ).pipe(
+            Stream.tapError((failure) =>
+              Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+            ),
+          )
+        }),
+        0,
+      )
+      const made = expecting(registry, source)
+      sources.set(source, made)
+      // The view is let go with its last reader too, or it would hold the subscription open.
+      return { expect: made.expect, atom: Atom.setIdleTTL(made.atom, 0) }
+    })
 }
 
 /**
@@ -583,8 +652,23 @@ export function makeLive(layer: Layer.Layer<VividRpcClient | RpcConnection>) {
 
   const reopen = () => reopenEnded(registry, sources)
 
-  return { registry, query, kept, family, ask, hold, run, change, reopen, whenSessionGone }
+  return {
+    registry,
+    query,
+    kept,
+    family,
+    followed: followedIn({ registry, runtime, sources, gone }),
+    ask,
+    hold,
+    run,
+    change,
+    reopen,
+    whenSessionGone,
+  }
 }
 
 /** One app's live engine: its registry, its queries and the way it describes a call. */
 export type LiveEngine = ReturnType<typeof makeLive>
+
+/** Shared live engine consumed by conversation adapters. */
+export type Live = LiveEngine

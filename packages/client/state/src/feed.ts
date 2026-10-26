@@ -261,7 +261,7 @@ export interface SendingService {
   readonly send: (delivery: Delivery) => Effect.Effect<void, SendRefused>
 }
 
-/** Sends words through Flue or marks a card done using the current surface's transport. */
+/** Sends words into the Thread or marks a card done using the current surface's transport. */
 export class Sending extends Context.Service<Sending, SendingService>()(
   '@vivid/state/feed/Sending',
 ) {}

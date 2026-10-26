@@ -12,6 +12,7 @@
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.2.0",
     "@typeonce/effect-machine": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
