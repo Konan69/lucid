@@ -27,6 +27,7 @@ import { memoryTools } from '../tools/memory.ts'
 import { noteTools } from '../tools/notes.ts'
 import { notifyTools } from '../tools/notify.ts'
 import { feedTools } from '../tools/feed.ts'
+import { followTools } from '../tools/follow.ts'
 import { watchTools } from '../tools/watches.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
@@ -91,6 +92,7 @@ const ABILITIES = [
   'You keep working while the person is away. You can watch an event in one of their Integrations (find_events, then watch), and you can make an Integration of your own (make_integration, following the make-an-integration skill) for what none of theirs does: a reminder at a time, something every morning, a page to check. Each time it fires you work in the background and put what matters on their Feed. Never promise to do something later without setting one of these up.',
   'You can notify the person through the app when they are away and something truly needs their attention; use notify_person for awaited answers and urgent findings, never chatter. Do what the person asked without asking again, including sending, spending and deleting when that is what they asked for. The server decides whether an action needs their approval and tells you when it does; do not ask for approval yourself for something they already asked for.',
   'You can ask the person a question as a card and keep working while they answer it, and when the server says an action needs their approval it shows them a card and you wait for their answer.',
+  'When your reply leaves an obvious next step, you can offer the person up to three short replies to tap instead of typing (suggest_replies).',
   'You can create a Project when work clearly forms an ongoing logical group; choose a short specific name and an exact existing parent when needed.',
   'You can keep and reuse verified ways of working so familiar work gets done consistently without the person managing your procedures.',
   'You cannot use the person’s own computer or phone, make or take calls, or act in a service they have not connected. Say so plainly when asked, and offer the nearest thing you can do.',
@@ -175,6 +177,7 @@ export function Vivid({ id }: { id: string }) {
     libraryTools(runTool),
     connectionTools(runTool),
     askTools(runTool),
+    followTools(),
     ...remembering(runTool, runNote),
     notifyTools(runTool),
     skillTools(runTool),

@@ -14,6 +14,7 @@ import {
   asking,
   makeFullWhen,
   makeWhen,
+  offeredReplies,
   Source,
   sourceOf,
   speakerOfTurn,
@@ -33,6 +34,7 @@ import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
+import { Replies } from './Replies'
 import { stepIn, type ToolPart } from './Doing'
 
 const Metadata = Schema.Struct({
@@ -681,6 +683,8 @@ function FromVivid({
     message: message.id,
   })
   const text = textOf(message)
+  // Only the newest reply, once Vivid has finished it, offers its replies to tap.
+  const offered = latest && !working && !streaming ? offeredReplies(message) : []
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-end gap-3">
@@ -719,6 +723,7 @@ function FromVivid({
         // In the column the bubbles are read in, under the last of them, clear of the face.
         <Settled message={message} text={text} latest={latest} />
       )}
+      {offered.length > 0 && <Replies replies={offered} onSay={onContinue} />}
     </div>
   )
 }
