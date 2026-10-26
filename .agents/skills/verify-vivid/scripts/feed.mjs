@@ -82,7 +82,7 @@ export async function feedChange(state, directory, { name, accepts, change }) {
 
 /** Record a real ordinary conversation, then require its handled entry through public APIs. */
 export async function conversation(state, id, directory) {
-  await chat(state, id, 'Reply with the two words amber orchid. Do not call any tools.', directory)
+  await chat(state, id, 'Just say the two words amber orchid, nothing else.', directory)
   await settled(state, id, 1, 'Completed', directory)
   const page = await history(state, id, directory)
   NodeAssert.ok(
@@ -138,7 +138,7 @@ export async function feed(state, id, directory) {
         admit(
           state,
           stopped,
-          'Write a detailed 2000-word essay about the history of astronomy. Do not use tools.',
+          'Write me a detailed 2000-word essay about the history of astronomy.',
           directory,
           'active-run',
         ),

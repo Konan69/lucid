@@ -70,7 +70,7 @@ const recipes = {
   },
   document: {
     phrase:
-      'Use write_document to create one document titled Verification plan with body # Verification plan\nResearch, writing and review. Only write this one document.',
+      'Write me a document called Verification plan that says: # Verification plan\nResearch, writing and review.',
     rehearsal: 'write a document',
     check: 'document',
   },
