@@ -17,9 +17,9 @@ After Launch and Doctor on the unchanged commit:
 .agents/skills/verify-vivid/verify browser name flue-<id>
 ```
 
-HTTP renames the disposable Person through `SetPersonName`, reads `Me` back, then asks "what’s my name?" in a new Thread and requires the reply to say the new first name.
+HTTP renames the disposable Person to Juniper Okafor through `SetPersonName`, reads `Me` back, then asks "what’s my name?" in a new Thread and requires the reply to say the new first name.
 
-Browser opens Settings, General over an empty Thread, presses Change, types the name and presses Save. It waits for the form to close and the dialog to show the new name, reads `Me`, reloads and checks the name again, then asks "what’s my name?" through the composer and waits for a Vivid bubble that says it. Snapshots and screenshots (`settings-before`, `name-form`, `settings-renamed`, `settings-reloaded`, `thread-answer`) and `scope.json` stay under `browser/name/`.
+Browser opens Settings, General over an empty Thread, presses Change, types Marisol Achebe (a different name, so either recipe may run first on the shared account) and presses Save. It waits for the form to close and the dialog to show the new name, reads `Me`, reloads and checks the name again, then asks "what’s my name?" through the composer and waits for a Vivid bubble that says it. Snapshots and screenshots (`settings-before`, `name-form`, `settings-renamed`, `settings-reloaded`, `thread-answer`) and `scope.json` stay under `browser/name/`.
 
 ## Blocked subcases
 

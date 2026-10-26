@@ -1,6 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import { json, history, rpc, settled } from './wire.mjs'
-import { NAME, nameLimits, answered } from './nameproof.mjs'
+import { BROWSER_NAME as NAME, nameLimits, answered } from './nameproof.mjs'
 
 /** Text of the open Settings dialog, read from the page itself. */
 const dialogText = `document.querySelector('[role="dialog"]')?.innerText ?? ''`
@@ -41,7 +41,7 @@ export async function nameBrowser(state, id, directory, browser) {
   await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
   await settled(state, id, 1, 'Completed', directory)
   const page = await history(state, id, directory)
-  const reply = answered(page)
+  const reply = answered(page, NAME)
   await run([
     'wait',
     '--fn',

@@ -1,8 +1,12 @@
 import * as NodeAssert from 'node:assert/strict'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 
-/** A name nothing in the disposable account suggests, so only the prompt can supply it. */
+/**
+ * Names nothing in the disposable account suggests, so only the prompt can supply them. HTTP and
+ * browser share one account, so each recipe gives its own name and either may run first.
+ */
 export const NAME = 'Juniper Okafor'
+export const BROWSER_NAME = 'Marisol Achebe'
 
 export const nameLimits = [
   'Phone Settings draws the same machine in a native sheet; this recipe drives the web client only. The phone row needs its own device run.',
@@ -11,7 +15,7 @@ export const nameLimits = [
 ]
 
 /** The last Vivid reply's text, which must say the new first name. */
-export function answered(page) {
+export function answered(page, name = NAME) {
   const last = page.messages.findLast((message) => message.role === 'assistant')
   NodeAssert.ok(last, 'No Vivid reply')
   const reply = last.parts
@@ -21,7 +25,7 @@ export function answered(page) {
     .trim()
   NodeAssert.match(
     reply,
-    new RegExp(NAME.split(' ')[0], 'iu'),
+    new RegExp(name.split(' ')[0], 'iu'),
     'Vivid did not answer with the new name',
   )
   return reply
