@@ -401,7 +401,6 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       Ready: ({ tools: catalog }) => catalog,
       NeedsAuthorization: () => [],
       Failed: () => [],
-      NeedsAuthorization: () => [],
     })
     const visible = tools.filter((tool) => row.companyId === null || tool.effect === 'read')
     const names = visible.map((tool) => tool.name)

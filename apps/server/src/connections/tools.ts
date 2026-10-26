@@ -320,7 +320,6 @@ export const resolveTool = Effect.fn('Connections.resolveTool')(function* (
     Ready: ({ tools: catalog }) => catalog,
     NeedsAuthorization: () => [],
     Failed: () => [],
-    NeedsAuthorization: () => [],
   })
   const requested = tools.find((entry) => entry.name === request.tool)
   if (requested === undefined) return yield* new NotFound({ message: 'Tool not found' })
