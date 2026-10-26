@@ -27,7 +27,7 @@ export function followTools() {
     defineTool({
       name: Tool.suggest_replies,
       description:
-        'Offer the person one to three short replies they can tap instead of typing, shown under your reply. Call it whenever your reply ends waiting on a short answer from them, such as whether to send something, which of two, or a change they might want: "send it", "make it shorter", "not yet". Write each in their own voice, as they would type it, a few words long, the most likely first. Call it at most once, as the last thing in your reply. It is not a question card (that is ask_person) and never repeats what you just said.',
+        'Offer the person one to three short replies they can tap instead of typing, shown under your reply: what they would most likely say next, such as the answer to your question, the next step on your draft ("send it"), or the follow-up they would want after an answer. Write each in their own voice, as they would type it, a few words long, the most likely first. Call it at most once, as the last thing in your reply. It is not a question card (that is ask_person) and never repeats what you just said.',
       input: v.object({
         replies: v.pipe(
           v.tupleWithRest([reply], reply),
