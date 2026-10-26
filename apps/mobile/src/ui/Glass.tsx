@@ -29,6 +29,11 @@ const RADIUS = 32
  * Ported from T3 Code mobile `src/components/GlassBackdrop.tsx` (`BlurView` at intensity 80 on
  * iOS only). Its `themeColorWithAlpha(color, 1)` becomes `opaque`: Android paints the theme's
  * solid `screen` instead of rewriting an rgba string at run time.
+ *
+ * Over the blur it lays `glass-surface` (74%), not the reference's `glass-fallback` (94%). On a
+ * build without the system's liquid glass this fill is the glass the Person sees, and at 94% the
+ * composer read as a solid slab with nothing under it (the owner, 26 October 2026: "liquid glass
+ * opacity over the composer").
  */
 export function GlassFill({ opaque }: { opaque?: string }) {
   const { colors: c, dark } = useTheme()
@@ -47,7 +52,7 @@ export function GlassFill({ opaque }: { opaque?: string }) {
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
-          { backgroundColor: blurs ? c['glass-fallback'] : (opaque ?? c.screen) },
+          { backgroundColor: blurs ? c['glass-surface'] : (opaque ?? c.screen) },
         ]}
       />
     </>

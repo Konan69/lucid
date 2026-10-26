@@ -65,6 +65,11 @@ interface ToolCallDescription {
   readonly state: ToolState
   readonly label: string
   readonly detail?: string
+  /**
+   * The Integration account the step works through, when it names one: what a surface shows
+   * beside the step's words while Vivid is on it (the account's logo in the working bubble).
+   */
+  readonly account: Option.Option<string>
 }
 
 /** How one kind of step reads in each state, and the detail that sets one call apart. */
@@ -522,7 +527,11 @@ export function describeToolCall(
     onNone: () => own,
     onSome: (words) => (own.includes(words) || label === words ? own : [words, ...own]),
   })
-  return details.length === 0 ? { state, label } : { state, label, detail: details.join(' · ') }
+  // Only a step that is about an account names it; a search that merely mentions one does not.
+  const account = known.named === undefined ? Option.none<string>() : said(read.account)
+  return details.length === 0
+    ? { state, label, account }
+    : { state, label, detail: details.join(' · '), account }
 }
 
 /**

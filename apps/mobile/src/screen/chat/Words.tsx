@@ -1,13 +1,15 @@
 import type { DisplaySource } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { stretches } from '@vivid/state'
-import { memo, useState } from 'react'
+import { memo, useState, type ReactNode } from 'react'
+import { View } from 'react-native'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useLiveData } from '../../data/live'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { useRevealed } from '../../ui/reveal'
 import { Display } from '../../parts/display'
-import { Label } from '../../ui/ui'
+import { useTheme } from '../../theme'
+import { EDGE, Label, radius } from '../../ui/ui'
 
 /**
  * Vivid's words as formatted text. A citation of something in the Library is a link the Thread
@@ -108,7 +110,9 @@ export function Reply({
     <>
       {stretches(drawn).map((stretch) =>
         stretch.kind === 'words' ? (
-          <Finished key={stretch.from} text={stretch.text} fresh={fresh} />
+          <Bubble key={stretch.from}>
+            <Finished text={stretch.text} fresh={fresh} />
+          </Bubble>
         ) : (
           <Display
             source={source}
@@ -121,5 +125,33 @@ export function Reply({
         ),
       )}
     </>
+  )
+}
+
+/**
+ * One of Vivid's messages: its words on the Thread's quiet surface, so where one message ends and
+ * the next begins can be seen (the owner, 26 October 2026: "we need message cards to know it's a
+ * new message"). The Person's own bubble is the warm `user-bubble` (`Said.tsx`); Vivid's is the
+ * `subtle` surface with a hairline, the same pair the Integration card sits in. A display is not
+ * in one: it is a surface of its own.
+ */
+function Bubble({ children }: { children: ReactNode }) {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+        paddingHorizontal: 14,
+        paddingVertical: 9,
+        borderRadius: radius.card,
+        borderCurve: 'continuous',
+        borderWidth: EDGE,
+        borderColor: c['border-subtle'],
+        backgroundColor: c.subtle,
+      }}
+    >
+      {children}
+    </View>
   )
 }

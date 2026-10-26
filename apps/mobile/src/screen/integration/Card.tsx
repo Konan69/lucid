@@ -10,15 +10,14 @@ import {
 } from '@vivid/state'
 import { Option } from 'effect'
 import { View } from 'react-native'
-import { Check, ExternalLink, KeyRound, Link2, type LucideIcon } from 'lucide-react-native'
 import { commit } from '../../data/haptics'
 import { cardSaid, type Authorization } from '../../data/integration'
 import { useLiveData, useLiveValue } from '../../data/live'
 import { useTheme } from '../../theme'
-import { ServiceMark } from '../../ui/Mark'
-import { Button, EDGE, Label, Notice, radius } from '../../ui/ui'
+import { EDGE, Label, Notice, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { useFlow } from './flow'
+import { Logo } from './Logo'
 
 /**
  * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
@@ -114,92 +113,198 @@ export function IntegrationCard({
     })
   }
 
+  // The account's own logo: the one the live list draws for it, else the service's bundled mark.
+  const mark = Option.flatMap(
+    Option.fromUndefinedOr(list.find((each) => each.service === request.service)),
+    (each) => Option.fromNullishOr(each.mark),
+  )
+  const said = cardSaid(flow.standingOfCard(id), {
+    starting: wayIn(authorization, awaited).starting,
+    serviceName: request.serviceName,
+  })
+  const row = rowOf({
+    ready,
+    current,
+    way: wayIn(authorization, awaited),
+    said,
+    busy: flow.busy,
+    onPress: press,
+    onCarryOn: () => {
+      // It says something in the Thread, and sending is felt.
+      commit()
+      // The live list can say the account is ready before the attempt that connected it has
+      // said so. That attempt must not then say "carry on" a second time.
+      flow.carriedOn(id)
+      // One more account is named by the account that was added, so Vivid does not have to
+      // guess which of several is new.
+      onContinue(words.carryOn(answering(list, request, awaited)))
+    },
+    onGiveUp: (message) => {
+      commit()
+      // A carry-on made by hand: nothing is owed for it by an attempt.
+      flow.carriedOn(id)
+      onContinue(message)
+    },
+  })
   return (
     <View
       style={{
         padding: 12,
-        gap: 12,
         borderRadius: radius.card,
+        borderCurve: 'continuous',
         borderWidth: EDGE,
-        borderColor: c.border,
-        backgroundColor: c.subtle,
+        borderColor: c['border-subtle'],
+        backgroundColor: c.screen,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <ServiceMark service={request.service} size={32} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+        <Logo service={request.service} mark={mark} size={36} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Label numberOfLines={1} size="footnote">
+          <Label numberOfLines={1} size="footnote" style={{ fontWeight: '600' }}>
             {words.title}
           </Label>
-          <Label size="label" tone="ink-2">
-            {request.reason}
+          <Label
+            accessibilityLiveRegion="polite"
+            numberOfLines={1}
+            size="label"
+            tone={row.tone}
+          >
+            {row.line}
           </Label>
         </View>
+        {Option.isSome(row.action) && <CardButton {...row.action.value} />}
       </View>
-      {ready && current && (
-        // Reached when the account was connected somewhere else (the Integrations page, another
-        // device), where no press here was waiting for it; a press here carries on by itself.
-        <Button
-          kind="primary"
-          label="Carry on"
-          onPress={() => {
-            // It says something in the Thread, and sending is felt.
-            commit()
-            // The live list can say the account is ready before the attempt that connected it
-            // has said so. That attempt must not then say "carry on" a second time.
-            flow.carriedOn(id)
-            // One more account is named by the account that was added, so Vivid does not have to
-            // guess which of several is new.
-            onContinue(words.carryOn(answering(list, request, awaited)))
-          }}
-        />
-      )}
-      {ready && !current && <Settled />}
-      {!ready && (
-        <Press
-          way={wayIn(authorization, awaited)}
-          serviceName={request.serviceName}
-          said={flow.standingOfCard(id)}
-          busy={flow.busy}
-          current={current}
-          onPress={press}
-          onGiveUp={(message) => {
-            // It says something in the Thread, and sending is felt.
-            commit()
-            // A carry-on made by hand: nothing is owed for it by an attempt.
-            flow.carriedOn(id)
-            onContinue(message)
-          }}
-        />
+      {/* What did not happen is said as every refusal is, under the words it belongs to. */}
+      {Option.isSome(said.line) && said.line.value.urgent && (
+        <View style={{ marginTop: 10, marginLeft: 47 }}>
+          <Notice message={said.line.value.words} />
+        </View>
       )}
     </View>
   )
 }
 
+/** The one thing a card's row offers: what its button says, how loud it is, and what it does. */
+interface Action {
+  readonly label: string
+  readonly kind: 'primary' | 'quiet'
+  readonly disabled: boolean
+  readonly onPress: () => void
+}
+
+/** A card's one row: the line under the name, its ink, and the button at its end, if any. */
+interface Row {
+  readonly line: string
+  readonly tone: 'ink-2' | 'status-success'
+  readonly action: Option.Option<Action>
+}
+
 /**
- * The settled fact, on a card the Thread has moved on from: the account is connected and there is
- * nothing left to press. It was a primary "Carry on" on every answered card, however old, so a
- * card Vivid had already carried on from still asked to be pressed, and pressing it said "carry
- * on" a second time. The web's card says the same thing the same way (`ConnectionAction` in
- * `apps/web/src/screen/thread/Cards.tsx`).
+ * What the card's row says and offers, from where the account and this card's attempt stand. One
+ * line under the name says the state for the Person; it is never the text Vivid was given (the
+ * owner, 26 October 2026: "why is it telling the user to call find tools?"). A settled card has
+ * no button: "Connected" says it all, so it carries no dot or check besides.
  */
-function Settled() {
+const rowOf = (card: {
+  ready: boolean
+  current: boolean
+  way: Way
+  said: ReturnType<typeof cardSaid>
+  busy: boolean
+  onPress: () => void
+  onCarryOn: () => void
+  onGiveUp: (message: string) => void
+}): Row => {
+  if (card.ready)
+    return {
+      line: 'Connected',
+      tone: 'status-success',
+      // Reached when the account was connected somewhere else (the Integrations page, another
+      // device), where no press here was waiting for it; a press here carries on by itself.
+      action: card.current
+        ? Option.some({ label: 'Carry on', kind: 'primary', disabled: false, onPress: card.onCarryOn })
+        : Option.none(),
+    }
+  const { button, line, carryOn } = card.said
+  // An attempt pressing again cannot mend: the button tells Vivid what happened instead, and
+  // only while the Thread waits on this card, so the words are not sent twice.
+  if (Option.isSome(carryOn))
+    return {
+      line: card.way.line,
+      tone: 'ink-2',
+      action: card.current
+        ? Option.some({
+            label: Option.getOrElse(button, () => 'Carry on'),
+            kind: 'primary',
+            disabled: false,
+            onPress: () => card.onGiveUp(carryOn.value),
+          })
+        : Option.none(),
+    }
+  return {
+    line: Option.match(line, {
+      onNone: () => card.way.line,
+      // An urgent line is said under the row as a notice; the row keeps the card's own line.
+      onSome: (said) => (said.urgent ? card.way.line : said.words),
+    }),
+    tone: 'ink-2',
+    action: Option.some({
+      label: Option.getOrElse(button, () => card.way.label),
+      kind: card.way.kind,
+      // One press at a time, anywhere: nothing is begun while the server is still being asked,
+      // about this card's account or another's. The machine refuses it as well.
+      disabled: card.busy,
+      onPress: card.onPress,
+    }),
+  }
+}
+
+/**
+ * The card's button: a 32-point pill at the end of its row, the size the row can hold beside a
+ * 36-point logo, with its hit area made up to 44 by slop. The loud one is the primary fill; the
+ * quiet one sits on the card's own surface with a hairline.
+ */
+function CardButton({ label, kind, disabled, onPress }: Action) {
   const { colors: c } = useTheme()
+  const primary = kind === 'primary'
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-      <Check pointerEvents="none" size={16} strokeWidth={2} color={c['status-success']} />
-      <Label size="label" tone="ink-2">
-        Connected
+    <Press
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        height: 32,
+        paddingHorizontal: 14,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.5 : 1,
+        borderWidth: primary ? 0 : EDGE,
+        borderColor: c['border-subtle'],
+        backgroundColor: primary
+          ? pressed
+            ? c['primary-text']
+            : c.primary
+          : pressed
+            ? c['wash-pressed']
+            : c['subtle-strong'],
+      })}
+    >
+      <Label size="label" tone={primary ? 'ink-on-accent' : 'ink'} style={{ fontWeight: '600' }}>
+        {label}
       </Label>
-    </View>
+    </Press>
   )
 }
 
 /** The card's button as it stands before anything is pressed, and its word for its first wait. */
 interface Way {
-  readonly kind: 'primary' | 'plain'
-  readonly icon: LucideIcon
+  readonly kind: 'primary' | 'quiet'
   readonly label: string
+  /** The line under the name while nothing has been pressed: what finishing it takes. */
+  readonly line: string
   /** What the button says while the server is first asked. */
   readonly starting: string
 }
@@ -212,89 +317,25 @@ interface Way {
 const wayIn = (authorization: Option.Option<Authorization>, awaited: Awaited): Way =>
   Option.match(authorization, {
     onNone: (): Way => ({
-      kind: 'plain',
-      icon: Link2,
+      kind: 'primary',
       label: Awaited.$is('Another')(awaited) ? 'Add account' : 'Connect',
+      line: Awaited.$is('Another')(awaited) ? 'Add another account' : 'Not connected yet',
       starting: 'Connecting…',
     }),
     onSome: (begun) =>
       ConnectionAuthorization.match(begun, {
         OpenSignIn: (): Way => ({
           kind: 'primary',
-          icon: ExternalLink,
           label: 'Sign in',
+          line: 'Sign in to connect',
           starting: 'Opening…',
         }),
         EnterKey: (): Way => ({
           kind: 'primary',
-          icon: KeyRound,
-          label: 'Enter key',
+          label: 'Add key',
+          line: 'Needs an API key to connect',
           starting: 'Opening…',
         }),
       }),
   })
 
-/**
- * The one thing to press on a card that is not ready, and what its attempt has to say. It is the
- * same button and the same press at every point of an attempt; what changes is what it says
- * (`cardSaid`, from where the machine stands). It holds nothing itself.
- *
- * The one exception is an attempt pressing again cannot mend (the service did not take the key):
- * the button is then "Carry on", which tells Vivid what happened. It is offered only while the
- * Thread is waiting on this card, so the same words are not sent a second time.
- */
-function Press({
-  way,
-  serviceName,
-  said,
-  busy,
-  current,
-  onPress,
-  onGiveUp,
-}: {
-  way: Way
-  /** The service's name, for the sentence about a sign-in that was not finished. */
-  serviceName: string
-  /** Where this card's own attempt stands. */
-  said: connecting.Standing
-  /** Whether nothing can be pressed for now: the server is being asked, here or anywhere. */
-  busy: boolean
-  /** Whether the Thread is waiting on this card. */
-  current: boolean
-  onPress: () => void
-  /** Carries the Thread on with what happened, when the attempt cannot be made again here. */
-  onGiveUp: (message: string) => void
-}) {
-  const { button, line, carryOn } = cardSaid(said, { starting: way.starting, serviceName })
-  return (
-    <View style={{ gap: 8 }}>
-      {Option.isNone(carryOn) && (
-        <Button
-          kind={way.kind}
-          icon={way.icon}
-          label={Option.getOrElse(button, () => way.label)}
-          // One press at a time, anywhere: nothing is begun while the server is still being
-          // asked, about this card's account or another's. The machine refuses it as well.
-          disabled={busy}
-          onPress={onPress}
-        />
-      )}
-      {/* Not a press on the machine, so it does not wait for one; and never the card's own way
-          in, which would pick up an account the server refuses. */}
-      {Option.isSome(carryOn) && current && (
-        <Button
-          kind="primary"
-          label={Option.getOrElse(button, () => 'Carry on')}
-          onPress={() => onGiveUp(carryOn.value)}
-        />
-      )}
-      {/* What did not happen is said as every refusal on a card is; the rest is a quiet line. */}
-      {Option.isSome(line) && line.value.urgent && <Notice message={line.value.words} />}
-      {Option.isSome(line) && !line.value.urgent && (
-        <Label accessibilityLiveRegion="polite" size="label" tone="ink-2">
-          {line.value.words}
-        </Label>
-      )}
-    </View>
-  )
-}

@@ -17,7 +17,6 @@ import {
   Source,
   sourceOf,
   speakerOfTurn,
-  summarizeSteps,
   type Awaited,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
@@ -145,6 +144,39 @@ export const lastWordsOf = (
 export const toolsOf = (message: FlueConversationMessage): ReadonlyArray<ToolPart> =>
   message.parts.flatMap((part) => (part.type === 'dynamic-tool' ? [part] : []))
 
+/**
+ * A reply as the Person reads it: what Vivid said and what it showed, in the order it happened.
+ * Each stretch of words between two pieces of work is a message of its own (Duet and Grok Bot
+ * both split a turn this way), and the work between them is drawn only where it left something
+ * for the Person, a card (`Cards`). Steps themselves are never drawn in the Thread; the working
+ * bubble says the one Vivid is on (`ui/Thinking.tsx`).
+ */
+export type Segment = Data.TaggedEnum<{
+  Words: { readonly text: string }
+  Work: { readonly tools: ReadonlyArray<ToolPart> }
+}>
+export const Segment = Data.taggedEnum<Segment>()
+
+/**
+ * Splits a reply into its segments. Text parts that follow one another are one stretch of words,
+ * joined as `textOf` joins them; tool calls that follow one another are one piece of work. Empty
+ * words make no segment, so a reply that has only begun has none.
+ */
+export const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segment> =>
+  message.parts.reduce<ReadonlyArray<Segment>>((segments, part) => {
+    const last = segments.at(-1)
+    if (part.type === 'text') {
+      if (part.text.trim().length === 0) return segments
+      return last !== undefined && Segment.$is('Words')(last)
+        ? [...segments.slice(0, -1), Segment.Words({ text: `${last.text}\n\n${part.text}` })]
+        : [...segments, Segment.Words({ text: part.text })]
+    }
+    if (part.type !== 'dynamic-tool') return segments
+    return last !== undefined && Segment.$is('Work')(last)
+      ? [...segments.slice(0, -1), Segment.Work({ tools: [...last.tools, part] })]
+      : [...segments, Segment.Work({ tools: [part] })]
+  }, [])
+
 /** Whether Vivid is still writing this message. */
 export const isStreaming = (message: FlueConversationMessage): boolean =>
   message.parts.some((part) => 'state' in part && part.state === 'streaming')
@@ -154,20 +186,6 @@ const Metadata = Schema.Struct({
   startedAt: Schema.optionalKey(Schema.Finite),
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
-
-/** When Vivid began a message, when the stream stamped it. */
-export const startOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
-    Option.fromUndefinedOr(metadata.startedAt),
-  )
-
-/** How long a finished message took, when the stream stamped both ends of it. */
-export const tookOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
-    metadata.startedAt !== undefined && metadata.finishedAt !== undefined
-      ? Option.some(metadata.finishedAt - metadata.startedAt)
-      : Option.none(),
-  )
 
 /** When a message was finished, when Vivid said so; an unstamped message simply has no time. */
 export const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
@@ -187,6 +205,8 @@ export interface Step {
   readonly standing: 'running' | 'done' | 'failed'
   /** The web's ON_COMPUTER tools have something to watch on the Computer screen. */
   readonly onComputer: boolean
+  /** The Integration account the step works through, when it names one (`describeToolCall`). */
+  readonly account: Option.Option<string>
 }
 
 const STANDING = {
@@ -234,6 +254,7 @@ export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
         // A tool that answered that it could not do it failed, even though the call returned.
         standing: described.state,
         onComputer: ON_COMPUTER.has(tool.toolName),
+        account: described.account,
       },
     ]
   })
@@ -248,14 +269,27 @@ export const currentStepOf = (steps: ReadonlyArray<Step>, working: boolean): Opt
     : Option.none()
 
 /**
- * The one line the steps collapse to, in the words every surface uses (`summarizeSteps` in
- * `@vivid/state`): what Vivid is doing right now while it works, what it did once it has.
+ * What Vivid is on while it works, for the working bubble (`ui/Thinking.tsx`): the step it is
+ * taking in the newest reply, in that step's own words ("Using Grain"), and the Integration
+ * account it works through, whose logo stands beside the words. None while it is on no step.
  */
-export const stepsSummary = (steps: ReadonlyArray<Step>, working: boolean): string =>
-  summarizeSteps(
-    steps,
-    Option.map(currentStepOf(steps, working), (step) => step.id),
-  )
+export interface Doing {
+  readonly words: string
+  readonly account: Option.Option<string>
+}
+
+/** The step Vivid is on in the newest reply, while it is working (`currentStepOf`). */
+export const doingOf = (
+  messages: ReadonlyArray<FlueConversationMessage>,
+  working: boolean,
+): Option.Option<Doing> => {
+  const newest = messages.at(-1)
+  if (newest === undefined || newest.role !== 'assistant') return Option.none()
+  return Option.map(currentStepOf(stepsOf(toolsOf(newest)), working), (step) => ({
+    words: step.label,
+    account: step.account,
+  }))
+}
 
 // ── Cards ──────────────────────────────────────────────────────────────────
 
