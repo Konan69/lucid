@@ -60,7 +60,7 @@ export function TextingChannels({
     <Section
       // Not "Text Vivid" again: the pane is already titled that, one line above.
       title="Messaging apps"
-      detail="Connect your own number, then text Vivid from your phone the way you text anyone."
+      detail="Connect an app, then message Vivid there the way you message anyone."
     >
       {links.map((link) => (
         <ChannelControl key={link.channel} link={link} acts={acts} />
