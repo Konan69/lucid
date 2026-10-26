@@ -103,7 +103,7 @@ export function Texting() {
         contentContainerStyle={[styles.page, styles.column]}
       >
         <Label size="label" tone="ink-2">
-          Connect your own number, then text Vivid from your phone the way you text anyone.
+          Connect an app, then message Vivid there the way you message anyone.
         </Label>
         <Live state={channels} loading={<Skeleton rows={3} />}>
           {(value) => <TextingChannels links={value.channels} acts={acts} />}
