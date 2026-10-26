@@ -282,14 +282,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
   const discordAccess = {
-    ...Option.match(environment.discordPeople, {
-      onNone: () => ({}),
-      onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
-    }),
-    ...Option.match(environment.discordBotToken, {
-      onNone: () => ({}),
-      onSome: (value) => ({ VIVID_DISCORD_BOT_TOKEN: value }),
-    }),
+    ...whenSet('VIVID_DISCORD_PEOPLE', environment.discordPeople),
+    ...whenSet('VIVID_DISCORD_BOT_TOKEN', environment.discordBotToken),
   }
 
   /**

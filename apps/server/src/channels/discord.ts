@@ -69,6 +69,109 @@ const disconnected = () => new ChannelDisconnected({ channel: 'Discord' })
 const recipientMissing = () => new ChannelRecipientMissing({ channel: 'Discord' })
 const textLimit = ChannelTextLimit.make(2000)
 
+/** Each inbound subscription owns its gateway listener and both scoped forwarding fibers. */
+const discordStream = (
+  discord: VividDiscord,
+  incoming: Queue.Queue<ChannelInbound | 'Connected'>,
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<ChannelInbound, ChannelDisconnected>()
+      // The SDK requires a bounded listener; discord.js resumes the socket within one span.
+      // A short span would end quiet periods through the worker's growing backoff and drop
+      // messages sent in the gap, so one span lasts a day.
+      yield* Effect.tryPromise({
+        try: (signal) => {
+          let completion = Promise.resolve<unknown>(undefined)
+          return discord
+            .startGatewayListener(
+              {
+                waitUntil: (task) => {
+                  completion = task
+                },
+              },
+              86_400_000,
+              signal,
+            )
+            .then(() => completion)
+        },
+        catch: disconnected,
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => Queue.failCauseUnsafe(events, Cause.fail(disconnected()))),
+        ),
+        Effect.forkScoped,
+      )
+      yield* Stream.fromQueue(incoming).pipe(
+        Stream.runForEach((message) =>
+          message === 'Connected'
+            ? Effect.logInfo('Discord channel connected')
+            : Queue.offer(events, message),
+        ),
+        Effect.forkScoped,
+      )
+      return Stream.fromQueue(events)
+    }),
+  )
+
+/** Replies preserve the original place, mention suppression, chunking and failure classification. */
+const discordSend = (
+  discord: VividDiscord,
+  request: HttpClient.HttpClient['execute'],
+  base: string,
+) => {
+  const post = (
+    path: string,
+    body: {
+      readonly content: string
+      readonly allowed_mentions: {
+        readonly parse: ReadonlyArray<never>
+        readonly replied_user: false
+      }
+      readonly message_reference?: {
+        readonly message_id: string
+        readonly fail_if_not_exists: false
+      }
+    },
+  ) =>
+    HttpClientRequest.bodyJson(HttpClientRequest.post(`${base}${path}`), body).pipe(
+      Effect.flatMap(request),
+    )
+  return Effect.fn('Channels.discordSend')(function* (
+    input: Parameters<ChannelProvider['Service']['send']>[0],
+  ) {
+    if (input.channel !== 'Discord')
+      return yield* new ChannelUnavailable({ channel: input.channel })
+    let conversation = input.place === undefined ? undefined : input.place.conversation
+    if (conversation === undefined) {
+      const thread = yield* Effect.tryPromise({
+        try: () => discord.openDM(input.address.slice('discord:'.length)),
+        catch: recipientMissing,
+      })
+      conversation = discord.decodeThreadId(thread).channelId
+    }
+    for (const content of splitChannelText(input.text, textLimit)) {
+      const body = {
+        content,
+        allowed_mentions: { parse: [], replied_user: false },
+      } satisfies Parameters<typeof post>[1]
+      const response = yield* post(
+        `/channels/${encodeURIComponent(conversation)}/messages`,
+        input.place === undefined
+          ? body
+          : {
+              ...body,
+              message_reference: { message_id: input.place.message, fail_if_not_exists: false },
+            },
+      ).pipe(Effect.mapError(() => new ChannelSendUnknown({ channel: 'Discord' })))
+      if (response.status >= 400 && response.status < 500) return yield* recipientMissing()
+      if (response.status < 200 || response.status >= 300)
+        return yield* new ChannelSendUnknown({ channel: 'Discord' })
+    }
+    return yield* Effect.void
+  })
+}
+
 const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted.Redacted) {
   const client = yield* HttpClient.HttpClient
   const request = Effect.fn('Channels.discordRequest')(
@@ -122,99 +225,14 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
     Effect.tryPromise({ try: () => bot.initialize(), catch: disconnected }),
     () => Effect.promise(() => bot.shutdown()),
   )
-  const post = (
-    path: string,
-    body: {
-      readonly content: string
-      readonly allowed_mentions: {
-        readonly parse: ReadonlyArray<never>
-        readonly replied_user: false
-      }
-      readonly message_reference?: {
-        readonly message_id: string
-        readonly fail_if_not_exists: false
-      }
-    },
-  ) =>
-    HttpClientRequest.bodyJson(HttpClientRequest.post(`${base}${path}`), body).pipe(
-      Effect.flatMap(request),
-    )
   return ChannelProvider.of({
     channels: ['Discord'],
     codeAddress: (channel) => (channel === 'Discord' ? Option.some(address) : Option.none()),
     enrol: (channel) => Effect.fail(new ChannelUnavailable({ channel })),
     unenrol: (channel) =>
       channel === 'Discord' ? Effect.void : Effect.fail(new ChannelUnavailable({ channel })),
-    inbound: Stream.unwrap(
-      Effect.gen(function* () {
-        const events = yield* Queue.unbounded<ChannelInbound, ChannelDisconnected>()
-        // The SDK requires a bounded listener; discord.js resumes the socket within one span.
-        // A short span would end quiet periods through the worker's growing backoff and drop
-        // messages sent in the gap, so one span lasts a day.
-        yield* Effect.tryPromise({
-          try: (signal) => {
-            let completion = Promise.resolve<unknown>(undefined)
-            return discord
-              .startGatewayListener(
-                {
-                  waitUntil: (task) => {
-                    completion = task
-                  },
-                },
-                86_400_000,
-                signal,
-              )
-              .then(() => completion)
-          },
-          catch: disconnected,
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => Queue.failCauseUnsafe(events, Cause.fail(disconnected()))),
-          ),
-          Effect.forkScoped,
-        )
-        yield* Stream.fromQueue(incoming).pipe(
-          Stream.runForEach((message) =>
-            message === 'Connected'
-              ? Effect.logInfo('Discord channel connected')
-              : Queue.offer(events, message),
-          ),
-          Effect.forkScoped,
-        )
-        return Stream.fromQueue(events)
-      }),
-    ),
-    send: Effect.fn('Channels.discordSend')(function* (input) {
-      if (input.channel !== 'Discord')
-        return yield* new ChannelUnavailable({ channel: input.channel })
-      let conversation = input.place === undefined ? undefined : input.place.conversation
-      if (conversation === undefined) {
-        const thread = yield* Effect.tryPromise({
-          try: () => discord.openDM(input.address.slice('discord:'.length)),
-          catch: recipientMissing,
-        })
-        conversation = discord.decodeThreadId(thread).channelId
-      }
-      for (const content of splitChannelText(input.text, textLimit)) {
-        const body = {
-          content,
-          allowed_mentions: { parse: [], replied_user: false },
-        } satisfies Parameters<typeof post>[1]
-        const response = yield* post(
-          `/channels/${encodeURIComponent(conversation)}/messages`,
-          input.place === undefined
-            ? body
-            : {
-                ...body,
-                message_reference: { message_id: input.place.message, fail_if_not_exists: false },
-              },
-        ).pipe(Effect.mapError(() => new ChannelSendUnknown({ channel: 'Discord' })))
-        if (response.status >= 400 && response.status < 500) return yield* recipientMissing()
-        if (response.status < 200 || response.status >= 300)
-          return yield* new ChannelSendUnknown({ channel: 'Discord' })
-      }
-      return yield* Effect.void
-    }),
+    inbound: discordStream(discord, incoming),
+    send: discordSend(discord, request, base),
   })
 })
 

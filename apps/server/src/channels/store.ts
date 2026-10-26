@@ -77,6 +77,38 @@ interface LinkAuthority extends ReturnType<typeof linkQueries> {
   readonly announce: (actor: Actor) => Effect.Effect<void>
 }
 
+/** Reissuing a code preserves an existing link and replaces only an unredeemed code. */
+const awaitingLink = ({
+  database,
+  announce,
+  byPerson,
+}: Pick<LinkAuthority, 'database' | 'announce' | 'byPerson'>) =>
+  Effect.fn('Channels.awaiting')(function* (
+    actor: Actor,
+    channel: Channel,
+    textTo: StoredLink['textTo'],
+  ) {
+    const prior = yield* byPerson(actor.person.id, channel)
+    if (Option.isSome(prior))
+      return ChannelLink.make({ channel, standing: standingOf(prior.value) })
+    const code = String(NodeCrypto.randomInt(100000, 1000000))
+    const expiresAt = (yield* Clock.currentTimeMillis) + 10 * 60 * 1000
+    yield* database.run(
+      database
+        .insert(channelCodes)
+        .values({ personId: actor.person.id, channel, code, expiresAt })
+        .onConflictDoUpdate({
+          target: [channelCodes.personId, channelCodes.channel],
+          set: { code, expiresAt },
+        }),
+    )
+    yield* announce(actor)
+    return ChannelLink.make({
+      channel,
+      standing: ChannelStanding.cases.Awaiting.make({ textTo, code, expiresAt }),
+    })
+  })
+
 /** One serialized connect operation owns enrolment and durable routing replacement. */
 const connectLink = ({
   database,
@@ -87,6 +119,7 @@ const connectLink = ({
   byPerson,
   byAddress,
 }: LinkAuthority) => {
+  const awaitConnect = awaitingLink({ database, announce, byPerson })
   /** Enrol before publishing Connected; repeat requests reuse the existing provider receipt. */
   return Effect.fn('Channels.connect')(
     function* (actor: Actor, channel: Channel, value?: string) {
@@ -98,25 +131,7 @@ const connectLink = ({
         return yield* new ChannelUnavailable({ channel })
       const textTo = provider.codeAddress(channel)
       if (Option.isSome(textTo)) {
-        const prior = yield* byPerson(actor.person.id, channel)
-        if (Option.isSome(prior))
-          return ChannelLink.make({ channel, standing: standingOf(prior.value) })
-        const code = String(NodeCrypto.randomInt(100000, 1000000))
-        const expiresAt = (yield* Clock.currentTimeMillis) + 10 * 60 * 1000
-        yield* database.run(
-          database
-            .insert(channelCodes)
-            .values({ personId: actor.person.id, channel, code, expiresAt })
-            .onConflictDoUpdate({
-              target: [channelCodes.personId, channelCodes.channel],
-              set: { code, expiresAt },
-            }),
-        )
-        yield* announce(actor)
-        return ChannelLink.make({
-          channel,
-          standing: ChannelStanding.cases.Awaiting.make({ textTo: textTo.value, code, expiresAt }),
-        })
+        return yield* awaitConnect(actor, channel, textTo.value)
       }
       if (value === undefined) return yield* new ChannelAddressInvalid({ channel })
       const address = yield* normalizeChannelPhone({ channel, value }).pipe(
@@ -166,6 +181,66 @@ const connectLink = ({
       // Publish the durable replacement first: a failed upsert must leave the old number enrolled.
       if (Option.isSome(prior)) yield* provider.unenrol(channel, prior.value.enrolmentId)
       return ChannelLink.make({ channel, standing: standingOf(link) })
+    },
+    (effect) => gate.withPermit(effect),
+  )
+}
+
+/** Consuming the code and publishing ownership are atomic. A conflicting address rolls back the consumed code. */
+const redeemLink = ({
+  database,
+  provider,
+  gate,
+  announce,
+}: Pick<LinkAuthority, 'database' | 'provider' | 'gate' | 'announce'>) => {
+  return Effect.fn('Channels.redeem')(
+    function* (channel: Channel, sender: StoredLink['address'], text: string) {
+      const textTo = provider.codeAddress(channel)
+      if (Option.isNone(textTo)) return false
+      const now = yield* Clock.currentTimeMillis
+      const personId = yield* database
+        .transaction((tx) =>
+          Effect.gen(function* () {
+            const consumed = yield* tx
+              .delete(channelCodes)
+              .where(
+                and(
+                  eq(channelCodes.channel, channel),
+                  eq(channelCodes.code, text.trim()),
+                  gt(channelCodes.expiresAt, now),
+                ),
+              )
+              .returning()
+            const code = consumed[0]
+            if (code === undefined) return Option.none<PersonId>()
+            const link = {
+              address: sender,
+              textTo: textTo.value,
+              enrolmentId: ChannelEnrolmentId.make(sender.slice('discord:'.length)),
+              since: now,
+              threadId: null,
+            }
+            yield* tx
+              .insert(channelLinks)
+              .values({ personId: code.personId, channel, ...link })
+              .onConflictDoUpdate({
+                target: [channelLinks.personId, channelLinks.channel],
+                set: link,
+              })
+            return Option.some(code.personId)
+          }),
+        )
+        .pipe(
+          Effect.catchTag('DatabaseConstraintViolation', () =>
+            Effect.fail(new ChannelAddressTaken({ channel })),
+          ),
+        )
+      if (Option.isNone(personId)) return false
+      const actor = yield* channelActor(personId.value).pipe(
+        Effect.provideService(Database, database),
+      )
+      yield* announce(actor)
+      return true
     },
     (effect) => gate.withPermit(effect),
   )
@@ -268,58 +343,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* (
     (effect) => gate.withPermit(effect),
   )
 
-  /** Consuming the code and publishing ownership are atomic. A conflicting address rolls back the consumed code. */
-  const redeem = Effect.fn('Channels.redeem')(
-    function* (channel: Channel, sender: StoredLink['address'], text: string) {
-      const textTo = provider.codeAddress(channel)
-      if (Option.isNone(textTo)) return false
-      const now = yield* Clock.currentTimeMillis
-      const personId = yield* database
-        .transaction((tx) =>
-          Effect.gen(function* () {
-            const consumed = yield* tx
-              .delete(channelCodes)
-              .where(
-                and(
-                  eq(channelCodes.channel, channel),
-                  eq(channelCodes.code, text.trim()),
-                  gt(channelCodes.expiresAt, now),
-                ),
-              )
-              .returning()
-            const code = consumed[0]
-            if (code === undefined) return Option.none<PersonId>()
-            const link = {
-              address: sender,
-              textTo: textTo.value,
-              enrolmentId: ChannelEnrolmentId.make(sender.slice('discord:'.length)),
-              since: now,
-              threadId: null,
-            }
-            yield* tx
-              .insert(channelLinks)
-              .values({ personId: code.personId, channel, ...link })
-              .onConflictDoUpdate({
-                target: [channelLinks.personId, channelLinks.channel],
-                set: link,
-              })
-            return Option.some(code.personId)
-          }),
-        )
-        .pipe(
-          Effect.catchTag('DatabaseConstraintViolation', () =>
-            Effect.fail(new ChannelAddressTaken({ channel })),
-          ),
-        )
-      if (Option.isNone(personId)) return false
-      const actor = yield* channelActor(personId.value).pipe(
-        Effect.provideService(Database, database),
-      )
-      yield* announce(actor)
-      return true
-    },
-    (effect) => gate.withPermit(effect),
-  )
+  const redeem = redeemLink({ database, provider, gate, announce })
 
   /** Remember only a still-current connected link, so a disconnect cannot attach a stale Thread. */
   const attach = Effect.fn('Channels.attachThread')(function* (

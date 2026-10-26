@@ -1,12 +1,25 @@
 import { describe, expect, it } from '@effect/vitest'
 import { DiscordAdapter } from '@chat-adapter/discord'
-import { Effect, Layer, Option, Redacted } from 'effect'
+import { Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { ChannelAddress } from '@vivid/contracts'
 import { ChannelMessageId, ChannelProvider } from './provider.ts'
 import { discordInbound, discordLayer } from './discord.ts'
 
 const botId = '123456789012345678'
+const DiscordReply = Schema.Struct({
+  content: Schema.String,
+  allowed_mentions: Schema.Struct({
+    parse: Schema.Array(Schema.String),
+    replied_user: Schema.Boolean,
+  }),
+  message_reference: Schema.optionalKey(
+    Schema.Struct({ message_id: Schema.String, fail_if_not_exists: Schema.Boolean }),
+  ),
+})
+const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(DiscordReply), {
+  onExcessProperty: 'error',
+})
 const adapter = new DiscordAdapter({
   botToken: 'test',
   applicationId: botId,
@@ -58,13 +71,13 @@ describe('Discord message mapping', () => {
 
 it.effect('sends bounded replies to the original place without mention parsing', () =>
   Effect.gen(function* () {
-    const sent: Array<{ url: string; body: unknown }> = []
+    const sent: Array<{ url: string; body: typeof DiscordReply.Type }> = []
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
-        if (request.method === 'POST' && request.body._tag === 'Uint8Array')
+        if (request.method === 'POST' && Predicate.isTagged(request.body, 'Uint8Array'))
           sent.push({
             url: request.url,
-            body: JSON.parse(new TextDecoder().decode(request.body.body)),
+            body: decodeReply(new TextDecoder().decode(request.body.body)),
           })
         return HttpClientResponse.fromWeb(request, Response.json({ id: botId }))
       }),
