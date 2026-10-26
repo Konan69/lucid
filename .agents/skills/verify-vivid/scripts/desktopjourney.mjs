@@ -176,11 +176,17 @@ export async function browse(state, page, directory) {
     'No successful browse tool receipt',
   )
   await json(directory + '/browse-receipts.json', steps)
+  // A finished reply is Vivid's bubbles with no "Worked" line (the quiet Thread, 26 October 2026).
+  // The wait names only what must appear; what must not appear is asserted after, so a failure
+  // says which part did not hold instead of running out the deadline.
   await wait(
     page,
-    // A finished reply is Vivid's bubbles with no "Worked" line (the quiet Thread, 26 October 2026).
-    `document.body.innerText.includes("Seen") && !/Worked \\d/u.test(document.body.innerText) && document.querySelector('[data-vivid-bubble]') && document.querySelector('button[aria-label="Copy message"]')`,
+    `document.body.innerText.includes("Seen") && document.querySelector('[data-vivid-bubble]') !== null`,
   )
+  const reply = await page.evaluate(
+    `({ copy: document.querySelector('button[aria-label="Copy message"]') !== null, worked: /Worked \\d/u.test(document.body.innerText) })`,
+  )
+  NodeAssert.deepEqual(reply, { copy: true, worked: false }, 'Finished reply is not the quiet Thread')
   await capture(page, directory, 'after-browser-action')
   await json(directory + '/browser-action.json', {
     thread: id,
