@@ -23,6 +23,7 @@ import { library } from './library.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
+import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
   'first',
   'reload',
@@ -49,6 +50,7 @@ export const features = [
   'learning',
   'discord',
   'github',
+  'texting-discord',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -448,11 +450,13 @@ const recipes = {
   discord: discordProof,
   github: githubProof,
   library,
+  'texting-discord': textingDiscordProof,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   ...discordBlocked(),
   ...githubBlocked(),
+  ...textingDiscordBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {

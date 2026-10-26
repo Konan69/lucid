@@ -52,6 +52,7 @@ const missing = {
   code: 'No disposable Person Computer authority',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
+  'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
 }
 const recipes = {
   approve: { check: 'approve' },
