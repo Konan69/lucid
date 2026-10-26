@@ -102,6 +102,25 @@ Enter `http://127.0.0.1:5178` as the app's server address. Repeat the reverse ma
 restarting ADB or the emulator; Metro must stay running for the development build. These are
 setup instructions, not proof that the current native app has been validated.
 
+### Android emulator on a devbox
+
+Use this to see a JavaScript change on a release build in about two minutes, signed in to
+production. `scripts/emulator.sh` runs on a devbox (`~/bin/devbox-pick`) from the checkout at
+`~/vivid-phone/src`:
+
+```sh
+# Once per native set (a new runtimeVersion): about 15 minutes, kept in ~/vivid-phone/apk.
+bash apps/mobile/scripts/emulator.sh base
+# Each change: bring the commit over, then ship its JavaScript into the kept build.
+git push cloudbox-konan2:vivid-phone/src HEAD:refs/heads/phone   # from the PC; HUSKY=0 skips the gate hook
+ssh cloudbox-konan2 'cd ~/vivid-phone/src && git checkout -q --detach phone && bash apps/mobile/scripts/emulator.sh ship'
+ssh cloudbox-konan2 'bash ~/vivid-phone/src/apps/mobile/scripts/emulator.sh shot /tmp/s.png'
+```
+
+The kept build has over-the-air updates switched off, so it runs only what `ship` gave it.
+`stop` stops the emulator the script started. The emulator never shows the iPhone's glass, its
+edge effects or anything else only iOS draws.
+
 ## Feature coverage
 
 This table describes code present today, not native end-to-end proof.
