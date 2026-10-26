@@ -3,8 +3,8 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.3.44",
-    "runtimeVersion": "0.3.12",
+    "version": "0.4.0",
+    "runtimeVersion": "0.3.13",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -17,6 +17,22 @@
     "plugins": [
       "expo-secure-store",
       "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Vivid opens your photos so you can send pictures in a Thread.",
+          "cameraPermission": "Vivid uses the camera so you can send a photo you take in a Thread.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Vivid shows your recent photos so you can send them in a Thread.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       [
         "@sentry/react-native/expo",
         {

@@ -56,10 +56,14 @@ export const isKept = (item: Item): boolean =>
 /** The server takes at most four pictures a message (as on the web). */
 export const MOST_PICTURES = 4
 
+/** Where files are chosen from: a photo taken now, the photo library, or the Files app. */
+export const Source = Schema.Literals(['Camera', 'Photos', 'Files'])
+export type Source = typeof Source.Type
+
 /** What a surface does with a file: ask for files, and read or send one. Neither fails. */
 export interface AttachingService {
-  /** Opens the system's picker. Closing it without choosing is no files, not a failure. */
-  readonly choose: Effect.Effect<ReadonlyArray<Chosen>>
+  /** Opens the system's picker for a source. Closing it without choosing is no files. */
+  readonly choose: (source: Source) => Effect.Effect<ReadonlyArray<Chosen>>
   /** Reads a picture or sends a document; a file that cannot go answers Refused with why. */
   readonly prepare: (file: Chosen) => Effect.Effect<Item>
 }
@@ -75,7 +79,7 @@ export const TrayStates = Machine.state({
   states: {
     Open: { fields: items },
     /** The picker is up. `attempt` names this opening, so a late answer from another is ignored. */
-    Choosing: { fields: { ...items, attempt: Schema.String } },
+    Choosing: { fields: { ...items, attempt: Schema.String, source: Source } },
     /** Reading or sending `current`, the first waiting file in `items`. */
     Preparing: { fields: { ...items, current: Chosen } },
   },
@@ -83,8 +87,8 @@ export const TrayStates = Machine.state({
 export type TrayState = Parameters<typeof TrayStates.matches>[0]
 
 export const TrayEvents = Machine.events({
-  /** The attach button. The presser makes the attempt id. */
-  Choose: { attempt: Schema.String },
+  /** A source in the attach sheet. The presser makes the attempt id. */
+  Choose: { attempt: Schema.String, source: Source },
   /** Files that arrived without the picker: pictures pasted into the composer. */
   Add: { files: Schema.Array(Chosen) },
   /** Takes one file off the tray. */
@@ -130,8 +134,10 @@ export const TrayMachine = Machine.make({
     removed: { kept: { update: 'Preparing' } },
   },
   effects: {
-    choose: (attempt: string) =>
-      Attaching.use((service) => service.choose).pipe(Effect.map((files) => ({ attempt, files }))),
+    choose: (input: { readonly attempt: string; readonly source: Source }) =>
+      Attaching.use((service) => service.choose(input.source)).pipe(
+        Effect.map((files) => ({ attempt: input.attempt, files })),
+      ),
     prepare: (file: Chosen) => Attaching.use((service) => service.prepare(file)),
   },
 }).handle({
@@ -141,7 +147,11 @@ export const TrayMachine = Machine.make({
       on: {
         Choose: {
           target: 'Choosing',
-          data: ({ state, event }) => ({ items: state.items, attempt: event.attempt }),
+          data: ({ state, event }) => ({
+            items: state.items,
+            attempt: event.attempt,
+            source: event.source,
+          }),
         },
         Add: {
           branches: 'next',
@@ -163,7 +173,7 @@ export const TrayMachine = Machine.make({
     Choosing: {
       invoke: {
         src: 'choose',
-        input: ({ state }) => state.attempt,
+        input: ({ state }) => ({ attempt: state.attempt, source: state.source }),
         onDone: {
           branches: 'next',
           declinable: true,
@@ -183,6 +193,7 @@ export const TrayMachine = Machine.make({
           data: ({ state, event }) => ({
             items: without(state.items, event.key),
             attempt: state.attempt,
+            source: state.source,
           }),
         },
         Clear: { target: 'Open', data: () => ({ items: [] }) },
@@ -212,7 +223,11 @@ export const TrayMachine = Machine.make({
       on: {
         Choose: {
           target: 'Choosing',
-          data: ({ state, event }) => ({ items: state.items, attempt: event.attempt }),
+          data: ({ state, event }) => ({
+            items: state.items,
+            attempt: event.attempt,
+            source: event.source,
+          }),
         },
         Add: {
           update: 'Preparing',

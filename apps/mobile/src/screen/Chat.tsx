@@ -46,7 +46,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
-import { chooseFiles, clearTray, pastePictures, removeFile, useTray } from '../data/attach'
+import { clearTray, pastePictures, removeFile, useTray } from '../data/attach'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { readingPlace, type Anchor } from '../data/reading'
@@ -79,7 +79,7 @@ import { THINKING, THINKING_ROOM } from '../ui/Thinking'
 import { Logo } from './integration/Logo'
 import { Button, Empty, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
-import { useFirst, useFront, useMe } from '../workspace'
+import { useFirst, useFront, useGo, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
 import {
   ApprovalHold,
@@ -929,6 +929,7 @@ function Foot({
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const data = useLiveData()
+  const go = useGo()
   const tray = useTray(thread)
   /**
    * Sends what was typed, as what it means now (`replyOf`). Nearly always that is an ordinary
@@ -1012,7 +1013,7 @@ function Foot({
           asked={Option.getOrUndefined(onward)}
           attachments={Option.some({
             tray,
-            onAttach: () => chooseFiles(data, thread, shared),
+            onAttach: () => go.navigate('Add', { thread, shared }),
             onRemove: (key: string) => removeFile(data, thread, shared, key),
             onPaste: (uris: ReadonlyArray<string>) => pastePictures(data, thread, shared, uris),
           })}

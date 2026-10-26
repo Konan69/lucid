@@ -50,6 +50,8 @@ import type { KeyRoute } from './data/connecting'
  *   key is for, the service's name, and the fields it asks for (their names and labels, never
  *   what is typed).
  * - `Notifications`: what finished or needs the Person while they were elsewhere, in the drawer.
+ * - `Add`: the bottom sheet the composer's + opens over a Thread (`screen/chat/Add.tsx`). It
+ *   carries the Thread whose tray it fills and whether that Thread is shared.
  */
 export type Routes = {
   Home: undefined
@@ -73,6 +75,7 @@ export type Routes = {
   }
   Key: KeyRoute
   Notifications: undefined
+  Add: { thread: ThreadId; shared: boolean }
 }
 
 /**

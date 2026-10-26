@@ -46,6 +46,7 @@ import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
 import { Settings } from './screen/Settings'
 import { Integrations } from './screen/settings/Integrations'
+import { Add } from './screen/chat/Add'
 import { Memory } from './screen/settings/Memory'
 import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
@@ -494,6 +495,7 @@ function Shell() {
             <Stack.Screen name="Account" component={Account} options={FITTED_SHEET} />
             <Stack.Screen name="NameAccount" component={NameAccount} options={FITTED_SHEET} />
             <Stack.Screen name="Key" component={Key} options={FITTED_SHEET} />
+            <Stack.Screen name="Add" component={Add} options={FITTED_SHEET} />
           </Stack.Navigator>
         </NavigationContainer>
       </FlowProvider>
