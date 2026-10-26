@@ -391,8 +391,15 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     })
     if (Option.isSome(refusal)) return refusal.value
     const discovery = yield* store.tools(actor, row)
+    if (ToolDiscovery.guards.NeedsAuthorization(discovery))
+      return TestIntegrationOutcome.cases.NotTested.make({
+        account,
+        tools: [],
+        reason: 'needs sign-in',
+      })
     const tools = ToolDiscovery.match(discovery, {
       Ready: ({ tools: catalog }) => catalog,
+      NeedsAuthorization: () => [],
       Failed: () => [],
     })
     const visible = tools.filter((tool) => row.companyId === null || tool.effect === 'read')

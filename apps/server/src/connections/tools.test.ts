@@ -16,7 +16,13 @@ import {
 import { Message } from '../observability/messages.ts'
 import { ActionOutcome } from '../approvals/gate.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { Executor, ExecutorCallOutcome, ExecutorResourceMissing, ExecutorTool } from './executor.ts'
+import {
+  Executor,
+  ExecutorCallOutcome,
+  ExecutorNotReady,
+  ExecutorResourceMissing,
+  ExecutorTool,
+} from './executor.ts'
 import { ConnectionStore, ToolDiscovery, connectionStoreLayer } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
@@ -555,6 +561,64 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ])
           expect((yield* findTools(ownerActor, { query: 'unrelated' })).tools).toEqual([])
         }),
+      )
+    },
+  )
+
+  layer(connectionTestLayer)(
+    'clock: a lapsed sign-in is saved at discovery and leaves the other accounts findable',
+    (it) => {
+      /** Production, 26 October 2026: Executor answered OAuthReconnectRequired for a Person's Gmail,
+       * Vivid kept it Ready, and every find_tools failed for all of their Integrations. */
+      it.effect(
+        'a lapsed sign-in is saved at discovery and leaves the other accounts findable',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor } = yield* fixture()
+            const store = yield* ConnectionStore
+            const lapsed = yield* store.begin(ownerActor, {
+              from: 'Web',
+              service: serviceId,
+              name: 'Work',
+              shared: false,
+            })
+            yield* TestClock.adjust(1)
+            yield* store.begin(ownerActor, {
+              from: 'Web',
+              service: serviceId,
+              name: 'Home',
+              shared: false,
+            })
+            const lapsedReferences = JSON.stringify(
+              (yield* store.get(ownerActor, lapsed.connection.id)).references,
+            )
+            const executor = yield* Executor
+            const found = yield* Effect.gen(function* () {
+              // The store holds the Executor it was built with, so it is built again over this one.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* findTools(ownerActor, { query: 'Records' }).pipe(
+                Effect.provide(context),
+              )
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(
+                Executor,
+                Executor.of({
+                  ...executor,
+                  tools: (references) =>
+                    JSON.stringify(references) === lapsedReferences
+                      ? Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
+                      : executor.tools(references),
+                }),
+              ),
+            )
+            expect(new Set(found.tools.map((tool) => tool.account))).toEqual(
+              new Set(['Records (Home)']),
+            )
+            expect((yield* store.get(ownerActor, lapsed.connection.id)).status).toBe(
+              'needs-authorization',
+            )
+          }),
       )
     },
   )
