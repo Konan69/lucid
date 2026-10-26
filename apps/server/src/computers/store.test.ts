@@ -1147,6 +1147,34 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
+    it.effect('inventory reads the catalogue beside an action, instead of queueing behind it', () =>
+      Effect.gen(function* () {
+        // Production, 26 October 2026: every message sent while Vivid browsed waited for this
+        // probe behind the Run's own Computer action, and the fifth missed admission.
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        yield* start(first)
+        const gate = yield* Deferred.make<void>()
+        yield* Ref.set(evidence.executionGate, Option.some(gate))
+        const action = yield* store.run(first.id, request).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.executing)
+        // The action keeps waiting on its gate; the catalogue read itself is not held back.
+        yield* Ref.set(evidence.executionGate, Option.none())
+        const installed = ComputerInventory.cases.Installed.make({
+          apps: [{ name: 'GIMP', purpose: 'Edit raster images' }],
+        })
+        yield* Ref.set(evidence.commandResult, {
+          exitCode: 0,
+          output: JSON.stringify(installed),
+          truncated: false,
+        })
+        expect(yield* computerHandlers.GetComputerApps().pipe(asVivid(first))).toEqual(installed)
+        yield* Deferred.succeed(gate, undefined)
+        yield* Fiber.join(action)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
     it.effect(
       'inventory does not renew the idle deadline and a passive probe cannot wake a stopped Computer',
       () =>
