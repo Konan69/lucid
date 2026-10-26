@@ -137,7 +137,9 @@ export async function browse(state, page, directory) {
   await capture(page, directory, 'before-browser-action')
   await click(page, 'document.querySelector("button[aria-label=Send]")')
   try {
-    await wait(page, '/Working · \\d/u.test(document.body.innerText)')
+    // Vivid at work is the one status line over the composer (`thread/Doing.tsx`, role status);
+    // the "Working · Ns" counter it replaced is gone from the Thread (26 October 2026).
+    await wait(page, `document.querySelector('span[role="status"].sheen') !== null`)
     await capture(page, directory, 'thread-working')
     await settled(state, id, 1, 'Completed', directory)
   } catch (error) {
