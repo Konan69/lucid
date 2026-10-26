@@ -1,7 +1,6 @@
 import { isServiceMarkId } from '@vivid/marks'
 import { Option } from 'effect'
-import { Image } from 'expo-image'
-import { View } from 'react-native'
+import { Image, View } from 'react-native'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
 
