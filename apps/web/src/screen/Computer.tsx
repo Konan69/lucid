@@ -36,7 +36,7 @@ import { Segmented } from '../ui/Segmented'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Edge } from './computer/Edge'
 import { Corner, grip } from './computer/Float'
-import { PageTabs, PageToolbar, PageView } from './computer/Pages'
+import { PageNav, PageTabs, PageView } from './computer/Pages'
 import { place, placeBox, usePlace } from './computer/place'
 import { viewerOnDesk, viewerResolution } from './computer/viewer'
 
@@ -85,7 +85,7 @@ const show = (next: View) => {
  */
 const leave = (event: KeyboardEvent) => {
   if (event.key !== 'Escape' || event.defaultPrevented) return
-  // The address field has its own Escape: it puts the page's address back.
+  // The address field has its own Escape: it turns back into the page's tab.
   if (event.target instanceof HTMLInputElement) return
   const home: View = split.canSplit() ? 'docked' : 'full'
   if (viewOf(place.isFloating(), split.isFull(), pages.front()) === home) return
@@ -95,8 +95,9 @@ const leave = (event: KeyboardEvent) => {
 
 /**
  * Vivid's computer: a real machine that is this Person's alone, shown live. One bar across the
- * top (the computer and, in the desktop app, every page opened beside the Thread; how it is seen;
- * what else can be done; close) and the machine's screen filling the rest. Who has the keyboard,
+ * top (in the desktop app, the page in front's back, forward and reload; the computer and every
+ * page opened beside the Thread; how it is seen; what else can be done; close) and the machine's
+ * screen, or the page in front, filling the rest. Who has the keyboard,
  * and the one control that changes it, sit under the screen, where the Person is looking.
  *
  * It is seen three ways (`View`). Beside the Thread, the divider on its left edge shares the page;
@@ -163,15 +164,18 @@ const attach = (element: HTMLElement | null) => {
 }
 
 /**
- * The one bar: what is open (the computer and, in the desktop app, every page beside the Thread),
- * how the computer is seen, what else can be done with it, and close. 52 high with 32-high
- * controls: 10 above and below, 8 at the sides.
+ * The one bar: in the desktop app, back, forward and reload for the page in front; what is open
+ * (the computer and, in the desktop app, every page beside the Thread); how the computer is seen;
+ * what else can be done with it; and close. 52 high with 32-high controls: 10 above and below, 8
+ * at the sides.
+ *
+ * It is the only row of chrome, with a page in front too. The page in front shows its title and
+ * its site, and becomes the address field in its own place when it is pressed or ⌘L is; what else
+ * a page can have done to it is in its tab's menu.
  *
  * Popped out, the bar is what the window is dragged by, and it names the window instead of
- * listing pages; a press on one of its controls is still that control's (`grip`).
- *
- * A page has an address to type and a history to walk, so it gets a second row for them. The
- * computer has neither, and its screen starts right under the bar.
+ * listing pages; a press on one of its controls is still that control's (`grip`). Only the
+ * computer is ever popped out, so there is no page to walk and no back or forward either.
  */
 function Bar({
   view,
@@ -188,39 +192,34 @@ function Bar({
   const browser = usePages((state) => state.browser)
   const page = pages.showing(browser)
   return (
-    <>
-      <header
-        {...grip}
-        className={cn(
-          'flex h-(--page-strip-h) shrink-0 items-center gap-1 px-2 py-2.5',
-          front !== 'computer' && 'hairline-b',
-          view === 'popout' && 'cursor-grab touch-none select-none active:cursor-grabbing',
-        )}
-      >
-        {view === 'popout' ? (
-          <Name running={running} />
-        ) : (
-          <PageTabs open={browser.tabs} front={front} showing={page} running={running} />
-        )}
-        <Views view={view} canSplit={canSplit} />
-        {running && front === 'computer' && <More />}
-        <IconButton label="Close" onClick={onClose}>
-          <X className="size-4" />
-        </IconButton>
-      </header>
-      {front !== 'computer' && (
-        // 48 high; the address takes what the controls leave.
-        <div className="flex h-12 shrink-0 items-center gap-2 px-2 hairline-b">
-          <PageToolbar page={front === 'page' ? page : Option.none()} />
-        </div>
+    <header
+      {...grip}
+      className={cn(
+        'flex h-(--page-strip-h) shrink-0 items-center gap-1 px-2 py-2.5',
+        front !== 'computer' && 'hairline-b',
+        view === 'popout' && 'cursor-grab touch-none select-none active:cursor-grabbing',
       )}
-    </>
+    >
+      {view === 'popout' ? (
+        <Name running={running} />
+      ) : (
+        <>
+          {pages.available && <PageNav page={front === 'page' ? page : Option.none()} />}
+          <PageTabs open={browser.tabs} front={front} showing={page} running={running} />
+        </>
+      )}
+      <Views view={view} canSplit={canSplit} />
+      {running && front === 'computer' && <More />}
+      <IconButton label="Close" onClick={onClose}>
+        <X className="size-4" />
+      </IconButton>
+    </header>
   )
 }
 
 /** How the surface under the bar is drawn for each thing that can be in front of it. */
 const SURFACE = {
-  // A page fills its slot flush under the toolbar.
+  // A page fills its slot flush under the bar.
   page: 'bg-surface-0',
   // The machine's desk: the wallpaper, in a frame of its own inside the panel.
   desk: 'mx-2 mb-2 rounded-panel picture-edge desktop-wallpaper',

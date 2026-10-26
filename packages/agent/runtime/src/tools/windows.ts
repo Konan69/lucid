@@ -81,7 +81,7 @@ const windowAction = (step: typeof input.Type.action): WindowAction =>
   )
 
 export const personComputerDescription =
-  'Work in any app on the person’s own Windows computer through the Vivid desktop app, including terminals. Start with list_windows or list_apps, then look at a window before acting. Prefer a numbered element from the look (press, choose, fill) over click. The person allowed this computer; nothing more is asked. If the person stopped it, stop.'
+  'Work in any app on the person’s own Windows computer through the Vivid desktop app, including terminals. For a web page on their computer, use browse with computer person instead. Start with list_windows or list_apps, then look at a window before acting. Prefer a numbered element from the look (press, choose, fill) over click. The person allowed this computer; nothing more is asked. If the person stopped it, stop.'
 
 /** The server owns Run and Device admission; only decoded completed results supply native images. */
 const program = Effect.fn('ComputerTool.person')(function* (
