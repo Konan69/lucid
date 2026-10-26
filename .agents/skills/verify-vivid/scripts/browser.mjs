@@ -50,6 +50,7 @@ const missing = {
   stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
+  discord: 'No browser recipe for the Discord Key form and Allow card yet',
 }
 const recipes = {
   reading: { check: 'reading' },

@@ -20,6 +20,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Device permission requests](devices.md).
 - [Read reporting](reading.md).
 - [Settings and Integration purpose groups](settings.md).
+- [Discord Integration](discord.md).
 - [Notes](notes.md).
 - [Desktop app](desktop.md).
 
