@@ -469,7 +469,8 @@ export interface ComputerStoreService {
   readonly access: (person: PersonId) => Effect.Effect<ComputerAccess, StoreError>
   readonly watching: (person: PersonId) => Effect.Effect<void, StoreError, Scope.Scope>
   readonly screen: (person: PersonId) => Effect.Effect<Option.Option<MachineScreen>, StoreError>
-  /** Passive observations neither wake a Computer nor extend its inactivity deadline. */
+  /** Passive observations neither wake a Computer nor extend its inactivity deadline, and never
+   * wait for an action that is using it. */
   readonly probe: (
     person: PersonId,
     input: { readonly command: string; readonly timeoutSeconds: number },
@@ -1133,22 +1134,27 @@ export const computerStoreLayer = Layer.effect(
       yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
       return yield* executeReady(person, action)
     })
-    /** Hold the same permit as takeover and idle stop, but do not prepare or record activity.
-     * Context reads must never start a machine or indefinitely postpone its idle shutdown. */
-    const probe = Effect.fn('ComputerStore.probe')(
-      function* (
-        person: PersonId,
-        input: { readonly command: string; readonly timeoutSeconds: number },
-      ) {
-        const key = yield* requireReady(state, person)
-        return yield* state.machine.exec({
-          key,
-          command: input.command,
-          timeoutSeconds: input.timeoutSeconds,
-        })
-      },
-      (effect, person) => state.lock.withPermit(person, effect),
-    )
+    /**
+     * A read beside whatever the Computer is doing: no action permit, no preparing, no activity.
+     * Context reads must never start a machine or postpone its idle shutdown, and must never queue
+     * behind an action. Until 26 October 2026 this took the action permit, so the app catalogue a
+     * message's admission reads (`loadContext` in the runtime) waited behind the Run's own
+     * browsing: each message sent while Vivid worked took 25 to 30 seconds to be admitted, and the
+     * fifth missed the server's 30 seconds. `requireReady` still refuses a held, failed or absent
+     * Computer; an idle stop that lands mid-read fails the read, which the caller treats as no
+     * catalogue.
+     */
+    const probe = Effect.fn('ComputerStore.probe')(function* (
+      person: PersonId,
+      input: { readonly command: string; readonly timeoutSeconds: number },
+    ) {
+      const key = yield* requireReady(state, person)
+      return yield* state.machine.exec({
+        key,
+        command: input.command,
+        timeoutSeconds: input.timeoutSeconds,
+      })
+    })
     /**
      * Both outline and image run under the same takeover permit. Whether the Person chose egress
      * is read first and handed to the machine, which uses it only if this step starts the browser.
