@@ -1483,12 +1483,10 @@ function useDoing(messages: ReadonlyArray<FlueConversationMessage>, working: boo
   const data = useLiveData()
   const connections = useLiveValue(data.live.connections)
   const doing = doingOf(messages, working)
-  const connection = Option.flatMap(doing, (now) =>
-    Option.flatMap(now.account, (account) =>
-      Option.flatMap(connections, (listed) =>
-        Option.fromUndefinedOr(listed.connections.find((each) => each.account === account)),
-      ),
-    ),
+  const listed = Option.match(connections, { onNone: () => [], onSome: (list) => list.connections })
+  const account = Option.flatMap(doing, (now) => now.account)
+  const connection = Option.flatMap(account, (named) =>
+    Option.fromUndefinedOr(listed.find((each) => each.account === named)),
   )
   return {
     words: Option.match(doing, { onNone: () => THINKING, onSome: (now) => now.words }),
