@@ -352,7 +352,7 @@ function useSend(
    */
   const deliver = ({ words, pictures, key }: Delivery): Promise<Option.Option<string>> =>
     shared
-      ? start(say(data, { id, body: words, key })).then(refusalOf)
+      ? start(say(data, { id, body: words, key, pictures })).then(refusalOf)
       : agent.sendMessage(words, { idempotencyKey: key, images: [...pictures] }).then(
           () => Option.none(),
           // A failed send is not proof the words did not arrive: on 26 October 2026 the server

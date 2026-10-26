@@ -21,10 +21,10 @@ export const MessageAttachment = Schema.Struct({
 })
 export interface MessageAttachment extends Schema.Schema.Type<typeof MessageAttachment> {}
 
-/** A Person's words and optional pictures; signals remain server-owned deliveries. */
+/** A Person's words or pictures. The gateway rejects messages with neither. */
 export const SendMessageRequest = Schema.Struct({
   kind: Schema.Literal('user'),
-  body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100_000)),
+  body: Schema.String.check(Schema.isMaxLength(100_000)),
   attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
   idempotencyKey: Schema.optionalKey(
     Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),

@@ -1211,14 +1211,18 @@ layer(
       }).pipe(Effect.scoped),
     )
     it.effect(
-      'carries a private picture with the ordinary user message and preserves its keyed receipt',
+      'carries a private picture without text through the gateway and preserves its keyed receipt',
       () =>
         Effect.gen(function* () {
           const test = yield* harness()
           yield* privateThread(test)
+          const empty = yield* post(test, { kind: 'user', body: '', attachments: [] })
+          expect(empty.status).toBe(400)
+          expect(yield* Ref.get(test.admitted)).toHaveLength(0)
+          expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(0)
           const body = {
             kind: 'user',
-            body: 'What is in this picture?',
+            body: '',
             attachments: [png],
             idempotencyKey: 'picture',
           }

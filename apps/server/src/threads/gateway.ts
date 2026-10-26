@@ -177,6 +177,9 @@ const send = Effect.fn('Gateway.send')(function* () {
   const sent = yield* decodeSent(yield* request.json).pipe(Effect.option)
   if (Option.isNone(sent)) return refuse(400, 'A message needs text')
   const attachments = yield* messagePictures(sent.value, thread)
+  // Pictures can be the whole message; an empty composer must still reserve no Run.
+  if (sent.value.body.length === 0 && attachments.length === 0)
+    return refuse(400, 'A message needs text or a picture')
   const origin = originOf(request.headers)
   if (Option.isNone(origin)) return refuse(400, 'The request has no host')
   const conversation = yield* Conversation

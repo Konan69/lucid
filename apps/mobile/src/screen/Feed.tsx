@@ -190,8 +190,7 @@ export function Feed() {
           placeholder="Message Vivid"
           working={false}
           disabled={false}
-          // A new Thread's first words carry no files: the tray belongs to a Thread.
-          attachments={Option.none()}
+          attachments={Option.some(start.attachments)}
           dictation={start.microphone}
           onChange={start.setDraft}
           onSend={() => {

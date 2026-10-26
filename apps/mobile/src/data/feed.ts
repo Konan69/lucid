@@ -54,7 +54,7 @@ const sending = (data: LiveData) =>
       const sent = yield* feed.Settling.$match(pressed.how, {
         // `say` is an Effect that answers with how the delivery went, never failing itself.
         Said: ({ words, key }) =>
-          Effect.map(say(data, { id: thread, body: words, key }), Result.isSuccess),
+          Effect.map(say(data, { id: thread, body: words, key, pictures: [] }), Result.isSuccess),
         Done: () =>
           Effect.map(
             Effect.promise(() =>

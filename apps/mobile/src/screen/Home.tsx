@@ -1,11 +1,10 @@
 import { useAppearance } from '../data/vivid'
-import { draftPlace, workspaceKey } from '@vivid/state'
+import { attaching, draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { ThreadId } from '@vivid/contracts'
-import { randomUUID } from 'expo-crypto'
 import { useCallback, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
+import { clearTray, pastePictures, removeFile, useTray } from '../data/attach'
 import { useMicrophone } from '../data/dictation'
 import { draft, useDraft } from '../data/drafts'
 import { again, begin, startedWith } from '../data/first'
@@ -13,7 +12,7 @@ import { Front } from '../data/front'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { firstWay } from '../data/threads'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
-import { Composer } from '../ui/Composer'
+import { Composer, type Attachments } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
@@ -52,7 +51,7 @@ export function Home() {
  * place, and draws nothing under its bar for the moment before it is known which Person this is.
  *
  * It owns no data. What is local is only what the Person is in the middle of: what they have
- * typed.
+ * typed or attached.
  */
 function Fresh() {
   // The name this Person or their Company gave Vivid, live.
@@ -151,8 +150,7 @@ function Writing({ me, mood, starting, placeholder }: WritingProps) {
           placeholder={placeholder}
           working={false}
           disabled={false}
-          // A new Thread's first words carry no files: the tray belongs to a Thread.
-          attachments={Option.none()}
+          attachments={Option.some(starting.attachments)}
           dictation={starting.microphone}
           onChange={starting.setDraft}
           onSend={starting.send}
@@ -186,6 +184,9 @@ export function useStart() {
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
+  const go = useGo()
+  const id = useSyncExternalStore(front.subscribe, front.draft)
+  const tray = useTray(id)
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -197,32 +198,49 @@ export function useStart() {
   const setDraft = (text: string) => draft.keep(place, text)
 
   function send() {
+    // A second press from the consumed draft cannot start its first message again.
+    if (front.draft() !== id || tray.preparing || tray.choosing) return
     const words = typed.trim()
-    if (words.length === 0) return
+    const carried = attaching.carriedBy(tray)
+    const message = {
+      words: [words, ...carried.lines].filter((line) => line.length > 0).join('\n'),
+      pictures: carried.pictures,
+    }
+    if (message.words.length === 0 && message.pictures.length === 0) return
     const way = firstWay(data)
     // Words that are already a Thread's first, and not yet with Vivid, go on as that Thread:
     // sending them again from here must not start a second one.
-    const begun = startedWith(front.firsts.all(), words, place)
+    // Newly chosen files are a new message, even when its text matches a failed send.
+    const begun = tray.items.some(attaching.isKept)
+      ? Option.none()
+      : startedWith(front.firsts.all(), words, place)
     if (Option.isSome(begun)) {
       void start(again(way, front.firsts, begun.value))
       front.open(begun.value, Keyboard.isVisible())
       return
     }
-    // The Thread's id is chosen here, so it can be drawn before the server has made it. The words
+    // The draft's reserved id lets it be drawn before the server has made it. The words
     // stay kept on the phone until they are with Vivid (`taken`), so closing the app before then
     // does not lose them; the composer they were typed in is not on screen meanwhile.
-    const id = ThreadId.make(randomUUID())
     void start(
       begin(way, front.firsts, id, {
         words,
+        message,
         // A Thread started while the drawer is scoped to a Project is filed in that Project.
         projectId: Option.getOrNull(Option.map(scoped, (project) => project.id)),
         at: Date.now(),
         place,
       }),
     )
+    clearTray(data, id, false)
     front.open(id, Keyboard.isVisible())
   }
 
-  return { draft: typed, setDraft, send, microphone }
+  const attachments: Attachments = {
+    tray,
+    onAttach: () => go.navigate('Add', { thread: id, shared: false }),
+    onRemove: (key) => removeFile(data, id, false, key),
+    onPaste: (uris) => pastePictures(data, id, false, uris),
+  }
+  return { draft: typed, setDraft, send, microphone, attachments }
 }
