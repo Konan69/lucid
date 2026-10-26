@@ -12,7 +12,7 @@ export const PictureMediaType = Schema.Literals([
 ] as const)
 export type PictureMediaType = typeof PictureMediaType.Type
 
-/** Flue's image wire shape. The gateway also checks decoded size and the bytes' signature. */
+/** The image wire shape. The gateway also checks decoded size and the bytes' signature. */
 export const MessageAttachment = Schema.Struct({
   type: Schema.Literal('image'),
   data: Schema.String,
@@ -31,6 +31,31 @@ export const SendMessageRequest = Schema.Struct({
   ),
 })
 export interface SendMessageRequest extends Schema.Schema.Type<typeof SendMessageRequest> {}
+
+/**
+ * One send from a Person's client, whichever runtime holds the Thread. `key` is made once per
+ * send by the client and comes back on the message in the conversation, so the client that drew
+ * the words at once recognises them when they arrive. Words, pictures or both; never neither.
+ */
+export const SendToThreadRequest = Schema.Struct({
+  threadId: ThreadId,
+  text: SendMessageRequest.fields.body,
+  pictures: Schema.Array(MessageAttachment),
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+}).check(
+  Schema.makeFilter(
+    (request) => request.text.trim().length > 0 || request.pictures.length > 0,
+    { message: 'A send carries words, pictures or both' },
+  ),
+)
+export interface SendToThreadRequest extends Schema.Schema.Type<typeof SendToThreadRequest> {}
+
+/** A conversation whose whole state is larger than the relay sends cannot open on any device. */
+export class ConversationTooLarge extends Schema.TaggedError<ConversationTooLarge>()(
+  'ConversationTooLarge',
+  { threadId: ThreadId, limit: Schema.Int },
+  { title: 'Thread conversation exceeds the relay limit' },
+) {}
 
 /** Invalid formats and mismatched signatures need the Person to choose another image. */
 export class UnsupportedAttachment extends Schema.TaggedError<UnsupportedAttachment>()(
@@ -208,6 +233,12 @@ export type RunState = typeof RunState.Type
 /** One bounded attempt by Vivid to advance a Thread. */
 export const Run = Schema.Struct({
   id: RunId,
+  /**
+   * The runtime's name for the delivery that started this Run, which is how the conversation
+   * refers to it. Absent until the runtime admitted it. Flue names it the same as `id`; Pi Durable
+   * numbers deliveries per Person, so a Pi name means nothing outside its Thread's creator.
+   */
+  submissionId: Schema.optional(Schema.String),
   threadId: ThreadId,
   /**
    * The Run's place in its Thread, counted from one. It is what the delivery that started the Run
@@ -220,6 +251,10 @@ export const Run = Schema.Struct({
   startedAt: Schema.Finite,
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/** A send answers once admitted, with the product Run it started or joined. */
+export const SendToThreadResponse = Schema.Struct({ run: Run })
+export interface SendToThreadResponse extends Schema.Schema.Type<typeof SendToThreadResponse> {}
 
 /** Someone with a Thread open right now, and whether they are writing. */
 export const Presence = Schema.Struct({
@@ -303,6 +338,12 @@ export const RuntimeRunRequest = Schema.Struct({
   attributes: Schema.Record(Schema.String, Schema.String),
   turn: Schema.Finite,
   scope: DeliveryScope,
+  /**
+   * The key the sending client made (`SendToThreadRequest.key`), passed through so the
+   * conversation gives it back on that message. It is not the idempotency key and is never shown
+   * to the model. Absent on deliveries the server makes itself.
+   */
+  clientKey: Schema.optionalKey(SendToThreadRequest.fields.key),
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 

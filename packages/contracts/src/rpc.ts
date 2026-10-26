@@ -2,6 +2,7 @@ import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
+import { ConversationFrame } from './conversation.js'
 import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
 import {
   ArtifactChanged,
@@ -196,6 +197,14 @@ import {
   PresenceRequest,
   ShareThreadRequest,
   ThreadDetail,
+  ConversationTooLarge,
+  SendToThreadRequest,
+  SendToThreadResponse,
+  UnsupportedAttachment,
+  InvalidAttachment,
+  AttachmentTooLarge,
+  TooManyAttachments,
+  PicturesRequirePrivateThread,
   ThreadListResponse,
   ThreadResponse,
   ThreadTitleHistoryUnavailable,
@@ -229,6 +238,7 @@ export { InvalidRequest, RuntimeUnavailable, ServiceUnavailable } from './failur
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([
+  ConversationTooLarge,
   Unauthenticated,
   Forbidden,
   NotFound,
@@ -355,6 +365,25 @@ const WatchThread = Rpc.make('WatchThread', {
   ...live,
   payload: { id: ThreadId },
   success: ThreadDetail,
+})
+/** A Thread's conversation: one `Whole` on every subscription, then its changes. */
+const WatchConversation = Rpc.make('WatchConversation', {
+  ...live,
+  payload: { threadId: ThreadId },
+  success: ConversationFrame,
+})
+/** One send from a Person's client; it answers once the runtime admitted the delivery. */
+const SendToThread = Rpc.make('SendToThread', {
+  payload: SendToThreadRequest,
+  success: SendToThreadResponse,
+  error: Schema.Union([
+    RpcFailure,
+    UnsupportedAttachment,
+    InvalidAttachment,
+    AttachmentTooLarge,
+    TooManyAttachments,
+    PicturesRequirePrivateThread,
+  ]),
 })
 const CreateThread = Rpc.make('CreateThread', {
   ...call,
@@ -963,6 +992,8 @@ export const VividRpc = RpcGroup.make(
   WatchThreads,
   GetThread,
   WatchThread,
+  WatchConversation,
+  SendToThread,
   CreateThread,
   OpenFirstThread,
   PatchThread,
