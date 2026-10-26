@@ -178,7 +178,8 @@ export async function browse(state, page, directory) {
   await json(directory + '/browse-receipts.json', steps)
   await wait(
     page,
-    `document.body.innerText.includes("Seen") && /Worked \\d/u.test(document.body.innerText) && document.querySelector('button[aria-label="Copy message"]')`,
+    // A finished reply is Vivid's bubbles with no "Worked" line (the quiet Thread, 26 October 2026).
+    `document.body.innerText.includes("Seen") && !/Worked \\d/u.test(document.body.innerText) && document.querySelector('[data-vivid-bubble]') && document.querySelector('button[aria-label="Copy message"]')`,
   )
   await capture(page, directory, 'after-browser-action')
   await json(directory + '/browser-action.json', {
