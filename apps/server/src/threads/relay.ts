@@ -102,6 +102,10 @@ const followHistory = (threadId: ThreadId, history: FlueHistory) =>
         Stream.pipeThroughChannel(Sse.decode({ maxEventSize: frameLimit })),
         Stream.mapError(unavailable),
         Stream.filter((event) => event.event === 'data'),
+        // Flue sends a batch per streamed delta, and each Whole re-reads the whole history. While a
+        // read runs, later batches collapse into one, so a long reply costs one read per read time,
+        // not one per token batch.
+        Stream.buffer({ capacity: 1, strategy: 'sliding' }),
         Stream.mapEffect(() => readHistory(threadId)),
         Stream.mapEffect((current) =>
           Option.isSome(current) ? whole(threadId, current.value) : Effect.fail(unavailable()),
