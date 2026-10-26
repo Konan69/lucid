@@ -73,7 +73,9 @@ describe.skipIf(!testDatabaseConfigured)('Discord channel linking', () => {
           expect(
             sent.every(
               (part) =>
-                part.place?.conversation === conversation && part.place.message === place.message,
+                part.place !== undefined &&
+                part.place.conversation === conversation &&
+                part.place.message === place.message,
             ),
           ).toBe(true)
         }
@@ -109,9 +111,9 @@ describe.skipIf(!testDatabaseConfigured)('Discord channel linking', () => {
       yield* Effect.gen(function* () {
         const test = yield* fixture()
         const store = yield* ChannelStore
-        expect(
-          (yield* store.list(test.actor)).find((link) => link.channel === 'Discord')?.standing._tag,
-        ).toBe('Unavailable')
+        const discord = (yield* store.list(test.actor)).find((link) => link.channel === 'Discord')
+        if (discord === undefined) return expect.fail('Expected Discord to be listed')
+        expect(discord.standing._tag).toBe('Unavailable')
         const result = yield* store.connect(test.actor, 'Discord').pipe(Effect.result)
         expect(Result.isFailure(result) ? result.failure._tag : 'accepted').toBe(
           'ChannelUnavailable',

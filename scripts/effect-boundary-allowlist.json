@@ -57,7 +57,7 @@
   {
     "file": "apps/server/src/channels/discord.ts",
     "classification": "third-party-adapter",
-    "symbols": ["handleGatewayMessage", "makeDiscord"]
+    "symbols": ["handleGatewayMessage", "makeDiscord", "discordStream", "discordSend"]
   },
   {
     "file": "packages/agent/runtime/src/providers/witness.ts",
