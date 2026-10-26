@@ -24,11 +24,11 @@ export function Replies({
       {replies.map((words, at) => (
         <Button
           key={words}
-          variant="outline"
-          size="pill"
-          // One after another: 120 ms between replies (`motion-offer`).
-          style={{ transitionDelay: `${at * 120}ms` }}
-          className="motion-offer gap-1.25 ps-2.5 pe-3 text-body font-normal bg-surface-0/45 backdrop-blur-md shadow-none edge-field"
+          variant="glass"
+          size="reply"
+          // One after another: `motion-offer` waits 120 ms for each reply before this one.
+          // SAFETY: React forwards this CSS custom property; `motion-offer` reads it.
+          style={{ '--offer-at': at } as React.CSSProperties}
           onClick={() => onSay(words)}
         >
           <span aria-hidden className="text-ink-3">

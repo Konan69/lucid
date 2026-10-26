@@ -434,12 +434,13 @@
 }
 
 /* A suggested reply arriving under Vivid's reply (`thread/Replies.tsx`): it slides in 16px from the
-   left as it fades in, over 420ms, with no overshoot; the component delays each by 120ms.
+   left as it fades in, over 420ms, with no overshoot, each `--offer-at` × 120ms after the first.
    The owner's approved mockup v8 (26 October 2026: "too much bounce", then "too fast"). */
 @utility motion-offer {
   transition:
     opacity 420ms cubic-bezier(0.22, 1, 0.36, 1),
     translate 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--offer-at, 0) * 120ms);
   @starting-style {
     opacity: 0;
     translate: -16px 0;

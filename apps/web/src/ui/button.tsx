@@ -16,6 +16,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip'
  * - `destructive`  the one thing that cannot be taken back, said in the danger ink on the quiet
  *                  control surface, not on a red fill: the warning is the dialog, this answers it.
  * - `link`         words that go somewhere.
+ * - `glass`        a suggested reply under Vivid's (`thread/Replies.tsx`): a light glass fill with
+ *                  the field's hairline and no shadow, so it reads as a tap and not as a bubble.
+ *                  It slides in as it arrives (`motion-offer`).
  *
  * Sizes are the control's (`default`, 32 px), smaller and larger steps of it, the square icon
  * sizes, and `pill`: the control's height, fully round, for a row's one action.
@@ -36,6 +39,8 @@ const buttonVariants = cva(
           'text-ink-2 hover:bg-accent hover:text-ink aria-expanded:bg-accent aria-expanded:text-ink aria-pressed:bg-wash-selected aria-pressed:text-ink',
         destructive: 'bg-surface-3 text-danger edge hover:bg-danger-soft',
         link: 'text-primary-ink underline-offset-4 hover:underline',
+        glass:
+          'motion-offer bg-surface-0/45 text-ink backdrop-blur-md edge-field hover:bg-surface-0/70',
       },
       size: {
         default: 'h-8 gap-2 rounded-control px-3 text-label',
@@ -46,6 +51,9 @@ const buttonVariants = cva(
         // (the Integration card in a Thread): as tall as a control, round, so it reads as the
         // row's single answer and not as one of a toolbar's buttons.
         pill: 'h-8 gap-1.5 rounded-full px-3.5 text-label',
+        // A suggested reply: the pill's height and round ends, in the reading size of the bubble
+        // above it, at the regular weight, with the "↪" sitting close (the owner's mockup v8).
+        reply: 'h-8 gap-1.25 rounded-full ps-2.5 pe-3 text-body font-normal',
         icon: 'size-8 rounded-control',
         'icon-xs': "size-6 rounded-row [&_svg:not([class*='size-'])]:size-3.5",
         'icon-sm': 'size-7 rounded-row',
