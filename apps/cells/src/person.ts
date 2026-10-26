@@ -106,9 +106,12 @@ export class Person {
       console.log(
         JSON.stringify({ event: 'person_open', person: owner, buildMs: built - started, holdMs: opened - built, totalMs: opened - started }),
       )
-      return HttpRouter.toWebHandler(routes.pipe(Layer.provide(Layer.succeedContext(services))), {
-        disableLogger: true,
-      }).handler
+      // The route handlers' own requirements are request requirements in Effect 4's router, so the
+      // services go to each call as its context, not only to the routes' Layer.
+      const { handler } = HttpRouter.toWebHandler(
+        routes.pipe(Layer.provide(Layer.succeedContext(services))),
+      )
+      return (request: Request) => handler(request, services)
     } catch (error) {
       console.log(JSON.stringify({ event: 'person_open_failed', person: owner, ms: Date.now() - started, error: String(error) }))
       throw error
@@ -124,7 +127,10 @@ export class Person {
       return Response.json(snapshot)
     }
     const handler = await this.ready
-    return handler(request)
+    const response = await handler(request)
+    if (response.status >= 500)
+      console.log(JSON.stringify({ event: 'route_failed', path: url.pathname, status: response.status }))
+    return response
   }
 }
 
