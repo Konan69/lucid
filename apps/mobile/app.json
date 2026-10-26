@@ -22,7 +22,7 @@
         {
           "photosPermission": "Vivid opens your photos so you can send pictures in a Thread.",
           "cameraPermission": "Vivid uses the camera so you can send a photo you take in a Thread.",
-          "microphonePermission": false
+          "microphonePermission": "Vivid listens while you hold to talk."
         }
       ],
       [
@@ -39,6 +39,21 @@
           "organization": "vivid-7t",
           "project": "vivid-mobile",
           "disableAutoUpload": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Vivid uses where you are for things near you, travel times and bookings, only when you share it.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Vivid listens while you hold to talk.",
+          "recordAudioAndroid": true
         }
       ]
     ],

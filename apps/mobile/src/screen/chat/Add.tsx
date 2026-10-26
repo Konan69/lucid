@@ -1,8 +1,6 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { ConnectionState } from '@vivid/contracts'
 import { attaching } from '@vivid/state'
-import { Option } from 'effect'
 import { AsyncResult } from 'effect/reactivity'
 import { Camera, FileUp, Images, type LucideIcon } from 'lucide-react-native'
 import { useState } from 'react'
@@ -10,7 +8,7 @@ import { Image } from 'expo-image'
 import { ActivityIndicator, ScrollView, View } from 'react-native'
 import { start } from '../../data/app'
 import { addRecent, chooseFrom, recentPhotos } from '../../data/attach'
-import { useLiveData, useLiveValue } from '../../data/live'
+import { useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { FittedSheet } from '../../ui/Sheet'
@@ -76,7 +74,7 @@ export function Add({ route, navigation }: NativeStackScreenProps<Routes, 'Add'>
           onPress={addPicked}
         />
       ) : (
-        <Section title="More">
+        <Section>
           {recent ? (
             <Row
               key="all"
@@ -108,27 +106,18 @@ export function Add({ route, navigation }: NativeStackScreenProps<Routes, 'Add'>
 }
 
 /**
- * The Person's Integrations as a group of their own, with no glyph: the developer asked on 26
- * October 2026 for the plug to go. The row says how many are connected and opens the
- * Integrations page as a new visit, as Settings does: the search starts empty and the shell's
- * flow from rest.
+ * The Integrations row, a group of its own with no glyph and no count: the developer asked on 26
+ * October 2026 for the plug to go and for nothing but the name. It opens the Integrations page as
+ * a new visit, as Settings does: the search starts empty and the shell's flow from rest.
  */
 function Integrations({ onOpen }: { onOpen: () => void }) {
   const data = useLiveData()
   const flow = useFlow()
   const setSearch = useAtomSet(data.serviceSearch)
-  const connections = useLiveValue(data.live.connections)
-  const ready = Option.map(
-    connections,
-    (value) => value.connections.filter((item) => ConnectionState.guards.Ready(item.state)).length,
-  )
   return (
-    <Section title="Integrations">
+    <Section>
       <Row
-        title={Option.match(ready, {
-          onNone: () => 'Your Integrations',
-          onSome: (count) => (count === 0 ? 'None connected yet' : `${count} connected`),
-        })}
+        title="Integrations"
         onPress={() => {
           setSearch('')
           flow.rest()
