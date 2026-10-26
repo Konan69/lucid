@@ -5,6 +5,7 @@ import { titleFromMessage } from '@vivid/state'
 import { Data, Effect, Redacted, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { draft } from './drafts'
+import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
 import { threadAddress } from './server'
@@ -52,13 +53,18 @@ export const UNDELIVERED =
  */
 export const say = (
   data: LiveData,
-  delivery: { readonly id: ThreadId; readonly body: string; readonly key: string },
+  delivery: {
+    readonly id: ThreadId
+    readonly body: string
+    readonly key: string
+    readonly pictures: Delivery['pictures']
+  },
 ) =>
   data.running(
     Effect.tryPromise({
       try: (signal) =>
         conversation(data.session, delivery.id).send({
-          message: { kind: 'user', body: delivery.body },
+          message: { kind: 'user', body: delivery.body, attachments: [...delivery.pictures] },
           idempotencyKey: delivery.key,
           signal,
         }),
@@ -88,7 +94,7 @@ const createThread = (
   data.changing((client) =>
     client.CreateThread({
       id: thread.id,
-      title: titleFromMessage(thread.message),
+      title: thread.message.trim().length === 0 ? UNTITLED : titleFromMessage(thread.message),
       projectId: thread.projectId,
     }),
   )
@@ -109,7 +115,7 @@ export const startThread = Effect.fn('Threads.start')(function* (
   const created = yield* createThread(data, { id, ...start })
   if (Result.isFailure(created)) return Start.NotCreated({ message: created.failure.message })
   // The Thread's id is also the delivery's name: a first message is said at most once.
-  const said = yield* say(data, { id, body: start.message, key: firstKey(id) })
+  const said = yield* say(data, { id, body: start.message, key: firstKey(id), pictures: [] })
   return Result.isFailure(said)
     ? Start.NotSaid({ id, message: said.failure.message })
     : Start.Started({ id })
@@ -126,11 +132,16 @@ export const startThread = Effect.fn('Threads.start')(function* (
  */
 export const firstWay = (data: LiveData): Way => ({
   make: (id, start) =>
-    createThread(data, { id, message: start.words, projectId: start.projectId }).pipe(
+    createThread(data, { id, message: start.message.words, projectId: start.projectId }).pipe(
       Effect.map(refusalOf),
     ),
   say: (id, start) =>
-    say(data, { id, body: start.words, key: firstKey(id) }).pipe(Effect.map(refusalOf)),
+    say(data, {
+      id,
+      body: start.message.words,
+      key: firstKey(id),
+      pictures: start.message.pictures,
+    }).pipe(Effect.map(refusalOf)),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
   },

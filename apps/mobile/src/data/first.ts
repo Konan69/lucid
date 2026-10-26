@@ -1,6 +1,7 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import type { ProjectId, ThreadId } from '@vivid/contracts'
 import { Data, Effect, Option } from 'effect'
+import type { Delivery } from './delivery'
 
 /**
  * A Thread's first words, from the moment they leave the composer on the first screen until they
@@ -42,7 +43,9 @@ export const First = Data.taggedEnum<First>()
 
 /** What a Thread is started with. `at` is when the words left the composer, in milliseconds. */
 export interface Start {
+  /** Raw draft text, kept separately from document references added to the delivered words. */
   readonly words: string
+  readonly message: Pick<Delivery, 'words' | 'pictures'>
   /** The Project the Thread is filed in, when the menu was showing one. */
   readonly projectId: ProjectId | null
   readonly at: number
@@ -191,5 +194,13 @@ export const standInOf = (
     role: 'user',
     purpose: 'user',
     display: 'visible',
-    parts: [{ type: 'text', text: start.words, state: 'done' }],
+    parts: [
+      { type: 'text', text: start.message.words, state: 'done' },
+      ...start.message.pictures.map((picture) => ({
+        type: 'file' as const,
+        mediaType: picture.mimeType,
+        url: `data:${picture.mimeType};base64,${picture.data}`,
+        filename: picture.filename,
+      })),
+    ],
   }))

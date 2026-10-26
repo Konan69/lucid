@@ -1,5 +1,6 @@
-import type { ThreadId } from '@vivid/contracts'
+import { ThreadId } from '@vivid/contracts'
 import { Data, Option } from 'effect'
+import { randomUUID } from 'expo-crypto'
 import { makeFirsts } from './first'
 
 /**
@@ -40,6 +41,7 @@ const FRESH = Front.Fresh()
  * is typing in a Thread that is being opened again.
  */
 export function makeFront(start: Option.Option<ThreadId>) {
+  let draft = ThreadId.make(randomUUID())
   let showing: Front = Option.match(start, {
     onNone: () => FRESH,
     onSome: (id) => Front.Thread({ id, writing: false }),
@@ -60,9 +62,13 @@ export function makeFront(start: Option.Option<ThreadId>) {
     },
     /** What is in front. The same object until it changes. */
     showing: () => showing,
+    /** Home and Feed share this draft's tray before its Thread exists on the server. */
+    draft: () => draft,
     /** Puts a Thread in front. One that is already there stays as it is. */
     open: (id: ThreadId, writing: boolean) => {
       if (Front.$is('Thread')(showing) && showing.id === id) return
+      // Sending consumes the reserved id. The next draft must have its own attachment tray.
+      if (id === draft) draft = ThreadId.make(randomUUID())
       show(Front.Thread({ id, writing }))
     },
     /**
