@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ChannelAddress, ChannelStanding, RunState } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Option, Ref, Result } from 'effect'
+import { ConfigProvider, Effect, Layer, Logger, Option, Ref, Result } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { RunStore } from '../threads/runs.ts'
@@ -120,7 +120,17 @@ describe.skipIf(!testDatabaseConfigured)('Discord channel linking', () => {
         const code = pending.standing.code
         const raced = yield* Ref.make(false)
         const redeem = Ref.getAndSet(raced, true).pipe(
-          Effect.flatMap((done) => (done ? Effect.void : store.redeem('Discord', sender, code))),
+          Effect.flatMap((done) =>
+            done
+              ? Effect.void
+              : store
+                  .redeem('Discord', sender, code)
+                  .pipe(
+                    Effect.catch(() =>
+                      Effect.sync(() => expect.fail('Concurrent redemption failed')),
+                    ),
+                  ),
+          ),
           Effect.asVoid,
         )
         const interleaved = Database.of({
@@ -185,8 +195,19 @@ describe.skipIf(!testDatabaseConfigured)('Discord channel linking', () => {
           return expect.fail('Expected a renewed code')
         expect(yield* store.redeem('Discord', sender, renewed.standing.code)).toBe(true)
         const receiver = yield* ChannelReceiver.pipe(Effect.provide(revokedContext))
-        yield* receiver.receive({ ...(yield* test.message('hello')), channel: 'Discord', sender })
+        const logs: string[] = []
+        yield* receiver
+          .receive({ ...(yield* test.message('hello')), channel: 'Discord', sender })
+          .pipe(
+            Effect.provideService(
+              Logger.CurrentLoggers,
+              new Set([Logger.make((entry) => logs.push(Logger.formatSimple.log(entry)))]),
+            ),
+          )
         expect(yield* Ref.get((yield* ChannelControl).admissions)).toEqual([])
+        expect(logs.join(' ')).toContain('Ignored a Discord channel message outside early access')
+        for (const identity of [email, sender, test.actor.person.id])
+          expect(logs.join(' ')).not.toContain(identity)
         expect(
           Option.isNone(
             Option.getOrThrow(yield* store.byPerson(test.actor.person.id, 'Discord')).threadId,

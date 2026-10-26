@@ -3,6 +3,7 @@ import { NotFound, ThreadAudience, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
+import { loadDiscordPeople } from '../connections/discord.ts'
 import { submissionId } from '../runtime/identity.ts'
 import {
   Conversation,
@@ -25,6 +26,7 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
   const threads = yield* ThreadStore
   const conversation = yield* Conversation
   const provider = yield* ChannelProvider
+  const discordPeople = yield* loadDiscordPeople
 
   /** Deleted or shared Threads cannot inherit phone authority; the next text opens a private Thread. */
   const threadFor = Effect.fn('Channels.threadFor')(function* (
@@ -63,6 +65,10 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     body: string,
   ) {
     const actor = yield* channelActor(link.personId).pipe(Effect.provideService(Database, database))
+    if (message.channel === 'Discord' && !discordPeople.has(actor.person.email.toLowerCase())) {
+      yield* Effect.logInfo('Ignored a Discord channel message outside early access')
+      return
+    }
     const threadId = yield* threadFor(actor, link, body)
     const key = `channel:${message.channel}:${message.id}`
     // Route before admission: even an immediately completed Run must know where its reply belongs.

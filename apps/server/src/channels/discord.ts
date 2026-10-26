@@ -1,11 +1,11 @@
+import * as NodeBuffer from 'node:buffer'
 import { DiscordAdapter } from '@chat-adapter/discord'
 import { createMemoryState } from '@chat-adapter/state-memory'
 import { ChannelAddress, ChannelUnavailable } from '@vivid/contracts'
 import { Chat, ConsoleLogger, type Message, type Thread } from 'chat'
-import { Cause, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from 'effect'
+import { Cause, Effect, Layer, Option, Queue, Redacted, Schema, Stream, type Scope } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import {
-  ChannelConnectionRefused,
   ChannelDisconnected,
   ChannelInbound,
   ChannelMessageId,
@@ -14,8 +14,25 @@ import {
   ChannelSendUnknown,
 } from './provider.ts'
 import { ChannelTextLimit, splitChannelText } from './text.ts'
+import { settingText } from '../config.ts'
 
-const User = Schema.Struct({ id: Schema.NonEmptyString })
+export const discordToken = Schema.RedactedFromValue(
+  settingText.check(
+    Schema.makeFilter((token) => {
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(token)) return false
+      const id = NodeBuffer.Buffer.from(token.split('.')[0] ?? '', 'base64url').toString('utf8')
+      return /^[1-9][0-9]{16,19}$/u.test(id) && BigInt(id) <= 18446744073709551615n
+    }),
+  ),
+)
+const RateLimit = Schema.Struct({
+  retry_after: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+})
+const RetryAfter = Schema.NumberFromString.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+)
+const decodeRetryAfter = Schema.decodeUnknownOption(RetryAfter)
 const RawMessage = Schema.Struct({ channel_id: Schema.NonEmptyString, content: Schema.String })
 const decodeRaw = Schema.decodeUnknownOption(RawMessage)
 
@@ -73,9 +90,11 @@ const textLimit = ChannelTextLimit.make(2000)
 const discordStream = (
   discord: VividDiscord,
   incoming: Queue.Queue<ChannelInbound | 'Connected'>,
+  connect: Effect.Effect<void, ChannelDisconnected, Scope.Scope>,
 ) =>
   Stream.unwrap(
     Effect.gen(function* () {
+      yield* connect
       const events = yield* Queue.unbounded<ChannelInbound, ChannelDisconnected>()
       // The SDK requires a bounded listener; discord.js resumes the socket within one span.
       // A short span would end quiet periods through the worker's growing backoff and drop
@@ -120,7 +139,7 @@ const discordSend = (
   request: HttpClient.HttpClient['execute'],
   base: string,
 ) => {
-  const post = (
+  const post = Effect.fn('Channels.discordPost')(function* (
     path: string,
     body: {
       readonly content: string
@@ -133,10 +152,20 @@ const discordSend = (
         readonly fail_if_not_exists: false
       }
     },
-  ) =>
-    HttpClientRequest.bodyJson(HttpClientRequest.post(`${base}${path}`), body).pipe(
+  ) {
+    const send = HttpClientRequest.bodyJson(HttpClientRequest.post(`${base}${path}`), body).pipe(
       Effect.flatMap(request),
     )
+    const response = yield* send
+    if (response.status !== 429) return response
+    const retry = yield* HttpClientResponse.schemaBodyJson(RateLimit)(response).pipe(
+      Effect.map((limit) => Option.some(limit.retry_after)),
+      Effect.orElseSucceed(() => decodeRetryAfter(response.headers['retry-after'])),
+    )
+    if (Option.isNone(retry)) return response
+    yield* Effect.sleep(retry.value * 1000)
+    return yield* send
+  })
   return Effect.fn('Channels.discordSend')(function* (
     input: Parameters<ChannelProvider['Service']['send']>[0],
   ) {
@@ -150,6 +179,7 @@ const discordSend = (
       })
       conversation = discord.decodeThreadId(thread).channelId
     }
+    let sent = false
     for (const content of splitChannelText(input.text, textLimit)) {
       const body = {
         content,
@@ -164,9 +194,12 @@ const discordSend = (
               message_reference: { message_id: input.place.message, fail_if_not_exists: false },
             },
       ).pipe(Effect.mapError(() => new ChannelSendUnknown({ channel: 'Discord' })))
+      if (response.status === 429)
+        return yield* sent ? new ChannelSendUnknown({ channel: 'Discord' }) : recipientMissing()
       if (response.status >= 400 && response.status < 500) return yield* recipientMissing()
       if (response.status < 200 || response.status >= 300)
         return yield* new ChannelSendUnknown({ channel: 'Discord' })
+      sent = true
     }
     return yield* Effect.void
   })
@@ -181,16 +214,11 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
       ),
   )
   const base = 'https://discord.com/api/v10'
-  const own = yield* request(HttpClientRequest.get(`${base}/users/@me`)).pipe(
-    Effect.mapError(disconnected),
-  )
-  if (own.status === 401 || own.status === 403)
-    return yield* new ChannelConnectionRefused({ channel: 'Discord' })
-  if (own.status !== 200) return yield* disconnected()
-  const user = yield* HttpClientResponse.schemaBodyJson(User)(own).pipe(
-    Effect.mapError(disconnected),
-  )
-  const address = ChannelAddress.make(`discord:${user.id}`)
+  const botId = NodeBuffer.Buffer.from(
+    Redacted.value(token).split('.')[0] ?? '',
+    'base64url',
+  ).toString('utf8')
+  const address = ChannelAddress.make(`discord:${botId}`)
   const incoming = yield* Queue.unbounded<ChannelInbound | 'Connected'>()
   const logger = new ConsoleLogger('silent')
   logger.info = (message) => {
@@ -198,7 +226,7 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
   }
   const discord = new VividDiscord({
     botToken: Redacted.value(token),
-    applicationId: user.id,
+    applicationId: botId,
     apiUrl: base,
     // No webhook endpoint is exposed by this resident adapter.
     webhookVerifier: () => false,
@@ -215,15 +243,14 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
     logger: 'silent',
   })
   const receive = (_thread: Thread, message: Message) => {
-    const mapped = discordInbound(user.id, message)
+    const mapped = discordInbound(botId, message)
     if (Option.isSome(mapped)) Queue.offerUnsafe(incoming, mapped.value)
     return Promise.resolve()
   }
   bot.onNewMention(receive)
   bot.onDirectMessage(receive)
-  yield* Effect.acquireRelease(
-    Effect.tryPromise({ try: () => bot.initialize(), catch: disconnected }),
-    () => Effect.promise(() => bot.shutdown()),
+  const connect = Effect.addFinalizer(() => Effect.promise(() => bot.shutdown())).pipe(
+    Effect.andThen(Effect.tryPromise({ try: () => bot.initialize(), catch: disconnected })),
   )
   return ChannelProvider.of({
     channels: ['Discord'],
@@ -231,7 +258,7 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
     enrol: (channel) => Effect.fail(new ChannelUnavailable({ channel })),
     unenrol: (channel) =>
       channel === 'Discord' ? Effect.void : Effect.fail(new ChannelUnavailable({ channel })),
-    inbound: discordStream(discord, incoming),
+    inbound: discordStream(discord, incoming, connect),
     send: discordSend(discord, request, base),
   })
 })
