@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./cell": "./src/cell.ts",
     "./sandbox": "./src/tools/sandbox.ts",
     "./scope": "./src/tools/scope.ts",
     "./signins": "./src/tools/signins.ts",
