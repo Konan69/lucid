@@ -27,7 +27,7 @@ import {
   migrationPending,
   executorMigrationMessage,
 } from './executor.ts'
-import { connectionLogo, IMPORTED } from './logo.ts'
+import { connectionLogo, connectionSite, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
 import { MADE } from './made.ts'
 import { connections } from './tables.ts'
@@ -193,6 +193,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
     service: row.service,
     serviceName: row.serviceName,
     mark: connectionLogo(row.service),
+    site: connectionSite(row.service),
     name: row.name,
     identity: row.identity,
     account,

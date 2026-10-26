@@ -504,6 +504,7 @@ const withCatalogMarks = (
           service: item.service,
           serviceName: item.serviceName,
           mark: Option.getOrNull(Option.fromNullishOr(marks.get(item.service))),
+          site: item.site,
           name: item.name,
           identity: item.identity,
           account: item.account,

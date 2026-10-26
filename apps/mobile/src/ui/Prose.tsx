@@ -75,10 +75,58 @@ const READING = { latexMath: false, hardSoftBreaks: false, admonitions: true } a
  * press; on an iPhone it would show a page's preview on a long press, which is the renderer
  * following the link, so that is off.
  */
+/** A service whose links a reply draws with its mark: where its links live, and its icon. */
+export interface SiteMark {
+  /** A registrable domain or a host with a path prefix (`Connection.site`). */
+  readonly site: string
+  /** The address of the service's icon (`Connection.mark`). */
+  readonly icon: string
+}
+
+/** Escapes a site for a regular expression; the renderer matches link patterns with one. */
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/gu, '\\$&')
+
+/**
+ * The pattern a link to a site matches: the host itself or any of its subdomains, then the path
+ * prefix when the site has one, then the end of the address or the start of what follows it.
+ * The renderer tries patterns longest first, so `docs.google.com/spreadsheets` wins over a bare
+ * host (`normalizeLinkPatternEntries` in the package).
+ */
+const patternOf = (site: string) => {
+  const [host, ...path] = site.split('/')
+  const prefix = path.length === 0 ? '' : `/${literal(path.join('/'))}`
+  return `^https?://([a-z0-9-]+\\.)*${literal(host)}${prefix}(?:[/?#]|$)`
+}
+
+/**
+ * Links to an Integration's site drawn as a chip with the Integration's mark before the words, in
+ * the link's colour and without the underline, as T3 Code mobile draws a link to a known host
+ * (`useEnrichedLinkVariants.ts`: `linkVariants` with a `pill`, transparent behind it, radius 6,
+ * padding 5 by 2). The words stay the link's own; tapping it opens the link as any other.
+ */
+const markedLinks = (marks: ReadonlyArray<SiteMark>, color: string) =>
+  Object.fromEntries(
+    marks.map((mark) => [
+      patternOf(mark.site),
+      {
+        color,
+        underline: false,
+        backgroundColor: 'transparent',
+        pill: {
+          iconUri: mark.icon,
+          borderRadius: 6,
+          paddingHorizontal: 5,
+          paddingVertical: 2,
+        },
+      },
+    ]),
+  )
+
 export function Prose({
   text,
   plain,
   fresh,
+  marks,
   onLink,
 }: {
   /** The Markdown to draw. */
@@ -87,11 +135,20 @@ export function Prose({
   plain: string
   /** Whether `text` is still arriving, which is when the words it gains fade in. */
   fresh: boolean
+  /** The Person's Integrations whose links are drawn with their mark (`markedLinks`). */
+  marks: ReadonlyArray<SiteMark>
   onLink: (address: string) => void
 }) {
   const { colors, dark } = useTheme()
-  // One object per palette: the renderer sends a style to the native view when it is a new one.
-  const style = useMemo(() => typeset(colors, dark, MOBILE_TYPOGRAPHY), [colors, dark])
+  // One object per palette and set of marks: the renderer sends a style to the native view when it
+  // is a new one.
+  const style = useMemo(
+    () => ({
+      ...typeset(colors, dark, MOBILE_TYPOGRAPHY),
+      linkVariants: markedLinks(marks, colors['primary-text']),
+    }),
+    [colors, dark, marks],
+  )
   if (!formats()) return <Plain text={plain} />
   return (
     <Recover from={text} fallback={<Plain text={plain} />}>
