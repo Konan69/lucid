@@ -132,6 +132,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                   Ready: ({ tools: catalog }) => catalog,
                   NeedsAuthorization: () => [],
                   Failed: () => [],
+                  NeedsAuthorization: () => [],
                 })
                 console.info(
                   JSON.stringify({

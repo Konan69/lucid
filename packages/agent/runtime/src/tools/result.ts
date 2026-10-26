@@ -199,7 +199,12 @@ export const settle = Effect.fn('Tools.settle')(function* (
       Unauthenticated: () => failure('The person needs to sign in before Vivid can do that.'),
       Conflict: () =>
         failure('The request conflicts with the current state; check it before trying again.'),
-      InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
+      // The server words every InvalidRequest itself, for the reader of the call that met it: it
+      // says what was wrong and what to do ("Authorize this integration before continuing.",
+      // "Use only the filters find_events lists."). A fixed sentence here left the model
+      // guessing (production, 26 October 2026: eight find_tools calls in a row). modelText still
+      // keeps any reference out of model context.
+      InvalidRequest: ({ message }) => failure(message),
       ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
       RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
       DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),

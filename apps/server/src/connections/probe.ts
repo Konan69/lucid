@@ -1,5 +1,4 @@
 import { Option, Schema } from 'effect'
-import { ExecutorReferences } from './executor.ts'
 
 const ObjectInput = Schema.Struct({
   type: Schema.Literal('object'),
@@ -7,17 +6,6 @@ const ObjectInput = Schema.Struct({
 })
 const decodeObject = Schema.decodeUnknownOption(ObjectInput)
 const decodeRecord = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Json))
-const Branch = Schema.Struct({
-  type: Schema.Literal('object'),
-  required: Schema.Array(Schema.String),
-  properties: Schema.Struct({
-    accountId: Schema.Struct({ type: Schema.Literal('string'), const: Schema.String }),
-    input: Schema.Json,
-  }),
-})
-const decodeBranch = Schema.decodeUnknownOption(Branch)
-const Envelope = Schema.Struct({ type: Schema.Literal('object'), anyOf: Schema.Array(Schema.Json) })
-const decodeEnvelope = Schema.decodeUnknownOption(Envelope)
 const metadata = ['$schema', '$defs', 'title', 'description']
 
 /** An unused definition is metadata; unknown root constraints and compositions prevent automatic calls. */
@@ -40,37 +28,11 @@ function acceptsEmpty(input: Schema.Json) {
   ])
 }
 
-/** Executor accountOperations wraps provider inputs in { accountId, input } and advertises one
- * anyOf branch per selected account (apps implementation/account-operations). Only the account
- * already bound to this Connection may satisfy that envelope; the model never supplies its id.
+/** The probe input for a read-only tool: `{}` when it provably satisfies the provider's input, and
+ * nothing otherwise. Discovery already shows the provider's own input for an account-bound tool
+ * (`envelope.ts`) and the adapter adds the account when it calls, so the probe never names one.
  * Provider JSON Schema is a second ingress contract within the decoded tool JSON document.
  */
-export function testInput(
-  input: Schema.Json,
-  references: ExecutorReferences,
-): Option.Option<Schema.Json> {
-  if (acceptsEmpty(input)) return Option.some({})
-  if (!ExecutorReferences.guards.Authorized(references)) return Option.none()
-  const envelope = decodeEnvelope(input)
-  if (Option.isNone(envelope) || !onlyKeywords(input, ['type', 'anyOf', ...metadata]))
-    return Option.none()
-  const branches = envelope.value.anyOf.filter((branch) =>
-    onlyKeywords(branch, ['type', 'properties', 'required', 'additionalProperties', ...metadata]),
-  )
-  const branch = branches
-    .map((value) => decodeBranch(value))
-    .find(
-      (candidate) =>
-        Option.isSome(candidate) &&
-        candidate.value.properties.accountId.const === references.account,
-    )
-  if (branch === undefined || Option.isNone(branch)) return Option.none()
-  if (
-    branch.value.required.length !== 2 ||
-    !branch.value.required.includes('accountId') ||
-    !branch.value.required.includes('input')
-  )
-    return Option.none()
-  if (!acceptsEmpty(branch.value.properties.input)) return Option.none()
-  return Option.some({ accountId: references.account, input: {} })
+export function testInput(input: Schema.Json): Option.Option<Schema.Json> {
+  return acceptsEmpty(input) ? Option.some({}) : Option.none()
 }

@@ -181,11 +181,16 @@ function useTool(runTool: RunTool) {
   return defineTool({
     name: Tool.use_tool,
     description:
-      'Call one Integration tool that find_tools returned, with JSON input matching its signature. If approval is requested, stop and wait.',
+      'Call one Integration tool that find_tools returned. input is the JSON object the tool’s signature takes, exactly as find_tools showed it: never a string, and never wrapped with an account; account chooses the account. If the call is rejected, read the tool’s signature with find_tools, correct the input and call again. If approval is requested, stop and wait.',
     input: v.object({
       account: text('The exact account name returned by find_tools.', 300),
       tool: text('The exact tool name returned by find_tools.', 200),
-      input: v.pipe(v.unknown(), v.description('JSON input matching the tool’s signature.')),
+      input: v.pipe(
+        v.unknown(),
+        v.description(
+          'The JSON object the tool’s signature takes, as an object rather than text. Do not add accountId or an account here.',
+        ),
+      ),
       summary,
       rationale: v.pipe(
         v.string(),
@@ -293,7 +298,11 @@ function integrationTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const outcome = yield* client.TestIntegration({ account: data.account })
-            if (TestIntegrationOutcome.isAnyOf(['NotTested', 'Blocked', 'Unreachable'])(outcome))
+            if (
+              TestIntegrationOutcome.isAnyOf(['NotTested', 'Refused', 'Blocked', 'Unreachable'])(
+                outcome,
+              )
+            )
               yield* warnFailure('test_integration', outcome._tag)
             return {
               output: connectionViews.tested(outcome),

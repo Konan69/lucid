@@ -55,7 +55,12 @@ export function integrations(response: FindIntegrationsResponse) {
   }
 }
 
-/** Authorization references are the existing card exception; ownership and foreign ids stay hidden. */
+/**
+ * Authorization references are the existing card exception; ownership and foreign ids stay hidden.
+ * A card's `reason` is shown to the Person on the card, so it is written to them and carries no
+ * instruction for the model. The Run ends at a card, and the delivery that follows the sign-in
+ * tells Vivid to carry on, so there is nothing for the model to be told here.
+ */
 export function added(outcome: AddIntegrationOutcome): Schema.Json {
   return AddIntegrationOutcome.match<Schema.Json>(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
@@ -88,7 +93,7 @@ export function added(outcome: AddIntegrationOutcome): Schema.Json {
         kind: 'connection-request',
         service: step.connection.service,
         serviceName: modelText(step.connection.serviceName),
-        reason: `Sign in to finish connecting ${modelText(step.connection.serviceName)}. Call find_tools for the account names you may use.`,
+        reason: `Sign in to finish connecting ${modelText(step.connection.serviceName)}.`,
         ready: false,
         authorization: ConnectionAuthorization.cases.OpenSignIn.make({
           connectionId: step.connection.id,
@@ -99,7 +104,7 @@ export function added(outcome: AddIntegrationOutcome): Schema.Json {
         kind: 'connection-request',
         service: step.connection.service,
         serviceName: modelText(step.connection.serviceName),
-        reason: `Enter the key in the secure dialog to finish connecting ${modelText(step.connection.serviceName)}. Call find_tools for the account names you may use.`,
+        reason: `Enter the key in the secure dialog to finish connecting ${modelText(step.connection.serviceName)}.`,
         ready: false,
         authorization: ConnectionAuthorization.cases.EnterKey.make({
           connectionId: step.connection.id,
@@ -125,6 +130,13 @@ export function tested(outcome: TestIntegrationOutcome) {
       account: modelText(account),
       tools,
       reason,
+    }),
+    Refused: ({ account, tools, tool, message }) => ({
+      works: false,
+      account: modelText(account),
+      tools,
+      testedTool: tool,
+      reason: `${tool} refused the test call: ${modelText(message)} Try another read-only tool with use_tool before concluding the integration does not work.`,
     }),
     ApprovalRequired: approval,
     Blocked: ({ rule }) => ({ works: false, reason: modelText(rule) }),

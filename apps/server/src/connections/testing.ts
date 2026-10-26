@@ -438,8 +438,14 @@ export const hostedPrefix = `/api/organizations/${hostedOrganization}`
 export const hostedService = ServiceId.make('test/service')
 export const hostedReturnAddress = 'https://vivid.example.test/api/connections/return'
 const hostedRemoved = { removed: true }
+/** An MCP tool lists its input as an object schema; with no required field `{}` satisfies it. */
 export const hostedTools = [
-  { name: 'read', description: 'Read records', inputSchema: {}, readOnly: true },
+  {
+    name: 'read',
+    description: 'Read records',
+    inputSchema: { type: 'object', properties: {} },
+    readOnly: true,
+  },
 ]
 
 interface HostedRequest {
@@ -629,6 +635,43 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
   return hostedRemoved
 })
 
+/** The accounts members linked on one fixture app, across its user requirements. */
+const hostedLinked = Effect.fn('Executor.HostedTest.linked')(function* (
+  state: HostedState,
+  app: string,
+) {
+  const selection = (yield* Ref.get(state.selections)).get(app)
+  if (selection === undefined) return []
+  return Object.values(yield* decodeHostedSelections(selection)).flat()
+})
+
+/**
+ * A tool as beta.23 lists it once members link their own accounts: `accountRouter` merges it
+ * across the accounts and its input becomes one `{ accountId, input }` branch per account, the
+ * provider's schema nested under `input` with its references rewritten to that branch
+ * (refs/executor packages/apps/src/implementation/account-router.ts `merge`). Fixture tools are
+ * flat schemas, so nesting them needs no reference rewrite here.
+ */
+function hostedAccountTool<Tool extends { readonly inputSchema: Schema.Json }>(
+  tool: Tool,
+  accounts: readonly string[],
+) {
+  return {
+    ...tool,
+    inputSchema: {
+      type: 'object',
+      anyOf: accounts.map((accountId) => ({
+        type: 'object',
+        properties: {
+          accountId: { type: 'string', const: accountId },
+          input: tool.inputSchema,
+        },
+        required: ['accountId', 'input'],
+      })),
+    },
+  }
+}
+
 /** Tool pages retain a version and exact selections while the fixture router stays independent. */
 const hostedPage = Effect.fn('Executor.HostedTest.page')(function* (
   state: HostedState,
@@ -638,19 +681,54 @@ const hostedPage = Effect.fn('Executor.HostedTest.page')(function* (
   const appId = request.path.split('/')[2]
   if (appId === undefined) return yield* Effect.die('Missing fixture app')
   const selection = (yield* Ref.get(state.selections)).get(appId)
+  const linked = yield* hostedLinked(state, appId)
+  const listed = <Tool extends { readonly inputSchema: Schema.Json }>(items: readonly Tool[]) =>
+    linked.length === 0 ? items : items.map((tool) => hostedAccountTool(tool, linked))
   const page = {
     accounts: { app: {}, user: selection === undefined ? {} : selection },
     version: 'version',
-    items: hostedTools,
+    items: listed(hostedTools),
     routers: [],
   }
   if (!(yield* Ref.get(state.paginated))) return page
   if (search.has('cursor'))
     return {
       ...page,
-      items: [{ name: 'write', description: 'Write records', inputSchema: {}, readOnly: false }],
+      items: listed([
+        { name: 'write', description: 'Write records', inputSchema: {}, readOnly: false },
+      ]),
     }
   return { ...page, next: 'next/with+&symbols' }
+})
+
+const HostedAccountInput = Schema.Struct({ accountId: Schema.String, input: Schema.Json })
+/** Executor's refusal of an input that does not fit the tool, before the tool runs. */
+const hostedInputInvalid = Schema.TaggedStruct('InputInvalid', {
+  problems: Schema.Array(Schema.String),
+})
+const decodeHostedCall = Schema.decodeUnknownOption(Schema.Struct({ input: HostedAccountInput }))
+
+/**
+ * A call on an app with linked accounts answers as beta.23 does: its input must be
+ * `{ accountId, input }` naming a linked account, or the call is refused before it runs with the
+ * problem Executor reports (`InputInvalid`, seen on production on 26 October 2026 as
+ * "input: Expected object {accountId, input}"). An app with no linked account takes the
+ * provider's input as it is.
+ */
+const hostedCall = Effect.fn('Executor.HostedTest.call')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  const app = request.path.split('/')[2]
+  if (app === undefined) return yield* Effect.die('Missing fixture app')
+  const linked = yield* hostedLinked(state, app)
+  const call = decodeHostedCall(request.body)
+  if (linked.length > 0 && (Option.isNone(call) || !linked.includes(call.value.input.accountId)))
+    return Option.some({
+      status: 422,
+      body: hostedInputInvalid.make({ problems: ['input: Expected object {accountId, input}'] }),
+    })
+  return Option.none<HostedReply>()
 })
 
 /** Both pages carry the same account/version snapshot; the cursor intentionally needs URL
@@ -769,6 +847,11 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
     }
     if (!hostedRoute(local.path))
       return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
+    const refused = /^POST \/apps\/[^/]+\/tools\/call$/u.test(local.path)
+      ? yield* hostedCall(state, local)
+      : Option.none<HostedReply>()
+    if (Option.isSome(refused))
+      return HttpServerResponse.jsonUnsafe(refused.value.body, { status: refused.value.status })
     const result =
       request.method === 'GET' ? yield* hostedRead(state, local) : yield* hostedWrite(state, local)
     if (request.method !== 'GET') yield* (yield* Ref.get(state.afterWrite))(received)
