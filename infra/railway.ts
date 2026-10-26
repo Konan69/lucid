@@ -281,10 +281,16 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onNone: () => ({}),
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
-  const discordAccess = Option.match(environment.discordPeople, {
-    onNone: () => ({}),
-    onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
-  })
+  const discordAccess = {
+    ...Option.match(environment.discordPeople, {
+      onNone: () => ({}),
+      onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
+    }),
+    ...Option.match(environment.discordBotToken, {
+      onNone: () => ({}),
+      onSome: (value) => ({ VIVID_DISCORD_BOT_TOKEN: value }),
+    }),
+  }
 
   /**
    * Keep the existing logical id and mount path so the first cell deploy preserves every notes

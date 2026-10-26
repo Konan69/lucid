@@ -1,4 +1,5 @@
-import { and, eq } from 'drizzle-orm'
+import * as NodeCrypto from 'node:crypto'
+import { and, eq, gt } from 'drizzle-orm'
 import {
   Channel,
   ChannelUnavailable,
@@ -14,11 +15,12 @@ import {
 import { Clock, Context, Effect, Layer, Option, Semaphore } from 'effect'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
+import { loadDiscordPeople } from '../connections/discord.ts'
 import { changed, Changes } from '../live/changes.ts'
 import { normalizeChannelPhone } from './address.ts'
 import { StoredLink, standingOf } from './model.ts'
-import { ChannelProvider } from './provider.ts'
-import { channelLinks } from './tables.ts'
+import { ChannelEnrolmentId, ChannelProvider } from './provider.ts'
+import { channelCodes, channelLinks } from './tables.ts'
 
 /** Provider identity grants only the linked Person's private workspace, never their selected Company. */
 export const channelActor = Effect.fn('Channels.actor')(function* (personId: PersonId) {
@@ -70,6 +72,7 @@ const linkQueries = (database: Database['Service']) => {
 interface LinkAuthority extends ReturnType<typeof linkQueries> {
   readonly database: Database['Service']
   readonly provider: ChannelProvider['Service']
+  readonly discordPeople: ReadonlySet<string>
   readonly gate: Semaphore.Semaphore
   readonly announce: (actor: Actor) => Effect.Effect<void>
 }
@@ -79,13 +82,43 @@ const connectLink = ({
   database,
   provider,
   gate,
+  discordPeople,
   announce,
   byPerson,
   byAddress,
 }: LinkAuthority) => {
   /** Enrol before publishing Connected; repeat requests reuse the existing provider receipt. */
   return Effect.fn('Channels.connect')(
-    function* (actor: Actor, channel: Channel, value: string) {
+    function* (actor: Actor, channel: Channel, value?: string) {
+      if (
+        channel === 'Discord' &&
+        (!provider.channels.includes(channel) ||
+          !discordPeople.has(actor.person.email.toLowerCase()))
+      )
+        return yield* new ChannelUnavailable({ channel })
+      const textTo = provider.codeAddress(channel)
+      if (Option.isSome(textTo)) {
+        const prior = yield* byPerson(actor.person.id, channel)
+        if (Option.isSome(prior))
+          return ChannelLink.make({ channel, standing: standingOf(prior.value) })
+        const code = String(NodeCrypto.randomInt(100000, 1000000))
+        const expiresAt = (yield* Clock.currentTimeMillis) + 10 * 60 * 1000
+        yield* database.run(
+          database
+            .insert(channelCodes)
+            .values({ personId: actor.person.id, channel, code, expiresAt })
+            .onConflictDoUpdate({
+              target: [channelCodes.personId, channelCodes.channel],
+              set: { code, expiresAt },
+            }),
+        )
+        yield* announce(actor)
+        return ChannelLink.make({
+          channel,
+          standing: ChannelStanding.cases.Awaiting.make({ textTo: textTo.value, code, expiresAt }),
+        })
+      }
+      if (value === undefined) return yield* new ChannelAddressInvalid({ channel })
       const address = yield* normalizeChannelPhone({ channel, value }).pipe(
         Effect.mapError(() => new ChannelAddressInvalid({ channel })),
       )
@@ -139,7 +172,9 @@ const connectLink = ({
 }
 
 /** Linking owns personal persistence and provider enrolment; handlers contain no business decisions. */
-const makeChannels = Effect.fn('Channels.makeStore')(function* () {
+const makeChannels = Effect.fn('Channels.makeStore')(function* (
+  discordPeople: ReadonlySet<string>,
+) {
   const database = yield* Database
   const provider = yield* ChannelProvider
   const changes = yield* Changes
@@ -152,9 +187,38 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
     return yield* Effect.forEach(
       Channel.literals,
       Effect.fn('Channels.standing')(function* (channel) {
-        if (!provider.channels.includes(channel))
+        if (
+          !provider.channels.includes(channel) ||
+          (channel === 'Discord' && !discordPeople.has(actor.person.email.toLowerCase()))
+        )
           return ChannelLink.make({ channel, standing: ChannelStanding.cases.Unavailable.make({}) })
         const found = yield* byPerson(actor.person.id, channel)
+        if (Option.isNone(found)) {
+          const textTo = provider.codeAddress(channel)
+          const now = yield* Clock.currentTimeMillis
+          const pending = yield* database.run(
+            database
+              .select()
+              .from(channelCodes)
+              .where(
+                and(
+                  eq(channelCodes.personId, actor.person.id),
+                  eq(channelCodes.channel, channel),
+                  gt(channelCodes.expiresAt, now),
+                ),
+              ),
+          )
+          const code = pending[0]
+          if (code !== undefined && Option.isSome(textTo))
+            return ChannelLink.make({
+              channel,
+              standing: ChannelStanding.cases.Awaiting.make({
+                textTo: textTo.value,
+                code: code.code,
+                expiresAt: code.expiresAt,
+              }),
+            })
+        }
         return ChannelLink.make({
           channel,
           standing: Option.match(found, {
@@ -166,13 +230,28 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
     )
   })
 
-  const connect = connectLink({ database, provider, gate, announce, byPerson, byAddress })
+  const connect = connectLink({
+    database,
+    provider,
+    gate,
+    discordPeople,
+    announce,
+    byPerson,
+    byAddress,
+  })
 
   /** Remove the provider allowlist before releasing ownership, so another Person cannot inherit a live link. */
   const disconnect = Effect.fn('Channels.disconnect')(
     function* (actor: Actor, channel: Channel) {
       if (!provider.channels.includes(channel)) return yield* new ChannelUnavailable({ channel })
       const prior = yield* byPerson(actor.person.id, channel)
+      yield* database.run(
+        database
+          .delete(channelCodes)
+          .where(
+            and(eq(channelCodes.personId, actor.person.id), eq(channelCodes.channel, channel)),
+          ),
+      )
       if (Option.isSome(prior)) {
         yield* provider.unenrol(channel, prior.value.enrolmentId)
         yield* database.run(
@@ -182,9 +261,62 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
               and(eq(channelLinks.personId, actor.person.id), eq(channelLinks.channel, channel)),
             ),
         )
-        yield* announce(actor)
       }
+      yield* announce(actor)
       return ChannelLink.make({ channel, standing: ChannelStanding.cases.NotConnected.make({}) })
+    },
+    (effect) => gate.withPermit(effect),
+  )
+
+  /** Consuming the code and publishing ownership are atomic. A conflicting address rolls back the consumed code. */
+  const redeem = Effect.fn('Channels.redeem')(
+    function* (channel: Channel, sender: StoredLink['address'], text: string) {
+      const textTo = provider.codeAddress(channel)
+      if (Option.isNone(textTo)) return false
+      const now = yield* Clock.currentTimeMillis
+      const personId = yield* database
+        .transaction((tx) =>
+          Effect.gen(function* () {
+            const consumed = yield* tx
+              .delete(channelCodes)
+              .where(
+                and(
+                  eq(channelCodes.channel, channel),
+                  eq(channelCodes.code, text.trim()),
+                  gt(channelCodes.expiresAt, now),
+                ),
+              )
+              .returning()
+            const code = consumed[0]
+            if (code === undefined) return Option.none<PersonId>()
+            const link = {
+              address: sender,
+              textTo: textTo.value,
+              enrolmentId: ChannelEnrolmentId.make(sender.slice('discord:'.length)),
+              since: now,
+              threadId: null,
+            }
+            yield* tx
+              .insert(channelLinks)
+              .values({ personId: code.personId, channel, ...link })
+              .onConflictDoUpdate({
+                target: [channelLinks.personId, channelLinks.channel],
+                set: link,
+              })
+            return Option.some(code.personId)
+          }),
+        )
+        .pipe(
+          Effect.catchTag('DatabaseConstraintViolation', () =>
+            Effect.fail(new ChannelAddressTaken({ channel })),
+          ),
+        )
+      if (Option.isNone(personId)) return false
+      const actor = yield* channelActor(personId.value).pipe(
+        Effect.provideService(Database, database),
+      )
+      yield* announce(actor)
+      return true
     },
     (effect) => gate.withPermit(effect),
   )
@@ -212,11 +344,14 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
     if (rows.length > 0) yield* announce(actor)
     return rows.length > 0
   })
-  return { list, connect, disconnect, byPerson, byAddress, attach }
+  return { list, connect, disconnect, redeem, byPerson, byAddress, attach }
 })
 
 export class ChannelStore extends Context.Service<
   ChannelStore,
   Effect.Success<ReturnType<typeof makeChannels>>
 >()('vivid/ChannelStore') {}
-export const channelStoreLayer = Layer.effect(ChannelStore, makeChannels())
+export const channelStoreLayer = Layer.effect(
+  ChannelStore,
+  loadDiscordPeople.pipe(Effect.flatMap(makeChannels)),
+)
