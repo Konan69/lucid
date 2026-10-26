@@ -1,7 +1,6 @@
 import { useAtomMount, useAtomValue } from '@effect/atom-react'
 import { useSyncExternalStore } from 'react'
 import { makeMutable } from 'react-native-reanimated'
-import AppleTranscription from '@react-native-ai/apple/src/NativeAppleTranscription'
 import { dictating } from '@vivid/state'
 import { Effect, Layer, Option } from 'effect'
 import { AsyncResult } from 'effect/reactivity'
@@ -18,6 +17,7 @@ import { randomUUID } from 'expo-crypto'
 import { File } from 'expo-file-system'
 import { AppState, Platform } from 'react-native'
 import { draft } from './drafts'
+import { transcriber } from './transcriber'
 import type { Dictating } from '../ui/Dictation'
 import { useLiveData, type LiveData } from './live'
 
@@ -51,7 +51,7 @@ interface Able {
 const able: Able = { known: Option.none() }
 export const canDictate = (): boolean =>
   Option.getOrElse(able.known, () => {
-    const now = Platform.OS === 'ios' && AppleTranscription.isAvailable(language())
+    const now = Option.exists(transcriber, (system) => system.isAvailable(language()))
     able.known = Option.some(now)
     return now
   })
@@ -120,12 +120,15 @@ const closeSession = Effect.fn('Dictation.closeSession')(function* () {
 const start = Effect.fn('Dictation.start')(function* () {
   const locale = language()
   if (!canDictate()) return yield* Effect.fail(why.Unavailable.make({}))
+  const system = yield* Effect.fromOption(transcriber).pipe(
+    Effect.mapError(() => why.Unavailable.make({})),
+  )
   const allowed = yield* Effect.tryPromise(() => requestRecordingPermissionsAsync()).pipe(
     Effect.mapError(() => why.Unprepared.make({})),
   )
   if (!allowed.granted)
     return yield* Effect.fail(why.NoMicrophone.make({ settings: !allowed.canAskAgain }))
-  yield* Effect.tryPromise(() => AppleTranscription.prepare(locale)).pipe(
+  yield* Effect.tryPromise(() => system.prepare(locale)).pipe(
     Effect.mapError(() => why.Unavailable.make({})),
   )
   yield* openSession().pipe(Effect.mapError(() => why.Unprepared.make({})))
@@ -236,7 +239,10 @@ const finish = Effect.fn('Dictation.finish')(function* (locale: string) {
   const audio = yield* Effect.tryPromise(() => new File(uri).arrayBuffer()).pipe(
     Effect.mapError(() => why.Untranscribed.make({})),
   )
-  const heard = yield* Effect.tryPromise(() => AppleTranscription.transcribe(audio, locale)).pipe(
+  const system = yield* Effect.fromOption(transcriber).pipe(
+    Effect.mapError(() => why.Untranscribed.make({})),
+  )
+  const heard = yield* Effect.tryPromise(() => system.transcribe(audio, locale)).pipe(
     Effect.mapError(() => why.Untranscribed.make({})),
   )
   return heard.segments
