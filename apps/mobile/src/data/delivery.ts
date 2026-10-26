@@ -1,3 +1,4 @@
+import type { attaching } from '@vivid/state'
 import { Option } from 'effect'
 
 /**
@@ -12,9 +13,13 @@ import { Option } from 'effect'
  * words until they are known to have arrived.
  */
 
-/** Words on their way to a Thread, and the key that names this one delivery to the server. */
+/**
+ * Words on their way to a Thread, the pictures that go with them, and the key that names this one
+ * delivery to the server.
+ */
 export interface Delivery {
   readonly words: string
+  readonly pictures: ReadonlyArray<attaching.Picture>
   readonly key: string
 }
 
@@ -40,12 +45,14 @@ export type Say = (words: string) => Promise<boolean>
 export const deliveryOf = (
   unsent: Option.Option<Unsent>,
   words: string,
+  pictures: ReadonlyArray<attaching.Picture>,
   fresh: () => string,
 ): Delivery =>
   Option.match(
     Option.filter(unsent, (failed) => failed.words === words),
     {
-      onNone: () => ({ words, key: fresh() }),
-      onSome: (failed) => ({ words, key: failed.key }),
+      onNone: () => ({ words, pictures, key: fresh() }),
+      // Sending the same words again is the delivery that did not arrive, with what it carried.
+      onSome: (failed) => ({ words, pictures: failed.pictures, key: failed.key }),
     },
   )

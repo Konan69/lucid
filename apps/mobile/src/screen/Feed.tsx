@@ -190,6 +190,8 @@ export function Feed() {
           placeholder="Message Vivid"
           working={false}
           disabled={false}
+          // A new Thread's first words carry no files: the tray belongs to a Thread.
+          attachments={Option.none()}
           onChange={start.setDraft}
           onSend={() => {
             // The new Thread opens on Home, where every Thread is read and written. Back to the

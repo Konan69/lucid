@@ -18,6 +18,7 @@ import {
 import {
   approvalUp,
   asking as model,
+  attaching,
   draftPlace,
   lasting,
   QUIET_MS,
@@ -45,6 +46,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
+import { chooseFiles, clearTray, pastePictures, removeFile, useTray } from '../data/attach'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { readingPlace, type Anchor } from '../data/reading'
@@ -347,10 +349,10 @@ function useSend(
    * and drawn when it comes back; in a private one the hook shows it at once and keeps it in the
    * conversation if it fails.
    */
-  const deliver = ({ words, key }: Delivery): Promise<Option.Option<string>> =>
+  const deliver = ({ words, pictures, key }: Delivery): Promise<Option.Option<string>> =>
     shared
       ? start(say(data, { id, body: words, key })).then(refusalOf)
-      : agent.sendMessage(words, { idempotencyKey: key }).then(
+      : agent.sendMessage(words, { idempotencyKey: key, images: [...pictures] }).then(
           () => Option.none(),
           // A failed send is not proof the words did not arrive: on 26 October 2026 the server
           // answered both of a phone's sends 202 while the phone's request failed, and the Thread
@@ -359,7 +361,7 @@ function useSend(
           // (`deriveKeyedSubmissionId`), so a delivery that arrived is answered as that delivery
           // and is never said twice, and starting the send clears the failed copy Flue kept.
           () =>
-            agent.sendMessage(words, { idempotencyKey: key }).then(
+            agent.sendMessage(words, { idempotencyKey: key, images: [...pictures] }).then(
               () => Option.none(),
               () => Option.some(UNDELIVERED),
             ),
@@ -396,7 +398,8 @@ function useSend(
      * Sends words: as the delivery still in doubt when they are its words, else as a new one.
      * Answers whether they arrived.
      */
-    say: (words: string) => send(deliveryOf(unsent, words, randomUUID)),
+    say: (words: string, pictures: ReadonlyArray<attaching.Picture>) =>
+      send(deliveryOf(unsent, words, pictures, randomUUID)),
   }
 }
 
@@ -787,10 +790,11 @@ function Conversation({
   }
 
   /** Says something in the Thread. Words that are on their way leave the composer they were in. */
-  const speak: Say = (words) => {
+  const sayWith = (words: string, pictures: ReadonlyArray<attaching.Picture>) => {
     if (typed.trim() === words) type('')
-    return sending.say(words)
+    return sending.say(words, pictures)
   }
+  const speak: Say = (words) => sayWith(words, [])
 
   const ended = endedOf(working, shown, around, (words) => void speak(words))
 
@@ -845,8 +849,9 @@ function Conversation({
           asking={asking}
           undecided={allowing.refused}
           stopping={stopping}
+          thread={id}
           onType={type}
-          onSpeak={speak}
+          onSpeak={sayWith}
           onDock={onDock}
         />
       </View>
@@ -888,6 +893,7 @@ const aroundOf = (
  * the banner has no button of its own (`onward`; `chat/Choices.tsx`).
  */
 function Foot({
+  thread,
   typed,
   writing,
   shared,
@@ -900,6 +906,7 @@ function Foot({
   onSpeak,
   onDock,
 }: {
+  thread: ThreadId
   typed: string
   writing: boolean
   shared: boolean
@@ -911,7 +918,8 @@ function Foot({
   undecided: boolean
   stopping: ReturnType<typeof useStop>
   onType: (words: string) => void
-  onSpeak: Say
+  /** Says words in the Thread with the pictures the tray carries. */
+  onSpeak: (words: string, pictures: ReadonlyArray<attaching.Picture>) => Promise<boolean>
   /**
    * The composer's dock was laid out this tall: it grows with what is typed, and loses the home
    * indicator's inset when the keyboard covers it.
@@ -920,6 +928,8 @@ function Foot({
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
+  const data = useLiveData()
+  const tray = useTray(thread)
   /**
    * Sends what was typed, as what it means now (`replyOf`). Nearly always that is an ordinary
    * message. For a question that offers no options it is that question's answer: the words
@@ -927,7 +937,16 @@ function Foot({
    */
   function reply(words: string) {
     model.Reply.$match(model.replyOf(asking.up, words), {
-      Message: () => void onSpeak(words),
+      Message: () => {
+        // Documents are named in the words and pictures travel beside them; the tray starts
+        // again from none. A message that does not arrive keeps its pictures (`deliveryOf`).
+        const carried = attaching.carriedBy(tray)
+        void onSpeak(
+          [words, ...carried.lines].filter((line) => line.length > 0).join('\n'),
+          carried.pictures,
+        )
+        clearTray(data, thread, shared)
+      },
       Answer: ({ drafting, step }) => {
         onType('')
         Option.map(asking.up, ({ request }) => {
@@ -991,6 +1010,12 @@ function Foot({
           onSend={() => reply(typed.trim())}
           onStop={() => void stopping.stop()}
           asked={Option.getOrUndefined(onward)}
+          attachments={Option.some({
+            tray,
+            onAttach: () => chooseFiles(data, thread, shared),
+            onRemove: (key: string) => removeFile(data, thread, shared, key),
+            onPaste: (uris: ReadonlyArray<string>) => pastePictures(data, thread, shared, uris),
+          })}
         />
       </View>
     </>

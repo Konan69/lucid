@@ -150,6 +150,8 @@ function Writing({ me, mood, starting, placeholder }: WritingProps) {
           placeholder={placeholder}
           working={false}
           disabled={false}
+          // A new Thread's first words carry no files: the tray belongs to a Thread.
+          attachments={Option.none()}
           onChange={starting.setDraft}
           onSend={starting.send}
           onStop={() => undefined}
