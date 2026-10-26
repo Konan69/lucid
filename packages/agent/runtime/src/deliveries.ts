@@ -40,6 +40,8 @@ const decodeKept = Schema.decodeUnknownOption(codec)
  * not a delivery.
  */
 export const DeliveryRecord = defineDocFamily<{ kept: string }, string>({
+  // Pi 1.4.0 requires the policy; never writing a base keeps 1.2.0's behaviour (deltas only).
+  checkpointWhen: () => false,
   kind: 'vivid.delivery',
   version: 1,
   scope: 'conversation',

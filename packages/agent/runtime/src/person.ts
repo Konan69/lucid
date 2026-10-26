@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createRegistry, Harness, type AgentChange } from '@earendil-works/pi-durable'
 import type { PersonId } from '@vivid/contracts'
-import { Deferred, Effect, type Scope } from 'effect'
+import { Deferred, Effect, Option, type Scope } from 'effect'
 import { definition, offered } from './agents/vivid.ts'
 import { resolveCall, scopeResolver } from './authority.ts'
 import { Product } from './client.ts'
@@ -14,6 +14,7 @@ import { RuntimeSettings } from './settings.ts'
 import type { StoreUnavailable } from './storage/errors.ts'
 import { Stores } from './storage/stores.ts'
 import { followSettlements } from './settled.ts'
+import { HarnessWake } from './wake.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
 import { tools } from './tools/index.ts'
@@ -90,6 +91,7 @@ export const openPerson: (
   const product = yield* Product
   const models = yield* Models
   const skills = yield* BuiltinSkills
+  const wake = yield* HarnessWake
   const storage = yield* (yield* Stores).open(personId)
 
   const services = yield* Effect.context()
@@ -131,6 +133,8 @@ export const openPerson: (
             onReport: (error) => {
               void run(reported(error))
             },
+            // Absent for the Node process, which keeps Pi's own timers (`wake.ts`).
+            onWake: Option.getOrUndefined(wake),
           },
           BACKGROUND_CONTEXT,
         ),

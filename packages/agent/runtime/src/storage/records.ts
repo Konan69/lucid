@@ -168,6 +168,12 @@ const taskStates = {
     on: Schema.Array(Schema.Int),
     policy: Schema.Literals(['failFast', 'allSettled']),
   }),
+  // Pi 1.4.0: a durable sleep holds no invocation and resumes at `checkpoint` once the clock reaches `until`.
+  sleeping: Schema.Struct({
+    status: Schema.tag('sleeping'),
+    checkpoint: Schema.MutableJson,
+    until: Schema.Finite,
+  }),
   completing: Schema.Struct({ status: Schema.tag('completing'), outcome: TaskResult }),
   terminal: Schema.Struct({ status: Schema.tag('terminal'), outcome: TaskResult }),
 } satisfies Record<

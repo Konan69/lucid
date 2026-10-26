@@ -87,6 +87,8 @@ export interface RunData extends Schema.Schema.Type<typeof RunData> {}
  * never has to guess; a submission without one answered itself. A fork is not a submission.
  */
 export const Answered = defineDocFamily<{ by: number }, number>({
+  // Pi 1.4.0 requires the policy; never writing a base keeps 1.2.0's behaviour (deltas only).
+  checkpointWhen: () => false,
   kind: 'vivid.answered',
   version: 1,
   scope: 'conversation',

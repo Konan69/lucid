@@ -18,6 +18,8 @@ export const ThreadConversation = defineDocFamily<
   { conversationId: ConversationId },
   ConversationId
 >({
+  // Pi 1.4.0 requires the policy; never writing a base keeps 1.2.0's behaviour (deltas only).
+  checkpointWhen: () => false,
   kind: 'vivid.thread',
   version: 1,
   scope: 'session',
@@ -40,6 +42,8 @@ interface ThreadFacts {
  * family. A fork would not be the same Thread, so it starts without the relation.
  */
 export const ConversationThread = defineDocFamily<ThreadFacts, ThreadFacts>({
+  // Pi 1.4.0 requires the policy; never writing a base keeps 1.2.0's behaviour (deltas only).
+  checkpointWhen: () => false,
   kind: 'vivid.conversation',
   version: 1,
   scope: 'conversation',

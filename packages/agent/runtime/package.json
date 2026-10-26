@@ -28,9 +28,9 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.2.0",
-    "@earendil-works/pi-ai": "1.2.0",
-    "@earendil-works/pi-durable": "1.2.0",
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
     "@effect/platform-node": "catalog:",
     "@openuidev/lang-core": "catalog:",
     "@valibot/to-json-schema": "1.7.1",

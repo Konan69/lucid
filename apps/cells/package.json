@@ -7,7 +7,7 @@
     "typecheck": "node ../../scripts/types.mjs tsconfig.json"
   },
   "dependencies": {
-    "@earendil-works/pi-durable": "1.2.0",
+    "@earendil-works/pi-durable": "1.4.0",
     "@vivid/agent-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",

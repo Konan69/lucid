@@ -13,7 +13,7 @@
     "test": "node ../../../scripts/test.mjs"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.2.0",
+    "@earendil-works/chord": "1.4.0",
     "@typeonce/effect-machine": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
