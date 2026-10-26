@@ -26,6 +26,7 @@ import { RunStore } from './runs.ts'
 import { LiveLink } from '../rpc/link.ts'
 import { ThreadStore, type Shared } from './store.ts'
 import { openFirstThread } from './arrival.ts'
+import { sendToThread, watchConversation } from './relay.ts'
 
 /**
  * Everything beside the conversation that draws one Thread. The conversation itself is Flue's
@@ -155,6 +156,8 @@ export const threadHandlers = {
     const auth = yield* requirePerson()
     yield* (yield* ThreadStore).markRead(auth.person.id, id)
   }),
+  WatchConversation: watchConversation,
+  SendToThread: sendToThread,
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
