@@ -148,7 +148,9 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
     inbound: Stream.unwrap(
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<ChannelInbound, ChannelDisconnected>()
-        // The SDK requires a bounded listener. Ending it re-enters the per-provider backoff.
+        // The SDK requires a bounded listener; discord.js resumes the socket within one span.
+        // A short span would end quiet periods through the worker's growing backoff and drop
+        // messages sent in the gap, so one span lasts a day.
         yield* Effect.tryPromise({
           try: (signal) => {
             let completion = Promise.resolve<unknown>(undefined)
@@ -159,7 +161,7 @@ const makeDiscord = Effect.fn('Channels.makeDiscord')(function* (token: Redacted
                     completion = task
                   },
                 },
-                180000,
+                86_400_000,
                 signal,
               )
               .then(() => completion)
