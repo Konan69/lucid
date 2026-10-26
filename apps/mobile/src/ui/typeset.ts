@@ -4,6 +4,34 @@ import type { MOBILE_TYPOGRAPHY } from '../data/typography'
 import type { Colors } from '../theme'
 
 /** The steps of the type scale prose is set in: its text, its three headings, its code. */
+/** T3 Code mobile's code colours on a dark ground (GitHub's dark theme). */
+const SYNTAX_DARK = {
+  keyword: '#ff7b72',
+  string: '#a5d6ff',
+  number: '#79c0ff',
+  constant: '#79c0ff',
+  comment: '#8b949e',
+  function: '#d2a8ff',
+  type: '#ffa657',
+  property: '#79c0ff',
+  tag: '#7ee787',
+  attribute: '#79c0ff',
+}
+
+/** T3 Code mobile's code colours on a light ground (GitHub's light theme). */
+const SYNTAX_LIGHT = {
+  keyword: '#cf222e',
+  string: '#0a3069',
+  number: '#0550ae',
+  constant: '#0550ae',
+  comment: '#6e7781',
+  function: '#8250df',
+  type: '#953800',
+  property: '#0550ae',
+  tag: '#116329',
+  attribute: '#0550ae',
+}
+
 export type ProseType = Pick<
   typeof MOBILE_TYPOGRAPHY,
   'reading' | 'title' | 'headline' | 'footnote'
@@ -33,12 +61,16 @@ const sized = (step: { readonly fontSize: number; readonly lineHeight: number })
  * dark on dark; each element that has a colour is given one here, including those a reply rarely
  * uses (a task list, a spoiler, a callout).
  *
- * Left out of T3 Code's style: `syntaxColors`, which are literal GitHub colours there and colour
- * nothing here because syntax colouring is not built in (`apps/mobile/deps/README.md`), and
- * `linkVariants`, which draw T3 Code's file and skill links as pills; Vivid has neither kind of
- * link.
+ * Code blocks are coloured by the renderer's own highlighter (`cpp/highlight/CodeBlockHighlighter.cpp`
+ * in the package, there since 1.2.0-t3.11), in T3 Code mobile's colours (`syntaxColors` in
+ * `apps/mobile/src/native/EnrichedMarkdownText.tsx`): GitHub's, one set for light and one for
+ * dark. Until 26 October 2026 this file left them out on the belief that the package had no
+ * highlighter, and every code block was one colour.
+ *
+ * Left out of T3 Code's style: `linkVariants`, which draw T3 Code's file and skill links as pills;
+ * Vivid has neither kind of link.
  */
-export const typeset = (c: Colors, type: ProseType): MarkdownStyle => {
+export const typeset = (c: Colors, dark: boolean, type: ProseType): MarkdownStyle => {
   const body = {
     ...sized(type.reading),
     color: c.foreground,
@@ -70,14 +102,21 @@ export const typeset = (c: Colors, type: ProseType): MarkdownStyle => {
     h5: small,
     h6: small,
     link: { color: c['primary-text'], underline: true },
-    // Inline code: the renderer's fixed-width face at the size of the text around it.
-    code: { color: c.foreground, backgroundColor: c.subtle, borderColor: c['border-subtle'] },
+    // Inline code: the renderer's fixed-width face at the size of the text around it, on a pill of
+    // ink at a seventh of its strength. `subtle` was all but the screen's own colour (#111 on #070707
+    // in graphite dark, #f4ede9 on #f9f7f5 in ember light), so a pill could not be seen.
+    code: {
+      color: c.foreground,
+      backgroundColor: c['wash-pressed'],
+      borderColor: c['border-subtle'],
+    },
     codeBlock: {
       ...block,
       ...sized(type.footnote),
       color: c['md-code-text'],
       backgroundColor: c['md-code-bg'],
       padding: 12,
+      syntaxColors: dark ? SYNTAX_DARK : SYNTAX_LIGHT,
     },
     blockquote: {
       ...body,

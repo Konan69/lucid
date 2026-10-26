@@ -106,7 +106,7 @@ const MARKDOWN_COMPONENTS: Components = {
   code: ({ children, className, ...props }) => (
     <code
       {...props}
-      className={cn('rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-inline-code', className)}
+      className={cn('rounded-xs bg-wash-pressed px-1 py-0.5 font-mono text-inline-code', className)}
     >
       {children}
     </code>

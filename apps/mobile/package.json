@@ -69,7 +69,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-native": "catalog:",
-    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.11.tgz",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz",
     "react-native-gesture-handler": "catalog:",
     "react-native-keyboard-controller": "1.21.9",
     "react-native-reanimated": "catalog:",
@@ -89,9 +89,8 @@
     "@types/react-dom": "catalog:"
   },
   "enriched-markdown": {
-    "enableMath": false,
-    "enableVideo": false,
-    "enableCodeHighlight": false
+    "enableMath": true,
+    "enableVideo": false
   },
   "expo": {
     "install": {

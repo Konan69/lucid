@@ -1,4 +1,6 @@
 import { useAtomMount, useAtomValue } from '@effect/atom-react'
+import { useSyncExternalStore } from 'react'
+import { makeMutable } from 'react-native-reanimated'
 import AppleTranscription from '@react-native-ai/apple/src/NativeAppleTranscription'
 import { dictating } from '@vivid/state'
 import { Effect, Layer, Option } from 'effect'
@@ -16,7 +18,7 @@ import { randomUUID } from 'expo-crypto'
 import { File } from 'expo-file-system'
 import { AppState, Platform } from 'react-native'
 import { draft } from './drafts'
-import type { Dictating } from '../ui/Composer'
+import type { Dictating } from '../ui/Dictation'
 import { useLiveData, type LiveData } from './live'
 
 /**
@@ -137,6 +139,58 @@ const start = Effect.fn('Dictation.start')(function* () {
 })
 
 /**
+ * How many levels the waveform keeps, and how often the recorder is read for one: T3's
+ * `VOICE_WAVEFORM_SAMPLE_COUNT` and `VOICE_METERING_INTERVAL_MS`.
+ */
+const SAMPLES = 64
+const SAMPLE_MS = 80
+/** Below this the voice is silence, as T3's `normalizeVoiceInputDecibels` floor. */
+const FLOOR_DB = -60
+const FLOOR = 10 ** (FLOOR_DB / 20)
+
+/** The recorder's decibels as a level from 0 to 1 (T3's `normalizeVoiceInputDecibels`). */
+const levelOf = (decibels: number | undefined): number => {
+  if (decibels === undefined || !Number.isFinite(decibels) || decibels <= FLOOR_DB) return 0
+  if (decibels >= 0) return 1
+  return Math.sqrt((10 ** (decibels / 20) - FLOOR) / (1 - FLOOR))
+}
+
+/**
+ * The voice's level, newest last, kept on the UI thread so the waveform moves without a React
+ * draw for each sample, as T3 keeps `audioLevels` in a shared value.
+ */
+const levels = makeMutable<ReadonlyArray<number>>(Array.from({ length: SAMPLES }, () => 0))
+
+/** Whole seconds listened, read by the composer through `useSyncExternalStore`. */
+interface Elapsed {
+  seconds: number
+  readers: Set<() => void>
+}
+const elapsed: Elapsed = { seconds: 0, readers: new Set() }
+const setSeconds = (seconds: number) => {
+  if (seconds === elapsed.seconds) return
+  elapsed.seconds = seconds
+  for (const reader of elapsed.readers) reader()
+}
+const readSeconds = () => elapsed.seconds
+const followSeconds = (reader: () => void) => {
+  elapsed.readers.add(reader)
+  return () => {
+    elapsed.readers.delete(reader)
+  }
+}
+
+/** Reads the recorder's level and time once, as T3's `sampleRecording`. */
+const sample = () => {
+  const now = recorder().getStatus()
+  if (!now.isRecording) return
+  levels.value = [...levels.value.slice(1), levelOf(now.metering)]
+  setSeconds(
+    Math.min(dictating.LONGEST_SECONDS, Math.max(0, Math.floor(now.durationMillis / 1000))),
+  )
+}
+
+/**
  * Waits for the recording to end by itself. Its length limit ends it whole; a call, another app
  * taking the audio, or the app leaving the screen cuts it off (T3 stops on `background` only: iOS
  * says `inactive` while its own permission dialog is up).
@@ -152,7 +206,13 @@ const listen: Effect.Effect<void, dictating.Why> = Effect.callback<void, dictati
     const away = AppState.addEventListener('change', (next) => {
       if (next === 'background') resume(Effect.fail(why.Interrupted.make({})))
     })
+    // The waveform starts flat and the clock at nought for each recording.
+    levels.value = Array.from({ length: SAMPLES }, () => 0)
+    setSeconds(0)
+    sample()
+    const sampling = setInterval(sample, SAMPLE_MS)
     return Effect.sync(() => {
+      clearInterval(sampling)
       status.remove()
       away.remove()
     })
@@ -272,9 +332,12 @@ export const useMicrophone = (owner: string): Option.Option<Dictating> => {
   const data = useLiveData()
   useAtomMount(machine.snapshot)
   const reading = useDictation(owner)
+  const seconds = useSyncExternalStore(followSeconds, readSeconds)
   if (!canDictate()) return Option.none()
   return Option.some({
     reading,
+    levels,
+    seconds,
     onTap: () => tapMicrophone(data, owner, reading),
     onDrop: () => dropDictation(data, reading),
   })
