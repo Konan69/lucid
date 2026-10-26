@@ -237,11 +237,23 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   const catalogs = yield* Effect.forEach(
     namedAccounts(records).filter(({ row }) => row.status === 'ready'),
     Effect.fn('Connections.loadDiscoveryTools')(function* (named) {
-      const discovery = yield* store.tools(actor, named.row)
-      const tools = ToolDiscovery.match(discovery, {
-        Ready: ({ tools: catalog }) => catalog,
-        Failed: () => [],
-      })
+      // One account that cannot list its tools (its service refused, its listing timed out) is
+      // that account's trouble: the Person's other Integrations still answer. Until 26 October
+      // 2026 one such account failed every find_tools for all of them.
+      const tools = yield* store.tools(actor, named.row).pipe(
+        Effect.map((discovery) =>
+          ToolDiscovery.match(discovery, {
+            Ready: ({ tools: catalog }) => catalog,
+            NeedsAuthorization: () => [],
+            Failed: () => [],
+          }),
+        ),
+        Effect.catchTag('InvalidRequest', () =>
+          Effect.logWarning('Integration tools unavailable', {
+            service: named.row.service,
+          }).pipe(Effect.as([])),
+        ),
+      )
       return { ...named, tools }
     }),
     { concurrency: 4 },
@@ -306,6 +318,7 @@ export const resolveTool = Effect.fn('Connections.resolveTool')(function* (
   const discovery = yield* store.tools(actor, account.row)
   const tools = ToolDiscovery.match(discovery, {
     Ready: ({ tools: catalog }) => catalog,
+    NeedsAuthorization: () => [],
     Failed: () => [],
   })
   const requested = tools.find((entry) => entry.name === request.tool)
@@ -530,12 +543,28 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
       yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
     return Result.fail(tools.failure)
   }
-  if (ToolDiscovery.guards.Failed(tools.success)) {
-    // Discovery persisted this failure. Count that decision, retaining each caller's old receipt.
-    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
-    return Result.fail(ToolAdmissionRefusal.cases.DiscoveryFailed.make({ tool: request.tool }))
-  }
-  const requested = tools.success.tools.find((entry) => entry.name === request.tool)
+  // Discovery persisted what it found: a lapsed sign-in or a lost resource declines the call as
+  // from that state, counted once here; a ready catalog goes on to the requested tool.
+  const catalog = yield* ToolDiscovery.match<
+    Effect.Effect<Result.Result<readonly (typeof ExecutorTool.Type)[], ToolAdmissionRefusal>>
+  >(tools.success, {
+    Ready: ({ tools: ready }) => Effect.succeed(Result.succeed(ready)),
+    NeedsAuthorization: Effect.fnUntraced(function* () {
+      yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
+      return Result.fail(
+        ToolAdmissionRefusal.cases.NeedsAuthorization.make({
+          service: row.service,
+          serviceName: row.serviceName,
+        }),
+      )
+    }),
+    Failed: Effect.fnUntraced(function* () {
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
+      return Result.fail(ToolAdmissionRefusal.cases.DiscoveryFailed.make({ tool: request.tool }))
+    }),
+  })
+  if (Result.isFailure(catalog)) return Result.fail(catalog.failure)
+  const requested = catalog.success.find((entry) => entry.name === request.tool)
   if (requested === undefined) {
     // The tool name is Person content; count only the closed missing-capability reason.
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ToolUnknown' }))

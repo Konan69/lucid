@@ -48,6 +48,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorResourceMissing,
+  ExecutorNotReady,
   ExecutorPublicAddressRequired,
   connectionSetupMessage,
   executorMigrationMessage,
@@ -433,22 +434,37 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
   })
 })
 
-/** Empty ready catalogs and newly failed Integrations have different admission meanings.
- * Discovery returns the transition it persisted; callers never guess it from a second read. */
+/** Empty ready catalogs, Integrations that must be signed in again and newly failed Integrations
+ * have different admission meanings. Discovery returns the transition it persisted; callers never
+ * guess it from a second read. */
 export const ToolDiscovery = Schema.TaggedUnion({
   Ready: { tools: Schema.Array(ExecutorTool) },
+  NeedsAuthorization: {},
   Failed: { reason: Schema.String },
 })
 
-/** Permanently missing resources fail the persisted Connection and disappear from discovery. */
+const isNotReady = Schema.is(ExecutorNotReady)
+
+/**
+ * Lists one Integration's tools, and keeps its stored state true to what Executor answered.
+ *
+ * Executor owns the account and its sign-in; the row's state is Vivid's copy of it. A missing
+ * resource fails the row. An account Executor says must be signed in again (its saved sign-in
+ * can no longer be used, no account is linked, the selection changed) moves the row to
+ * NeedsAuthorization here, at discovery. Until 26 October 2026 that answer became InvalidRequest
+ * and left the row Ready: only a tool call that reached Executor could demote it, and discovery
+ * failed before any call did. A Person's Gmail whose Google sign-in had lapsed stayed Ready for
+ * days and failed every find_tools for all of their Integrations.
+ */
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
   const executor = yield* Executor
   return yield* executor.tools(row.references).pipe(
     Effect.map((tools) => ToolDiscovery.cases.Ready.make({ tools })),
-    Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
-    Effect.catchTag(
-      'ExecutorResourceMissing',
-      Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
+    Effect.mapError((error) =>
+      isResourceMissing(error) || isNotReady(error) ? error : executorFailure(error),
+    ),
+    Effect.catchTags({
+      ExecutorResourceMissing: Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
         const reason = resourceReason(resource)
         const saved = yield* saveState(
           row,
@@ -458,7 +474,16 @@ const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: C
         yield* recordChanged(actor, saved)
         return ToolDiscovery.cases.Failed.make({ reason })
       }),
-    ),
+      ExecutorNotReady: Effect.fn('Connections.lapsedDiscovery')(function* () {
+        const saved = yield* saveState(
+          row,
+          ConnectionState.cases.NeedsAuthorization.make({}),
+          row.references,
+        )
+        yield* recordChanged(actor, saved)
+        return ToolDiscovery.cases.NeedsAuthorization.make({})
+      }),
+    }),
   )
 })
 

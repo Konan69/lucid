@@ -130,6 +130,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 const discovery = yield* store.tools(personalActor, row)
                 const tools = ToolDiscovery.match(discovery, {
                   Ready: ({ tools: catalog }) => catalog,
+                  NeedsAuthorization: () => [],
                   Failed: () => [],
                 })
                 console.info(
