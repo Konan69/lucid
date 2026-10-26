@@ -159,9 +159,12 @@ const withThreadActivity = (config: ExpoConfig, app: string): ExpoConfig =>
 
 /** A paid team's build gets the widget extension; a personal team's loses what it cannot sign. */
 const withSigning = (config: ExpoConfig): ExpoConfig => {
-  const app = config.ios?.bundleIdentifier
-  if (app === undefined) throw new Error('app.json must name the iOS bundle.')
-  return PERSONAL_TEAM ? withoutPaidTeamCapabilities(config) : withThreadActivity(config, app)
+  const { ios } = config
+  if (ios === undefined || ios.bundleIdentifier === undefined)
+    throw new Error('app.json must name the iOS bundle.')
+  return PERSONAL_TEAM
+    ? withoutPaidTeamCapabilities(config)
+    : withThreadActivity(config, ios.bundleIdentifier)
 }
 
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
