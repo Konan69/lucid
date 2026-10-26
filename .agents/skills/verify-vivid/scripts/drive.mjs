@@ -6,6 +6,7 @@ import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
+import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
@@ -27,6 +28,7 @@ export const features = [
   'reading',
   'settings',
   'notes',
+  'name',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -288,6 +290,7 @@ const recipes = {
   watch,
   reading,
   settings: settingsProof,
+  name: nameProof,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
@@ -309,7 +312,11 @@ export async function drive(state, feature) {
   const unavailable =
     state.modelKind === 'real'
       ? realBlocked
-      : { ...blocked, notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.' }
+      : {
+          ...blocked,
+          notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.',
+          name: 'Name requires a real model; rehearsal cannot answer what the Person is called.',
+        }
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name

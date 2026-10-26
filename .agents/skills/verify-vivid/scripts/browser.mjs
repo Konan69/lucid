@@ -10,6 +10,7 @@ import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
+import { nameBrowser } from './namebrowser.mjs'
 import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 
@@ -53,6 +54,7 @@ const missing = {
 const recipes = {
   reading: { check: 'reading' },
   settings: { check: 'settings' },
+  name: { check: 'name' },
   notes: { check: 'notes' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
@@ -94,6 +96,11 @@ const specialRecipes = {
     drive: readBrowser,
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  name: {
+    drive: nameBrowser,
+    scope:
+      'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for the phone and shared-Thread subcases.',
   },
   settings: {
     drive: settingsBrowser,
@@ -171,11 +178,7 @@ async function rendered(run, kind) {
       // doesn't need to see this"): the reply is Vivid's bubbles, and the document's receipt is
       // proved by the HTTP recipe's versioning. The browser proves the reply arrived as a bubble
       // and that no step list or "Worked" line came back.
-      await run([
-        'wait',
-        '--fn',
-        `document.querySelectorAll('[data-vivid-bubble]').length > 0`,
-      ])
+      await run(['wait', '--fn', `document.querySelectorAll('[data-vivid-bubble]').length > 0`])
       const leftovers = await dom(
         run,
         `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('more steps') || text.startsWith('Worked') || text.includes('Wrote a document'))`,
@@ -260,7 +263,9 @@ async function journey(state, feature) {
   const reason =
     feature === 'notes' && state.modelKind !== 'real'
       ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
-      : missing[feature]
+      : feature === 'name' && state.modelKind !== 'real'
+        ? 'Name requires a real model; rehearsal cannot answer what the Person is called.'
+        : missing[feature]
   if (reason) {
     const verdict = {
       ...base,
