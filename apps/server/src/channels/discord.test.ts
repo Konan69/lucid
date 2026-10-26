@@ -1,6 +1,8 @@
+import { Buffer } from 'node:buffer'
 import { describe, expect, it } from '@effect/vitest'
 import { DiscordAdapter } from '@chat-adapter/discord'
-import { Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect'
+import { Effect, Fiber, Layer, Option, Predicate, Queue, Redacted, Result, Schema } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { ChannelAddress } from '@vivid/contracts'
 import { ChannelMessageId, ChannelProvider } from './provider.ts'
@@ -83,7 +85,7 @@ it.effect('sends bounded replies to the original place without mention parsing',
       }),
     )
     const context = yield* Layer.build(
-      discordLayer(Redacted.make('test-token')).pipe(
+      discordLayer(Redacted.make(`${Buffer.from(botId).toString('base64url')}.test.token`)).pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
       ),
     )
@@ -123,4 +125,64 @@ it.effect('sends bounded replies to the original place without mention parsing',
       })),
     )
   }).pipe(Effect.scoped),
+)
+
+it.effect(
+  'retries chunk 2 once after Discord rate limits and preserves partial-send classification',
+  () =>
+    Effect.gen(function* () {
+      for (const mode of ['body', 'header', 'repeated'] as const) {
+        const sent: string[] = []
+        const limited = yield* Queue.unbounded<void>()
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.method !== 'POST' || !Predicate.isTagged(request.body, 'Uint8Array'))
+              return HttpClientResponse.fromWeb(request, Response.json({ id: botId }))
+            const body = decodeReply(new TextDecoder().decode(request.body.body))
+            sent.push(body.content)
+            if (sent.length === 2 || (mode === 'repeated' && sent.length === 3)) {
+              Queue.offerUnsafe(limited, undefined)
+              return HttpClientResponse.fromWeb(
+                request,
+                mode === 'header'
+                  ? Response.json({}, { status: 429, headers: { 'Retry-After': '2' } })
+                  : Response.json({ retry_after: 2 }, { status: 429 }),
+              )
+            }
+            return HttpClientResponse.fromWeb(request, Response.json({ id: botId }))
+          }),
+        )
+        const context = yield* Layer.build(
+          discordLayer(
+            Redacted.make(`${Buffer.from(botId).toString('base64url')}.test.token`),
+          ).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+        )
+        const discord = yield* ChannelProvider.pipe(Effect.provide(context))
+        const sending = yield* discord
+          .send({
+            channel: 'Discord',
+            address: ChannelAddress.make('discord:523456789012345678'),
+            text: 'a'.repeat(2000) + 'b'.repeat(2000) + 'c',
+            place: {
+              conversation: '323456789012345678',
+              message: ChannelMessageId.make('423456789012345678'),
+            },
+          })
+          .pipe(Effect.result, Effect.forkScoped)
+        yield* Queue.take(limited)
+        expect(sent).toEqual(['a'.repeat(2000), 'b'.repeat(2000)])
+        yield* TestClock.adjust('1 second')
+        expect(sent).toHaveLength(2)
+        yield* TestClock.adjust('1 second')
+        const result = yield* Fiber.join(sending)
+        expect(sent).toEqual(
+          mode === 'repeated'
+            ? ['a'.repeat(2000), 'b'.repeat(2000), 'b'.repeat(2000)]
+            : ['a'.repeat(2000), 'b'.repeat(2000), 'b'.repeat(2000), 'c'],
+        )
+        if (mode === 'repeated')
+          expect(Result.isFailure(result) ? result.failure._tag : 'sent').toBe('ChannelSendUnknown')
+        else expect(Result.isSuccess(result)).toBe(true)
+      }
+    }).pipe(Effect.scoped),
 )
