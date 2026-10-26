@@ -3,7 +3,7 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.4.4",
+    "version": "0.4.5",
     "runtimeVersion": "0.3.16",
     "userInterfaceStyle": "automatic",
     "ios": {
