@@ -3,7 +3,7 @@ import { json, history, rpc, settled } from './wire.mjs'
 import { BROWSER_NAME as NAME, nameLimits, answered } from './nameproof.mjs'
 
 /** Text of the open Settings dialog, read from the page itself. */
-const dialogText = `document.querySelector('[role="dialog"]')?.innerText ?? ''`
+const dialogText = `(document.querySelector('[role="dialog"]')?.innerText ?? '')`
 
 /**
  * The Person changes their name in the real Settings dialog, sees it there and after a reload,
