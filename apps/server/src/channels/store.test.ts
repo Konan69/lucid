@@ -33,6 +33,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         ).toEqual([
           ['iMessage', 'NotConnected'],
           ['WhatsApp', 'Unavailable'],
+          ['Discord', 'Unavailable'],
         ])
         const result = yield* store
           .connect(test.actor, 'WhatsApp', test.address)
@@ -51,7 +52,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
-          for (const address of ['2025550123', '+000123', 'ada@example.test']) {
+          for (const address of [undefined, '2025550123', '+000123', 'ada@example.test']) {
             const result = yield* channelHandlers
               .ConnectChannel({ channel: 'iMessage', address })
               .pipe(test.signedIn, Effect.result)
@@ -173,6 +174,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         const initial = yield* Queue.take(values)
         expect(initial.channels.map((link) => link.standing._tag)).toEqual([
           'NotConnected',
+          'Unavailable',
           'Unavailable',
         ])
         const receipt = yield* (yield* Changes).subscribe(

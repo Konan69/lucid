@@ -295,10 +295,16 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onNone: () => ({}),
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
-  const discordAccess = Option.match(environment.discordPeople, {
-    onNone: () => ({}),
-    onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
-  })
+  const discordAccess = {
+    ...Option.match(environment.discordPeople, {
+      onNone: () => ({}),
+      onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
+    }),
+    ...Option.match(environment.discordBotToken, {
+      onNone: () => ({}),
+      onSome: (value) => ({ VIVID_DISCORD_BOT_TOKEN: value }),
+    }),
+  }
 
   /**
    * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
