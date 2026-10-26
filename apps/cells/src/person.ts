@@ -16,6 +16,7 @@ import type { CellEnv, CellState } from './cloudflare.ts'
 import { meter, type Meter } from './meter.ts'
 import { notesLayer } from './notes.ts'
 import { skillsLayer } from './skills.ts'
+import { seed, type SeedRequest } from './seed.ts'
 import { storesLayer } from './stores.ts'
 
 /** The cell's variables: the runtime token the server presents, and where the server is. */
@@ -232,6 +233,19 @@ export class Person {
       const query = url.searchParams.get('q') ?? ''
       if (!/^\s*select\b/iu.test(query)) return new Response('select only', { status: 400 })
       return Response.json(this.state.storage.sql.exec(query).toArray())
+    }
+    // Proof instrumentation: write a large history through Pi's own API (`seed.ts`).
+    if (url.pathname.endsWith('/__seed') && request.method === 'POST') {
+      const { owner, services } = await this.ready
+      const body = (await request.json()) as SeedRequest
+      const started = Date.now()
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const persons = yield* Persons
+          return yield* persons.use(owner, ({ harness }) => seed(harness, owner, body))
+        }).pipe(Effect.provide(services)),
+      )
+      return Response.json({ ...result, ms: Date.now() - started })
     }
     const { handler } = await this.ready
     // Arm before any call that can start work (Pi README: `onWake` runs after the commit, and a
