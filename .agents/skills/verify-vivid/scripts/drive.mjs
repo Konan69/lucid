@@ -166,7 +166,7 @@ async function document(state, id, directory) {
     id,
     state.modelKind === 'rehearsal'
       ? 'write a document'
-      : 'Use write_document to create a document titled Verification plan with body # Verification plan\nResearch, writing and review. Only write this one document.',
+      : 'Write me a document called Verification plan that says: # Verification plan\nResearch, writing and review.',
     directory,
     'write',
   )
@@ -190,7 +190,7 @@ async function document(state, id, directory) {
     id,
     state.modelKind === 'rehearsal'
       ? 'revise the document'
-      : 'Use write_document with the same title Verification plan to revise the existing document. Send the whole body with the added sentence Ready for review. Do not change the title.',
+      : 'Add the sentence Ready for review to the end of the Verification plan document.',
     directory,
     'revise',
   )
@@ -209,7 +209,7 @@ async function document(state, id, directory) {
     id,
     state.modelKind === 'rehearsal'
       ? 'read the document'
-      : 'Use read_document to read the existing Verification plan document at its latest version and tell me the version number.',
+      : 'Open the Verification plan document and tell me which version it is on now.',
     directory,
     'read',
   )

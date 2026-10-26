@@ -139,7 +139,7 @@ async function reply(state, context, browser, observed) {
   const text = await chat(
     state,
     id,
-    'Reply with the two words amber orchid. Do not call any tools.',
+    'Just say the two words amber orchid, nothing else.',
     directory,
     'background-reply',
   )

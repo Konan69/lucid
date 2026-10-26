@@ -153,7 +153,7 @@ function AudienceIcon({ audience }: { audience: ThreadAudience }) {
  */
 export function Hero({ mood, onOpen }: { mood: FaceMood; onOpen: () => void }) {
   return (
-    <li className="pt-4 pb-8 text-center">
+    <li className="pb-8 text-center">
       <HeroButton mood={mood} open={false} onOpen={onOpen} />
     </li>
   )

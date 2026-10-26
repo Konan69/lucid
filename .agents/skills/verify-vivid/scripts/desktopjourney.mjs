@@ -131,8 +131,8 @@ export async function browse(state, page, directory) {
     directory,
   )
   await page.navigate(() => page.send('Page.navigate', { url: state.web + '/t/' + id }))
-  const prompt =
-    'Use the browse tool on my computer (computer="person"). Open https://example.com then read that page. Do not use your own Computer, shell, web search, or fetch. Report the page title and stop.'
+  // Asked as a Person asks: no tool names or arguments (the owner, 26 October 2026).
+  const prompt = 'Open https://example.com in the browser on my computer and tell me the page title.'
   await fill(page, '[aria-label="Message Vivid"]', prompt)
   await capture(page, directory, 'before-browser-action')
   await click(page, 'document.querySelector("button[aria-label=Send]")')
