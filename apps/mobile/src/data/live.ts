@@ -29,6 +29,7 @@ import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
+import { makeNaming } from './name'
 import { makeConnecting } from './connecting'
 import { door } from './door'
 import { sessionExpiry } from './account'
@@ -361,6 +362,7 @@ function makeLiveData(session: SignedIn) {
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
   const devices = makeDeviceDecisions(engine)
+  const naming = makeNaming(engine, live.me)
 
   followLook(engine, live)
 
@@ -415,6 +417,8 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices,
+    /** The Person changing their own name in Settings (`data/name.ts`). */
+    naming,
     gone,
     seenThread,
     typingIn,

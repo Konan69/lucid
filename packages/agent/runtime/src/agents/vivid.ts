@@ -14,7 +14,7 @@ import { actingFor, threadOriginOf } from '../client.ts'
 import '../providers/explabs.ts'
 import '../providers/openrouter.ts'
 import { DEFAULT_MODEL } from '../providers/opencode.ts'
-import { namedAs, useVividContext } from '../context.ts'
+import { namedAs, useVividContext, workingFor } from '../context.ts'
 import { notesLayer } from '../keeping.ts'
 import { DISPLAYS } from './displays.ts'
 import { askTools } from '../tools/ask.ts'
@@ -197,6 +197,8 @@ export function Vivid({ id }: { id: string }) {
     ...VOICE,
     // The name this Person or their Company gave Vivid, as text; nothing while it is still Vivid.
     ...namedAs(context.name),
+    // The acting Person's own name, as text; nothing when there is none to say.
+    ...workingFor(context.person),
     Option.isSome(acting)
       ? `Today is ${today(timezone)} in the ${timezone} time zone.`
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',

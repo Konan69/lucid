@@ -72,6 +72,26 @@ export type ArtifactId = typeof ArtifactId.Type
 export const ComputerId = Schema.String.pipe(Schema.brand('ComputerId'))
 export type ComputerId = typeof ComputerId.Type
 
+/** The longest name a Person can give themselves in Settings. */
+export const PERSON_NAME_MAX = 64
+
+/**
+ * What a Person asks to be called, as they set it in Settings: 1 to 64 characters, with no space
+ * at either end, on one line and without a backslash. It is drawn in headers and said to the model
+ * as plain text, so a line break or an escape has no honest meaning in it (`VividName` holds the
+ * same rule for Vivid's own name). A client trims what was typed before it sends; the server
+ * refuses rather than repairs.
+ *
+ * `Person.name` stays a plain string: it also holds the name a sign-in provider gave, which no
+ * one checked against this rule, and refusing to read such a Person would lock them out.
+ */
+export const PersonName = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isBetweenLength(1, PERSON_NAME_MAX),
+  Schema.isPattern(/^[^\\\r\n]*$/u),
+)
+export type PersonName = typeof PersonName.Type
+
 export class Person extends Schema.Class<Person>('Person')(
   {
     id: PersonId,

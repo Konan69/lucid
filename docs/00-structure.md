@@ -82,7 +82,7 @@ rule; `store.ts` holds no HTTP or RPC type.
 main.ts  config.ts
 database/  auth/  http/  rpc/  runtime/          infrastructure and composition adapters
 
-people/         ○ Person profile and preferences (not built)             docs/12
+people/         ● the Person's own name, set in Settings                 docs/12
 companies/      ● Company, Membership, invitation                        docs/12, 22
 projects/       ● recursive work containers, inheritance                 docs/12
 threads/        ● Threads, audience, deliveries, Run records, pictures   docs/03, 07, 22
