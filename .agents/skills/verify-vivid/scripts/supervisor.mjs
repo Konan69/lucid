@@ -306,12 +306,18 @@ async function launch() {
     GOOGLE_REDIRECT_URI: state.web + '/api/auth/callback/google',
     PUBLIC_URL: state.web,
   }
+  // The Discord channel needs the bot token in the server alone: never argv, state or evidence.
+  const serverEnv = { ...env }
+  if (process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE)
+    serverEnv.VIVID_DISCORD_BOT_TOKEN = (
+      await NodeFSP.readFile(process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE, 'utf8')
+    ).trim()
   serverChild = await own(
     'server',
     [process.execPath, '--import', require.resolve('tsx'), root + '/apps/server/src/main.ts'],
     {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env,
+      env: serverEnv,
     },
   )
   await serverReady(serverChild)

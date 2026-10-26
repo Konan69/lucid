@@ -195,17 +195,20 @@ async function cleanUp(state, { api, channel, nonce, cleanup }, directory) {
   await json(directory + '/cleanup.json', cleanup)
 }
 
-/** Any copy of the token in retained evidence is replaced and fails the feature. Private scratch
+/** Any copy of a token in retained evidence is replaced and fails the feature. Private scratch
  * (instance/) is deleted by Cleanup and is not evidence. */
-async function redact(evidence, token, directory) {
+export async function redact(evidence, tokens, directory) {
   const found = []
   for (const entry of await NodeFSP.readdir(evidence, { recursive: true, withFileTypes: true })) {
     const file = NodePath.join(entry.parentPath, entry.name)
     if (!entry.isFile() || file.startsWith(evidence + '/instance/')) continue
     const text = await NodeFSP.readFile(file, 'utf8')
-    if (!text.includes(token)) continue
+    if (!tokens.some((token) => text.includes(token))) continue
     found.push(NodePath.relative(evidence, file))
-    await NodeFSP.writeFile(file, text.replaceAll(token, '<redacted>'))
+    await NodeFSP.writeFile(
+      file,
+      tokens.reduce((redacted, token) => redacted.replaceAll(token, '<redacted>'), text),
+    )
   }
   await json(directory + '/redaction.json', { found })
   NodeAssert.deepEqual(found, [], 'Discord token reached evidence')
@@ -299,7 +302,7 @@ export async function discordProof(state, _personal, directory) {
     failure = error
   }
   await cleanUp(state, { api, channel, nonce, cleanup }, directory)
-  await redact(state.evidence, token, directory)
+  await redact(state.evidence, [token], directory)
   if (failure) throw failure
   NodeAssert.deepEqual(cleanup.errors, [], 'Discord cleanup failed')
 }

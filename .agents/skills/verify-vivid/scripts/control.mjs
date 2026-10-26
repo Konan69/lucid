@@ -104,21 +104,22 @@ async function launch() {
     await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
       mode: 0o600,
     })
+    const env = {
+      PATH: process.env.PATH,
+      HOME: scratch,
+      COREPACK_HOME:
+        process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
+      COREPACK_ENABLE_NETWORK: '0',
+    }
+    // Only the path crosses; the supervisor reads the bot token into the server env.
+    if (process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE)
+      env.VIVID_VERIFY_DISCORD_TOKEN_FILE = NodePath.resolve(
+        process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE,
+      )
     child = NodeChildProcess.spawn(
       process.execPath,
       [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
-      {
-        cwd: root,
-        detached: true,
-        stdio: ['ignore', log.fd, log.fd, 'ipc'],
-        env: {
-          PATH: process.env.PATH,
-          HOME: scratch,
-          COREPACK_HOME:
-            process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
-          COREPACK_ENABLE_NETWORK: '0',
-        },
-      },
+      { cwd: root, detached: true, stdio: ['ignore', log.fd, log.fd, 'ipc'], env },
     )
     state.processes.supervisor = await identity(child.pid)
     await json(evidence + '/state.json', state)
@@ -165,7 +166,7 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord|texting-discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
     )
   else {
     const state = await selected()
