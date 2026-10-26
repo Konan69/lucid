@@ -32,6 +32,7 @@ import type * as HttpBody from 'effect/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
+import { accountBranch } from './envelope.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
@@ -283,6 +284,22 @@ export const ExecutorTool = Schema.Struct({
   output: Schema.Option(Schema.Json).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
   effect: ActionEffect,
 })
+/**
+ * How Executor is told a listed tool's account. `Direct`: the provider's input as it is. `Account`:
+ * wrapped as `{ accountId, input }` with the Connection's own account, because Executor listed the
+ * tool through its account router (`envelope.ts`). Discovery decides it from the listed schema and
+ * the invocation snapshot keeps it beside the tool, so a call can never send a shape the listing
+ * did not ask for, and the model only ever sees the provider's input.
+ */
+const ToolAccount = Schema.TaggedUnion({
+  Direct: {},
+  Account: { accountId: ExecutorAccountId },
+})
+/** A listed tool as Vivid shows it, with how Executor is told its account when it is called. */
+interface ListedTool {
+  readonly tool: typeof ExecutorTool.Type
+  readonly account: typeof ToolAccount.Type
+}
 export const ExecutorCallOutcome = Schema.TaggedUnion({
   Completed: { value: Schema.Json },
   Rejected: {
@@ -1207,7 +1224,7 @@ function makeDiscovery(http: ExecutorHttp) {
   return Effect.fn('Executor.discover')(function* (references: ExecutorReferences) {
     if (isMigrationOnly(references))
       return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
-    const items: (typeof ExecutorTool.Type)[] = []
+    const items: ListedTool[] = []
     let version = Option.none<typeof ExecutorVersionId.Type>()
     let cursor = Option.none<string>()
     const seen = new Set<string>()
@@ -1231,16 +1248,7 @@ function makeDiscovery(http: ExecutorHttp) {
       if (Option.isSome(version) && version.value !== page.version)
         return yield* ExecutorConflict.make({ service: 'connections', tool: null })
       version = Option.some(page.version)
-      for (const tool of page.items)
-        items.push(
-          ExecutorTool.make({
-            name: tool.name,
-            description: tool.description,
-            input: tool.inputSchema,
-            output: Option.fromUndefinedOr(tool.outputSchema),
-            effect: classifyTool(tool),
-          }),
-        )
+      for (const tool of page.items) items.push(listedTool(references, tool))
       if (page.next !== undefined) {
         if (seen.has(page.next))
           return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
@@ -1254,10 +1262,40 @@ function makeDiscovery(http: ExecutorHttp) {
   })
 }
 
+/**
+ * One listed tool as Vivid shows it. A tool Executor lists through its account router is shown
+ * with the provider's own schemas from the Connection's account branch and remembers to wrap its
+ * input again; any other tool is shown and called as listed. Only an Authorized Connection holds
+ * an account, so only it can match a branch.
+ */
+function listedTool(references: ExecutorReferences, tool: typeof WireTool.Type): ListedTool {
+  const listed = { input: tool.inputSchema, output: Option.fromUndefinedOr(tool.outputSchema) }
+  const branch = ExecutorReferences.guards.Authorized(references)
+    ? Option.map(accountBranch(listed, references.account), (own) => ({
+        own,
+        account: ToolAccount.cases.Account.make({ accountId: references.account }),
+      }))
+    : Option.none()
+  const schemas = Option.match(branch, { onNone: () => listed, onSome: ({ own }) => own })
+  return {
+    tool: ExecutorTool.make({
+      name: tool.name,
+      description: tool.description,
+      input: schemas.input,
+      output: schemas.output,
+      effect: classifyTool(tool),
+    }),
+    account: Option.match(branch, {
+      onNone: () => ToolAccount.cases.Direct.make({}),
+      onSome: ({ account }) => account,
+    }),
+  }
+}
+
 /** Hide the invocation snapshot from product discovery; call retains it until dispatch. */
 function makeTools(discover: ReturnType<typeof makeDiscovery>) {
   return Effect.fn('Executor.tools')(function* (references: ExecutorReferences) {
-    return (yield* discover(references)).items
+    return (yield* discover(references)).items.map((listed) => listed.tool)
   })
 }
 
@@ -2586,7 +2624,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
           ExecutorResponseInvalid: discoveryFailed,
         }),
       )
-      const selected = catalog.items.find((candidate) => candidate.name === tool)
+      const selected = catalog.items.find((candidate) => candidate.tool.name === tool)
       if (selected === undefined)
         return ExecutorCallOutcome.cases.Rejected.make({
           message: 'Tool not found. Discover the current tools.',
@@ -2595,9 +2633,13 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         .readCall(
           post(`/apps/${query(references.app)}/tools/call`, {
             version: catalog.version,
-            kind: selected.effect === 'read' ? 'query' : 'mutation',
+            kind: selected.tool.effect === 'read' ? 'query' : 'mutation',
             tool,
-            input,
+            // The account router takes the account beside the provider's input (`envelope.ts`).
+            input: ToolAccount.match(selected.account, {
+              Direct: () => input,
+              Account: ({ accountId }) => ({ accountId, input }),
+            }),
           }),
           tool,
         )

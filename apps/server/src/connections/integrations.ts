@@ -409,13 +409,11 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     // the exact called tool. Gate still decides whether this read may cross the Thread boundary.
     const candidates = visible.flatMap((tool) => {
       if (tool.effect !== 'read') return []
-      return Option.toArray(
-        Option.map(testInput(tool.input, row.references), (input) => ({ tool, input })),
-      )
+      return Option.toArray(Option.map(testInput(tool.input), (input) => ({ tool, input })))
     })
     const selectedProbe =
       candidates.find((candidate) =>
-        /(?:^|[._])(?:ping|health|status|me)(?:$|[._])/iu.test(candidate.tool.name),
+        /(?:^|[._])(?:ping|health|status|me|myself|whoami)(?:$|[._])/iu.test(candidate.tool.name),
       ) ?? candidates[0]
     if (selectedProbe === undefined)
       return TestIntegrationOutcome.cases.NotTested.make({
@@ -443,11 +441,12 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
           tools: names,
           reason: 'needs sign-in',
         }),
-      Rejected: () =>
-        TestIntegrationOutcome.cases.NotTested.make({
+      Rejected: ({ message }) =>
+        TestIntegrationOutcome.cases.Refused.make({
           account,
           tools: names,
-          reason: 'call failed',
+          tool: tool.name,
+          message,
         }),
       OutcomeUnknown: () =>
         TestIntegrationOutcome.cases.NotTested.make({

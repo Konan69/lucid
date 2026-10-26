@@ -324,12 +324,10 @@ export const codeCallsLayer = Layer.effect(
                 { ok: false, reason: 'That tool is not available here.' },
                 'Find the tool',
               ),
-            InvalidRequest: () =>
-              refused(
-                call.kind,
-                { ok: false, reason: 'The request was refused.' },
-                'Check the request',
-              ),
+            // Every InvalidRequest is a sentence this server wrote for the caller; the program
+            // reads the same reason use_tool or find_tools would give, not a blank refusal.
+            InvalidRequest: ({ message }) =>
+              refused(call.kind, { ok: false, reason: message }, 'Check the request'),
             Conflict: () =>
               refused(
                 call.kind,

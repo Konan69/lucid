@@ -568,6 +568,17 @@ export const TestIntegrationOutcome = Schema.TaggedUnion({
       'call failed',
     ]),
   },
+  /**
+   * The service answered the probe call with a refusal. Its words say why (a plan without the
+   * feature, an input it wanted), so they are kept: "call failed" alone read as a broken sign-in
+   * and sent Vivid asking the Person to reconnect (production, 26 October 2026).
+   */
+  Refused: {
+    account: Schema.String,
+    tools: Schema.Array(Schema.String),
+    tool: Schema.String,
+    message: Schema.String,
+  },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String },
   Unreachable: {},
