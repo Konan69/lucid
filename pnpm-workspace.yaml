@@ -1,4 +1,5 @@
 packages:
+  - 'apps/cells'
   - 'apps/desktop'
   - 'apps/mobile'
   - 'apps/server'

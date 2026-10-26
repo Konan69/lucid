@@ -1,0 +1,12 @@
+{
+  // One Person cell per Person: Vivid's conversation runtime on Pi's Durable Object SQLite storage.
+  // `fleet.sh` copies this file to the ignored `wrangler.local.jsonc`, adds the secret `vars`, and
+  // deploys that copy, because `celld deploy` reads no `.dev.vars`.
+  "name": "vivid-cells",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "PERSON", "class_name": "Person" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Person"] }],
+  "rules": [{ "type": "Text", "globs": ["**/*.md"] }]
+}

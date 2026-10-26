@@ -1,0 +1,3 @@
+# The deploy config the fleet script writes holds the model key; it never enters git.
+wrangler.local.jsonc
+.celld/
