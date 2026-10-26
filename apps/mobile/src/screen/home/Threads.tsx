@@ -1,7 +1,7 @@
 import type { Thread } from '@vivid/contracts'
 import { Option } from 'effect'
 import { useState, type ReactElement } from 'react'
-import { FlatList, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
+import { FlatList, View } from 'react-native'
 import { ChevronDown, ChevronRight, CircleCheck } from 'lucide-react-native'
 import { useNow } from '../../data/foreground'
 import { arrange, matching, Row, rowKey, rowsOf, type Lane } from '../../data/lanes'
@@ -26,7 +26,6 @@ interface ListProps extends ThreadActions {
   readonly header: ReactElement
   /** Said under the header when a scope leaves nothing to list; none when nothing is scoped. */
   readonly empty: Option.Option<string>
-  readonly onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
 }
 
 /**
@@ -167,9 +166,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
   const scrolling = {
     keyboardShouldPersistTaps: 'handled',
     keyboardDismissMode: 'on-drag',
-    scrollEventThrottle: 16,
-    onScroll: props.onScroll,
-    // Room for the floating "New thread" under the last row.
+    // Room for the floating Search and New thread under the last row.
     contentContainerStyle: { paddingBottom: 88 },
   } as const
   if (searching) {

@@ -412,8 +412,8 @@ export function VividAtTop({ stand }: { stand: Stand }) {
  * its row in the menu.
  *
  * `conversation` says the screen's scroller is a Thread's conversation and that it is on screen.
- * It is laid out under the bar and never behind it, so it is given no edge effect at all
- * (`NO_SCROLL_EDGES`); the greeting's scroller runs behind the bar and keeps the effect. A Thread
+ * It runs behind the bar with no fade, as the owner asked, so it is given no edge effect at all
+ * (`NO_SCROLL_EDGES`); the greeting's scroller keeps the system's effect. A Thread
  * says it only once its scroller is laid out, because the change is the one moment the scroller
  * can be told. Both are named every time, because the two share one route and `setOptions`
  * merges.
@@ -464,10 +464,10 @@ function StandingTitle({ title, standing }: { title: string; standing: Standing 
  * The bar's height as empty room, for a screen whose content is not an ordinary scroller.
  *
  * Under a glass bar UIKit insets a scroll view by itself (`contentInsetAdjustmentBehavior`), and
- * that is what every ordinary screen uses. A Thread's conversation is kept clear of the bar and not
- * under it, so the system has no edge of it to soften; the Thread puts this room above its
- * conversation and its outline, so neither is ever behind the bar (`Transcript`, `screen/Chat.tsx`). The height is the stack's own measurement, so it follows the device and
- * the text size. Where the bar is solid the content already starts below it and no room is made.
+ * that is what every ordinary screen uses. A Thread puts this room at the top of its conversation
+ * and its outline instead, inside its own scroller, because that scroller is kept on its newest
+ * words by hand from its content's height (`Transcript`, `screen/Chat.tsx`). The height is the
+ * stack's own measurement, so it follows the device and the text size. Where the bar is solid the content already starts below it and no room is made.
  */
 export function BarRoom() {
   return GLASS_SUPPORTED ? <MeasuredRoom /> : null

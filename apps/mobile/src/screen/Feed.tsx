@@ -5,7 +5,6 @@ import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
@@ -75,7 +74,8 @@ export function Feed() {
   const go = useGo()
   const openThread = useOpenThread()
   const start = useStart()
-  const insets = useSafeAreaInsets()
+  // The composer's height: it floats over the foot of the list, which keeps that much clear.
+  const [foot, setFoot] = useState(0)
   const state = useLive(data.live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
   const view = feed.feedView(items, useLiveValue(data.live.devices))
@@ -118,23 +118,12 @@ export function Feed() {
   ])
 
   const head = (
-    <View style={{ paddingTop: 24, paddingBottom: 16 }}>
-      <Label size="label" tone="ink-3">
-        {date}
-      </Label>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 8 }}>
-        <Label accessibilityRole="header" size="opening" style={{ flex: 1 }}>
-          {first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
-        </Label>
-        <Face size={56} mood={LOOK[feed.feedFace(view, pleased)]} />
-      </View>
-      <Label size="body" tone="ink-2" style={{ marginTop: 10 }}>
-        <Label size="body" style={{ fontWeight: '600' }}>
-          {standing.lead}
-        </Label>
-        {standing.rest.length > 0 ? ` ${standing.rest}` : ''}
-      </Label>
-    </View>
+    <Head
+      date={date}
+      greeting={first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
+      mood={LOOK[feed.feedFace(view, pleased)]}
+      standing={standing}
+    />
   )
 
   return (
@@ -149,7 +138,11 @@ export function Feed() {
           Handled: () => 'handled',
         })}
         ListHeaderComponent={head}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 12 }}
+        // Clear of the glass bar and its menu button, as every other page under it is; without
+        // it the date and the greeting stood under the menu button.
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 + foot, gap: 12 }}
+        scrollIndicatorInsets={{ bottom: foot }}
         viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
           Row.$match(row, {
@@ -183,7 +176,13 @@ export function Feed() {
           })
         }
       />
-      <View style={{ paddingBottom: insets.bottom }}>
+      {/* Over the foot of the list, as a Thread's composer is: nothing behind it but the cards.
+          The composer keeps the home indicator's inset itself. */}
+      <View
+        pointerEvents="box-none"
+        onLayout={(event) => setFoot(event.nativeEvent.layout.height)}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
+      >
         <Composer
           value={start.draft}
           autoFocus={false}
@@ -204,6 +203,39 @@ export function Feed() {
         />
       </View>
     </Screen>
+  )
+}
+
+/** The head of the Feed: the date, the greeting beside Vivid's face, and the standing line. */
+function Head({
+  date,
+  greeting,
+  mood,
+  standing,
+}: {
+  date: string
+  greeting: string
+  mood: (typeof LOOK)[keyof typeof LOOK]
+  standing: ReturnType<typeof feed.standingOf>
+}) {
+  return (
+    <View style={{ paddingTop: 24, paddingBottom: 16 }}>
+      <Label size="label" tone="ink-3">
+        {date}
+      </Label>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 8 }}>
+        <Label accessibilityRole="header" size="opening" style={{ flex: 1 }}>
+          {greeting}
+        </Label>
+        <Face size={56} mood={mood} />
+      </View>
+      <Label size="body" tone="ink-2" style={{ marginTop: 10 }}>
+        <Label size="body" style={{ fontWeight: '600' }}>
+          {standing.lead}
+        </Label>
+        {standing.rest.length > 0 ? ` ${standing.rest}` : ''}
+      </Label>
+    </View>
   )
 }
 

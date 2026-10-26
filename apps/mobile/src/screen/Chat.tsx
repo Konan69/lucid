@@ -271,9 +271,9 @@ function Top({
   return (
     <>
       <VividBar
-        // A Thread's conversation is under the bar, never behind it, so the system has no edge
-        // to soften. It is said only once the scroller is there, and so said again for each: the
-        // system is told to leave a scroller alone only at the moment this changes.
+        // A Thread's conversation runs behind the bar with no fade, as the owner asked, so the
+        // system is told to draw no edge on it. It is said only once the scroller is there, and so
+        // said again for each: the system is told to leave a scroller alone only at that moment.
         conversation={listed}
         present={others.map((seen) => seen.person)}
         actions={Option.match(sharing, {
@@ -832,6 +832,7 @@ function Conversation({
             unsent={undelivered}
             settled={settledIds}
             covered={covered}
+            foot={Option.getOrElse(dock, () => 0)}
             onContinue={speak}
           />
         </View>
@@ -985,7 +986,11 @@ function Foot({
   })
 
   return (
-    <>
+    // Over the foot of the conversation, which scrolls on behind it: nothing is drawn behind the
+    // composer but the words themselves, as in T3 Code mobile (`ThreadDetailScreen.tsx`, the
+    // absolute composer overlay). Until 26 October 2026 the composer stood under the conversation
+    // on a strip of its own, which the owner read as a fill behind it.
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
       {Option.isSome(asking.refusal) && (
         <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
           <Notice message={asking.refusal.value.words} />
@@ -1023,7 +1028,7 @@ function Foot({
           dictation={microphone}
         />
       </View>
-    </>
+    </View>
   )
 }
 
@@ -1191,6 +1196,12 @@ interface MessagesProps {
    * foot of the conversation, in points (`chat/Banner.tsx`). The conversation keeps that much more clear under its newest words.
    */
   readonly covered: SharedValue<number>
+  /**
+   * The height of the composer's dock, which floats over the foot of the conversation as T3 Code
+   * mobile's does (`ThreadDetailScreen.tsx`, the composer overlay whose height is the list's end
+   * inset). The conversation keeps that much clear under its newest words and scrolls behind it.
+   */
+  readonly foot: number
   readonly onContinue: Say
 }
 
@@ -1259,7 +1270,7 @@ const pageOf = (ready: boolean, said: number, thinking: boolean): Page => {
  */
 function Messages(props: MessagesProps) {
   if (props.page === 'Conversation') return <Transcript {...props} />
-  return <Blank ready={props.page === 'Opening'} />
+  return <Blank ready={props.page === 'Opening'} foot={props.foot} />
 }
 
 /**
@@ -1286,16 +1297,17 @@ function Messages(props: MessagesProps) {
  * The scroller is not shown until it has first been put on its newest words (`placed`), so a
  * Thread never opens on its oldest words and jumps.
  *
- * It sits in a box of its own that clips it, between the bar and the composer. Both are siblings
- * of the box, not overlays, so its viewport is exactly what is left under the bar and above the
- * composer and the keyboard; a card taller than that scrolls inside it and can never be drawn
- * behind the composer. The box starts under the bar, not behind it, and the words run up to the
- * bar with no fade: the owner asked for none where Vivid's name hangs (26 October 2026, kept by
- * Vivid in its notes of his bug reports). The box is written first and drawn second
- * (`column-reverse`): react-native-screens looks for the screen's scroller down the first child
- * of each view and nowhere else (`RNSScrollViewFinder`), and the bar still asks it to leave this
- * one's edges alone once it is laid out (`onListed`). The room the thinking bubble needs is kept
- * inside the scroller, not made between it and the composer.
+ * It runs the whole height of the screen, behind the bar and behind the composer, as T3 Code
+ * mobile's feed does, and keeps the bar's height and Vivid's hang clear above its oldest words and
+ * the composer's dock clear under its newest (`foot`), inside the scroller, so at rest nothing is
+ * covered and the words scroll on under both. Until 26 October 2026 it was a box between the two,
+ * which left a strip of plain page behind Vivid's avatar and another behind the composer; the
+ * owner asked why either was there. The words pass under the avatar with no fade, as he asked
+ * that day too, so the pill under the avatar is an opaque bubble (`ui/Presence.tsx`).
+ * react-native-screens looks for the screen's scroller down the first child of each view and
+ * nowhere else (`RNSScrollViewFinder`), so the scroller stays the first child here, and the bar
+ * asks it to leave its edges alone once it is laid out (`onListed`). The room the thinking bubble
+ * needs is kept inside the scroller as well.
  *
  * A message that has just arrived comes in with motion, and nothing else does (`Message`,
  * `fresh`). The reference decides that from the message's own time (T3 Code mobile
@@ -1405,94 +1417,89 @@ function Transcript(props: MessagesProps) {
   }
 
   return (
-    // The scroller's box is written first and drawn second: see the note above.
-    <View style={{ flex: 1, flexDirection: 'column-reverse' }}>
-      <View style={{ flex: 1, overflow: 'hidden' }} onLayout={settle}>
-        <Animated.ScrollView
-          ref={list}
-          keyboardShouldPersistTaps="handled"
-          // "on-drag", not "interactive": an interactive dismiss moves the keyboard with the
-          // finger, and React Native's `KeyboardAvoidingView` on iOS hears only keyboardWillShow
-          // and keyboardWillHide (`Libraries/Components/Keyboard/KeyboardAvoidingView.js`), not
-          // the frames in between. The composer stayed at the keyboard's full height while the
-          // keyboard was dragged half down, with the conversation showing through the gap (seen
-          // on an iPhone, 26 October 2026). On drag the keyboard leaves in one animation the
-          // composer rides. T3 Code mobile keeps "interactive" only under `KeyboardStickyView`,
-          // from a native module this build does not ship.
-          keyboardDismissMode="on-drag"
-          onLayout={(event) => {
-            port.set(event.nativeEvent.layout.height)
-            // Settled again once the viewport it is settled against is current: the box around
-            // it settles first, a frame before this height is known, and a place the Person was
-            // reading at is worked out from it (`useReadingPlace`).
-            settle()
-            props.onListed()
-          }}
-          onScroll={follow}
-          // The room under the conversation grows on the UI thread, and the scroller is put on
-          // its new end in that same frame (`useEndRoom`). The platform holds that scroll to the
-          // content's height as it was laid out last, a frame ago. While the banner glides the
-          // next frame makes it up; when the whole rise lands in one frame (a Thread opened
-          // under load: measured on Android on 12 October 2026, the room went from 0 to 193
-          // points in one step) nothing came after it, and the newest words stayed behind the
-          // banner. The content's own size changing is the one event that always follows the
-          // last growth, so the scroller is put back on its end from it as well.
-          onContentSizeChange={settle}
-          // A finger on the conversation takes over from a return that was under way, and from
-          // the place the Thread was opened at.
-          onScrollBeginDrag={() => {
-            returning.current = false
-            place.release()
-          }}
-          scrollEventThrottle={32}
-          style={{ opacity: placed ? 1 : 0 }}
-          // A Thread with few words keeps them at the foot, beside the composer.
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
-        >
-          {/* Everything said, in a view of its own: its height is what the scroller's end is
+    <View style={{ flex: 1, overflow: 'hidden' }} onLayout={settle}>
+      <Animated.ScrollView
+        ref={list}
+        keyboardShouldPersistTaps="handled"
+        // "on-drag", not "interactive": an interactive dismiss moves the keyboard with the
+        // finger, and React Native's `KeyboardAvoidingView` on iOS hears only keyboardWillShow
+        // and keyboardWillHide (`Libraries/Components/Keyboard/KeyboardAvoidingView.js`), not
+        // the frames in between. The composer stayed at the keyboard's full height while the
+        // keyboard was dragged half down, with the conversation showing through the gap (seen
+        // on an iPhone, 26 October 2026). On drag the keyboard leaves in one animation the
+        // composer rides. T3 Code mobile keeps "interactive" only under `KeyboardStickyView`,
+        // from a native module this build does not ship.
+        keyboardDismissMode="on-drag"
+        onLayout={(event) => {
+          port.set(event.nativeEvent.layout.height)
+          // Settled again once the viewport it is settled against is current: the box around
+          // it settles first, a frame before this height is known, and a place the Person was
+          // reading at is worked out from it (`useReadingPlace`).
+          settle()
+          props.onListed()
+        }}
+        onScroll={follow}
+        // The room under the conversation grows on the UI thread, and the scroller is put on
+        // its new end in that same frame (`useEndRoom`). The platform holds that scroll to the
+        // content's height as it was laid out last, a frame ago. While the banner glides the
+        // next frame makes it up; when the whole rise lands in one frame (a Thread opened
+        // under load: measured on Android on 12 October 2026, the room went from 0 to 193
+        // points in one step) nothing came after it, and the newest words stayed behind the
+        // banner. The content's own size changing is the one event that always follows the
+        // last growth, so the scroller is put back on its end from it as well.
+        onContentSizeChange={settle}
+        // A finger on the conversation takes over from a return that was under way, and from
+        // the place the Thread was opened at.
+        onScrollBeginDrag={() => {
+          returning.current = false
+          place.release()
+        }}
+        scrollEventThrottle={32}
+        // The bar is clear of the scroll bar by the room at the top; the composer is not.
+        scrollIndicatorInsets={{ bottom: props.foot }}
+        style={{ opacity: placed ? 1 : 0 }}
+        // A Thread with few words keeps them at the foot, beside the composer.
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
+      >
+        {/* Everything said, in a view of its own: its height is what the scroller's end is
               worked out from, and its growing is when the scroller is put back on that end. */}
-          <View
-            onLayout={(event) => {
-              body.set(event.nativeEvent.layout.height)
-              place.body(event.nativeEvent.layout.y)
-              settle()
-            }}
-            style={[
-              styles.column,
-              {
-                paddingHorizontal: GUTTER - 4,
-                paddingTop: 16,
-                // The room the thinking bubble floats in, kept only while it is there. Until
-                // 12 October 2026 it was kept always, so that the bubble moved nothing as it
-                // came and went; at rest that left 42 points of nothing under Vivid's last
-                // words, and the owner called it out. The bubble arrives with a send, which
-                // moves the conversation anyway, and the scroller is put back on its end when
-                // this height changes (`settle`).
-                paddingBottom: thinking ? THINKING_ROOM : END_ROOM,
-                gap: 22,
-              },
-            ]}
-          >
-            {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
+        <View
+          onLayout={(event) => {
+            body.set(event.nativeEvent.layout.height)
+            place.body(event.nativeEvent.layout.y)
+            settle()
+          }}
+          style={[styles.column, saidRoom(thinking, props.foot)]}
+        >
+          {/* The bar and the room Vivid's avatar hangs into, so the oldest words rest under
+                its name. One child, so the gap between messages is not put between the two. */}
+          <View>
+            <BarRoom />
             <View style={{ height: HANG }} />
-            <Rows
-              {...{ thread: id, messages, settled: props.settled }}
-              lines={model.linesOf(messages.map(spokenOf), requestsOf(props.detail))}
-              known={known}
-              around={props.around}
-              detail={props.detail}
-              working={working}
-              unsent={props.unsent}
-              onContinue={props.onContinue}
-              onRow={(key, laid) => {
-                if (place.row(key, laid)) settle()
-              }}
-            />
-            <Tail ended={props.ended} trouble={props.trouble} />
           </View>
-          {/* The room a question's choices are covering, after everything said (`useEndRoom`). */}
-          <Animated.View style={room} />
-        </Animated.ScrollView>
+          <Rows
+            {...{ thread: id, messages, settled: props.settled }}
+            lines={model.linesOf(messages.map(spokenOf), requestsOf(props.detail))}
+            known={known}
+            around={props.around}
+            detail={props.detail}
+            working={working}
+            unsent={props.unsent}
+            onContinue={props.onContinue}
+            onRow={(key, laid) => {
+              if (place.row(key, laid)) settle()
+            }}
+          />
+          <Tail ended={props.ended} trouble={props.trouble} />
+        </View>
+        {/* The room a question's choices are covering, after everything said (`useEndRoom`). */}
+        <Animated.View style={room} />
+      </Animated.ScrollView>
+      {/* Standing on the composer, which floats over the foot of the box. */}
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: props.foot }}
+      >
         <Floating
           thinking={thinking}
           doing={useDoing(messages, working)}
@@ -1503,10 +1510,24 @@ function Transcript(props: MessagesProps) {
           onNewest={latest}
         />
       </View>
-      <BarRoom />
     </View>
   )
 }
+
+/**
+ * The room around everything said in a Thread. At the foot: the room the thinking bubble floats
+ * in, kept only while it is there, and the composer's dock, which floats over the foot. Until
+ * 12 October 2026 the bubble's room was kept always, so that the bubble moved nothing as it came
+ * and went; at rest that left 42 points of nothing under Vivid's last words, and the owner called
+ * it out. The bubble arrives with a send, which moves the conversation anyway, and the scroller
+ * is put back on its end when this height changes (`settle`).
+ */
+const saidRoom = (thinking: boolean, foot: number) => ({
+  paddingHorizontal: GUTTER - 4,
+  paddingTop: 16,
+  paddingBottom: (thinking ? THINKING_ROOM : END_ROOM) + foot,
+  gap: 22,
+})
 
 /**
  * What the working bubble says and shows: the step Vivid is on, in its own words, with the logo
@@ -1784,7 +1805,7 @@ function Rows({
 const FRESH = 3000
 
 /** A Thread with nothing in it: its outline while it opens, then Vivid waiting to be asked. */
-function Blank({ ready }: { ready: boolean }) {
+function Blank({ ready, foot }: { ready: boolean; foot: number }) {
   if (!ready) {
     return (
       <View>
@@ -1800,6 +1821,8 @@ function Blank({ ready }: { ready: boolean }) {
     <View style={{ flex: 1 }}>
       <BarRoom />
       <Opening mood="happy" title="What should I take off your plate?" />
+      {/* The composer floats over the foot, so the middle is the middle of what it leaves. */}
+      <View style={{ height: foot }} />
     </View>
   )
 }
