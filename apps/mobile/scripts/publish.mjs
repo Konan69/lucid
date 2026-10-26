@@ -179,15 +179,16 @@ function findMaps(directory) {
  * raises `runtimeVersion`, which is the commit that adds, removes or changes a native module or
  * view the JavaScript calls: a binary without it would be handed code that crashes on it.
  *
- * It is empty since 0.3.12, which draws Markdown with a native view (`src/ui/Prose.tsx`,
- * `react-native-enriched-markdown`). No binary before it has that view, so none of them is given
- * this JavaScript: 0.3.0 to 0.3.3, which shared one native side and were all listed here until
- * then, are answered "no update is published" and go on running the JavaScript they last took,
- * until the new build is installed.
+ * 0.3.16 is the installed iPhone build (`Vivid-0.4.4.ipa`). 0.3.17 only took `expo-image` out of
+ * the binary (#136) and no JavaScript calls it any more, so a 0.3.16 binary runs this JavaScript
+ * whole: it was answered "no update is published" for every change after it (seen on the
+ * iPhone, 27 October 2026, Settings at 0.4.4 with no update running). Remove it in the commit
+ * that next raises `runtimeVersion`. Binaries before 0.3.12 have no native Markdown view
+ * (`src/ui/Prose.tsx`, `react-native-enriched-markdown`) and are never listed.
  *
  * @type {ReadonlyArray<string>}
  */
-const ALSO_RUNS_ON = []
+const ALSO_RUNS_ON = ['0.3.16']
 
 // A link, not a copy: the server reads a release through `stat` and by path
 // (`apps/server/src/updates/release.ts`), both of which follow one, and the image keeps a single
