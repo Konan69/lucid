@@ -61,7 +61,8 @@
         {
           "enableBackgroundRemoteNotifications": false
         }
-      ]
+      ],
+      "expo-quick-actions"
     ],
     "web": {
       "bundler": "metro"

@@ -6,7 +6,9 @@ import {
   IOSConfig,
   withAndroidManifest,
   withDangerousMod,
+  withEntitlementsPlist,
   withInfoPlist,
+  withPlugins,
 } from 'expo/config-plugins'
 
 /**
@@ -107,13 +109,68 @@ const withSplash = (config: ExpoConfig): ExpoConfig =>
     },
   )
 
+/**
+ * Whether this build is signed by a free Apple ID (a "personal team"), set by
+ * `VIVID_IOS_PERSONAL_TEAM=1` in the environment of whoever builds. A personal team cannot sign
+ * push, App Groups or extension targets, and an IPA that asks for them does not install. So such
+ * a build drops the widget extension and those entitlements, and the same source builds either
+ * way. Ported from T3 Code mobile (`apps/mobile/app.config.ts`, `isIosPersonalTeamBuild`, and
+ * `plugins/withoutIosPersonalTeamCapabilities.cjs`).
+ */
+const PERSONAL_TEAM = process.env['VIVID_IOS_PERSONAL_TEAM'] === '1'
+
+/** The entitlements a personal team cannot sign, taken off its build. */
+const withoutPaidTeamCapabilities = (config: ExpoConfig): ExpoConfig =>
+  withEntitlementsPlist(config, (plist) => {
+    delete plist.modResults['aps-environment']
+    delete plist.modResults['com.apple.security.application-groups']
+    return plist
+  })
+
+/**
+ * The widget extension: a Live Activity and a widget that show what Vivid is doing in the
+ * Person's Threads while the app is closed, updated from the server. As T3 Code mobile's
+ * `AgentActivity` (`apps/mobile/app.config.ts`, `widgetsPlugin`): its own bundle under the app's,
+ * one App Group shared with the app, remote updates, and the frequent-updates budget because a
+ * Run can change its state many times an hour. The layout ships over the air (`expo-widgets`
+ * draws it with `@expo/ui`); only the target and its capabilities are native.
+ */
+const withThreadActivity = (config: ExpoConfig, app: string): ExpoConfig =>
+  withPlugins(config, [
+    [
+      'expo-widgets',
+      {
+        bundleIdentifier: `${app}.widgets`,
+        groupIdentifier: `group.${app}`,
+        enablePushNotifications: true,
+        frequentUpdates: true,
+        widgets: [
+          {
+            name: 'ThreadActivity',
+            displayName: 'Vivid at work',
+            description: 'What Vivid is doing in your Threads.',
+            android: null,
+            ios: { supportedFamilies: ['systemSmall', 'systemMedium', 'accessoryRectangular'] },
+          },
+        ],
+      },
+    ],
+  ])
+
+/** A paid team's build gets the widget extension; a personal team's loses what it cannot sign. */
+const withSigning = (config: ExpoConfig): ExpoConfig => {
+  const app = config.ios?.bundleIdentifier
+  if (app === undefined) throw new Error('app.json must name the iOS bundle.')
+  return PERSONAL_TEAM ? withoutPaidTeamCapabilities(config) : withThreadActivity(config, app)
+}
+
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
   const server = process.env['VIVID_SERVER']
   // Expo hands over `app.json` typed as possibly partial. A config plugin needs the whole thing,
   // and an `app.json` that does not name the app is a broken build, so it fails here.
   const { name, slug } = config
   if (name === undefined || slug === undefined) throw new Error('app.json must name the app.')
-  const base = withSplash(withSentryOff({ ...config, name, slug }))
+  const base = withSigning(withSplash(withSentryOff({ ...config, name, slug })))
   if (server === undefined || server === '') return { ...base, updates: { enabled: false } }
   return {
     ...base,
