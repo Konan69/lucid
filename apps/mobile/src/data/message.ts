@@ -1,19 +1,22 @@
-import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ApprovalId,
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   InputRequestId,
   textOf,
+  type ConversationMessage,
   type PersonId,
   type Run,
+  type ThreadId,
 } from '@vivid/contracts'
 import {
   awaitedOf,
   describeToolCall,
   inThread,
+  pictureAddress,
   readAnswered,
   readAsked,
+  runOf,
   Source,
   sourceOf,
   speakerOfTurn,
@@ -21,17 +24,18 @@ import {
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
 import type { Authorization } from './integration'
+import type { ServerAddress } from './server'
 
 /**
  * Reading one message of a Thread's conversation: who it is from, what it says, and which card
- * it asks the Thread to draw. Pure functions over what Flue's stream and the Thread's live detail
- * carry; the screen only draws what these return.
+ * it asks the Thread to draw. Pure functions over what the Thread's conversation and its live
+ * detail carry; the screen only draws what these return.
  *
  * The rules are the web Thread's (`apps/web/src/screen/thread/Message.tsx`), so a message reads
  * the same on a phone as in a browser.
  */
 
-export type ToolPart = Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>
+export type ToolPart = Extract<ConversationMessage['parts'][number], { type: 'dynamic-tool' }>
 
 /** What a Thread carries beside its messages, which attribution is read from. */
 export interface Around {
@@ -39,8 +43,25 @@ export interface Around {
   readonly me: PersonId
   /** Whether anyone but its creator can see the Thread. */
   readonly shared: boolean
-  /** The Thread's Runs. A Run's id is the submission id Flue stamps on Vivid's reply. */
+  /**
+   * The Thread's Runs. A reply names the delivery it answers by the Run's number in the runtime
+   * (`Run.submissionId`), never by the Run's own id (`runOf`, `@vivid/state`).
+   */
   readonly runs: ReadonlyArray<Run>
+  /** Where a picture in one of the Thread's messages is read from, and as whom. */
+  readonly hosted: Hosted
+}
+
+/**
+ * Where the pictures of one Thread's messages are kept: the Person's server and the Thread, and
+ * the header that says who is asking (`bearer`, `data/transport.ts`), which is what the server
+ * lets a picture be read by. The header is made by whoever holds the session; nothing here
+ * reads a token.
+ */
+export interface Hosted {
+  readonly server: ServerAddress
+  readonly thread: ThreadId
+  readonly asking: Readonly<Record<string, string>>
 }
 
 /**
@@ -68,12 +89,9 @@ export type Speaker = Data.TaggedEnum<{
 export const Speaker = Data.taggedEnum<Speaker>()
 
 /** Who Vivid was answering, where more than one Person could have asked. */
-function answering(message: FlueConversationMessage, around: Around): Option.Option<string> {
+function answering(message: ConversationMessage, around: Around): Option.Option<string> {
   if (!around.shared) return Option.none()
-  return Option.map(
-    Option.fromUndefinedOr(around.runs.find((run) => run.id === message.submissionId)),
-    (run) => run.origin.person.name,
-  )
+  return Option.map(runOf(around.runs, message), (run) => run.origin.person.name)
 }
 
 /**
@@ -82,10 +100,9 @@ function answering(message: FlueConversationMessage, around: Around): Option.Opt
  * which Person a turn belongs to, and who Vivid was answering.
  *
  * It read the conversation itself before, and took every `system` message without a signal for a
- * notice. Flue projects its own `instructions` and `environment` signals exactly so, and not
- * hidden, so the phone drew the runtime's notes to the model in the Thread.
+ * notice, so the phone drew the runtime's notes to the model in the Thread.
  */
-export function speakerOf(message: FlueConversationMessage, around: Around): Speaker {
+export function speakerOf(message: ConversationMessage, around: Around): Speaker {
   return Source.$match(sourceOf(message), {
     Person: () => Speaker.Me(),
     Vivid: () => Speaker.Vivid({ answering: answering(message, around) }),
@@ -101,22 +118,31 @@ export function speakerOf(message: FlueConversationMessage, around: Around): Spe
 }
 
 /** Whether a message belongs in the Thread at all, by the rule every surface shares. */
-export const isShown: (message: FlueConversationMessage) => boolean = inThread
+export const isShown: (message: ConversationMessage) => boolean = inThread
 
 /**
- * The SDK supplies hosted URLs for durable images and data URLs for local previews. Unresolved
- * files have no bytes to draw yet; non-image files belong to the Library, never this gallery.
- * A part's position gives repeated pictures distinct React keys even before durable ids arrive.
+ * A message's pictures, each with where its bytes are read. A stored picture is on the Person's
+ * server under its Thread (`pictureAddress`, `@vivid/state`) and is asked for as the signed-in
+ * Person: a phone has no cookie, so the header that says who is asking goes with the request
+ * (`Hosted.asking`). Any other address is drawn
+ * as it is, with nothing sent beside it: bytes this phone already holds (`data:`).
+ *
+ * A file with no address has no bytes to draw yet; non-image files belong to the Library, never
+ * this gallery. A part's position gives repeated pictures distinct React keys.
  */
-export const picturesOf = (message: FlueConversationMessage) =>
+export const picturesOf = (message: ConversationMessage, hosted: Hosted) =>
   message.parts.flatMap((part, position) => {
     if (part.type !== 'file' || !part.mediaType.startsWith('image/') || part.url === undefined) {
       return []
     }
+    const path = pictureAddress(hosted.thread, part.url)
+    const stored = path !== part.url
     return [
       {
         key: `${message.id}:${position}`,
-        url: part.url,
+        url: stored ? `${hosted.server}${path}` : part.url,
+        // Only to the Person's own server: who is asking is never said to another address.
+        headers: stored ? Option.some(hosted.asking) : Option.none(),
         name: Option.fromUndefinedOr(part.filename),
       },
     ]
@@ -130,7 +156,7 @@ export type MessagePicture = ReturnType<typeof picturesOf>[number]
  * Run that came to nothing says again.
  */
 export const lastWordsOf = (
-  messages: ReadonlyArray<FlueConversationMessage>,
+  messages: ReadonlyArray<ConversationMessage>,
   around: Around,
 ): Option.Option<string> =>
   Option.map(
@@ -141,7 +167,7 @@ export const lastWordsOf = (
   )
 
 /** What Vivid did while answering, in the order it did it. */
-export const toolsOf = (message: FlueConversationMessage): ReadonlyArray<ToolPart> =>
+export const toolsOf = (message: ConversationMessage): ReadonlyArray<ToolPart> =>
   message.parts.flatMap((part) => (part.type === 'dynamic-tool' ? [part] : []))
 
 /**
@@ -162,7 +188,7 @@ export const Segment = Data.taggedEnum<Segment>()
  * joined as `textOf` joins them; tool calls that follow one another are one piece of work. Empty
  * words make no segment, so a reply that has only begun has none.
  */
-export const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segment> => {
+export const segmentsOf = (message: ConversationMessage): ReadonlyArray<Segment> => {
   const segments: Array<Segment> = []
   for (const part of message.parts) {
     const last = segments.at(-1)
@@ -181,18 +207,12 @@ export const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segm
 }
 
 /** Whether Vivid is still writing this message. */
-export const isStreaming = (message: FlueConversationMessage): boolean =>
+export const isStreaming = (message: ConversationMessage): boolean =>
   message.parts.some((part) => 'state' in part && part.state === 'streaming')
 
-const Metadata = Schema.Struct({
-  finishedAt: Schema.optionalKey(Schema.Finite),
-  startedAt: Schema.optionalKey(Schema.Finite),
-})
-const decodeMetadata = Schema.decodeUnknownOption(Metadata)
-
 /** When a message was finished, when Vivid said so; an unstamped message simply has no time. */
-export const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+export const momentOf = (message: ConversationMessage): Option.Option<number> =>
+  Option.flatMap(Option.fromUndefinedOr(message.metadata), (metadata) =>
     Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
       Option.fromUndefinedOr(metadata.startedAt),
     ),
@@ -283,7 +303,7 @@ export interface Doing {
 
 /** The step Vivid is on in the newest reply, while it is working (`currentStepOf`). */
 export const doingOf = (
-  messages: ReadonlyArray<FlueConversationMessage>,
+  messages: ReadonlyArray<ConversationMessage>,
   working: boolean,
 ): Option.Option<Doing> => {
   const newest = messages.at(-1)

@@ -4,8 +4,9 @@ import { fetch as expoFetch } from 'expo/fetch'
 /**
  * The app's one way of making an HTTP request.
  *
- * It is Expo's `fetch` rather than React Native's because a conversation arrives as a stream and
- * React Native's own `fetch` only hands over a body once it has all of it.
+ * It is Expo's `fetch` rather than React Native's because a body can arrive as a stream (it did
+ * when a conversation was read over HTTP), and React Native's own `fetch` only hands one over
+ * once it has all of it.
  *
  * Every request leaves without cookies. A phone is signed in by the bearer token it sends, and
  * the operating system's cookie jar would otherwise quietly keep the session cookie Better Auth
@@ -24,17 +25,9 @@ export const request = (
 ) => expoFetch(address, { ...init, credentials: 'omit' })
 
 /**
- * The same transport in the form Flue's client takes: the standard `fetch` signature. Flue only
- * ever calls it with an address string and an init whose body is a string.
- */
-// SAFETY: expo/fetch implements the Fetch API (its response class `implements Response`); the
-// two signatures differ only in init fields Flue does not use.
-export const streamingFetch = ((address: string, init: Parameters<typeof expoFetch>[1]) =>
-  expoFetch(address, { ...init, credentials: 'omit' })) as typeof fetch
-
-/**
- * The header that says who is asking. This and Flue's client are the only places a session's
- * token is unwrapped.
+ * The header that says who is asking: on a request, on the socket's upgrade (`data/socket.ts`)
+ * and beside a picture kept on the Person's server (`data/message.ts`). This is the one place a
+ * session's token is unwrapped for the server.
  */
 export const bearer = (token: Redacted.Redacted) => ({
   authorization: `Bearer ${Redacted.value(token)}`,

@@ -1,5 +1,10 @@
-import type { FlueConversationMessage } from '@flue/sdk'
-import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import {
+  DisplaySource,
+  textOf,
+  type ConversationMessage,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
 import { offeredReplies } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -48,7 +53,7 @@ export function Message({
   onContinue,
 }: {
   thread: ThreadId
-  message: FlueConversationMessage
+  message: ConversationMessage
   around: Around
   detail: Option.Option<ThreadDetail>
   working: boolean
@@ -66,7 +71,7 @@ export function Message({
    * Whether Flue has settled the submission this reply answers. Neither `latest`, `working` nor a
    * part's streaming state says so: Flue closes every streaming part between steps and folds a
    * delivery written while the reply arrives into the same submission (`appendToolInput` in
-   * `@flue/sdk` 2.2.2, `projectConversationUi` in `@flue/runtime` 2.2.2). The server runs a
+   * Flue's SDK 2.2.2, `projectConversationUi` in Flue's runtime 2.2.2). The server runs a
    * display's program only from a settled reply.
    */
   settled: boolean
@@ -77,13 +82,17 @@ export function Message({
       <Arriving arrival={fresh ? 'said' : 'there'}>
         <Said
           text={textOf(message)}
-          pictures={picturesOf(message)}
+          pictures={picturesOf(message, around.hosted)}
           voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()}
         />
       </Arriving>
     ),
     Member: ({ name }) => (
-      <Said text={textOf(message)} pictures={picturesOf(message)} voice={Voice.Theirs({ name })} />
+      <Said
+        text={textOf(message)}
+        pictures={picturesOf(message, around.hosted)}
+        voice={Voice.Theirs({ name })}
+      />
     ),
     Vivid: ({ answering }) => (
       <Arriving arrival={fresh ? 'answered' : 'there'}>
@@ -194,7 +203,7 @@ function FromVivid({
   onContinue,
 }: {
   thread: ThreadId
-  message: FlueConversationMessage
+  message: ConversationMessage
   answering: Option.Option<string>
   detail: Option.Option<ThreadDetail>
   around: Around
@@ -211,7 +220,7 @@ function FromVivid({
   // A reply with nothing to show yet is not drawn: the working bubble already says Vivid is on it.
   if (segments.length === 0 && Option.isNone(answering)) return null
   // Flue streams every step of a reply under the id of its first step, the id its history keeps
-  // the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a display drawn
+  // the whole reply under (`buildResponseMessageIndex` in Flue's runtime 2.2.2), so a display drawn
   // while the reply arrives already names the reply the server reads.
   const source = DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })
   // Only the newest reply, once Vivid has finished it, offers its replies to tap.

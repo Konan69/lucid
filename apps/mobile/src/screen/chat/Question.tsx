@@ -1,7 +1,7 @@
-import type { FlueConversationMessage } from '@flue/sdk'
 import {
   InputRequestId,
   InputRequestState,
+  type ConversationMessage,
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
@@ -66,10 +66,8 @@ const decodeRequest = Schema.decodeUnknownOption(InputRequestId)
  * `answer` signal whose `request` attribute names it, `apps/server/src/inputs/store.ts`); and
  * when it was said, where the conversation stamps it.
  */
-export const spokenOf = (message: FlueConversationMessage): asking.Spoken => {
+export const spokenOf = (message: ConversationMessage): asking.Spoken => {
   const signal = message.signal
-  const attributes =
-    signal === undefined || signal.attributes === undefined ? {} : signal.attributes
   return {
     key: message.id,
     asked: toolsOf(message).flatMap((tool) =>
@@ -77,7 +75,7 @@ export const spokenOf = (message: FlueConversationMessage): asking.Spoken => {
     ),
     answers:
       signal !== undefined && signal.tagName === 'answer'
-        ? decodeRequest(attributes.request)
+        ? decodeRequest(signal.attributes.request)
         : Option.none(),
     at: momentOf(message),
   }

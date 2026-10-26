@@ -1,4 +1,4 @@
-import type { attaching } from '@vivid/state'
+import type { MessageAttachment } from '@vivid/contracts'
 import { Option } from 'effect'
 
 /**
@@ -19,7 +19,7 @@ import { Option } from 'effect'
  */
 export interface Delivery {
   readonly words: string
-  readonly pictures: ReadonlyArray<attaching.Picture>
+  readonly pictures: ReadonlyArray<MessageAttachment>
   readonly key: string
 }
 
@@ -45,7 +45,7 @@ export type Say = (words: string) => Promise<boolean>
 export const deliveryOf = (
   unsent: Option.Option<Unsent>,
   words: string,
-  pictures: ReadonlyArray<attaching.Picture>,
+  pictures: ReadonlyArray<MessageAttachment>,
   fresh: () => string,
 ): Delivery =>
   Option.match(

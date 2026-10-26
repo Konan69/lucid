@@ -103,6 +103,17 @@ export function Said({
   )
 }
 
+/**
+ * Where an image is read from, as the system's image view takes it. A picture kept on the
+ * Person's server is asked for with the token the phone is signed in with (`picturesOf`,
+ * `data/message.ts`); one the phone already holds is given as it is.
+ */
+const sourceOf = (picture: MessagePicture) =>
+  Option.match(picture.headers, {
+    onNone: () => ({ uri: picture.url }),
+    onSome: (headers) => ({ uri: picture.url, headers }),
+  })
+
 /** A sent picture opens at full size, using the native sheet in place of the web's image link. */
 function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
   const [opened, setOpened] = useState<Option.Option<MessagePicture>>(Option.none())
@@ -125,7 +136,7 @@ function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
             style={({ pressed }) => ({ opacity: pressed ? 0.82 : 1 })}
           >
             <Image
-              source={{ uri: picture.url }}
+              source={sourceOf(picture)}
               resizeMode="cover"
               style={{ width: side, height: side, borderRadius: radius.row }}
             />
@@ -138,7 +149,7 @@ function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
           onClose={() => setOpened(Option.none())}
         >
           <Image
-            source={{ uri: opened.value.url }}
+            source={sourceOf(opened.value)}
             accessibilityLabel={Option.getOrUndefined(opened.value.name)}
             resizeMode="contain"
             style={{ width: '100%', aspectRatio: 1 }}

@@ -2,9 +2,8 @@ import { Option } from 'effect'
 
 /**
  * The fields of a conversation message that a Thread's first words are matched and drawn with.
- * The shape is Flue's `FlueConversationMessage` (`@flue/sdk` 2.2.2, `dist/index.d.mts`), named
- * structurally so this package reads a message without depending on Flue (as `Sourced` does).
- * Only text and reasoning parts carry `text`.
+ * The shape is `ConversationMessage` (`@vivid/contracts`), named structurally. Only text and
+ * reasoning parts carry `text`.
  */
 export interface Worded {
   readonly id: string
@@ -30,9 +29,9 @@ export const saysWords = (message: Worded, words: string): boolean =>
  * choosing. The words come back from the server as a Person's message that says the same thing,
  * and that message takes the stand-in's key: the list then keeps the row it already drew, so the
  * words neither blink nor rise twice. This is what T3 Code mobile does for a message that is not
- * yet with the server (`appendPendingThreadMessages`, `pending-thread-feed.ts`) and what Flue's own
- * hook does for the messages it sends (`converge`, `@flue/react` 2.2.2: the server's message takes
- * the local id).
+ * yet with the server (`appendPendingThreadMessages`, `pending-thread-feed.ts`) and what a
+ * Thread's sending does for the messages it sends (`drawing`, `sending.ts`: the server's message
+ * takes the local id).
  *
  * Until that message is there and the conversation's history has not been read (`ready`), the
  * words stand at the head of whatever the conversation holds. That matters when the Person says
