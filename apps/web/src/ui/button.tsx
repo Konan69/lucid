@@ -40,7 +40,7 @@ const buttonVariants = cva(
         destructive: 'bg-surface-3 text-danger edge hover:bg-danger-soft',
         link: 'text-primary-ink underline-offset-4 hover:underline',
         glass:
-          'motion-offer bg-surface-0/45 text-ink backdrop-blur-md edge-field hover:bg-surface-0/70',
+          'motion-offer bg-surface-0/45 text-ink backdrop-blur-md edge edge-field hover:bg-surface-0/70',
       },
       size: {
         default: 'h-8 gap-2 rounded-control px-3 text-label',
