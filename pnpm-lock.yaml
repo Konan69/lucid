@@ -537,6 +537,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@config-plugins/react-native-webrtc':
+        specifier: 15.0.2
+        version: 15.0.2(expo@57.0.31)
       '@effect/atom-react':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)(react@19.2.3)(scheduler@0.27.0)
@@ -711,6 +714,9 @@ importers:
       react-native-web:
         specifier: 'catalog:'
         version: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      react-native-webrtc:
+        specifier: 155.0.1
+        version: 155.0.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
       react-native-webview:
         specifier: 13.16.1
         version: 13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -1939,6 +1945,11 @@ packages:
   '@cloudflare/workers-types@5.20261009.1':
     resolution: {integrity: sha512-Oa/7pS2upeCKG0lEvPSGHLK8B8sx3lPanEaXDlOj13H6HfZV5agBeHq5A1VtJj+/x9dXuMJpHTg7U7kTYt4xDA==}
 
+  '@config-plugins/react-native-webrtc@15.0.2':
+    resolution: {integrity: sha512-sH4T7Z4P2RowV91k9CEwEr0unn+396NBexxCNZwRXuJXwguDU1qZWpE6fcwN0730B8uiS83F7+CLTyhpC7qRHQ==}
+    peerDependencies:
+      expo: '>=56'
+
   '@distilled.cloud/acme@1.0.0-rc.13':
     resolution: {integrity: sha512-3rmzH125jQxk0zpCvXGNEybSaqpAolyCX+8LWDDrXf+wIKs67GflkJyQLjOOh0lKARe29hdUZGgqEbbvpp0LNA==}
     peerDependencies:
@@ -2508,9 +2519,6 @@ packages:
 
   '@expo/config-plugins@57.0.11':
     resolution: {integrity: sha512-lnNF0cNXqLQPpQVeb/AAu7O0KhdwMFx99rJkO11mrd0IbQDhnOVObpgaR/Ja2D1jAOoKuqk55jwS4l+ZD1j7aw==}
-
-  '@expo/config-plugins@57.0.9':
-    resolution: {integrity: sha512-hHgfL1avkCdEvDSw7IwlKwRYYNgcxzbNNMIk6W6lTkJpY0MajinAfeJUS0J+wPCsjUfGbVqOJM+XhPaO5ulUxg==}
 
   '@expo/config-types@57.0.2':
     resolution: {integrity: sha512-ewW08OonrcRIsRKIlFvvcmmafE5zemb1ocu3HkNwtVPyRtj2w42pZCAkMIROYpcVBaPnc3mDT9UZDzwXWC3i6g==}
@@ -6565,6 +6573,15 @@ packages:
       supports-color:
         optional: true
 
+  debug@4.3.4:
+    resolution: {integrity: sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==}
+    engines: {node: '>=6.0'}
+    peerDependencies:
+      supports-color: '*'
+    peerDependenciesMeta:
+      supports-color:
+        optional: true
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -8734,6 +8751,9 @@ packages:
   ms@2.0.0:
     resolution: {integrity: sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==}
 
+  ms@2.1.2:
+    resolution: {integrity: sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==}
+
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
@@ -9449,6 +9469,11 @@ packages:
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
+
+  react-native-webrtc@155.0.1:
+    resolution: {integrity: sha512-xQ71L3l1yE9o7H0VWupktdib08OXt5hnGspQYTSW1S3sYqXQHkYx8ZY9HNjw8o1FfBZuoFJ/ypGTUzky6YHnsQ==}
+    peerDependencies:
+      react-native: '>=0.60.0'
 
   react-native-webview@13.16.1:
     resolution: {integrity: sha512-If0eHhoEdOYDcHsX+xBFwHMbWBGK1BvGDQDQdVkwtSIXiq1uiqjkpWVP2uQ1as94J0CzvFE9PUNDuhiX0Z6ubw==}
@@ -10385,11 +10410,6 @@ packages:
     resolution: {integrity: sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==}
     engines: {node: '>= 0.4.0'}
 
-  uuid@7.0.3:
-    resolution: {integrity: sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
   valibot@1.2.0:
     resolution: {integrity: sha512-mm1rxUsmOxzrwnX5arGS+U4T25RdvpPjPN4yR0u9pUBov9+zGVtO84tif1eY4r6zWxVxu3KzIyknJy3rxfRZZg==}
     peerDependencies:
@@ -10664,10 +10684,6 @@ packages:
   wsl-utils@1.0.1:
     resolution: {integrity: sha512-c16PKLIRxBYpR3jSWsdS7SFp0COm5SOQdiFjY818dYFHJbMGuLBszpF07LBWmOS1uzrHa9VGdynsEgoeKy0oOQ==}
     engines: {node: '>=20'}
-
-  xcode@3.0.1:
-    resolution: {integrity: sha512-kCz5k7J7XbJtjABOvkc5lJmkiDh8VhjVCGNiqdKCscmVpdVUpEAyXv1xmCLkQJ5dsHqx3IPO4XW+NTDhU/fatA==}
-    engines: {node: '>=10.0.0'}
 
   xcode@4.0.0:
     resolution: {integrity: sha512-dDaoWzc9EP2fp9FS9PVZUkyvFxY4y1TOV9pcKaKLk++Ei/qb97XDFEVP7GnW7Osii/TzVABJ0jq2F+9/lq0TVA==}
@@ -11757,6 +11773,10 @@ snapshots:
 
   '@cloudflare/workers-types@5.20261009.1': {}
 
+  '@config-plugins/react-native-webrtc@15.0.2(expo@57.0.31)':
+    dependencies:
+      expo: 57.0.31(@babel/core@7.29.7(supports-color@8.1.1))(expo-widgets@57.0.27)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
+
   '@distilled.cloud/acme@1.0.0-rc.13(effect@4.0.2)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.2)
@@ -12417,26 +12437,6 @@ snapshots:
       - supports-color
       - typescript
 
-  '@expo/config-plugins@57.0.9(supports-color@8.1.1)':
-    dependencies:
-      '@expo/config-types': 57.0.2
-      '@expo/json-file': 11.0.1
-      '@expo/plist': 0.8.1
-      '@expo/require-utils': 57.0.6(supports-color@8.1.1)
-      '@expo/sdk-runtime-versions': 1.0.0
-      chalk: 4.1.2
-      debug: 4.4.3(supports-color@8.1.1)
-      getenv: 2.0.0
-      glob: 13.0.6
-      semver: 7.8.5
-      slugify: 1.6.9
-      xcode: 3.0.1
-      xml2js: 0.6.0
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   '@expo/config-types@57.0.2': {}
 
   '@expo/config@57.0.10(supports-color@8.1.1)':
@@ -12457,7 +12457,7 @@ snapshots:
 
   '@expo/config@57.0.9(supports-color@8.1.1)':
     dependencies:
-      '@expo/config-plugins': 57.0.9(supports-color@8.1.1)
+      '@expo/config-plugins': 57.0.11(supports-color@8.1.1)
       '@expo/config-types': 57.0.2
       '@expo/json-file': 11.0.1
       '@expo/require-utils': 57.0.6(supports-color@8.1.1)
@@ -16709,6 +16709,12 @@ snapshots:
     optionalDependencies:
       supports-color: 8.1.1
 
+  debug@4.3.4(supports-color@8.1.1):
+    dependencies:
+      ms: 2.1.2
+    optionalDependencies:
+      supports-color: 8.1.1
+
   debug@4.4.3(supports-color@8.1.1):
     dependencies:
       ms: 2.1.3
@@ -19445,6 +19451,8 @@ snapshots:
 
   ms@2.0.0: {}
 
+  ms@2.1.2: {}
+
   ms@2.1.3: {}
 
   multitars@1.0.2: {}
@@ -20248,6 +20256,14 @@ snapshots:
     transitivePeerDependencies:
       - encoding
     optional: true
+
+  react-native-webrtc@155.0.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1):
+    dependencies:
+      base64-js: 1.5.1
+      debug: 4.3.4(supports-color@8.1.1)
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - supports-color
 
   react-native-webview@13.16.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
     dependencies:
@@ -21414,9 +21430,6 @@ snapshots:
 
   utils-merge@1.0.1: {}
 
-  uuid@7.0.3:
-    optional: true
-
   valibot@1.2.0: {}
 
   valibot@1.4.2:
@@ -21616,12 +21629,6 @@ snapshots:
     dependencies:
       is-wsl: 3.1.1
       powershell-utils: 0.2.1
-
-  xcode@3.0.1:
-    dependencies:
-      simple-plist: 1.3.1
-      uuid: 7.0.3
-    optional: true
 
   xcode@4.0.0:
     dependencies:

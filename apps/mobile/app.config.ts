@@ -124,6 +124,7 @@ const withoutPaidTeamCapabilities = (config: ExpoConfig): ExpoConfig =>
   withEntitlementsPlist(config, (plist) => {
     delete plist.modResults['aps-environment']
     delete plist.modResults['com.apple.security.application-groups']
+    delete plist.modResults['com.apple.developer.associated-domains']
     return plist
   })
 
@@ -157,14 +158,66 @@ const withThreadActivity = (config: ExpoConfig, app: string): ExpoConfig =>
     ],
   ])
 
+/**
+ * "Share to Vivid" from any app: a link, words, pictures or files from the system's share sheet
+ * land in Vivid. `expo-sharing`'s share extension with T3 Code mobile's settings
+ * (`apps/mobile/app.config.ts`, `sharingPlugin`): its own bundle and the App Group it shares
+ * with the app, one link, up to eight pictures, films or files. A personal team cannot sign an
+ * extension, so its build has the share sheet off on iOS, as T3's does; Android needs no signing
+ * and always takes shares. What a share does once it is in the app ships over the air.
+ */
+const withShareTarget = (config: ExpoConfig, app: string): ExpoConfig =>
+  withPlugins(config, [
+    [
+      'expo-sharing',
+      {
+        ios: {
+          enabled: !PERSONAL_TEAM,
+          extensionBundleIdentifier: `${app}.sharing`,
+          appGroupId: `group.${app}`,
+          activationRule: {
+            supportsText: true,
+            supportsWebUrlWithMaxCount: 1,
+            supportsImageWithMaxCount: 8,
+            supportsMovieWithMaxCount: 8,
+            supportsFileWithMaxCount: 8,
+          },
+        },
+        android: {
+          enabled: true,
+          singleShareMimeTypes: ['*/*'],
+          multipleShareMimeTypes: ['*/*'],
+        },
+      },
+    ],
+  ])
+
+/**
+ * Links on the Vivid server's own address open the app (a notification, a shared Thread, the end
+ * of a sign-in), and the system offers the Person's saved Vivid password, as T3 Code mobile's
+ * `associatedDomains` do. The address is the build's `VIVID_SERVER`; the server answers
+ * `/.well-known/apple-app-site-association` for it. Only a paid team can sign it.
+ */
+const withServerLinks = (config: ExpoConfig, server: string): ExpoConfig => {
+  const host = new URL(server).host
+  return {
+    ...config,
+    ios: {
+      ...config.ios,
+      associatedDomains: [`applinks:${host}`, `webcredentials:${host}`],
+    },
+  }
+}
+
 /** A paid team's build gets the widget extension; a personal team's loses what it cannot sign. */
 const withSigning = (config: ExpoConfig): ExpoConfig => {
   const { ios } = config
   if (ios === undefined || ios.bundleIdentifier === undefined)
     throw new Error('app.json must name the iOS bundle.')
+  const app = ios.bundleIdentifier
   return PERSONAL_TEAM
-    ? withoutPaidTeamCapabilities(config)
-    : withThreadActivity(config, ios.bundleIdentifier)
+    ? withoutPaidTeamCapabilities(withShareTarget(config, app))
+    : withShareTarget(withThreadActivity(config, app), app)
 }
 
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
@@ -175,9 +228,10 @@ export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
   if (name === undefined || slug === undefined) throw new Error('app.json must name the app.')
   const base = withSigning(withSplash(withSentryOff({ ...config, name, slug })))
   if (server === undefined || server === '') return { ...base, updates: { enabled: false } }
+  const linked = PERSONAL_TEAM ? base : withServerLinks(base, server)
   return {
-    ...base,
-    extra: { ...base.extra, server },
+    ...linked,
+    extra: { ...linked.extra, server },
     updates: {
       enabled: true,
       url: new URL(`${server.replace(/\/+$/u, '')}/api/updates/manifest`).toString(),

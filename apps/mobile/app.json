@@ -62,7 +62,14 @@
           "enableBackgroundRemoteNotifications": false
         }
       ],
-      "expo-quick-actions"
+      "expo-quick-actions",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Vivid uses the camera so you can send a photo you take in a Thread.",
+          "microphonePermission": "Vivid listens while you hold to talk."
+        }
+      ]
     ],
     "web": {
       "bundler": "metro"
