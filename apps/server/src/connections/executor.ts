@@ -36,6 +36,7 @@ import { accountBranch } from './envelope.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
+import { discordAppName, discordFiles, discordServiceId } from './discord.ts'
 import {
   keyedService,
   keyedServices,
@@ -2086,9 +2087,13 @@ function makeBegin(
     const app = yield* Effect.acquireRelease(
       Option.match(googleService(input.service), {
         onNone: () =>
-          install(connectionAppName(input.connectionId), (name) =>
-            http.readApp(post('/apps/install', { entry: entry.id, name }), null),
-          ),
+          input.service === discordServiceId
+            ? install(`${discordAppName()} ${input.connectionId}`, (name) =>
+                http.readApp(post('/apps/deploy', { name, files: discordFiles() }), null),
+              )
+            : install(connectionAppName(input.connectionId), (name) =>
+                http.readApp(post('/apps/install', { entry: entry.id, name }), null),
+              ),
         onSome: (google) =>
           install(`${googleAppName(google)} ${input.connectionId}`, (name) =>
             http.readApp(post('/apps/deploy', { name, files: googleFiles(google) }), null),
@@ -3176,11 +3181,22 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     return [
       ...googleCatalog,
       ...keyedCatalog,
+      ExecutorServiceEntry.make({
+        id: discordServiceId,
+        name: 'Discord',
+        description:
+          'Create a bot at discord.com/developers/applications, copy its token, and invite it to your server.',
+        domain: 'discord.com',
+        authorization: ServiceAuthorization.cases.Key.make({
+          fields: [{ name: 'token', label: 'Bot token' }],
+        }),
+      }),
       ...remote.filter(
         // Upstream still lists refused services; their wire entries carry no address, so by id.
         (entry) =>
           Option.isNone(googleService(entry.id)) &&
           keyedService(entry.id) === undefined &&
+          entry.id !== discordServiceId &&
           !refusedService(entry.id),
       ),
     ]

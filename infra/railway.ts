@@ -295,6 +295,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onNone: () => ({}),
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
+  const discordAccess = Option.match(environment.discordPeople, {
+    onNone: () => ({}),
+    onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
+  })
 
   /**
    * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
@@ -381,6 +385,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       ...textingAccess(environment),
       ...pushAccess(environment),
       ...decisionAccess,
+      ...discordAccess,
       ...observabilityAccess(environment),
       ...googleAccess(environment),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */

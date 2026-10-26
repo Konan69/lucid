@@ -10,6 +10,7 @@ import { watch } from './watch.mjs'
 import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 import { offer } from './offer.mjs'
+import { discordProof, discordBlocked } from './discord.mjs'
 export const features = [
   'first',
   'reload',
@@ -29,6 +30,7 @@ export const features = [
   'reading',
   'settings',
   'notes',
+  'discord',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -291,6 +293,7 @@ const recipes = {
   watch,
   reading,
   settings: settingsProof,
+  discord: discordProof,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
@@ -300,6 +303,7 @@ const blocked = {
   deny: 'Needs an actual pending proposal from a connected disposable Integration.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
+  ...discordBlocked(),
 }
 const realBlocked = {
   ...blocked,

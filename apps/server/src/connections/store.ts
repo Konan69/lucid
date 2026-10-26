@@ -1,3 +1,4 @@
+import { loadDiscordPeople } from './discord.ts'
 import { CATALOG_RETRY_DELAY } from './catalog.ts'
 import {
   Cause,
@@ -581,6 +582,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
   const listCatalog = yield* rememberListCatalog(catalogServices())
+  const discordPeople = yield* loadDiscordPeople
   /** Inspect the selected candidate without retaining any account or credential. */
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
     const authorization = yield* executor
@@ -622,6 +624,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 
   return {
     get,
+    discordPeople,
     catalog: catalogServices,
     service,
     /** Catalog search is independent of ownership and preserves the adapter's retained order. */

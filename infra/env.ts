@@ -50,6 +50,9 @@ export interface InfrastructureEnvironment {
    * It needs no key of its own: decisions go through the model gateway with `EXPLABS_API_KEY`.
    */
   readonly decisions: Option.Option<string>
+  /** Who sees the Discord Integration (`VIVID_DISCORD_PEOPLE` in
+   * `apps/server/src/connections/discord.ts`). Absent hides it from everyone. */
+  readonly discordPeople: Option.Option<string>
   /**
    * Where the server exports traces and logs (`apps/server/src/observability/export.ts`). Without
    * it the server runs exactly as before and exports nothing.
@@ -169,6 +172,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
   }
 
   const decisions = yield* optionalString('VIVID_DECISIONS')
+  const discordPeople = yield* optionalString('VIVID_DISCORD_PEOPLE')
 
   const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
   const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
@@ -206,6 +210,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     texting,
     push,
     decisions,
+    discordPeople,
     observability,
     computer,
   } satisfies InfrastructureEnvironment
