@@ -18,6 +18,7 @@ import {
   channelWords,
   composerOf,
   connecting,
+  KNOWN_BY,
   liveStateOf,
   textLink,
   whichAccount,
@@ -722,6 +723,7 @@ export function ChannelTile({ link }: { link: ChannelLink }) {
     ),
     NotConnected: (waiting) => opens(channelWords(waiting)),
     Confirming: (confirming) => opens(channelWords(confirming)),
+    Awaiting: (awaiting) => opens(channelWords(awaiting)),
     Connected: ({ textTo }) => (
       <ConnectedChannelTile channel={channel} textTo={textTo} onSettings={settings} />
     ),
@@ -765,7 +767,10 @@ function ConnectedChannelTile({
         onClick={onSettings}
         className="absolute inset-0 cursor-pointer rounded-card outline-none"
       />
-      <ChannelFace channel={channel} line={`Connected · ${textTo}`} />
+      <ChannelFace
+        channel={channel}
+        line={KNOWN_BY[channel] === 'number' ? `Connected · ${textTo}` : 'Connected'}
+      />
       {Option.isNone(link) && <Done drawn={false} />}
       {Option.isSome(link) && (
         <a href={link.value} className={cn(buttonVariants({ size: 'sm' }), 'relative')}>
