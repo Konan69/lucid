@@ -90,6 +90,10 @@ interface Opened {
  */
 const HEARTBEAT_MS = 60_000
 
+/** Proof knob: `VIVID_CELL_HEARTBEAT_MS` shortens the heartbeat to measure how fast a wake can be. */
+const heartbeatOf = (env: CellEnv) =>
+  typeof env['VIVID_CELL_HEARTBEAT_MS'] === 'string' ? Number(env['VIVID_CELL_HEARTBEAT_MS']) : HEARTBEAT_MS
+
 /**
  * One Person's conversations as a celld Durable Object (docs/27-runtime-cells.md).
  *
@@ -104,19 +108,21 @@ const HEARTBEAT_MS = 60_000
 export class Person {
   private readonly metered: Meter
   private readonly ready: Promise<Opened>
+  private readonly heartbeat: number
 
   constructor(
     private readonly state: CellState,
     env: CellEnv,
   ) {
     this.metered = meter(state.storage)
+    this.heartbeat = heartbeatOf(env)
     this.ready = state.blockConcurrencyWhile(() => this.open(state, env))
   }
 
   /** Arm or clear the alarm for what the Harness says it needs. */
   // @effect-diagnostics-next-line asyncFunction:off -- Durable Object storage is a Promise API; this is the framework boundary.
   private async arm(wake: Wake) {
-    const heartbeat = wake.active ? Date.now() + HEARTBEAT_MS : undefined
+    const heartbeat = wake.active ? Date.now() + this.heartbeat : undefined
     const at =
       heartbeat === undefined || wake.at === undefined
         ? (heartbeat ?? wake.at)
@@ -134,7 +140,7 @@ export class Person {
     if (name === undefined) throw new Error('A Person cell must be addressed by the Person id')
     const owner = PersonId.make(name)
     // A fallback before anything can throw: a cell whose open or recovery fails is started again.
-    const fallback = Date.now() + HEARTBEAT_MS
+    const fallback = Date.now() + this.heartbeat
     const current = await state.storage.getAlarm()
     if (current === null || current > fallback) await state.storage.setAlarm(fallback)
     // Pi calls this off its Session line after a commit and it must not block; a failed alarm
