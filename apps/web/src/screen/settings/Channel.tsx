@@ -2,6 +2,7 @@ import { ChannelStanding, type Channel, type ChannelLink } from '@vivid/contract
 import {
   codeEnding,
   composerOf,
+  KNOWN_BY,
   makeWhen,
   MESSENGER,
   messageLink,
@@ -102,27 +103,40 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
     )
   }
 
-  const connect = (written: string) => void ask('connecting', acts.connect(channel, written))
+  const connect = (written: Option.Option<string>) =>
+    void ask('connecting', acts.connect(channel, written))
   const disconnect = () => void ask('disconnecting', acts.disconnect(channel))
 
   return (
     <div>
       {ChannelStanding.guards.Unavailable(standing) && <Unavailable channel={channel} />}
-      {ChannelStanding.guards.NotConnected(standing) && (
-        <NotConnected
-          channel={channel}
-          asking={asking}
-          invalid={refused !== null}
-          onConnect={connect}
-        />
-      )}
+      {ChannelStanding.guards.NotConnected(standing) &&
+        (KNOWN_BY[channel] === 'number' ? (
+          <NotConnected
+            channel={channel}
+            asking={asking}
+            invalid={refused !== null}
+            onConnect={(written) => connect(Option.some(written))}
+          />
+        ) : (
+          <NotStarted channel={channel} asking={asking} onConnect={() => connect(Option.none())} />
+        ))}
       {ChannelStanding.guards.Confirming(standing) && (
         <Confirming
           channel={channel}
           standing={standing}
           asking={asking}
-          onAgain={() => connect(standing.address)}
+          onAgain={() => connect(Option.some(standing.address))}
           onOther={disconnect}
+        />
+      )}
+      {ChannelStanding.guards.Awaiting(standing) && (
+        <Awaiting
+          channel={channel}
+          standing={standing}
+          asking={asking}
+          onAgain={() => connect(Option.none())}
+          onCancel={disconnect}
         />
       )}
       {ChannelStanding.guards.Connected(standing) && (
@@ -242,6 +256,28 @@ function NotConnected({
 }
 
 /**
+ * A channel where there is no number to give (Discord): one press asks for a code, and the account
+ * it is sent from becomes the Person's.
+ */
+function NotStarted({
+  channel,
+  asking,
+  onConnect,
+}: {
+  channel: Channel
+  asking: Asking
+  onConnect: () => void
+}) {
+  return (
+    <Line channel={channel} detail={`Connect, then send Vivid a code on ${channel}.`}>
+      <Button size="sm" disabled={asking !== 'nothing'} onClick={onConnect}>
+        {asking === 'connecting' ? 'Connecting…' : `Connect ${channel}`}
+      </Button>
+    </Line>
+  )
+}
+
+/**
  * The number is given and not yet proved: the Person texts the code from that phone. The number
  * to text and the code are the two things to carry to the phone, so they are large, in the
  * fixed-width face, each with its own copy button.
@@ -311,6 +347,69 @@ function Confirming({
 }
 
 /**
+ * Waiting for the code on a channel with no number to give (Discord): whoever sends it to Vivid
+ * there is the account that becomes the Person's. The code is the one thing to carry, so it is
+ * large with its copy; "Open Discord" goes to the Vivid bot, where it is pasted, since Discord's
+ * links cannot write it in. Like `Confirming`, the screen changes once when the code ends, to
+ * connecting again for a new code, and the live list replaces this with `Connected` when the
+ * message arrives.
+ */
+function Awaiting({
+  channel,
+  standing,
+  asking,
+  onAgain,
+  onCancel,
+}: {
+  channel: Channel
+  standing: Standing<'Awaiting'>
+  asking: Asking
+  onAgain: () => void
+  onCancel: () => void
+}) {
+  const ending = useMemo(() => codeEnding(standing.expiresAt), [standing.expiresAt])
+  const ended = useSyncExternalStore(ending.subscribe, ending.read, ending.read)
+  const [opened] = useState(() => Date.now())
+  const at = when(standing.expiresAt, opened)
+  const busy = asking !== 'nothing'
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex items-center gap-3">
+        <Mark service={{ name: channel }} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-label text-ink">{channel}</div>
+          <div className="text-label text-ink-3">{channelWords(standing)}</div>
+        </div>
+      </div>
+      <p className="text-label text-pretty text-ink-2">Send this code to Vivid on {channel}.</p>
+      <dl className="rounded-control bg-well">
+        <Figure name="This code" value={standing.code} spent={ended} />
+      </dl>
+      <p aria-live="polite" className="text-label text-ink-3">
+        {ended ? 'This code has ended.' : `The code works until ${at}.`}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {ended ? (
+          <Button size="sm" disabled={busy} onClick={onAgain}>
+            {asking === 'connecting' ? 'Connecting…' : 'Connect again'}
+          </Button>
+        ) : (
+          <a
+            href={messageLink(channel, composer(), standing.textTo, Option.none())}
+            className={buttonVariants({ size: 'sm' })}
+          >
+            Open {MESSENGER[channel]}
+          </a>
+        )}
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
+          {asking === 'disconnecting' ? 'Cancelling…' : 'Cancel'}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
  * One thing to carry to the phone: what it is, the value in the fixed-width face, and a button
  * that copies it. A code that has ended is struck through and cannot be copied, so an old code
  * is never the one that gets sent.
@@ -345,6 +444,9 @@ function Figure({ name, value, spent }: { name: string; value: string; spent: bo
  * Windows or Linux desktop has nothing that takes an `sms:` link, and a button that does nothing
  * when pressed is worse than none: there the number and its copy are the whole of it, and one
  * sentence says to text it from the phone.
+ *
+ * Discord has no number to text (`KNOWN_BY`): the Person writes to the Vivid bot, so the line says
+ * where Vivid answers there instead.
  */
 function Connected({
   channel,
@@ -360,6 +462,7 @@ function Connected({
   const [confirming, setConfirming] = useState(false)
   const [opened] = useState(() => Date.now())
   const link = textLink(channel, composerOf(navigator.userAgent), standing.textTo)
+  const byNumber = KNOWN_BY[channel] === 'number'
   return (
     <>
       <div className="flex flex-col gap-3 px-4 py-3">
@@ -373,9 +476,11 @@ function Connected({
             </div>
           </div>
         </div>
-        <dl className="rounded-control bg-well">
-          <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
-        </dl>
+        {byNumber && (
+          <dl className="rounded-control bg-well">
+            <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
+          </dl>
+        )}
         {Option.isSome(link) && (
           <div>
             <a href={link.value} className={buttonVariants({ size: 'sm' })}>
@@ -387,8 +492,14 @@ function Connected({
             button above so the two are never pressed for each other. */}
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
           <p className="min-w-48 flex-1 text-label text-pretty wrap-anywhere text-ink-3">
-            {Option.isNone(link) && 'Text this number from your phone. '}
-            Vivid answers texts from <span className="tabular-nums">{standing.address}</span>.
+            {byNumber ? (
+              <>
+                {Option.isNone(link) && 'Text this number from your phone. '}
+                Vivid answers texts from <span className="tabular-nums">{standing.address}</span>.
+              </>
+            ) : (
+              'DM Vivid, or mention @Vivid in any channel of your server.'
+            )}
           </p>
           <Button
             size="sm"
@@ -403,7 +514,11 @@ function Connected({
       {confirming && (
         <Disconnect
           channel={channel}
-          address={standing.address}
+          stops={
+            byNumber
+              ? `Vivid will stop answering texts from ${standing.address}.`
+              : `Vivid will stop answering you on ${channel}.`
+          }
           onClose={() => setConfirming(false)}
           onDisconnect={onDisconnect}
         />
@@ -412,15 +527,15 @@ function Connected({
   )
 }
 
-/** The second ask before a number is taken off a channel. */
+/** The second ask before a number is taken off a channel. `stops` says what Vivid stops doing. */
 function Disconnect({
   channel,
-  address,
+  stops,
   onClose,
   onDisconnect,
 }: {
   channel: Channel
-  address: string
+  stops: string
   onClose: () => void
   onDisconnect: () => void
 }) {
@@ -430,7 +545,7 @@ function Disconnect({
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect {channel}?</AlertDialogTitle>
           <AlertDialogDescription>
-            {`Vivid will stop answering texts from ${address}. You can connect it again at any time.`}
+            {`${stops} You can connect it again at any time.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

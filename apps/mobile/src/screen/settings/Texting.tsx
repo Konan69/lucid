@@ -5,6 +5,7 @@ import {
   connectChannel,
   disconnectChannel,
   FIRST_TEXT,
+  KNOWN_BY,
   MESSENGER,
   messageLink,
   textingSettled,
@@ -58,8 +59,14 @@ type Standing<Tag extends ChannelStanding['_tag']> = Extract<ChannelStanding, { 
  * work as Effects.
  */
 export interface TextingActs {
-  /** Gives the Person's number to a channel, or asks for a new code for the same number. */
-  readonly connect: (channel: Channel, written: string) => Effect.Effect<Option.Option<string>>
+  /**
+   * Gives the Person's number to a channel (none on Discord, `KNOWN_BY`), or asks for a new code
+   * the same way.
+   */
+  readonly connect: (
+    channel: Channel,
+    written: Option.Option<string>,
+  ) => Effect.Effect<Option.Option<string>>
   /** Takes the Person's number off a channel. */
   readonly disconnect: (channel: Channel) => Effect.Effect<Option.Option<string>>
 }
@@ -151,7 +158,8 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
     )
   }
 
-  const connect = (written: string) => void ask('connecting', acts.connect(channel, written))
+  const connect = (written: Option.Option<string>) =>
+    void ask('connecting', acts.connect(channel, written))
   const disconnect = () => void ask('disconnecting', acts.disconnect(channel))
   const words = channelWords(standing)
 
@@ -166,16 +174,39 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
             Vivid cannot text on {channel} yet.
           </Head>
         )}
-        {ChannelStanding.guards.NotConnected(standing) && (
-          <NotConnected channel={channel} words={words} asking={asking} onConnect={connect} />
-        )}
+        {ChannelStanding.guards.NotConnected(standing) &&
+          (KNOWN_BY[channel] === 'number' ? (
+            <NotConnected
+              channel={channel}
+              words={words}
+              asking={asking}
+              onConnect={(written) => connect(Option.some(written))}
+            />
+          ) : (
+            <NotStarted
+              channel={channel}
+              words={words}
+              asking={asking}
+              onConnect={() => connect(Option.none())}
+            />
+          ))}
         {ChannelStanding.guards.Confirming(standing) && (
           <Confirming
             channel={channel}
             standing={standing}
             asking={asking}
-            onAgain={() => connect(standing.address)}
+            onAgain={() => connect(Option.some(standing.address))}
             onOther={disconnect}
+            onUnopened={setRefused}
+          />
+        )}
+        {ChannelStanding.guards.Awaiting(standing) && (
+          <Awaiting
+            channel={channel}
+            standing={standing}
+            asking={asking}
+            onAgain={() => connect(Option.none())}
+            onCancel={disconnect}
             onUnopened={setRefused}
           />
         )}
@@ -279,6 +310,38 @@ function NotConnected({
 }
 
 /**
+ * A channel where there is no number to give (Discord): one press asks for a code, and the account
+ * it is sent from becomes the Person's.
+ */
+function NotStarted({
+  channel,
+  words,
+  asking,
+  onConnect,
+}: {
+  channel: Channel
+  words: string
+  asking: Asking
+  onConnect: () => void
+}) {
+  const busy = asking !== 'nothing'
+  return (
+    <>
+      <Head channel={channel} words={words}>
+        Connect, then send Vivid a code on {channel}.
+      </Head>
+      <Button
+        kind="primary"
+        morph
+        label={busy ? 'Connecting…' : `Connect ${channel}`}
+        disabled={busy}
+        onPress={onConnect}
+      />
+    </>
+  )
+}
+
+/**
  * Hands a link to the phone, and says so in the group if the phone would not take it (no
  * messaging app, or a tablet that cannot send a text). The number and code stay on screen to copy.
  */
@@ -292,7 +355,9 @@ const open = (
     () => undefined,
     () =>
       onUnopened(
-        Option.some(`${MESSENGER[channel]} could not be opened here. Copy the number instead.`),
+        Option.some(
+          `${MESSENGER[channel]} could not be opened here.${KNOWN_BY[channel] === 'number' ? ' Copy the number instead.' : ''}`,
+        ),
       ),
   )
 }
@@ -364,6 +429,73 @@ function Confirming({
 }
 
 /**
+ * Waiting for the code on a channel with no number to give (Discord): whoever sends it to Vivid
+ * there is the account that becomes the Person's. The code is the one thing to carry, so it is
+ * large with its copy; "Open Discord" goes to the Vivid bot, where it is pasted, since Discord's
+ * links cannot write it in. Like `Confirming`, the screen changes once when the code ends, to
+ * connecting again for a new code, and the live list replaces this with `Connected` when the
+ * message arrives.
+ */
+function Awaiting({
+  channel,
+  standing,
+  asking,
+  onAgain,
+  onCancel,
+  onUnopened,
+}: {
+  channel: Channel
+  standing: Standing<'Awaiting'>
+  asking: Asking
+  onAgain: () => void
+  onCancel: () => void
+  onUnopened: (said: Option.Option<string>) => void
+}) {
+  const ending = useMemo(() => codeEnding(standing.expiresAt), [standing.expiresAt])
+  const ended = useSyncExternalStore(ending.subscribe, ending.read, ending.read)
+  const at = when(standing.expiresAt, useNow())
+  const busy = asking !== 'nothing'
+  return (
+    <>
+      <Head channel={channel} words={channelWords(standing)}>
+        Send this code to Vivid on {channel}.
+      </Head>
+      <Figure name="This code" value={standing.code} spent={ended} />
+      <Label accessibilityLiveRegion="polite" size="label" tone="ink-2">
+        {ended ? 'This code has ended.' : `The code works until ${at}.`}
+      </Label>
+      {ended ? (
+        <Button
+          kind="primary"
+          morph
+          label={asking === 'connecting' ? 'Connecting…' : 'Connect again'}
+          disabled={busy}
+          onPress={onAgain}
+        />
+      ) : (
+        <Button
+          kind="primary"
+          label={`Open ${MESSENGER[channel]}`}
+          onPress={() =>
+            open(
+              channel,
+              messageLink(channel, COMPOSER, standing.textTo, Option.none()),
+              onUnopened,
+            )
+          }
+        />
+      )}
+      <Button
+        kind="ghost"
+        label={asking === 'disconnecting' ? 'Cancelling…' : 'Cancel'}
+        disabled={busy}
+        onPress={onCancel}
+      />
+    </>
+  )
+}
+
+/**
  * One thing to send: what it is, the value in the fixed-width face, and a button that copies it.
  * The value can be selected by hand as well. A code that has ended is struck through and cannot
  * be copied, so an old code is never the one that gets sent.
@@ -400,6 +532,9 @@ function Figure({ name, value, spent }: { name: string; value: string; spent: bo
  * phone, and for when the app would not open. Their own number and since when are said in the
  * head. Disconnecting stops Vivid answering that phone, so it is last, in the danger colour, and
  * the system asks before it is done.
+ *
+ * Discord has no number to text (`KNOWN_BY`): the Person writes to the Vivid bot, so the head says
+ * where Vivid answers there, and "Open Discord" goes to the bot.
  */
 function Connected({
   channel,
@@ -415,10 +550,14 @@ function Connected({
   onUnopened: (said: Option.Option<string>) => void
 }) {
   const since = when(standing.since, useNow())
+  const byNumber = KNOWN_BY[channel] === 'number'
+  const stops = byNumber
+    ? `Vivid will stop answering texts from ${standing.address}.`
+    : `Vivid will stop answering you on ${channel}.`
   const askToDisconnect = () =>
     confirmDestructive({
       title: `Disconnect ${channel}?`,
-      detail: `Vivid will stop answering texts from ${standing.address}. You can connect it again at any time.`,
+      detail: `${stops} You can connect it again at any time.`,
       action: `Disconnect ${channel}`,
       onConfirm: () => {
         warn()
@@ -432,9 +571,11 @@ function Connected({
         words={`${channelWords(standing)} · ${since}`}
         dot={<Dot tone="status-success" />}
       >
-        Vivid answers texts from {standing.address}.
+        {byNumber
+          ? `Vivid answers texts from ${standing.address}.`
+          : 'DM Vivid, or mention @Vivid in any channel of your server.'}
       </Head>
-      <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
+      {byNumber && <Figure name="Vivid’s number" value={standing.textTo} spent={false} />}
       <Button
         kind="primary"
         label={`Open ${MESSENGER[channel]}`}
