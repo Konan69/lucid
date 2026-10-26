@@ -150,6 +150,51 @@ export const chooseDocument = Effect.fn('Documents.choose')(function* () {
   return Option.some<Chosen>({ name: asset.name, uri: asset.uri })
 })
 
+/** Pictures a message can carry beside the words (as on the web, `screen/thread/Attach.tsx`). */
+const PICTURES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/heic'] as const
+
+/**
+ * A file the Person chose for a message: a picture to carry with it or a document for the
+ * Library. Sizes are checked where the file is prepared (`data/attach.ts`), per file.
+ */
+export interface Attached extends Chosen {
+  readonly mimeType: string
+  readonly size: Option.Option<number>
+}
+
+/**
+ * Asks the Person for files to attach to a message, any number at once. Closing the picker
+ * without choosing is no files. A picker that cannot open says so (`DocumentUnavailable`).
+ */
+export const chooseAttachments = Effect.fn('Documents.chooseAttachments')(function* () {
+  choosing = true
+  const picked = yield* Effect.tryPromise({
+    try: () =>
+      DocumentPicker.getDocumentAsync({
+        type: [...READABLE, ...PICTURES],
+        multiple: true,
+        copyToCacheDirectory: true,
+      }),
+    catch: () => new DocumentUnavailable({ message: UNPICKABLE }),
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        choosing = false
+      }),
+    ),
+  )
+  if (picked.canceled) return []
+  return picked.assets.map((asset): Attached => ({
+    name: asset.name,
+    uri: asset.uri,
+    mimeType: Option.getOrElse(
+      Option.fromUndefinedOr(asset.mimeType),
+      () => 'application/octet-stream',
+    ),
+    size: Option.fromUndefinedOr(asset.size),
+  }))
+})
+
 /**
  * Sends a chosen file to a shelf, into a folder or to the top of the shelf. The server answers
  * once it has stored the file; reading it continues after that, and the shelf's live query shows

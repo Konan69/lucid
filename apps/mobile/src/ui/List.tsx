@@ -17,7 +17,8 @@ export function Section({
   detail,
   children,
 }: {
-  title: string
+  /** Left out by a group that is one row whose own title says what it is. */
+  title?: string
   detail?: string
   children: ReactNode
 }) {
@@ -26,16 +27,18 @@ export function Section({
   const rows = Children.toArray(children).filter(isValidElement)
   return (
     <View style={{ gap: 8 }}>
-      <View style={{ paddingHorizontal: 4, gap: 2 }}>
-        <Label accessibilityRole="header" size="label" tone="ink-2" style={{ fontWeight: '600' }}>
-          {title}
-        </Label>
-        {detail !== undefined && (
-          <Label size="caption" tone="foreground-tertiary">
-            {detail}
+      {title !== undefined && (
+        <View style={{ paddingHorizontal: 4, gap: 2 }}>
+          <Label accessibilityRole="header" size="label" tone="ink-2" style={{ fontWeight: '600' }}>
+            {title}
           </Label>
-        )}
-      </View>
+          {detail !== undefined && (
+            <Label size="caption" tone="foreground-tertiary">
+              {detail}
+            </Label>
+          )}
+        </View>
+      )}
       <View
         style={{
           borderRadius: radius.card,

@@ -2,7 +2,8 @@ import { Option } from 'effect'
 import { useState, type ReactNode, type Ref } from 'react'
 import { Platform, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ArrowUp, ChevronLeft, Square } from 'lucide-react-native'
+import { attaching } from '@vivid/state'
+import { ArrowUp, ChevronLeft, Plus, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
 import { useFontFamily } from '../data/font'
 import { useKeyboardShowing } from '../data/keyboard'
@@ -13,6 +14,7 @@ import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
 import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
+import { Tray } from './Tray'
 import { Label, Press, styles, TARGET } from './ui'
 
 /**
@@ -132,6 +134,7 @@ export function Composer({
   onSend,
   onStop,
   asked,
+  attachments,
 }: {
   ref?: Ref<ComposerEditorHandle>
   value: string
@@ -150,6 +153,8 @@ export function Composer({
   onStop: () => void
   /** A question from Vivid is up: with nothing written, the trailing end moves on from it. */
   asked?: Onward
+  /** Files going with the message, where this composer takes them (a Thread's; not Home's). */
+  attachments: Option.Option<Attachments>
 }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
@@ -170,16 +175,14 @@ export function Composer({
   // response is running joins it at a turn boundary, or waits its turn and is never lost). With
   // nothing written and Vivid working, it stops Vivid. Until 8 October 2026 it only stopped
   // while Vivid worked, so nothing could be said until the answer ended.
-  // Words that cannot be sent yet (a send still on its way) leave the button dimmed, not a way to
-  // stop: it must not change what it does under words the Person means to send.
-  const sends = !empty && !disabled
+  const { blank, sends } = sendingOf(attachments, empty, disabled)
   // While a question is up the trailing end moves on from it: with nothing written, and also
   // with words when the question is answered by writing, since the words are then its answer.
   // Vivid keeps working after it asks, so while it does a small stop sits beside (`Halt`).
   // Until 12 October 2026 a question answered by writing kept the round arrow, so the last
   // question never said "Submit" (seen on the emulator).
   const moving = movingOf(Option.fromUndefinedOr(asked), empty)
-  const stops = working && empty && Option.isNone(moving)
+  const stops = working && blank && Option.isNone(moving)
   const idle = !sends && !stops
 
   function act() {
@@ -223,15 +226,17 @@ export function Composer({
               borderCurve: 'continuous',
             }}
           />
+          <Files attachments={attachments} />
           {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
           <View
             style={{ flexDirection: 'row', alignItems: 'flex-end', paddingVertical: EDGE_ROOM }}
           >
+            <Attach attachments={attachments} />
             <View
               style={{
                 flex: 1,
                 minWidth: 0,
-                paddingLeft: 16,
+                paddingLeft: Option.match(attachments, { onNone: () => 16, onSome: () => 4 }),
                 paddingVertical: (TARGET - ONE_LINE) / 2,
               }}
             >
@@ -252,6 +257,7 @@ export function Composer({
                 singleLineCentered={needed <= ONE_LINE + 1}
                 contentInsetVertical={INSET}
                 onContentHeightChange={setReported}
+                onPasteImages={pasteOf(attachments)}
                 style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
@@ -270,6 +276,76 @@ export function Composer({
       </View>
     </View>
   )
+}
+
+/** What a composer that takes files is given: its tray and what to do with files. */
+export interface Attachments {
+  readonly tray: attaching.Tray
+  /** The attach button: opens the system's picker. */
+  readonly onAttach: () => void
+  readonly onRemove: (key: string) => void
+  /** Pictures pasted into the editor. */
+  readonly onPaste: (uris: ReadonlyArray<string>) => void
+}
+
+/**
+ * The attach button at the composer's leading end, the mirror of the send button at its trailing
+ * end: the same round size and the same well, so the two ends read as a pair. It opens the system's
+ * picker (photos from Files, PDFs, text); while the picker is up it is dimmed and not pressable.
+ */
+function Attach({ attachments }: { attachments: Option.Option<Attachments> }) {
+  const { colors: c } = useTheme()
+  if (Option.isNone(attachments)) return null
+  const { tray, onAttach } = attachments.value
+  return (
+    <View style={{ width: TARGET, height: TARGET, alignItems: 'center', justifyContent: 'center' }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel="Attach files"
+        accessibilityState={{ disabled: tray.choosing }}
+        disabled={tray.choosing}
+        onPress={() => {
+          commit()
+          onAttach()
+        }}
+        style={({ pressed }) => ({
+          width: ROUND,
+          height: ROUND,
+          borderRadius: ROUND / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: pressed ? c['row-hover'] : c['surface-well'],
+          opacity: tray.choosing ? 0.5 : 1,
+        })}
+      >
+        <Plus size={17} strokeWidth={2.1} color={c.foreground} />
+      </Press>
+    </View>
+  )
+}
+
+/** Where pasted pictures go: the tray, in a composer that takes files. */
+const pasteOf = (attachments: Option.Option<Attachments>) =>
+  Option.getOrUndefined(Option.map(attachments, (taking) => taking.onPaste))
+
+/** The files going with the message, along the top of the composer, when there are any. */
+function Files({ attachments }: { attachments: Option.Option<Attachments> }) {
+  if (Option.isNone(attachments) || attachments.value.tray.items.length === 0) return null
+  return <Tray tray={attachments.value.tray} onRemove={attachments.value.onRemove} />
+}
+
+/**
+ * What the button can do. Nothing to send is no words and no kept file (`blank`). Kept files are
+ * something to send on their own; a file still being read or sent holds the message back, since
+ * the message would go without it. Words or files that cannot be sent yet (a send still on its
+ * way) leave the button dimmed, not a way to stop: it must not change what it does under what
+ * the Person means to send.
+ */
+function sendingOf(attachments: Option.Option<Attachments>, empty: boolean, disabled: boolean) {
+  const tray = Option.map(attachments, (taking) => taking.tray)
+  const blank = empty && !Option.exists(tray, (files) => files.items.some(attaching.isKept))
+  const preparing = Option.exists(tray, (files) => files.preparing)
+  return { blank, sends: !blank && !disabled && !preparing }
 }
 
 /**
