@@ -9,10 +9,12 @@ import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
 import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
+import { offer } from './offer.mjs'
 export const features = [
   'first',
   'reload',
   'tool',
+  'replies',
   'question',
   'approve',
   'deny',
@@ -279,6 +281,7 @@ const recipes = {
   first,
   reload,
   tool,
+  replies: offer,
   question,
   picture,
   document,
