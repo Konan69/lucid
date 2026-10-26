@@ -102,13 +102,15 @@ export const typeset = (c: Colors, dark: boolean, type: ProseType): MarkdownStyl
     h5: small,
     h6: small,
     link: { color: c['primary-text'], underline: true },
-    // Inline code: the renderer's fixed-width face at the size of the text around it, on a pill of
-    // ink at a seventh of its strength. `subtle` was all but the screen's own colour (#111 on #070707
-    // in graphite dark, #f4ede9 on #f9f7f5 in ember light), so a pill could not be seen.
+    // Inline code as T3 Code mobile draws it (`code` in `apps/mobile/src/native/EnrichedMarkdownText.tsx`,
+    // coloured `--color-foreground-secondary` in `ThreadFeed.tsx`): the renderer's fixed-width face at
+    // nine tenths of the text around it, in the secondary ink, with no pill behind it. A grey pill
+    // read flat (the developer, 26 October 2026).
     code: {
-      color: c.foreground,
-      backgroundColor: c['wash-pressed'],
-      borderColor: c['border-subtle'],
+      color: c['foreground-secondary'],
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      fontSize: type.reading.fontSize * 0.9,
     },
     codeBlock: {
       ...block,
