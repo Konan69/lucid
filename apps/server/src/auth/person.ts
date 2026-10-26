@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import type { PersonId, PersonName } from '@vivid/contracts'
-import { personTable } from '../auth/tables.ts'
+import { personTable } from './tables.ts'
 import { Database, returned } from '../database/client.ts'
 
 /**
@@ -20,7 +20,7 @@ import { Database, returned } from '../database/client.ts'
  * A Person who no longer exists has no row to return, which is a database fault: the call that
  * reached here was authenticated as them a moment ago.
  */
-export const renamePerson = Effect.fn('People.rename')(function* (
+export const renamePerson = Effect.fn('Auth.renamePerson')(function* (
   personId: PersonId,
   name: PersonName,
 ) {

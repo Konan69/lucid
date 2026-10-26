@@ -26,7 +26,7 @@ import { sessionWorkspace } from '../auth/session.ts'
 import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { renamePerson } from '../people/store.ts'
+import { renamePerson } from '../auth/person.ts'
 import { CompanyStore } from './store.ts'
 
 /**

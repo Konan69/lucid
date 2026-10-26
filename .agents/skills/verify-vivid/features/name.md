@@ -4,7 +4,7 @@ Model requirement: a real model. Rehearsal cannot answer what the Person is call
 
 ## Behaviour and entry points
 
-A Person changes the name Vivid calls them in Settings, General, under You: the Name row opens a small form ([web](../../../../apps/web/src/screen/settings/Name.tsx), [phone](../../../../apps/mobile/src/screen/settings/Name.tsx)). Its open, saving and refused states are one machine shared by both surfaces ([naming.ts](../../../../packages/client/state/src/naming.ts)). Save calls `SetPersonName`, which writes the Better Auth user's name ([people/store.ts](../../../../apps/server/src/people/store.ts)); `Me` and `WatchMe` read the Person from that row each time.
+A Person changes the name Vivid calls them in Settings, General, under You: the Name row opens a small form ([web](../../../../apps/web/src/screen/settings/Name.tsx), [phone](../../../../apps/mobile/src/screen/settings/Name.tsx)). Its open, saving and refused states are one machine shared by both surfaces ([naming.ts](../../../../packages/client/state/src/naming.ts)). Save calls `SetPersonName`, which writes the Better Auth user's name ([auth/person.ts](../../../../apps/server/src/auth/person.ts)); `Me` and `WatchMe` read the Person from that row each time.
 
 At the start of every response the runtime reads `Me` as the acting Person and tells the model their name as one plain line ([context.ts](../../../../packages/agent/runtime/src/context.ts) `loadPerson`, `workingFor`).
 

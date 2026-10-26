@@ -19,7 +19,12 @@ const renaming = naming.make(
           live.me.expect(
             (current) =>
               new MeResponse({
-                person: new Person({ ...current.person, name }),
+                person: new Person({
+                  id: current.person.id,
+                  name,
+                  email: current.person.email,
+                  image: current.person.image,
+                }),
                 workspace: current.workspace,
                 companies: current.companies,
               }),

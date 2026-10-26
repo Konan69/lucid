@@ -11,13 +11,14 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { eq } from 'drizzle-orm'
 import { Effect, Fiber, Layer, Option, Queue, Result, Schema, Stream } from 'effect'
-import { findPerson } from '../auth/access.ts'
-import { personTable, sessionTable } from '../auth/tables.ts'
+import * as TestClock from 'effect/testing/TestClock'
+import { findPerson } from './access.ts'
+import { personTable, sessionTable } from './tables.ts'
 import { companyHandlers } from '../companies/handlers.ts'
 import { companyStoreLayer } from '../companies/store.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { changesLayer } from '../live/changes.ts'
+import { Changes, changesLayer, everyPart, Topic } from '../live/changes.ts'
 import { LiveTally, makeTally } from '../live/tally.ts'
 
 const testLayer = Layer.mergeAll(
@@ -103,10 +104,19 @@ describe.skipIf(!testDatabaseConfigured)('a Person’s name', () => {
         // The first answer is sent after the subscription is open (`live/query.ts` `watch`), so
         // the rename below cannot be missed.
         expect(yield* Queue.take(answers)).toBe('Ada Lovelace')
+        // A second, real subscription hears the PostgreSQL notice; only then is the test clock
+        // moved past the live query's 20 ms coalescing window (`CHANGE_COALESCENCE`).
+        const heard = yield* (yield* Changes).subscribe([Topic.person(test.person.id)], everyPart)
         yield* companyHandlers
           .SetPersonName({ name: yield* decodeName('Countess') })
           .pipe(test.signedIn)
-        expect(yield* Queue.take(answers)).toBe('Countess')
+        expect(Option.isSome(yield* Stream.runHead(heard))).toBe(true)
+        yield* TestClock.adjust('20 millis')
+        const next = yield* Effect.raceFirst(
+          Queue.take(answers),
+          Fiber.join(watching).pipe(Effect.andThen(Effect.never)),
+        )
+        expect(next).toBe('Countess')
         yield* Fiber.interrupt(watching)
       }).pipe(Effect.scoped),
     )
