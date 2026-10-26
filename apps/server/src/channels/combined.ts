@@ -1,7 +1,7 @@
 import { ChannelUnavailable, type Channel } from '@vivid/contracts'
 import { Effect, Layer, Option, Predicate, Schedule, Stream } from 'effect'
-import { optionalSetting, settingSecret } from '../config.ts'
-import { discordLayer } from './discord.ts'
+import { optionalSetting } from '../config.ts'
+import { discordLayer, discordToken } from './discord.ts'
 import { photonLayer } from './photon.ts'
 import {
   ChannelProvider,
@@ -65,8 +65,8 @@ export const channelProviderLayer = Layer.unwrap(
     const photon = yield* ChannelProvider
     const token = yield* optionalSetting(
       'VIVID_DISCORD_BOT_TOKEN',
-      settingSecret,
-      'the Discord bot token',
+      discordToken,
+      'a Discord bot token containing a snowflake user id',
     )
     if (Option.isNone(token)) return Layer.succeed(ChannelProvider, photon)
     return Layer.effect(

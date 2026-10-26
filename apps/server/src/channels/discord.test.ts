@@ -1,7 +1,20 @@
-import { Buffer } from 'node:buffer'
+import * as NodeBuffer from 'node:buffer'
 import { describe, expect, it } from '@effect/vitest'
 import { DiscordAdapter } from '@chat-adapter/discord'
-import { Effect, Fiber, Layer, Option, Predicate, Queue, Redacted, Result, Schema } from 'effect'
+import { Chat } from 'chat'
+import { vi } from 'vitest'
+import {
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Queue,
+  Redacted,
+  Result,
+  Schema,
+  Stream,
+} from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { ChannelAddress } from '@vivid/contracts'
@@ -85,9 +98,9 @@ it.effect('sends bounded replies to the original place without mention parsing',
       }),
     )
     const context = yield* Layer.build(
-      discordLayer(Redacted.make(`${Buffer.from(botId).toString('base64url')}.test.token`)).pipe(
-        Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-      ),
+      discordLayer(
+        Redacted.make(`${NodeBuffer.Buffer.from(botId).toString('base64url')}.test.token`),
+      ).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
     )
     const discord = yield* ChannelProvider.pipe(Effect.provide(context))
     const text = '@everyone <@&223456789012345678>'
@@ -131,7 +144,8 @@ it.effect(
   'retries chunk 2 once after Discord rate limits and preserves partial-send classification',
   () =>
     Effect.gen(function* () {
-      for (const mode of ['body', 'header', 'repeated'] as const) {
+      for (const mode of ['body', 'header', 'repeated', 'first'] as const) {
+        const rateLimitedChunk = mode === 'first' ? 1 : 2
         const sent: string[] = []
         const limited = yield* Queue.unbounded<void>()
         const http = HttpClient.make((request) =>
@@ -140,7 +154,10 @@ it.effect(
               return HttpClientResponse.fromWeb(request, Response.json({ id: botId }))
             const body = decodeReply(new TextDecoder().decode(request.body.body))
             sent.push(body.content)
-            if (sent.length === 2 || (mode === 'repeated' && sent.length === 3)) {
+            if (
+              sent.length === rateLimitedChunk ||
+              ((mode === 'repeated' || mode === 'first') && sent.length === rateLimitedChunk + 1)
+            ) {
               Queue.offerUnsafe(limited, undefined)
               return HttpClientResponse.fromWeb(
                 request,
@@ -154,7 +171,7 @@ it.effect(
         )
         const context = yield* Layer.build(
           discordLayer(
-            Redacted.make(`${Buffer.from(botId).toString('base64url')}.test.token`),
+            Redacted.make(`${NodeBuffer.Buffer.from(botId).toString('base64url')}.test.token`),
           ).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
         )
         const discord = yield* ChannelProvider.pipe(Effect.provide(context))
@@ -170,19 +187,65 @@ it.effect(
           })
           .pipe(Effect.result, Effect.forkScoped)
         yield* Queue.take(limited)
-        expect(sent).toEqual(['a'.repeat(2000), 'b'.repeat(2000)])
+        expect(sent).toEqual(
+          mode === 'first' ? ['a'.repeat(2000)] : ['a'.repeat(2000), 'b'.repeat(2000)],
+        )
         yield* TestClock.adjust('1 second')
-        expect(sent).toHaveLength(2)
+        expect(sent).toHaveLength(rateLimitedChunk)
         yield* TestClock.adjust('1 second')
         const result = yield* Fiber.join(sending)
-        expect(sent).toEqual(
-          mode === 'repeated'
-            ? ['a'.repeat(2000), 'b'.repeat(2000), 'b'.repeat(2000)]
-            : ['a'.repeat(2000), 'b'.repeat(2000), 'b'.repeat(2000), 'c'],
-        )
-        if (mode === 'repeated')
-          expect(Result.isFailure(result) ? result.failure._tag : 'sent').toBe('ChannelSendUnknown')
+        const expected =
+          mode === 'first'
+            ? ['a'.repeat(2000), 'a'.repeat(2000)]
+            : ['a'.repeat(2000), 'b'.repeat(2000), 'b'.repeat(2000)]
+        if (mode === 'body' || mode === 'header') expected.push('c')
+        expect(sent).toEqual(expected)
+        if (mode === 'repeated' || mode === 'first')
+          expect(Result.isFailure(result) ? result.failure._tag : 'sent').toBe(
+            mode === 'first' ? 'ChannelRecipientMissing' : 'ChannelSendUnknown',
+          )
         else expect(Result.isSuccess(result)).toBe(true)
       }
     }).pipe(Effect.scoped),
+)
+
+it.effect('defers SDK initialization to inbound and retries after initialization failure', () =>
+  Effect.gen(function* () {
+    const mocks = yield* Effect.acquireRelease(
+      Effect.sync(() => ({
+        initialize: vi
+          .spyOn(DiscordAdapter.prototype, 'initialize')
+          .mockRejectedValueOnce(new Error('unavailable')),
+        gateway: vi
+          .spyOn(DiscordAdapter.prototype, 'startGatewayListener')
+          .mockRejectedValue(new Error('unavailable')),
+        shutdown: vi.spyOn(Chat.prototype, 'shutdown'),
+      })),
+      (spies) =>
+        Effect.sync(() => {
+          spies.initialize.mockRestore()
+          spies.gateway.mockRestore()
+          spies.shutdown.mockRestore()
+        }),
+    )
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response('', { status: 503 }))),
+    )
+    const context = yield* Layer.build(
+      discordLayer(
+        Redacted.make(`${NodeBuffer.Buffer.from(botId).toString('base64url')}.test.token`),
+      ).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+    )
+    const discord = yield* ChannelProvider.pipe(Effect.provide(context))
+    expect(mocks.initialize).not.toHaveBeenCalled()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = yield* discord.inbound.pipe(Stream.runDrain, Effect.scoped, Effect.result)
+      expect(Result.isFailure(result) ? result.failure._tag : 'connected').toBe(
+        'ChannelDisconnected',
+      )
+    }
+    expect(mocks.initialize).toHaveBeenCalledTimes(2)
+    expect(mocks.gateway).toHaveBeenCalledTimes(1)
+    expect(mocks.shutdown).toHaveBeenCalledTimes(2)
+  }).pipe(Effect.scoped),
 )

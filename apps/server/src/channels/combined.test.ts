@@ -1,7 +1,7 @@
-import { Buffer } from 'node:buffer'
+import * as NodeBuffer from 'node:buffer'
 import { describe, expect, it } from '@effect/vitest'
 import { ChannelAddress, ChannelUnavailable, type Channel } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Option, Stream } from 'effect'
+import { ConfigProvider, Effect, Layer, Option, Result, Stream } from 'effect'
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http'
 import { channelProviderLayer, combineChannels } from './combined.ts'
 import {
@@ -82,7 +82,7 @@ describe('channel composition', () => {
                 ConfigProvider.fromUnknown({
                   VIVID_PHOTON_PROJECT_ID: 'test',
                   VIVID_PHOTON_PROJECT_SECRET: 'test',
-                  VIVID_DISCORD_BOT_TOKEN: `${Buffer.from('123456789012345678').toString('base64url')}.test.token`,
+                  VIVID_DISCORD_BOT_TOKEN: `${NodeBuffer.Buffer.from('123456789012345678').toString('base64url')}.test.token`,
                 }),
               ),
             ),
@@ -97,6 +97,34 @@ describe('channel composition', () => {
           'photon-enrolment',
         )
       }).pipe(Effect.scoped),
+  )
+
+  it.effect('rejects malformed Discord tokens at the setting boundary without exposing them', () =>
+    Effect.gen(function* () {
+      for (const token of [
+        'invalid-token',
+        `${NodeBuffer.Buffer.from('not-a-snowflake').toString('base64url')}.test.token`,
+      ]) {
+        const result = yield* Layer.build(
+          channelProviderLayer.pipe(
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  VIVID_PHOTON_PROJECT_ID: 'test',
+                  VIVID_PHOTON_PROJECT_SECRET: 'test',
+                  VIVID_DISCORD_BOT_TOKEN: token,
+                }),
+              ),
+            ),
+          ),
+        ).pipe(Effect.result)
+        expect(Result.isFailure(result) ? result.failure._tag : 'composed').toBe(
+          'ConfigurationError',
+        )
+        expect(JSON.stringify(result)).not.toContain(token)
+      }
+    }).pipe(Effect.scoped),
   )
 
   it.effect(

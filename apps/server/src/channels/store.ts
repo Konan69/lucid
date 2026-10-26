@@ -14,6 +14,7 @@ import {
 } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Option, Semaphore } from 'effect'
 import { findPerson, type Actor } from '../auth/access.ts'
+import { personTable } from '../auth/tables.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { loadDiscordPeople } from '../connections/discord.ts'
 import { changed, Changes } from '../live/changes.ts'
@@ -191,8 +192,9 @@ const redeemLink = ({
   database,
   provider,
   gate,
+  discordPeople,
   announce,
-}: Pick<LinkAuthority, 'database' | 'provider' | 'gate' | 'announce'>) => {
+}: Pick<LinkAuthority, 'database' | 'provider' | 'gate' | 'discordPeople' | 'announce'>) => {
   return Effect.fn('Channels.redeem')(
     function* (channel: Channel, sender: StoredLink['address'], text: string) {
       const textTo = provider.codeAddress(channel)
@@ -213,6 +215,15 @@ const redeemLink = ({
               .returning()
             const code = consumed[0]
             if (code === undefined) return Option.none<PersonId>()
+            if (channel === 'Discord') {
+              const people = yield* tx
+                .select({ email: personTable.email })
+                .from(personTable)
+                .where(eq(personTable.id, code.personId))
+              const person = people[0]
+              if (person === undefined || !discordPeople.has(person.email.toLowerCase()))
+                return Option.none<PersonId>()
+            }
             const link = {
               address: sender,
               textTo: textTo.value,
@@ -315,27 +326,31 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* (
     byAddress,
   })
 
-  /** Remove the provider allowlist before releasing ownership, so another Person cannot inherit a live link. */
+  /** Delete codes before links so a concurrent redemption cannot outlive disconnect. */
   const disconnect = Effect.fn('Channels.disconnect')(
     function* (actor: Actor, channel: Channel) {
       if (!provider.channels.includes(channel)) return yield* new ChannelUnavailable({ channel })
-      const prior = yield* byPerson(actor.person.id, channel)
-      yield* database.run(
-        database
+      const deleted = yield* database.transaction((tx) =>
+        tx
           .delete(channelCodes)
-          .where(
-            and(eq(channelCodes.personId, actor.person.id), eq(channelCodes.channel, channel)),
+          .where(and(eq(channelCodes.personId, actor.person.id), eq(channelCodes.channel, channel)))
+          .pipe(
+            Effect.andThen(
+              tx
+                .delete(channelLinks)
+                .where(
+                  and(
+                    eq(channelLinks.personId, actor.person.id),
+                    eq(channelLinks.channel, channel),
+                  ),
+                )
+                .returning(),
+            ),
           ),
       )
-      if (Option.isSome(prior)) {
-        yield* provider.unenrol(channel, prior.value.enrolmentId)
-        yield* database.run(
-          database
-            .delete(channelLinks)
-            .where(
-              and(eq(channelLinks.personId, actor.person.id), eq(channelLinks.channel, channel)),
-            ),
-        )
+      for (const row of deleted) {
+        const link = yield* decodeLink(row)
+        yield* provider.unenrol(channel, link.enrolmentId)
       }
       yield* announce(actor)
       return ChannelLink.make({ channel, standing: ChannelStanding.cases.NotConnected.make({}) })
@@ -343,7 +358,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* (
     (effect) => gate.withPermit(effect),
   )
 
-  const redeem = redeemLink({ database, provider, gate, announce })
+  const redeem = redeemLink({ database, provider, gate, discordPeople, announce })
 
   /** Remember only a still-current connected link, so a disconnect cannot attach a stale Thread. */
   const attach = Effect.fn('Channels.attachThread')(function* (
