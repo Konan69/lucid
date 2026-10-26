@@ -16,12 +16,19 @@ import { budgeted } from './budget.ts'
 const baseUrl = 'https://openrouter.ai/api/v1'
 
 /**
- * GLM 5.3 Flash, with the context window and output limit the model has on every gateway. Cost is
- * left to OpenRouter's own accounting; Pi's reads zero here.
+ * One OpenRouter model, with the context window and output limit OpenRouter's catalogue gives it
+ * and the upstreams to try first. Cost is left to OpenRouter's own accounting; Pi's reads zero.
  *
- * `HTTP-Referer` and `X-Title` are how OpenRouter asks an application to name itself.
+ * `HTTP-Referer` and `X-Title` are how OpenRouter asks an application to name itself. OpenRouter
+ * otherwise picks the upstream per request, and the slowest of them spend ten times as long on
+ * the same turn; the fallbacks stay allowed so Vivid still answers when the first is down.
  */
-const glm = (id: string, name: string) => ({
+const model = (
+  id: string,
+  name: string,
+  limits: { readonly contextWindow: number; readonly maxTokens: number },
+  order: ReadonlyArray<string>,
+) => ({
   id,
   name,
   api: 'openai-completions' as const,
@@ -30,17 +37,35 @@ const glm = (id: string, name: string) => ({
   reasoning: true,
   input: ['text' as const, 'image' as const],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  // OpenRouter serves this model with a smaller window than the other gateways (its catalogue).
-  contextWindow: 1_048_576,
-  maxTokens: 131_072,
+  ...limits,
   headers: { 'HTTP-Referer': 'https://vivid.app', 'X-Title': 'Vivid' },
-  // OpenRouter otherwise picks the upstream per request. On 21 October 2026 it sent Vivid's
-  // ~23k-token turns to OpenInference, which spent 9.9 to 18.8 s generating 100 to 600 tokens per
-  // model step; Together served the same model and prompt in 0.5 to 1.8 s
-  // (`generation_time` in OpenRouter's generation records). Together goes first; the fallbacks
-  // stay allowed so Vivid still answers when Together is down.
-  compat: { openRouterRouting: { order: ['together'], allow_fallbacks: true } },
+  compat: { openRouterRouting: { order: [...order], allow_fallbacks: true } },
 })
+
+/**
+ * GLM 5.3 Flash. On 21 October 2026 OpenRouter sent Vivid's ~23k-token turns to OpenInference,
+ * which spent 9.9 to 18.8 s generating 100 to 600 tokens per model step; Together served the same
+ * model and prompt in 0.5 to 1.8 s (`generation_time` in OpenRouter's generation records).
+ */
+const glm = model(
+  'z-ai/glm-5.3-flash',
+  'GLM 5.3 Flash',
+  { contextWindow: 1_048_576, maxTokens: 131_072 },
+  ['together'],
+)
+
+/**
+ * DeepSeek V4.1 Flash (the 17 October 2026 snapshot), the newest DeepSeek on OpenRouter on
+ * 26 October 2026. Measured that day with a streamed tool-calling turn, three runs each: Together
+ * answered first in 0.75 to 1.1 s (one run 3.2 s) and Fireworks in 0.9 to 1.2 s, against 1.0 to
+ * 11.9 s on DeepInfra and up to 4.6 s on Cloudflare; DeepSeek's own endpoint returned 404.
+ */
+const deepseek = model(
+  'deepseek/deepseek-v4.1-flash-1017',
+  'DeepSeek V4.1 Flash',
+  { contextWindow: 1_048_576, maxTokens: 393_216 },
+  ['together', 'fireworks'],
+)
 
 /** The same production provider is exercised through its public streaming seam in tests. */
 export const provider = createProvider({
@@ -48,7 +73,7 @@ export const provider = createProvider({
   name: 'OpenRouter',
   baseUrl,
   auth: { apiKey: envApiKeyAuth('OpenRouter API key', ['OPENROUTER_API_KEY']) },
-  models: [glm('z-ai/glm-5.3-flash', 'GLM 5.3 Flash')],
+  models: [glm, deepseek],
   api: budgeted,
 })
 
