@@ -345,7 +345,17 @@ function useSend(
       ? start(say(data, { id, body: words, key })).then(refusalOf)
       : agent.sendMessage(words, { idempotencyKey: key }).then(
           () => Option.none(),
-          () => Option.some(UNDELIVERED),
+          // A failed send is not proof the words did not arrive: on 26 October 2026 the server
+          // answered both of a phone's sends 202 while the phone's request failed, and the Thread
+          // said "did not reach Vivid" under a message Vivid was already answering. Asking again
+          // with the same key settles it: Flue derives the submission from the key
+          // (`deriveKeyedSubmissionId`), so a delivery that arrived is answered as that delivery
+          // and is never said twice, and starting the send clears the failed copy Flue kept.
+          () =>
+            agent.sendMessage(words, { idempotencyKey: key }).then(
+              () => Option.none(),
+              () => Option.some(UNDELIVERED),
+            ),
         )
 
   function send(delivery: Delivery) {
@@ -1361,7 +1371,15 @@ function Transcript(props: MessagesProps) {
         <Animated.ScrollView
           ref={list}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
+          // "on-drag", not "interactive": an interactive dismiss moves the keyboard with the
+          // finger, and React Native's `KeyboardAvoidingView` on iOS hears only keyboardWillShow
+          // and keyboardWillHide (`Libraries/Components/Keyboard/KeyboardAvoidingView.js`), not
+          // the frames in between. The composer stayed at the keyboard's full height while the
+          // keyboard was dragged half down, with the conversation showing through the gap (seen
+          // on an iPhone, 26 October 2026). On drag the keyboard leaves in one animation the
+          // composer rides. T3 Code mobile keeps "interactive" only under `KeyboardStickyView`,
+          // from a native module this build does not ship.
+          keyboardDismissMode="on-drag"
           onLayout={(event) => {
             port.set(event.nativeEvent.layout.height)
             // Settled again once the viewport it is settled against is current: the box around
@@ -1410,7 +1428,7 @@ function Transcript(props: MessagesProps) {
                 // words, and the owner called it out. The bubble arrives with a send, which
                 // moves the conversation anyway, and the scroller is put back on its end when
                 // this height changes (`settle`).
-                paddingBottom: thinking ? THINKING_ROOM : END_ROOM,
+                paddingBottom: bubbleShown(thinking, awaited) ? THINKING_ROOM : END_ROOM,
                 gap: 22,
               },
             ]}
@@ -1437,7 +1455,7 @@ function Transcript(props: MessagesProps) {
         </Animated.ScrollView>
         <TopFade />
         <Floating
-          thinking={thinking}
+          thinking={bubbleShown(thinking, awaited)}
           away={Option.isSome(awayAt)}
           arrived={arrived > 0}
           label={newestWords(arrived)}
@@ -1449,6 +1467,14 @@ function Transcript(props: MessagesProps) {
     </View>
   )
 }
+
+/**
+ * Whether the floating thinking bubble is drawn. One sign that Vivid is working, never two at
+ * once: before its reply begins, the face and dots stand where the reply will be (`Waiting`) and
+ * the bubble is not drawn. Both showed together, one over the other, until 26 October 2026 (seen
+ * on an iPhone).
+ */
+const bubbleShown = (thinking: boolean, awaited: boolean) => thinking && !awaited
 
 /** Vivid has been asked and has not begun: the newest thing in the Thread is not its reply. */
 const awaitsReply = ({
@@ -1820,13 +1846,18 @@ function Tail({
  * out as a reply is (`FromVivid`, `screen/chat/Message.tsx`), so the reply takes its place
  * without anything moving.
  *
- * It says nothing to a screen reader: the thinking bubble already says Vivid is thinking.
+ * The floating bubble is not drawn while this is (`Transcript`), so this is what tells a screen
+ * reader that Vivid is thinking, in the bubble's own words.
  */
 function Waiting() {
+  const vivid = useAppearance()
   return (
     <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={`${vivid.name} is thinking`}
+      accessibilityState={{ busy: true }}
+      accessibilityLiveRegion="polite"
       style={{ flexDirection: 'row', gap: 10 }}
     >
       <View style={{ marginTop: 1 }}>

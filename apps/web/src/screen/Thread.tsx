@@ -391,6 +391,34 @@ function ConversationMessages({
 const shownIn = (messages: ReadonlyArray<FlueConversationMessage>) =>
   messages.filter((message) => inThread(message) && !isBlank(message))
 
+/**
+ * Sends one keyed delivery, and once more if the first attempt fails. A failed send is not proof
+ * the words did not arrive: on 26 October 2026 a phone's send failed after the server had answered
+ * it 202. The second attempt carries the same idempotency key, from which Flue derives the
+ * submission, so an arrived delivery is answered as itself and never said twice. Only a second
+ * failure is told to the Person.
+ *
+ * In a shared Thread the server turns the message into an attributed one, so it is sent plainly
+ * and drawn when it comes back; in a private one the hook shows it at once.
+ */
+function deliver(
+  through: {
+    readonly shared: boolean
+    readonly client: ReturnType<typeof conversationOf>
+    readonly sendMessage: ReturnType<typeof useFlueAgent>['sendMessage']
+  },
+  said: { readonly text: string; readonly key: string; readonly pictures: ReadonlyArray<Picture> },
+) {
+  const once = () =>
+    through.shared
+      ? through.client.send({
+          message: { kind: 'user', body: said.text },
+          idempotencyKey: said.key,
+        })
+      : through.sendMessage(said.text, { idempotencyKey: said.key, images: [...said.pictures] })
+  return once().catch(once)
+}
+
 function Conversation({
   id,
   me,
@@ -479,12 +507,7 @@ function Conversation({
       if (unnamed) {
         void change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
       }
-      // In a shared Thread the server turns the message into an attributed one, so it is sent
-      // plainly and drawn when it comes back; in a private one the hook shows it at once.
-      const sending = shared
-        ? client.send({ message: { kind: 'user', body: text }, idempotencyKey: key })
-        : sendMessage(text, { idempotencyKey: key, images: [...pictures] })
-      void sending.catch((refusal) =>
+      void deliver({ shared, client, sendMessage }, { text, key, pictures }).catch((refusal) =>
         setUnsent(Option.some({ words: text, key, pictures, why: whyNot(refusal) })),
       )
     },

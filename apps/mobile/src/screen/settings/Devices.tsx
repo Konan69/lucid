@@ -32,23 +32,36 @@ export function Devices({ onClose }: { onClose: () => void }) {
   const computer = useLive(data.live.computer)
   const me = useMe()
   const go = useGo()
-  const computerWords = LiveState.$match(computer, {
-    Loading: () => 'Looking for your computer…',
-    Failed: ({ failure }) => failure.message,
-    Ready: ({ value }) => standingOf(value.computer).glass,
-  })
   const openComputer = () => {
     onClose()
     arrive(data)
     go.navigate('Computer')
   }
+  // The section header already names the thing, so the row says how it stands: the header
+  // and the row both read "Vivid's Computer" until 26 October 2026 (seen on an iPhone).
+  const computerRow = LiveState.$match(computer, {
+    Loading: () => ({ title: 'Looking for it…', detail: Option.none<string>() }),
+    Failed: ({ failure }) => ({
+      title: 'Could not check it',
+      detail: Option.some(failure.message),
+    }),
+    Ready: ({ value }) => {
+      const now = standingOf(value.computer)
+      return { title: now.title, detail: Option.some(now.detail) }
+    },
+  })
   return (
     <Sheet title="Devices" onClose={onClose}>
       <Section title="This phone">
-        <Row title="This phone" detail={`Signed in as ${me.person.email}.`} wrap />
+        <Row title={me.person.email} detail="Signed in on this phone." wrap />
       </Section>
       <Section title="Vivid's Computer">
-        <Row title="Vivid's Computer" detail={computerWords} onPress={openComputer} wrap />
+        <Row
+          title={computerRow.title}
+          detail={Option.getOrUndefined(computerRow.detail)}
+          onPress={openComputer}
+          wrap
+        />
       </Section>
       <Live state={state} loading={<Skeleton rows={3} />}>
         {({ devices }) => (

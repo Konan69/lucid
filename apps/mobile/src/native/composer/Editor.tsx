@@ -1,4 +1,4 @@
-import { View } from 'react-native'
+import { Keyboard, View } from 'react-native'
 import { useImperativeHandle, useRef } from 'react'
 import { TextInput, type TextInput as RNTextInput } from 'react-native'
 
@@ -7,6 +7,11 @@ import { useFontFamily } from '../../data/font'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 
 import type { ComposerEditorProps } from './types'
+
+/** This editor is a React Native `TextInput`, which `Keyboard.dismiss()` already blurs. */
+export function endEditing() {
+  Keyboard.dismiss()
+}
 
 export function ComposerEditor({
   ref,

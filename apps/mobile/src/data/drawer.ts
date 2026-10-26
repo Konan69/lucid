@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import { BackHandler, Keyboard } from 'react-native'
+import { BackHandler } from 'react-native'
+import { endEditing } from '../native/composer/Editor'
 import { makeMutable, ReduceMotion, withSpring } from 'react-native-reanimated'
 
 /**
@@ -40,9 +41,12 @@ export function settleDrawer(next: boolean) {
   for (const listener of listeners) listener()
 }
 
-/** Puts the keyboard away: a drawer opening over a focused field would leave it typing blind. */
+/**
+ * Puts the keyboard away: a drawer opening over a focused field would leave it typing blind.
+ * `endEditing` reaches the native composer too, which `Keyboard.dismiss()` alone does not.
+ */
 export function hideKeyboard() {
-  Keyboard.dismiss()
+  endEditing()
 }
 
 export function openDrawer() {
