@@ -140,8 +140,12 @@ const checkSettings = Effect.fn('Stores.checkSettings')(function* (client: Clien
   return yield* Effect.void
 })
 
-/** Where this package's generated migrations are, one directory each (`drizzle.config.ts`). */
-const MIGRATIONS = new URL('../../drizzle/', import.meta.url)
+/**
+ * Where this package's generated migrations are, one directory each (`drizzle.config.ts`). Resolved
+ * when checked, not at import: a host that imports `Stores` without this module's files (a celld
+ * cell, whose bundle has no `import.meta.url`) must still load.
+ */
+const migrations = () => new URL('../../drizzle/', import.meta.url)
 
 /**
  * Refuse to start until the database has the tables this code was written for: the newest
@@ -150,7 +154,7 @@ const MIGRATIONS = new URL('../../drizzle/', import.meta.url)
  */
 const checkMigrated = Effect.fn('Stores.checkMigrated')(function* (client: Client) {
   const shipped = yield* Effect.tryPromise({
-    try: () => NodeFSP.readdir(MIGRATIONS, { withFileTypes: true }),
+    try: () => NodeFSP.readdir(migrations(), { withFileTypes: true }),
     catch: unavailable,
   })
   const names = shipped.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
