@@ -283,7 +283,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
   const discordAccess = {
     ...whenSet('VIVID_DISCORD_PEOPLE', environment.discordPeople),
-    ...whenSet('VIVID_DISCORD_BOT_TOKEN', environment.discordBotToken),
+    ...Option.match(environment.discordBotToken, {
+      onNone: () => ({}),
+      onSome: (token) => ({ VIVID_DISCORD_BOT_TOKEN: token }),
+    }),
   }
 
   /**
