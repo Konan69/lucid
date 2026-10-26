@@ -52,7 +52,8 @@ export async function noteBrowser(state, id, directory, browser) {
   assert.equal(state.modelKind, 'real', 'Notes requires a real model; rehearsal cannot prove it')
   const { run, capture } = browser
   const steps = noteSteps()
-  await json(directory + '/steps.json', steps)
+  await json(directory + '/steps.json', steps.map(({ name, prompt, change }) => ({ name, prompt, change })))
+  const known = { file: undefined }
   for (const [index, step] of steps.entries()) {
     const evidence = directory + '/' + step.name
     await fs.mkdir(evidence, { recursive: true })
@@ -61,7 +62,7 @@ export async function noteBrowser(state, id, directory, browser) {
     const detail = await settled(state, id, index + 1, 'Completed', evidence)
     const page = await history(state, id, evidence)
     const currentRun = detail.runs[index].id
-    await noteReceipt(page, currentRun, step, evidence)
+    await noteReceipt(page, currentRun, step, evidence, known)
     await latestReply(browser, page, currentRun, { directory: evidence, stage: 'after' })
     await capture(step.name + '-after')
     await run(['reload'])

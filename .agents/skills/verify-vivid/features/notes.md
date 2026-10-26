@@ -4,7 +4,7 @@ Model requirement: needs a real model with the shipped Notes tools. Rehearsal ca
 
 ## Sub-features
 
-Vivid keeps a standing preference for the acting Person, reads its complete body, replaces the same file, reads the correction, deletes it, and receives the missing-note result on another read. The recipe checks the actual `write_note`, `read_note`, and `delete_note` receipts in each settled Run. A sentence saying that a preference was saved cannot satisfy an assertion.
+Vivid keeps a standing preference for the acting Person, answers from it, replaces the same note when corrected, answers from the correction, and deletes it when asked to forget. The recipe checks the actual `write_note` and `delete_note` receipts in each settled Run and that questions change nothing. A sentence saying that a preference was saved cannot satisfy an assertion.
 
 Notes belong to the runtime's Person-scoped SQLite store. They are separate from the product knowledge base and documents. `ListMemories`, document artifacts, and SQL fixtures cannot prove Notes behavior.
 
@@ -22,7 +22,7 @@ Use a fresh launch at the intended head and unchanged tree. Require Doctor to re
 .agents/skills/verify-vivid/verify cleanup flue-<id>
 ```
 
-Both recipes use a unique file and six real model turns. The prompts name the shipped tools and exact note fields so the proof can distinguish storage behavior from model paraphrasing. The create receipt must have `replaced: false`. The replacement must use the same file with `replaced: true`. Reads must return the exact original and replacement bodies. The delete must return the same file, and the final read must return the actual missing-note failure. Additional note mutations fail the recipe.
+Both recipes use six real model turns asked in a Person's words, with no tool, file or field named (the owner, 26 October 2026). The create turn must write exactly one note whose body says "before noon", with `replaced: false`; its file is read from that receipt. The correction must write that same file with `replaced: true` and a body saying "after three": a second note fails. The forget turn must delete that same file. The three questions must change no note, and the first two replies must say the preference ("noon" and why, then "three"). Any extra write or delete fails the recipe.
 
 The HTTP recipe uses the Person gateway, the public Flue SDK history, and `WatchThread` settlement. The browser recipe sends every prompt through **Message Vivid** and **Send**. It checks the actual Run's tool receipt, asserts the assistant reply in the rendered DOM, reloads, and checks that reply and durable history again after every turn. It does not claim that a Notes editor or list exists.
 

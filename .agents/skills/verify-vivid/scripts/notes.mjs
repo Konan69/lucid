@@ -3,95 +3,108 @@ import * as assert from 'node:assert/strict'
 import { Tool } from '@vivid/contracts'
 import { chat, settled, history, json } from './wire.mjs'
 
-/** One unique file keeps repeated HTTP and browser journeys independent in the same Person store. */
+/**
+ * The Notes journey, asked as a Person asks (the owner, 26 October 2026: stop telling it which tool
+ * to use). No prompt names a tool, a file or a field. What is checked is what a Person would see
+ * and what the tools leave behind: each change is exactly one write or delete with the right
+ * words, a correction replaces the same note instead of adding a second, and a question changes
+ * nothing. The file is the one Vivid chose for the first note, read from that receipt.
+ */
 export function noteSteps() {
-  const file = 'verify-' + crypto.randomUUID().replaceAll('-', '') + '.md'
-  const original = {
-    kind: 'preference',
-    description: 'Meetings before noon',
-    note: 'I prefer meetings before noon.\nWhy: Afternoons are for writing.\nHow to apply: Offer morning meetings.',
-  }
-  const replacement = {
-    kind: 'preference',
-    description: 'Meetings after three',
-    note: 'I prefer meetings after three.\nWhy: Mornings are for writing.\nHow to apply: Offer meetings after three.',
-  }
-  const write = (value) => JSON.stringify({ file, ...value })
   return [
     {
       name: 'create',
-      file,
-      tool: Tool.write_note,
-      prompt: `Remember my standing meeting preference with write_note using exactly these fields: ${write(original)}. Do not write another note. Briefly acknowledge the preference.`,
-      output: { ok: true, file, replaced: false },
+      prompt: 'Please remember that I prefer meetings before noon, because afternoons are for writing.',
+      change: 'write',
+      note: /before noon/iu,
+      says: [],
     },
     {
       name: 'read-original',
-      file,
-      tool: Tool.read_note,
-      prompt: `Call read_note for ${file} and tell me my meeting preference and its reason. Read the whole note even if its summary is enough. Do not change any notes.`,
-      output: original,
+      prompt: 'When do I like to have meetings, and why?',
+      change: 'none',
+      says: [/noon/iu, /writ/iu],
     },
     {
       name: 'replace',
-      file,
-      tool: Tool.write_note,
-      prompt: `My standing meeting preference has changed. Use write_note to replace ${file} with exactly these fields: ${write(replacement)}. Keep the same file and do not create another note. Briefly acknowledge the correction.`,
-      output: { ok: true, file, replaced: true },
+      prompt: 'That has changed: I now prefer meetings after three, because mornings are for writing.',
+      change: 'replace',
+      note: /after (three|3)/iu,
+      says: [],
     },
     {
       name: 'read-replacement',
-      file,
-      tool: Tool.read_note,
-      prompt: `Call read_note for ${file} again. Tell me my corrected meeting preference and its reason. Read the whole note and do not change it.`,
-      output: replacement,
+      prompt: 'So when should you book my meetings now?',
+      change: 'none',
+      says: [/three|3/iu],
     },
     {
       name: 'delete',
-      file,
-      tool: Tool.delete_note,
-      prompt: `Forget my meeting preference by calling delete_note for ${file}. Do not keep a replacement. Briefly acknowledge that you forgot the preference.`,
-      output: { ok: true, deleted: file },
+      prompt: 'Please forget my meeting preference.',
+      change: 'delete',
+      says: [],
     },
     {
       name: 'read-missing',
-      file,
-      tool: Tool.read_note,
-      prompt: `Check that you forgot my preference by calling read_note for ${file}, even though it is no longer listed. Report that it is missing. Do not recreate it or use conversation history as a substitute for the tool call.`,
-      output: {
-        ok: false,
-        message: `You have no note called ${file}; use a file name from the list of what you remember.`,
-      },
+      prompt: 'Do you still have a note of when I like meetings?',
+      change: 'none',
+      says: [],
     },
   ]
 }
 
-/** A settled model sentence cannot replace the actual tool receipt from this exact Run. */
-export async function noteReceipt(page, run, step, directory) {
+/** The tool parts of one Run, read from the Thread's history. */
+function callsOf(page, run) {
   const replies = page.messages.filter(
     (message) => message.role === 'assistant' && message.submissionId === run,
   )
   const calls = replies
     .flatMap((message) => message.parts)
     .filter((part) => part.type === 'dynamic-tool')
-  const matching = calls.filter((part) => part.toolName === step.tool)
-  assert.equal(matching.length, 1, 'Expected one ' + step.tool + ' in ' + step.name)
-  const receipt = matching[0]
-  assert.equal(receipt.state, 'output-available')
-  assert.equal(receipt.input.file, step.file)
-  assert.deepEqual(receipt.output, step.output)
-  const mutations = calls.filter(
-    (part) => part.toolName === Tool.write_note || part.toolName === Tool.delete_note,
-  )
-  assert.equal(mutations.length, step.tool === Tool.read_note ? 0 : 1, 'Unexpected note mutation')
   const text = replies
     .flatMap((message) => message.parts)
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('')
     .trim()
+  return { calls, text }
+}
+
+/**
+ * What one step left behind. `known.file` is the note Vivid made in the first step; the later
+ * steps must change that same note. A settled model sentence never replaces a receipt.
+ */
+export async function noteReceipt(page, run, step, directory, known) {
+  const { calls, text } = callsOf(page, run)
+  const writes = calls.filter((part) => part.toolName === Tool.write_note)
+  const deletes = calls.filter((part) => part.toolName === Tool.delete_note)
   assert.ok(text.length > 0, 'No assistant reply in ' + step.name)
-  await json(directory + '/receipt.json', { step: step.name, run, receipt, text })
+  for (const pattern of step.says) assert.match(text, pattern, step.name + ' reply')
+  if (step.change === 'none') {
+    assert.equal(writes.length + deletes.length, 0, 'A question changed a note in ' + step.name)
+  }
+  if (step.change === 'write' || step.change === 'replace') {
+    assert.equal(writes.length, 1, 'Expected one note written in ' + step.name)
+    assert.equal(deletes.length, 0, 'Unexpected delete in ' + step.name)
+    const [write] = writes
+    assert.equal(write.state, 'output-available')
+    assert.equal(write.output.ok, true)
+    assert.match(String(write.input.note), step.note)
+    if (step.change === 'write') {
+      assert.equal(write.output.replaced, false)
+      known.file = write.input.file
+    } else {
+      assert.equal(write.input.file, known.file, 'The correction made a second note')
+      assert.equal(write.output.replaced, true)
+    }
+  }
+  if (step.change === 'delete') {
+    assert.equal(writes.length, 0, 'Unexpected write in delete')
+    assert.equal(deletes.length, 1, 'Expected one note deleted')
+    assert.equal(deletes[0].state, 'output-available')
+    assert.deepEqual(deletes[0].output, { ok: true, deleted: known.file })
+  }
+  await json(directory + '/receipt.json', { step: step.name, run, file: known.file, calls, text })
   return text
 }
 
@@ -99,14 +112,15 @@ export async function noteReceipt(page, run, step, directory) {
 export async function notes(state, id, directory) {
   assert.equal(state.modelKind, 'real', 'Notes requires a real model; rehearsal cannot prove it')
   const steps = noteSteps()
-  await json(directory + '/steps.json', steps)
+  await json(directory + '/steps.json', steps.map(({ name, prompt, change }) => ({ name, prompt, change })))
+  const known = { file: undefined }
   for (const [index, step] of steps.entries()) {
     const evidence = directory + '/' + step.name
     await fs.mkdir(evidence, { recursive: true })
     await chat(state, id, step.prompt, evidence)
     const detail = await settled(state, id, index + 1, 'Completed', evidence)
     const page = await history(state, id, evidence)
-    await noteReceipt(page, detail.runs[index].id, step, evidence)
+    await noteReceipt(page, detail.runs[index].id, step, evidence, known)
   }
   await json(directory + '/scope.json', {
     proved:
