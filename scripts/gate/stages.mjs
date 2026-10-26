@@ -26,6 +26,8 @@ export const stages = [
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
       ['node', 'scripts/owners.mjs'],
+      // Proof journeys ask in a Person's words, never naming a tool (scripts/asking.mjs).
+      ['node', 'scripts/asking.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
     ],
