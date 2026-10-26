@@ -54,8 +54,16 @@ import { useDrawerOpened } from '../data/drawer'
 import { inFront, onCatchUp } from '../data/foreground'
 import type { Kept, Whose } from '../data/heard'
 import { heardIn, heardThrough } from '../data/hearing'
-import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
-import { isShown, lastWordsOf, momentOf, Speaker, speakerOf, type Around } from '../data/message'
+import { LiveState, refusalOf, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import {
+  doingOf,
+  isShown,
+  lastWordsOf,
+  momentOf,
+  Speaker,
+  speakerOf,
+  type Around,
+} from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
@@ -64,10 +72,10 @@ import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } fro
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { HANG } from '../ui/Presence'
-import { Dots } from '../ui/Dots'
 import { Floating } from '../ui/Floating'
-import { THINKING_ROOM } from '../ui/Thinking'
-import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { THINKING, THINKING_ROOM } from '../ui/Thinking'
+import { Logo } from './integration/Logo'
+import { Button, Empty, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useFirst, useFront, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
@@ -1362,8 +1370,6 @@ function Transcript(props: MessagesProps) {
     if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
 
-  const awaited = awaitsReply(props)
-
   return (
     // The scroller's box is written first and drawn second: see the note above.
     <View style={{ flex: 1, flexDirection: 'column-reverse' }}>
@@ -1428,7 +1434,7 @@ function Transcript(props: MessagesProps) {
                 // words, and the owner called it out. The bubble arrives with a send, which
                 // moves the conversation anyway, and the scroller is put back on its end when
                 // this height changes (`settle`).
-                paddingBottom: bubbleShown(thinking, awaited) ? THINKING_ROOM : END_ROOM,
+                paddingBottom: thinking ? THINKING_ROOM : END_ROOM,
                 gap: 22,
               },
             ]}
@@ -1448,13 +1454,14 @@ function Transcript(props: MessagesProps) {
                 if (place.row(key, laid)) settle()
               }}
             />
-            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+            <Tail ended={props.ended} trouble={props.trouble} />
           </View>
           {/* The room a question's choices are covering, after everything said (`useEndRoom`). */}
           <Animated.View style={room} />
         </Animated.ScrollView>
         <Floating
-          thinking={bubbleShown(thinking, awaited)}
+          thinking={thinking}
+          doing={useDoing(messages, working)}
           away={Option.isSome(awayAt)}
           arrived={arrived > 0}
           label={newestWords(arrived)}
@@ -1468,21 +1475,25 @@ function Transcript(props: MessagesProps) {
 }
 
 /**
- * Whether the floating thinking bubble is drawn. One sign that Vivid is working, never two at
- * once: before its reply begins, the face and dots stand where the reply will be (`Waiting`) and
- * the bubble is not drawn. Both showed together, one over the other, until 26 October 2026 (seen
- * on an iPhone).
+ * What the working bubble says and shows: the step Vivid is on, in its own words, with the logo
+ * of the Integration it works through (the account named by the step, found among the Person's
+ * live connections), or "Thinking" and Vivid's orb while it is on no step.
  */
-const bubbleShown = (thinking: boolean, awaited: boolean) => thinking && !awaited
-
-/** Vivid has been asked and has not begun: the newest thing in the Thread is not its reply. */
-const awaitsReply = ({
-  messages,
-  thinking,
-  trouble,
-}: Pick<MessagesProps, 'messages' | 'thinking' | 'trouble'>) => {
-  const newest = messages[messages.length - 1]
-  return thinking && Option.isNone(trouble) && newest !== undefined && newest.role !== 'assistant'
+function useDoing(messages: ReadonlyArray<FlueConversationMessage>, working: boolean) {
+  const data = useLiveData()
+  const connections = useLiveValue(data.live.connections)
+  const doing = doingOf(messages, working)
+  const listed = Option.match(connections, { onNone: () => [], onSome: (list) => list.connections })
+  const account = Option.flatMap(doing, (now) => now.account)
+  const connection = Option.flatMap(account, (named) =>
+    Option.fromUndefinedOr(listed.find((each) => each.account === named)),
+  )
+  return {
+    words: Option.match(doing, { onNone: () => THINKING, onSome: (now) => now.words }),
+    lead: Option.map(connection, (each) => (
+      <Logo service={each.service} mark={Option.fromNullishOr(each.mark)} size={20} />
+    )),
+  }
 }
 
 /** Whether the list draws a row for the message `key` (`Rows` draws none for a silent one). */
@@ -1765,21 +1776,18 @@ function Blank({ ready }: { ready: boolean }) {
  * over the foot of the list, where it stays while the conversation is read (`ui/Floating.tsx`).
  */
 function Tail({
-  awaited,
   ended,
   trouble,
 }: {
-  /** Vivid has been asked and its reply has not begun. */
-  awaited: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
   // Nothing to say is nothing drawn: an empty row here still took the column's 22-point gap
-  // under the newest words (measured on the emulator, 12 October 2026).
-  if (!awaited && Option.isNone(ended) && Option.isNone(trouble)) return null
+  // under the newest words (measured on the emulator, 12 October 2026). Vivid about to answer is
+  // said by the working bubble alone; the face and dots that stood here went (26 October 2026).
+  if (Option.isNone(ended) && Option.isNone(trouble)) return null
   return (
     <View style={{ gap: 12 }}>
-      {awaited && <Waiting />}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
           <Label size="label" tone="ink-2">
@@ -1804,35 +1812,6 @@ function Tail({
           />
         </View>
       )}
-    </View>
-  )
-}
-
-/**
- * Where Vivid's reply will be, before it has begun: its face, as beside every reply, and three
- * dots bouncing where the words will start (`ui/Dots.tsx`). The place used to be empty from the
- * send until the first word, and the owner asked for the dots there (7 October 2026). It is laid
- * out as a reply is (`FromVivid`, `screen/chat/Message.tsx`), so the reply takes its place
- * without anything moving.
- *
- * The floating bubble is not drawn while this is (`Transcript`), so this is what tells a screen
- * reader that Vivid is thinking, in the bubble's own words.
- */
-function Waiting() {
-  const vivid = useAppearance()
-  return (
-    <View
-      accessible
-      accessibilityRole="progressbar"
-      accessibilityLabel={`${vivid.name} is thinking`}
-      accessibilityState={{ busy: true }}
-      accessibilityLiveRegion="polite"
-      style={{ flexDirection: 'row', gap: 10 }}
-    >
-      <View style={{ marginTop: 1 }}>
-        <Face size={24} mood="thinking" label="" />
-      </View>
-      <Dots />
     </View>
   )
 }

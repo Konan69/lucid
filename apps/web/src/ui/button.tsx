@@ -17,6 +17,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip'
  *                  control surface, not on a red fill: the warning is the dialog, this answers it.
  * - `link`         words that go somewhere.
  *
+ * Sizes are the control's (`default`, 32 px), smaller and larger steps of it, the square icon
+ * sizes, and `pill`: the control's height, fully round, for a row's one action.
+ *
  * It answers a press by giving a little (`motion-press`, scale 0.97 over 120 ms). Focus is the
  * document's own ring, so it is not restated here. Base UI gives it `type="button"` unless the
  * caller says `type="submit"`.
@@ -39,6 +42,10 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 rounded-row px-2 text-meta [&_svg:not([class*='size-'])]:size-3.5",
         sm: 'h-7 gap-1.5 rounded-row px-2.5 text-label',
         lg: 'h-10 gap-2 rounded-control px-4 text-title',
+        // The one compact action at the end of a row that already carries a logo and two lines
+        // (the Integration card in a Thread): as tall as a control, round, so it reads as the
+        // row's single answer and not as one of a toolbar's buttons.
+        pill: 'h-8 gap-1.5 rounded-full px-3.5 text-label',
         icon: 'size-8 rounded-control',
         'icon-xs': "size-6 rounded-row [&_svg:not([class*='size-'])]:size-3.5",
         'icon-sm': 'size-7 rounded-row',

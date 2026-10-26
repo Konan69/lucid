@@ -112,7 +112,7 @@ export const cardSaid = (
   return connecting.Standing.match(standing, {
     Still: () => quiet,
     Starting: () => waits(card.starting),
-    Away: () => line('Finish signing in, then come back. Vivid carries on by itself.', false),
+    Away: () => line('Finish signing in in the browser', false),
     Checking: () => waits('Checking…'),
     Keying: () => quiet,
     Unfinished: (): CardSaid => ({

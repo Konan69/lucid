@@ -1,37 +1,26 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { clock, spanOf } from '@vivid/state'
-import { Data, Option } from 'effect'
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Option } from 'effect'
+import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { AlarmClock, ChevronDown, ChevronRight, Monitor } from 'lucide-react-native'
+import { AlarmClock } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
-import { arrive } from '../../data/computer'
-import { useLiveData } from '../../data/live'
 import {
-  currentStepOf,
   isStreaming,
   momentOf,
   picturesOf,
+  Segment,
+  segmentsOf,
   Speaker,
   speakerOf,
-  stepsOf,
-  startOf,
-  stepsSummary,
-  toolsOf,
-  tookOf,
   type Around,
-  type Step,
 } from '../../data/message'
 import { when } from '../../data/when'
 import { useTheme } from '../../theme'
-import { ThinkingOrb } from '../../../vendor/orb'
-import { Dots } from '../../ui/Dots'
 import { ANSWERED, SAID } from '../../ui/motion/morph'
-import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
-import { useGo } from '../../workspace'
+import { EDGE, Face, Label, radius } from '../../ui/ui'
 import { Cards } from './Cards'
 import { Said, Voice } from './Said'
 import { Reply } from './Words'
@@ -39,7 +28,7 @@ import { Reply } from './Words'
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
  * words are a bubble: the reader's own on the right, anyone else's on the left under their name.
- * Vivid's are plain text with what it did and what it is asking. A follow-up that woke Vivid is
+ * Vivid's are a run of bubbles, with the cards its work left between them. A follow-up that woke Vivid is
  * a quiet line saying why it spoke. The answer to a question of Vivid's is not a
  * message of the conversation; the Thread draws it as a row of its own (`Replied`,
  * `Question.tsx`).
@@ -170,119 +159,6 @@ function Aside({ text, failed }: { text: string; failed: boolean }) {
   )
 }
 
-const STEP_TONE = {
-  running: 'ink-2',
-  done: 'ink-2',
-  failed: 'status-danger',
-} as const satisfies Record<Step['standing'], 'ink-2' | 'status-danger'>
-
-/** What Vivid did while answering, collapsed to one line that opens into each step. */
-function Steps({
-  steps,
-  working,
-  timing,
-}: {
-  steps: ReadonlyArray<Step>
-  working: boolean
-  /** How long Vivid has been at it (`Working`) or took (`Worked`), when the stream stamped it. */
-  timing: Timing
-}) {
-  const { colors: c, dark } = useTheme()
-  const go = useGo()
-  const data = useLiveData()
-  const [open, setOpen] = useState(false)
-  if (steps.length === 0) return null
-  const summary = said(stepsSummary(steps, working), timing)
-  const current = currentStepOf(steps, working)
-  const busy = Option.isSome(current)
-  const Chevron = open ? ChevronDown : ChevronRight
-  return (
-    <View style={{ marginBottom: 6 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Press
-          accessibilityRole="button"
-          accessibilityState={{ expanded: open }}
-          // The line is short; the slop makes it as easy to hit as any other control.
-          hitSlop={{ top: 10, bottom: 10 }}
-          onPress={() => setOpen((shown) => !shown)}
-          containerStyle={{ flexShrink: 1 }}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
-        >
-          <Chevron
-            pointerEvents="none"
-            size={15}
-            strokeWidth={1.8}
-            color={c['foreground-secondary']}
-          />
-          {/* The step in hand is the web's working orb (`apps/web/src/screen/thread/Trail.tsx`);
-              the summary beside it says what it is, so the orb itself is not announced. */}
-          {busy && (
-            <ThinkingOrb
-              state="working"
-              size={20}
-              theme={dark ? 'dark' : 'light'}
-              accessibilityLabel=""
-            />
-          )}
-          <Label size="label" tone="ink-2" style={{ flexShrink: 1 }}>
-            {summary}
-          </Label>
-          {Timing.$is('Working')(timing) && <Counting since={timing.since} />}
-        </Press>
-        {Option.exists(current, (step) => step.onComputer) && (
-          <Press
-            accessibilityRole="button"
-            accessibilityLabel="Watch Vivid work on its Computer"
-            // The pill is a quiet 28 points beside the line it belongs to; the slop makes it 44.
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-            onPress={() => {
-              // The step says Vivid used its Computer, not that it is still on: going to watch
-              // is arriving at it, which turns it on.
-              arrive(data)
-              go.navigate('Computer')
-            }}
-            style={({ pressed }) => ({
-              height: 28,
-              paddingHorizontal: 10,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 5,
-              borderRadius: 14,
-              backgroundColor: pressed ? c['wash-pressed'] : c['thread-selected'],
-            })}
-          >
-            <Monitor pointerEvents="none" size={13} strokeWidth={1.9} color={c['primary-text']} />
-            <Label size="caption" tone="accent-ink">
-              Watch
-            </Label>
-          </Press>
-        )}
-      </View>
-      {open && (
-        <View
-          style={{
-            marginTop: 6,
-            marginLeft: 7,
-            paddingLeft: 14,
-            gap: 6,
-            borderLeftWidth: HAIRLINE,
-            borderLeftColor: c.border,
-          }}
-        >
-          {steps.map((step) => (
-            <Label key={step.id} size="label" tone={STEP_TONE[step.standing]}>
-              {step.label}
-              {Option.isSome(step.detail) && (
-                <Label size="label" tone="ink-2">{` · ${step.detail.value}`}</Label>
-              )}
-            </Label>
-          ))}
-        </View>
-      )}
-    </View>
-  )
-}
-
 /**
  * When Vivid finished a reply. "Now" is the moment the app last came to the front
  * (`data/foreground.ts`), so a Thread left open overnight stops calling yesterday's replies
@@ -297,57 +173,13 @@ function Stamp({ moment }: { moment: number }) {
   )
 }
 
-/** What Vivid said, once it has said anything: its words and the displays among them. */
-function Spoken(props: {
-  source: DisplaySource
-  text: string
-  streaming: boolean
-  making: boolean
-  settled: boolean
-  live: boolean
-  onSay: Say
-}) {
-  return props.text.length === 0 ? null : <Reply {...props} />
-}
-
 /**
- * How long a reply's work has gone on: counting while it is made, said once when it is done, or
- * nothing to say when the stream did not stamp it. The web says the same (`Trail.tsx`).
+ * Vivid's reply, as a run of messages: each stretch of words is a bubble of its own, and the work
+ * between two stretches shows only where it left the Person something (a card). Its face stands
+ * once, at the foot of the run, as Messages draws a run of bubbles from one sender. The steps it
+ * took are not drawn: the working bubble says the one it is on while it works (`ui/Thinking.tsx`),
+ * and the owner asked that nothing of them stay in the Thread (26 October 2026).
  */
-type Timing = Data.TaggedEnum<{
-  Working: { readonly since: number }
-  Worked: { readonly took: number }
-  Untimed: {}
-}>
-const Timing = Data.taggedEnum<Timing>()
-
-/** The steps' line with its time: "Reading lobste.rs · 12s", "Worked 41s · Used its browser". */
-const said = (summary: string, timing: Timing) =>
-  Timing.$is('Worked')(timing) ? `Worked ${spanOf(timing.took)} · ${summary}` : summary
-
-/** The count beside a reply still being made, ticking each second while it is on screen. */
-function Counting({ since }: { since: number }) {
-  const now = useSyncExternalStore(clock.watch, clock.read, clock.read)
-  return (
-    <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
-      · {spanOf(now - since)}
-    </Label>
-  )
-}
-
-/** Where a reply's time stands: counting while it is made, said once it is done. */
-const timingOf = (message: FlueConversationMessage, making: boolean): Timing =>
-  making
-    ? Option.match(startOf(message), {
-        onNone: () => Timing.Untimed(),
-        onSome: (since) => Timing.Working({ since }),
-      })
-    : Option.match(tookOf(message), {
-        onNone: () => Timing.Untimed(),
-        onSome: (took) => Timing.Worked({ took }),
-      })
-
-/** Vivid's reply: who it was answering, what it did, what it said, and what it is asking. */
 function FromVivid({
   thread,
   message,
@@ -369,47 +201,55 @@ function FromVivid({
   settled: boolean
   onContinue: Say
 }) {
-  const text = textOf(message)
-  const tools = toolsOf(message)
+  const segments = segmentsOf(message)
   const moment = momentOf(message)
-  // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
-  // Vivid is about to speak, where the row was a face beside nothing.
-  const silent = text.length === 0 && tools.length === 0
   // Only the newest reply can still be in the making; an older one is whole.
   const making = latest && working
-  const awaited = silent && (isStreaming(message) || making)
+  const streaming = isStreaming(message)
+  // A reply with nothing to show yet is not drawn: the working bubble already says Vivid is on it.
+  if (segments.length === 0 && Option.isNone(answering)) return null
+  // Flue streams every step of a reply under the id of its first step, the id its history keeps
+  // the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a display drawn
+  // while the reply arrives already names the reply the server reads.
+  const source = DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })
   return (
-    <View style={{ flexDirection: 'row', gap: 10 }}>
-      <View style={{ marginTop: 1 }}>
-        <Face size={24} mood={isStreaming(message) || awaited ? 'thinking' : 'neutral'} />
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+      <View style={{ marginBottom: Option.isSome(moment) ? 18 : 2 }}>
+        <Face size={24} mood={streaming ? 'thinking' : 'neutral'} />
       </View>
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
         {Option.isSome(answering) && (
-          <Label size="caption" tone="ink-2" style={{ marginBottom: 4 }}>
+          <Label size="caption" tone="ink-2" style={{ marginBottom: 2 }}>
             Answering {answering.value}
           </Label>
         )}
-        <Steps steps={stepsOf(tools)} working={working} timing={timingOf(message, making)} />
-        {awaited && <Dots />}
-        <Spoken
-          // Flue streams every step of a reply under the id of its first step, the id its history
-          // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a
-          // display drawn while the reply arrives already names the reply the server reads.
-          source={DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })}
-          text={text}
-          streaming={isStreaming(message)}
-          making={making}
-          settled={settled}
-          live={latest && !working}
-          onSay={onContinue}
-        />
-        <Cards
-          tools={tools}
-          detail={detail}
-          me={around.me}
-          live={latest && !working}
-          onContinue={onContinue}
-        />
+        {segments.map((segment, at) =>
+          Segment.$match(segment, {
+            Words: ({ text }) => (
+              <Reply
+                key={`words-${at}`}
+                source={source}
+                text={text}
+                // Only the last stretch can still be arriving; the ones before it are whole.
+                streaming={streaming && at === segments.length - 1}
+                making={making}
+                settled={settled}
+                live={latest && !working}
+                onSay={onContinue}
+              />
+            ),
+            Work: ({ tools }) => (
+              <Cards
+                key={`work-${at}`}
+                tools={tools}
+                detail={detail}
+                me={around.me}
+                live={latest && !working}
+                onContinue={onContinue}
+              />
+            ),
+          }),
+        )}
         {Option.isSome(moment) && <Stamp moment={moment.value} />}
       </View>
     </View>

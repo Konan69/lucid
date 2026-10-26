@@ -20,7 +20,7 @@ import {
   stretches,
   thisReader,
 } from '@vivid/state'
-import { Option, Schema } from 'effect'
+import { Data, Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
 import { memo, useState } from 'react'
 import { Display } from '../../parts/Display'
@@ -33,7 +33,7 @@ import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
 import { Asked } from './Question'
-import { Doing, doingIn, Trail, type ToolPart } from './Trail'
+import { stepIn, type ToolPart } from './Doing'
 
 const Metadata = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Finite),
@@ -61,20 +61,6 @@ const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
     Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
       Option.fromUndefinedOr(metadata.startedAt),
     ),
-  )
-
-/** When Vivid began a message, when the stream stamped it. */
-const startOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
-    Option.fromUndefinedOr(metadata.startedAt),
-  )
-
-/** How long a finished message took, when the stream stamped both ends of it. */
-const tookOf = (message: FlueConversationMessage): Option.Option<number> =>
-  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
-    metadata.startedAt !== undefined && metadata.finishedAt !== undefined
-      ? Option.some(metadata.finishedAt - metadata.startedAt)
-      : Option.none(),
   )
 
 /**
@@ -410,15 +396,28 @@ function Signal({
 }
 
 /**
- * What Vivid said: its words, with each display it wrote drawn where it stands in them. A display
- * is drawn from the first of its lines to arrive, so it fills in as the reply does. Each stretch is
- * keyed by where it starts in the reply, which never moves, so a display is not remounted (and
- * keeps what the Person picked in it) while the words after it are still coming.
+ * The bubble each stretch of Vivid's words is drawn in: the quiet fill with a hairline edge, at
+ * the card's radius, so a reply reads as messages and not as a page of text. It leaves room on
+ * the right as the Person's own bubbles leave room on the left. Markdown's first and last blocks
+ * lose their outer margins, so the padding alone sets the bubble's edge.
+ */
+const BUBBLE =
+  'w-fit max-w-bubble min-w-0 rounded-card border border-line-2 bg-surface-2 px-3.5 py-2.25 *:*:first:mt-0 *:*:last:mb-0'
+
+/**
+ * One stretch of what Vivid said, between two pieces of its work: each run of words a bubble of
+ * its own, and each display it wrote drawn bare where it stands in them, never in a bubble (a
+ * display is a thing to use, not words to read). A display is drawn from the first of its lines
+ * to arrive, so it fills in as the reply does. Each part is keyed by where it starts in the
+ * stretch, which never moves, so a display is not remounted (and keeps what the Person picked in
+ * it) while the words after it are still coming.
+ *
+ * The words arrive in lumps and are let out evenly (`useRevealed`); only the stretch still being
+ * written has anything left to let out, so the ones before it are whole from their first frame.
  */
 function Written({
   source,
   text,
-  fresh,
   making,
   streaming,
   settled,
@@ -428,7 +427,6 @@ function Written({
   /** The reply as Flue stored it, which every program drawn from it names. */
   source: DisplaySource
   text: string
-  fresh: boolean
   /**
    * Whether Vivid is still making the newest reply and this is it. A display whose own end has
    * arrived still waits for the reply's: the server runs a program only from a reply it has stored
@@ -436,9 +434,9 @@ function Written({
    */
   making: boolean
   /**
-   * Whether this reply's own parts are still streaming. It is checked beside `making` because a
-   * reply can still be streaming after it stops being the newest thing in the Thread (the Person
-   * writes while it arrives), and then `making` alone would let its Queries run early.
+   * Whether this stretch is still streaming. It is checked beside `making` because a reply can
+   * still be streaming after it stops being the newest thing in the Thread (the Person writes
+   * while it arrives), and then `making` alone would let its Queries run early.
    */
   streaming: boolean
   /** Whether the submission this reply answers is settled; see `MessageProps.settled`. */
@@ -447,20 +445,28 @@ function Written({
   live: boolean
   onSay: (words: string) => void
 }) {
-  return stretches(text).map((stretch) =>
-    stretch.kind === 'words' ? (
-      <Markdown key={stretch.from} content={stretch.text} fresh={fresh} />
-    ) : (
-      <Display
-        source={source}
-        key={stretch.from}
-        text={stretch.text}
-        arriving={making || streaming || !settled || !stretch.whole}
-        live={live}
-        onSay={onSay}
-      />
-    ),
-  )
+  const { drawn, fresh } = useRevealed(text, streaming)
+  return stretches(drawn).map((stretch) => {
+    if (stretch.kind === 'display') {
+      return (
+        <Display
+          source={source}
+          key={stretch.from}
+          text={stretch.text}
+          arriving={making || streaming || !settled || !stretch.whole}
+          live={live}
+          onSay={onSay}
+        />
+      )
+    }
+    // Only the space between two displays: nothing to put in a bubble.
+    if (stretch.text.trim().length === 0) return null
+    return (
+      <div key={stretch.from} className={BUBBLE} data-vivid-bubble="">
+        <Markdown content={stretch.text} fresh={fresh} />
+      </div>
+    )
+  })
 }
 
 /** The cards a response's tool results ask for, in the order Vivid produced them. */
@@ -578,9 +584,71 @@ function Stamp({ message }: { message: FlueConversationMessage }) {
 }
 
 /**
- * Vivid's reply, in the open reading column beside its face. It has no bubble: a short reply used
- * to get one and lose it mid-sentence when it grew a list or a second paragraph, and the owner
- * asked for it gone (13 October 2026).
+ * A reply as the Person reads it: what Vivid said and what it showed, in the order it happened.
+ * Each stretch of words between two pieces of work is a message of its own (Duet and Grok Bot
+ * both split a turn this way), and the work between them is drawn only where it left something
+ * for the Person, a card (`ToolCards`). The phone splits a reply the same way
+ * (`segmentsOf`, `apps/mobile/src/data/message.ts`).
+ */
+type Segment = Data.TaggedEnum<{
+  Words: { readonly from: number; readonly text: string }
+  Work: { readonly from: number; readonly tools: ReadonlyArray<ToolPart> }
+}>
+const Segment = Data.taggedEnum<Segment>()
+
+/**
+ * Splits a reply into its segments. Text parts that follow one another are one stretch of words,
+ * joined as `textOf` joins them; tool calls that follow one another are one piece of work. Empty
+ * words make no segment, so a reply that has only begun has none. `from` is the place of a
+ * segment's first part in the reply, which never moves as more arrives, so a segment keeps its
+ * identity (and a display in it what the Person picked) while the reply grows around it.
+ */
+const segmentsOf = (message: FlueConversationMessage): ReadonlyArray<Segment> => {
+  const segments: Array<Segment> = []
+  message.parts.forEach((part, from) => {
+    const last = segments.at(-1)
+    if (part.type === 'text' && part.text.trim().length > 0) {
+      if (last !== undefined && Segment.$is('Words')(last)) {
+        segments[segments.length - 1] = Segment.Words({
+          from: last.from,
+          text: `${last.text}\n\n${part.text}`,
+        })
+      } else segments.push(Segment.Words({ from, text: part.text }))
+    }
+    if (part.type !== 'dynamic-tool') return
+    if (last !== undefined && Segment.$is('Work')(last)) {
+      segments[segments.length - 1] = Segment.Work({
+        from: last.from,
+        tools: [...last.tools, part],
+      })
+    } else segments.push(Segment.Work({ from, tools: [part] }))
+  })
+  return segments
+}
+
+/** Whether a piece of work left the Person anything to see: a card among its tool results. */
+const showsCard = (tools: ReadonlyArray<ToolPart>) =>
+  tools.some((tool) => tool.state === 'output-available' && Option.isSome(cardFor(tool.output)))
+
+/**
+ * Whether a segment draws anything. Words always do; work does only where it left a card, since
+ * the steps themselves are not drawn (the line at the foot of the Thread says the one Vivid is on,
+ * `Doing.tsx`).
+ */
+const drawsSomething = (segment: Segment) =>
+  Segment.$match(segment, { Words: () => true, Work: ({ tools }) => showsCard(tools) })
+
+/** A card Vivid produces while it is making this reply rises into place; `contents` keeps the
+ * wrapper out of the layout, so the card stands in the column like any message. */
+const ARRIVING = 'contents *:motion-enter'
+
+/**
+ * Vivid's reply, as a run of messages: each stretch of words a bubble, with the cards its work
+ * left between them. Its face stands once, at the foot of the run, as Messages draws a run of
+ * bubbles from one sender, and the time and copy control stand under the last of them. The steps
+ * it took are not drawn: the line at the foot of the Thread says the one it is on while it works
+ * (`Doing.tsx`), and the owner asked that nothing of them stay in the Thread (26 October 2026).
+ * Until then the reply had no bubble and a list of steps above its words (13 October 2026).
  */
 function FromVivid({
   message,
@@ -597,110 +665,68 @@ function FromVivid({
   settled: boolean
   onContinue: (text: string) => void
 }) {
-  const text = textOf(message)
-  const tools = message.parts.filter((part) => part.type === 'dynamic-tool')
+  const segments = segmentsOf(message).filter(drawsSomething)
   const forWhom = answering(message, context)
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
-  // What is drawn of it: the words arrive in lumps and are let out evenly (`useRevealed`).
-  const { drawn: drawnText, fresh } = useRevealed(text, streaming)
-  // Only the newest reply can still be in the making; an older one's steps are its record.
+  // Only the newest reply can still be in the making; an older one is whole.
   const making = working && latest
+  // A reply with nothing to show yet is not drawn: the line at the foot of the Thread already
+  // says Vivid is on it.
+  if (segments.length === 0 && Option.isNone(forWhom)) return null
+  // Flue streams every step of a reply under the id of its first step, the id its history keeps
+  // the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a display drawn
+  // while the reply arrives already names the reply the server reads.
+  const source = DisplaySource.cases.ThreadMessage.make({
+    thread: context.thread,
+    message: message.id,
+  })
+  const text = textOf(message)
   return (
-    <div className="flex gap-3">
-      <ReplyFace message={message} latest={latest} making={making} />
-      <div className="min-w-0 flex-1 text-body text-ink">
-        {Option.isSome(forWhom) && (
-          <span className="mb-1 block text-meta font-meta text-ink-3">
-            Answering {forWhom.value}
-          </span>
-        )}
-        {making && <Doing tools={tools} wordless={text.length === 0} since={startOf(message)} />}
-        {text.length > 0 && (
-          <Written
-            // Flue streams every step of a reply under the id of its first step, the id its history
-            // keeps the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so
-            // a display drawn while the reply arrives already names the reply the server reads.
-            source={DisplaySource.cases.ThreadMessage.make({
-              thread: context.thread,
-              message: message.id,
-            })}
-            text={drawnText}
-            fresh={fresh}
-            making={making}
-            streaming={streaming}
-            settled={settled}
-            live={latest && !working}
-            onSay={onContinue}
-          />
-        )}
-        {!making && (
-          <Footer
-            message={message}
-            tools={tools}
-            text={text}
-            streaming={streaming}
-            latest={latest}
-          />
-        )}
-        {/* A card Vivid produces while it is making this reply rises into place; the cards of a
-            reply that is already finished are simply there. `contents` keeps the wrapper out of
-            the layout. */}
-        <div className={making ? ARRIVING : 'contents'}>
-          <ToolCards
-            tools={tools}
-            context={context}
-            live={latest && !working}
-            onContinue={onContinue}
-          />
+    <div className="flex flex-col gap-1">
+      <div className="flex items-end gap-3">
+        <ReplyFace message={message} latest={latest} making={making} />
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-body text-ink">
+          {Option.isSome(forWhom) && (
+            <span className="block text-meta font-meta text-ink-3">Answering {forWhom.value}</span>
+          )}
+          {segments.map((segment) =>
+            Segment.$is('Words')(segment) ? (
+              <Written
+                key={`words-${segment.from}`}
+                source={source}
+                text={segment.text}
+                making={making}
+                // Only the last stretch can still be arriving; the ones before it are whole.
+                streaming={streaming && segment === segments.at(-1)}
+                settled={settled}
+                live={latest && !working}
+                onSay={onContinue}
+              />
+            ) : (
+              <div key={`work-${segment.from}`} className={making ? ARRIVING : 'contents'}>
+                <ToolCards
+                  tools={segment.tools}
+                  context={context}
+                  live={latest && !working}
+                  onContinue={onContinue}
+                />
+              </div>
+            ),
+          )}
         </div>
       </div>
+      {!making && !streaming && text.length > 0 && (
+        // In the column the bubbles are read in, under the last of them, clear of the face.
+        <Settled message={message} text={text} latest={latest} />
+      )}
     </div>
   )
 }
 
 /**
- * The one quiet line under a finished reply: when it was said and its copy button, then, when
- * Vivid used anything to get there, how long it worked and what it did, which opens into the
- * steps. A reply with no steps keeps the time and copy alone.
- */
-function Footer({
-  message,
-  tools,
-  text,
-  streaming,
-  latest,
-}: {
-  message: FlueConversationMessage
-  tools: ReadonlyArray<ToolPart>
-  text: string
-  streaming: boolean
-  latest: boolean
-}) {
-  const said = !streaming && text.length > 0
-  if (tools.length === 0)
-    return said ? <Settled message={message} text={text} latest={latest} /> : null
-  return (
-    <Trail
-      tools={tools}
-      took={tookOf(message)}
-      lead={
-        said && (
-          <>
-            <Stamp message={message} />
-            <CopyWords read={() => text} />
-          </>
-        )
-      }
-    />
-  )
-}
-
-/** The wrapper of a reply's cards while the reply is being made: each card that appears rises in. */
-const ARRIVING = 'contents *:motion-enter'
-
-/**
- * The face beside a reply. The newest reply's is alive: it works while the reply is made and is
- * pleased, then at rest, once it is finished. An older reply is a record, and its face is still.
+ * The face beside a reply. The newest reply's is alive: it works while a step of the reply runs,
+ * thinks between steps, and is pleased, then at rest, once the reply is made. An older reply is a
+ * record, and its face is still.
  */
 function ReplyFace({
   message,
@@ -711,10 +737,8 @@ function ReplyFace({
   latest: boolean
   making: boolean
 }) {
-  if (!latest) return <Face size={28} className="mt-0.5" mood="neutral" />
-  return (
-    <Alive size={28} className="mt-0.5" state={stateOf(making, Option.isSome(doingIn(message)))} />
-  )
+  if (!latest) return <Face size={28} mood="neutral" />
+  return <Alive size={28} state={stateOf(making, Option.isSome(stepIn(message)))} />
 }
 
 /**
@@ -734,8 +758,7 @@ function Settled({
   return (
     <div
       className={cn(
-        'flex h-6 items-center gap-1.5 text-meta text-ink-3',
-        'mt-1',
+        'flex h-6 items-center gap-1.5 ps-10 text-meta text-ink-3',
         latest && 'motion-fade',
       )}
     >

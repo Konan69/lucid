@@ -378,3 +378,57 @@
     animation: none;
   }
 }
+
+/*
+ * The words of the line that says what Vivid is on (`thread/Doing.tsx`), with a band of light
+ * passing over them, left to right, for as long as Vivid works: the one thing here that repeats,
+ * because it is the sign the work is alive (the owner, 26 October 2026: "should have some
+ * shimmer", then "the shimmer isn't enough"). The band is the page's own colour at 85% over ink
+ * words, so the ink seems to catch the light where it passes; at that strength it reads at a
+ * glance, where a faint one did not. The phone draws the same band (`ui/Thinking.tsx`).
+ *
+ * It is not shadcn's `shimmer` utility (`shadcn/tailwind.css`), which clips a moving gradient to
+ * the text and so paints the words again on every frame; and its name is not `shimmer`, which
+ * would apply both.
+ *
+ * One pass takes 1.3 s and rests 0.5 s before the next. Only the band's `translate` moves, on the
+ * compositor, so the words are never painted again. A Person who asked for less motion gets the
+ * words standing still.
+ */
+@keyframes sheen {
+  0% {
+    translate: -100% 0;
+  }
+  /* 1.3 s of the 1.8 s cycle; the band is 40% of the words wide, so 250% carries it clear. */
+  72.2%,
+  100% {
+    translate: 250% 0;
+  }
+}
+@utility sheen {
+  position: relative;
+  /* The band is clipped to the words, so it never shows past their ends. */
+  overflow: hidden;
+  &::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 40%;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface-0) 85%, transparent),
+      transparent
+    );
+    translate: -100% 0;
+    animation: sheen 1.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &::after {
+      content: none;
+      animation: none;
+    }
+  }
+}

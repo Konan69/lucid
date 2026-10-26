@@ -11,26 +11,8 @@ import { splitFull, useSplit } from '../../data/split'
 import { useFaceState, useLook } from '../../ui/Alive'
 import { cn } from '../../ui/cn'
 import { About } from './About'
-import { Header, Hero, STANDING, type Standing } from './Header'
+import { Header, Hero, STANDING } from './Header'
 import { Share } from './Share'
-
-/**
- * How Vivid stands in the bar. At rest it is the Thread's own standing line. While it works the
- * line is what the stream says it is doing ("Using Gmail (Work)…"), and "Thinking…" between
- * steps: the bar never says only that work is happening when it can say which work.
- */
-const standingNow = (
-  attention: ThreadRecord['attention'],
-  working: boolean,
-  doing: Option.Option<string>,
-): Standing => {
-  const resting = STANDING[attention]
-  if (!working) return resting
-  return {
-    ...resting,
-    words: Option.match(doing, { onNone: () => 'Thinking…', onSome: (step) => `${step}…` }),
-  }
-}
 
 /**
  * The Thread's frame: the bar, the conversation and composer, and the card around Vivid with the
@@ -48,7 +30,7 @@ export function Layout({
   arriving,
   present,
   working,
-  doing,
+  usingTool,
   failed,
   panelOpen,
   onTogglePanel,
@@ -60,8 +42,8 @@ export function Layout({
   arriving: Option.Option<string>
   present: ThreadDetail['present']
   working: boolean
-  /** The step Vivid is on right now, from the Thread's own stream, when it is on one. */
-  doing: Option.Option<string>
+  /** Whether Vivid is on a step right now, from the Thread's own stream. Its face shows it. */
+  usingTool: boolean
   /** Whether the last thing asked of Vivid here did not work. Its face shows it. */
   failed: boolean
   panelOpen: boolean
@@ -80,12 +62,15 @@ export function Layout({
   const look = useLook(
     useFaceState({
       answering: working,
-      usingTool: Option.isSome(doing),
+      usingTool,
       failed,
       needsPerson: attention === 'NeedsYou',
     }),
   )
-  const standing = { ...standingNow(attention, working, doing), mood: look }
+  // The bar says how Vivid stands (working, waiting for the Person), never which step it is on:
+  // that is said in one place, the line at the foot of the conversation (`Doing.tsx`), and the
+  // owner asked that the status be said there alone (26 October 2026).
+  const standing = { ...STANDING[attention], mood: look }
   return (
     <section
       // `data-alive`: every face in the Thread eases its lean from one look to the next.

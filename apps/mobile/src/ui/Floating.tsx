@@ -1,3 +1,4 @@
+import type { Option } from 'effect'
 import { GlassContainer } from 'expo-glass-effect'
 import { ChevronDown } from 'lucide-react-native'
 import type { ComponentProps, ReactNode } from 'react'
@@ -100,6 +101,7 @@ const DOT = 9
  */
 export function Floating({
   thinking,
+  doing,
   away,
   arrived,
   label,
@@ -108,6 +110,8 @@ export function Floating({
 }: {
   /** Vivid is at work or about to be. */
   thinking: boolean
+  /** What the thinking bubble says and shows (`Thinking`): the step Vivid is on, with its logo. */
+  doing: { readonly words: string; readonly lead: Option.Option<ReactNode> }
   /** The Person has scrolled away from the newest words. */
   away: boolean
   /** Whether anything arrived while they were away, which is what the dot says. */
@@ -127,7 +131,7 @@ export function Floating({
   const lifted = useAnimatedStyle(() => ({ transform: [{ translateY: -lift.get() }] }))
   return (
     <Row style={lifted}>
-      {thinking && <Thinking style={aside} />}
+      {thinking && <Thinking style={aside} words={doing.words} lead={doing.lead} />}
       {(thinking || away) && (
         <Newest
           separation={separation}

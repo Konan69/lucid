@@ -167,32 +167,21 @@ async function rendered(run, kind) {
       break
     }
     case 'document': {
+      // Since 26 October 2026 a Thread draws no step rows (the owner: "tool call spam ... the user
+      // doesn't need to see this"): the reply is Vivid's bubbles, and the document's receipt is
+      // proved by the HTTP recipe's versioning. The browser proves the reply arrived as a bubble
+      // and that no step list or "Worked" line came back.
       await run([
         'wait',
         '--fn',
-        `Array.from(document.querySelectorAll('button[aria-expanded]')).some(b => b.textContent.includes('Wrote a document') || b.textContent.includes('more steps'))`,
+        `document.querySelectorAll('[data-vivid-bubble]').length > 0`,
       ])
-      const names = await dom(
+      const leftovers = await dom(
         run,
-        `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('Wrote a document') || text.includes('more steps'))`,
+        `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('more steps') || text.startsWith('Worked') || text.includes('Wrote a document'))`,
       )
-      assert.equal(names.length, 1, 'Expected one rendered document tool card')
-      await run(['find', 'role', 'button', 'click', '--name', names[0], '--exact'])
-      await run([
-        'wait',
-        '--fn',
-        `Array.from(document.querySelectorAll('button[aria-expanded="true"] + ol > li')).some(li => li.innerText.trim().startsWith('Wrote a document'))`,
-      ])
-      const steps = await dom(
-        run,
-        `Array.from(document.querySelectorAll('button[aria-expanded="true"] + ol > li')).map(li => li.innerText.trim())`,
-      )
-      assert.ok(
-        steps.some((text) => text.startsWith('Wrote a document')),
-        'No document receipt in the expanded card',
-      )
+      assert.deepEqual(leftovers, [], 'A step row is still drawn in the Thread')
       await run(['snapshot'])
-      await run(['find', 'role', 'button', 'click', '--name', names[0], '--exact'])
       break
     }
     case 'reply':

@@ -22,7 +22,6 @@ import {
 } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
-import { ThinkingOrb } from 'thinking-orbs'
 import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
@@ -33,7 +32,7 @@ import { link } from '../data/runtime'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords, saidWith, useFirstWords, wordsFor } from '../data/threads'
 import { Button } from '../ui/button'
-import { Alive, ranBadly } from '../ui/Alive'
+import { ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -44,7 +43,7 @@ import { Composer } from './thread/Composer'
 import { isBlank, Message, Replied, Said, spokenOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
 import { Layout } from './thread/Layout'
-import { doingIn } from './thread/Trail'
+import { Doing, stepIn } from './thread/Doing'
 
 /**
  * One Thread: the conversation with Vivid, and everything live around it.
@@ -114,14 +113,6 @@ function Gone() {
 /** The reply Vivid is on: the newest message, when it is Vivid's. */
 const replyIn = (visible: ReadonlyArray<FlueConversationMessage>) =>
   Option.filter(Option.fromUndefinedOr(visible.at(-1)), (message) => message.role === 'assistant')
-
-/**
- * Whether the waiting row is needed: Vivid is working and has not begun a reply. Once a reply
- * exists it carries its own signs of life (its steps, "Putting it together…", its words), so the
- * row is only for the moment before, when the one true thing to say is that Vivid is thinking.
- */
-const isWaiting = (working: boolean, visible: ReadonlyArray<FlueConversationMessage>) =>
-  working && Option.isNone(replyIn(visible))
 
 /** Stops Vivid in this Thread, and says so when the server did not take it. */
 const stop = (id: ThreadId) =>
@@ -276,7 +267,9 @@ const Rows = memo(function Rows({
         const latest = message === newest
         const turn = turns.get(key)
         return (
-          <li key={key} data-arrives>
+          // A reply with nothing to show yet draws nothing (`FromVivid`), and its row then takes
+          // no room either, so the line at the foot does not jump when the reply begins.
+          <li key={key} data-arrives className="empty:hidden">
             {turn !== undefined && (
               <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
             )}
@@ -308,7 +301,6 @@ function ConversationMessages({
   ready,
   empty,
   working,
-  waiting,
   failure,
   onRetry,
   said,
@@ -330,7 +322,6 @@ function ConversationMessages({
   ready: boolean
   empty: boolean
   working: boolean
-  waiting: boolean
   failure: string | null
   onRetry: () => void
   /** The whole conversation, drawn or not: answers are placed against all of it (`Rows`). */
@@ -352,7 +343,7 @@ function ConversationMessages({
       ready={ready}
       empty={empty}
       working={working}
-      waiting={waiting}
+      reply={replyIn(visible)}
       // Transport details stay in the log; the Person gets a clear reason and a retry action.
       failure={failure}
       onRetry={onRetry}
@@ -533,7 +524,7 @@ function Conversation({
       arriving={arrivingTitle(first)}
       present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
       working={working}
-      doing={working ? Option.flatMap(replyIn(visible), doingIn) : Option.none()}
+      usingTool={working && Option.isSome(Option.flatMap(replyIn(visible), stepIn))}
       // What Vivid's face answers for: words that did not arrive, a server that cannot be
       // reached, a Run that ended without an answer.
       failed={cut || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
@@ -562,7 +553,6 @@ function Conversation({
             ready={ready}
             empty={visible.length === 0 && !FirstWords.$is('Unsent')(first)}
             working={working}
-            waiting={isWaiting(working, visible)}
             failure={cut ? 'Vivid can’t be reached right now.' : null}
             onRetry={() => agent.refresh()}
             said={said}
@@ -850,7 +840,7 @@ function Messages({
   ready,
   empty,
   working,
-  waiting,
+  reply,
   failure,
   onRetry,
   children,
@@ -861,7 +851,8 @@ function Messages({
   /** Nothing has been said here yet, by anyone. */
   empty: boolean
   working: boolean
-  waiting: boolean
+  /** The reply Vivid is on, when the newest message is its; the line under it says its step. */
+  reply: Option.Option<FlueConversationMessage>
   failure: string | null
   onRetry: () => void
   children: React.ReactNode
@@ -889,7 +880,7 @@ function Messages({
         >
           {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
           {hero}
-          {/* Not while Vivid is working: the waiting row below is the truer thing to show. */}
+          {/* Not while Vivid is working: the line at the foot is the truer thing to show. */}
           {!ready && empty && !working && (
             <li className="py-12 text-center text-label text-ink-3" aria-busy>
               Opening the thread…
@@ -902,22 +893,10 @@ function Messages({
             </li>
           )}
           {children}
-          {waiting && (
-            // It arrives late on purpose: an answer that starts within a second never shows it,
-            // and one that takes longer has something alive to look at. It stands where the
-            // reply will be, with Vivid's face, so the answer takes its place instead of
-            // appearing somewhere else.
-            <li
-              className="flex items-center gap-3 transition-opacity delay-700 duration-(--dur-slow) starting:opacity-0"
-              aria-live="polite"
-            >
-              <Alive size={28} state="thinking" />
-              <span className="flex items-center gap-2">
-                <ThinkingOrb state="breathing" size={20} aria-hidden />
-                <span className="text-label text-ink-3">Thinking…</span>
-              </span>
-            </li>
-          )}
+          {/* The one place a Thread says what Vivid is on, for as long as it works: the step it
+              is taking in the newest reply, or that it is thinking. Vivid's face is not drawn
+              beside it; a reply's face stands at the foot of the reply itself. */}
+          {working && <Doing reply={reply} />}
           {failure !== null && (
             <li className="flex items-center gap-3 rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
               <span className="min-w-0 flex-1">{failure}</span>
