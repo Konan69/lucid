@@ -109,7 +109,7 @@ export const useSending = (id: ThreadId): Option.Option<sending.SendingState> =>
  * make its way of sending anew at every word that arrives. `sending` is whether a delivery is
  * with the server and unanswered.
  */
-export const drawnNow = (id: ThreadId) => {
+const drawnNow = (id: ThreadId) => {
   const reading = liveStateOf(engine.registry.get(conversationOf(id).atom))
   const detail = liveStateOf(engine.registry.get(live.thread.get(id).atom))
   const state = engine.registry.get(sending.stateOf(machines(id)))
@@ -130,15 +130,6 @@ export const drawnNow = (id: ThreadId) => {
     sending: sending.isWaiting(state),
   }
 }
-
-/**
- * Hears each time what a Thread draws may have changed: its sending moved, or its conversation
- * spoke. Answers with the ways to stop hearing.
- */
-export const whenMoved = (id: ThreadId, heard: () => void): ReadonlyArray<() => void> => [
-  engine.registry.subscribe(sending.stateOf(machines(id)), heard),
-  engine.registry.subscribe(conversationOf(id).atom, heard),
-]
 
 /**
  * Sends everything that did not arrive in a Thread again, each as the delivery it is. The
@@ -167,9 +158,6 @@ export const say = (delivery: sending.Delivery): void =>
  * from this page is sent after it (`SendingEvents.Stop`).
  */
 export const halted = (id: ThreadId): void => sending.stopped(engine.registry, machines(id))
-
-/** A machine read outside React, including first-word projections and gesture handlers. */
-export const sendingNow = (id: ThreadId) => engine.registry.get(sending.stateOf(machines(id)))
 
 /** Start creation with first words already in their Thread's ordered sending owner. */
 export const beginThread = (first: Parameters<typeof sending.begin>[2]): void =>
