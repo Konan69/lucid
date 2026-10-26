@@ -1,12 +1,11 @@
 import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
-import { useFlueAgent, type UseFlueAgentOptions } from '@flue/react'
-import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ApprovalDecision,
   ThreadAudience,
   Workspace,
   type Approval,
   type ApprovalId,
+  type ConversationMessage,
   type InputAnswer,
   type InputRequest,
   type InputRequestId,
@@ -19,15 +18,20 @@ import {
   approvalUp,
   asking as model,
   attaching,
+  conversationIn,
   draftPlace,
+  isTooLong,
   lasting,
   QUIET_MS,
   readingOf,
+  sending as outbox,
   streamSaid,
   titleFromMessage,
+  TOO_LONG,
   withFirst,
   workspaceKey,
   type ApprovalUp,
+  type Following,
   makeTurns,
   thisReader,
 } from '@vivid/state'
@@ -48,16 +52,16 @@ import Animated, {
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { clearTray, pastePictures, removeFile, useTray } from '../data/attach'
 import { useMicrophone } from '../data/dictation'
-import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
+import { deliveryOf, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { readingPlace, type Anchor } from '../data/reading'
 import { commit, confirm, warn } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onCatchUp } from '../data/foreground'
-import type { Kept, Whose } from '../data/heard'
-import { heardIn, heardThrough } from '../data/hearing'
-import { LiveState, refusalOf, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import { drawnFrom } from '../data/heard'
+import { heardIn } from '../data/hearing'
+import { LiveState, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
 import {
   doingOf,
   isShown,
@@ -69,7 +73,8 @@ import {
 } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
-import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
+import { firstWay, UNDELIVERED, UNTITLED } from '../data/threads'
+import { bearer } from '../data/transport'
 import { Composer, type Onward } from '../ui/Composer'
 import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
@@ -114,10 +119,11 @@ import { start } from '../data/app'
  * first screen's place (`screen/Home.tsx`), not as a screen of its own; `writing` says its
  * composer takes the keyboard over from the one a first message was typed in.
  *
- * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
- * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
- * someone, who is looking right now) comes from the Thread's live query. Neither is fetched and
- * neither is refreshed by hand.
+ * Two live queries feed this screen. The words come from the Thread's conversation
+ * (`live.conversation`, `data/live.ts`), change by change, whichever runtime holds the Thread.
+ * Everything else (who is in the Thread, who Vivid acted for, what is waiting on someone, who is
+ * looking right now) comes from the Thread's own query. Neither is fetched and neither is
+ * refreshed by hand.
  *
  * Looking at the Thread is what marks it read and what makes the Person present in it, and both
  * are said only while they really are looking (`useLooking`). The screen reads the query that
@@ -308,6 +314,8 @@ function useStop(id: ThreadId, working: boolean) {
   if (refused && !working) setRefused(false)
 
   function stop() {
+    // The Thread's sending first, so nothing still waiting to leave this phone goes after it.
+    data.sending.stopped(id)
     return start(
       Effect.gen(function* () {
         setRefused(false)
@@ -321,86 +329,126 @@ function useStop(id: ThreadId, working: boolean) {
 }
 
 /**
- * Sending in one Thread, and the one delivery from here that is not known to have arrived.
+ * Sending in one Thread, and what the Thread draws of its conversation with it.
  *
- * Each message goes out under a key that names it (`data/delivery.ts`). When it does not arrive,
- * its words and its key are kept together here, so sending those words again, from the button
- * under the conversation or from the composer, is the same delivery to the server and never a
- * second message. It used to be sent again under a new key, which could run the work twice, and
- * the button beside the refusal only reconnected the conversation and sent nothing.
+ * Each message goes out under a key that names it (`data/delivery.ts`), through the Thread's
+ * machine (`data/sending.ts`). When it does not arrive the machine keeps its words, its pictures
+ * and its key together, so sending those words again, from the button under the conversation or
+ * from the composer, is the same delivery to the server and never a second message. Nothing of
+ * it is kept here: what is on its way and what did not arrive are read from the machine.
+ *
+ * What is drawn (`drawing`, `@vivid/state`) is the conversation with this phone's own words in
+ * it from the moment they are sent. Until the conversation has been read, that is what this
+ * phone last heard in the Thread (`data/hearing.ts`), with the same words laid over it: its
+ * words are on the first frame, and something sent before the conversation arrives is not
+ * hidden behind what was kept. In a shared Thread the server turns a message into one that says
+ * who spoke, so nothing is drawn ahead of it.
+ *
+ * `ready` is only that there is something to draw; `live` that it is the conversation as the
+ * server has it now.
  */
 function useSend(
   id: ThreadId,
-  thread: Option.Option<Thread>,
-  agent: ReturnType<typeof useFlueAgent>,
   place: string,
+  at: {
+    readonly detail: Option.Option<ThreadDetail>
+    /** The conversation's query as it stands (`useFollowed`). */
+    readonly reading: LiveState<Following>
+  },
 ) {
   const data = useLiveData()
-  const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
-  // A delivery is on its way and has not been answered. In a private Thread the stream says so
-  // itself the moment it is sent. In a shared one the message goes to the server first, and
-  // nothing on this phone says Vivid has it until the Thread's record comes back; for that
-  // moment this is what the top of the screen goes by.
-  const [pending, setPending] = useState(false)
+  const me = useMe()
+  const { detail, reading } = at
+  const state = useAtomValue(data.sending.stateIn(id))
+  const thread = Option.map(detail, (value) => value.thread)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
+  // What is drawn from: the conversation, or until it has been read what the phone kept of it
+  // (`drawnFrom`, `data/heard.ts`), never for a conversation the server has refused.
+  const from = drawnFrom(
+    reading,
+    heardIn({ origin: data.session.server, person: me.person.id }, id),
+  )
+  const drawn = outbox.drawing({
+    messages: from.messages,
+    live: from.live,
+    sending: state,
+    runs: runsOf(detail),
+    ahead: !shared,
+  })
+  // The one delivery the foot of the conversation speaks of: the first that is not known to
+  // have arrived. Sending it again sends everything that is not, in the order it was written.
+  // What a Person is told is the one thing they can act on, whatever the server said.
+  const unsent = Option.map(Option.fromUndefinedOr(drawn.unsent[0]), ({ delivery }): Unsent => ({
+    words: delivery.words,
+    pictures: delivery.pictures,
+    key: delivery.key,
+    why: UNDELIVERED,
+  }))
 
-  /**
-   * Hands one delivery to the server and answers with why it did not arrive, when it did not. In
-   * a shared Thread the server turns the message into an attributed one, so it is sent plainly
-   * and drawn when it comes back; in a private one the hook shows it at once and keeps it in the
-   * conversation if it fails.
-   */
-  const deliver = ({ words, pictures, key }: Delivery): Promise<Option.Option<string>> =>
-    shared
-      ? start(say(data, { id, body: words, key, pictures })).then(refusalOf)
-      : agent.sendMessage(words, { idempotencyKey: key, images: [...pictures] }).then(
-          () => Option.none(),
-          // A failed send is not proof the words did not arrive: on 26 October 2026 the server
-          // answered both of a phone's sends 202 while the phone's request failed, and the Thread
-          // said "did not reach Vivid" under a message Vivid was already answering. Asking again
-          // with the same key settles it: Flue derives the submission from the key
-          // (`deriveKeyedSubmissionId`), so a delivery that arrived is answered as that delivery
-          // and is never said twice, and starting the send clears the failed copy Flue kept.
-          () =>
-            agent.sendMessage(words, { idempotencyKey: key, images: [...pictures] }).then(
-              () => Option.none(),
-              () => Option.some(UNDELIVERED),
-            ),
-        )
-
-  function send(delivery: Delivery) {
-    setUnsent(Option.none())
-    setPending(true)
+  /** Renames a Thread that has no name after the words being sent into it. */
+  function name(words: string) {
     // A Thread started without a name takes its first message as one. A refusal is not said: the
     // Person did not ask for this, the Thread keeps the title it had, and the next message tries
     // again because the title is still the unnamed one.
     if (Option.exists(thread, (value) => value.title === UNTITLED)) {
-      void data.change((sdk) =>
-        sdk.PatchThread({ id, patch: { title: titleFromMessage(delivery.words) } }),
-      )
+      void data.change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(words) } }))
     }
-    return deliver(delivery).then((why) => {
-      setPending(false)
-      if (Option.isNone(why)) return true
-      setUnsent(Option.some({ ...delivery, why: why.value }))
+  }
+
+  /**
+   * Sends words. When they are the words of something that did not arrive, however they got
+   * back into the Person's hands (the retry button, or the composer the words were put back
+   * in), everything that did not arrive goes again, each as the delivery it is. Any other words
+   * are a new message with a key of their own.
+   */
+  function say(words: string, pictures: ReadonlyArray<attaching.Picture>) {
+    name(words)
+    const delivery = deliveryOf(unsent, words, pictures, randomUUID)
+    const retried = drawn.unsent.some((failed) => failed.delivery.key === delivery.key)
+    const sent = retried
+      ? data.sending.again(id, { seen: drawn.seen, key: delivery.key })
+      : data.sending.say({ delivery: { thread: id, ...delivery }, seen: drawn.seen })
+    return sent.then((arrived) => {
       // Nothing in a shared Thread shows words that did not arrive, so they go back into the
-      // composer, and so back into what the phone keeps, unless the Person has started writing
-      // something else there since.
-      if (shared && draft.in(place).length === 0) draft.keep(place, delivery.words)
-      return false
+      // composer, and so back into what the phone keeps, unless the Person has started
+      // writing something else there since.
+      if (!arrived && shared && draft.in(place).length === 0) draft.keep(place, words)
+      return arrived
     })
   }
 
   return {
     shared,
-    pending,
+    said: drawn.said,
+    ready: from.ready,
+    live: from.live,
+    settled: from.settled,
+    /**
+     * Whether Vivid is at work, by the one rule every surface shares (`isWorking`,
+     * `@vivid/state`): from what this phone has sent, what the conversation says, and what the
+     * Thread's record says, which is how work started anywhere else is known here.
+     */
+    working: outbox.isWorking({
+      owed: drawn.owed,
+      conversation: conversationIn(reading),
+      attention: Option.map(thread, (value) => value.attention),
+    }),
+    /**
+     * A delivery is on its way and has not been answered: until the server answers, nothing
+     * more is sent from here.
+     */
+    pending: outbox.isWaiting(state),
     unsent,
+    /**
+     * The ids the messages that did not arrive are drawn under, so they are drawn as not sent.
+     * A shared Thread draws none of its own words ahead, so there is no such row in it.
+     */
+    undelivered: shared ? [] : drawn.unsent.map((failed) => outbox.sentId(failed.delivery)),
     /**
      * Sends words: as the delivery still in doubt when they are its words, else as a new one.
      * Answers whether they arrived.
      */
-    say: (words: string, pictures: ReadonlyArray<attaching.Picture>) =>
-      send(deliveryOf(unsent, words, pictures, randomUUID)),
+    say,
   }
 }
 
@@ -704,6 +752,33 @@ const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputReq
   Option.match(detail, { onNone: () => NO_REQUESTS, onSome: (value) => value.requests })
 
 /**
+ * A Thread's conversation as its screen follows it (`live.conversation`, `data/live.ts`). It is
+ * asked for only once the Thread's first words are with Vivid: before that there may be no
+ * Thread, and a query for one that is not there ends for good.
+ *
+ * A phone suspends the app when it is not in front, and its socket with it; a network that
+ * changes or a server that is replaced cuts it too. Coming back, or reaching the server again,
+ * has the conversation asked for again (`reopen`), which begins with it whole; what is on screen
+ * stays until it answers. `wake` is the ref that does it for as long as the view it is given to
+ * is mounted (`onCatchUp`), and no longer.
+ */
+function useFollowed(id: ThreadId, settled: boolean) {
+  const data = useLiveData()
+  const followed = data.live.conversation.get(id)
+  const reading = useLiveWhen(settled, followed)
+  const reopen = useCallback(() => data.registry.refresh(followed.atom), [data, followed])
+  const wake = useMemo(() => onCatchUp(reopen), [reopen])
+  return { reading, reopen, wake }
+}
+
+/** No Runs: a Thread whose detail has not arrived. One value, not a new list each render. */
+const NO_RUNS: ThreadDetail['runs'] = []
+
+/** The Thread's Runs, once its live detail carries them. */
+const runsOf = (detail: Option.Option<ThreadDetail>): ThreadDetail['runs'] =>
+  Option.match(detail, { onNone: () => NO_RUNS, onSome: (value) => value.runs })
+
+/**
  * One Thread's conversation: its words, the composer under them, and what is live around both. It
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
  * doubt included, belongs to that one Thread and to nothing opened after it.
@@ -728,16 +803,11 @@ function Conversation({
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
-  const { whose, client } = useConversation(id)
   // The conversation is opened only once the Thread's first words are with Vivid. Before that
-  // there may be no Thread, and after it the stream's first look finds the message already
+  // there may be no Thread, and after it the conversation's first look finds the message already
   // there, as it did when a Thread was only opened once it had started.
   const settled = isSettled(first)
-  const agent = useFlueAgent(settled ? { client } : UNOPENED)
-  // A phone suspends the app when it is not in front, and the stream with it; a network that
-  // changes or a server that is replaced cuts it too. Coming back, or reaching the server again,
-  // catches the conversation up. The subscription lives exactly as long as this view does.
-  const wake = useMemo(() => onCatchUp(() => agent.refresh()), [agent])
+  const { reading, reopen, wake } = useFollowed(id, settled)
   // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
   // in the composer after leaving the Thread or closing the app.
   const place = threadPlace(me, id)
@@ -747,38 +817,38 @@ function Conversation({
   // Whether the conversation's list has been laid out, which is when the bar can speak for it.
   const [listed, setListed] = useState(false)
   const thread = Option.map(detail, (value) => value.thread)
-  const sending = useSend(id, thread, agent, place)
-  const { shared } = sending
+  const sending = useSend(id, place, { detail, reading })
+  const { shared, working, ready } = sending
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
   const { allowing, asking } = useWaiting(detail, me.person.id)
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
-  const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
-  const around = aroundOf(me.person.id, shared, detail)
-  const { said, ready, settled: finished } = drawn(agent, heardIn(whose, id))
-  const whole = agent.historyReady
-  const shown = withFirst(standInOf(id, first), { messages: said.filter(isShown), ready: whole })
+  const around = useAround(id, detail, shared)
+  const shown = withFirst(standInOf(id, first), {
+    messages: sending.said.filter(isShown),
+    ready: sending.live,
+  })
   // First words count as on their way from the send until the Thread's own two sources have both
   // spoken: after that, whether Vivid is working is theirs to say. Without the second half the
   // thinking would stop for the moment between the server taking the words and the Thread's
   // record arriving.
   // A conversation that could not be read has spoken too: it will not become ready, and the
   // trouble under it says why.
-  const read = agent.historyReady || agent.error !== undefined
+  const read = !LiveState.$is('Loading')(reading)
   const starting = isOnItsWay(first, read && Option.isSome(detail))
   // Thinking starts at the send; the composer's button waits for Vivid to have really started.
   const thinking = working || sending.pending || starting
   const page = pageOf(ready, shown.length, thinking)
-  // The stream keeps a message it could not send, under the id it showed it with, so the Thread
-  // can draw it as not sent instead of as said. Sending again clears the list. First words that
-  // did not arrive are drawn the same way, under their own key.
+  // The Thread's sending keeps a message that did not arrive under the id it showed it with, so
+  // the Thread can draw it as not sent instead of as said. First words that did not arrive are
+  // drawn the same way, under their own key.
   const lost = Option.filter(first, First.$is('Unsent'))
-  // The submissions Flue has settled, from the same reading as `said`; a reply's displays wait for
-  // its own (`Message`, `settled`).
-  const settledIds = new Set(finished)
-  const undelivered = new Set([...agent.failedSends.map((send) => send.id), ...lostKeys(id, lost)])
+  // The submissions the conversation has settled, from the same reading as what is said; a
+  // reply's displays wait for its own (`Message`, `settled`).
+  const settledIds = new Set(sending.settled)
+  const undelivered = new Set([...sending.undelivered, ...lostKeys(id, lost)])
 
   function type(next: string) {
     // Whether there is something typed is part of what the Thread's presence says; see
@@ -799,10 +869,11 @@ function Conversation({
   const trouble = troubleOf({
     lost,
     unsent: sending.unsent,
-    cut: useCut(agent),
+    cut: useCut(reading, !shared && Option.isSome(sending.unsent)),
+    words: isTooLong(reading) ? TOO_LONG : UNREACHED,
     onFirst: () => void start(again(firstWay(data), front.firsts, id)),
     onSay: (words) => void speak(words),
-    onOpen: () => agent.refresh(),
+    onOpen: reopen,
   })
 
   return (
@@ -867,16 +938,17 @@ function Conversation({
   )
 }
 
-/** The rows need the Person and sharing context beside the Runs from the Thread's live detail. */
-const aroundOf = (
-  me: Around['me'],
-  shared: boolean,
-  detail: Option.Option<ThreadDetail>,
-): Around => ({
-  me,
-  shared,
-  runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
-})
+/** What a Thread carries beside its messages, which attribution and pictures are read from. */
+function useAround(id: ThreadId, detail: Option.Option<ThreadDetail>, shared: boolean): Around {
+  const me = useMe()
+  const { session } = useLiveData()
+  return {
+    me: me.person.id,
+    shared,
+    runs: runsOf(detail),
+    hosted: { server: session.server, thread: id, asking: bearer(session.token) },
+  }
+}
 
 /**
  * The foot of a Thread: the composer, and over it what could not be done from it (an answer or
@@ -1053,9 +1125,6 @@ const placeholderOf = (asked: boolean, shared: boolean, vivid: string): string =
   return shared ? `Message everyone and ${vivid}` : `Message ${vivid}`
 }
 
-/** No conversation to open yet. One value, so the hook is not handed a new one each render. */
-const UNOPENED: UseFlueAgentOptions = {}
-
 /** Something that went wrong under the conversation: what to say, and the one thing to do. */
 interface Trouble {
   readonly message: string
@@ -1064,24 +1133,12 @@ interface Trouble {
 }
 
 /**
- * Whether Vivid is at work in a Thread: the conversation's stream says so on this phone, or the
- * Thread's record does, which is how work started anywhere else is known here.
- */
-const isWorking = (
-  status: ReturnType<typeof useFlueAgent>['status'],
-  thread: Option.Option<Thread>,
-): boolean =>
-  status === 'submitted' ||
-  status === 'streaming' ||
-  Option.exists(thread, (value) => value.attention === 'Working')
-
-/**
  * How the newest Run ended, when it ended without an answer; said once Vivid has stopped, where
  * the answer would have been. "Try again" says the Person's last words again, as a new message.
  */
 const endedOf = (
   working: boolean,
-  shown: ReadonlyArray<FlueConversationMessage>,
+  shown: ReadonlyArray<ConversationMessage>,
   around: Around,
   onSay: (words: string) => void,
 ): Option.Option<Ended> =>
@@ -1096,18 +1153,13 @@ const endedOf = (
   )
 
 /**
- * Whether the conversation's stream is broken in a way worth saying. A stream Flue is already
- * reopening is not said while the app's own socket still reaches the server (`streamSaid`).
+ * Whether the conversation is out of reach in a way worth saying. A link that is already being
+ * opened again is not said while the app's own socket still reaches the server (`streamSaid`).
+ * `unsent` is that words drawn in the conversation did not arrive (`readingOf`).
  */
-const useCut = (
-  agent: Pick<ReturnType<typeof useFlueAgent>, 'status' | 'error' | 'settlements'>,
-) => {
+const useCut = (conversation: LiveState<Following>, unsent: boolean) => {
   const link = useAtomValue(useLiveData().link)
-  const reading = readingOf({
-    status: agent.status,
-    broken: agent.error !== undefined,
-    settledBadly: agent.settlements.slice(-1).some((settled) => settled.outcome === 'failed'),
-  })
+  const reading = readingOf(conversation, { unsent })
   const held = useMemo(() => lasting(reading === 'CatchingUp', QUIET_MS), [reading])
   const late = useSyncExternalStore(held.subscribe, held.read, held.read)
   return streamSaid(reading, { socketLost: link === 'lost', late })
@@ -1115,7 +1167,7 @@ const useCut = (
 
 /**
  * What a Person is told when the conversation cannot be followed. Flue's own sentence for it
- * names a stream and a number of milliseconds, and was on the screen until 13 October 2026.
+ * named a stream and a number of milliseconds, and was on the screen until 13 October 2026.
  */
 const UNREACHED = 'Vivid can’t be reached right now.'
 
@@ -1123,15 +1175,17 @@ const UNREACHED = 'Vivid can’t be reached right now.'
  * What went wrong at the foot of the conversation, and the one thing to do about it. First words
  * that did not arrive come first, since nothing else can be said until they have: their button
  * sends them again from where they stopped. Then a later message that did not arrive: its button
- * sends those words again, as the same delivery. Otherwise it is the conversation's own stream
- * that is cut, and its button opens it again; a stream Flue is already reopening says nothing. Sending is felt, from here as from the composer's
- * own button.
+ * sends those words again, as the same delivery. Otherwise it is the conversation's own link
+ * that is cut, and its button opens it again; a link that is already being opened again says
+ * nothing. Sending is felt, from here as from the composer's own button.
  */
 const troubleOf = (at: {
   readonly lost: Option.Option<Extract<First, { readonly _tag: 'Unsent' }>>
   readonly unsent: Option.Option<Unsent>
-  /** The conversation's stream is broken in a way worth saying (`useCut`). */
+  /** The conversation is out of reach in a way worth saying (`useCut`). */
   readonly cut: boolean
+  /** What is said when it is: that Vivid cannot be reached, or that the Thread is too long. */
+  readonly words: string
   readonly onFirst: () => void
   readonly onSay: (words: string) => void
   readonly onOpen: () => void
@@ -1154,7 +1208,7 @@ const troubleOf = (at: {
       },
     })),
     at.cut
-      ? Option.some<Trouble>({ message: UNREACHED, action: 'Try again', onAct: at.onOpen })
+      ? Option.some<Trouble>({ message: at.words, action: 'Try again', onAct: at.onOpen })
       : Option.none(),
   ])
 
@@ -1169,7 +1223,7 @@ interface Ended {
 }
 
 interface MessagesProps {
-  readonly messages: ReadonlyArray<FlueConversationMessage>
+  readonly messages: ReadonlyArray<ConversationMessage>
   readonly page: Page
   readonly working: boolean
   /** Vivid is at work or about to be: from the send, before the Thread's record says so. */
@@ -1189,7 +1243,7 @@ interface MessagesProps {
   readonly detail: Option.Option<ThreadDetail>
   /** The ids of the messages written here that did not arrive. */
   readonly unsent: ReadonlySet<string>
-  /** The submissions Flue has settled. */
+  /** The submissions the conversation has settled. */
   readonly settled: ReadonlySet<string>
   /**
    * How far the banner over the composer (a question's choices, an Approval) stands over the
@@ -1203,47 +1257,6 @@ interface MessagesProps {
    */
   readonly foot: number
   readonly onContinue: Say
-}
-
-/**
- * A Thread's conversation client, the same one for as long as the Thread and the session are.
- * Its reading is also kept on the phone (`data/hearing.ts`), which is what the next opening of
- * this Thread is drawn from.
- */
-function useConversation(id: ThreadId) {
-  const { session } = useLiveData()
-  // Whose words these are, for what the phone keeps of them (`data/heard.ts`).
-  const whose: Whose = { origin: session.server, person: useMe().person.id }
-  const { origin, person } = whose
-  const client = useMemo(
-    () => heardThrough({ origin, person }, id, conversation(session, id)),
-    [origin, person, session, id],
-  )
-  return { whose, client }
-}
-
-/**
- * What a Thread is drawn from. Until its conversation has been read, that is what this phone last
- * heard in it (`data/hearing.ts`): its words are on the first frame, and the reading takes their
- * place when it arrives. It used to be drawn as its outline for that round trip, on every opening.
- * The submissions that had ended (`settled`) come from the same reading as the words, so a kept
- * reply whose submission had ended is drawn as ended, and its displays do not wait again.
- *
- * `ready` here is only that there is something to draw. Whether the Thread's first words are
- * already in the conversation (`withFirst`) is known once it has been read whole: what the phone
- * kept is its newest messages and may not reach back to them.
- */
-const drawn = (agent: ReturnType<typeof useFlueAgent>, heard: Option.Option<Kept>) => {
-  const settled = agent.settlements.map((settlement) => settlement.submissionId)
-  if (agent.historyReady) return { said: agent.messages, settled, ready: true }
-  // Kept messages that are all hidden ones would draw as an empty Thread, which this one is not.
-  return Option.match(
-    Option.filter(heard, (kept) => kept.messages.some(isShown)),
-    {
-      onNone: () => ({ said: agent.messages, settled, ready: false }),
-      onSome: (kept) => ({ said: kept.messages, settled: kept.settled, ready: true }),
-    },
-  )
 }
 
 /**
@@ -1534,7 +1547,7 @@ const saidRoom = (thinking: boolean, foot: number) => ({
  * of the Integration it works through (the account named by the step, found among the Person's
  * live connections), or "Thinking" and Vivid's orb while it is on no step.
  */
-function useDoing(messages: ReadonlyArray<FlueConversationMessage>, working: boolean) {
+function useDoing(messages: ReadonlyArray<ConversationMessage>, working: boolean) {
   const data = useLiveData()
   const connections = useLiveValue(data.live.connections)
   const doing = doingOf(messages, working)
@@ -1553,13 +1566,13 @@ function useDoing(messages: ReadonlyArray<FlueConversationMessage>, working: boo
 
 /** Whether the list draws a row for the message `key` (`Rows` draws none for a silent one). */
 const drawsRow = (
-  messages: ReadonlyArray<FlueConversationMessage>,
+  messages: ReadonlyArray<ConversationMessage>,
   around: Around,
   key: string,
 ): boolean => messages.some((message) => message.id === key && !silent(message, around))
 
 /** A message that is not drawn, as an answer or an Approval's outcome, told by its card. */
-const silent = (message: FlueConversationMessage, around: Around): boolean =>
+const silent = (message: ConversationMessage, around: Around): boolean =>
   Speaker.$is('Silent')(speakerOf(message, around))
 
 /**
@@ -1569,10 +1582,7 @@ const silent = (message: FlueConversationMessage, around: Around): boolean =>
  * time after the list has moved, so moving it (`moved`) is when everything in it stops being new:
  * a message scrolled back to does not arrive again.
  */
-function useKnown(
-  messages: ReadonlyArray<FlueConversationMessage>,
-  rising: MessagesProps['rising'],
-) {
+function useKnown(messages: ReadonlyArray<ConversationMessage>, rising: MessagesProps['rising']) {
   const [known, setKnown] = useState<ReadonlySet<string>>(() => {
     const now = Date.now()
     const risen = (key: string) =>
@@ -1713,7 +1723,7 @@ function Rows({
   onRow,
 }: {
   thread: ThreadId
-  messages: ReadonlyArray<FlueConversationMessage>
+  messages: ReadonlyArray<ConversationMessage>
   lines: ReadonlyArray<model.Line>
   /** The messages that are not new here (`Transcript`). */
   known: ReadonlySet<string>
@@ -1721,7 +1731,7 @@ function Rows({
   detail: Option.Option<ThreadDetail>
   working: boolean
   unsent: ReadonlySet<string>
-  /** The submissions Flue has settled. */
+  /** The submissions the conversation has settled. */
   settled: ReadonlySet<string>
   onContinue: Say
   /** Where each row is laid out, for where the Person is reading (`useReadingPlace`). */

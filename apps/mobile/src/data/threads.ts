@@ -1,35 +1,24 @@
-import { createFlueClient, type FlueClient } from '@flue/sdk'
-import { regenerateThreadTitle } from '@vivid/client-runtime'
+import { regenerateThreadTitle, VividRpcClient } from '@vivid/client-runtime'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Redacted, Result, Schema } from 'effect'
+import { Data, Effect, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { draft } from './drafts'
 import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
-import { threadAddress } from './server'
-import type { SignedIn } from './session'
-import { streamingFetch } from './transport'
 
 /**
  * Starting, speaking in and changing Threads.
  *
- * A Thread has two sides. Its record (title, audience, attention) is a product call on the live
- * socket. Its conversation is Flue's stream, reached only through the server's gateway at
- * `/api/vivid/<thread>`, which is what knows who is speaking; there is no other way to it.
+ * A Thread has two sides, both on the live socket. Its record (title, audience, attention) is
+ * one live query, and its conversation another (`live.conversation`, `data/live.ts`). What is
+ * said in it goes to the server as a delivery (`SendToThread`), and the server, which knows who
+ * is speaking, hands it to the runtime that holds the Thread.
  */
 
 /** The title a Thread has until its first message names it; `openThread` on the web sets it. */
 export const UNTITLED = 'New thread'
-
-/** A Thread's conversation, opened as the signed-in Person. */
-export const conversation = (session: SignedIn, id: ThreadId): FlueClient =>
-  createFlueClient({
-    url: threadAddress(session.server, id),
-    token: Redacted.value(session.token),
-    fetch: streamingFetch,
-  })
 
 /** A message was handed to the app and the server did not take it. */
 export class Undelivered extends Schema.TaggedError<Undelivered>()(
@@ -43,13 +32,15 @@ export const UNDELIVERED =
   'That message did not reach Vivid. Check your connection and send it again.'
 
 /**
- * Delivers one message into a Thread, described and not yet started. The gateway turns it into an
+ * Delivers one message into a Thread, described and not yet started. The server turns it into an
  * attributed message when the Thread is shared, so the same call serves a private Thread and a
- * shared one. It answers as soon as the server has admitted the message, not when Vivid has
+ * shared one. It answers as soon as the runtime has admitted the message, not when Vivid has
  * replied.
  *
  * `key` names the delivery: sending again with the same key after a lost answer converges on the
- * first delivery instead of saying the same thing twice.
+ * first delivery instead of saying the same thing twice. A Thread's composer sends through the
+ * Thread's machine instead (`data/sending.ts`); this is for first words, which are said before
+ * there is a Thread to keep a machine for.
  */
 export const say = (
   data: LiveData,
@@ -60,17 +51,18 @@ export const say = (
     readonly pictures: Delivery['pictures']
   },
 ) =>
-  data.running(
-    Effect.tryPromise({
-      try: (signal) =>
-        conversation(data.session, delivery.id).send({
-          message: { kind: 'user', body: delivery.body, attachments: [...delivery.pictures] },
-          idempotencyKey: delivery.key,
-          signal,
+  data
+    .running(
+      VividRpcClient.use((client) =>
+        client.SendToThread({
+          threadId: delivery.id,
+          text: delivery.body,
+          pictures: delivery.pictures,
+          key: delivery.key,
         }),
-      catch: () => new Undelivered({ message: UNDELIVERED }),
-    }),
-  )
+      ),
+    )
+    .pipe(Effect.map(Result.mapError((): Undelivered => new Undelivered({ message: UNDELIVERED }))))
 
 /**
  * How far starting a Thread got.

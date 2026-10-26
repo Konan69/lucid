@@ -1,5 +1,4 @@
-import type { FlueConversationMessage } from '@flue/sdk'
-import type { ProjectId, ThreadId } from '@vivid/contracts'
+import type { ConversationMessage, ProjectId, ThreadId } from '@vivid/contracts'
 import { Data, Effect, Option } from 'effect'
 import type { Delivery } from './delivery'
 
@@ -21,8 +20,8 @@ import type { Delivery } from './delivery'
  *   nothing asks the server about it until its first words are with Vivid (`First.Said`): a query
  *   for a Thread that is not there ends for good (`data/live.ts`).
  * - The conversation names a Person's message itself, so the echo has another id. The first words
- *   keep the key they were drawn under (`withFirst`, `@vivid/state`), which is what Flue's own hook does for the
- *   messages it sends (`converge`, `@flue/react`).
+ *   keep the key they were drawn under (`withFirst`, `@vivid/state`), which is what a Thread's own
+ *   sending does for the messages it sends (`drawing`, `@vivid/state` `sending.ts`).
  */
 
 /**
@@ -188,7 +187,7 @@ export const isOnItsWay = (first: Option.Option<First>, spoken: boolean): boolea
 export const standInOf = (
   id: ThreadId,
   first: Option.Option<First>,
-): Option.Option<FlueConversationMessage> =>
+): Option.Option<ConversationMessage> =>
   Option.map(first, ({ start }) => ({
     id: firstKey(id),
     role: 'user',
