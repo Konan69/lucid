@@ -149,8 +149,8 @@ const FLOOR_DB = -60
 const FLOOR = 10 ** (FLOOR_DB / 20)
 
 /** The recorder's decibels as a level from 0 to 1 (T3's `normalizeVoiceInputDecibels`). */
-const levelOf = (decibels: number | undefined): number => {
-  if (decibels === undefined || !Number.isFinite(decibels) || decibels <= FLOOR_DB) return 0
+const levelOf = (decibels: number): number => {
+  if (!Number.isFinite(decibels) || decibels <= FLOOR_DB) return 0
   if (decibels >= 0) return 1
   return Math.sqrt((10 ** (decibels / 20) - FLOOR) / (1 - FLOOR))
 }
@@ -184,7 +184,12 @@ const followSeconds = (reader: () => void) => {
 const sample = () => {
   const now = recorder().getStatus()
   if (!now.isRecording) return
-  levels.value = [...levels.value.slice(1), levelOf(now.metering)]
+  // No metering in a reading is silence for that sample.
+  const level = Option.match(Option.fromUndefinedOr(now.metering), {
+    onNone: () => 0,
+    onSome: levelOf,
+  })
+  levels.value = [...levels.value.slice(1), level]
   setSeconds(
     Math.min(dictating.LONGEST_SECONDS, Math.max(0, Math.floor(now.durationMillis / 1000))),
   )

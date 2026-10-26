@@ -230,9 +230,8 @@ export function Composer({
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', padding: EDGE_ROOM }}>
             {!speaking && <Attach attachments={attachments} />}
             <View
-              pointerEvents={speaking ? 'none' : 'auto'}
               style={{
-                opacity: speaking ? 0 : 1,
+                ...(speaking ? UNDER : OVER),
                 flex: 1,
                 minWidth: 0,
                 paddingLeft: Option.match(attachments, { onNone: () => 16, onSome: () => 4 }),
@@ -261,19 +260,8 @@ export function Composer({
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
             </View>
-            {speaking && Option.isSome(dictation) && (
-              <View
-                style={{
-                  position: 'absolute',
-                  left: EDGE_ROOM,
-                  right: EDGE_ROOM,
-                  bottom: EDGE_ROOM,
-                }}
-              >
-                <DictationBar dictation={dictation.value} />
-              </View>
-            )}
-            {!speaking && <MicButton dictation={dictation} />}
+            <Overlay dictation={dictation} />
+            <MicButton dictation={dictation} />
             {!speaking && (
               <Trailing
                 moving={moving}
@@ -288,6 +276,20 @@ export function Composer({
           </View>
         </View>
       </View>
+    </View>
+  )
+}
+
+/** The words while dictating: kept in place underneath, out of sight and out of reach. */
+const UNDER = { opacity: 0, pointerEvents: 'none' } as const
+const OVER = { opacity: 1, pointerEvents: 'auto' } as const
+
+/** The dictation row laid over the composer's own while it listens (`DictationBar`). */
+function Overlay({ dictation }: { dictation: Option.Option<Dictating> }) {
+  if (!isDictating(dictation) || Option.isNone(dictation)) return null
+  return (
+    <View style={{ position: 'absolute', left: EDGE_ROOM, right: EDGE_ROOM, bottom: EDGE_ROOM }}>
+      <DictationBar dictation={dictation.value} />
     </View>
   )
 }
