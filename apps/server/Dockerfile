@@ -48,7 +48,9 @@ RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm --filter @vivid/web build
 FROM build AS updates
 ENV CI=1
 ENV EXPO_NO_TELEMETRY=1
-RUN pnpm install --frozen-lockfile --filter @vivid/mobile...
+# `--ignore-scripts`: an export needs only JavaScript, and the Markdown renderer's install step
+# downloads its syntax grammars and maths renderer (about 170 MB) for native builds alone.
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @vivid/mobile...
 COPY apps/mobile apps/mobile
 COPY scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 RUN pnpm --filter @vivid/mobile run updates /app/apps/mobile/updates

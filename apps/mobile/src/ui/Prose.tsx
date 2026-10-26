@@ -89,9 +89,9 @@ export function Prose({
   fresh: boolean
   onLink: (address: string) => void
 }) {
-  const { colors } = useTheme()
+  const { colors, dark } = useTheme()
   // One object per palette: the renderer sends a style to the native view when it is a new one.
-  const style = useMemo(() => typeset(colors, MOBILE_TYPOGRAPHY), [colors])
+  const style = useMemo(() => typeset(colors, dark, MOBILE_TYPOGRAPHY), [colors, dark])
   if (!formats()) return <Plain text={plain} />
   return (
     <Recover from={text} fallback={<Plain text={plain} />}>

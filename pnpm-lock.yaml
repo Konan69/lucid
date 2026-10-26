@@ -691,8 +691,8 @@ importers:
         specifier: 'catalog:'
         version: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
       react-native-enriched-markdown:
-        specifier: file:deps/react-native-enriched-markdown-1.2.0-t3.11.tgz
-        version: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+        specifier: file:deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz
+        version: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       react-native-gesture-handler:
         specifier: 'catalog:'
         version: 2.32.0(patch_hash=808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3)(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -9397,9 +9397,9 @@ packages:
       '@types/react': '>=18'
       react: '>=18'
 
-  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz:
-    resolution: {integrity: sha512-flSZglM98BMtQHffAu1HVq8Y295sff1aT9vMdUZMnSj/3QojV21DSlSITNNhPAArIsAr1rdUrLhipggO8TvfIg==, tarball: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz}
-    version: 1.2.0-t3.11
+  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz:
+    resolution: {integrity: sha512-Dl8Raid4175mHijMpsIRLB3yXBZ1s04YxaQoIdHwy64KPHBVdt26x2OYRhYyjMM3VEo4U24AAYNXUh271zYDQw==, tarball: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz}
+    version: 1.2.0-t3.16
     peerDependencies:
       katex: '>=0.16.0'
       react: '*'
@@ -20164,7 +20164,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
     dependencies:
       react: 19.2.3
       react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)

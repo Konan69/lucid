@@ -1,17 +1,9 @@
 import { Option } from 'effect'
 import { useState, type ReactNode, type Ref } from 'react'
-import { ActivityIndicator, Platform, Text, View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { attaching, dictating } from '@vivid/state'
-import {
-  ArrowUp,
-  Check,
-  ChevronLeft,
-  Mic as Microphone,
-  Plus,
-  Square,
-  X,
-} from 'lucide-react-native'
+import { attaching } from '@vivid/state'
+import { ArrowUp, ChevronLeft, Plus, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
 import { useFontFamily } from '../data/font'
 import { useKeyboardShowing } from '../data/keyboard'
@@ -22,6 +14,8 @@ import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
 import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
+import { DictationBar, isDictating, MicButton, type Dictating } from './Dictation'
+import { Glyph } from './Glyph'
 import { Tray } from './Tray'
 import { Label, Press, styles, TARGET } from './ui'
 
@@ -181,6 +175,8 @@ export function Composer({
   // editor reports what its text needs and nothing is measured there.
   const needed = Platform.OS === 'ios' ? measured : reported
   const empty = value.trim().length === 0
+  // While dictating, the row is the recording's: the words stay underneath, out of reach.
+  const speaking = isDictating(dictation)
   // With words written, the button sends them, while Vivid is working too: they join the answer
   // in progress at its next step (Flue's durability contract: a message that arrives while a
   // response is running joins it at a turn boundary, or waits its turn and is never lost). With
@@ -227,15 +223,15 @@ export function Composer({
           ]}
         >
           <GlassMaterial style={GLASS_FILL} />
-          <Refusal dictation={dictation} />
           <Files attachments={attachments} />
           {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
-          <View
-            style={{ flexDirection: 'row', alignItems: 'flex-end', paddingVertical: EDGE_ROOM }}
-          >
-            <Attach attachments={attachments} />
+          {/* `EDGE_ROOM` on every side puts the centre of the round controls at each end on the
+              centre of the composer's corner, so they sit in its curve. */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', padding: EDGE_ROOM }}>
+            {!speaking && <Attach attachments={attachments} />}
             <View
               style={{
+                ...(speaking ? UNDER : OVER),
                 flex: 1,
                 minWidth: 0,
                 paddingLeft: Option.match(attachments, { onNone: () => 16, onSome: () => 4 }),
@@ -264,19 +260,36 @@ export function Composer({
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
             </View>
-            <Mic dictation={dictation} />
-            <Trailing
-              moving={moving}
-              empty={empty}
-              sends={sends}
-              onSend={act}
-              onStop={working && asked !== undefined ? Option.some(onStop) : Option.none()}
-            >
-              <Act working={working} stops={stops} idle={idle} onPress={act} />
-            </Trailing>
+            <Overlay dictation={dictation} />
+            <MicButton dictation={dictation} />
+            {!speaking && (
+              <Trailing
+                moving={moving}
+                empty={empty}
+                sends={sends}
+                onSend={act}
+                onStop={working && asked !== undefined ? Option.some(onStop) : Option.none()}
+              >
+                <Act working={working} stops={stops} idle={idle} onPress={act} />
+              </Trailing>
+            )}
           </View>
         </View>
       </View>
+    </View>
+  )
+}
+
+/** The words while dictating: kept in place underneath, out of sight and out of reach. */
+const UNDER = { opacity: 0, pointerEvents: 'none' } as const
+const OVER = { opacity: 1, pointerEvents: 'auto' } as const
+
+/** The dictation row laid over the composer's own while it listens (`DictationBar`). */
+function Overlay({ dictation }: { dictation: Option.Option<Dictating> }) {
+  if (!isDictating(dictation) || Option.isNone(dictation)) return null
+  return (
+    <View style={{ position: 'absolute', left: EDGE_ROOM, right: EDGE_ROOM, bottom: EDGE_ROOM }}>
+      <DictationBar dictation={dictation.value} />
     </View>
   )
 }
@@ -303,9 +316,9 @@ export interface Attachments {
 }
 
 /**
- * The attach button at the composer's leading end, the mirror of the send button at its trailing
- * end: the same round size and the same well, so the two ends read as a pair. It opens the system's
- * picker (photos from Files, PDFs, text); while the picker is up it is dimmed and not pressable.
+ * The attach button at the composer's leading end: a bare glyph, as the microphone is, with no
+ * well behind it (the developer, 26 October 2026: "no circle"). It opens the Add sheet; while a
+ * picker is up it is dimmed and not pressable.
  */
 function Attach({ attachments }: { attachments: Option.Option<Attachments> }) {
   const { colors: c } = useTheme()
@@ -323,155 +336,14 @@ function Attach({ attachments }: { attachments: Option.Option<Attachments> }) {
           onAttach()
         }}
         style={({ pressed }) => ({
-          width: ROUND,
-          height: ROUND,
-          borderRadius: ROUND / 2,
+          width: TARGET,
+          height: TARGET,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: pressed ? c['row-hover'] : c['surface-well'],
-          opacity: tray.choosing ? 0.5 : 1,
+          opacity: tray.choosing ? 0.5 : pressed ? 0.7 : 1,
         })}
       >
-        <Plus size={17} strokeWidth={2.1} color={c.foreground} />
-      </Press>
-    </View>
-  )
-}
-
-/** What a composer that takes speech is given: how dictation stands for it, and the two moves. */
-export interface Dictating {
-  readonly reading: dictating.Reading
-  /** Starts listening, or ends it and writes what was said. */
-  readonly onTap: () => void
-  /** Throws away what is being said. */
-  readonly onDrop: () => void
-}
-
-/**
- * The microphone, beside the send button and the same round size, as T3 Code mobile's dictation
- * control (`ComposerDictationControl.tsx`): tap to talk, tap again to have it written. While it
- * listens it fills with the accent and shows a tick, and a small cross beside it throws the
- * recording away; while the words are being made it holds a spinner. It is not drawn while
- * another Thread's composer has the microphone.
- */
-function Mic({ dictation }: { dictation: Option.Option<Dictating> }) {
-  const { colors: c } = useTheme()
-  if (Option.isNone(dictation)) return null
-  const { reading, onTap, onDrop } = dictation.value
-  const look = dictating.Reading.match(reading, {
-    Ready: () => Option.some({ live: false, busy: false, label: 'Dictate' }),
-    Refused: () => Option.some({ live: false, busy: false, label: 'Dictate' }),
-    Starting: () => Option.some({ live: false, busy: true, label: 'Stop listening' }),
-    Listening: () => Option.some({ live: true, busy: false, label: 'Done talking' }),
-    Writing: () => Option.some({ live: false, busy: true, label: 'Writing what you said' }),
-    Elsewhere: () => Option.none(),
-  })
-  if (Option.isNone(look)) return null
-  const { live, busy, label } = look.value
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', height: TARGET }}>
-      {live && (
-        <Press
-          accessibilityRole="button"
-          accessibilityLabel="Throw away the recording"
-          hitSlop={8}
-          onPress={onDrop}
-          style={({ pressed }) => ({
-            width: 28,
-            height: 28,
-            marginRight: 4,
-            borderRadius: 14,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: pressed ? c['row-hover'] : 'transparent',
-          })}
-        >
-          <X size={15} strokeWidth={2.2} color={c['ink-2']} />
-        </Press>
-      )}
-      <View
-        style={{ width: TARGET, height: TARGET, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <Press
-          accessibilityRole="button"
-          accessibilityLabel={label}
-          accessibilityState={{ disabled: busy && !dictating.Reading.guards.Starting(reading) }}
-          disabled={dictating.Reading.guards.Writing(reading)}
-          onPress={() => {
-            commit()
-            onTap()
-          }}
-          style={({ pressed }) => ({
-            width: ROUND,
-            height: ROUND,
-            borderRadius: ROUND / 2,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: live ? c.primary : pressed ? c['row-hover'] : c['surface-well'],
-          })}
-        >
-          {busy ? (
-            <ActivityIndicator size="small" color={c.foreground} />
-          ) : live ? (
-            <Check size={17} strokeWidth={2.4} color={c['primary-foreground']} />
-          ) : (
-            <Microphone size={17} strokeWidth={2.1} color={c.foreground} />
-          )}
-        </Press>
-      </View>
-    </View>
-  )
-}
-
-/** What the composer says when dictation stopped short, in the Person's words. */
-const refusalOf = (why: dictating.Why): string =>
-  dictating.Why.match(why, {
-    Unavailable: () => 'This phone cannot write down speech in its language.',
-    NoMicrophone: ({ settings }) =>
-      settings
-        ? 'The microphone is off for Vivid. Turn it on in Settings.'
-        : 'Vivid needs the microphone to hear you.',
-    Unprepared: () => 'The microphone could not start. Try again.',
-    Interrupted: () => 'The recording was cut off. Try again.',
-    Unheard: () => 'Nothing was heard. Try again.',
-    Untranscribed: () => 'What you said could not be written down. Try again.',
-  })
-
-/** Why dictation stopped short, over the editor, with a cross to put it away. */
-function Refusal({ dictation }: { dictation: Option.Option<Dictating> }) {
-  const { colors: c } = useTheme()
-  if (Option.isNone(dictation) || !dictating.Reading.guards.Refused(dictation.value.reading))
-    return null
-  const { reading, onDrop } = dictation.value
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingLeft: 16,
-        paddingRight: 6,
-        paddingTop: 10,
-      }}
-    >
-      <Label size="footnote" tone="ink-2" style={{ flex: 1 }}>
-        {refusalOf(reading.why)}
-      </Label>
-      <Press
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-        hitSlop={8}
-        onPress={onDrop}
-        style={({ pressed }) => ({
-          width: 28,
-          height: 28,
-          borderRadius: 14,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: pressed ? c['row-hover'] : 'transparent',
-        })}
-      >
-        <X size={14} strokeWidth={2.2} color={c['ink-2']} />
+        <Glyph name="plus" fallback={Plus} size={22} color={c.foreground} />
       </Press>
     </View>
   )

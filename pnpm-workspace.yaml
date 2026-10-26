@@ -167,10 +167,9 @@ allowBuilds:
   # ssh2 runs on its JavaScript ciphers; its optional native accelerators are not built.
   cpu-features: false
   ssh2: false
-  # Its install step only downloads what the phone app has switched off in its manifest
-  # (`enriched-markdown` in apps/mobile/package.json: syntax grammars and the maths renderer), so
-  # there is nothing for it to do.
-  'react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz': false
+  # Its install step downloads the syntax grammars and the maths renderer the phone app turns on in
+  # its manifest (`enriched-markdown` in apps/mobile/package.json), as T3 Code mobile allows it.
+  'react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz': true
 
 patchedDependencies:
   '@flue/runtime@2.2.2': patches/@flue__runtime@2.2.2.patch
