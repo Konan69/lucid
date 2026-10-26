@@ -47,6 +47,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { clearTray, pastePictures, removeFile, useTray } from '../data/attach'
+import { useMicrophone } from '../data/dictation'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
 import { readingPlace, type Anchor } from '../data/reading'
@@ -850,6 +851,7 @@ function Conversation({
           undecided={allowing.refused}
           stopping={stopping}
           thread={id}
+          place={place}
           onType={type}
           onSpeak={sayWith}
           onDock={onDock}
@@ -894,6 +896,7 @@ const aroundOf = (
  */
 function Foot({
   thread,
+  place,
   typed,
   writing,
   shared,
@@ -907,6 +910,8 @@ function Foot({
   onDock,
 }: {
   thread: ThreadId
+  /** Where this Thread's draft is kept, which is also whose dictation this composer shows. */
+  place: string
   typed: string
   writing: boolean
   shared: boolean
@@ -931,6 +936,7 @@ function Foot({
   const data = useLiveData()
   const go = useGo()
   const tray = useTray(thread)
+  const microphone = useMicrophone(place)
   /**
    * Sends what was typed, as what it means now (`replyOf`). Nearly always that is an ordinary
    * message. For a question that offers no options it is that question's answer: the words
@@ -1017,6 +1023,7 @@ function Foot({
             onRemove: (key: string) => removeFile(data, thread, shared, key),
             onPaste: (uris: ReadonlyArray<string>) => pastePictures(data, thread, shared, uris),
           })}
+          dictation={microphone}
         />
       </View>
     </>

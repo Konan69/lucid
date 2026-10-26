@@ -6,6 +6,7 @@ import { randomUUID } from 'expo-crypto'
 import { useCallback, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
+import { useMicrophone } from '../data/dictation'
 import { draft, useDraft } from '../data/drafts'
 import { again, begin, startedWith } from '../data/first'
 import { Front } from '../data/front'
@@ -152,6 +153,7 @@ function Writing({ me, mood, starting, placeholder }: WritingProps) {
           disabled={false}
           // A new Thread's first words carry no files: the tray belongs to a Thread.
           attachments={Option.none()}
+          dictation={starting.microphone}
           onChange={starting.setDraft}
           onSend={starting.send}
           onStop={() => undefined}
@@ -189,6 +191,8 @@ export function useStart() {
     thread: Option.none(),
   })
   const typed = useDraft(place)
+  // The microphone writes into this same draft.
+  const microphone = useMicrophone(place)
   const scoped = useScope()
   const setDraft = (text: string) => draft.keep(place, text)
 
@@ -220,5 +224,5 @@ export function useStart() {
     front.open(id, Keyboard.isVisible())
   }
 
-  return { draft: typed, setDraft, send }
+  return { draft: typed, setDraft, send, microphone }
 }
