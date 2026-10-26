@@ -6,7 +6,6 @@ import {
   Globe,
   LoaderCircle,
   Monitor,
-  MoreHorizontal,
   Plus,
   RotateCw,
   X,
@@ -23,16 +22,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '../../ui/contextmenu'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '../../ui/dropdownmenu'
 import { Face } from '../../ui/Face'
 import { floatingSurfaces, useSurfaces } from '../../ui/Layer'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /** The Person asks for Vivid's computer: it comes in front of the pages, and is turned on. */
 const toComputer = () => {
@@ -41,17 +32,40 @@ const toComputer = () => {
 }
 
 /**
- * One tab: 32 high, about 236 wide when there is room and shrinking to 90 before the strip
- * scrolls sideways. Selected tabs rise onto the surface with a hairline; the others are flat until
+ * One tab: 32 high. Selected tabs rise onto the surface with a hairline; the others are flat until
  * the pointer or keyboard reaches them.
  */
 const TAB =
-  'group/tab relative flex h-8 min-w-(--page-tab-min-w) max-w-(--page-tab-w) flex-1 basis-(--page-tab-w) items-center gap-2 rounded-row pr-1.5 pl-2.5 text-title transition-press duration-(--dur-fast)'
+  'group/tab relative flex h-8 flex-1 items-center gap-2 rounded-row pr-1.5 pl-2.5 text-title transition-press duration-(--dur-fast)'
 const SELECTED = 'bg-surface-3 text-ink edge'
 const RESTING = 'text-ink-3 hover:bg-wash-hover hover:text-ink focus-within:bg-wash-hover'
 
+/**
+ * How wide a tab is. Most are about 236 when there is room and shrink to 90 before the strip
+ * scrolls sideways. The page in front, and a page not opened yet, are 280 and keep 160: they carry
+ * the site beside the title, and the address field takes their place when it is asked for.
+ */
+const WIDTH = {
+  tab: 'min-w-(--page-tab-min-w) max-w-(--page-tab-w) basis-(--page-tab-w)',
+  front: 'min-w-(--page-tab-front-min-w) max-w-(--page-tab-front-w) basis-(--page-tab-front-w)',
+} as const
+
 /** What a page is called when its document has no title: where it is. */
 const nameOf = (page: Page) => (page.title.trim().length > 0 ? page.title : page.address)
+
+/**
+ * The site a page is on, as its address names it, less the "www." most sites also answer to. It is
+ * the host, not the registrable domain: telling one from the other needs the public suffix list,
+ * which this app does not carry, and the host is what the Person would type. An address with no
+ * host (a file, `about:blank`) has no site.
+ */
+const siteOf = (page: Page) =>
+  Option.filter(
+    Option.map(Option.fromNullOr(URL.parse(page.address)), (url) =>
+      url.hostname.replace(/^www\./u, ''),
+    ),
+    (host) => host.length > 0,
+  )
 
 /** The tab an arrow, Home or End key goes to, wrapping at either end. */
 function neighbour(key: string, at: number, last: number) {
@@ -75,13 +89,16 @@ function neighbour(key: string, at: number, last: number) {
 function steer(event: KeyboardEvent<HTMLDivElement>) {
   // Only a key pressed in the strip itself. A tab's menu is drawn at the end of the document,
   // but React carries its keys up to the strip, and Home and End there move within the menu.
+  // The address field sits in the strip while it is open, and its arrows move its caret.
   if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return
+  if (event.target instanceof HTMLInputElement) return
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'))
   const at = tabs.findIndex((tab) => tab === document.activeElement)
   const next = tabs[neighbour(event.key, at, tabs.length - 1)]
-  if (next === undefined) return
+  // Home or End on the tab already there: pressing it again would open its address.
+  if (next === undefined || next === document.activeElement) return
   next.focus()
   next.click()
 }
@@ -115,6 +132,22 @@ export function PageTabs({
     setDragging(Option.none())
     setOver(Option.none())
   }
+  /** What every page tab is told, in front or not: itself, and where a drag over it would land. */
+  const placed = (page: Page, position: number) => ({
+    page,
+    dragging: Option.contains(dragging, page.tab),
+    landing:
+      Option.contains(over, page.tab) && from !== position
+        ? Option.some<Landing>(from < position ? 'after' : 'before')
+        : Option.none<Landing>(),
+    onDragStart: () => setDragging(Option.some(page.tab)),
+    onDragOver: () => setOver(Option.some(page.tab)),
+    onDrop: () => {
+      Option.map(dragging, (tab) => pages.reorder(tab, position))
+      stop()
+    },
+    onDragEnd: stop,
+  })
   return (
     <>
       <div
@@ -129,32 +162,33 @@ export function PageTabs({
           aria-controls="computer-surface"
           tabIndex={front === 'page' ? -1 : 0}
           onClick={toComputer}
-          className={cn(TAB, 'cursor-pointer', front === 'computer' ? SELECTED : RESTING)}
+          className={cn(
+            TAB,
+            WIDTH.tab,
+            'cursor-pointer',
+            front === 'computer' ? SELECTED : RESTING,
+          )}
         >
           <Monitor className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">Vivid’s computer</span>
           {running && <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />}
         </button>
-        {open.map((page, position) => (
-          <PageTab
-            key={page.tab}
-            page={page}
-            active={front === 'page' && Option.exists(showing, (shown) => shown.tab === page.tab)}
-            dragging={Option.contains(dragging, page.tab)}
-            landing={
-              Option.contains(over, page.tab) && from !== position
-                ? Option.some<Landing>(from < position ? 'after' : 'before')
-                : Option.none()
-            }
-            onDragStart={() => setDragging(Option.some(page.tab))}
-            onDragOver={() => setOver(Option.some(page.tab))}
-            onDrop={() => {
-              Option.map(dragging, (tab) => pages.reorder(tab, position))
-              stop()
-            }}
-            onDragEnd={stop}
-          />
-        ))}
+        {open.map((page, position) =>
+          // The tab in front is its own element (`Editable`), so an address open in it is put
+          // away the moment another page comes forward, whoever brought it.
+          front === 'page' && Option.exists(showing, (shown) => shown.tab === page.tab) ? (
+            <Editable key={page.tab} page={Option.some(page)}>
+              {(edit) => <PageTab {...placed(page, position)} active onPress={edit} />}
+            </Editable>
+          ) : (
+            <PageTab
+              key={page.tab}
+              {...placed(page, position)}
+              active={false}
+              onPress={() => pages.show(page.tab)}
+            />
+          ),
+        )}
         {front === 'new' && <NewTab />}
       </div>
       {pages.available && (
@@ -167,24 +201,82 @@ export function PageTabs({
 }
 
 /**
- * A page that has not been opened yet: an address still to be typed. It is drawn as the tab it
- * will become, so "new page" is a place the Person is in, and closing it goes back to the computer.
+ * ⌘L or Ctrl+L: the address of the page in front, the key every browser has trained people on. Not
+ * while an input method is composing, and not a key something else already used.
+ */
+const asksForAddress = (event: globalThis.KeyboardEvent) =>
+  (event.metaKey || event.ctrlKey) &&
+  !event.altKey &&
+  !event.shiftKey &&
+  !event.defaultPrevented &&
+  !event.isComposing &&
+  event.key.toLocaleLowerCase() === 'l'
+
+/**
+ * The tab in front, which turns into the address field in its own place when it is pressed or ⌘L
+ * is. The field has the tab's width, so nothing else in the bar moves. Going to an address, Escape,
+ * or leaving the field turns it back into the tab.
+ *
+ * The shortcut is heard on the window for as long as this tab is in front. A key pressed in the
+ * page itself is the page's: the desktop app draws the page as a view of its own, outside this
+ * document, and its keys do not reach it.
+ */
+function Editable({
+  page,
+  children,
+}: {
+  page: Option.Option<Page>
+  children: (edit: () => void) => React.ReactNode
+}) {
+  // A page not opened yet is nothing but its address, so it starts in the field.
+  const [editing, setEditing] = useState(Option.isNone(page))
+  const listen = useCallback((element: HTMLSpanElement | null) => {
+    if (element === null) return undefined
+    const press = (event: globalThis.KeyboardEvent) => {
+      if (!asksForAddress(event)) return
+      event.preventDefault()
+      setEditing(true)
+    }
+    addEventListener('keydown', press)
+    return () => removeEventListener('keydown', press)
+  }, [])
+  return (
+    // `contents`: the strip lays out the tab or the field inside, never this.
+    <span ref={listen} role="presentation" className="contents">
+      {editing ? (
+        <Address page={page} onDone={() => setEditing(false)} />
+      ) : (
+        children(() => setEditing(true))
+      )}
+    </span>
+  )
+}
+
+/**
+ * A page that has not been opened yet: an address still to be typed. It opens in the field, and
+ * once the field is left it is drawn as the tab it will become, so "new page" is a place the
+ * Person is in; pressing it opens the field again, and closing it goes back to the computer.
  */
 function NewTab() {
   return (
-    <span role="presentation" className={cn(TAB, SELECTED)}>
-      <button
-        role="tab"
-        aria-selected
-        aria-controls="computer-surface"
-        tabIndex={0}
-        className="flex min-w-0 flex-1 cursor-default items-center gap-2 text-left outline-none"
-      >
-        <Globe className="size-4 shrink-0 text-ink-3" />
-        <span className="truncate">New page</span>
-      </button>
-      <CloseTab label="Close new page" visible onClose={pages.toComputer} />
-    </span>
+    <Editable page={Option.none()}>
+      {(edit) => (
+        <span role="presentation" className={cn(TAB, WIDTH.front, SELECTED)}>
+          <button
+            role="tab"
+            aria-selected
+            aria-controls="computer-surface"
+            tabIndex={0}
+            onClick={edit}
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none"
+          >
+            <Globe className="size-4 shrink-0 text-ink-3" />
+            <span className="truncate">New page</span>
+          </button>
+          <CloseTab label="Close new page" visible onClose={pages.toComputer} />
+        </span>
+      )}
+    </Editable>
   )
 }
 
@@ -230,15 +322,34 @@ function PageIcon({ page }: { page: Page }) {
 }
 
 /**
+ * The site at the trailing end of the tab in front, quieter than the title and never more than two
+ * fifths of it. The title comes first: where the strip has squeezed the tab's label
+ * (`@container/label`) under 160 px, two cut-off words would say neither, so the site steps out and
+ * the title has the room. A page with no title is already called by its address, so it does not say
+ * the site twice.
+ */
+function Site({ page }: { page: Page }) {
+  const site = siteOf(page)
+  if (page.title.trim().length === 0 || Option.isNone(site)) return null
+  return (
+    <span className="hidden max-w-2/5 shrink-0 truncate text-label text-ink-3 @min-[10rem]/label:inline">
+      {site.value}
+    </span>
+  )
+}
+
+/**
  * One open page. Activation and closing are separate buttons, so the close target never switches
  * to the page first; a middle click closes, and a right click opens the page's actions. Dragging
- * reorders through the desktop app, which owns the order.
+ * reorders through the desktop app, which owns the order. Pressing a page brings it in front;
+ * pressing the one already in front opens its address (`onPress` says which).
  */
 function PageTab({
   page,
   active,
   dragging,
   landing,
+  onPress,
   onDragStart,
   onDragOver,
   onDrop,
@@ -248,6 +359,7 @@ function PageTab({
   active: boolean
   dragging: boolean
   landing: Option.Option<Landing>
+  onPress: () => void
   onDragStart: () => void
   onDragOver: () => void
   onDrop: () => void
@@ -263,7 +375,12 @@ function PageTab({
           <span
             role="presentation"
             draggable
-            className={cn(TAB, active ? SELECTED : RESTING, dragging && 'opacity-50')}
+            className={cn(
+              TAB,
+              active ? WIDTH.front : WIDTH.tab,
+              active ? SELECTED : RESTING,
+              dragging && 'opacity-50',
+            )}
             onDragStart={(event) => {
               event.dataTransfer.effectAllowed = 'move'
               onDragStart()
@@ -304,11 +421,12 @@ function PageTab({
           aria-controls="computer-surface"
           tabIndex={active ? 0 : -1}
           title={nameOf(page)}
-          onClick={() => pages.show(page.tab)}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none"
+          onClick={onPress}
+          className="@container/label flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none"
         >
           <PageIcon page={page} />
-          <span className="truncate">{nameOf(page)}</span>
+          <span className="min-w-0 flex-1 truncate">{nameOf(page)}</span>
+          {active && <Site page={page} />}
         </button>
         <CloseTab
           label={`Close ${nameOf(page)}`}
@@ -317,152 +435,115 @@ function PageTab({
         />
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <PageActions page={page} parts={IN_CONTEXT} />
+        <PageActions page={page} />
       </ContextMenuContent>
     </ContextMenu>
   )
 }
 
-/* The two menus a page's actions are drawn in. Each has its own item and separator, so the
-   actions are written once and told which pair to draw themselves with. */
-const IN_CONTEXT = { Item: ContextMenuItem, Separator: ContextMenuSeparator }
-const IN_DROPDOWN = { Item: DropdownMenuItem, Separator: DropdownMenuSeparator }
-
 /**
- * The actions a page has, in the menu a right click and the toolbar's overflow both open. They
- * exist only while a menu is open, so the order of the pages is read as it is at that moment.
- * The menu closes itself when one is chosen, so the page it acts on is in front of nothing.
+ * Everything a page can have done to it, in the menu its tab opens; going back, forward and
+ * reloading the page in front are also at the start of the bar. The actions exist only while the
+ * menu is open, so the order of the pages is read as it is at that moment. The menu closes itself
+ * when one is chosen, so the page it acts on is in front of nothing.
  */
-function PageActions({
-  page,
-  parts: { Item, Separator },
-}: {
-  page: Page
-  parts: typeof IN_CONTEXT | typeof IN_DROPDOWN
-}) {
+function PageActions({ page }: { page: Page }) {
   const open = pages.current().tabs
   const position = open.findIndex((candidate) => candidate.tab === page.tab)
   return (
     <>
-      <Item onClick={() => pages.reload(page.tab)}>Reload</Item>
-      <Item onClick={() => void navigator.clipboard.writeText(page.address)}>Copy address</Item>
-      <Item onClick={() => pages.duplicate(page.tab)}>Duplicate</Item>
-      <Separator />
-      {position > 0 && <Item onClick={() => pages.reorder(page.tab, position - 1)}>Move left</Item>}
-      {position < open.length - 1 && (
-        <Item onClick={() => pages.reorder(page.tab, position + 1)}>Move right</Item>
+      <ContextMenuItem onClick={() => pages.reload(page.tab)}>Reload</ContextMenuItem>
+      <ContextMenuItem onClick={() => void navigator.clipboard.writeText(page.address)}>
+        Copy address
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => pages.duplicate(page.tab)}>Duplicate</ContextMenuItem>
+      <ContextMenuSeparator />
+      {position > 0 && (
+        <ContextMenuItem onClick={() => pages.reorder(page.tab, position - 1)}>
+          Move left
+        </ContextMenuItem>
       )}
-      <Item onClick={() => pages.reopen()}>Reopen closed page</Item>
-      <Separator />
-      <Item onClick={() => pages.close(page.tab)}>Close</Item>
-      {open.length > 1 && <Item onClick={() => pages.closeOthers(page.tab)}>Close the others</Item>}
+      {position < open.length - 1 && (
+        <ContextMenuItem onClick={() => pages.reorder(page.tab, position + 1)}>
+          Move right
+        </ContextMenuItem>
+      )}
+      <ContextMenuItem onClick={() => pages.reopen()}>Reopen closed page</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => pages.close(page.tab)}>Close</ContextMenuItem>
+      {open.length > 1 && (
+        <ContextMenuItem onClick={() => pages.closeOthers(page.tab)}>
+          Close the others
+        </ContextMenuItem>
+      )}
     </>
   )
 }
 
-/** One of the three controls in the navigation pill: round, 28 across, so the pill is 32 high. */
-function NavButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    // Named in a tooltip, which the keyboard gets too; a native `title` is the pointer's alone.
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            aria-label={label}
-            disabled={disabled}
-            onClick={onClick}
-            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-full text-ink-2 transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:enabled:scale-96 disabled:cursor-not-allowed disabled:text-ink-4"
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
-}
+/** A control with nothing to do is only dim: it is not refused, so it does not say "not allowed". */
+const STILL = 'disabled:cursor-default'
 
 /**
- * The toolbar for a page: back, forward and reload in one pill, the address, and the page's
- * actions. A page-to-Thread action is not here because there is no such action yet.
+ * Back, forward and reload, at the start of the one bar and acting on the page in front. With the
+ * computer in front, or a page not opened yet, there is nothing to walk or load, so the three stay
+ * in their places, dim. Each is named in a tooltip, which the keyboard gets too. A hairline ends
+ * the group, so the page's controls do not read as the first tabs.
  */
-export function PageToolbar({ page }: { page: Option.Option<Page> }) {
+export function PageNav({ page }: { page: Option.Option<Page> }) {
   const loading = Option.exists(page, (shown) => shown.loading)
   return (
-    <>
-      <div className="flex h-8 w-(--page-nav-w) shrink-0 items-center justify-evenly rounded-full bg-surface-2 px-0.5">
-        <NavButton
-          label="Back"
-          disabled={!Option.exists(page, (shown) => shown.canGoBack)}
-          onClick={() => Option.map(page, (shown) => pages.back(shown.tab))}
-        >
-          <ArrowLeft className="size-4" />
-        </NavButton>
-        <NavButton
-          label="Forward"
-          disabled={!Option.exists(page, (shown) => shown.canGoForward)}
-          onClick={() => Option.map(page, (shown) => pages.forward(shown.tab))}
-        >
-          <ArrowRight className="size-4" />
-        </NavButton>
-        <span aria-hidden className="h-4 w-px shrink-0 bg-line-3" />
-        <NavButton
-          label={loading ? 'Stop loading' : 'Reload'}
-          disabled={Option.isNone(page)}
-          onClick={() =>
-            Option.map(page, (shown) =>
-              shown.loading ? pages.stop(shown.tab) : pages.reload(shown.tab),
-            )
-          }
-        >
-          {loading ? <X className="size-4" /> : <RotateCw className="size-4" />}
-        </NavButton>
-      </div>
-      <Address
-        // A navigation, or another page coming forward, starts the field again from that address.
-        key={Option.match(page, {
-          onNone: () => 'address',
-          onSome: (shown) => `${shown.tab}:${shown.address}`,
-        })}
-        page={page}
-      />
-      {Option.isSome(page) && (
-        // The menu is drawn at the end of the document, under the button: the page is a native
-        // view that would sit over a menu drawn inside the panel. While it is open the button
-        // holds its fill, which the menu's own `aria-expanded` on it draws.
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<IconButton label="Page actions" />}>
-            <MoreHorizontal className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <PageActions page={page.value} parts={IN_DROPDOWN} />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </>
+    <div role="group" aria-label="Page" className="flex shrink-0 items-center">
+      <IconButton
+        label="Back"
+        disabled={!Option.exists(page, (shown) => shown.canGoBack)}
+        onClick={() => Option.map(page, (shown) => pages.back(shown.tab))}
+        className={STILL}
+      >
+        <ArrowLeft className="size-4" />
+      </IconButton>
+      <IconButton
+        label="Forward"
+        disabled={!Option.exists(page, (shown) => shown.canGoForward)}
+        onClick={() => Option.map(page, (shown) => pages.forward(shown.tab))}
+        className={STILL}
+      >
+        <ArrowRight className="size-4" />
+      </IconButton>
+      <IconButton
+        label={loading ? 'Stop loading' : 'Reload'}
+        disabled={Option.isNone(page)}
+        onClick={() =>
+          Option.map(page, (shown) =>
+            shown.loading ? pages.stop(shown.tab) : pages.reload(shown.tab),
+          )
+        }
+        className={STILL}
+      >
+        {loading ? <X className="size-4" /> : <RotateCw className="size-4" />}
+      </IconButton>
+      <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-line-3" />
+    </div>
   )
 }
 
+/** Puts the caret in the address field as it appears, where the press or ⌘L asked for it. */
+const grab = (input: HTMLInputElement | null) => {
+  if (input !== null) input.focus()
+}
+
 /**
- * The address and search field. What is typed belongs to this field and to nothing else: a page
- * that is not open yet has no identity to hold a draft. Escape puts the page's own address back.
+ * The address and search field, in the place of the tab in front. What is typed belongs to this
+ * field and to nothing else: a page that is not open yet has no identity to hold a draft, and the
+ * field starts again from the page's own address each time it opens, so Escape (or leaving it)
+ * leaves the page as it was.
  */
-function Address({ page }: { page: Option.Option<Page> }) {
-  const here = Option.match(page, { onNone: () => '', onSome: (shown) => shown.address })
-  const [typed, setTyped] = useState(here)
+function Address({ page, onDone }: { page: Option.Option<Page>; onDone: () => void }) {
+  const [typed, setTyped] = useState(
+    Option.match(page, { onNone: () => '', onSome: (shown) => shown.address }),
+  )
   return (
     <form
-      className="min-w-0 flex-1"
+      className={cn('flex h-8 flex-1', WIDTH.front)}
       onSubmit={(event) => {
         event.preventDefault()
         const address = typed.trim()
@@ -471,24 +552,25 @@ function Address({ page }: { page: Option.Option<Page> }) {
           onNone: () => pages.open(address),
           onSome: (shown) => pages.go(shown.tab, address),
         })
+        onDone()
       }}
     >
+      {/* The tab's own shape and type in Vivid's field (a well, held by an edge that turns primary
+          with focus, as `ui/input.tsx` draws one), so the tab and the field are one place. */}
       <input
+        ref={grab}
         value={typed}
-        // oxlint-disable-next-line jsx-a11y/no-autofocus
-        autoFocus={Option.isNone(page)}
         onChange={(event) => setTyped(event.currentTarget.value)}
         onFocus={(event) => event.currentTarget.select()}
+        onBlur={onDone}
         onKeyDown={(event) => {
-          if (event.key !== 'Escape') return
-          setTyped(here)
-          event.currentTarget.blur()
+          if (event.key === 'Escape') event.currentTarget.blur()
         }}
         aria-label="Address"
         placeholder="Search or enter an address"
         spellCheck={false}
         autoComplete="off"
-        className="h-8 w-full truncate rounded-full bg-surface-2 px-4 text-center text-title text-ink transition-press duration-(--dur-fast) outline-none placeholder:text-ink-3 hover:bg-surface-3 focus:bg-surface-3 focus:text-left focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 w-full min-w-0 truncate rounded-row bg-well px-2.5 text-title text-ink edge outline-none edge-field placeholder:text-ink-3 focus-visible:edge-primary"
       />
     </form>
   )
@@ -577,8 +659,8 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
 }
 
 /**
- * A page not opened yet. It offers only what exists: Vivid's computer, and the address bar above.
- * Files, documents and suggested pages appear when there is something real behind them.
+ * A page not opened yet. It offers only what exists: Vivid's computer, and the address in the bar
+ * above. Files, documents and suggested pages appear when there is something real behind them.
  */
 function Launcher() {
   return (
