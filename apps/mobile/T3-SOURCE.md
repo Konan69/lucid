@@ -79,6 +79,4 @@ directory carrying the context:
 | `src/Stack.tsx` (header and sheet option sets)                                                    | `src/ui/stack.ts`                             |
 | `src/components/SegmentedControl.tsx`                                                             | `src/ui/ui.tsx` (`Segmented`)                 |
 | layout-transition timings (`SegmentedControl`, `ConnectionEnvironmentRow`, `AndroidAnchoredMenu`) | `src/ui/motion/morph.ts`                      |
-| `src/features/home/material-fab-scroll.ts`                                                        | `src/data/collapse.ts`                        |
-| `src/components/MaterialFloatingActionButton.android.tsx` (behaviour)                             | `src/screen/home/Menu.tsx` (`Fresh`)          |
 | `src/features/threads/ThreadNavigationSidebar.tsx` (drawer tokens)                                | `src/ui/Drawer.tsx`                           |
