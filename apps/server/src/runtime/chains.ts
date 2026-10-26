@@ -205,7 +205,7 @@ export const completeRun = Effect.fn('ThreadProof.completeRun')(function* (
   fixture: ChainFixture,
   runId: RunId,
 ) {
-  const outcome = yield* observeRun(fixture.conversation, runId, 90_000)
+  const outcome = yield* observeRun(fixture.conversation, runId)
   expect(Settlement.guards.Completed(outcome), 'The real model Run must settle successfully').toBe(
     true,
   )

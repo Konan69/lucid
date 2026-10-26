@@ -55,8 +55,8 @@ Test and live-proof settings are excluded from product capability requirements.
 | `VIVID_EMBEDDING_DIMENSIONS`, `VIVID_EMBEDDING_MODEL` | `memory/embeddings.ts`                 | Genuinely optional overrides for a defined embedding recipe. They do not guard availability. `main.ts` currently composes `parkedEmbeddingsLayer`, so vector memory is deliberately unavailable regardless of these settings. |
 | `VIVID_MEMORY_MODEL`                                  | `memory/model.ts`                      | Genuinely optional model override. The required gateway key and default model preserve background completion.                                                                                                                 |
 
-The other defaulted controls are `VIVID_DECISIONS`, `VIVID_DECISION_MODEL`,
-`VIVID_EXECUTOR_PUBLIC_ONLY`, and `VIVID_RUN_FIRST_TOKEN_TIMEOUT_MS`.
+The other defaulted controls are `VIVID_DECISIONS`, `VIVID_DECISION_MODEL`
+and `VIVID_EXECUTOR_PUBLIC_ONLY`.
 They do not retain an `Option` in the composed service. The decisions flag deliberately
 switches an experimental capability off. The remaining controls select a model, restrict
 an Integration catalogue, or tune a deadline. Their absence preserves their defined behavior.
