@@ -43,10 +43,9 @@ export const SendToThreadRequest = Schema.Struct({
   pictures: Schema.Array(MessageAttachment),
   key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 }).check(
-  Schema.makeFilter(
-    (request) => request.text.trim().length > 0 || request.pictures.length > 0,
-    { message: 'A send carries words, pictures or both' },
-  ),
+  Schema.makeFilter((request) => request.text.trim().length > 0 || request.pictures.length > 0, {
+    message: 'A send carries words, pictures or both',
+  }),
 )
 export interface SendToThreadRequest extends Schema.Schema.Type<typeof SendToThreadRequest> {}
 

@@ -100,8 +100,6 @@ const requiredByManifest = Object.freeze({
     'vitest',
   ],
   'apps/mobile/package.json': [
-    '@flue/react',
-    '@flue/sdk',
     '@react-native/metro-config',
     '@react-navigation/native',
     '@react-navigation/native-stack',
@@ -138,8 +136,6 @@ const requiredByManifest = Object.freeze({
     'tsx',
   ],
   'apps/web/package.json': [
-    '@flue/react',
-    '@flue/sdk',
     '@tailwindcss/vite',
     '@types/react',
     '@types/react-dom',
