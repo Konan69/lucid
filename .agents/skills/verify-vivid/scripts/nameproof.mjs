@@ -9,7 +9,7 @@ export const NAME = 'Juniper Okafor'
 export const BROWSER_NAME = 'Marisol Achebe'
 
 export const nameLimits = [
-  'Phone Settings draws the same machine in a native sheet; this recipe drives the web client only. The phone row needs its own device run.',
+  'The phone sheet is proved by `verify phone name` on Android; the iPhone needs the phone itself or a macOS runner.',
   'A shared Thread names the Person who sent each message; a disposable Company with two Persons is needed to prove it.',
   'A name a sign-in provider gave that is not one line of plain text is not said to the model; no provider sign-in is available here.',
 ]

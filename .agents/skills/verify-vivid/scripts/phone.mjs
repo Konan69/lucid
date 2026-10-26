@@ -10,6 +10,9 @@ import { phoneCleanup } from './phonecleanup.mjs'
 import { readAccount, readDevice, readState } from './phonewire.mjs'
 import { rpc } from './wire.mjs'
 
+/** Different from the web and HTTP recipes' names, so the three may run in any order. */
+const PHONE_NAME = 'Tobenna Ruiz'
+
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
 const cli = [
   cache + '/node/bin/node',
@@ -72,10 +75,45 @@ async function journey(state, run, directory) {
   return { id, title }
 }
 
+/** The only text field on screen: the name sheet's. A field is found by its kind, because its
+ * placeholder repeats the sheet's own title. */
+async function onlyField(run) {
+  const snapshot = await run(['snapshot', '-i'])
+  const lines = snapshot.split('\n').filter((line) => /@e\d+ \[text-field\]/u.test(line))
+  NodeAssert.equal(lines.length, 1, 'Expected one text field\n' + snapshot)
+  return lines[0].match(/@e\d+/u)[0]
+}
+
+/** The Person renames themselves from the phone's Settings and the row and server both say it.
+ * No model call: what Vivid answers with the name is the web and HTTP recipes' claim. */
+async function naming(state, run, directory) {
+  await run(['open', 'work.vivid.mobile', '--relaunch'])
+  const account = await enter(state, run)
+  await run(['press', await target(run, 'Open menu')])
+  await run(['press', await target(run, 'Settings'), '--settle'])
+  await run(['wait', 'text', 'Your name', '60000'])
+  await run(['screenshot', directory + '/settings-before.png'])
+  await run(['press', await target(run, 'Your name'), '--settle'])
+  await run(['wait', 'text', 'Save', '60000'])
+  await run(['fill', await onlyField(run), PHONE_NAME])
+  await run(['screenshot', directory + '/name-sheet.png'])
+  await run(['press', await target(run, 'Save'), '--settle'])
+  await run(['wait', 'text', PHONE_NAME, '60000'])
+  const after = await run(['snapshot', '-i'])
+  NodeAssert.ok(!/@e\d+ \[text-field\]/u.test(after), 'The name sheet must close after Save')
+  await run(['screenshot', directory + '/settings-renamed.png'])
+  const me = await rpc(state, 'Me', undefined, directory, 'me-after')
+  NodeAssert.equal(me.person.id, account.person)
+  NodeAssert.equal(me.person.name, PHONE_NAME)
+  return { name: PHONE_NAME }
+}
+
+const journeys = { thread: journey, name: naming }
+
 /** One phone command owns the host lease until finally has closed its session and stopped the
  * captured emulator. A killed worker leaves acquisition receipts for verify cleanup. */
 export async function phone(state, feature) {
-  NodeAssert.equal(feature, 'thread', 'No phone recipe for ' + feature)
+  NodeAssert.ok(Object.hasOwn(journeys, feature), 'No phone recipe for ' + feature)
   await host()
   NodeAssert.equal(state.dirty, false, 'Phone APK proof requires a clean committed checkout')
   const directory = state.evidence + '/phone'
@@ -135,22 +173,25 @@ export async function phone(state, feature) {
     await execute([adb, '-s', device.serial, 'shell', 'pm', 'clear', 'work.vivid.mobile'])
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
-    const thread = await journey(state, run, directory)
-    verdict = { verdict: 'proved', thread, apk: artifact }
+    const result = await journeys[feature](state, run, directory)
+    verdict = { verdict: 'proved', [feature]: result, apk: artifact }
   } catch (error) {
     verdict = { verdict: 'failed', error: error.stack }
     throw error
   } finally {
     await json(directory + '/verdict.json', {
       ...verdict,
-      feature: 'features/phone.md',
+      feature: feature === 'name' ? 'features/name.md' : 'features/phone.md',
       head: state.head,
       dirty: state.dirty,
       tree: state.tree,
       diffHash: state.diffHash,
       model: state.model,
       modelKind: state.modelKind,
-      claim: 'idle native navigation; no model behaviour',
+      claim:
+        feature === 'name'
+          ? 'native Settings name sheet and saved name; no model behaviour'
+          : 'idle native navigation; no model behaviour',
       alias: state.devbox,
       hostname: state.hostname,
       serial: device.serial,

@@ -21,8 +21,16 @@ HTTP renames the disposable Person to Juniper Okafor through `SetPersonName`, re
 
 Browser opens Settings, General over an empty Thread, presses Change, types Marisol Achebe (a different name, so either recipe may run first on the shared account) and presses Save. It waits for the form to close and the dialog to show the new name, reads `Me`, reloads and checks the name again, then asks "what’s my name?" through the composer and waits for a Vivid bubble that says it. Snapshots and screenshots (`settings-before`, `name-form`, `settings-renamed`, `settings-reloaded`, `thread-answer`) and `scope.json` stay under `browser/name/`.
 
+On Android, after `verify android provision <alias>` and Launch on the same host ([Android setup](../references/android.md)):
+
+```sh
+.agents/skills/verify-vivid/verify phone name flue-<id>
+```
+
+The phone recipe installs the commit's APK, signs in with email, opens Settings from the menu, presses Your name, types Tobenna Ruiz and presses Save. It waits for the sheet to close and the row to show the name, and reads `Me` back. It makes no model call. Screenshots (`settings-before`, `name-sheet`, `settings-renamed`) stay under `phone/`.
+
 ## Blocked subcases
 
-- The phone's native sheet needs its own device run.
+- The iPhone's sheet needs the phone itself or a macOS runner.
 - A shared Thread names whoever sent each message; that needs a disposable Company with two Persons.
 - A provider-given name that is not one plain line is left out of the prompt; no provider sign-in is available here.
