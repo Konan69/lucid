@@ -158,7 +158,7 @@ export function mountComputer(runTool: RunTool, run: RunScoped) {
 }
 
 const browseDescription =
-  'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask to use their computer; their desktop app must be connected. Screenshot returns a picture. If approval is requested, stop and wait.'
+  'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask for a page on their computer or in their browser; their desktop app must be connected. Screenshot returns a picture. If approval is requested, stop and wait.'
 
 /** Native image tools retain the server's action schema but validate and describe display words
  * with the same Valibot summary as every defineTool input; no second wording or limit is owned here. */
