@@ -10,6 +10,7 @@ const PERSON_PATH = /^\/persons\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})(\/|$)/u
  * reaches one cell from every node. Anything else has no Person to go to.
  */
 export default {
+  // @effect-diagnostics-next-line asyncFunction:off -- Durable Object and Worker handlers are Promise APIs; this is the framework boundary.
   async fetch(request: Request, env: CellEnv): Promise<Response> {
     const match = PERSON_PATH.exec(new URL(request.url).pathname)
     if (match === null || match[1] === undefined) return new Response('no person', { status: 404 })

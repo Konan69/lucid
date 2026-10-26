@@ -19,12 +19,13 @@ export class SkillNotBundled extends Schema.TaggedError<SkillNotBundled>()(
 export const skillsLayer = Layer.effect(
   BuiltinSkills,
   Effect.gen(function* () {
-    const loaded = yield* Effect.forEach(manifest, (entry) => {
-      const text = texts.get(entry.runtimeName)
-      return text === undefined
-        ? Effect.fail(new SkillNotBundled({ name: entry.runtimeName }))
-        : parseSkill(text, entry.runtimeName)
-    })
+    const loaded = yield* Effect.forEach(manifest, (entry) =>
+      Effect.gen(function* () {
+        const text = texts.get(entry.runtimeName)
+        if (text === undefined) return yield* new SkillNotBundled({ name: entry.runtimeName })
+        return yield* parseSkill(text, entry.runtimeName)
+      }),
+    )
     return extensionOf(loaded)
   }),
 )

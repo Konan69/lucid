@@ -47,6 +47,7 @@ export const meter = (storage: CellStorage): Meter => {
     return storage.sql.exec(query, ...bindings)
   }
 
+  // @effect-diagnostics-next-line asyncFunction:off -- Durable Object and Worker handlers are Promise APIs; this is the framework boundary.
   const transaction = async <T>(closure: () => Promise<T>): Promise<T> => {
     const counter = { statements: 0, writes: 0 }
     open = counter

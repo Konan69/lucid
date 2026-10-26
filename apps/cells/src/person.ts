@@ -79,11 +79,12 @@ export class Person {
   private readonly metered: Meter
   private readonly ready: Promise<(request: Request) => Promise<Response>>
 
-  constructor(state: CellState, env: CellEnv) {
+  constructor(private readonly state: CellState, env: CellEnv) {
     this.metered = meter(state.storage)
     this.ready = state.blockConcurrencyWhile(() => this.open(state, env))
   }
 
+  // @effect-diagnostics-next-line asyncFunction:off -- Durable Object and Worker handlers are Promise APIs; this is the framework boundary.
   private async open(state: CellState, env: CellEnv) {
     const started = Date.now()
     // `idFromName` keeps the name (`durable-objects.md`); a cell reached any other way has no Person.
@@ -118,6 +119,7 @@ export class Person {
     }
   }
 
+  // @effect-diagnostics-next-line asyncFunction:off -- Durable Object and Worker handlers are Promise APIs; this is the framework boundary.
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
     // Proof instrumentation (`meter.ts`): the driver reads and resets the commit numbers here.
@@ -125,6 +127,13 @@ export class Person {
       const snapshot = this.metered.snapshot()
       if (url.searchParams.has('reset')) this.metered.reset()
       return Response.json(snapshot)
+    }
+    // Proof instrumentation: one read-only SELECT on the cell's SQLite, to inspect Pi's rows.
+    if (url.pathname.endsWith('/__select')) {
+      await this.ready
+      const query = url.searchParams.get('q') ?? ''
+      if (!/^\s*select\b/iu.test(query)) return new Response('select only', { status: 400 })
+      return Response.json(this.state.storage.sql.exec(query).toArray())
     }
     const handler = await this.ready
     const response = await handler(request)
