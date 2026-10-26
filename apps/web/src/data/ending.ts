@@ -1,5 +1,5 @@
 import { Effect } from 'effect'
-import { forgetConversations } from './conversation'
+import { forgetConversations } from './sending'
 import { forgetDrafts } from './drafts'
 import { engine } from './runtime'
 import { snapshots } from './snapshot'

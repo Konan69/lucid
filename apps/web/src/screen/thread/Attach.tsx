@@ -1,4 +1,5 @@
-import { Effect, Option, Predicate, Result } from 'effect'
+import { PictureMediaType, type MessageAttachment } from '@vivid/contracts'
+import { Effect, Option, Predicate, Result, Schema } from 'effect'
 import { FileText, X } from 'lucide-react'
 import { useState } from 'react'
 import { act, running } from '../../data/app'
@@ -25,13 +26,17 @@ export const attachable = (pictures: boolean) => (pictures ? `${DOCUMENTS},${PIC
 const MOST_PICTURES = 4
 const LARGEST_PICTURE = 5 * 1024 * 1024
 
-/** A picture as a message carries it: its bytes in base64, and what kind of image they are. */
-export interface Picture {
-  readonly type: 'image'
-  readonly mimeType: string
-  readonly data: string
+/**
+ * A picture as a message carries it (`MessageAttachment`, `@vivid/contracts`): its bytes in
+ * base64, and which of the kinds of image the server takes they are. One picked here always has
+ * its file's name.
+ */
+export interface Picture extends MessageAttachment {
   readonly filename: string
 }
+
+/** Reads a file's own word for what it is as one of the kinds of image a message can carry. */
+const pictureKind = Schema.decodeUnknownOption(PictureMediaType)
 
 /** Where one attached file stands. */
 type Standing =
@@ -59,14 +64,17 @@ const readPicture = (file: File) =>
       }
       const preview = reader.result
       resume(
-        Effect.succeedSome({
-          type: 'image',
-          mimeType: file.type,
-          // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
-          data: preview.slice(preview.indexOf(',') + 1),
-          filename: file.name,
-          preview,
-        }),
+        Effect.succeed(
+          // An image of a kind the server does not take is not a picture a message can carry.
+          Option.map(pictureKind(file.type), (mimeType) => ({
+            type: 'image' as const,
+            mimeType,
+            // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
+            data: preview.slice(preview.indexOf(',') + 1),
+            filename: file.name,
+            preview,
+          })),
+        ),
       )
     })
     reader.readAsDataURL(file)
