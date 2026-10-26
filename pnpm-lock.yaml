@@ -191,9 +191,6 @@ catalogs:
     '@flue/postgres':
       specifier: 2.2.2
       version: 2.2.2
-    '@flue/react':
-      specifier: 2.2.2
-      version: 2.2.2
     '@flue/runtime':
       specifier: 2.2.2
       version: 2.2.2
@@ -537,12 +534,6 @@ importers:
       '@expo/ui':
         specifier: 'catalog:'
         version: 57.0.26(@babel/core@7.29.7(supports-color@8.1.1))(@types/react-dom@19.2.3(@types/react@19.2.18))(@types/react@19.2.18)(expo@57.0.31)(react-dom@19.2.3(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
-      '@flue/react':
-        specifier: 'catalog:'
-        version: 2.2.2(@flue/sdk@2.2.2)(react@19.2.3)
-      '@flue/sdk':
-        specifier: 'catalog:'
-        version: 2.2.2
       '@openuidev/react-lang':
         specifier: 'catalog:'
         version: 1.0.0(patch_hash=a483e8945dfa7d8d2a015fab5189fc25b90089866cf959b39bf13502812ea207)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(zod@4.5.4)
@@ -842,12 +833,6 @@ importers:
       '@effect/atom-react':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)(react@19.2.3)(scheduler@0.27.0)
-      '@flue/react':
-        specifier: 'catalog:'
-        version: 2.2.2(@flue/sdk@2.2.2)(react@19.2.3)
-      '@flue/sdk':
-        specifier: 'catalog:'
-        version: 2.2.2
       '@fontsource-variable/bricolage-grotesque':
         specifier: ^5.3.0
         version: 5.3.0
@@ -1079,6 +1064,9 @@ importers:
 
   packages/client/state:
     dependencies:
+      '@earendil-works/chord':
+        specifier: 1.2.0
+        version: 1.2.0
       '@typeonce/effect-machine':
         specifier: 'catalog:'
         version: 0.46.0(effect@4.0.2)
@@ -2031,6 +2019,10 @@ packages:
     resolution: {integrity: sha512-bg7IkJGFcEaMqqYgOGUiq5Ky9RghpRfrlZ8I/v/1b4bBZ02A7t3E+6uhPRbadwWb/kWsnVFbZsqOKRN4a3LLCg==}
     engines: {node: '>=22.19.0'}
 
+  '@earendil-works/chord@1.2.0':
+    resolution: {integrity: sha512-Xh3M5B4D9YotOyBXyVbZ/5WfoUwP6Kt+TheCIDLxLCUx72UExuxZF//hNmIQGD13EkAHf2svKpXr/rCCT1gXTg==}
+    engines: {node: '>=22.19.0'}
+
   '@earendil-works/pi-agent-core@0.87.1':
     resolution: {integrity: sha512-Zev3B0HK7YS5A4EZQ2XnEqiJuirx6QBiltJ+LpmjV5a/+2IU0cfKtIfnkNkORK707XOvKBY2WRtk7cAwHpbh2Q==}
     engines: {node: '>=22.19.0'}
@@ -2692,12 +2684,6 @@ packages:
   '@flue/postgres@2.2.2':
     resolution: {integrity: sha512-R2CJ5Ut/81LxUGa1QM3DuYSoAnEUKvGlpxmjiyWvXadTouKMGtq7x/tVJLfKv1UL22W8y+RUlaR7+BwAeavFNg==}
     engines: {node: '>=22.19.0'}
-
-  '@flue/react@2.2.2':
-    resolution: {integrity: sha512-byWnBIvkfx4VMrJ4uWBhG5u+lAy267UVopXEd8kHFSPdLNvC3GjfIzGVAmZXsPEjb9yiWma+BOBkwdLuiTweOg==}
-    peerDependencies:
-      '@flue/sdk': 2.2.2
-      react: '>=18'
 
   '@flue/runtime@2.2.2':
     resolution: {integrity: sha512-1E1LE7HZJ7ZYbBzSz1jvAPNnBIEfz7iMP44t2wBgg/TJg3Jy+fkdpxEKY4aMh43nXYzdJWTDV66oeDXP5KNQMw==}
@@ -11854,6 +11840,10 @@ snapshots:
     dependencies:
       esbuild: 0.28.2
 
+  '@earendil-works/chord@1.2.0':
+    dependencies:
+      typebox: 1.3.27
+
   '@earendil-works/pi-agent-core@0.87.1(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
       '@earendil-works/chord': 0.87.1
@@ -12834,11 +12824,6 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
-
-  '@flue/react@2.2.2(@flue/sdk@2.2.2)(react@19.2.3)':
-    dependencies:
-      '@flue/sdk': 2.2.2
-      react: 19.2.3
 
   '@flue/runtime@2.2.2(patch_hash=0a2539a8a851290e597695a39af5d9509bb2499c4f6911841e1492ba5d2eb232)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
