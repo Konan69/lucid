@@ -15,9 +15,20 @@ export function plainPreview(markdown: string) {
     .trim()
 }
 
-/** Chooses the first Message line as a bounded Thread title. */
+/** A web address written out in a message: its scheme, host and anything after the host. */
+const ADDRESS = /\bhttps?:\/\/(?:www\.)?([^\s/?#]+)[^\s]*/gi
+
+/**
+ * Chooses the first Message line as a bounded Thread title. It is the seed the list shows until
+ * the server's title model names the Thread (`apps/server/src/threads/generation.ts`). A web
+ * address in it is shortened to its host: a pasted link seeded the title
+ * "https://x.com/idrisayobell…" for the minutes until the Thread was named (26 October 2026).
+ */
 export function titleFromMessage(message: string) {
-  const firstLine = message.trim().split('\n', 1)[0] ?? 'New conversation'
+  const firstLine = (message.trim().split('\n', 1)[0] ?? 'New conversation').replace(
+    ADDRESS,
+    (_address, host: string) => host,
+  )
   return firstLine.length > 46 ? `${firstLine.slice(0, 45).trimEnd()}…` : firstLine
 }
 

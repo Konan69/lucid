@@ -419,10 +419,6 @@ html[data-theme='light'] {
 @utility scroll-fade-end {
   mask-image: linear-gradient(to right, black calc(100% - 40px), transparent);
 }
-/* For a column that scrolls up out of view under a bar: only the top edge fades. */
-@utility scroll-fade-top {
-  mask-image: linear-gradient(to bottom, transparent, black 24px);
-}
 @utility scroll-fade-none {
   mask-image: none;
 }

@@ -1,5 +1,5 @@
 import { requireNativeView } from 'expo'
-import { Platform, View } from 'react-native'
+import { Keyboard, Platform, View } from 'react-native'
 import { composerColor } from './color'
 import {
   useCallback,
@@ -51,6 +51,23 @@ interface NativeComposerEditorRef {
   focus: () => Promise<void>
   blur: () => Promise<void>
   setSelection: (start: number, end: number) => Promise<void>
+}
+
+/**
+ * The native editor that holds the keyboard right now, if one does. React Native's
+ * `Keyboard.dismiss()` blurs only inputs registered with its own `TextInputState`; this editor is
+ * an Expo native view (a `UITextView` on iOS) that is never registered there, so a dismiss left
+ * the keyboard up and the composer in its focused, taller shape (seen on an iPhone, 26 October
+ * 2026, when the menu was swiped open over a Thread). T3 Code mobile ends editing with
+ * `KeyboardController.dismiss()` from `react-native-keyboard-controller`, a native module Vivid's
+ * installed build does not ship, so the focused editor is tracked here instead.
+ */
+let editing: NativeComposerEditorRef | null = null
+
+/** Puts the keyboard away from whichever input has it: this native editor or a React Native one. */
+export function endEditing() {
+  if (editing !== null) void editing.blur()
+  Keyboard.dismiss()
 }
 
 interface NativeComposerEditorProps extends ViewProps {
@@ -310,8 +327,14 @@ function NativeComposerView({
         onComposerPasteImages={(event) => {
           if (onPasteImages !== undefined) onPasteImages(event.nativeEvent.uris)
         }}
-        onComposerFocus={onFocus}
-        onComposerBlur={onBlur}
+        onComposerFocus={() => {
+          editing = nativeRef.current
+          if (onFocus !== undefined) onFocus()
+        }}
+        onComposerBlur={() => {
+          if (editing === nativeRef.current) editing = null
+          if (onBlur !== undefined) onBlur()
+        }}
         onComposerContentSizeChange={(event) => {
           if (onContentHeightChange !== undefined) onContentHeightChange(event.nativeEvent.height)
         }}

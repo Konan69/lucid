@@ -18,6 +18,26 @@ export interface Scrolled {
   readonly viewport: number
 }
 
+/**
+ * Whether Vivid's reply is coming in now: Vivid is working and the newest message is its own.
+ * While it is, the conversation does not follow the new words down. The owner asked for that on
+ * 26 October 2026 ("during inference the view shouldn't auto-scroll", kept by Vivid in its notes
+ * of his bug reports): the list stays where the Person is reading, and once the reply runs past
+ * the foot of the screen the button that goes to the newest words comes out.
+ */
+export const replying = (
+  working: boolean,
+  messages: ReadonlyArray<{ readonly role: string }>,
+): boolean =>
+  working && Option.exists(Option.fromUndefinedOr(messages.at(-1)), (m) => m.role === 'assistant')
+
+/** How many messages arrived after the newest one the Person had seen, when they are away. */
+export const arrivedOf = (
+  awayAt: Option.Option<string>,
+  messages: ReadonlyArray<{ readonly id: string }>,
+): number =>
+  Option.match(awayAt, { onNone: () => 0, onSome: (newest) => arrivedSince(messages, newest) })
+
 /** The newest message's id: what the Person had seen when they scrolled away. */
 export const newestOf = (messages: ReadonlyArray<{ readonly id: string }>): Option.Option<string> =>
   Option.map(Option.fromUndefinedOr(messages.at(-1)), (message) => message.id)

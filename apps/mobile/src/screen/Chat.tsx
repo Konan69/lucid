@@ -44,7 +44,6 @@ import Animated, {
   type AnimatedRef,
   type SharedValue,
 } from 'react-native-reanimated'
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { again, First, firstKey, isOnItsWay, isSettled, standInOf } from '../data/first'
@@ -70,7 +69,6 @@ import { Floating } from '../ui/Floating'
 import { THINKING_ROOM } from '../ui/Thinking'
 import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
-import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
 import { Allow } from './chat/Allow'
 import {
@@ -83,11 +81,12 @@ import {
 } from './chat/asked'
 import {
   anchorAt,
-  arrivedSince,
+  arrivedOf,
   isAway,
   newestOf,
   newestWords,
   offsetFor,
+  replying,
   scrolledOf,
   type Laid,
   type Scrolled,
@@ -345,7 +344,17 @@ function useSend(
       ? start(say(data, { id, body: words, key })).then(refusalOf)
       : agent.sendMessage(words, { idempotencyKey: key }).then(
           () => Option.none(),
-          () => Option.some(UNDELIVERED),
+          // A failed send is not proof the words did not arrive: on 26 October 2026 the server
+          // answered both of a phone's sends 202 while the phone's request failed, and the Thread
+          // said "did not reach Vivid" under a message Vivid was already answering. Asking again
+          // with the same key settles it: Flue derives the submission from the key
+          // (`deriveKeyedSubmissionId`), so a delivery that arrived is answered as that delivery
+          // and is never said twice, and starting the send clears the failed copy Flue kept.
+          () =>
+            agent.sendMessage(words, { idempotencyKey: key }).then(
+              () => Option.none(),
+              () => Option.some(UNDELIVERED),
+            ),
         )
 
   function send(delivery: Delivery) {
@@ -1238,8 +1247,9 @@ function Messages(props: MessagesProps) {
  * It sits in a box of its own that clips it, between the bar and the composer. Both are siblings
  * of the box, not overlays, so its viewport is exactly what is left under the bar and above the
  * composer and the keyboard; a card taller than that scrolls inside it and can never be drawn
- * behind the composer. The box starts under the bar, not behind it, and where the words meet the
- * bar they fade out over a few points (`TopFade`). The box is written first and drawn second
+ * behind the composer. The box starts under the bar, not behind it, and the words run up to the
+ * bar with no fade: the owner asked for none where Vivid's name hangs (26 October 2026, kept by
+ * Vivid in its notes of his bug reports). The box is written first and drawn second
  * (`column-reverse`): react-native-screens looks for the screen's scroller down the first child
  * of each view and nowhere else (`RNSScrollViewFinder`), and the bar still asks it to leave this
  * one's edges alone once it is laid out (`onListed`). The room the thinking bubble needs is kept
@@ -1288,14 +1298,12 @@ function Messages(props: MessagesProps) {
  */
 function Transcript(props: MessagesProps) {
   const { id, messages, working, thinking, rising } = props
-  // Where the Person was reading when they last left this Thread, when it was not its newest
-  // words and its row is among those the Thread opens with. A row that is not (it was further back
-  // than what the phone kept, or it was a message sent from here that the conversation now names
-  // otherwise) cannot be waited for: the Thread opens on its newest words, as it always did.
+  // Where the Person was reading when they last left this Thread, if its row is among those the
+  // Thread opens with; a row that is not cannot be waited for, and the Thread opens on its end.
   const [opened] = useState(() =>
     Option.filter(readingPlace.of(id), (anchor) => drawsRow(messages, props.around, anchor.key)),
   )
-  const { list, room, body, port, following } = useEndRoom(props.covered, Option.isNone(opened))
+  const { list, room, body, port, following, offset } = useEndRoom(props.covered, opened)
   const place = useReadingPlace(id, opened, list, (key) => drawsRow(messages, props.around, key))
   // Whether the scroller has been put in its place once, which is when it is shown.
   const [placed, setPlaced] = useState(false)
@@ -1304,10 +1312,7 @@ function Transcript(props: MessagesProps) {
   const returning = useRef(false)
   // A Thread opened where the Person was reading is one they are away from its newest words in.
   const [awayAt, setAwayAt] = useState(() => Option.flatMap(opened, () => newestOf(messages)))
-  const arrived = Option.match(awayAt, {
-    onNone: () => 0,
-    onSome: (newest) => arrivedSince(messages, newest),
-  })
+  const arrived = arrivedOf(awayAt, messages)
   const { known, moved } = useKnown(messages, rising)
 
   function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -1322,6 +1327,7 @@ function Transcript(props: MessagesProps) {
     // Person was reading.
     if (returning.current) return
     place.seen(scrolled)
+    offset.set(scrolled.offset)
     following.set(near)
     setAwayAt((current) => {
       if (near) return Option.isNone(current) ? current : Option.none()
@@ -1338,8 +1344,12 @@ function Transcript(props: MessagesProps) {
     if (list.current === null) return
     const at = place.hold()
     if (at === 'Unmeasured') return
-    if (at === 'Free' && Option.isNone(awayAt)) {
-      list.current.scrollToEnd({ animated: false })
+    // A reply coming in is not followed down (`replying`); past the foot the Person is away.
+    const free = at === 'Free' && Option.isNone(awayAt)
+    if (free && !replying(working, messages)) list.current.scrollToEnd({ animated: false })
+    else if (free && isAway({ offset: offset.get(), content: body.get(), viewport: port.get() })) {
+      following.set(false)
+      setAwayAt(newestOf(messages))
     }
     if (!placed) setPlaced(true)
   }
@@ -1361,7 +1371,15 @@ function Transcript(props: MessagesProps) {
         <Animated.ScrollView
           ref={list}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
+          // "on-drag", not "interactive": an interactive dismiss moves the keyboard with the
+          // finger, and React Native's `KeyboardAvoidingView` on iOS hears only keyboardWillShow
+          // and keyboardWillHide (`Libraries/Components/Keyboard/KeyboardAvoidingView.js`), not
+          // the frames in between. The composer stayed at the keyboard's full height while the
+          // keyboard was dragged half down, with the conversation showing through the gap (seen
+          // on an iPhone, 26 October 2026). On drag the keyboard leaves in one animation the
+          // composer rides. T3 Code mobile keeps "interactive" only under `KeyboardStickyView`,
+          // from a native module this build does not ship.
+          keyboardDismissMode="on-drag"
           onLayout={(event) => {
             port.set(event.nativeEvent.layout.height)
             // Settled again once the viewport it is settled against is current: the box around
@@ -1410,7 +1428,7 @@ function Transcript(props: MessagesProps) {
                 // words, and the owner called it out. The bubble arrives with a send, which
                 // moves the conversation anyway, and the scroller is put back on its end when
                 // this height changes (`settle`).
-                paddingBottom: thinking ? THINKING_ROOM : END_ROOM,
+                paddingBottom: bubbleShown(thinking, awaited) ? THINKING_ROOM : END_ROOM,
                 gap: 22,
               },
             ]}
@@ -1435,9 +1453,8 @@ function Transcript(props: MessagesProps) {
           {/* The room a question's choices are covering, after everything said (`useEndRoom`). */}
           <Animated.View style={room} />
         </Animated.ScrollView>
-        <TopFade />
         <Floating
-          thinking={thinking}
+          thinking={bubbleShown(thinking, awaited)}
           away={Option.isSome(awayAt)}
           arrived={arrived > 0}
           label={newestWords(arrived)}
@@ -1449,6 +1466,14 @@ function Transcript(props: MessagesProps) {
     </View>
   )
 }
+
+/**
+ * Whether the floating thinking bubble is drawn. One sign that Vivid is working, never two at
+ * once: before its reply begins, the face and dots stand where the reply will be (`Waiting`) and
+ * the bubble is not drawn. Both showed together, one over the other, until 26 October 2026 (seen
+ * on an iPhone).
+ */
+const bubbleShown = (thinking: boolean, awaited: boolean) => thinking && !awaited
 
 /** Vivid has been asked and has not begun: the newest thing in the Thread is not its reply. */
 const awaitsReply = ({
@@ -1576,11 +1601,14 @@ function useReadingPlace(
  * worked out from them, not read from its content size: the room is changing in this very frame,
  * and what the scroller would report is a frame old.
  */
-function useEndRoom(covered: SharedValue<number>, atEnd: boolean) {
+function useEndRoom(covered: SharedValue<number>, opened: Option.Option<Anchor>) {
   const list = useAnimatedRef<Animated.ScrollView>()
   const body = useSharedValue(0)
   const port = useSharedValue(0)
-  const following = useSharedValue(atEnd)
+  // A Thread opened where the Person was reading is not at its newest words.
+  const following = useSharedValue(Option.isNone(opened))
+  // How far down the Person has scrolled, kept as they scroll (`Transcript`, `follow`).
+  const offset = useSharedValue(0)
   const room = useAnimatedStyle(() => ({ height: covered.get() }))
   useAnimatedReaction(
     () => covered.get(),
@@ -1590,7 +1618,7 @@ function useEndRoom(covered: SharedValue<number>, atEnd: boolean) {
       scrollTo(list, 0, Math.max(0, body.get() + now - port.get()), false)
     },
   )
-  return { list, room, body, port, following }
+  return { list, room, body, port, following, offset }
 }
 
 /** What is kept clear under the newest words while nothing floats there. */
@@ -1710,39 +1738,6 @@ function Rows({
  */
 const FRESH = 3000
 
-/**
- * How far under the bar the conversation fades out, in points: as far as Vivid's avatar and its
- * name hang below the bar (`HANG`), and a little more for the words to come back in.
- */
-const FADE = HANG + 28
-
-/**
- * The top edge of the conversation: the page's own colour, strong behind Vivid's avatar and its
- * name and gone a little under them, so a line scrolling up leaves softly and is never read
- * through the name. It is a picture and takes no touches.
- */
-function TopFade() {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: FADE }}
-    >
-      <Svg width="100%" height={FADE}>
-        <Defs>
-          <LinearGradient id="conversation-top" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={c.screen} stopOpacity={1} />
-            {/* Solid as far as the name reaches, so no line is read through or beside it. */}
-            <Stop offset={HANG / FADE} stopColor={c.screen} stopOpacity={1} />
-            <Stop offset="1" stopColor={c.screen} stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect width="100%" height={FADE} fill="url(#conversation-top)" />
-      </Svg>
-    </View>
-  )
-}
-
 /** A Thread with nothing in it: its outline while it opens, then Vivid waiting to be asked. */
 function Blank({ ready }: { ready: boolean }) {
   if (!ready) {
@@ -1820,13 +1815,18 @@ function Tail({
  * out as a reply is (`FromVivid`, `screen/chat/Message.tsx`), so the reply takes its place
  * without anything moving.
  *
- * It says nothing to a screen reader: the thinking bubble already says Vivid is thinking.
+ * The floating bubble is not drawn while this is (`Transcript`), so this is what tells a screen
+ * reader that Vivid is thinking, in the bubble's own words.
  */
 function Waiting() {
+  const vivid = useAppearance()
   return (
     <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={`${vivid.name} is thinking`}
+      accessibilityState={{ busy: true }}
+      accessibilityLiveRegion="polite"
       style={{ flexDirection: 'row', gap: 10 }}
     >
       <View style={{ marginTop: 1 }}>

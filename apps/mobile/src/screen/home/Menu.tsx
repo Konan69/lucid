@@ -36,6 +36,7 @@ import { useKeyboardShowing } from '../../data/keyboard'
 import { LiveState, useLive, useLiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { useAppearance } from '../../data/vivid'
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { useTheme } from '../../theme'
 import { Avatar, pictureOf } from '../../ui/Avatar'
 import { Face } from '../../ui/Face'
@@ -351,6 +352,36 @@ function Seek({
   )
 }
 
+/** How far up from the list's foot the fade reaches: the floating actions and the gap above them. */
+const FOOT_FADE = ACTION + 12 + 20
+
+/**
+ * The list fades out under the floating Search and New thread, so a row passing behind them is
+ * not read through Search's glass beside the button's edge (seen on an iPhone, 26 October 2026,
+ * "Fix Gmail conne…" across the round button). It is the scroll edge effect the reference's
+ * floating chrome uses instead of a divider, and it takes no touch: a row under it still opens.
+ */
+function FootFade() {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      pointerEvents="none"
+      style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: FOOT_FADE }}
+    >
+      <Svg width="100%" height={FOOT_FADE}>
+        <Defs>
+          <LinearGradient id="drawer-foot" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={c.drawer} stopOpacity={0} />
+            <Stop offset="0.55" stopColor={c.drawer} stopOpacity={1} />
+            <Stop offset="1" stopColor={c.drawer} stopOpacity={1} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height={FOOT_FADE} fill="url(#drawer-foot)" />
+      </Svg>
+    </View>
+  )
+}
+
 /**
  * The foot of the drawer: the Person, who is also the way to change workspace, and Settings. It
  * is hidden while the keyboard is up so searching has the room.
@@ -663,6 +694,7 @@ export function Menu({
             onSome: (project) => Option.some(`No threads in ${project.name} yet.`),
           })}
         />
+        <FootFade />
         <View
           pointerEvents="box-none"
           style={{
