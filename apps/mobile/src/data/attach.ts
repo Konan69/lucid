@@ -246,7 +246,17 @@ export const addRecent = (
 ): void =>
   data.registry.set(
     trayFor(data, thread, shared).send,
-    attaching.TrayEvents.Add({ files: [{ ...photo, key: randomUUID() }] }),
+    attaching.TrayEvents.Add({
+      files: [
+        {
+          key: randomUUID(),
+          name: photo.name,
+          uri: photo.uri,
+          mimeType: photo.mimeType,
+          size: photo.size,
+        },
+      ],
+    }),
   )
 
 /** Pictures pasted into the composer join the tray as if chosen. */
