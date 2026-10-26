@@ -6,6 +6,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Android Thread navigation](phone.md).
 - [Reload a Thread](reload.md).
 - [Rich replies](tool.md).
+- [Suggested replies](replies.md).
 - [Questions](question.md).
 - [Allow an action](approve.md).
 - [Deny an action](deny.md).

@@ -205,13 +205,18 @@ export const routes = Effect.gen(function* () {
           )
           // The required-input check below must inspect an actual owned tool, not an empty catalog.
           expect(owned.length).toBeGreaterThan(0)
-          // Every tool says its step to the Person in `summary`. `ask_person` is the one that
-          // does not: its `questions` are already those sentences (`tools/ask.ts`, 5 October 2026;
-          // one to four of them since 10 October 2026).
+          // Every tool says its step to the Person in `summary`. Two do not, because what the
+          // Person reads is already their input: `ask_person`'s `questions` (`tools/ask.ts`,
+          // 5 October 2026; one to four since 10 October 2026) and `suggest_replies`'s
+          // `replies` (`tools/follow.ts`, 26 October 2026).
+          const said = new Map([
+            ['ask_person', 'questions'],
+            ['suggest_replies', 'replies'],
+          ])
           for (const tool of owned)
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',
-              expect.arrayContaining([tool.name === 'ask_person' ? 'questions' : 'summary']),
+              expect.arrayContaining([said.get(tool.name) ?? 'summary']),
             )
           return fauxAssistantMessage('ready')
         },

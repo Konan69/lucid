@@ -12,6 +12,7 @@ import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
 import { noteBrowser } from './notebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
+import { offerBrowser } from './offer.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -57,6 +58,7 @@ const recipes = {
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
+  replies: { check: 'replies' },
   first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
@@ -79,6 +81,11 @@ const specialRecipes = {
   watch: {
     drive: watchBrowser,
     scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+  },
+  replies: {
+    drive: offerBrowser,
+    scope:
+      "Suggested replies drawn under the newest reply, unchanged after reload, and a tap sent as the Person's next message; the phone draws them separately.",
   },
   devices: {
     drive: deviceBrowser,
@@ -171,11 +178,7 @@ async function rendered(run, kind) {
       // doesn't need to see this"): the reply is Vivid's bubbles, and the document's receipt is
       // proved by the HTTP recipe's versioning. The browser proves the reply arrived as a bubble
       // and that no step list or "Worked" line came back.
-      await run([
-        'wait',
-        '--fn',
-        `document.querySelectorAll('[data-vivid-bubble]').length > 0`,
-      ])
+      await run(['wait', '--fn', `document.querySelectorAll('[data-vivid-bubble]').length > 0`])
       const leftovers = await dom(
         run,
         `Array.from(document.querySelectorAll('button[aria-expanded]')).map(b => b.textContent.trim()).filter(text => text.includes('more steps') || text.startsWith('Worked') || text.includes('Wrote a document'))`,

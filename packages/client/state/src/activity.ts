@@ -352,6 +352,16 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.question)],
   },
+  // The replies themselves are drawn as taps under the reply (`offeredReplies`); the step is only
+  // the line at the foot of the Thread for the moment the call runs.
+  suggest_replies: {
+    said: {
+      running: 'Suggesting replies',
+      done: 'Suggested replies',
+      failed: 'Could not suggest replies',
+    },
+    detail: nothing,
+  },
   create_project: {
     said: {
       running: 'Starting a project',

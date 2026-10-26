@@ -1,5 +1,6 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import { DisplaySource, textOf, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import { offeredReplies } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -22,6 +23,7 @@ import { useTheme } from '../../theme'
 import { ANSWERED, SAID } from '../../ui/motion/morph'
 import { EDGE, Face, Label, radius } from '../../ui/ui'
 import { Cards } from './Cards'
+import { Replies } from './Replies'
 import { Said, Voice } from './Said'
 import { Reply } from './Words'
 
@@ -212,46 +214,51 @@ function FromVivid({
   // the whole reply under (`buildResponseMessageIndex` in @flue/runtime 2.2.2), so a display drawn
   // while the reply arrives already names the reply the server reads.
   const source = DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })
+  // Only the newest reply, once Vivid has finished it, offers its replies to tap.
+  const offered = latest && !working && !streaming ? offeredReplies(message) : []
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-      <View style={{ marginBottom: Option.isSome(moment) ? 18 : 2 }}>
-        <Face size={24} mood={streaming ? 'thinking' : 'neutral'} />
+    <View style={{ gap: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+        <View style={{ marginBottom: Option.isSome(moment) ? 18 : 2 }}>
+          <Face size={24} mood={streaming ? 'thinking' : 'neutral'} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          {Option.isSome(answering) && (
+            <Label size="caption" tone="ink-2" style={{ marginBottom: 2 }}>
+              Answering {answering.value}
+            </Label>
+          )}
+          {segments.map((segment, at) =>
+            Segment.$match(segment, {
+              Words: ({ text }) => (
+                <Reply
+                  key={`words-${at}`}
+                  source={source}
+                  text={text}
+                  // Only the last stretch can still be arriving; the ones before it are whole.
+                  streaming={streaming && at === segments.length - 1}
+                  making={making}
+                  settled={settled}
+                  live={latest && !working}
+                  onSay={onContinue}
+                />
+              ),
+              Work: ({ tools }) => (
+                <Cards
+                  key={`work-${at}`}
+                  tools={tools}
+                  detail={detail}
+                  me={around.me}
+                  live={latest && !working}
+                  onContinue={onContinue}
+                />
+              ),
+            }),
+          )}
+          {Option.isSome(moment) && <Stamp moment={moment.value} />}
+        </View>
       </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-        {Option.isSome(answering) && (
-          <Label size="caption" tone="ink-2" style={{ marginBottom: 2 }}>
-            Answering {answering.value}
-          </Label>
-        )}
-        {segments.map((segment, at) =>
-          Segment.$match(segment, {
-            Words: ({ text }) => (
-              <Reply
-                key={`words-${at}`}
-                source={source}
-                text={text}
-                // Only the last stretch can still be arriving; the ones before it are whole.
-                streaming={streaming && at === segments.length - 1}
-                making={making}
-                settled={settled}
-                live={latest && !working}
-                onSay={onContinue}
-              />
-            ),
-            Work: ({ tools }) => (
-              <Cards
-                key={`work-${at}`}
-                tools={tools}
-                detail={detail}
-                me={around.me}
-                live={latest && !working}
-                onContinue={onContinue}
-              />
-            ),
-          }),
-        )}
-        {Option.isSome(moment) && <Stamp moment={moment.value} />}
-      </View>
+      {offered.length > 0 && <Replies replies={offered} onSay={onContinue} />}
     </View>
   )
 }

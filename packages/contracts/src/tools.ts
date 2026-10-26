@@ -32,6 +32,7 @@ export const ToolName = Schema.Literals([
   'save_skill',
   'search_library',
   'stop_watching',
+  'suggest_replies',
   'task',
   'test_integration',
   'use_desktop',
@@ -61,6 +62,13 @@ export const Tool: ToolTable = Result.getOrThrow(
     Record.fromIterableWith(ToolName.literals, (name) => [name, name]),
   ),
 )
+
+/**
+ * The suggested replies Vivid may offer under a reply (`suggest_replies`): few and short, so they
+ * read as taps and not as a menu. The runtime refuses more and the clients decode no more.
+ */
+export const SUGGESTED_REPLIES_MOST = 3
+export const SUGGESTED_REPLY_LONGEST = 40
 
 /** Programs reach only this subset of the tools mounted for an ordinary turn. */
 export const CodeCallKind = ToolName.pick(['find_tools', 'use_tool', 'browse', 'read_page'])
