@@ -55,6 +55,11 @@
     "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
   },
   {
+    "file": "apps/server/src/channels/discord.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["handleGatewayMessage", "makeDiscord"]
+  },
+  {
     "file": "packages/agent/runtime/src/providers/witness.ts",
     "classification": "third-party-adapter",
     "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
