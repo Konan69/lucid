@@ -16,6 +16,7 @@ import {
   NoteAddress,
   NoteWrite,
   RuntimeHistoryAnswer,
+  RuntimeHistoryInput,
   RuntimeHistoryResult,
   RuntimeSubmissionId,
   type RuntimeHistoryBody,
@@ -106,15 +107,20 @@ const responded = (writing: Writing, item: typeof RuntimeHistoryEntry.cases.Resp
     writing.unsettled.delete(input.requestId)
     const at = placed[index]
     if (at === undefined) throw new InvalidHistory()
-    if (input.outcome === 'completed') {
-      if (Option.isNone(answer)) throw new InvalidHistory()
-      writing.tx.settleSubmission(at.submission, { status: 'done', answer: answer.value })
-    } else
-      writing.tx.settleSubmission(at.submission, {
-        status: 'unanswered',
-        reason: input.outcome === 'aborted' ? 'aborted' : 'history_failed',
-        detail: Option.getOrNull(writing.detail),
-      })
+    RuntimeHistoryInput.match(input, {
+      completed: () => {
+        if (Option.isNone(answer)) throw new InvalidHistory()
+        writing.tx.settleSubmission(at.submission, { status: 'done', answer: answer.value })
+      },
+      aborted: () =>
+        writing.tx.settleSubmission(at.submission, { status: 'unanswered', reason: 'aborted' }),
+      failed: ({ failure }) =>
+        writing.tx.settleSubmission(at.submission, {
+          status: 'unanswered',
+          reason: failure === null ? 'history_failed' : failure,
+          detail: Option.getOrNull(writing.detail),
+        }),
+    })
   })
   writing.answer = Option.none()
   writing.detail = Option.none()

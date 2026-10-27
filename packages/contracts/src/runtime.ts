@@ -209,6 +209,18 @@ export const RuntimeHistoryDraft = Schema.Struct({
   data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 })
 
+/** A failed input keeps a product category when one was recorded independently of model text. */
+export const RuntimeHistoryInput = Schema.Union([
+  Schema.Struct({ outcome: Schema.tag('completed'), requestId: Schema.NonEmptyString }),
+  Schema.Struct({ outcome: Schema.tag('aborted'), requestId: Schema.NonEmptyString }),
+  Schema.Struct({
+    outcome: Schema.tag('failed'),
+    requestId: Schema.NonEmptyString,
+    failure: Schema.NullOr(RunFailure),
+  }),
+]).pipe(Schema.toTaggedUnion('outcome'))
+export type RuntimeHistoryInput = typeof RuntimeHistoryInput.Type
+
 /** References name earlier deliveries, never guessed native submission or entry numbers. */
 export const RuntimeHistoryEntry = Schema.TaggedUnion({
   Entry: { draft: RuntimeHistoryDraft },
@@ -216,12 +228,7 @@ export const RuntimeHistoryEntry = Schema.TaggedUnion({
   Run: { inputs: Schema.Array(Schema.NonEmptyString) },
   Response: {
     draft: RuntimeHistoryDraft,
-    inputs: Schema.Array(
-      Schema.Struct({
-        requestId: Schema.NonEmptyString,
-        outcome: Schema.Literals(['completed', 'failed', 'aborted']),
-      }),
-    ),
+    inputs: Schema.Array(RuntimeHistoryInput),
   },
 })
 export type RuntimeHistoryEntry = typeof RuntimeHistoryEntry.Type
@@ -233,7 +240,12 @@ export const RuntimeHistoryThread = Schema.Struct({
 export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
 export const RuntimeHistoryBody = Schema.Struct({
   threads: Schema.Array(RuntimeHistoryThread),
-  notes: Schema.Array(Schema.Struct({ ...Note.fields, updatedAt: Schema.Finite })),
+  // Note's address check remains valid when only its source timestamp is added.
+  notes: Schema.Array(
+    Note.mapFields((fields) => ({ ...fields, updatedAt: Schema.Finite }), {
+      unsafePreserveChecks: true,
+    }),
+  ),
 })
 export type RuntimeHistoryBody = typeof RuntimeHistoryBody.Type
 

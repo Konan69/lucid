@@ -1,4 +1,4 @@
-import type { RunFailure } from '@vivid/contracts'
+import { RunFailure } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 
 /**
@@ -42,6 +42,7 @@ const classifyText = (text: string, status: Option.Option<number>): RunFailure =
   return 'Unexplained'
 }
 
+const decodeFailure = Schema.decodeUnknownOption(RunFailure)
 const decodeWords = Schema.decodeUnknownOption(Schema.String)
 
 /**
@@ -51,6 +52,9 @@ const decodeWords = Schema.decodeUnknownOption(Schema.String)
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Pi stores a failure's detail as JSON of any shape; it is decoded here.
 export const classify = (reason: string, detail: unknown) => {
+  // An explicit product category outranks diagnostic text that may describe a different attempt.
+  const saved = decodeFailure(reason)
+  if (Option.isSome(saved)) return { failure: saved.value, status: Option.none<number>() }
   if (reason === 'no_model')
     return { failure: 'ModelUnavailable' as const, status: Option.none<number>() }
   return Option.match(decodeWords(detail), {

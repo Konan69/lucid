@@ -222,7 +222,7 @@ const outcomes = RuntimeHistoryBody.make({
             ],
           },
         }),
-        response([{ requestId: 'failed', outcome: 'failed' }]),
+        response([{ requestId: 'failed', outcome: 'failed', failure: 'TimedOut' }]),
         input('stopped'),
         RuntimeHistoryEntry.cases.Run.make({ inputs: ['stopped'] }),
         response([{ requestId: 'stopped', outcome: 'aborted' }]),
@@ -267,9 +267,7 @@ it.effect(
         for (const receipt of thread.deliveries) {
           const actual = yield* settled(runtime, ada, threadId, receipt.submissionId)
           if (receipt.requestId === 'failed')
-            expect(actual).toEqual(
-              RuntimeSettlement.cases.Failed.make({ failure: 'RateLimited', status: 429 }),
-            )
+            expect(actual).toEqual(RuntimeSettlement.cases.Failed.make({ failure: 'TimedOut' }))
           else if (receipt.requestId === 'stopped')
             expect(actual).toEqual(RuntimeSettlement.cases.Stopped.make({}))
           else
