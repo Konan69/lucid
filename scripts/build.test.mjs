@@ -100,21 +100,21 @@ void NodeTest.test(
     const built = await run()
     assert.equal(built.results.length, 1)
     assert.deepEqual(built.results[0].failed, [], built.results[0].output)
-    const artifacts = [
-      'apps/web/dist/result',
-      'packages/agent/runtime/dist/result',
-      'apps/mobile/.cache/updates/result',
-    ]
+    const artifacts = ['apps/web/dist/result', 'apps/mobile/.cache/updates/result']
     for (const file of artifacts) {
       assert.equal(NodeFS.readFileSync(NodePath.join(directory, file), 'utf8'), 'built artifact')
       NodeFS.rmSync(NodePath.join(directory, file))
     }
     assert.equal(NodeFS.existsSync(NodePath.join(directory, 'apps/desktop/dist/result')), false)
     assert.equal(NodeFS.existsSync(NodePath.join(directory, 'apps/mobile/dist/result')), false)
+    assert.equal(
+      NodeFS.existsSync(NodePath.join(directory, 'packages/agent/runtime/dist/result')),
+      false,
+    )
     const cached = await run()
     assert.match(
       cached.results[0].detail,
-      /^3\/3 cached$/u,
+      /^2\/2 cached$/u,
       built.results[0].output + cached.results[0].output,
     )
     for (const file of artifacts)
@@ -124,7 +124,7 @@ void NodeTest.test(
       '// changed shared input\n',
     )
     const changed = await run()
-    assert.match(changed.results[0].detail, /^0\/3 cached$/u)
+    assert.match(changed.results[0].detail, /^0\/2 cached$/u)
     environment.VIVID_COMMIT = 'reject-web'
     const failed = await run()
     assert.deepEqual(failed.results[0].failed, ['@vivid/web#build'])

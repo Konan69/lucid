@@ -1,6 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
-import { chat, history, rpc, request, settled, json } from './wire.mjs'
+import { chat, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
@@ -68,7 +68,7 @@ async function rows(state, thread, directory) {
     await json(directory + '/' + table + '.json', JSON.parse(output))
   }
 }
-/** Main's default Thread is Flue. Capture its identity before the first Person message. */
+/** Capture the Thread identity before the first Person message. */
 async function thread(state, directory, title) {
   const id = crypto.randomUUID()
   await rpc(state, 'CreateThread', { id, title, projectId: null }, directory)
@@ -219,7 +219,10 @@ async function document(state, id, directory) {
   )
   const { page, detail } = await completed(state, id, directory, 3)
   const read = page.messages
-    .filter((message) => message.role === 'assistant' && message.submissionId === detail.runs[2].id)
+    .filter(
+      (message) =>
+        message.role === 'assistant' && message.submissionId === detail.runs[2].submissionId,
+    )
     .flatMap((message) => message.parts)
     .find(
       (part) =>
@@ -250,7 +253,7 @@ async function document(state, id, directory) {
   NodeAssert.notEqual(v1.body, v2.body)
   NodeAssert.match(v2.body, /Ready for review\./)
 }
-/** Main's image attachment follows Flue's wire format. Compare exact reloaded private bytes. */
+/** Send a picture through the public contract and compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
   await NodeFSP.writeFile(directory + '/sent.png', Buffer.from(png, 'base64'))
   await chat(state, id, 'Hello Vivid with a picture', directory, 'chat', [
@@ -397,9 +400,7 @@ export async function manual(state, action, args) {
   } else if (action === 'history')
     console.log(JSON.stringify(await history(state, id, directory), null, 2))
   else if (action === 'stop')
-    console.log(
-      await request(state, `/api/vivid/${id}/abort`, { method: 'POST', directory, name: 'abort' }),
-    )
+    console.log(await rpc(state, 'StopThread', { id }, directory, 'abort'))
   else throw new Error('Unknown helper ' + action)
 }
 if (process.argv[1] === new URL(import.meta.url).pathname)

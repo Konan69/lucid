@@ -478,8 +478,8 @@ export const assertRuntimePolicy = (local, hosted, dockerfile) => {
   )
   assert.doesNotMatch(
     dockerfile,
-    /agent-runtime build|dist\/server\.mjs|flue build/,
-    'runtime image must not build a Flue bundle',
+    /agent-runtime build|dist\/server\.mjs/,
+    'runtime image must run TypeScript without a bundle',
   )
 }
 

@@ -1,10 +1,52 @@
 import * as NodeFSP from 'node:fs/promises'
+import { applyImmutable, assertValidOp, isReplace } from '@earendil-works/chord/delta'
 import { Schema, Result } from 'effect'
 import { RpcSerialization } from 'effect/rpc'
-import { SendMessageRequest, ThreadDetail } from '@vivid/contracts'
+import {
+  ConversationFrame,
+  ConversationState,
+  SendToThreadRequest,
+  ThreadDetail,
+  ThreadId,
+} from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { json } from './process.mjs'
+import { Account, decodeText, RuntimeHealth } from './receipts.mjs'
 export { json } from './process.mjs'
+
+const ConversationPacket = Schema.TaggedUnion({
+  Chunk: { values: Schema.Array(ConversationFrame) },
+  Exit: { exit: Schema.Unknown },
+  Pong: {},
+})
+const WatchRequest = Schema.TaggedStruct('Request', {
+  id: Schema.String,
+  tag: Schema.Literal('WatchConversation'),
+  payload: Schema.Struct({ threadId: ThreadId }),
+  headers: Schema.Array(Schema.Array(Schema.String)),
+})
+
+/** Decode complete RPC lines before the conversation observer consumes their frames. */
+async function* frames(response) {
+  let buffer = ''
+  const decoder = new TextDecoder()
+  for await (const bytes of response.body) {
+    buffer += decoder.decode(bytes, { stream: true })
+    let newline
+    while ((newline = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (!line) continue
+      yield* ConversationPacket.match(decodeText(ConversationPacket, line), {
+        Chunk: ({ values }) => values,
+        Exit: () => {
+          throw new Error('WatchConversation ended: ' + line)
+        },
+        Pong: () => [],
+      })
+    }
+  }
+}
 
 /** These public ingress/egress codecs are the same contracts the web's transport and gateway use. */
 export const decode = (schema, value) =>
@@ -135,57 +177,92 @@ export async function settled(state, thread, count, terminal = 'Completed', dire
   }
 }
 
-/** Main's Person gateway uses SendMessageRequest, not migration's ai ChatBody. */
+/** Admission uses the same Person RPC and delivery key as every shipped client. */
 export async function admit(state, thread, text, directory, name = 'chat', attachments = []) {
-  const body = encode(SendMessageRequest, {
-    kind: 'user',
-    body: text,
-    idempotencyKey: crypto.randomUUID(),
-    attachments,
+  const body = decode(SendToThreadRequest, {
+    threadId: thread,
+    text,
+    pictures: attachments,
+    key: crypto.randomUUID(),
   })
-  await json(directory + '/' + name + '.request.json', body)
-  return request(state, `/api/vivid/${thread}`, { method: 'POST', body, directory, name })
+  await json(directory + '/' + name + '.request.json', encode(SendToThreadRequest, body))
+  return rpc(state, 'SendToThread', body, directory, name)
 }
 
-/** The installed public SDK validates live chunks and waits on Flue's durable submission signal.
- * Recording wraps only fetch: bytes, status and route are captured without altering the protocol. */
-export async function client(state, thread, directory, name = 'stream', ready) {
-  const flue = await import('@flue/sdk')
-  const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
-  let number = 0
-  return flue.createFlueClient({
-    url: state.web + `/api/vivid/${thread}`,
-    headers: { cookie: account.cookie, origin: state.web },
-    fetch: async (input, options) => {
-      const response = await fetch(input, options)
-      if (ready) ready.resolve(response.status)
-      const file = directory + '/' + name + '-' + ++number
-      await json(file + '.json', {
-        url: String(input),
-        status: response.status,
-        contentType: response.headers.get('content-type'),
-      })
-      await NodeFSP.writeFile(file + '.sse', '')
-      const capture = new TransformStream({
-        async transform(bytes, controller) {
-          await NodeFSP.appendFile(file + '.sse', bytes)
-          controller.enqueue(bytes)
+/** Follow the public conversation link, checking Pi's delta operations before applying them.
+ * Every observation owns and closes its HTTP stream, including a first-snapshot history read. */
+async function* conversation(state, thread, { directory, name, ready }) {
+  const account = decodeText(
+    Account,
+    await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'),
+  )
+  const abort = new AbortController()
+  const file = directory + '/' + name + '.ndjson'
+  await NodeFSP.writeFile(file, '')
+  try {
+    const response = await fetch(state.web + '/api/rpc', {
+      method: 'POST',
+      headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
+      body:
+        JSON.stringify(
+          WatchRequest.make({
+            id: '1',
+            tag: 'WatchConversation',
+            payload: { threadId: thread },
+            headers: [],
+          }),
+        ) + '\n',
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(300_000)]),
+    })
+    if (ready) ready.resolve(response.status)
+    await json(directory + '/' + name + '.response.json', {
+      tag: 'WatchConversation',
+      threadId: thread,
+      status: response.status,
+    })
+    if (!response.ok) throw new Error('WatchConversation HTTP ' + response.status)
+    let current
+    for await (const frame of frames(response)) {
+      await NodeFSP.appendFile(file, JSON.stringify(frame) + '\n')
+      current = ConversationFrame.match(frame, {
+        Whole: ({ state: whole }) => whole,
+        Changes: ({ ops }) => {
+          if (!current) throw new Error('Conversation changes arrived before Whole')
+          for (const op of ops) {
+            assertValidOp(op)
+            if (isReplace(op)) throw new Error('Conversation changes replaced Whole')
+          }
+          return decode(ConversationState, applyImmutable(current, ops))
         },
       })
-      return new Response(response.body.pipeThrough(capture), {
-        status: response.status,
-        headers: response.headers,
-      })
-    },
-  })
+      yield current
+    }
+    throw new Error('WatchConversation closed before observation')
+  } finally {
+    abort.abort()
+  }
 }
 
-/** Separate admission from observation for held-tool, reconnect and stop recipes. */
+/** A joined delivery reads the reply named by its settlement, never by the product Run id. */
 export async function read(state, thread, admission, directory, name = 'stream', ready) {
-  const api = await client(state, thread, directory, name, ready)
-  const reply = await api.read(admission, { signal: AbortSignal.timeout(300_000) })
-  await json(directory + '/' + name + '-reply.json', reply)
-  return reply.text
+  const submissionId = admission.run.submissionId
+  if (!submissionId) throw new Error('Admitted Run has no runtime submission id')
+  for await (const page of conversation(state, thread, { directory, name, ready })) {
+    const settlement = page.settlements.find((entry) => entry.submissionId === submissionId)
+    if (!settlement) continue
+    await json(directory + '/' + name + '-reply.json', { settlement, page })
+    if (settlement.outcome !== 'completed')
+      throw new Error('Conversation delivery ' + settlement.outcome)
+    return page.messages
+      .filter(
+        (message) => message.role === 'assistant' && message.submissionId === settlement.answeredBy,
+      )
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n\n')
+  }
+  throw new Error('Conversation ended before settlement')
 }
 export async function chat(state, thread, text, directory, name = 'chat', attachments = []) {
   return read(
@@ -197,21 +274,19 @@ export async function chat(state, thread, text, directory, name = 'chat', attach
   )
 }
 
-/** Main's web client asks for Flue's history view through the same server gateway. */
+/** A fresh subscription starts with the durable conversation whole, as a client reload does. */
 export async function history(state, thread, directory, name = 'history') {
-  const api = await client(state, thread, directory, name)
-  const page = await api.history({ signal: AbortSignal.timeout(15_000) })
-  await json(directory + '/' + name + '.json', page)
-  return page
+  for await (const page of conversation(state, thread, { directory, name })) {
+    await json(directory + '/' + name + '.json', page)
+    return page
+  }
+  throw new Error('Conversation ended before history')
 }
-/** Flue health advertises the selected model; its protected routes remain token-gated. */
+/** Pi health advertises the selected model; its protected routes remain token-gated. */
 export async function status(state) {
   const response = await fetch(`http://127.0.0.1:${state.ports.runtime}/health`, {
     signal: AbortSignal.timeout(5000),
   })
   if (response.status !== 200) throw new Error(`Runtime health HTTP ${response.status}`)
-  return decode(
-    Schema.Struct({ model: Schema.String, service: Schema.String, status: Schema.String }),
-    await response.json(),
-  )
+  return decodeText(RuntimeHealth, await response.text())
 }

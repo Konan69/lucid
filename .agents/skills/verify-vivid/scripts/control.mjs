@@ -26,9 +26,9 @@ const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
 /** The CLI always selects a run it created, never any ordinary application instance. */
 async function selected() {
   const run =
-    args.find((arg) => arg.startsWith('flue-')) ??
+    args.find((arg) => arg.startsWith('pi-')) ??
     (await NodeFSP.readFile(cache + '/current', 'utf8').catch(() => '')).trim()
-  if (!run || !/^flue-[a-z0-9-]+$/.test(run))
+  if (!run || !/^pi-[a-z0-9-]+$/.test(run))
     throw new Error('No verification run; execute verify launch')
   return JSON.parse(await NodeFSP.readFile(cache + '/' + run + '/state.json', 'utf8'))
 }
@@ -45,10 +45,7 @@ async function launch() {
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
-    'flue-' +
-    new Date().toISOString().replace(/[^0-9]/g, '') +
-    '-' +
-    crypto.randomUUID().slice(0, 8)
+    'pi-' + new Date().toISOString().replace(/[^0-9]/g, '') + '-' + crypto.randomUUID().slice(0, 8)
   const evidence = cache + '/' + run
   const scratch = evidence + '/instance'
   const ports = await freePorts([
@@ -93,10 +90,10 @@ async function launch() {
   if (
     existing &&
     (!existing.isSymbolicLink() ||
-      (await NodeFSP.readlink(dependencies)) !== root + '/apps/server/node_modules')
+      (await NodeFSP.readlink(dependencies)) !== root + '/packages/agent/runtime/node_modules')
   )
     throw new Error('Verification dependency link is not ours')
-  if (!existing) await NodeFSP.symlink(root + '/apps/server/node_modules', dependencies)
+  if (!existing) await NodeFSP.symlink(root + '/packages/agent/runtime/node_modules', dependencies)
   const log = await NodeFSP.open(evidence + '/supervisor.log', 'a', 0o600)
   let child
   // A failed spawn, identity capture or readiness step must not retain the provider handoff.
@@ -165,7 +162,7 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
@@ -191,7 +188,7 @@ try {
               loader,
               skill + '/scripts/drive.mjs',
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
+              args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
             ],
             {
               heavy: true,
@@ -212,7 +209,7 @@ try {
               loader,
               skill + '/scripts/phone.mjs',
               state.evidence + '/state.json',
-              args.find((arg) => !arg.startsWith('flue-')) ?? 'thread',
+              args.find((arg) => !arg.startsWith('pi-')) ?? 'thread',
             ],
             {
               heavy: true,
@@ -248,7 +245,7 @@ try {
               loader,
               skill + '/scripts/browser.mjs',
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
+              args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
             ],
             {
               heavy: true,
@@ -262,7 +259,7 @@ try {
         await manual(
           state,
           action,
-          args.filter((arg) => !arg.startsWith('flue-')),
+          args.filter((arg) => !arg.startsWith('pi-')),
         )
       }
     }

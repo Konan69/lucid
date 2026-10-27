@@ -21,6 +21,7 @@ import { remoteCleanup } from './remote.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
 import { executor } from './executor.mjs'
 import { authSecret } from './settings.mjs'
+import { decodeText, RuntimeHealth } from './receipts.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -195,6 +196,11 @@ async function database() {
       heavy: true,
       log: state.evidence + '/' + name.replace(':', '-') + '.json',
     })
+  await run(['pnpm', '--filter', '@vivid/agent-runtime', 'db:migrate'], {
+    env,
+    heavy: true,
+    log: state.evidence + '/runtime-migrate.json',
+  })
 }
 
 /** The product entry exposes HTTP health but no IPC readiness receipt. Launch probes that
@@ -315,28 +321,28 @@ async function launch() {
     },
   )
   await serverReady(serverChild)
-  await run([process.execPath, skill + '/scripts/build.mjs', state.scratch], {
-    cwd: root + '/packages/agent/runtime',
-    env,
-    heavy: true,
-    log: state.evidence + '/build.json',
-  })
-  await NodeFSP.symlink(
-    root + '/packages/agent/runtime/node_modules',
-    state.scratch + '/runtime/node_modules',
+  const runtimeRequire = NodeModule.createRequire(root + '/packages/agent/runtime/package.json')
+  const runtime = await own(
+    'runtime',
+    [
+      process.execPath,
+      '--import',
+      runtimeRequire.resolve('tsx'),
+      root + '/packages/agent/runtime/src/main.ts',
+    ],
+    {
+      cwd: state.scratch,
+      env: { ...env, HOST: '127.0.0.1', PORT: String(state.ports.runtime) },
+    },
   )
-  const runtime = await own('runtime', [process.execPath, state.scratch + '/runtime/server.mjs'], {
-    cwd: state.scratch,
-    env: { ...env, PORT: String(state.ports.runtime) },
-  })
   await signal(runtime, runtime.stdout, 'data', (bytes) =>
-    bytes.toString().includes('[flue] Server listening'),
+    bytes.toString().includes('Listening on '),
   )
   const runtimeHealth = await fetch(env.VIVID_RUNTIME_URL + '/health')
-  const runtimeValue = await runtimeHealth.json()
+  const runtimeValue = decodeText(RuntimeHealth, await runtimeHealth.text())
   await json(state.evidence + '/runtime-health.json', runtimeValue)
-  if (runtimeValue.model !== state.model || runtimeValue.status !== 'ok')
-    throw new Error('Selected runtime health refused')
+  if (!runtimeHealth.ok || runtimeValue.model !== state.model || runtimeValue.status !== 'ok')
+    throw new Error('Selected Pi runtime health refused')
   await run([process.execPath, skill + '/scripts/dev.mjs', 'build', state.scratch], {
     cwd: root + '/apps/web',
     env: { ...cleanEnv, VIVID_SERVER_URL: state.server },

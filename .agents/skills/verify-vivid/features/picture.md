@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature picture` after Launch and Doctor
 
 ## Gotchas
 
-Shared Threads intentionally refuse pictures with Flue 2.2.2. The HTTP helper submits a tiny owned PNG. For attachment UI changes use the composer file input; an HTTP upload does not prove that control.
+Shared Threads intentionally refuse pictures. The HTTP helper submits a tiny owned PNG. For attachment UI changes use the composer file input; an HTTP upload does not prove that control.

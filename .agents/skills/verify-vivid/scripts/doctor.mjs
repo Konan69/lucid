@@ -97,7 +97,7 @@ export async function doctor(state) {
     ])
     return { ok: output.includes('accepting connections'), output }
   })
-  await check('Flue selected runtime', async () => {
+  await check('Pi selected runtime', async () => {
     if (!currentBoot || !(await ownsPort(state.processes.runtime, state.ports.runtime)))
       return { ok: false, reason: 'No owned runtime listener' }
     const { status } = await import('./wire.mjs')

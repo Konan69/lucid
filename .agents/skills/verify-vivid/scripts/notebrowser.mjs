@@ -61,7 +61,7 @@ export async function noteBrowser(state, id, directory, browser) {
     await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
     const detail = await settled(state, id, index + 1, 'Completed', evidence)
     const page = await history(state, id, evidence)
-    const currentRun = detail.runs[index].id
+    const currentRun = detail.runs[index].submissionId
     await noteReceipt(page, currentRun, step, evidence, known)
     await latestReply(browser, page, currentRun, { directory: evidence, stage: 'after' })
     await capture(step.name + '-after')

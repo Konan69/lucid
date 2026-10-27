@@ -13,9 +13,9 @@ Read [Android setup](../references/android.md). Select a devbox with `~/bin/devb
 In the separate proof checkout on that same host, run Launch and Doctor. Then run the phone journey with the explicit run id.
 
 ```sh
-.agents/skills/verify-vivid/verify phone thread flue-<id>
-.agents/skills/verify-vivid/verify doctor flue-<id>
-.agents/skills/verify-vivid/verify cleanup flue-<id>
+.agents/skills/verify-vivid/verify phone thread pi-<id>
+.agents/skills/verify-vivid/verify doctor pi-<id>
+.agents/skills/verify-vivid/verify cleanup pi-<id>
 ```
 
 The recipe creates one idle Thread through public `CreateThread`, installs a release APK from the recorded commit, and clears only this disposable emulator's Vivid app data. `adb reverse` maps the APK's fixed emulator loopback address to this run's own single-origin web proxy. Email sign-in uses the run's synthetic Better Auth account. It uses neither Google nor a developer account.

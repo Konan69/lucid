@@ -120,7 +120,7 @@ export async function notes(state, id, directory) {
     await chat(state, id, step.prompt, evidence)
     const detail = await settled(state, id, index + 1, 'Completed', evidence)
     const page = await history(state, id, evidence)
-    await noteReceipt(page, detail.runs[index].id, step, evidence, known)
+    await noteReceipt(page, detail.runs[index].submissionId, step, evidence, known)
   }
   await json(directory + '/scope.json', {
     proved:

@@ -15,8 +15,8 @@ The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.t
 After Launch and Doctor on the unchanged commit, run both recipes with the explicit run id.
 
 ```sh
-.agents/skills/verify-vivid/verify feature settings flue-<id>
-.agents/skills/verify-vivid/verify browser settings flue-<id>
+.agents/skills/verify-vivid/verify feature settings pi-<id>
+.agents/skills/verify-vivid/verify browser settings pi-<id>
 ```
 
 HTTP requires `ListMemory` to return no facts and an empty brief. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must remain empty.

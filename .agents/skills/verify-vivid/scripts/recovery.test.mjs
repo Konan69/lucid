@@ -28,10 +28,7 @@ async function cli(args) {
  * live fixtures register shutdown before any filesystem write so failed setup leaves no child. */
 async function fixture(context, live = false) {
   const run =
-    'flue-' +
-    new Date().toISOString().replace(/[^0-9]/g, '') +
-    '-' +
-    crypto.randomUUID().slice(0, 8)
+    'pi-' + new Date().toISOString().replace(/[^0-9]/g, '') + '-' + crypto.randomUUID().slice(0, 8)
   const evidence = testCache + '/' + run
   const scratch = evidence + '/instance'
   const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
@@ -118,7 +115,7 @@ NodeTest.test(
 
 /** A supervisor crash must not strand a separately captured product child. */
 NodeTest.test(
-  'crash cleanup stops the recorded child and preserves evidence on repeated cleanup',
+  'crash cleanup stops the recorded Pi runtime and preserves evidence on repeated cleanup',
   async (context) => {
     const state = await fixture(context)
     const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
@@ -132,13 +129,13 @@ NodeTest.test(
         await closed
       }
     })
-    state.processes.server = await identity(child.pid)
+    state.processes.runtime = await identity(child.pid)
     await NodeFSP.writeFile(state.evidence + '/state.json', JSON.stringify(state, null, 2))
-    NodeAssert.equal(await alive(state.processes.server), true)
+    NodeAssert.equal(await alive(state.processes.runtime), true)
     const first = await cli(['cleanup', state.run])
     NodeAssert.equal(first.code, 0, first.output)
     await closed
-    NodeAssert.equal(await alive(state.processes.server), false)
+    NodeAssert.equal(await alive(state.processes.runtime), false)
     const second = await cli(['cleanup', state.run])
     NodeAssert.equal(second.code, 0, second.output)
     await NodeFSP.access(state.evidence + '/state.json')
@@ -178,7 +175,7 @@ NodeTest.test(
     const live = await fixture(context, true)
     const dead = await fixture(context)
     const link = testCache + '/dependencies'
-    const target = root + '/apps/server/node_modules'
+    const target = root + '/packages/agent/runtime/node_modules'
     context.after(async () => {
       if ((await NodeFSP.readlink(link).catch(() => null)) === target) await NodeFSP.unlink(link)
     })
