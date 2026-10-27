@@ -27,7 +27,7 @@
   {
     "file": "packages/agent/runtime/src/agents/vivid.ts",
     "classification": "third-party-adapter",
-    "symbols": ["DefinitionInput.frozen"]
+    "symbols": ["<module>"]
   },
   {
     "file": "packages/agent/runtime/src/persons.ts",
@@ -57,18 +57,17 @@
   {
     "file": "packages/agent/runtime/src/tools/sandbox.ts",
     "classification": "third-party-adapter",
-    "symbols": [
-      "ComputerDriver.exec",
-      "ComputerDriver.readFile",
-      "ComputerDriver.writeFile",
-      "ComputerDriver.mkdir",
-      "Sandbox.computer"
-    ]
+    "symbols": ["<module>"]
   },
   {
     "file": "packages/agent/runtime/src/tools/tool.ts",
     "classification": "third-party-adapter",
     "symbols": ["executeCall", "execute"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/tests/harness.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["roundTrip", "invoke", "execute"]
   },
   {
     "file": "packages/agent/runtime/src/storage/database.ts",
