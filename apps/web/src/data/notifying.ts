@@ -98,10 +98,11 @@ const subscriptionIn = (registration: ServiceWorkerRegistration) =>
 const browser = notifying.Device.of({
   read: Effect.gen(function* () {
     if (!pushable) return notifying.Holding.cases.Unsupported.make({})
-    const registration = yield* registered
     if (Notification.permission === 'denied') return notifying.Holding.cases.Blocked.make({})
     if (Notification.permission === 'default') return notifying.Holding.cases.Unasked.make({})
-    const subscription = yield* subscriptionIn(registration)
+    // Only a browser that allowed notifications installs the worker, and each launch registers
+    // it again so a new build's worker replaces the old one.
+    const subscription = yield* subscriptionIn(yield* registered)
     if (Option.isNone(subscription)) return notifying.Holding.cases.Off.make({})
     const destination = yield* destinationOf(subscription.value)
     return notifying.Holding.cases.Held.make({ destination })
