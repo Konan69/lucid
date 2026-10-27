@@ -9,6 +9,7 @@ import {
   BrowserAction,
   BrowseTarget,
   ConnectionId,
+  FeedItem,
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
@@ -96,7 +97,9 @@ layer(testDatabaseLayer)((it) => {
               expect(approvals.map((approval) => approval.action)).toEqual([proposed])
               const feed = yield* readFeed(database, test.personal.person.id)
               expect(feed.items).toHaveLength(1)
-              expect(feed.items[0]).toMatchObject({ _tag: 'Waiting', asking: ['approval'] })
+              expect(feed.items.filter(FeedItem.guards.Waiting).map((item) => item.asking)).toEqual(
+                [['approval']],
+              )
             }
           }
           expect(yield* Ref.get(observed.notices)).toEqual([])
