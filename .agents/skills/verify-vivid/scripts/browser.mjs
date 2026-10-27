@@ -4,8 +4,8 @@ import * as assert from 'node:assert/strict'
 import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
-import { rpc, settled, history, chat } from './wire.mjs'
-import { features, stop } from './drive.mjs'
+import { rpc, settled, history, chat, conversation } from './wire.mjs'
+import { features, stop, png } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
@@ -44,7 +44,6 @@ function normaliseReply(text) {
 
 const missing = {
   question: 'No browser recipe for the multi-question controls yet',
-  picture: 'No browser recipe for the composer file input yet',
   approve: 'No connected disposable Integration to produce a pending Approval',
   deny: 'No connected disposable Integration to produce a pending Approval',
   code: 'No disposable Person Computer authority',
@@ -60,7 +59,12 @@ const recipes = {
   watch: { check: 'watch' },
   feed: { check: 'feed' },
   replies: { check: 'replies' },
-  first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
+  first: {
+    phrase:
+      'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
+    check: 'reply',
+  },
+  picture: { phrase: 'Hello Vivid with a picture. Acknowledge briefly.', check: 'picture' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
     check: 'reload',
@@ -213,6 +217,18 @@ async function rendered(run, kind) {
         )
       break
     }
+    case 'picture': {
+      await run([
+        'wait',
+        '--fn',
+        `Array.from(document.images).some(image => image.src.includes('/attachments/') && image.complete && image.naturalWidth > 0)`,
+      ])
+      await run([
+        'eval',
+        `JSON.stringify(Array.from(document.images).filter(image => image.src.includes('/attachments/')).map(image => ({ src: image.src, width: image.naturalWidth, height: image.naturalHeight })))`,
+      ])
+      break
+    }
     case 'document': {
       // Since 26 October 2026 a Thread draws no step rows (the owner: "tool call spam ... the user
       // doesn't need to see this"): the reply is Vivid's bubbles, and the document's receipt is
@@ -233,6 +249,25 @@ async function rendered(run, kind) {
     default:
       throw new Error('Unknown rendered assertion ' + kind)
   }
+}
+
+/** Reload only after observing actual model text. A completed reply cannot prove reconnect. */
+async function reloadStreaming(state, id, directory, run) {
+  for await (const active of conversation(state, id, { directory, name: 'before-reload-stream' })) {
+    assert.equal(active.settlements.length, 0, 'Reply settled before mid-stream reload')
+    const streaming = active.messages.some(
+      (message) =>
+        message.purpose === 'assistant' &&
+        message.parts.some(
+          (part) => part.type === 'text' && part.state === 'streaming' && part.text.trim(),
+        ),
+    )
+    if (!active.working || !streaming) continue
+    await json(directory + '/midstream.json', active)
+    await run(['reload'])
+    return active
+  }
+  throw new Error('No streamed reply to reload')
 }
 
 /** Read daemon identities from this run's private namespace, then capture its Chrome descendants. */
@@ -441,9 +476,23 @@ async function journey(state, feature) {
       const phrase =
         state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
       await run(['find', 'label', 'Message Vivid', 'fill', phrase])
+      if (feature === 'picture') {
+        await fs.writeFile(directory + '/pixel.png', Buffer.from(png, 'base64'))
+        await run(['upload', 'input[type=file]', directory + '/pixel.png'])
+        await run(['wait', 'button[aria-label="Take off pixel.png"]'])
+      }
       await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+      const interrupted =
+        feature === 'first' ? await reloadStreaming(state, id, directory, run) : undefined
       await settled(state, id, feature === 'reload' ? 2 : 1, 'Completed', directory)
       const page = await history(state, id, directory)
+      if (interrupted) {
+        for (const message of interrupted.messages)
+          assert.ok(
+            page.messages.some((saved) => saved.id === message.id),
+            'Reload lost a streamed entry',
+          )
+      }
       const replies = page.messages.filter((m) => m.role === 'assistant')
       assert.ok(
         replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
@@ -485,7 +534,9 @@ async function journey(state, feature) {
             ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
             : feature === 'reload'
               ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
-              : 'send and rendered reply before and after reload',
+              : feature === 'first'
+                ? 'real streamed reply, mid-stream reload, same entries, completed reply and reload'
+                : 'composer send, rendered content and reload',
       }
     }
   } catch (error) {

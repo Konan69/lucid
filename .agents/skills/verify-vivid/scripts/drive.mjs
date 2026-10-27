@@ -36,7 +36,7 @@ export const features = [
   'notes',
   'discord',
 ]
-const png =
+export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
 const words = (page) =>
   page.messages
