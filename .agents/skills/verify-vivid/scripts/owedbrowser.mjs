@@ -19,7 +19,7 @@ export async function owedBrowser(state, id, directory, { run, capture }) {
   await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
   const detail = await settled(state, id, 1, 'Completed', directory)
   await trackedReceipt(state, id, detail.runs[0].id, directory)
-  const record = await trackedRecord(state, directory, 'listed')
+  const record = await trackedRecord(state, id, directory, 'listed')
   await capture('thread')
 
   await run(['open', state.web + '/feed'])
@@ -43,7 +43,7 @@ export async function owedBrowser(state, id, directory, { run, capture }) {
   await run(['wait', '[aria-label="Message Vivid"]'])
   const after = await run(['eval', rowShown(record.what)])
   assert.equal(after.trim(), 'false', 'The received row came back after reload')
-  const closed = await trackedRecord(state, directory, 'resolved')
+  const closed = await trackedRecord(state, id, directory, 'resolved')
   assert.equal(closed.state._tag, 'Resolved', 'The Feed press did not resolve the record')
   await capture('reloaded')
   await json(directory + '/scope.json', {

@@ -13,11 +13,14 @@ export const OWED_PROMPT =
 const party = /tunde/iu
 const thing = /deck/iu
 
-/** The one record this journey tracked, read through the public list. */
-export async function trackedRecord(state, directory, name) {
+/**
+ * The one record this journey tracked, read through the public list. Only records from this
+ * journey's Thread count: one Person may run several journeys.
+ */
+export async function trackedRecord(state, id, directory, name) {
   const listed = await rpc(state, 'ListOwed', undefined, directory, name)
   const matching = listed.owed.filter(
-    (record) => party.test(record.from) && thing.test(record.what),
+    (record) => record.threadId === id && party.test(record.from) && thing.test(record.what),
   )
   assert.equal(
     matching.length,
@@ -54,8 +57,7 @@ export async function owed(state, id, directory) {
   await chat(state, id, OWED_PROMPT, directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
   await trackedReceipt(state, id, detail.runs[0].id, directory)
-  const record = await trackedRecord(state, directory, 'listed')
-  assert.equal(record.threadId, id, 'The record names another Thread')
+  const record = await trackedRecord(state, id, directory, 'listed')
   assert.ok(['Open', 'Nudged'].includes(record.state._tag), 'The new record is not open')
   await rpc(
     state,
@@ -63,7 +65,7 @@ export async function owed(state, id, directory) {
     ResolveOwedRequest.make({ id: record.id, how: 'The Person marked it received on the Feed.' }),
     directory,
   )
-  const closed = await trackedRecord(state, directory, 'resolved')
+  const closed = await trackedRecord(state, id, directory, 'resolved')
   assert.equal(closed.state._tag, 'Resolved', 'Resolving did not close the record')
   await json(directory + '/scope.json', {
     proved:
