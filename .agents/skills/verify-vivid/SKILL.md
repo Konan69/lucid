@@ -5,7 +5,13 @@ description: Verify Vivid behaviour through its real server entry, web client, f
 
 # Verify Vivid
 
-Read the [feature map](features/README.md), the touched feature and [runtime boundaries](references/boundaries.md). Product source stays unchanged. This skill starts `apps/server/src/main.ts`, the shipped Pi Durable runtime and web, with disposable PostgreSQL and Helix. A missing recipe or authority is blocked, never verified.
+Read the [feature map](features/README.md), the touched feature and [runtime boundaries](references/boundaries.md). Product source stays unchanged. The chosen runtime is one celld Person cell with native Pi Durable Object SQLite, defined in [Runtime cells](../../../docs/27-runtime-cells.md). PostgreSQL remains product-only.
+
+Cell-backed verification is currently blocked. The launcher still starts the old Node runtime
+and invokes a runtime PG migration command. The PG adapter is being deleted; cell host, Notes,
+infrastructure, and launcher integration are in progress. The commands below describe the
+verification workflow, not a working cell launch. Replace the launcher integration before using
+its verdicts for cell-backed behavior. A missing recipe or authority is blocked, never verified.
 
 ## Host and credentials
 
@@ -26,7 +32,11 @@ VIVID_VERIFY_DEVBOX=cloudbox-konan VIVID_VERIFY_KEY_FILE=/private/verify.env .ag
 
 Require exit 0 and `worthy: true` from doctor. Launch captures HEAD, `git status --porcelain=v1 -uall` and a SHA-256 hash of `git diff --binary HEAD`. Dirty trees are labelled dirty in state, doctor and every verdict. Untracked paths, byte lengths and file contents also feed the hash. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch removes instance/provider.json immediately after reading it. The launch finally block and both cleanup paths remove it even if later teardown fails. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
 
-Each run owns fresh ports, labelled containers, synthetic Better Auth account, model/runtime notes, build outputs, Vite caches and captured process generations. Pi executes `packages/agent/runtime/src/main.ts` with its installed `tsx` loader and disposable Notes directory. It builds no runtime bundle. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Readiness requires actual product health, runtime model health, Helix health, web build/proxy and successful signup/signin. Startup failure keeps evidence and attempts cleanup.
+Each run owns fresh ports, labelled containers, synthetic Better Auth account, build outputs,
+Vite caches, and captured process generations. The current launcher executes the old
+`packages/agent/runtime/src/main.ts` through `tsx` with a disposable Notes directory. Cell-backed
+launch must instead own disposable celld storage, native Pi SQLite, and its alarm lifecycle.
+Until that integration lands, runtime readiness is blocked. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Readiness requires actual product health, runtime model health, Helix health, web build/proxy and successful signup/signin. Startup failure keeps evidence and attempts cleanup.
 
 ## Drive the touched feature
 
@@ -39,7 +49,9 @@ Each run owns fresh ports, labelled containers, synthetic Better Auth account, m
 .agents/skills/verify-vivid/verify browser devices pi-<id>
 ```
 
-`feature all` and `browser all` attempt every mapped feature. Missing browser recipes exit unsuccessfully with `no browser recipe`. Only the requested feature's journey can produce its verdict. HTTP uses Person cookies, public contracts/RPC and the real server gateway. WatchThread proves settlement. Browser uses the composer, Send and reload, records snapshots/screenshots and asserts semantic DOM. Tool checks table columns and rows. Document checks the tool-card element and expanded list item; the Artifact opener is blocked in this web client. Full document proof also requires the HTTP versioning recipe.
+`feature all` and `browser all` attempt every mapped feature. Missing browser recipes exit unsuccessfully with `no browser recipe`. Only the requested feature's journey can produce its verdict. Runtime journeys also require
+cell-backed evidence, including native terminal waiting and reconnect across an owner move.
+HTTP uses Person cookies, public contracts/RPC and the real server gateway. WatchThread proves settlement. Browser uses the composer, Send and reload, records snapshots/screenshots and asserts semantic DOM. Tool checks table columns and rows. Document checks the tool-card element and expanded list item; the Artifact opener is blocked in this web client. Full document proof also requires the HTTP versioning recipe.
 
 The repository workflow uses agent-browser on the selected host with a private namespace, session and profile. Read its installed core skill before use. Set `VIVID_VERIFY_BROWSER` and `VIVID_VERIFY_CHROME` when binaries are elsewhere. Browser processes are recorded from its private PID receipts. Close always runs in finally; cleanup retries retained receipts.
 

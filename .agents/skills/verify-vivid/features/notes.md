@@ -6,7 +6,10 @@ Model requirement: needs a real model with the shipped Notes tools. Rehearsal ca
 
 Vivid keeps a standing preference for the acting Person, answers from it, replaces the same note when corrected, answers from the correction, and deletes it when asked to forget. The recipe checks the actual `write_note` and `delete_note` receipts in each settled Run and that questions change nothing. A sentence saying that a preference was saved cannot satisfy an assertion.
 
-Notes belong to the runtime's Person-scoped SQLite store. They are separate from the product knowledge base and documents. `ListMemories`, document artifacts, and SQL fixtures cannot prove Notes behavior.
+The chosen Notes store is the Person cell's SQLite beside the native Pi Harness. Cell-backed
+Notes integration and proof are in progress, not complete. The current launcher still uses the
+old Node host and runtime PG migration command, so these recipes are blocked until it launches
+cells. Notes belong to the acting Person, including in a shared Thread. They are separate from the product knowledge base and documents. `ListMemories`, document artifacts, and SQL fixtures cannot prove Notes behavior.
 
 ## How to get to it
 
@@ -30,10 +33,18 @@ Inspect `notes/verdict.json` and `browser/notes/verdict.json`. Each recipe retai
 
 ## Limits and prerequisites
 
-These recipes are implemented but have not been run by their author. The parent reports live proof blocked by OpenRouter HTTP 401 and Experiential Labs insufficient credits. Supply a working key for a shipped real model and funded `EXPLABS_API_KEY` authority for the server's memory and title model. Then the parent must run Launch, Doctor, both Notes recipes, and Cleanup on the same unchanged head. Formatting and syntax checks do not establish runtime proof.
+These recipes were implemented for the pre-cell host and have not been proven on cells.
+Cell-backed Launch and Doctor are required first. The earlier real-model attempts were also
+blocked by OpenRouter HTTP 401 and insufficient Experiential Labs credits. A working shipped
+model key and funded `EXPLABS_API_KEY` authority remain prerequisites. Then run Launch, Doctor,
+both Notes recipes, and Cleanup on the same unchanged head. Formatting and syntax checks do not
+establish runtime proof.
 
-Owner cancellation, native operation draining, idle eviction, and capacity admission need the real SQLite checks in `packages/agent/runtime/src/notes.test.ts`. Notes surviving a runtime stop and start needs the disposable PostgreSQL check "reopens the persisted SQLite note after runtime stop" in `packages/agent/runtime/src/parity.test.ts`. The parent owns these checks and their red/green evidence. Their controlled scheduling and test provider do not establish real-model behavior. A browser reload cannot prove any of these lifecycle claims.
-
-The current supervisor only supports capture and cleanup. Server process restart with retained stores is unsupported by this recipe. The runtime lifecycle test does not prove a supervisor or operating-system process restart. Add owned restart control before claiming that coverage.
+Owner cancellation, active-operation completion, idle hibernation, and retained Notes after an
+owner move need the real cell host and native persistent storage. The former disposable
+PG-adapter reopen test is not proof of these claims. Drive them through the cell-backed product
+and retain the actual restart or move receipt. A browser reload proves neither lifecycle nor
+process recovery. The current supervisor offers capture and cleanup, not owned cell restart or
+move control; that missing integration blocks these claims.
 
 Phone and desktop native clients need separate device runs. Cross-Person isolation, cross-Thread recall, index budgets, automatic preference selection, and concurrent edits are outside these recipes. No native dependency, app configuration, or binary changes belong to this verifier work.

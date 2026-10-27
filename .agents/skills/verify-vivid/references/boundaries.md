@@ -1,6 +1,16 @@
 # Runtime boundaries
 
-Launch runs `apps/server/src/main.ts` unchanged. All handler groups, the product live transport, HTTP routes and background workers are composed by that entry point. There is no private server composition. PostgreSQL and Helix are disposable labelled containers. The Pi Durable runtime executes its shipped TypeScript entry with its full agent prompt, provider declarations, tools and stores. Its schema migrates after auth and product before the process starts. The web uses its shipped build and preview configuration.
+The chosen proof stack runs `apps/server/src/main.ts` unchanged, the web client, and one celld
+Person cell with a native Pi Durable Harness over Durable Object SQLite. Product PostgreSQL and
+Helix remain disposable labelled containers. Pi's `onWake`/alarm pattern drives durable work;
+celld owns activation, ownership, and idle lifecycle.
+
+This stack is not yet wired. The existing launcher starts the old Node runtime and invokes its
+PG migration command. The custom PG adapter is being deleted, and cell host, Notes,
+infrastructure, and verification integration are in progress. Report cell-backed runtime
+journeys as blocked until Launch and Doctor use the real cell host. Old PG-adapter tests,
+Node startup, and rehearsal verdicts do not prove that integration. Require terminal waiting,
+abort, Notes, pictures, and state-link reconnect after a cell move through the real product.
 
 Only model credentials are read from development key sources. Launch never imports application database URLs, Computer identities or production service credentials. Synthetic auth/Google configuration and a fresh VAPID pair belong to the disposable instance. Boat and Photon adapters remain explicitly unconfigured. Launch owns a disposable Executor beta.23 with a private Verify Pulse catalogue and loopback callbacks. The Watch recipe connects that Integration through real Connect. No Computer, Google login, channel delivery or push delivery is proved. Failures at these external boundaries remain failures. A connected disposable authority is required before those features can pass.
 

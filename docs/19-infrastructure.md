@@ -2,13 +2,27 @@
 
 2026-10-03: The current local stack below supersedes the beta.76 resource proposal preserved later in this file; current feature evidence lives in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
-## Current shape
+## Runtime host transition
+
+[Runtime cells](27-runtime-cells.md) is the chosen architecture. Each Person gets one celld
+cell with a native Pi Durable Harness over Durable Object SQLite. celld owns activation,
+ownership, and idle lifecycle; Pi owns tasks, queues, deduplication, wait, abort, and restart.
+PostgreSQL keeps auth, Company/Membership, Thread metadata, Runs, Library, and other product
+records. The custom runtime PG adapter is being deleted.
+
+Cell hosting, Notes, Alchemy wiring, and cell-backed verification are in progress and unproven.
+The pre-cell graph below still exists in source; it is not a working cell launch or evidence of
+production conversion. Update infrastructure directly to the chosen cell design rather than
+build or deploy the discarded PG runtime first. No production action is authorized by this
+transition note.
+
+## Pre-cell graph
 
 ```text
 pnpm infra:dev
   ├─ Docker: PostgreSQL 18 → 127.0.0.1:55433
   ├─ ordered Drizzle migrations: server auth → server product
-  ├─ Command.Dev: Flue runtime → 127.0.0.1:5173 (one long-lived instance)
+  ├─ Command.Dev: old Node Pi runtime → 127.0.0.1:5173 (being replaced)
   ├─ Command.Dev: application server → 127.0.0.1:8787
   └─ Command.Dev: Vite web proxy → 127.0.0.1:5178
 ```
@@ -22,14 +36,16 @@ skips recovery for it; beta.79 does not know the mark, keeps the same state vers
 recover and then delete the renamed resource's predecessor.
 PostgreSQL uses database/user/password `vivid` and the named volume
 `vivid-postgres-local-data`. `infra/database.ts` is the database seam and returns a `Redacted`
-URL. `scripts/migrate.mjs` applies the server's auth then product chains; Flue `2.2.2` migrates
-its own PostgreSQL storage when the runtime starts.
+URL. The server's migrations remain auth then product. Runtime PG migration wiring in
+`scripts/migrate.mjs` is obsolete and must leave with the adapter. Native Pi SQLite opens inside
+the cell; it has no runtime PostgreSQL migration owner or `DATABASE_URL` requirement.
 
 `preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, persistent
-HelixDB, the private Flue runtime, and the public application server. `pnpm infra:deploy` selects
+HelixDB, the pre-cell private runtime, and the public application server. `pnpm infra:deploy` selects
 that graph; local development keeps the Command/Docker graph above. Railway PostgreSQL and
-Helix were reported healthy on 3 October 2026; application deployment still needs the container
-fixes and remote verification described below.
+Helix were reported healthy on 3 October 2026. That historical result does not prove the cell
+fleet or authorize its deployment. The target uses celld 0.6.2 nodes and a fleet bucket, declared
+through Alchemy as described in [Runtime cells](27-runtime-cells.md).
 
 ### Optional server settings and required capabilities
 
@@ -270,7 +286,7 @@ routes because profiles were removed. Neither mixed pairing can perform Integrat
    to stop Server and Runtime, then Executor, for the paired backups. Do not accept product writes
    while taking the backups. These stops are temporary; the merge can deploy Server again.
 2. Create Railway **volume backups** of both the entire Executor volume (including encrypted
-   keys) and the Vivid PostgreSQL volume (all auth, product and runtime data). The GraphQL create
+   keys) and the Vivid PostgreSQL volume (the complete volume, including any historical runtime rows). The GraphQL create
    mutation is `volumeInstanceBackupCreate(volumeInstanceId, name)`; give the two backups one
    cutover name and record both backup IDs, volume-instance IDs, server SHA, old image digest
    and configuration. Wait for both backups to finish before continuing. Use each service's
@@ -409,7 +425,7 @@ Required by the stack:
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
 - `EXPLABS_API_KEY` — the Experiential Labs model gateway: memory, embeddings and decisions.
-- `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
+- `VIVID_RUNTIME_TOKEN` — authority shared only between the application server and runtime host.
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
   from (`infra/computer/prepare.py` prints it).
@@ -441,12 +457,11 @@ sign-in. `pnpm infra:verify` fails when a setting the server requires is not sen
 forwarded to the hosted server when set (`apps/server/src/computers/README.md` says what each
 does).
 
-The runtime has one required setting of its own, `VIVID_MEMORY_DIR`, the directory of Vivid's
-notes. The hosted stack sets it to a volume and the local stack to `.state/notes` beside the
-runtime. `VIVID_MODEL`
-defaults to `opencode-go/glm-5.3-flash`; pi `0.87.1` and the provider at
-`packages/agent/runtime/src/providers/opencode.ts` supply model access. Vivid adds no model retry
-or fallback layer. AWS credentials are not required locally.
+The pre-cell graph still wires `VIVID_MEMORY_DIR` to a runtime volume or local `.state/notes`.
+The chosen cell design stores Notes beside Pi's tables and removes that directory requirement.
+Model credentials and server-call authority remain runtime-only. `VIVID_MODEL` currently defaults
+to `opencode-go/glm-5.3-flash`; `packages/agent/runtime/src/providers/opencode.ts` declares it.
+Vivid adds no model retry or fallback layer. Cell configuration and launch remain unproven.
 
 The hosted stack runs HelixDB as a Railway service and gives the server its private address
 (`VIVID_HELIX_URL`), runs Executor and gives the server its private address
@@ -462,18 +477,16 @@ may cost money; their charges are separate from local CPU and storage.
 
 ## Containers
 
-Build from the repository root, one image at a time:
+Build the server image from the repository root:
 
 ```sh
 docker build -f apps/server/Dockerfile -t vivid-server .
-docker build -f packages/agent/runtime/Dockerfile -t vivid-runtime .
 ```
 
-Both images use Node 24 and the root manifest's pinned pnpm through Corepack, preserve the
-installed workspace dependency layout, and run as the non-root `node` user. The server runs
-`pnpm --filter @vivid/server start` (tsx); the runtime runs its built `dist/server.mjs`.
-The runtime image bundles Vivid's TypeScript workspace exports into JavaScript for Node;
-third-party dependencies retain Flue's external dependency layout. Local build config is unchanged.
+The server image uses Node 24 and the root manifest's pinned pnpm through Corepack, preserves
+the installed workspace layout, and runs `pnpm --filter @vivid/server start` as the non-root
+`node` user. The old runtime Dockerfile is not the chosen cell host. Its build or health does
+not prove celld integration; cell packaging belongs to the Alchemy work in progress.
 No credential or application origin is supplied at build time. Container health checks use
 `GET /health` on the configured `PORT`.
 
@@ -482,8 +495,7 @@ The server image defaults to `HOST=0.0.0.0`, `PORT=8787`, and
 API routes, WebSocket upgrades, and health retain priority; other GET/HEAD requests serve files
 or the SPA document. Content-hashed assets cache immutably; the document revalidates. Traversal
 and symlinks outside the static root are refused. Without `VIVID_WEB_DIST`, local startup serves
-no static app; without `HOST`, it retains `127.0.0.1`. The runtime defaults to `PORT=5173` in its
-image; Flue's production Node listener omits a hostname and accepts non-loopback connections.
+no static app; without `HOST`, it retains `127.0.0.1`.
 
 The same image carries the mobile app's JavaScript as an over-the-air update
 (`VIVID_MOBILE_UPDATES=/app/apps/mobile/updates`, exported by `apps/mobile/scripts/publish.mjs`
@@ -516,13 +528,12 @@ build from `RAILWAY_GIT_COMMIT_SHA` (`apps/server/Dockerfile`); the run-time `VI
 `apps/server/src/observability/`.
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
-`VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
-`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `OPENCODE_API_KEY`
-for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
-under "Credentials and external services": the Computer, memory, Integrations, texting, away
-notifications and Google sign-in are required, and it does not start without them. Model
-settings keep their defaults. Apply the auth then product
-migrations before starting the server; Flue migrates its own runtime schema at startup.
+`VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. The runtime host needs the
+server-call authority and model credentials, not the product database URL or a Notes directory.
+Alchemy owns its cell endpoint and fleet storage configuration; that wiring is not yet proven.
+The server also needs the capabilities listed under "Credentials and external services".
+Apply auth then product migrations before starting the server. Pi uses its native SQLite
+storage inside the cell.
 
 Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
 Computer: the server starts its runner there over its SSH connection to the Computer, reads what
@@ -537,18 +548,10 @@ building an image neither calls Railway nor changes the local development graph.
 Railway uploads the repository root through Alchemy's filtered context packer, selecting each
 checked-in Dockerfile. It does not bundle an application through `main` or `extraFiles`.
 Both Services pin `startCommand` to the image's `CMD`; the offline verifier rejects drift.
-The runtime build also rejects external Vivid workspace imports or TypeScript file imports in
-its output, and prints `Vivid workspace bundle verified for bare Node`. A deployed image must
-contain that build step; an older upload of the ordinary Flue build externalizes workspace
-TypeScript sources and fails under bare Node.
-
-Server and Runtime remain independent nodes, using literal private addresses rather than each
-other's resource outputs. Alchemy reconciles them concurrently and collects sibling failures;
-Runtime health cannot prevent Server's build or migrations. Server's pre-deploy command runs
-auth then product migrations inside its image; Runtime has no pre-deploy command. An empty
-Metal scheduling log does not establish a migration or application failure: obtain the Server
-deployment's detailed builder/platform error separately. A Dockerfile fix lands when it is pushed
-to `main`, which rebuilds the image; `pnpm infra:deploy` reconciles the graph itself.
+The old standalone runtime service and volume are replaced by the chosen cell fleet. Keep
+server startup, product migrations, and health independent from runtime availability. Cell
+packaging, private routing, and deployment verification remain part of the infrastructure
+integration in progress. No PG-runtime deployment is a prerequisite for that work.
 
 ## Outside the current stack
 

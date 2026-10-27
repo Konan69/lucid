@@ -49,7 +49,7 @@ packages/
     state/    ● shared view logic, live cache, subscriptions and optimistic writes
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
-    runtime/  ● Pi Durable: conversation execution, history, model adapter
+    runtime/  ◐ Pi Durable: conversation execution, history, model adapter; moving to Person cells
     runtime/src/tools/      ● the tools Vivid can call; each one is an RPC call to the server
     runtime/src/providers/  ● the model gateway provider, and the scripted rehearsal model
     prompts/  ○ nothing here; the instructions live in runtime/src/agents/vivid.ts
@@ -71,6 +71,12 @@ infra/        ● Alchemy stack modules        scripts/  ● repository tooling
 docs/         ● these documents              tools/    ● vendored lint plugins
 refs/         · ignored: third-party source, including Effect at the pinned tag
 ```
+
+The chosen runtime host is one celld Person cell with native Pi Durable Object SQLite
+([Runtime cells](27-runtime-cells.md)). Host, Notes, infrastructure, and verification integration
+are in progress. celld owns activation, ownership, and idle lifecycle; Pi owns durable execution.
+Product PostgreSQL remains in the server. The deleted runtime PG adapter has no replacement
+migration owner.
 
 ## Server
 

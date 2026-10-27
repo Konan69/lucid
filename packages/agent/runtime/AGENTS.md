@@ -1,35 +1,25 @@
 # Vivid conversation runtime
 
-This package is Vivid's conversation runtime: a plain Node process on
-[Pi Durable](https://github.com/earendil-works/pi) 1.2.0 (`@earendil-works/pi-durable`, with
-`pi-ai` for models and `chord` for document state). Pi owns the transcript, model turns, tool
-calls and their durability. Product state and persistence remain in `apps/server`; runtime tools
-call that server through the schema-derived `VividRpcClient`.
+This package runs Vivid's conversations with Pi Durable. The chosen host is one celld Person
+cell with Pi's native Durable Object SQLite storage. [Runtime cells](../../../docs/27-runtime-cells.md)
+is authoritative. celld owns activation, ownership, and idle lifecycle. Pi owns tasks, queues,
+deduplication, wait, abort, and restart. Product state and authorization remain in `apps/server`;
+runtime tools call it through the schema-derived `VividRpcClient`.
+
+The existing integration is Pi Durable 1.2.0; the cell host targets 1.4.0. The custom PostgreSQL
+adapter is being deleted. Cell hosting, Notes, infrastructure wiring, and real product verification
+are in progress, not proven. Preserve pictures, Notes, and acting authority through that work.
 
 Read the installed packages before changing anything that touches Pi
 (`node_modules/@earendil-works/*/dist`), and the installed README for the same version. Never assume its API from memory; it is experimental and changes between releases.
 
 ## Layout
 
-- `src/main.ts`: the process entry. Builds the Layers, serves HTTP, and on SIGTERM closes HTTP,
-  then every Person's Harness (which closes its storage), then the shared HTTP client.
-- `src/lifetime.ts`: serving while the process owns the stores: losing the control connection
-  ends startup or serving at once, and the process exits non-zero.
-- `src/app.ts`: the HTTP routes (`packages/contracts/src/runtime.ts` documents the surface).
-- `src/settings.ts`: the required settings, read once at startup.
-- `src/persons.ts`: every Person's conversations: opened on demand, resumed at startup (only the
-  stores with unfinished work), closed when idle, dropped when their Harness fails.
-- `src/person.ts`: opening one Person: their store, Pi's Harness over it, Vivid's definition, and
-  the bridge from Pi's Promise callbacks into Effect.
-- `src/storage/`: Pi Durable's storage in PostgreSQL, one logical store per Person in shared
-  tables. `tables.ts` is the Drizzle schema (`drizzle.config.ts` generates `./drizzle`; root
-  `pnpm db:migrate` applies it after the server's owners, and the runtime service's pre-deploy
-  step alone in production; its ledger is its own, `ledger.ts`); `store.ts` is the Pi `Storage` port,
-  every statement scoped by `store_id`; `driver.ts` borrows a pooled connection per read or
-  transaction and fences every write by the owner generation; `stores.ts` takes the runtime's
-  authority (control connection, advisory lock, generation), finds or makes a Person's store and
-  lists the stores with unfinished work; `records.ts`, `scan.ts`, `statements.ts`, `literal.ts`
-  and `database.ts` are the port's pieces.
+- Host integration is moving to the Person cell. Open `Harness` over
+  `openDurableObjectSqliteStorage(ctx.storage)` and use Pi 1.4.0's README `onWake`/alarm pattern.
+  Arm wake before starting work and resume on alarms. celld owns eviction and ownership.
+- `src/app.ts`: the HTTP routes (`packages/contracts/src/runtime.ts` documents the contract).
+- `src/person.ts`: Vivid's definition, tools, and the bridge from Pi's callbacks into Effect.
 - `src/threads.ts`: one Pi conversation per Thread, and the documents that relate the two.
 - `src/admission.ts`: admitting one delivery exactly once.
 - `src/delivery.ts`: a delivery as the model reads it and as Pi places it; the delivery scope
@@ -56,47 +46,37 @@ Read the installed packages before changing anything that touches Pi
 - `src/state/link.ts`: the state link: the whole state, then the changes between projections
   (`@earendil-works/chord/delta`), for as long as somebody reads; and the one-off read.
 - `src/state/pictures.ts`: the bytes of a picture a Person sent.
-- `tests/process.ts`: the route fixture: the production routes, Persons and Stores Layers on a
-  database of the case's own (`tests/database.ts` copies a template it migrates once through
-  this package's migration owner, administered through `VIVID_TEST_DATABASE_URL`), with a scripted model and an unreachable
-  server. `tests/setup.ts` removes inherited settings from each worker. The suites that need
-  PostgreSQL skip without `VIVID_TEST_DATABASE_URL`; the gate always supplies it
-  (`pnpm gate focused <files>`).
+- Runtime tests are transitioning to native first-party persistent storage. Product database
+  fixtures still use only disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`.
 
-## Commands
+## Verification during the host change
 
-- `pnpm dev`: run the process from source and restart it on change.
-- `pnpm start`: run the process from source (`tsx src/main.ts`), as production does.
-- `pnpm check:types`: typecheck this package.
-- `pnpm lint`: run type-aware lint on the whole package, including tests.
+Use the installed Pi README and source for the selected version. celld's `examples/pi` uses
+another `agents/harness` SDK; it is a host-binding reference, not a replacement for pi-durable.
+The current verifier starts the old Node entry and invokes a runtime PG migration command.
+Cell-backed journeys are blocked until the launcher and recipes use the real cell host. Require
+proof on a disposable devbox, including wake, abort, terminal wait, Notes, pictures, and reconnect
+across an owner move. A PG-adapter test or rehearsal does not prove those claims.
 
 ## Runtime contract
 
 - The application server is the only caller. It holds the runtime token and forwards a Person's
   message, or delivers a signal, to `POST /persons/:personId/threads/:threadId` after checking who
   they are and that they may see the Thread. The Person in the path is the Thread's creator.
-- One Person, one logical store, one Harness. A store is the rows of the `runtime` schema that
-  carry its `store_id` (an opaque id, recorded with its Person in `runtime.stores`); nothing in a
-  store refers to another, so the same code can later run on a Person's own Computer and moving
-  them is moving that store's rows. Every store shares one connection pool; none holds a
-  connection. One runtime process owns every store: the advisory lock on its control connection
-  keeps a second one from starting, and the owner generation, read `FOR SHARE` in every write
-  transaction, refuses a process that has been replaced (`OwnershipLost`). Losing the control
-  connection ends the process, during startup recovery as much as while serving (`lifetime.ts`).
-  A runtime whose newest migration is not in the database's ledger refuses to start
-  (`MigrationsPending`) and exits; in production the runtime service runs its own migration
-  in its pre-deploy step (`pnpm --filter @vivid/agent-runtime db:migrate`) first.
-- Pi's failure rule is the only failure handling: a storage error fails and closes the Harness,
-  later calls reject, and the next request opens a fresh one. Do not add retries or bookkeeping
-  around it; the store's own bounded retry of rolled-back transactions and its ownership fence
-  (`storage/driver.ts`) are part of the storage, not of the host. The server's retry with the same idempotency key finds a delivery that
-  was already admitted.
+- One Person, one cell, one native SQLite store, one Harness. PostgreSQL holds only product
+  records, including auth, Company/Membership, Thread metadata, Runs, and Library. Runtime
+  persistence has no `DATABASE_URL` requirement or PostgreSQL migration owner.
+- Use celld's ownership and idle lifecycle and Pi's native scheduling and failure protocols.
+  Keep required follow-up work in native durable tasks. Do not recreate them with central maps,
+  ownership fences, idle timers, or in-memory recovery queues.
+- `GET …/submissions/:id` awaits native `submission.wait(context)` directly. Its wire result is
+  terminal only (`Done`, `Failed`, `Stopped`). Request cancellation ends only that wait.
+  In-progress state comes from watch/live documents. Reconnect a state link after a cell move.
 - A delivery's Pi request id is its idempotency key under the prefix `delivery:`, so it cannot
   equal a request id the runtime gives its own writes. A delivery that arrives during a response
   joins it after the current round of tools (`whenBusy: 'steer'`), together with every other one
-  that arrived meanwhile (`steeringMode: 'all'`, as main). A response that fails leaves them
-  waiting in Pi's inbox; the runtime then places them with one write (`placeWaiting`), and does
-  the same when a process starts.
+  that arrived meanwhile (`steeringMode: 'all'`). Use Pi's native inbox and task protocols for
+  placement and continuation after failure or restart.
 - The model is asked to think at `medium`, main's level; Pi's default is `off`.
 - A failed response leaves the runtime as a closed category and an HTTP status number
   (`failure.ts`). The provider's or Pi's failure text never crosses the HTTP surface.
@@ -118,7 +98,7 @@ Read the installed packages before changing anything that touches Pi
   times, tool count and usage), `vivid.run` (a run's deliveries, written while it runs, so a
   screen groups a reply the same way during and after) and `vivid.placed` (the write that placed
   waiting deliveries); the documents `vivid.thread`, `vivid.conversation`, `vivid.delivery`, `vivid.answered`.
-  A kind is a persisted name: changing one needs a migration of every Person's store.
+  These kinds are persisted names. Preserve their meaning and stored content through the host change.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
 - The default model is `opencode-go/glm-5.3-flash`, served by OpenCode Go
   (`src/providers/opencode.ts`, key `OPENCODE_API_KEY`). The Experiential Labs gateway stays
@@ -132,8 +112,9 @@ Read the installed packages before changing anything that touches Pi
 
 ## Known limits
 
-These are states the runtime can be left in and does not repair. Each is here instead of in code
-because closing it would need new recovery machinery (a sweeper, a marker, a second record).
+These limits describe the pre-cell integration. They have not been re-proven in the cell host.
+Use them to preserve observable behavior while moving required work into Pi's native tasks;
+they are not instructions to build a separate recovery framework.
 
 - **A response's follow-up writes are not durable** (`settled.ts` runs them just after the
   settling commit, from memory): releasing each delivery's `vivid.delivery` record, which holds
@@ -180,13 +161,5 @@ because closing it would need new recovery machinery (a sweeper, a marker, a sec
 - **A picture in a tool's result cannot be read from the state.** It is drawn as `{ type:
 'image', mimeType }` with no address. Its bytes are still in the transcript, inside the tool
   result, and reach only the model. No screen draws one today.
-- **Durability is the database's.** A commit is acknowledged when PostgreSQL's COMMIT returns,
-  with whatever `synchronous_commit` the database runs.
-- **A replaced process can finish one write.** A write that already holds the fence when a new
-  runtime takes over commits before the takeover does; every later one is refused. Losing the
-  control connection does not by itself stop writes on pooled connections until a successor
-  advances the generation; the process stops on that loss.
-- **Moving a Person** is their store's rows (every table, by `store_id`), copied while no process
-  has it open, and their notes, which live under `VIVID_MEMORY_DIR`. There is no tool for it yet.
 
 The opt-in rehearsal model uses pi’s faux provider to exercise real Vivid tools and display cards without a model provider key. It reconstructs deterministic scenes from conversation context and reports real tool receipts and failures; it is for product rehearsal and is never a default. Set `VIVID_MODEL=rehearsal/script` before starting the runtime to register it, then send a supported phrase such as “show a table” or “run a program”; an unrecognized message lists all phrases.

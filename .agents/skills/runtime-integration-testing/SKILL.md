@@ -1,33 +1,35 @@
 ---
 name: runtime-integration-testing
-description: Use when testing Vivid across real PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Flue runtime boundary, Integrations transport, schedulers, restart recovery, or model behavior where a pure unit test cannot prove the production contract.
+description: Use when testing Vivid across real PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Pi/celld runtime boundary, Integrations transport, schedulers, restart recovery, or model behavior where a pure unit test cannot prove the production contract.
 ---
 
 # Runtime Integration Testing
 
 ## Core principle
 
-Test the smallest **real runtime seam** that contains the production failure. Do not replace PostgreSQL, the RPC server, Better Auth session lookup, Flue persistence, or Integration transport with a mock and then claim the integration works.
+Test the smallest **real runtime seam** that contains the production failure. Do not replace PostgreSQL, the RPC server, Better Auth session lookup, native Pi SQLite persistence, or Integration transport with a mock and then claim the integration works.
 
-Keep pure state-machine and domain tests fast. A test of an Effect combinator, a schema literal, or a fake's configured return value is not evidence that Vivid's runtime contract works.
+State invariants belong in the Effect Machine or type model. Prove runtime behavior through a real persistent boundary. A test of an Effect combinator, a schema literal, or a fake's configured return value is not runtime evidence.
 
 **Use the seams that exist.** Everything below names a file on disk. Before adding a harness, factory, or `make…Target` helper, read those files; a second database bootstrap or server factory is almost always a duplicate. Where a capability is missing, this skill says so under "Missing capabilities" — do not paper over it with a sketch.
 
-Re-verify against installed source when a pin moves. Pinned now: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.2`; the Effect seams below were verified on `4.0.0-rc.116` and are not yet re-read on `4.0.2`. Verified here: Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
+Re-verify against installed source when a pin moves. Pinned now: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.2`; the Effect seams below were verified on `4.0.0-rc.116` and are not yet re-read on `4.0.2`. Verified here: Vitest `5.0.1`; Better Auth `1.7.5`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
 
-## Database boundary (non-negotiable)
+## Product database boundary
 
-- PostgreSQL is the integration database. Its URL is read only from `VIVID_TEST_DATABASE_URL`. Never fall back to `DATABASE_URL`, an app env file, the developer database on port 55433, or a remote database.
-- With the variable absent, database suites **skip**: `testDatabaseConfigured` (`apps/server/src/database/testdb.ts`) gates them with `describe.skipIf(!testDatabaseConfigured)`. Nothing substitutes another URL. The runtime project rejects a set-but-empty variable during worker setup rather than skipping.
+Runtime host, Notes, infrastructure, and verification integration are transitioning to
+[Person cells](../../../docs/27-runtime-cells.md). The chosen runtime uses Pi Durable 1.4.0's
+native Durable Object SQLite adapter on celld 0.6.2. Those cell-backed seams are not yet proven.
+The existing package integration is still Pi 1.2.0. PostgreSQL is product-only.
+
+- PostgreSQL is the product integration database. Its URL is read only from `VIVID_TEST_DATABASE_URL`. Never fall back to `DATABASE_URL`, an app env file, the developer database on port 55433, or a remote database.
+- With the variable absent, database suites **skip**: `testDatabaseConfigured` (`apps/server/src/database/testdb.ts`) gates them with `describe.skipIf(!testDatabaseConfigured)`. Nothing substitutes another URL.
 - **Server project:** the supplied URL is used as an **administration connection only**. The template and the per-file clones are separate databases on that server; no server migration and no server fixture writes to the database the URL names. It must still be a disposable instance: the role needs `CREATE DATABASE`, and the harness creates and force-drops databases on that server.
-- **Runtime project:** `packages/agent/runtime/tests/database.ts` migrates a template through the Pi storage owner and clones a database per scoped case. It uses only `VIVID_TEST_DATABASE_URL` for administration, registers cleanup before creation and refuses port 55433. Production storage remains in `packages/agent/runtime/src/storage/`.
 - Migrations run through the production path. `apps/server/tests/template.ts` (Vitest `globalSetup`) creates `vivid_test_<uuid>` from `template0` and runs `pnpm exec drizzle-kit migrate` for `drizzle.config.ts` then `product-drizzle.config.ts`, the same order as root `scripts/migrate.mjs`. Never use `push` or hand-written schema SQL.
-- **`DATABASE_URL` is an output of the test variable, never an input.** Production code reads `DATABASE_URL`, so three existing adapters derive it from `VIVID_TEST_DATABASE_URL`, each in one direction only:
-  - `tests/template.ts` sets it to the template's URL in the Drizzle Kit child's environment, and nowhere else.
-  - `packages/agent/runtime/tests/setup.ts`, registered with Vitest `setupFiles`, derives it for each runtime worker before test imports, because `src/db.ts` reads `DATABASE_URL` at import. It removes inherited `DATABASE_URL` when the test variable is absent and refuses an empty test URL.
-  - `testConfigLayer` (`database/testdb.ts`) puts the file's clone into the `ServerConfig` value. This one is a context value, not process environment.
-
-  Do not add a fourth, and do not make any of them read `DATABASE_URL`. None is a fallback: when the test variable is absent the template setup returns early, `testConfigLayer` fails, and the runtime setup removes inherited `DATABASE_URL`, so importing `db.ts` fails at its config read.
+- **`DATABASE_URL` is an output of the test variable, never an input.** Product code reads
+  `DATABASE_URL`. `tests/template.ts` supplies the template URL only to the Drizzle Kit child;
+  `testConfigLayer` (`database/testdb.ts`) supplies the file's clone as a `ServerConfig` value.
+  Neither reads deployment `DATABASE_URL` as a fallback. Runtime SQLite needs no database URL.
 
 - Cleanup is defined before creation in both server files. `template.ts` returns a teardown that drops every `<template>_*` database it can still find (Vitest skips `afterAll` for wholly skipped files and failed collection) and then the template. `tests/setup.ts` registers `afterAll` before `CREATE DATABASE`.
 
@@ -76,7 +78,7 @@ const testLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 | Scheduler admission, due time, expiry                                                   | The real store/scheduler with `TestClock`                                                             | `routines/store.test.ts`, `connections/transport.test.ts`                         |
 | Durable replay after a failure                                                          | Real PostgreSQL with explicit failure injection                                                       | `inputs/replay.test.ts`, `approvals/replay.test.ts`, `library/durability.test.ts` |
 | Integration transport: mapping, retries, cursors, caches                                | Real transport code against a local `NodeHttpServer.layer(…, { port: 0 })` standing in for the remote | `connections/transport.test.ts`                                                   |
-| Runtime tool behavior                                                                   | The real Flue runtime and an HTTP RPC server                          | `packages/agent/runtime/src/routes.test.ts`, `src/tools/scope.test.ts`              |
+| Runtime tool behavior                                                                   | The real Person cell with native Pi SQLite and an HTTP RPC server                                     | Cell-backed fixture integration is blocked during the host transition             |
 | Signup, cookies, gateway, a real Run end to end                                         | The **running** stack on a disposable database                                                        | `runtime/chains.ts` + `*/thread.live.test.ts`                                     |
 | Model quality or tool choice                                                            | Gated `.live.test.ts`                                                                                 | `memory/*.live.test.ts`                                                           |
 
@@ -104,11 +106,23 @@ Two different claims, two seams:
 
 Better Auth's organization routes are deliberately answered 404 (`closedRoute`); Companies and People are managed through `VividRpc` only.
 
-## Runtime: Pi boundary
+## Runtime boundary
 
-The runtime runs on Pi Durable 1.2.0. Its installed README and package source define the SDK API. The production routes and Persons Layers are exercised through `packages/agent/runtime/tests/process.ts`, with the production PostgreSQL storage and migration owner. Only model responses and the remote product server are controlled fixture boundaries. Runtime setup removes inherited deployment configuration; each case supplies typed settings and its own database.
+Use native first-party Pi persistent storage in the Person cell. The custom PG adapter is being
+deleted, not retained as a test backend. celld owns activation, ownership, and idle lifecycle;
+Pi owns tasks, queues, deduplication, wait, abort, and restart. Read the installed Pi 1.4.0 README
+and source for `openDurableObjectSqliteStorage`, `onWake`, and the alarm pattern. celld's
+`examples/pi` uses another `agents/harness` SDK and is only a host-binding reference.
 
-`src/routes.test.ts` and `src/state/link.test.ts` cover runtime admission, projection and restart recovery. The one-time history importer is preserved outside the shipping runtime in the ignored operator archive. Tool tests use a real Pi Harness via `src/tools/tests/harness.ts`. Database-backed suites belong on a devbox with a disposable administration URL. The server's `Runtime` service reads typed ConversationState and ConversationFrame contracts, not Flue history.
+`GET …/submissions/:id` directly awaits native `submission.wait(context)`. Its terminal wire
+result is `Done`, `Failed`, or `Stopped`. Cancellation ends only the wait; live documents expose
+in-progress work. Keep state-link reconnect after a cell move and all product authorization.
+
+Runtime fixtures and the verifier launcher still need cell integration. Until then, report
+cell-backed admission, Notes, image persistence, wake, abort, terminal waiting, and owner-move
+recovery as blocked. Use controlled model and remote product-server boundaries only where they
+do not replace the behavior under test. Do not substitute MemoryStorage, Node SQLite production
+hosting, or tests of SDK internals for this proof.
 
 ## Time
 
@@ -178,7 +192,7 @@ Closing one of these is a design task for the owner of that boundary: extend the
 
 - A mock database for a SQL constraint, transaction or replay claim.
 - A stubbed session or injected `AuthContext` presented as authentication coverage.
-- A mocked Flue conversation store presented as durability coverage.
+- A mocked Pi conversation store presented as durability coverage.
 - A test that only proves `Effect.retry`, a Schema literal, or a fake's return value.
 - A test that sleeps, polls, or needs a longer timeout.
 - Cases that share fixed ids, or assert on a global scan without accounting for the file's other rows.
@@ -189,7 +203,7 @@ Closing one of these is a design task for the owner of that boundary: extend the
 ## Completion checklist
 
 - [ ] The seam is the smallest real boundary containing the failure, and it is one named above.
-- [ ] Only `VIVID_TEST_DATABASE_URL` is read as input; `DATABASE_URL` appears only as an output of the three existing adapters; nothing can reach port 55433 or a remote database.
+- [ ] Product fixtures read only `VIVID_TEST_DATABASE_URL`; runtime fixtures use disposable native Pi SQLite. Nothing can reach port 55433, live cells, or a remote application database.
 - [ ] Every fixture registers its row cleanup before its first write, and cleanup failure fails the test.
 - [ ] Isolation is described as per-file clone plus per-case cleanup, not per-test.
 - [ ] `testDatabaseLayer` is composed, not re-implemented; no production Layer was hard-provided.
