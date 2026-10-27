@@ -93,7 +93,7 @@ layer(testDatabaseLayer)((it) => {
             const approvals = yield* (yield* ApprovalStore).inThread(test.personalId)
             expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
             if (GateDecision.guards.ApprovalRequired(decision)) {
-              expect(approvals[0]?.action).toEqual(proposed)
+              expect(approvals.map((approval) => approval.action)).toEqual([proposed])
               const feed = yield* readFeed(database, test.personal.person.id)
               expect(feed.items).toHaveLength(1)
               expect(feed.items[0]).toMatchObject({ _tag: 'Waiting', asking: ['approval'] })

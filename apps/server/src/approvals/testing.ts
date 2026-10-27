@@ -210,9 +210,11 @@ const ports = Layer.effectContext(
 const foundation = auditLayer.pipe(Layer.provideMerge(ports))
 const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
 /** Production stores over the test ports, for a test that composes the gate with other production Layers. */
-export const storeServices = Layer.mergeAll(approvalStoreLayer, inputStoreLayer, runStoreLayer).pipe(
-  Layer.provideMerge(policy),
-)
+export const storeServices = Layer.mergeAll(
+  approvalStoreLayer,
+  inputStoreLayer,
+  runStoreLayer,
+).pipe(Layer.provideMerge(policy))
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
 export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
 /** Complete fixtures remain available to suites that compose their own dependency graph. */
