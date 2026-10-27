@@ -33,6 +33,7 @@ import { Admitted } from '../threads/conversation.ts'
 import { runs } from '../threads/tables.ts'
 import { deliveryRunId } from '../threads/key.ts'
 import {
+  cellNodes,
   conversationFrames,
   requestRuntime,
   RuntimeTransportFailed,
@@ -67,7 +68,7 @@ export class AdmissionUncertain extends Schema.TaggedError<AdmissionUncertain>()
     threadId: ThreadId,
     /** The Run whose admission cannot be told: the product id derived from the Thread and key. */
     runId: RunId,
-    reason: Schema.Literals(['Transport', 'TimedOut', 'Status', 'Receipt']),
+    reason: Schema.Literals(['Transport', 'Status', 'Receipt']),
   },
   { title: 'Runtime admission uncertain' },
 ) {}
@@ -174,7 +175,7 @@ export interface RuntimeService {
 export class Runtime extends Context.Service<Runtime, RuntimeService>()('vivid/Runtime') {}
 
 interface Transport {
-  readonly http: HttpClient.HttpClient
+  readonly http: ReturnType<typeof cellNodes>
   readonly request: (
     address: Address,
     suffix: string,
@@ -217,19 +218,8 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
         repeated: receipt.repeated,
       }
     },
-    (effect, input) =>
+    (effect) =>
       effect.pipe(
-        Effect.timeoutOrElse({
-          duration: '30 seconds',
-          orElse: () =>
-            Effect.fail(
-              AdmissionUncertain.make({
-                threadId: input.threadId,
-                runId: deliveryRunId(input.threadId, input.idempotencyKey),
-                reason: 'TimedOut',
-              }),
-            ),
-        }),
         Effect.scoped,
         Effect.tapErrorTag('AdmissionRefused', ({ reason }) =>
           recordRefusal(Refusal.cases.AdmissionRefused.make({ reason })),
@@ -240,14 +230,14 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
 /** Capture transport once. Product ownership supplies every address; the runtime owns settlement. */
 const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const config = yield* ServerConfig
-  const http = yield* HttpClient.HttpClient
+  const http = cellNodes(yield* HttpClient.HttpClient, config.RUNTIME_URLS)
   const database = yield* Database
   const token = Redacted.value(config.RUNTIME_TOKEN)
   const request: Transport['request'] = (address, suffix, method) =>
     HttpClientRequest.make(method)(
       new URL(
         `/persons/${encodeURIComponent(address.personId)}/threads/${encodeURIComponent(address.threadId)}${suffix}`,
-        config.RUNTIME_URL,
+        config.RUNTIME_URLS[0],
       ),
     ).pipe(HttpClientRequest.bearerToken(token))
   /** Acting authority never substitutes for the Thread creator's runtime storage identity. */
@@ -264,7 +254,10 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       // A failed server read says nothing about the runtime's Run. Reconnect on its observation cadence.
       const thread = yield* findThread(threadId).pipe(
         Effect.provideService(Database, database),
-        Effect.retry(Schedule.spaced('1 second')),
+        Effect.retry({
+          while: (error) => Predicate.isTagged(error, 'DatabaseUnavailable'),
+          schedule: Schedule.spaced('1 second'),
+        }),
       )
       if (Option.isNone(thread)) return Settlement.cases.Unknown.make({})
       const address = { personId: thread.value.personId, threadId }
@@ -275,7 +268,12 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             .from(runs)
             .where(and(eq(runs.id, runId), eq(runs.threadId, threadId))),
         )
-        .pipe(Effect.retry(Schedule.spaced('1 second')))
+        .pipe(
+          Effect.retry({
+            while: (error) => Predicate.isTagged(error, 'DatabaseUnavailable'),
+            schedule: Schedule.spaced('1 second'),
+          }),
+        )
       if (row === undefined || row.receipt === null) return Settlement.cases.Unknown.make({})
       // Corrupt product data is a typed storage failure, never evidence that Pi ended the reply.
       const receipt = yield* decodeReceipt(row.receipt)

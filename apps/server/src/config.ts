@@ -70,7 +70,8 @@ export const ObservabilityConfiguration = Data.taggedEnum<ObservabilityConfigura
 export interface ServerConfigService {
   readonly DATABASE_URL: Redacted.Redacted
   readonly AUTH_SECRET: Redacted.Redacted
-  readonly RUNTIME_URL: URL
+  /** Private celld ingress nodes in failover order. One URL is valid for local development. */
+  readonly RUNTIME_URLS: readonly [URL, ...URL[]]
   readonly RUNTIME_TOKEN: Redacted.Redacted
   readonly PORT: number
   readonly PUBLIC_URL: URL
@@ -289,10 +290,15 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     yield* optionalSetting('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
     () => new URL('http://localhost:3000'),
   )
+  const [runtime, ...peers] = yield* Config.Array(Schema.URLFromString, 'VIVID_RUNTIME_URL').pipe(
+    Effect.mapError(() => configError('VIVID_RUNTIME_URL', 'comma-separated absolute cell URLs')),
+  )
+  if (runtime === undefined)
+    return yield* configError('VIVID_RUNTIME_URL', 'at least one absolute cell URL')
   return {
     DATABASE_URL: yield* loadDatabaseUrl(),
     AUTH_SECRET: loadedAuthSecret,
-    RUNTIME_URL: yield* requiredSetting('VIVID_RUNTIME_URL', Schema.URLFromString),
+    RUNTIME_URLS: [runtime, ...peers],
     RUNTIME_TOKEN: yield* requiredSetting('VIVID_RUNTIME_TOKEN', secret),
     PORT: port,
     // Listener and static-root inputs belong to launch; domain test Layers need no HTTP host.

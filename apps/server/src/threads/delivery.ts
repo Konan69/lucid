@@ -179,18 +179,13 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-/** Retry uncertain keyed attempts within one admission budget so retries cannot triple the Thread permit hold. */
+/** Retry uncertain admissions with the same durable key. Cell activation has no server deadline. */
 const admitRuntime = Effect.fn('Conversation.admitRuntime')(
   (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
     runtime.admit(input).pipe(
       Effect.retry({
         while: (error) => Predicate.isTagged(error, 'AdmissionUncertain'),
         schedule: Schedule.exponential('1 second').pipe(Schedule.upTo({ times: 2 })),
-      }),
-      Effect.timeoutOrElse({
-        duration: '30 seconds',
-        orElse: () =>
-          Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
       }),
       Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
         Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),

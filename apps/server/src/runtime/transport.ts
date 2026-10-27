@@ -8,7 +8,8 @@ import {
 import { Effect, Predicate, Schema, Stream } from 'effect'
 import * as Sse from 'effect/encoding/Sse'
 import * as HttpClient from 'effect/http/HttpClient'
-import type * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import type * as HttpClientError from 'effect/http/HttpClientError'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 
 /** A lost connection or invalid response supplies no evidence of an explicit runtime refusal. */
@@ -34,9 +35,32 @@ export interface Address {
   readonly threadId: ThreadId
 }
 
+/** Every node can forward to a cell's owner. Only a transport failure advances ingress;
+ * a runtime refusal, bad payload or interrupted request must retain its own meaning. */
+export const cellNodes = (http: HttpClient.HttpClient, nodes: readonly [URL, ...URL[]]) => {
+  const scoped = HttpClient.withScope(http)
+  return HttpClient.transform(scoped, (effect, request) => {
+    let response = effect
+    for (const node of nodes.slice(1)) {
+      response = response.pipe(
+        Effect.catchIf(
+          (error) => Predicate.isTagged(error.reason, 'TransportError'),
+          () => {
+            const url = new URL(request.url)
+            return scoped.execute(
+              HttpClientRequest.setUrl(request, new URL(url.pathname + url.search, node)),
+            )
+          },
+        ),
+      )
+    }
+    return response
+  })
+}
+
 /** One scoped response, checked before its body is consumed by the caller's decoder. */
-export const requestRuntime = Effect.fn('Runtime.request')(function* (
-  http: HttpClient.HttpClient,
+export const requestRuntime = Effect.fn('Runtime.request')(function* <R>(
+  http: HttpClient.HttpClient.With<HttpClientError.HttpClientError, R>,
   request: HttpClientRequest.HttpClientRequest,
   address: Address,
 ) {

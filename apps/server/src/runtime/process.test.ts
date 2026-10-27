@@ -1,6 +1,7 @@
+import * as TestClock from 'effect/testing/TestClock'
 import { readThreadHistory } from './history.ts'
 import { ChannelReplies } from '../channels/replies.ts'
-import { Ref } from 'effect'
+import { Deferred, Ref } from 'effect'
 import { eq } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
 import { expect, layer } from '@effect/vitest'
@@ -45,7 +46,7 @@ import { conversationLayer } from '../threads/delivery.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
 import { RunStore, RunEnding } from '../threads/runs.ts'
-import { runs } from '../threads/tables.ts'
+import { runs, threads } from '../threads/tables.ts'
 import { sendToThread, watchConversation } from '../threads/relay.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threadHandlers } from '../threads/handlers.ts'
@@ -54,14 +55,35 @@ import { productFixture, productLayer } from './testing.ts'
 
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
-type Receipt = 'Kept' | 'LostOnce' | 'AbortLostOnce' | 'AbortNotTaken'
+type Receipt =
+  | 'NodeDown'
+  | 'SlowAdmission'
+  | 'Kept'
+  | 'LostOnce'
+  | 'AbortLostOnce'
+  | 'AbortNotTaken'
 
 /** Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable native SQLite. */
-const transport = (process: Effect.Success<ReturnType<typeof start>>, receipt: Receipt) => {
+const transport = (
+  process: Effect.Success<ReturnType<typeof start>>,
+  receipt: Receipt,
+  admission: {
+    readonly entered: Deferred.Deferred<void>
+    readonly release: Deferred.Deferred<void>
+  },
+) => {
   let lost = false
   return HttpClient.make((request) =>
     Effect.gen(function* () {
       const url = new URL(request.url)
+      if (url.hostname === 'down.test')
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request }),
+        })
+      if (receipt === 'SlowAdmission' && request.method === 'POST') {
+        yield* Deferred.succeed(admission.entered, undefined)
+        yield* Deferred.await(admission.release)
+      }
       if (request.headers.accept === 'text/event-stream') {
         const link = yield* process.link(url.pathname)
         const events = Stream.fromEffectRepeat(link.event).pipe(
@@ -159,16 +181,20 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
           ),
         ),
   })
+  const admission = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() }
   const config = yield* ServerConfig
   const runtimeContext = yield* Layer.build(
     runtimeLayer.pipe(
       Layer.provide([
         Layer.succeed(ServerConfig, {
           ...config,
-          RUNTIME_URL: new URL('http://runtime.test'),
+          RUNTIME_URLS:
+            receipt === 'NodeDown'
+              ? [new URL('http://down.test'), new URL('http://runtime.test')]
+              : [new URL('http://runtime.test')],
           RUNTIME_TOKEN: Redacted.make('fixture-runtime-token'),
         }),
-        Layer.succeed(HttpClient.HttpClient, transport(process, receipt)),
+        Layer.succeed(HttpClient.HttpClient, transport(process, receipt, admission)),
         Layer.succeed(Database, database),
       ]),
     ),
@@ -200,6 +226,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
   const scope = yield* Layer.build(foundation)
   return {
     ...rows,
+    admission,
     given,
     runtime,
     ended,
@@ -274,6 +301,35 @@ const receiptOf = Effect.fn('PiServer.test.receipt')(function* (id: RunId) {
 
 layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServices: true })(
   (it) => {
+    it.effect('a down ingress node still admits and settles through the next node', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture('NodeDown')
+        const answer = yield* held('Reached through the peer')
+        test.given.faux.setResponses([answer.factory])
+        const { run } = yield* test.send('peer-node')
+        yield* answer.entered
+        yield* answer.release
+        yield* Queue.take(test.ended)
+        expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a corrupt Thread surfaces a storage failure instead of retrying forever', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture('Kept')
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'corrupt' })
+            .where(eq(threads.id, test.threadId)),
+        )
+        expect(
+          (yield* Effect.flip(test.runtime.settled(test.threadId, RunId.make('unadmitted'))))._tag,
+        ).toBe('DatabaseFailure')
+      }).pipe(Effect.scoped),
+    )
+
     it.effect('real Pi admission settles the reserved Run and repeating a key starts one Run', () =>
       Effect.gen(function* () {
         const test = yield* fixture('Kept')
@@ -430,3 +486,27 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
     )
   },
 )
+
+/** Product SQL uses its live adapter clock; admission alone follows the controlled test clock. */
+layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)))((it) => {
+  it.effect('slow cell admission remains working after thirty seconds and settles normally', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture('SlowAdmission')
+      const answer = yield* held('Admitted after activation')
+      test.given.faux.setResponses([answer.factory])
+      const sending = yield* test.send('slow-activation').pipe(Effect.forkScoped)
+      yield* Deferred.await(test.admission.entered)
+      yield* TestClock.adjust('31 seconds')
+      expect(sending.pollUnsafe()).toBeUndefined()
+      expect((yield* test.store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+        'Working',
+      ])
+      yield* Deferred.succeed(test.admission.release, undefined)
+      const { run } = yield* Fiber.join(sending)
+      yield* answer.entered
+      yield* answer.release
+      yield* Queue.take(test.ended)
+      expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+    }).pipe(Effect.scoped),
+  )
+})
