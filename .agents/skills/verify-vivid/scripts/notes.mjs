@@ -11,7 +11,7 @@ import { chat, settled, history, json } from './wire.mjs'
  * nothing. The file is the one Vivid chose for the first note, read from that receipt.
  */
 export function noteSteps() {
-  const project = 'Cedar ' + crypto.randomUUID()
+  const project = 'Cedar-' + crypto.randomUUID().slice(0, 8)
   return [
     {
       name: 'create',

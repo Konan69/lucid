@@ -16,7 +16,7 @@ async function latestReply(browser, page, currentRun, { directory, stage }) {
   const text = message.parts
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
-    .join('')
+    .join('\n\n')
     .trim()
   const normalised = await browser.render(text)
   assert.ok(normalised.length > 0, 'Assistant reply is empty after normalisation')
@@ -52,7 +52,10 @@ export async function noteBrowser(state, id, directory, browser) {
   assert.equal(state.modelKind, 'real', 'Notes requires a real model; rehearsal cannot prove it')
   const { run, capture } = browser
   const steps = noteSteps()
-  await json(directory + '/steps.json', steps.map(({ name, prompt, change }) => ({ name, prompt, change })))
+  await json(
+    directory + '/steps.json',
+    steps.map(({ name, prompt, change }) => ({ name, prompt, change })),
+  )
   const known = { file: undefined }
   for (const [index, step] of steps.entries()) {
     const evidence = directory + '/' + step.name
