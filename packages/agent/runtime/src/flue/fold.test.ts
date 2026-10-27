@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { PersonId, ThreadId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Option, Result, type Schema } from 'effect'
+import { ConfigProvider, Context, Effect, Layer, Option, Result, type Schema } from 'effect'
 import { databaseConfigured, disposableDatabase } from '../../tests/database.ts'
 import { query } from '../../tests/stores.ts'
 import { FlueSource, flueSourceLayer } from './source.ts'
@@ -97,15 +97,14 @@ const folded = Effect.fn('FlueFoldTest.read')(function* (
       VALUES ($1, $2, $3, $4, 'fixture', $5, $6, 0)`,
       [path, id, file.mimeType, file.bytes.length, ROOT, file.bytes],
     )
-  const logged = yield* Effect.flatMap(FlueSource, (source) => source.read(path)).pipe(
-    Effect.provide(
-      flueSourceLayer.pipe(
-        Layer.provide(
-          ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_FLUE_DATABASE_URL: database })),
-        ),
+  const context = yield* Layer.build(
+    flueSourceLayer.pipe(
+      Layer.provide(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_FLUE_DATABASE_URL: database })),
       ),
     ),
   )
+  const logged = yield* Context.get(context, FlueSource).read(path)
   const attachments: Attachments = new Map(logged.files.map((file) => [file.attachmentId, file]))
   return Result.flatMap(decodeRecords(logged.batches.join('')), (decoded) =>
     fold(THREAD, decoded, attachments),
