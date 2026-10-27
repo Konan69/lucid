@@ -1,9 +1,11 @@
+import * as NodeCrypto from 'node:crypto'
 import { copyJson } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
   AssistantEntry,
   ToolResultEntry,
   UserEntry,
+  defineDocFamily,
   type ConversationId,
   type EntryDraft,
   type EntryId,
@@ -17,18 +19,41 @@ import { Answered, RESPONSE_ENTRY, RUN_ENTRY, type ResponseData } from '../respo
 import {
   ConversationThread,
   conversationOf,
+  pi,
   PiRejected,
   THREAD_KEY,
   ThreadConversation,
 } from '../threads.ts'
 import { Item, type Carried, type Input, type Measured } from './fold.ts'
 
-/** What carrying one Thread did: wrote its history, or found its conversation already there. */
+/** What carrying one Thread did. Only an identical imported history may be left in place. */
 export type Landed = Data.TaggedEnum<{
   Carried: { readonly entries: number }
   AlreadyThere: {}
 }>
 export const Landed = Data.taggedEnum<Landed>()
+
+/** An import owns only this conversation. Its source digest keeps unchanged Pi receipts stable. */
+const Imported = defineDocFamily<{ fingerprint: string }, string>({
+  kind: 'vivid.flue',
+  version: 1,
+  scope: 'conversation',
+  family: true,
+  history: 'latest',
+  fork: 'initial',
+  initial: (fingerprint) => ({ fingerprint }),
+})
+
+/** The folded snapshot includes messages, pictures, outcomes, attribution and original times. */
+const fingerprintOf = (carried: Carried) =>
+  NodeCrypto.createHash('sha256').update(JSON.stringify(carried)).digest('hex')
+
+/** Serving before cutover must never turn an empty native conversation into a successful import. */
+export class CreatedByRuntime extends Schema.TaggedError<CreatedByRuntime>()(
+  'CreatedByRuntime',
+  {},
+  { title: 'created by the runtime before import' },
+) {}
 
 /**
  * Another commit recorded a conversation for the Thread first (a runtime request, or a second
@@ -240,11 +265,18 @@ const append = (writing: Writing, item: Item): Promise<void> => {
  * documents the runtime keeps beside them. All of it is one commit, so a Thread is either wholly
  * imported or absent, and every submission in it is settled when it is first seen.
  */
-const write = (tx: Tx, conversationId: ConversationId, carried: Carried) =>
+const write = (
+  tx: Tx,
+  conversationId: ConversationId,
+  carried: Carried,
+  previous: Option.Option<ConversationId>,
+) =>
   tx
     .doc(ThreadConversation, carried.threadId, conversationId)
     .then((recorded) => {
-      if (recorded.conversationId !== conversationId) throw new RecordedElsewhere()
+      if (recorded.conversationId !== Option.getOrElse(previous, () => conversationId))
+        throw new RecordedElsewhere()
+      recorded.conversationId = conversationId
       return tx.doc(ConversationThread, conversationId, THREAD_KEY, {
         threadId: carried.threadId,
         creator: carried.origin.creator,
@@ -253,47 +285,78 @@ const write = (tx: Tx, conversationId: ConversationId, carried: Carried) =>
     })
     .then(() => {
       const writing: Writing = { tx, conversationId, placed: new Map(), answer: Option.none() }
-      // In order: each entry's id is minted when it is appended, and later items name them.
+      // Each entry's id is minted before a later item can name it.
       return carried.items.reduce<Promise<void>>(
         (before, item) => before.then(() => append(writing, item)),
         Promise.resolve(),
       )
     })
+    .then(() => tx.doc(Imported, conversationId, THREAD_KEY, fingerprintOf(carried)))
+    .then(() => {})
+
+/**
+ * Earlier rehearsals had no marker. Their raw Flue request ids prove importer ownership;
+ * runtime admissions use `delivery:` instead. An empty unmarked conversation has no such proof.
+ */
+const importedBeforeMarker = Effect.fn('Flue.importedBeforeMarker')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  carried: Carried,
+) {
+  for (const item of carried.items) {
+    if (!('submission' in item) || Option.isNone(item.submission)) continue
+    const requestId = item.submission.value
+    const submission = yield* pi(() =>
+      harness.commit((tx) => tx.submissionByRequest(conversationId, requestId), BACKGROUND_CONTEXT),
+    )
+    return submission !== undefined
+  }
+  return false
+})
 
 /**
  * Write one Thread's Flue history into its creator's store, the way the runtime creates a
  * Thread's conversation (`ensureConversation` in `threads.ts`: an ownerless conversation whose
  * `init` records it) with the history appended in the same `init`.
  *
- * Idempotent: a Thread whose conversation is already recorded is left as it is and reported
- * `AlreadyThere`, whether an earlier import or the runtime made it. Two writers racing for the
- * same Thread meet in the `vivid.thread` document; the one that finds the other's conversation
- * there rolls back and reports `AlreadyThere` too.
+ * A changed imported snapshot is replaced whole, with the Thread pointer switched in the same
+ * commit. Pi has no deletion API, so superseded conversations remain unreachable from the Thread.
+ * An identical snapshot keeps its receipts. A runtime-created conversation is a cutover error.
  */
 export const carry: (
   harness: Harness,
   carried: Carried,
-) => Effect.Effect<Landed, PiRejected | HistoryInconsistent> = Effect.fn('Flue.carry')(function* (
-  harness: Harness,
-  carried: Carried,
-) {
+) => Effect.Effect<Landed, PiRejected | HistoryInconsistent | CreatedByRuntime> = Effect.fn(
+  'Flue.carry',
+)(function* (harness: Harness, carried: Carried) {
   const existing = yield* conversationOf(harness, carried.threadId)
-  if (Option.isSome(existing)) return Landed.AlreadyThere()
+  if (Option.isSome(existing)) {
+    const imported = yield* pi(() =>
+      harness.snapshot(Imported, existing.value.id, THREAD_KEY, BACKGROUND_CONTEXT),
+    )
+    if (imported !== undefined && imported.fingerprint === fingerprintOf(carried))
+      return Landed.AlreadyThere()
+    if (
+      imported === undefined &&
+      !(yield* importedBeforeMarker(harness, existing.value.id, carried))
+    )
+      return yield* new CreatedByRuntime()
+  }
   return yield* Effect.tryPromise({
     try: () =>
       harness.createConversation(
         {
           ownership: { kind: 'ownerless' },
-          init: (tx, conversationId) => write(tx, conversationId, carried),
+          init: (tx, conversationId) =>
+            write(
+              tx,
+              conversationId,
+              carried,
+              Option.map(existing, (conversation) => conversation.id),
+            ),
         },
         BACKGROUND_CONTEXT,
       ),
-    catch: (cause) =>
-      cause instanceof RecordedElsewhere || cause instanceof HistoryInconsistent
-        ? cause
-        : new PiRejected({ cause }),
-  }).pipe(
-    Effect.as(Landed.Carried({ entries: carried.items.length })),
-    Effect.catchTag('RecordedElsewhere', () => Effect.succeed(Landed.AlreadyThere())),
-  )
+    catch: (cause) => (cause instanceof HistoryInconsistent ? cause : new PiRejected({ cause })),
+  }).pipe(Effect.as(Landed.Carried({ entries: carried.items.length })))
 })

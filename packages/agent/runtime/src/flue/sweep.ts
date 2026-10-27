@@ -1,6 +1,6 @@
 import type { PersonId, ThreadId } from '@vivid/contracts'
 import { Effect, Option, Result, Schema } from 'effect'
-import { HistoryInconsistent, Landed } from './carry.ts'
+import { CreatedByRuntime, HistoryInconsistent, Landed } from './carry.ts'
 import {
   AnswerMissing,
   AttachmentMismatch,
@@ -92,8 +92,12 @@ const DESCRIBED = [
  * Why a Thread failed, as printable text: its tag, and its own message when that is one of ours.
  * A storage or library failure's message can quote a statement or a value, so only its tag is told.
  */
-const reasonOf = (error: { readonly _tag: string; readonly message: string }) =>
-  DESCRIBED.some((kind) => error instanceof kind) ? `${error._tag}: ${error.message}` : error._tag
+const reasonOf = (error: { readonly _tag: string; readonly message: string }) => {
+  if (error instanceof CreatedByRuntime) return 'created by the runtime before import'
+  return DESCRIBED.some((kind) => error instanceof kind)
+    ? `${error._tag}: ${error.message}`
+    : error._tag
+}
 
 /** Every batch decoded, in `seq` order and then array order. */
 function recordsOf(logged: Logged) {
@@ -194,8 +198,8 @@ const one = <E extends { readonly _tag: string; readonly message: string }, R>(
 
 /**
  * Carry every Flue stream whose Thread still exists in the product into its creator's store, one
- * Thread at a time in path order, and report each. Running it again carries only what is not
- * there yet (`carry` is idempotent), so the same command serves a rehearsal and the cutover.
+ * Thread at a time in path order, and report each. A changed snapshot replaces the previous
+ * import whole; identical snapshots retain their Pi receipts.
  * Listing the streams failing ends it; a Thread failing does not.
  */
 export const sweep = Effect.fn('Flue.sweep')(function* <

@@ -40,6 +40,17 @@ export const stores = runtime.table('stores', {
   personId: text('person_id').notNull().unique(),
 })
 
+/** Cutover output for the server's old-Run rewrite, derived from committed Pi submissions. */
+export const importedSubmissions = runtime.table(
+  'imported_submissions',
+  {
+    personId: text('person_id').notNull(),
+    flueSubmissionId: text('flue_submission_id').notNull(),
+    submissionId: text('submission_id').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.personId, table.flueSubmissionId] })],
+)
+
 /**
  * The runtime's authority: one row, advanced each time a process takes over. Every write reads
  * it `FOR SHARE` in its own transaction and refuses when the generation is not its own; a

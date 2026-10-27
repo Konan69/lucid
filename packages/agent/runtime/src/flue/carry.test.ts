@@ -1,9 +1,12 @@
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeProcess from 'node:process'
+import * as NodeURL from 'node:url'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { describe, expect, it } from '@effect/vitest'
 import { ConversationState, ThreadId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Exit, Layer, Option, Result, Schema, Scope } from 'effect'
 import { databaseConfigured, disposableDatabase } from '../../tests/database.ts'
-import { start, world } from '../../tests/process.ts'
+import { start, world, type World } from '../../tests/process.ts'
 import {
   ada,
   grace,
@@ -14,6 +17,7 @@ import {
   type Runtime,
 } from '../../tests/requests.ts'
 import { query } from '../../tests/stores.ts'
+import { ensureConversation } from '../threads.ts'
 import { carry, Landed } from './carry.ts'
 import { fold, Item, type Carried } from './fold.ts'
 import { decodeRecords } from './records.ts'
@@ -688,7 +692,180 @@ const entryCount = (database: string) =>
     Effect.map(([row]) => row.n),
   )
 
+/** Drive the shipped CLI with fixture-only settings, including its nonzero partial-failure exit. */
+const importFlue = (given: World, source: string, args: ReadonlyArray<string>) =>
+  Effect.callback<{ code: number | null; output: string }, Error>((resume) => {
+    const child = NodeChildProcess.spawn(
+      NodeProcess.execPath,
+      ['--import', 'tsx', NodeURL.fileURLToPath(new URL('./main.ts', import.meta.url)), ...args],
+      {
+        cwd: NodeURL.fileURLToPath(new URL('../../', import.meta.url)),
+        env: {
+          ...NodeProcess.env,
+          DATABASE_URL: given.database,
+          VIVID_FLUE_DATABASE_URL: source,
+          VIVID_MEMORY_DIR: given.notes,
+          VIVID_RUNTIME_TOKEN: 'fixture-runtime-token',
+          VIVID_SERVER_URL: 'http://server.invalid',
+          VIVID_MODEL: 'rehearsal/script',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    let output = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+    child.once('error', (error) => resume(Effect.fail(error)))
+    child.once('close', (code) => resume(Effect.succeed({ code, output })))
+    return Effect.sync(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+    })
+  })
+
+/** Read through the production routes after the importer releases its exclusive authority. */
+const importedState = (given: World) =>
+  Effect.scoped(
+    Effect.flatMap(start(given, { idleMillis: IDLE }), (runtime) => read(runtime, KEPT)),
+  )
+
 describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s store', () => {
+  it.effect(
+    'replaces a rehearsal when Flue gains messages and refuses runtime-created Threads',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const given = yield* world()
+          const source = yield* sourceDatabase()
+          yield* query(source, 'UPDATE vivid_conversations SET person_id = $1 WHERE id = $2', [
+            ada,
+            OTHER,
+          ])
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* start(given, { idleMillis: IDLE })
+              yield* runtime.persons.use(ada, (person) =>
+                ensureConversation(person.harness, OTHER, { creator: ada, creatorName: 'Ada' }),
+              )
+            }),
+          )
+
+          const first = yield* importFlue(given, source, [])
+          expect(first.code).toBe(1)
+          expect(first.output).toContain(
+            JSON.stringify({
+              outcome: 'failed',
+              threadId: OTHER,
+              personId: ada,
+              entries: 0,
+              reason: 'created by the runtime before import',
+            }),
+          )
+          expect(first.output).toContain('"carried":1,"already":0,"skipped":1,"failed":1')
+          const before = yield* importedState(given)
+          expect(before.messages).toHaveLength(2)
+          expect(before.messages).toContainEqual(
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                {
+                  type: 'file',
+                  mediaType: 'image/png',
+                  url: expect.stringMatching(/^attachments\/\d+-1$/),
+                },
+              ]),
+            }),
+          )
+
+          // Reproduce a rehearsal made by the previous importer, before it recorded ownership.
+          yield* query(
+            given.database,
+            `DELETE FROM runtime.document_revisions WHERE document_id IN
+            (SELECT id FROM runtime.documents WHERE kind = 'vivid.flue')`,
+          )
+          yield* query(given.database, "DELETE FROM runtime.documents WHERE kind = 'vivid.flue'")
+
+          const owner = { submissionId: 'sub_2', attemptId: 'att_2' }
+          const added = [
+            delivery(owner, 'u_new', 6, 'And now?'),
+            ...said(owner, 'm_new', {
+              second: 7,
+              text: 'A dog.',
+              end: { stopReason: 'stop' },
+              extra: [],
+            }),
+            record('r_new_settled', 'submission_settled', 8, { ...owner, outcome: 'completed' }),
+          ]
+          yield* query(
+            source,
+            `INSERT INTO flue_conversation_stream_batches
+        (path, seq, producer_id, producer_epoch, producer_sequence, data)
+        VALUES ($1, 3, 'w', 1, 3, $2)`,
+            [`agents/vivid/${KEPT}`, JSON.stringify(added)],
+          )
+          expect((yield* importFlue(given, source, [])).code).toBe(1)
+          const after = yield* importedState(given)
+          expect(
+            after.messages.flatMap((message) =>
+              message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+            ),
+          ).toEqual(['Look', 'A cat.', 'And now?', 'A dog.'])
+          const mapped = yield* query(
+            given.database,
+            'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
+          )
+          expect(mapped).toEqual(
+            after.settlements.map((settlement, index) => ({
+              person_id: ada,
+              flue_submission_id: `sub_${index + 1}`,
+              submission_id: settlement.submissionId,
+            })),
+          )
+          expect(mapped).toHaveLength(2)
+        }),
+      ),
+  )
+
+  it.effect('repairs mappings without Flue and keeps repeat imports unchanged', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const given = yield* world()
+        const source = yield* sourceDatabase()
+        expect((yield* importFlue(given, source, [])).code).toBe(1)
+        const after = yield* importedState(given)
+        const mapped = yield* query(
+          given.database,
+          'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
+        )
+        expect(mapped).toHaveLength(1)
+        yield* query(given.database, 'DELETE FROM runtime.imported_submissions')
+        const repaired = yield* importFlue(given, 'postgres://unreachable.invalid/flue', ['--map'])
+        expect(repaired.code, repaired.output).toBe(0)
+        expect(repaired.output).toContain('"mapped":1')
+        expect(
+          yield* query(
+            given.database,
+            'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
+          ),
+        ).toEqual(mapped)
+        const entries = yield* entryCount(given.database)
+        const repeated = yield* importFlue(given, source, [])
+        expect(repeated.code).toBe(1)
+        expect(repeated.output).toContain('"carried":0,"already":1,"skipped":1,"failed":1')
+        expect(yield* importedState(given)).toEqual(after)
+        expect(yield* entryCount(given.database)).toBe(entries)
+        expect(
+          yield* query(
+            given.database,
+            'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
+          ),
+        ).toEqual(mapped)
+      }),
+    ),
+  )
+
   it.effect('writes the history in one commit and the screens read it as Flue showed it', () =>
     scenario((_given, runtime) =>
       Effect.gen(function* () {

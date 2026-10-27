@@ -9,6 +9,7 @@ import { settingsLayer } from '../settings.ts'
 import { builtinSkillsLayer } from '../skills.ts'
 import { Stores, storesLayer } from '../storage/stores.ts'
 import { carry } from './carry.ts'
+import { mapSubmissions } from './mapping.ts'
 import type { Carried } from './fold.ts'
 import { flueSourceLayer } from './source.ts'
 import { sweep, type Report } from './sweep.ts'
@@ -42,7 +43,6 @@ const print = (line: Report) => Console.log(JSON.stringify(line))
  * read Flue's conversations from, which is only ever read.
  */
 const run = Effect.fn('Flue.import')(function* () {
-  const stores = yield* Stores
   const scope = yield* Effect.scope
   const opened = new Map<PersonId, PersonConversations>()
   const open = (personId: PersonId) => {
@@ -55,11 +55,15 @@ const run = Effect.fn('Flue.import')(function* () {
   }
   const carryInto = (personId: PersonId, carried: Carried) =>
     Effect.flatMap(open(personId), (person) => carry(person.harness, carried))
-  const summary = yield* Effect.raceFirst(stores.lost, sweep(carryInto, print))
+  const summary = yield* sweep(carryInto, print)
+  const mapped = yield* mapSubmissions()
+  yield* Console.log(JSON.stringify({ mapped }))
   yield* Console.log(JSON.stringify({ summary }))
   if (summary.failed > 0) return yield* new ThreadsFailed({ failed: summary.failed })
   return summary
 })
+
+const mappingOnly = process.argv.slice(2).includes('--map')
 
 const entry = Layer.mergeAll(
   storesLayer,
@@ -67,7 +71,7 @@ const entry = Layer.mergeAll(
   modelsLayer,
   builtinSkillsLayer,
   runtimeNotesLayer,
-  flueSourceLayer,
+  mappingOnly ? Layer.empty : flueSourceLayer,
 ).pipe(
   Layer.provideMerge(settingsLayer),
   // oxlint-disable-next-line vivid/no-config-provider-from-env-in-library -- This is the importer's process entry point, the one place the environment becomes configuration.
@@ -75,6 +79,16 @@ const entry = Layer.mergeAll(
 )
 
 NodeRuntime.runMain(
-  // @effect-diagnostics-next-line strictEffectProvide:off -- The process entry point provides its composed Layer once.
-  Effect.scoped(run()).pipe(Effect.provide(entry)),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const stores = yield* Stores
+      const work = mappingOnly
+        ? mapSubmissions().pipe(Effect.flatMap((mapped) => Console.log(JSON.stringify({ mapped }))))
+        : run()
+      return yield* Effect.raceFirst(stores.lost, work)
+    }),
+  ).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The process entry point provides its composed Layer once.
+    Effect.provide(entry),
+  ),
 )

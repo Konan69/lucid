@@ -81,3 +81,23 @@ pnpm --filter @vivid/agent-runtime start
 There is no build: the process runs from source with `tsx`, as the application server does. The
 checked-in Dockerfile runs that command on port `5173` with a `/health` check. It has not been
 built or run since the move to Pi Durable.
+
+## Cut over existing Threads
+
+1. Stop the Flue runtime and application server. Import before the Pi runtime first serves.
+2. Run `pnpm --filter @vivid/agent-runtime db:migrate` against the target `DATABASE_URL`.
+3. Set `VIVID_FLUE_DATABASE_URL` to the old Flue database and supply the runtime settings above.
+4. Run `pnpm --filter @vivid/agent-runtime import:flue`. Require zero failed Threads before proceeding.
+5. Run the server's old-Run cutover command, then start Pi and the application server.
+
+Each Thread reports `carried`, `already`, `skipped`, or `failed` as JSON. A changed Flue snapshot
+replaces the imported conversation whole. An unchanged snapshot reports `already` and keeps its
+Pi submission numbers. The replacement and Thread pointer commit together. Pi has no deletion API,
+so superseded conversations remain stored but are no longer attached to the Thread.
+A conversation created by the runtime fails with `created by the runtime before import`.
+
+Every import also upserts `runtime.imported_submissions(person_id, flue_submission_id,
+submission_id)` from committed Pi receipts in the current Thread conversations. The server reads
+this output to rewrite old Runs. If the process stops between import and mapping, rerun the import
+or run `pnpm --filter @vivid/agent-runtime import:flue --map`. Mapping alone needs no Flue database.
+Both commands take the runtime's exclusive store authority, so neither runs while Pi serves.
