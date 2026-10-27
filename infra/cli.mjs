@@ -15,8 +15,8 @@ const decodeVariables = Schema.decodeUnknownEffect(
 )
 
 /** Forward shutdown only to the child this invocation owns, then let the caller remove its config. */
-async function run(command, args) {
-  const child = NodeChildProcess.spawn(command, args, { stdio: 'inherit' })
+async function run(command, args, stdio) {
+  const child = NodeChildProcess.spawn(command, args, { stdio })
   const interrupt = () => child.kill('SIGINT')
   const terminate = () => child.kill('SIGTERM')
   process.on('SIGINT', interrupt)
@@ -50,7 +50,8 @@ async function withPrivateConfig(command) {
   process.once('SIGINT', cleanup)
   process.once('SIGTERM', cleanup)
   try {
-    await NodeFSP.writeFile(privateConfig, configured, { mode: 0o600, flag: 'wx' })
+    // No await separates creation from launching the child and installing its signal handlers.
+    NodeFS.writeFileSync(privateConfig, configured, { mode: 0o600, flag: 'wx' })
     return await command(NodeURL.fileURLToPath(privateConfig))
   } finally {
     cleanup()
@@ -66,21 +67,35 @@ async function main() {
   if (mode !== 'dev' && mode !== 'deploy') throw new Error('Expected dev or deploy')
   await withPrivateConfig(async (path) => {
     if (mode === 'dev') {
-      await run('celld', [mode, path, ...args])
+      await run('celld', [mode, path, ...args], 'inherit')
       return
     }
-    await run(process.execPath, [
-      NodeURL.fileURLToPath(new URL('../apps/cells/scripts/build.mjs', import.meta.url)),
-      'deploy',
-      path,
-      NodeURL.fileURLToPath(new URL('../apps/cells/dist/deployment.json', import.meta.url)),
-      ...args,
-    ])
+    await run(
+      process.execPath,
+      [
+        NodeURL.fileURLToPath(new URL('../apps/cells/scripts/build.mjs', import.meta.url)),
+        'deploy',
+        path,
+        NodeURL.fileURLToPath(new URL('../apps/cells/dist/deployment.json', import.meta.url)),
+        ...args,
+      ],
+      'inherit',
+    )
   })
 }
 
 if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
-  await main().catch((error) => {
+  // The config owner observes IPC closure even when the invoking wrapper is killed with SIGKILL.
+  // It terminates its own child and removes the private file without relying on the dead wrapper.
+  if (process.connected) process.once('disconnect', () => process.kill(process.pid, 'SIGTERM'))
+  const command = process.connected
+    ? main()
+    : run(
+        process.execPath,
+        [process.argv[1], ...process.argv.slice(2)],
+        ['inherit', 'inherit', 'inherit', 'ipc'],
+      )
+  await command.catch((error) => {
     let reason = error instanceof Error ? error.message : String(error)
     for (const [name, value] of Object.entries(process.env))
       if (/KEY|TOKEN|SECRET|VARS/.test(name) && value)
