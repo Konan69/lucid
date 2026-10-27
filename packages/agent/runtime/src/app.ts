@@ -179,17 +179,28 @@ const stopThread = Effect.fn('Runtime.stopThread')(function* (
   return busy
 })
 
-/** The terminal wait endpoint. Pi owns waiting and the request owns only its cancellation. */
+const encodeSettlement = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.toCodecJson(RuntimeSettlement)),
+)
+
+/**
+ * Validate before returning headers so refusals keep their HTTP status. The body owns Pi's
+ * terminal wait, allowing celld to drain public admission and interrupt it during a handoff.
+ */
 const settled = Effect.fn('Runtime.settled')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeSubmissionPath)
   const person = yield* bound(path)
-  const outcome = yield* readSettlement(person.harness, path)
-  return yield* HttpServerResponse.schemaJson(RuntimeSettlement)(outcome)
+  const submission = yield* findSubmission(person.harness, path)
+  const body = Stream.fromEffect(settlement(person.harness, submission)).pipe(
+    Stream.mapEffect((outcome) => encodeSettlement(outcome)),
+    Stream.encodeText,
+  )
+  return HttpServerResponse.stream(body, { contentType: 'application/json' })
 })
 
 /** Resolve through the Thread before waiting, so another Thread's submission remains unknown. */
-const readSettlement = Effect.fn('Runtime.readSettlement')(function* (
+const findSubmission = Effect.fn('Runtime.findSubmission')(function* (
   harness: Harness,
   path: RuntimeSubmissionPath,
 ) {
@@ -198,7 +209,7 @@ const readSettlement = Effect.fn('Runtime.readSettlement')(function* (
   if (!isSubmissionId(path.submissionId)) return yield* new UnknownSubmission()
   const submission = yield* submissionOf(harness, conversation.value.id, path.submissionId)
   if (Option.isNone(submission)) return yield* new UnknownSubmission()
-  return yield* settlement(harness, submission.value)
+  return submission.value
 })
 
 const encodeFrame = Schema.encodeEffect(
