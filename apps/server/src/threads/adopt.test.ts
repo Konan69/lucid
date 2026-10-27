@@ -126,5 +126,66 @@ layer(runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)))((it) => {
         return undefined
       }).pipe(Effect.scoped),
     )
+    it.effect('joins a Run again when its Thread loads after an earlier adoption cleared it', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const personId = PersonId.make(NodeCrypto.randomUUID())
+        const threadId = ThreadId.make(NodeCrypto.randomUUID())
+        const runId = RunId.make(NodeCrypto.randomUUID())
+        yield* Effect.addFinalizer(() =>
+          database.run(database.delete(threads).where(eq(threads.id, threadId))).pipe(
+            Effect.andThen(
+              database.run(database.delete(personTable).where(eq(personTable.id, personId))),
+            ),
+            Effect.asVoid,
+            Effect.catch(() => Effect.sync(() => expect.fail('Adoption fixture cleanup failed'))),
+          ),
+        )
+        yield* database.run(
+          database
+            .insert(personTable)
+            .values({ id: personId, name: 'History', email: `${personId}@example.test` }),
+        )
+        yield* database.run(
+          database.insert(threads).values({
+            id: threadId,
+            personId,
+            title: 'Refused Thread',
+            titleSource: 'Person',
+            updatedAt: 1,
+          }),
+        )
+        yield* database.run(
+          database.insert(runs).values({
+            id: runId,
+            threadId,
+            personId,
+            turn: 0,
+            origin: StoredRunOrigin.cases.Message.make({}),
+            state: 'completed',
+            startedAt: 1,
+            finishedAt: 2,
+            receipt: { runId, offset: '1', incarnation: 'earlier' },
+          }),
+        )
+        const read = database.run(database.select().from(runs).where(eq(runs.id, runId)))
+        // The Thread's load was refused, so its first adoption has no entry for it.
+        expect(yield* adoptRuns(RuntimeHistoryMap.make([]))).toBeGreaterThanOrEqual(1)
+        expect((yield* read).map((run) => run.receipt)).toEqual([null])
+        const loaded = RuntimeHistoryMap.make([
+          {
+            personId,
+            ...RuntimeHistoryResult.cases.Loaded.make({
+              threadId,
+              deliveries: [{ requestId: runId, submissionId: RuntimeSubmissionId.make(3) }],
+            }),
+          },
+        ])
+        expect(yield* adoptRuns(loaded)).toBeGreaterThanOrEqual(1)
+        expect((yield* read).map((run) => run.receipt)).toEqual([{ runId, submissionId: '3' }])
+        expect(yield* adoptRuns(loaded)).toBe(0)
+        return undefined
+      }).pipe(Effect.scoped),
+    )
   })
 })

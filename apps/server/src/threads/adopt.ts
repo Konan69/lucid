@@ -60,7 +60,19 @@ const adoptThread = Effect.fn('Runs.adoptThread')(function* (
       const rows = yield* tx.select().from(runs).where(eq(runs.threadId, threadId)).for('update')
       let changed = 0
       for (const run of rows) {
-        if (run.receipt === null) continue
+        if (run.receipt === null) {
+          // An earlier adoption cleared this receipt because its Thread was not loaded yet (a
+          // refused or failed load). Earlier receipts named the Run itself, so a later map that
+          // carries this Run's delivery joins it again instead of leaving it unjoined for good.
+          const submissionId = mapped.get(run.id)
+          if (submissionId === undefined) continue
+          yield* tx
+            .update(runs)
+            .set({ receipt: yield* encodeReceipt(Admitted.make({ runId: run.id, submissionId })) })
+            .where(and(eq(runs.threadId, threadId), eq(runs.id, run.id)))
+          changed += 1
+          continue
+        }
         const current = currentReceipt(run.receipt)
         if (Option.isSome(current)) {
           const receipt = current.value
