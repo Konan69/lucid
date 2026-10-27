@@ -122,12 +122,7 @@ const resultOf = (entry: EntryRecord): Option.Option<ToolResultMessage> => {
  */
 export const pictureId = (entry: number, index: number) => `${entry}-${index}`
 
-/**
- * A Person's own words, with the key of the client that sent them when it gave one (`key`, from
- * a `vivid.message` entry's data): Flue's projection of a user message (Flue 2.2.2
- * `projectCompletedMessage`): role and purpose `user`, drawn, one done text part per text block
- * and a file part per picture.
- */
+/** Draw a Person's words and pictures with the sending client's key from `vivid.message`. */
 function personMessage(
   entry: EntryRecord,
   message: UserMessage,
@@ -165,13 +160,8 @@ function personMessage(
   })
 }
 
-/**
- * A delivery the server sent. The values are the ones Flue's projection gave a signal record
- * (`classifySignal` and `projectCompletedMessage` in Flue 2.2.2): role `system`,
- * purpose `dispatch`, display `diagnostic`, the tag and attributes under `signal`, and the body as
- * one text part. The clients tell a shared message, a Routine coming due and plumbing apart by
- * exactly these (`packages/client/state/src/source.ts`), so they are kept as they were.
- */
+/** Draw a server delivery as a diagnostic dispatch with its tag, attributes and body.
+ * Clients classify shared messages, Routines and internal signals from these fields. */
 function dispatchMessage(
   entry: EntryRecord,
   signal: SignalData,
@@ -206,22 +196,13 @@ function inputMessage(entry: EntryRecord, submission: Option.Option<number>) {
   return Option.map(userOf(entry), (message) => personMessage(entry, message, submission))
 }
 
-/** A tool's text as Flue gave an error's words (`toolResultText`): its text blocks, a line each. */
+/** Join a tool result's text blocks into its error message, one block per line. */
 const wordsOf = (result: ToolResultMessage) =>
   result.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n')
 
-/**
- * What a finished tool call shows as its output: what main's clients received. Flue kept a
- * tool's structured output only when its details were an object with an `output` property (its
- * stream store), and projected that (`entry.toolOutput.value`); a Vivid tool's receipt is `{
- * customTool, output }`, so the screens read the `output` inside. Any other tool (the Computer's,
- * whose details are a bare receipt) showed its content through `toolResultOutput`: a lone text
- * block as its string, anything else as the list.
- *
- * One difference: Flue kept a tool result's picture as an attachment and put its id where the
- * bytes were. Pi keeps the bytes in the result, and there is no attachment to name, so a picture
- * is listed by its kind only. The bytes never enter the state.
- */
+/** Vivid receipts expose their structured `output`; other tools expose a lone text block
+ * as a string or multiple content blocks as a list. Pictures retain their kind and MIME type
+ * here. Their bytes remain in the transcript and never enter client state. */
 function outputOf(result: ToolResultMessage): JsonValue {
   const receipt = decodeReceipt(result.details)
   if (Option.isSome(receipt)) return copyJson(receipt.value.output)
@@ -463,17 +444,8 @@ function answer(parts: Array<Part>, result: ToolResultMessage) {
   )
 }
 
-/**
- * The parts of a run's reply, walked in transcript order, then the response still arriving.
- *
- * Pi commits every provider result, including an attempt that failed and was tried again and a
- * partial a stop cut short (`generation.ts` `classify`, `convertPartial`). An attempt is not
- * something Vivid said once another has taken its place, as Flue's projection left it out from
- * the moment the next one began (`supersededAssistantErrorEntryIds` reads the messages in
- * progress, which exist before they have content): so an unfinished message shows only while it
- * is the last thing written and Pi has not begun another request, whether or not that request
- * has said anything yet.
- */
+/** Walk committed reply parts and the live tail in order. Pi commits failed attempts too,
+ * so an unfinished message is visible only until another message or model request replaces it. */
 function replyParts(written: ReadonlyArray<EntryRecord>, tail: Tail) {
   const arriving = liveParts(tail.partial)
   const last = Arr.findLast(written, (entry) => Option.isSome(assistantOf(entry)))
@@ -526,13 +498,8 @@ function replyMessage(
   )
 }
 
-/**
- * The runtime's word that a reply was not finished or was stopped: the advisory Flue appended
- * for an interrupted or aborted submission (`classifySignal`: role `system`, purpose `advisory`,
- * display `diagnostic`, with `settlement`). The clients read `settlement.outcome` and say their
- * own words (`source.ts`: a failed one is drawn, a stopped one is not), so the text here is
- * plain and carries no cause.
- */
+/** A failed or stopped reply produces a diagnostic advisory. Clients read its settlement
+ * outcome and choose their own wording; provider failure text never reaches the client. */
 function advisory(
   run: Run,
   submission: Option.Option<number>,

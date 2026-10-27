@@ -24,7 +24,6 @@ const sha = git(['rev-parse', '--verify', '--end-of-options', `${process.argv[2]
 const files = new Set(git(['ls-tree', '-r', '--name-only', sha]).split('\n'))
 const contents = new Map()
 const durable = files.has('packages/agent/durable/src/main.ts')
-const pi = durable || files.has('packages/agent/runtime/src/main.ts')
 
 /** Missing paths are an expected parity result; corrupt or unreadable git objects still fail. */
 function source(path) {
@@ -43,14 +42,10 @@ function check(probe) {
       ? path
       : undefined
   }
-  // A port beside Flue must satisfy runtime checks itself; the retained Flue copy is not evidence.
-  const candidates = pi
-    ? probe.paths.filter((path) => !path.startsWith('patches/@flue__runtime'))
-    : probe.paths
   const paths =
-    durable && candidates.some((path) => path.startsWith('packages/agent/durable/'))
-      ? candidates.filter((path) => !path.startsWith('packages/agent/runtime/'))
-      : candidates
+    durable && probe.paths.some((path) => path.startsWith('packages/agent/durable/'))
+      ? probe.paths.filter((path) => !path.startsWith('packages/agent/runtime/'))
+      : probe.paths
   const matched = paths.find((path) => {
     const text = source(path)
     // A forbidden placeholder is absent on main, which predates the RPC relay module.

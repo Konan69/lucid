@@ -248,7 +248,7 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
           }),
         )
         const model = yield* Deferred.await(before)
-        // Flue's rendering, character for character; the scope's Person is not in it.
+        // Escaped signal text excludes the acting Person's private scope.
         expect(model.said).toMatchObject({
           role: 'user',
           content:

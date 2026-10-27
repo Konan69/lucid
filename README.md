@@ -5,7 +5,7 @@ One person, one Vivid—simple alone and organizational by design.
 Vivid watches Integration events and posts useful updates to the Feed.
 
 Vivid is an AI teammate for everyday work, reached through a Thread. This repository holds the
-whole product: web, mobile, desktop, application server, Flue runtime, shared contracts, tests,
+whole product: web, mobile, desktop, application server, conversation runtime, shared contracts, tests,
 and design documents. Backend product logic lives in `apps/server`, organized by domain.
 
 ## Start
@@ -22,8 +22,8 @@ pnpm infra:dev
 ```
 
 Alchemy provisions PostgreSQL 18 on port `55433`, applies the server's auth migrations then
-product migrations, and starts the runtime (`5173`), server (`8787`), and web (`5178`). Flue
-migrates its own PostgreSQL storage at runtime startup. Nothing is deployed; remote targets are
+product migrations, then the runtime's migrations, and starts the runtime (`5173`), server
+(`8787`), and web (`5178`). Nothing is deployed; remote targets are
 disabled. Keep the real local database and Alchemy state read/copy only during tests and audits.
 Tests that need persistence require a disposable database through `VIVID_TEST_DATABASE_URL`.
 
@@ -52,7 +52,8 @@ graphs or a typecheck alongside a build.
 
 ## Runtime and persistence
 
-Flue `2.2.2` with pi `0.87.1` owns conversation transport, history, and runtime lifecycle.
+Pi Durable `1.2.0` owns conversation execution, history, and runtime lifecycle. Vivid serves
+projected conversation state through its gateway.
 Product metadata, authorization, Routines, Library, and other product records belong to the
 server. Tools in `packages/agent/runtime/src/tools` call the server's schema-derived `VividRpc`
 contract. Shared clients live in `packages/client/rpc`, and shared view logic in
@@ -62,9 +63,9 @@ Vivid's replies use OpenCode Go (`OPENCODE_API_KEY`,
 `packages/agent/runtime/src/providers/opencode.ts`); the default is `opencode-go/glm-5.3-flash`.
 Memory, embeddings and decisions use the Experiential Labs gateway (`EXPLABS_API_KEY`).
 Vivid has no model retry or fallback layer of its own; the gateway fails over upstreams and
-Flue handles transient retries.
+Pi handles generation retries.
 
-PostgreSQL stores product records and Flue state. Memory uses HelixDB; Integrations use Executor;
+PostgreSQL stores product records and runtime state. Memory uses HelixDB; Integrations use Executor;
 the Computer uses Boat, proven against real Boat on 3 October 2026. All of them are required: the
 server does not start without their settings (`apps/server/README.md`, "External capabilities").
 The hosted stack runs HelixDB and Executor itself; Boat is an outside service. Code and

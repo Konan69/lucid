@@ -638,7 +638,7 @@ layer(databaseLayer)((it) => {
     )
 
     // The first Thread is opened by Vivid, and the Person replies only by pressing answers on
-    // question cards. Flue records each as an `answer` dispatch, never a `user` message, so
+    // question cards. The runtime records each as an `answer` dispatch, never a `user` message, so
     // without this case the Thread has no Person words and keeps its Seed title forever.
     it.effect('counts a pressed answer as Person words when Vivid opened the Thread', () =>
       Effect.gen(function* () {

@@ -16,10 +16,8 @@ packages:
 # untracked .npmrc when a private registry eventually requires them.
 autoInstallPeers: false
 strictPeerDependencies: true
-# Strict peers stay on. These three are transitive peers of tools we do not run:
-# @shadcn/lint's ESLint parser (we load it through oxlint), Flue's decorator
-# transform (its Babel 8 plugin sits beside the Babel 7 the phone build uses), and alchemy's
-# Cloudflare types pin.
+# Strict peers stay on. The ESLint parser used through oxlint and Alchemy's
+# Cloudflare types pin have transitive peer exceptions.
 peerDependencyRules:
   ignoreMissing:
     - eslint
@@ -31,7 +29,7 @@ verifyDepsBeforeRun: false
 pmOnFail: error
 
 # Every repeated stack pin has one owner. Manifests reference these entries with
-# catalog: so Effect/Drizzle/Flue cannot drift by package.
+# catalog: so Effect/Drizzle cannot drift by package.
 catalog:
   '@alchemy.run/frontend-frameworks': 2.0.0-beta.81
   '@earendil-works/pi-ai': 0.87.1
@@ -41,7 +39,6 @@ catalog:
   '@effect/platform-node': 4.0.2
   '@effect/sql-pg': 4.0.2
   '@effect/vitest': 4.0.2
-  '@flue/sdk': 2.2.2
   '@openuidev/cli': 0.4.1
   '@openuidev/lang-core': 1.0.0
   '@openuidev/react-lang': 1.0.0

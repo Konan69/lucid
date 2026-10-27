@@ -1,16 +1,8 @@
 import { Effect, Option, Schema } from 'effect'
 
-/**
- * A built-in skill as the runtime uses it: the name and description the catalogue lists, and the
- * procedure body activation returns. Shipped frontmatter is a YAML mapping of one-line scalars
- * and literal block strings; `metadata` is provenance and never enters the prompt.
- *
- * Flue 2.2.2 parsed these files with a YAML library (`parseSkillMarkdown`, `dist/result-*.mjs`):
- * the same frontmatter fence, a `name` of lowercase letters, digits and single hyphens of at most
- * 64 characters that equals the directory, a non-empty `description` of at most 1,024, and the
- * trimmed body. This parser keeps those rules and owns only the YAML the shipped files use, so the
- * runtime carries no YAML dependency; anything else fails startup instead of being approximated.
- */
+/** A shipped skill's catalogue name, description and procedure body. Frontmatter accepts the
+ * YAML subset shipped here. Names match their directories, descriptions are nonempty, and
+ * unsupported syntax fails startup. Provenance metadata never enters the prompt. */
 export const LoadedSkill = Schema.Struct({
   name: Schema.String.check(
     Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),

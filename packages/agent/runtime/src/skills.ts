@@ -30,11 +30,7 @@ export const loadSkills = Effect.fn('Skills.load')(function* () {
   )
 })
 
-/**
- * The catalogue as the model reads it: Flue 2.2.2's wording and layout, line for line
- * (`composeSystemPrompt`, `dist/conversation-stream-store-*.mjs`). The instructions refer to
- * "Available Skills" by this heading.
- */
+/** The catalogue heading matches the instructions that direct the model to Available Skills. */
 export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
   return [
     '## Available Skills',
@@ -45,11 +41,7 @@ export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
   ].join('\n')
 }
 
-/**
- * What activation returns: Flue's packaged-skill prompt (`buildPackagedSkillPrompt`) for a known
- * name and its factual miss (`activateSkillForTool`) for an unknown one. No shipped skill has a
- * supporting file, so the resource list Flue would add is never present.
- */
+/** Activation returns a known skill procedure or lists the available names. */
 export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
   const skill = skills.find((entry) => entry.name === name)
   if (skill === undefined)
@@ -65,12 +57,8 @@ export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
 
 export const ACTIVATE_SKILL = 'activate_skill'
 
-/**
- * The built-in skills: the catalogue section and the one tool that loads a procedure. The tool's
- * name, description, parameter and details are Flue's (`createActivateSkillTool`,
- * `dist/result-*.mjs`). It only reads text the process loaded at startup, so a call a restart
- * interrupted may simply run again.
- */
+/** The catalogue and activation tool read only skills loaded at startup. An interrupted
+ * activation may run again because it has no side effects. */
 export const skillsExtension = Effect.fn('Skills.extension')(function* () {
   const skills = yield* loadSkills()
   return defineExtension({

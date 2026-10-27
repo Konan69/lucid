@@ -136,7 +136,7 @@ const storedDisplay = Effect.fn('Test.StoredDisplay')(
     ),
 )
 
-/** Only the external Flue transport is supplied; production source decoding and access checks run. */
+/** Only external conversation transport is supplied; production decoding and access checks run. */
 const runDisplay = Effect.fn('Test.RunDisplayCode')(
   (actor: Actor, thread: ThreadId, kind: DisplayToolKind, code: string) =>
     withCalls(

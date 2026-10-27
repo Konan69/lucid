@@ -154,21 +154,9 @@ export interface DefinitionInput {
   readonly frozen: (conversationId: ConversationId) => Promise<Option.Option<Kept>>
 }
 
-/**
- * Vivid's definition: what a conversation runs with, apart from its model. Pi calls a bundle of
- * tools, prompt sections and hooks an "extension"; this is the only one, beside the built-in
- * skills.
- *
- * The two sections are the two parts of main's agent document: the text `Vivid()` returned, and
- * the context instruction `useVividContext` added after it. Pi joins sections with a blank line
- * (pi-ai `getSystemMessageText`), as Flue joined the two (`composeAgentDocument`), and neither is
- * wrapped in a tag, so the model reads the same characters. Both render from the one context
- * frozen for the response, so every request of a response carries the same text and Pi writes
- * no system update between them.
- *
- * What Flue appended on its own is gone with Flue: an "Available Agents" section about a `task`
- * tool Vivid never offered, a `Date:` line that changed every day, and a working directory.
- */
+/** Vivid's tools, sections and hooks. The instruction and context sections render from one
+ * frozen context, so every request of a response has identical instructions across restarts.
+ * Pi joins the untagged sections with a blank line (`getSystemMessageText`). */
 export function definition(input: DefinitionInput): Extension {
   const response = (conversationId: ConversationId) =>
     input.frozen(conversationId).then(Option.getOrElse(() => unprepared))
@@ -190,13 +178,8 @@ export function definition(input: DefinitionInput): Extension {
   })
 }
 
-/**
- * The order the model is offered its tools in, which is main's: the Computer's tools, then the
- * skill tool Flue mounted itself, then every product tool. Pi lists an extension's tools before
- * the next extension's, which would put the skill tool last, so the order is stated to Pi by name
- * (`AgentChange.tools`) each time a delivery is admitted. `copy_signin` is the last of the
- * Computer tools (`tools/computer.ts` `computerTools`).
- */
+/** Offer Computer tools, skill activation, then product tools. Pi normally groups tools by
+ * extension, so admission sets the order explicitly through `AgentChange.tools`. */
 export function offered(
   tools: ReadonlyArray<ToolRegistration>,
   skills: Extension,

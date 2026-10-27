@@ -42,10 +42,7 @@ const ECHO = 'https://api.ipify.org'
 /** An IPv4 or IPv6 address somewhere in a page's outline. */
 const ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b/iu
 
-/**
- * A browser step's receipt as the Thread holds it: a native Browse result with no picture is
- * its single JSON text block in Flue 2.2.2 (`computers/thread.live.test.ts`).
- */
+/** A browser receipt without a picture projects as its single JSON text block. */
 const Receipt = Schema.fromJsonString(
   Schema.Struct({
     ok: Schema.Literal(true),

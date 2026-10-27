@@ -22,11 +22,11 @@ export type InvitationId = typeof InvitationId.Type
 /** Project identifier used by project contracts. */
 export const ProjectId = Schema.String.pipe(Schema.brand('ProjectId'))
 export type ProjectId = typeof ProjectId.Type
-/** Durable Thread identifier used by collaboration and Flue transport routes. */
+/** Durable Thread identifier used by collaboration and conversation routes. */
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 /** Decoded Thread identifier. */
 export type ThreadId = typeof ThreadId.Type
-/** Run identifier. It is Flue's submission id, so a Message can be joined to the Run that carried it. */
+/** Product Run identifier. The admission receipt links it to a runtime submission. */
 export const RunId = Schema.String.pipe(Schema.brand('RunId'))
 export type RunId = typeof RunId.Type
 /** Durable notification identifier. */

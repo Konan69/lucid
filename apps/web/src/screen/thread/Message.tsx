@@ -152,14 +152,8 @@ interface MessageProps {
   readonly working: boolean
   /** Whether this is the newest message in the Thread, the one a Person can still answer. */
   readonly latest: boolean
-  /**
-   * Whether the runtime has settled the submission this reply answers (its `submissionId` is
-   * among the conversation's settlements). Neither `latest`, `working` nor a part's streaming
-   * state says so: Flue closes every streaming part between steps and folds a delivery written
-   * while the reply arrives into the same submission (`appendToolInput` in Flue's SDK 2.2.2,
-   * `projectConversationUi` in Flue's runtime 2.2.2), so the reply can look finished while its
-   * submission is not. The server runs a display's program only from a settled reply.
-   */
+  /** Whether the runtime has settled this reply's submission. A finished part does not settle
+   * the response. The server runs a display's program only from a settled reply. */
   readonly settled: boolean
   readonly onContinue: (text: string) => void
 }
@@ -419,7 +413,7 @@ function Written({
   live,
   onSay,
 }: {
-  /** The reply as Flue stored it, which every program drawn from it names. */
+  /** The stored reply every program drawn from it names. */
   source: DisplaySource
   text: string
   /**
@@ -669,9 +663,7 @@ function FromVivid({
   // A reply with nothing to show yet is not drawn: the line at the foot of the Thread already
   // says Vivid is on it.
   if (segments.length === 0 && Option.isNone(forWhom)) return null
-  // Flue streams every step of a reply under the id of its first step, the id its history keeps
-  // the whole reply under (`buildResponseMessageIndex` in Flue's runtime 2.2.2), so a display drawn
-  // while the reply arrives already names the reply the server reads.
+  // Live and settled replies share an id, so a display already names the reply the server reads.
   const source = DisplaySource.cases.ThreadMessage.make({
     thread: context.thread,
     message: message.id,

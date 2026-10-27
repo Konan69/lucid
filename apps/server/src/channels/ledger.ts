@@ -57,7 +57,7 @@ const makeLedger = Effect.fn('Channels.makeLedger')(function* () {
    * unknown and never retried: Spectrum 12.10.1 Space.send cannot deduplicate a caller's key.
    * PersistedQueue retries and Workflow activities would resend that uncertain external effect;
    * neither fits this deliberately at-most-once delivery policy (rc.116 persistence source).
-   * A unique response id also claims a coalesced Flue answer once across its joined Runs.
+   * A unique response id also claims a coalesced runtime answer once across its joined Runs.
    */
   const claim = Effect.fn('Channels.claimReply')(function* (
     runId: RunId,

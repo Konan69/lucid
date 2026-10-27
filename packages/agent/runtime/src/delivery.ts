@@ -216,14 +216,8 @@ const escapeText = (value: string) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 const escapeAttribute = (value: string) => escapeText(value).replaceAll('"', '&quot;')
 
-/**
- * A signal as the model reads it. This is Flue 2.2.2's rendering, kept character for character
- * (its runtime package, `dist/dispatch-*.mjs`: `renderSignalMessage`, `escapeXmlText`,
- * `escapeXmlAttribute`): the tag is the signal's tag name, its first attribute is `type`, the
- * delivery's attributes follow in their own order, and the body stands alone on the lines between.
- * The instructions tell the model that a shared message arrives as `<message from="Name">`, so a
- * changed rendering would change what those words mean.
- */
+/** Render a signal with its type first, then its ordered attributes and escaped body.
+ * Instructions describe shared messages using these tags, so the rendering is a prompt contract. */
 export function signalText(signal: Extract<Delivered, { kind: 'signal' }>) {
   const tag = signal.tagName === undefined ? 'signal' : signal.tagName
   const named: ReadonlyArray<readonly [string, string]> = [
@@ -236,16 +230,9 @@ export function signalText(signal: Extract<Delivered, { kind: 'signal' }>) {
   return `<${tag}${attributes}>\n${escapeText(signal.body)}\n</${tag}>`
 }
 
-/**
- * The two parts of Pi's input for one delivery: what the model reads, and the entry it is placed
- * as. A Person's words are an ordinary user entry with their pictures as image content (Flue also
- * wrote an attachment manifest with its own attachment ids into the text; Pi keeps the picture in
- * the message itself, so there is no id to name). A signal is placed as `vivid.signal` carrying
- * its type, attributes and body, while the model reads exactly the text Flue rendered.
- *
- * `clientKey` is the sending client's key for a message it sent. It goes into the entry's data
- * and nowhere else: `content` is all the model is given.
- */
+/** Place a Person's words and image bytes as user content, or a server delivery as
+ * `vivid.signal` with its type, attributes and body. The model reads `signalText` for signals.
+ * The sending client's key lives only in entry data and never reaches the model. */
 export function placement(delivery: Delivered, clientKey: Option.Option<string>) {
   if (delivery.kind === 'signal') {
     const signal = {

@@ -84,7 +84,7 @@ export class TooManyAttachments extends Schema.TaggedError<TooManyAttachments>()
   { title: 'Too many pictures' },
 ) {}
 
-/** Flue cannot preserve attachments on the attributed signals used by shared Threads. */
+/** Shared Threads accept text-only attributed signals. */
 export class PicturesRequirePrivateThread extends Schema.TaggedError<PicturesRequirePrivateThread>()(
   'PicturesRequirePrivateThread',
   { threadId: ThreadId, message: Schema.String },
@@ -264,7 +264,7 @@ export interface Presence extends Schema.Schema.Type<typeof Presence> {}
 
 /**
  * Everything beside the conversation itself that a client needs to draw one Thread: who is in it,
- * who sent what (Runs carry the attribution Flue's history does not), and who is here now.
+ * who sent what (Runs carry the attribution conversation history does not), and who is here now.
  */
 export const ThreadDetail = Schema.Struct({
   thread: Thread,
@@ -287,10 +287,7 @@ export const PresenceRequest = Schema.Struct({
 })
 export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceRequest> {}
 
-/**
- * The signal types the server delivers into a Thread. Flue keeps them in its own history, so the
- * vocabulary is fixed here once for the server, the runtime and every client that renders them.
- */
+/** One signal vocabulary for the server, runtime history and every client that draws it. */
 export const SignalType = Schema.Literals([
   'message',
   'approval',
@@ -301,14 +298,8 @@ export const SignalType = Schema.Literals([
 ] as const)
 export type SignalType = typeof SignalType.Type
 
-/**
- * Who a delivery is for: the Person Vivid acts for.
- *
- * This is never written into the conversation. Flue shows a delivery's attributes to the model as
- * text, so anything put there is something the model can read, repeat to the people in a shared
- * Thread, or be talked into changing. The scope travels beside the conversation instead, from the
- * server to the runtime, and reaches the tools through a Layer.
- */
+/** The Person Vivid acts for. Scope travels from server to runtime beside model-visible
+ * text and reaches tools through a Layer. The model cannot read or alter this authority. */
 export const DeliveryScope = Schema.Struct({
   acting: PersonId,
 }).annotate({ identifier: 'DeliveryScope', title: 'Delivery scope' })
@@ -321,13 +312,8 @@ export const DeliveryScopeRequest = Schema.Struct({
 })
 export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
 
-/**
- * One server-owned request for Flue to accept a Run without owning product state.
- *
- * `body` and `attributes` are what the model reads, so they hold words only: who is speaking by
- * name, what woke Vivid, and the delivery's `turn`. `scope` is what the runtime acts with and the
- * model never sees.
- */
+/** A server-owned runtime admission request. Body and attributes contain model-visible
+ * words; scope carries the authority the model never sees. Product state stays on the server. */
 export const RuntimeRunRequest = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.String,
@@ -346,14 +332,12 @@ export const RuntimeRunRequest = Schema.Struct({
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 
-/** Flue's durable receipt for one accepted Run. */
+/** Durable runtime admission receipt for one accepted Run. */
 export const RuntimeRunResponse = Schema.Struct({ submissionId: Schema.String })
 export interface RuntimeRunResponse extends Schema.Schema.Type<typeof RuntimeRunResponse> {}
 
-/**
- * What the runtime is told about a Thread when its Flue instance is created, and never again:
- * where it lives and who started it. Evolving facts come with each delivery instead.
- */
+/** Thread location and creator supplied when its conversation is created.
+ * Evolving facts travel with each delivery. */
 export const ThreadOrigin = Schema.Struct({
   creator: PersonId,
   creatorName: Schema.String,

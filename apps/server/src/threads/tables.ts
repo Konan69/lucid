@@ -18,15 +18,9 @@ import { projectTable } from '../projects/tables.ts'
 /** The existing migration backfilled legacy titles as Person; every new writer must state provenance explicitly. */
 export const titleSource = pgEnum('vivid_thread_title_source', TitleSource.literals)
 
-/**
- * One row per Thread. The table keeps its first name because Flue's history is keyed by the same
- * id and renaming a table is not worth a rewrite of every installation's data.
- *
- * `person_id` is the creator, on whose behalf Vivid acts in a private Thread. `audience` widens who
- * may read and send: `private` (the creator), `people` (the creator and the rows in
- * `vivid_thread_participants`), `company` (every Member of `company_id`). A personal-space Thread
- * has no Company and is always `private`.
- */
+/** One row per Thread. Its persisted table name and ids remain stable across runtime changes.
+ * `person_id` is the creator. `audience` allows the creator alone, named participants, or every
+ * Company Member to read and send. A personal-space Thread is always private. */
 export const threads = pgTable(
   'vivid_conversations',
   {

@@ -123,16 +123,6 @@
     "symbols": ["sql", "closeControl", "control", "checkMigrated", "storesLayer"]
   },
   {
-    "file": "packages/agent/runtime/src/flue/carry.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["responded", "append", "carry"]
-  },
-  {
-    "file": "packages/agent/runtime/src/flue/source.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["snapshot", "readStream", "flueSourceLayer"]
-  },
-  {
     "file": "apps/server/src/library/extraction/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["extractPages"]

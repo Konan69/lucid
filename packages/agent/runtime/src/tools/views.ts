@@ -134,9 +134,7 @@ export function desktop(item: DesktopView) {
   }
 }
 
-/** Flue 2.1 custom tools stringify the same output stored in client history (conversation-stream-store).
- * These three card references are the sole exception: defineTool has no separate content/details API.
- * Web/mobile require these exact fields to render and answer the server-owned card. */
+/** Card references keep the exact fields web and phone clients need to draw and answer them. */
 export function inputRequest(item: InputRequest) {
   return {
     kind: 'input-request',

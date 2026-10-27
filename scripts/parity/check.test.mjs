@@ -5,7 +5,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 
-/** Real git objects prove ref isolation and prevent an old Flue copy from hiding a missing port. */
+/** Real git objects prove ref isolation and prevent an old runtime hiding a missing port. */
 NodeTest.test(
   'checks the requested commit, feature mapping and the replacement runtime',
   (context) => {

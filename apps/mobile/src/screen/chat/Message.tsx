@@ -67,13 +67,8 @@ export function Message({
   latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
   unsent: ReadonlySet<string>
-  /**
-   * Whether Flue has settled the submission this reply answers. Neither `latest`, `working` nor a
-   * part's streaming state says so: Flue closes every streaming part between steps and folds a
-   * delivery written while the reply arrives into the same submission (`appendToolInput` in
-   * Flue's SDK 2.2.2, `projectConversationUi` in Flue's runtime 2.2.2). The server runs a
-   * display's program only from a settled reply.
-   */
+  /** Whether the runtime has settled the submission this reply answers. A finished part does
+   * not settle the response. The server runs a display's program only from a settled reply. */
   settled: boolean
   onContinue: Say
 }) {
@@ -219,9 +214,7 @@ function FromVivid({
   const streaming = isStreaming(message)
   // A reply with nothing to show yet is not drawn: the working bubble already says Vivid is on it.
   if (segments.length === 0 && Option.isNone(answering)) return null
-  // Flue streams every step of a reply under the id of its first step, the id its history keeps
-  // the whole reply under (`buildResponseMessageIndex` in Flue's runtime 2.2.2), so a display drawn
-  // while the reply arrives already names the reply the server reads.
+  // Live and settled replies share an id, so a display already names the reply the server reads.
   const source = DisplaySource.cases.ThreadMessage.make({ thread, message: message.id })
   // Only the newest reply, once Vivid has finished it, offers its replies to tap.
   const offered = latest && !working && !streaming ? offeredReplies(message) : []

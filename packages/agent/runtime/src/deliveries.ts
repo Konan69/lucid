@@ -13,16 +13,8 @@ import { Addressed } from './delivery.ts'
 import { pi, type PiRejected } from './threads.ts'
 import { VividContext } from './tools/snapshots.ts'
 
-/**
- * What is kept beside one admitted delivery while it can still be answered: how it is addressed
- * (to find whom a tool acts for), whether anybody was behind it, and the context read for it.
- *
- * The context is the frozen one. On Flue it lived in process memory between `useResponseStart`
- * and `useResponseFinish`, so a restart in the middle of a reply lost it and the reply went on
- * with an empty context and a changed instruction. Here it is committed before the delivery is
- * submitted and read back at every request of the response, so the instruction stays the same
- * text across the requests of one response and across a restart.
- */
+/** Keep a delivery's address, authority and frozen context until it settles. Commit context
+ * before admission and read it for every model request so instructions survive a restart. */
 export const Kept = Schema.Struct({
   addressed: Addressed,
   acting: Schema.Boolean,

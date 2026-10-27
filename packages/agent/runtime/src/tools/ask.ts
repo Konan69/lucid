@@ -38,8 +38,8 @@ const question = v.object({
  * Asking does not stop Vivid. One durable Input request carries everything Vivid needs together;
  * the tool returns as soon as the server has recorded it, and the turn goes on with whatever does
  * not depend on the answer. The answer comes back later as a new delivery (`inputs/store.ts`
- * `answer`): Flue joins it into the response still being written, at the next turn boundary
- * (2.2.2 `applyQueuedJoins`), or starts a new Run in the Thread when nothing is running.
+ * `answer`). It joins the running response at the next turn boundary, or starts a new Run
+ * in the Thread when nothing is running.
  *
  * Ported from Codex's async question, which shipped with the GPT-6 family (GPT-6 Astra first):
  * `codex-rs/core/src/tools/handlers/request_user_input_async.rs` `RequestUserInputAsyncHandler`
@@ -71,7 +71,7 @@ export function askTools(runTool: RunTool) {
           ),
         ),
       }),
-      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+      /** Pi owns decoding and cancellation; this boundary runs the attributed RPC Effect. */
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {

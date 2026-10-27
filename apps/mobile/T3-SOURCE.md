@@ -25,7 +25,7 @@ The MIT notice is retained in [T3-LICENSE](./T3-LICENSE), and in the native modu
 | `src/data/{layout,adaptive-navigation,layoutMetrics}.ts` | Layout and navigation calculations copied and used in the phone/tablet shell. Typography now consumes Vivid web metrics.                                                                                                                                                                                                                                                              |
 | `src/features/layout/workspace-pane-animation.ts`        | Copied unchanged and used for the animated native sidebar.                                                                                                                                                                                                                                                                                                                            |
 
-The product screens and Flue connection are Vivid code. T3's coding providers,
+The product screens and conversation connection are Vivid code. T3's coding providers,
 terminal, authentication and coding state subsystem are not included.
 The welcome screen, sidebar hierarchy and composer chrome adapt Vivid web.
 T3's actual pane timing and composer transition durations drive native movement.

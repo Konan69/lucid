@@ -27,8 +27,7 @@ interface Barrier {
  * What follows every settlement, exactly once per delivery however its response ended: a final
  * answer, a tool that ended the turn, a model failure, a stop, or a withdrawal while still queued.
  *
- * Flue told the agent when a response finished (`useResponseFinish`); Pi has no such hook, and a
- * generation hook would miss a failed or stopped run. What every ending shares is the commit that
+ * A generation hook misses failed or stopped runs. Every ending shares the commit that
  * settles the run's inputs (`endRun`, Pi `src/harness/live.ts`, settles all of them in one
  * commit), and a Session publishes each commit to its listeners (`subscribeCommits`). So this
  * reads settlements from the commits themselves:

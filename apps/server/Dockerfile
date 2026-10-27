@@ -27,7 +27,7 @@ COPY packages/compiler packages/compiler
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
 # The server takes `@vivid/agent-runtime` only as a devDependency, for tests that import the
 # runtime's tools by name; the runtime ships in its own image (`packages/agent/runtime/Dockerfile`).
-# Excluding it keeps its dependency closure (Flue CLI, AgentFS) out of the store this image copies,
+# Excluding it keeps its dependency closure (Pi, AgentFS) out of the store this image copies,
 # while the server's own devDependencies, `tsx` among them, stay installed for its start command.
 RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter '!@vivid/agent-runtime' --filter @vivid/web...
 # Shared phone packages extend the root Hermes profile; Vite and tsx resolve it too.

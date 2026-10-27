@@ -11,7 +11,7 @@ import { firstThreads, runs, threads } from './tables.ts'
 /**
  * Serialize first arrival on the existing Person row, across workspaces and server processes.
  * The Person primary key on the receipt is the final uniqueness constraint. Thread and receipt
- * commit together; Flue admission happens afterward through Conversation, outside SQL locks.
+ * commit together; runtime admission happens afterward through Conversation, outside SQL locks.
  * Look up the receipt before older Threads so the Thread we created remains an Existing result.
  */
 export const claimFirstThread = Effect.fn('Threads.claimFirst')(function* (actor: Actor) {

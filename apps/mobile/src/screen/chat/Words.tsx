@@ -108,7 +108,7 @@ export function Reply({
   live,
   onSay,
 }: {
-  /** The reply as Flue stored it, which every program drawn from it names. */
+  /** The stored reply every program drawn from it names. */
   source: DisplaySource
   text: string
   /**
@@ -123,7 +123,7 @@ export function Reply({
    * whole.
    */
   making: boolean
-  /** Whether Flue has settled the submission this reply answers (`Message`, `settled`). */
+  /** Whether the runtime has settled the submission this reply answers. */
   settled: boolean
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean

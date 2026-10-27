@@ -108,7 +108,7 @@ Better Auth's organization routes are deliberately answered 404 (`closedRoute`);
 
 The runtime runs on Pi Durable 1.2.0. Its installed README and package source define the SDK API. The production routes and Persons Layers are exercised through `packages/agent/runtime/tests/process.ts`, with the production PostgreSQL storage and migration owner. Only model responses and the remote product server are controlled fixture boundaries. Runtime setup removes inherited deployment configuration; each case supplies typed settings and its own database.
 
-`src/routes.test.ts`, `src/state/link.test.ts` and `src/flue/carry.test.ts` prove admission, projection, restart recovery and historical import. Tool tests use a real Pi Harness via `src/tools/tests/harness.ts`. Database-backed suites belong on a devbox with a disposable administration URL. The server's `Runtime` service reads typed ConversationState and ConversationFrame contracts, not Flue history.
+`src/routes.test.ts` and `src/state/link.test.ts` cover runtime admission, projection and restart recovery. The one-time history importer is preserved outside the shipping runtime in the ignored operator archive. Tool tests use a real Pi Harness via `src/tools/tests/harness.ts`. Database-backed suites belong on a devbox with a disposable administration URL. The server's `Runtime` service reads typed ConversationState and ConversationFrame contracts, not Flue history.
 
 ## Time
 

@@ -28,11 +28,8 @@ import { ThreadStore, type Shared } from './store.ts'
 import { openFirstThread } from './arrival.ts'
 import { sendToThread, watchConversation } from './relay.ts'
 
-/**
- * Everything beside the conversation that draws one Thread. The conversation itself is Flue's
- * stream, read through the gateway; this is who is in it, who Vivid acted for in each Run, what is
- * waiting on someone, and who is looking at it now.
- */
+/** Product records beside the conversation. The gateway carries conversation state; these
+ * records say who participates, whom each Run acts for, what is waiting and who is looking. */
 const detail = Effect.fn('Threads.detail')(function* (actor: Actor, id: ThreadId) {
   const stored = yield* requireThread(id, actor.person.id)
   return ThreadDetail.make({

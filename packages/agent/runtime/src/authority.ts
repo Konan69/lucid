@@ -10,21 +10,10 @@ import { Scope, type ResolveScope } from './tools/scope.ts'
 
 const nobody = (message: string) => new NobodyToActFor({ message })
 
-/**
- * Whom one tool call acts for. The rule is main's, unchanged: a tool acts for the Person behind
- * the delivery being answered; a private message is from the Thread's creator, recorded when the
- * conversation was created; a signal is found by its turn in the record made at admission, or,
- * when this process no longer has it (a restart in the middle of a response), from the server
- * with the bare runtime credential (`GetDeliveryScope`).
- *
- * What changed is where "the delivery being answered" comes from. Flue handed it to the render;
- * here it is read from the conversation: the newest input its current run has placed
- * (`deliveries.ts` `answering`). Pi gives a tool only its own ids, so the Thread is read from the
- * conversation's own record and nothing is taken from the call's arguments.
- *
- * The attributed client lives as long as the returned Layer, which the tool boundary holds for
- * the whole call. The bare client lives only for the one lookup, in a scope of its own.
- */
+/** A tool acts for the Person behind the newest input its run placed (`answering`). Private
+ * messages use the recorded creator. Signals use admission scope, recovered through
+ * `GetDeliveryScope` after a restart. Nothing in model arguments supplies authority.
+ * The attributed Layer lasts for the call; the bare client lasts for the recovery lookup. */
 export const scopeResolver =
   (harness: Effect.Effect<Harness>, product: ProductService): ResolveScope =>
   (call) =>

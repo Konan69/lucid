@@ -26,7 +26,7 @@ const refusedUrl = Effect.callback<string>((resume) => {
 
 layer(NodeHttpClient.layerUndici)((it) => {
   // Production, 26 October 2026: the runtime was unavailable for longer than 90 seconds and the
-  // server recorded the Run as ended while Flue kept working on it, so every later tool call of
+  // server recorded the Run as ended while the runtime kept working on it, so every later tool call of
   // that Run was refused. Only the runtime's settlement ends a Run; an unreachable runtime does not.
   it.effect('keeps waiting on a Run while its runtime cannot be reached', () =>
     Effect.gen(function* () {

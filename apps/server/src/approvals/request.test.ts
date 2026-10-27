@@ -60,7 +60,7 @@ layer(testDatabaseLayer)((it) => {
           yield* record(thread, [
             { id: 'old', personId: me, origin: message, working: false },
             { id: 'done', personId: me, origin: message, working: false },
-            // Settled in Flue, but the row was never updated: its words were already acted on.
+            // The runtime settled it, but the row was never updated. Its words were already acted on.
             { id: 'stuck', personId: me, origin: message, working: true },
             { id: 'other', personId: test.other.person.id, origin: message, working: true },
             { id: 'now', personId: me, origin: message, working: true },

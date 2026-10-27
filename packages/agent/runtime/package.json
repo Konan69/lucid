@@ -23,8 +23,7 @@
     "lint": "node ../../../scripts/lint.mjs",
     "types": "node ../../../scripts/types.mjs tsconfig.types.json",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "import:flue": "tsx src/flue/main.ts"
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@earendil-works/chord": "1.2.0",

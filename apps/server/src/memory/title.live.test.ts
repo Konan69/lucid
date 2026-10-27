@@ -44,7 +44,7 @@ const observedClient = Layer.effect(
   }),
 ).pipe(Layer.provide(NodeHttpClient.layerUndici))
 
-/** Recorded Flue history isolates this live claim to title generation and its real guarded SQL write. */
+/** Recorded conversation history isolates title generation and its guarded SQL write. */
 const history = Layer.mock(Runtime, {
   read: () =>
     Effect.succeed(

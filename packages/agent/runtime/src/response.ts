@@ -23,10 +23,7 @@ import { isDeliveryEntry } from './delivery.ts'
 import { classify } from './failure.ts'
 import { PiRejected, pi } from './threads.ts'
 
-/**
- * What a response cost and when it ran: the facts main recorded as Flue message metadata
- * (`useResponseStart`, `useResponseFinish`) for the screens' timing line.
- */
+/** Response cost and timing for the screens' timing line. */
 export const ResponseData = Schema.Struct({
   /** `provider/model` of the response's last model message, the name `VIVID_MODEL` uses. */
   model: Schema.optionalKey(Schema.String),
@@ -161,9 +158,8 @@ const ownEntries = (entries: ReadonlyArray<EntryRecord>, own: Option.Option<Read
  * between the first delivery's entry and the answer counts towards usage, failed attempts
  * included, as they do in Pi's own usage ledger. `own` names the run's deliveries when there is no answer to stop at.
  *
- * `reply` is the response's words as main's `readSubmissionReply` gave them (Flue 2.2.2
- * `replyFromSnapshot`): every text part of the response, across all its model turns, joined by
- * a blank line. Tool calls and results are not words.
+ * `reply` joins text across every model turn with a blank line. Tool calls and results are
+ * not words.
  */
 const measure = Effect.fn('Response.measure')(function* (
   conversation: Conversation,

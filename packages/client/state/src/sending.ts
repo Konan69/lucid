@@ -16,26 +16,10 @@ import { Context, Effect, type Layer, Option, Predicate, Result, Schema } from '
 import { AsyncResult, Atom, type AtomRegistry } from 'effect/reactivity'
 import type { Live } from './live.js'
 
-/**
- * Sending in one Thread, as one machine for every surface.
- *
- * A Person presses send; their words are drawn at once; the server takes the delivery and names
- * the Run it began; the conversation's own state then shows the message, and the words that were
- * drawn ahead of it become that message without moving. Until 27 October 2026 this was Flue's
- * React hook (Flue React 2.2.2 `AgentSession.sendMessage` and `converge`): it kept the sends
- * that were on their way, drew each as an optimistic message, and gave the message that came
- * back the id the optimistic one was drawn under. The web and the phone each kept what did not
- * arrive in their own `useState`, set after an `await` (`apps/web/src/screen/Thread.tsx` `send`,
- * `apps/mobile/src/screen/Chat.tsx` `useSend`).
- *
- * Here the states are the only places a delivery can stand. Work belongs to the state that needs
- * it: the call to the server is `Sending`'s, so its answer cannot land anywhere else. The key
- * that names a delivery is made by whoever presses and stays with its words through every state,
- * so sending words again that did not arrive is the same delivery to the server
- * (`SendToThread`, `@vivid/contracts`: "a retry must keep both that key and payload").
- *
- * What differs by surface is one service, `Delivering`: how the server is asked.
- */
+/** One sending machine for every client. Words draw immediately, then keep their identity
+ * when conversation state confirms them. `Sending` owns the server call, so a late answer
+ * cannot enter another state. Retries preserve both the delivery key and payload.
+ * The `Delivering` service supplies the transport for each app. */
 
 /**
  * Words on their way to a Thread, with the pictures that go with them, and the key that names
@@ -556,11 +540,8 @@ export const arrivalOf = (
  */
 export const sentId = (delivery: Pick<Delivery, 'key'>): string => `sent:${delivery.key}`
 
-/**
- * A delivery's words as the conversation draws a Person's own message, before it has its own:
- * the shape Flue's hook drew (Flue React 2.2.2 `optimisticMessage`), a picture as the bytes
- * that were sent. One object per delivery, so a row given it is not drawn again for nothing.
- */
+/** Draw a delivery before conversation state confirms it, including its sent picture bytes.
+ * Reuse one object per delivery so unrelated updates do not redraw its row. */
 const drawnAhead = new WeakMap<Delivery, ConversationMessage>()
 const ahead = (delivery: Delivery): ConversationMessage => {
   const made = drawnAhead.get(delivery)
@@ -769,9 +750,6 @@ export const drawing = (at: Drawn): Drawing => {
  *   device started it.
  * - The Thread's record says so (`attention`), which is how work is known before the
  *   conversation has been read, and in a Thread whose conversation this client is not following.
- *
- * Before 27 October 2026 the first two were read from Flue's hook (`status` `submitted` and
- * `streaming`), by each app in its own words.
  */
 export const isWorking = (at: {
   readonly owed: boolean

@@ -34,7 +34,7 @@ export function sanitizeThreadTitle(raw: string): string {
   return normalized.length <= 50 ? normalized : `${normalized.slice(0, 47).trimEnd()}...`
 }
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#ThreadTitleMessage: text-only Flue projection; attachments remain Flue-owned. */
+/** Text-only title input. Attachments stay in the conversation. */
 export interface TitleMessage {
   readonly role: 'user' | 'assistant' | 'system'
   readonly text: string

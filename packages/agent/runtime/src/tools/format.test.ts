@@ -2,8 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Option, Result } from 'effect'
 import { reading, shell } from './format.ts'
 
-/** Golden assertions are the Flue 2.2.2 result formatter's observable UTF-16 limits and wording.
- * They intentionally contain independent numbers/text so changing production constants fails. */
+/** Golden formatter assertions keep UTF-16 limits and wording independent of production constants. */
 describe('Computer formatting parity', () => {
   it('keeps 2000 read lines and gives the next one-indexed offset', () => {
     const text = Array.from({ length: 2001 }, (_, index) => String(index + 1)).join('\n')

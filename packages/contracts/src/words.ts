@@ -1,8 +1,8 @@
-import type { FlueConversationPart } from '@flue/sdk'
+import type { ConversationPart } from './conversation.js'
 
-/** The canonical content blocks Flue exposes to every conversation consumer. */
+/** Canonical Vivid conversation blocks shared by conversation consumers. */
 export interface Worded {
-  readonly parts: ReadonlyArray<FlueConversationPart>
+  readonly parts: ReadonlyArray<ConversationPart>
 }
 
 /**

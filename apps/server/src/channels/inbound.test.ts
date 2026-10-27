@@ -214,7 +214,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
         }).pipe(Effect.scoped),
       ),
     )
-    it.effect('two quick texts sharing a Flue response send that response exactly once', () =>
+    it.effect('two quick texts sharing a runtime response send that response exactly once', () =>
       withChannels(
         Effect.gen(function* () {
           const test = yield* linked()

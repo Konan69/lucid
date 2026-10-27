@@ -41,7 +41,7 @@ const decodeAdmission = decodeStored(Admitted, 'Conversation Run receipt')
 /** Pi submission numbers are Person-local, whereas readers attribute words to product Runs.
  * Translate only persisted admission receipts of this Thread. Unrecorded submissions retain no
  * attribution, and a missing follow-up submissionId stays missing rather than being inferred.
- * Only receipts named by this state are decoded, so old Flue receipts outside the Pi transcript
+ * Only receipts named by this state are decoded, so old runtime receipts outside the Pi transcript
  * cannot break a new Thread read. Submission numbers are trusted only while the Person's Pi store
  * has not been reset or restored; receipts cannot distinguish store generations. A matching corrupt receipt remains a typed database failure. */
 export const attributedConversation = Effect.fn('Conversation.attribute')(function* (

@@ -75,15 +75,15 @@ const program = Effect.fn('ComputerTool.copySignIn')(function* (request: CopySig
   }
 })
 
-/** Native Flue adapter follows the existing Computer tools. Unknown input is decoded once,
- * and cancellation reaches the attributed RPC runner. It has no browser-closing capability. */
+/** Computer tool input is decoded once and cancellation reaches the attributed RPC runner.
+ * This adapter has no browser-closing capability. */
 export function signInModelTool(runTool: RunTool) {
   return durableTool({
     name: Tool.copy_signin,
     description:
       'Copy the person’s sign-in for one site to Vivid’s Computer when they ask. Choose Chrome or Helium and the profile name shown in that browser, or Default. Never copy in the background or switch sources silently. BrowserLocked means ask them to quit that browser, end this turn, and wait for their request to retry. Never close their browser yourself. Copied is a cookie transfer receipt; read the site afterward to verify login.',
     parameters,
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Flue tool input is untrusted; the shared schema owns ingress.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native runtime tool input is untrusted; the shared schema owns ingress.
     execute(value, _api, context) {
       return executionResult(
         executeCall(

@@ -1,6 +1,6 @@
 import { Record, Result, Schema } from 'effect'
 
-/** Every tool Vivid mounts, including Flue's native file tools and skill activation. */
+/** Every tool Vivid mounts, including file tools and skill activation. */
 export const ToolName = Schema.Literals([
   'activate_skill',
   'add_integration',
@@ -48,8 +48,8 @@ type ToolTable = { readonly [Name in ToolName]: Name }
 
 const isToolRecord = Schema.is(Schema.Record(ToolName, ToolName))
 
-/** Record construction loses each key's literal value type. Check that relation rather than
- * casting a string dictionary into the dependent type consumed by Flue's definitions. */
+/** Record construction loses each key's literal value. Check that relation rather than
+ * casting a string dictionary into the tool definition's dependent type. */
 const ToolTable = Schema.declare<ToolTable>(
   (input): input is ToolTable =>
     isToolRecord(input) && ToolName.literals.every((name) => input[name] === name),

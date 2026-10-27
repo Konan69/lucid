@@ -44,15 +44,13 @@ export interface ThreadTitlesService {
   ) => Effect.Effect<string, TitleFailure | DatabaseInfrastructureError | NotFound>
 }
 
-/** Thread naming owns generation policy. The store owns guarded writes and publication; Flue and MemoryModel own I/O. */
+/** Thread naming owns generation policy. The store owns guarded writes and publication; the runtime and MemoryModel own I/O. */
 export class ThreadTitles extends Context.Service<ThreadTitles, ThreadTitlesService>()(
   'vivid/ThreadTitles',
 ) {}
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#formatThreadTitleContext adapted to Flue purposes: scheduled/approval
- * dispatches are not Person messages. Shared Person messages are dispatches tagged message, and a
- * Person's answer to one of Vivid's questions is a dispatch tagged answer: in the Thread Vivid
- * opens itself those answers are the only Person words there are, so they must count. */
+/** T3's formatThreadTitleContext adapted to conversation purposes. Routine and approval
+ * dispatches are not Person messages. Shared messages and answers to Vivid's questions are. */
 function titleMessages(
   history: Effect.Success<ReturnType<typeof readConversationHistory>>,
 ): ReadonlyArray<TitleMessage> {

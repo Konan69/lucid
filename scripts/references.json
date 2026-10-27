@@ -2,7 +2,7 @@
   "generated": [
     {
       "path": "packages/agent/runtime/.state",
-      "reason": "Flue's ignored durable local state, never source."
+      "reason": "Archived runtime state, never source."
     },
     {
       "path": "docs/prds",

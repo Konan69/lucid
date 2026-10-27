@@ -909,7 +909,7 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('names the decider as speaker while Flue acts for the original Person', () =>
+    it.effect('names the decider as speaker while Vivid acts for the original Person', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         const delivery: SignalDelivery = {

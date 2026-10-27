@@ -49,7 +49,7 @@ packages/
     state/    ● shared view logic, live cache, subscriptions and optimistic writes
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
-    runtime/  ● Flue: conversation transport, history, model adapter
+    runtime/  ● Pi Durable: conversation execution, history, model adapter
     runtime/src/tools/      ● the tools Vivid can call; each one is an RPC call to the server
     runtime/src/providers/  ● the model gateway provider, and the scripted rehearsal model
     prompts/  ○ nothing here; the instructions live in runtime/src/agents/vivid.ts

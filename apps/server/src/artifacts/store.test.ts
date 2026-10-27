@@ -40,7 +40,7 @@ interface ResponseRecord {
 class Responses extends Context.Service<Responses, Ref.Ref<ReadonlyArray<ResponseRecord>>>()(
   'artifacts/test/Responses',
 ) {}
-/** The public Flue history seam varies independently from product Run settlement. */
+/** Public conversation history varies independently from product Run settlement. */
 const runtimeHistoryLayer = Layer.effectContext(
   Effect.gen(function* () {
     const responses = yield* Ref.make<ReadonlyArray<ResponseRecord>>([])
@@ -405,7 +405,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         const store = yield* ArtifactStore
         const later = RunId.make(NodeCrypto.randomUUID())
         const laterCall = DocumentToolCallId.make('late-answer-document')
-        // Flue completed A and started B from the late answer; the product observer has not
+        // The runtime completed A and started B from the late answer; the product observer has not
         // settled A yet. Both admitted product rows intentionally remain working throughout.
         yield* database.run(
           database.insert(runs).values({

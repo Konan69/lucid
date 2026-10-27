@@ -44,18 +44,6 @@ interface Scene {
   readonly steps: readonly Step[]
 }
 
-/** pi exposes Flue's instruction-change marker as a user message, but it is not a new Person delivery. */
-function isDelivery(message: Context['messages'][number]) {
-  if (message.role !== 'user') return false
-  const text = Predicate.isString(message.content)
-    ? message.content
-    : message.content
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text)
-        .join('\n')
-  return text !== '<signal type="instructions">\nSystem instructions updated.\n</signal>'
-}
-
 /** A call's identity and message time are derived from history, so replay is byte-for-byte stable. */
 function call(context: Context, name: string, input: ToolCall['arguments'], index = 0) {
   return fauxToolCall(name, input, { id: `rehearsal:${context.messages.length}:${index}` })
@@ -76,7 +64,10 @@ function display(phrase: string, shown: string): Scene {
 
 /** Every scene closes using the actual receipt, including unavailable dependencies, rather than promising success. */
 function completion(context: Context): FauxContentBlock[] {
-  const latest = Option.getOrElse(Array.findLastIndex(context.messages, isDelivery), () => -1)
+  const latest = Option.getOrElse(
+    Array.findLastIndex(context.messages, (message) => message.role === 'user'),
+    () => -1,
+  )
   const results = context.messages
     .slice(latest + 1)
     .filter((message) => message.role === 'toolResult')
@@ -330,7 +321,10 @@ export const phrases = Object.freeze(examples.map((scene) => scene.phrase))
 
 /** Reconstruct the scene and step solely from pi history; no counters, clock, randomness or network belong here. */
 export function script(context: Context): AssistantMessage {
-  const index = Option.getOrElse(Array.findLastIndex(context.messages, isDelivery), () => -1)
+  const index = Option.getOrElse(
+    Array.findLastIndex(context.messages, (message) => message.role === 'user'),
+    () => -1,
+  )
   const person = context.messages[index]
   const timestamp = person === undefined ? 0 : person.timestamp
   const text =

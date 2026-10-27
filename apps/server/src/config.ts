@@ -129,7 +129,7 @@ export const optionalSetting = <A>(
   )
 
 /** One explicit provider choice governs the server's text, embedding and decision requests.
- * This is independent of Flue's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
+ * This is independent of the runtime's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
 export const ModelProvider = Schema.Literals(['explabs', 'openrouter'])
 const modelProviders = {
   explabs: {

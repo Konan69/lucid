@@ -12,8 +12,6 @@ import { Schema } from 'effect'
  * is replayed). The server checks the Person and the Thread and relays the frames.
  *
  * The message and part shapes are the ones the web Thread and the phone's Chat already draw.
- * They were Flue's client types (`FlueConversationMessage` of `@flue/sdk` 2.2.2); they are
- * Vivid's own from here.
  */
 
 /** Whether a piece of a reply is still being written. */

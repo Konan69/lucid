@@ -27,7 +27,7 @@ Minimal correct code wins. Solve the actual problem with the fewest concepts, in
 
 Complexity is linted: classic cyclomatic complexity 12, 120 lines per function, nesting depth 3, four parameters, three nested callbacks. A finding means the function owns more than one decision; split the variant or extract the pure step rather than flattening syntax to pass. Existing findings are ratcheted in `scripts/gate/ratchets.mjs` and may only go down.
 
-Keep one responsibility per module. Split files that own unrelated concerns. Pure domain logic must be testable without booting a server, database, Flue runtime, Expo runtime, or browser.
+Keep one responsibility per module. Split files that own unrelated concerns. Pure domain logic must be testable without booting a server, database, conversation runtime, Expo runtime, or browser.
 
 Keep one source of truth for each vocabulary, invariant, and mapping. Derive dependent values so extending the source makes missing cases fail at typecheck. Where direct derivation is blocked, keep one declaration authoritative and assert total coverage of the other at the type level; never cast to force agreement.
 
@@ -71,7 +71,7 @@ Shared wire contracts and `VividRpc` live in `packages/contracts`; the RPC clien
 
 A TypeScript annotation does not make a network boundary safe. `response.json()` and generic `request<T>()` casts are unknown input, not proof. Validate route params, search, headers, and bodies at every server boundary; validate response payloads at the consumer with the same Effect schema from `packages/contracts`.
 
-Flue owns conversation/turn transport, durable conversation history, model interaction, and its runtime lifecycle. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Watches, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into Flue state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
+Pi Durable owns conversation execution, durable history, model interaction, and its runtime lifecycle. Vivid projects its entries into the shared conversation contracts and serves the state link. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Watches, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into runtime state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
 
 Edit the Drizzle TypeScript schema first, run `pnpm --filter @vivid/server db:generate` for auth or `pnpm --filter @vivid/server db:generate:product` for product tables, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
 
@@ -147,7 +147,7 @@ Say in the report which of the two the change was. `apps/mobile/README.md` ("Ove
 
 ## SDKs, servers, and tools
 
-Flue, Alchemy beta, Effect, Better Auth, Expo, and related SDKs move quickly. Never assume their APIs from memory. Read installed package source and version-matched docs first; for Flue use `pnpm exec flue docs ...`. Do not hack, reassign, or monkey-patch framework/SDK internals; use public APIs or an owned boundary and document a narrow removable workaround only when source proves a gap.
+Pi Durable, Alchemy beta, Effect, Better Auth, Expo, and related SDKs move quickly. Never assume their APIs from memory. Read installed package source and version-matched docs first. Do not hack, reassign, or monkey-patch framework/SDK internals; use public APIs or an owned boundary and document a narrow removable workaround only when source proves a gap.
 
 Only invoke a skill after reading relevant files and confirming the task surface. State which skill applies and why. When listing skills, name only verified matches; never dump the installed list.
 
@@ -186,7 +186,7 @@ Infrastructure is local-first, and production runs on Railway (see `docs/19-infr
 
 Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` provisioned by the Alchemy local stack (`pnpm infra:dev`, Docker `postgres:18-alpine`); there is no compose file. Worktrees live under `~/agency/vivid-lanes/<name>`, never `/tmp`.
 
-This repository holds the whole product: the web, mobile and desktop apps, the application server and every piece of product logic, authentication, the Flue runtime, connectors, the Computer, shared contracts, tests and the design documents under `docs/`. Backend logic lives in `apps/server`, organized by domain; a package exists only for code that more than one app imports. What stays out, and stays ignored by root `.gitignore`: client requirement documents (`docs/prds/`), third-party reference checkouts (`refs/`), generated decks and dumps (`artifacts/`), `CONTEXT.md`, and every secret. Committed files never name a client, an investor or a funding conversation, and never contain an absolute path on someone's machine.
+This repository holds the whole product: the web, mobile and desktop apps, the application server and every piece of product logic, authentication, the conversation runtime, connectors, the Computer, shared contracts, tests and the design documents under `docs/`. Backend logic lives in `apps/server`, organized by domain; a package exists only for code that more than one app imports. What stays out, and stays ignored by root `.gitignore`: client requirement documents (`docs/prds/`), third-party reference checkouts (`refs/`), generated decks and dumps (`artifacts/`), `CONTEXT.md`, and every secret. Committed files never name a client, an investor or a funding conversation, and never contain an absolute path on someone's machine.
 
 ## Product language
 

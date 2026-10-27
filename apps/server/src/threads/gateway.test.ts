@@ -122,7 +122,7 @@ const removeSession = Effect.fn('GatewayTest.removeSession')(function* (test: Fi
 
 const hello = new TextEncoder().encode('data: hello\n\n')
 
-/** Flue's updates stream as the runtime hands it over: one event, then open for good. */
+/** One runtime state frame followed by an open stream. */
 const updates = () =>
   HttpClientResponse.fromWeb(
     HttpClientRequest.get('http://runtime.test'),

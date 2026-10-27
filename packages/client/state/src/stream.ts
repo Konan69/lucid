@@ -34,13 +34,8 @@ export const isTooLong = (conversation: LiveState<Following>): boolean =>
 /** What a Person is told about a conversation that is too long to open, on every surface. */
 export const TOO_LONG = 'This thread is too long to open. Start a new thread to carry on.'
 
-/**
- * The link's reading from the conversation's query. `unsent` is that words sent from here, and
- * drawn in the conversation, did not arrive (`sending.unsentIn` in a Thread that draws its own
- * words ahead): it read as `Cut` when sending was Flue's hook (Flue React 2.2.2 `converge`
- * raised the hook's one `error` for a failed send as for a stream it had given up on), and it
- * still does, so a screen says the same thing about it.
- */
+/** A failed send and a failed conversation link both read as `Cut`, so every client shows
+ * the same interruption state when words drawn ahead did not reach the server. */
 export const readingOf = (
   conversation: LiveState<Following>,
   at: { readonly unsent: boolean },

@@ -258,14 +258,8 @@ export const personsLayer = Layer.effect(
           }),
       )
 
-    /**
-     * What Flue's runtime did at startup, for every Person: work a crash or a deploy interrupted
-     * continues with no client attached. Pi leaves such work pending and `resume()` starts its
-     * scheduler (Pi README, "Persist and Resume"). Only the stores whose tasks or queued
-     * submissions say they have work are opened (`Stores.working`); one that turns out to have
-     * nothing unfinished (a queued write of the runtime's own) is closed again at once. One Person's store failing to open must not keep the others' replies from
-     * resuming, so it is logged and passed over; a request for that Person meets the same failure.
-     */
+    /** Resume interrupted work without an attached client. Open only stores with pending tasks
+     * or submissions, close idle ones, and let one Person's failed store leave others running. */
     const resume = Effect.fn('Persons.resume')(function* (personId: PersonId) {
       const entry = yield* admit(personId)
       if (yield* idle(entry)) {

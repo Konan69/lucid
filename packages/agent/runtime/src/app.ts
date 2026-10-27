@@ -142,7 +142,7 @@ const admission = Effect.fn('Runtime.admission')(function* () {
 /**
  * Stop whatever is in progress in a Thread. Pi's `Conversation.abort()` withdraws queued inputs,
  * aborts every task of the current work and resolves once the conversation is idle. `aborted`
- * says whether there was a response to stop, as Flue's abort answered.
+ * says whether there was a response to stop, as runtime's abort answered.
  */
 const stop = Effect.fn('Runtime.stop')(function* () {
   yield* authorize()

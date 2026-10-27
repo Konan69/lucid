@@ -191,7 +191,7 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/** Lock the exact Flue response's admitted Run; unrelated working rows cannot change authorship. */
+/** Lock the exact response's admitted Run; unrelated working rows cannot change authorship. */
 const workingRun = Effect.fn('Artifacts.workingRun')(function* (
   tx: Transaction,
   author: { readonly threadId: ThreadId; readonly personId: PersonId; readonly runId: RunId },

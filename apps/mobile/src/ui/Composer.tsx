@@ -177,11 +177,7 @@ export function Composer({
   const empty = value.trim().length === 0
   // While dictating, the row is the recording's: the words stay underneath, out of reach.
   const speaking = isDictating(dictation)
-  // With words written, the button sends them, while Vivid is working too: they join the answer
-  // in progress at its next step (Flue's durability contract: a message that arrives while a
-  // response is running joins it at a turn boundary, or waits its turn and is never lost). With
-  // nothing written and Vivid working, it stops Vivid. Until 8 October 2026 it only stopped
-  // while Vivid worked, so nothing could be said until the answer ended.
+  // New words join the running response at its next boundary. An empty composer stops it.
   const { blank, sends } = sendingOf(attachments, empty, disabled)
   // While a question is up the trailing end moves on from it: with nothing written, and also
   // with words when the question is answered by writing, since the words are then its answer.

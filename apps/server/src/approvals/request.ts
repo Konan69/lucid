@@ -74,7 +74,7 @@ interface Said {
 /**
  * Every instruction in the history that a recorded Run attributes to the acting Person.
  *
- * A Run is the turn in progress only while its row says `working` and Flue has not settled it.
+ * A Run is the turn in progress only while its row says `working` and the runtime has not settled it.
  * The row alone is not enough: when writing a settlement fails, the row stays `working`
  * (`threads/delivery.ts`), and words that were already acted on would keep counting as current.
  */
@@ -111,8 +111,8 @@ const split = (said: ReadonlyArray<Said>): Option.Option<PersonRequest> => {
 /**
  * What the acting Person asked for, in their own words, for the reviewer of a proposed action.
  *
- * The working model's summary of the request cannot vouch for itself. Flue's history has the
- * words and the server's records have the attribution Flue does not keep: a history message
+ * The working model's summary of the request cannot vouch for itself. Conversation history has the
+ * words and the server's records have the attribution: a history message
  * counts only when its submission is a Run recorded as acting for the acting Person
  * (`threads/runs.ts`) and that Person wrote it (`spoken`). Names in the conversation are never
  * compared.

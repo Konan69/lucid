@@ -210,8 +210,7 @@ describe('Computer tools on Pi', () => {
   )
 })
 
-/** These model schemas/descriptions were captured from main's installed Flue 2.2.2 factories,
- * independently of this port. There is no runtime dependency on that removed library. */
+/** Model tool schemas and descriptions stay stable across runtime changes. */
 it.effect('advertises main’s exact six schemas, descriptions and ordering', () =>
   Effect.gen(function* () {
     const { tools } = yield* fixture('machine-person')
@@ -603,7 +602,7 @@ it.effect('returns exit 124 when the model’s own bash deadline expires', () =>
     expect(result.message.content).toEqual([
       {
         type: 'text',
-        text: '[flue] Command timed out after 30 seconds.\n\nCommand exited with code 124',
+        text: '[vivid] Command timed out after 30 seconds.\n\nCommand exited with code 124',
       },
     ])
     expect(result.message.details).toEqual({ command: 'slow', exitCode: 124 })

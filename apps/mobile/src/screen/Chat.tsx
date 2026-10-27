@@ -1165,10 +1165,7 @@ const useCut = (conversation: LiveState<Following>, unsent: boolean) => {
   return streamSaid(reading, { socketLost: link === 'lost', late })
 }
 
-/**
- * What a Person is told when the conversation cannot be followed. Flue's own sentence for it
- * named a stream and a number of milliseconds, and was on the screen until 13 October 2026.
- */
+/** What a Person is told when the conversation cannot be followed. */
 const UNREACHED = 'Vivid can’t be reached right now.'
 
 /**

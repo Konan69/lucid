@@ -25,7 +25,7 @@ export const ArtifactBody = Schema.String.check(Schema.isNonEmpty(), Schema.isMa
 /** What changed in a version, in a sentence, for the version list. */
 export const ArtifactNote = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200))
 
-/** Flue's opaque call identity, supplied by ToolContext rather than model arguments. */
+/** Opaque call identity supplied by the runtime outside model arguments. */
 export const DocumentToolCallId = Schema.String.check(Schema.isNonEmpty()).pipe(
   Schema.brand('DocumentToolCallId'),
 )
@@ -105,8 +105,8 @@ export class ArtifactChanged extends Schema.TaggedError<ArtifactChanged>()(
 ) {}
 
 /**
- * What Vivid's `write_document` tool sends. ToolContext supplies the call identity; the server
- * resolves its actual Flue response and checks the Run, Thread and Person, never the model.
+ * What Vivid's `write_document` tool sends. The runtime supplies the call identity; the server
+ * resolves its actual runtime response and checks the Run, Thread and Person, never the model.
  * A title the Thread already has adds a version to that document; a new title makes a new one.
  * One tool for both, because "write" and
  * "revise" are the same act to the one writing.

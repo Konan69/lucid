@@ -217,7 +217,7 @@ import {
 /**
  * Every product call a Vivid client makes to the application server, declared once.
  *
- * The server implements this group; web, mobile, desktop and the Flue runtime's tools all derive
+ * The server implements this group; web, mobile, desktop and the runtime's tools all derive
  * their client from it with `RpcClient.make(VividRpc)`. No client writes a path, a method, a
  * response type or a status check by hand, so a changed payload or a renamed call is a compile
  * error in every consumer.
@@ -231,7 +231,7 @@ import {
  * Only three kinds of route stay plain HTTP, because a browser or a third party calls them
  * without our client: Better Auth (`/api/auth/*`), the address a provider or an outside service
  * calls back to, and byte transfer (Library upload and download). The conversation itself is
- * Flue's stream, which the server proxies at `/api/vivid/*`.
+ * runtime state, which the server proxies at `/api/vivid/*`.
  */
 
 export { InvalidRequest, RuntimeUnavailable, ServiceUnavailable } from './failures.js'

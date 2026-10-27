@@ -365,7 +365,7 @@ export const desktopAction = ProposedAction.make({
 })
 export const JudgmentMode = Judgment
 
-// Run records and Flue history, for tests of what the reviewer is shown as the Person's request.
+// Run records and conversation history for tests of what the reviewer sees as the Person's request.
 
 const encodeOrigin = encodeStored(StoredRunOrigin, 'Run origin')
 
@@ -457,10 +457,10 @@ export const historyMessage = (
   }
 }
 
-/** One finished text part, as Flue's history holds a message's words. */
+/** One finished text part of a message. */
 export const textPart = (value: string) => [{ type: 'text', text: value, state: 'done' }]
 
-/** A delivery as Flue's history projects it: a signal carries its tag, a private turn none. */
+/** A projected delivery. A signal carries its tag; a private turn carries none. */
 export const delivery = (threadId: ThreadId, run: string, tagName: string | null, value: string) =>
   tagName === null
     ? {

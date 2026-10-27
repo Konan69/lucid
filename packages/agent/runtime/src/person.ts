@@ -43,19 +43,11 @@ const reported = (error: unknown) =>
     error: error instanceof Error ? error.name : 'not an Error',
   })
 
-/**
- * How much the model is asked to think. Main ran on Flue's default, `medium` (its Session built
- * the agent with `thinkingLevel ?? 'medium'`); Pi's default for a conversation that states none
- * is `off`, so it is stated.
- */
+/** Keep Vivid's thinking level explicit. Pi otherwise defaults a conversation to `off`. */
 const THINKING = 'medium'
 
-/**
- * Deliveries that arrive during a response are all placed at its next boundary, as on main
- * (Flue built its agent with `steeringMode: 'all'` and `followUpMode: 'all'`). Pi's default
- * places one per turn, which could let the model act on one message before reading the
- * correction sent right after it.
- */
+/** Place every waiting delivery at the next response boundary, so the model sees corrections
+ * alongside the message they correct. Pi otherwise places one delivery per turn. */
 const QUEUES = { steeringMode: 'all', followUpMode: 'all' } as const
 
 /**

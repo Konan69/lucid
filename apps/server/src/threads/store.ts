@@ -162,7 +162,7 @@ const makeView = (database: DatabaseService) =>
   })
 
 /**
- * The inserted row owns its private audience. Announce in the insert transaction so failed Flue
+ * The inserted row owns its private audience. Announce in the insert transaction so failed runtime
  * admission cannot leave an unannounced Thread; an existing ownership receipt writes nothing.
  * A Watch id is predictable, so its presence never proves which Person may receive the work.
  */

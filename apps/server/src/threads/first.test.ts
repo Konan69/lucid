@@ -215,7 +215,7 @@ layer(stores)((it) => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('the no-Run guard retains a failed unadmitted reservation after a Flue refusal', () =>
+    it.effect('the no-Run guard keeps a failed unadmitted reservation after runtime refusal', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         yield* Ref.set(test.refuseAdmission, true)

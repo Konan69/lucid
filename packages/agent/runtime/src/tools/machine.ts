@@ -225,7 +225,7 @@ function shellTool(sandbox: Sandbox) {
             shell(
               {
                 stdout: '',
-                stderr: `[flue] Command timed out after ${data.timeout} seconds.`,
+                stderr: `[vivid] Command timed out after ${data.timeout} seconds.`,
                 exitCode: 124,
               },
               data.command,
