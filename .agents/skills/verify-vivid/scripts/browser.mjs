@@ -17,6 +17,7 @@ import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
+import { pushBrowser } from './push.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -60,6 +61,7 @@ const recipes = {
   reading: { check: 'reading' },
   settings: { check: 'settings' },
   memory: { check: 'memory' },
+  push: { check: 'push' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -145,6 +147,11 @@ const specialRecipes = {
     drive: readBrowser,
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  push: {
+    drive: pushBrowser,
+    scope:
+      'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
   },
   settings: {
     drive: settingsBrowser,

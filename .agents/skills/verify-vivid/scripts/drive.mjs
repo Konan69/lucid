@@ -16,6 +16,7 @@ import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
+import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
@@ -42,6 +43,7 @@ export const features = [
   'settings',
   'memory',
   'discord',
+  'push',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -409,6 +411,7 @@ const recipes = {
   reading,
   settings: settingsProof,
   discord: discordProof,
+  push: pushProof,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
