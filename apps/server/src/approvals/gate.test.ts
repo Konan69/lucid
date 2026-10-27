@@ -7,13 +7,18 @@ import {
   AuditEvent,
   BrowserAction,
   BrowseTarget,
+  ConnectionId,
+  FeedItem,
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { loadAudit } from '../audit/store.ts'
+import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { readFeed } from '../feed/read.ts'
 import { RuleStore } from '../rules/store.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
 import { Gate, GateDecision } from './gate.ts'
 import { Review } from './policy.ts'
 import { ApprovalStore } from './store.ts'
@@ -23,6 +28,7 @@ import {
   fixture,
   JudgmentMode,
   Observation,
+  recordRuns,
   trustTestServices,
 } from './testing.ts'
 
@@ -30,6 +36,62 @@ import {
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
+    it.effect('unwatched sends become durable drafts while watched and contained writes run', () =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(trustTestServices)
+        return yield* Effect.gen(function* () {
+          const observed = yield* Observation
+          const gate = yield* Gate
+          const action = ProposedAction.make({
+            ...connectionAction,
+            summary: 'Send the signed NDA to Dami at dami@example.test',
+            target: ActionTarget.cases.Connection.make({
+              connectionId: ConnectionId.make('test-connection'),
+              account: 'Work mail',
+              tool: 'send_email',
+              input: { to: 'dami@example.test', body: 'Here is the signed NDA.' },
+            }),
+          })
+          const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
+          const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
+          const message = StoredRunOrigin.cases.Message.make({})
+          const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
+          for (const [origin, review, effect, allowRule, expected] of [
+            [watch, reviewed, 'write', false, 'ApprovalRequired'],
+            [message, reviewed, 'write', false, 'Allowed'],
+            [watch, Review.cases.Unreviewed.make({}), 'write', false, 'ApprovalRequired'],
+            [watch, contained, 'write', false, 'Allowed'],
+            [watch, reviewed, 'write', true, 'ApprovalRequired'],
+            [watch, contained, 'destructive', true, 'ApprovalRequired'],
+          ] as const) {
+            const test = yield* fixture()
+            yield* recordRuns(test.personalId, [
+              { id: 'acting', personId: test.personal.person.id, origin, working: true },
+            ])
+            if (allowRule)
+              yield* (yield* RuleStore).create(test.personal, {
+                action: 'Send email',
+                decision: 'Allow',
+                scope: RuleScope.cases.Personal.make({}),
+              })
+            yield* Ref.set(observed.review, review)
+            const proposed = ProposedAction.make({ ...action, effect })
+            const decision = yield* gate.check(test.vivid, proposed, 'Ordinary')
+            expect(decision._tag).toBe(expected)
+            const approvals = yield* (yield* ApprovalStore).inThread(test.personalId)
+            expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
+            if (GateDecision.guards.ApprovalRequired(decision)) {
+              expect(approvals[0]?.action).toEqual(proposed)
+              const feed = yield* readFeed(yield* Database, test.personal.person.id)
+              expect(feed.items).toHaveLength(1)
+              expect(FeedItem.guards.Waiting(feed.items[0])).toBe(true)
+            }
+          }
+          expect(yield* Ref.get(observed.actions)).toEqual([])
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+
     /** A Never is counted at its Gate, with no rule prose in telemetry. */
     it.effect('records the Gate refusal once with only action kinds', () => {
       const logs = refusalLogs()
