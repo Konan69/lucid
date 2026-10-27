@@ -106,11 +106,7 @@ const ports = Layer.effectContext(
       }),
     })
     const provider = ChannelProvider.of({
-      channels: ['iMessage', 'Discord'],
-      codeAddress: (channel) =>
-        channel === 'Discord'
-          ? Option.some(ChannelAddress.make('discord:123456789012345678'))
-          : Option.none(),
+      channels: ['iMessage'],
       enrol: Effect.fn('Channels.test.enrol')(function* (_channel, address) {
         const refusal = yield* Ref.get(failure)
         if (Option.isSome(refusal)) return yield* refusal.value
@@ -120,11 +116,9 @@ const ports = Layer.effectContext(
           textTo: ChannelAddress.make('+12025550100'),
         })
       }),
-      unenrol: Effect.fn('Channels.test.unenrol')(function* (_channel, id) {
-        const refusal = yield* Ref.get(failure)
-        if (Option.isSome(refusal)) return yield* refusal.value
-        yield* Ref.update(unenrols, (all) => [...all, id])
-      }),
+      unenrol: Effect.fn('Channels.test.unenrol')((_, id) =>
+        Ref.update(unenrols, (all) => [...all, id]),
+      ),
       inbound: Stream.unwrap(
         Effect.gen(function* () {
           yield* Queue.offer(connections, undefined)
@@ -217,14 +211,12 @@ export const channelTestLayer = channelReceiverLayer.pipe(Layer.provideMerge(con
 const cleanupFailed = () => Effect.sync(() => expect.fail('Channel fixture cleanup failed'))
 
 /** Fixtures own unique addresses and register cleanup before their first write, including replay receipts for unlinked senders. */
-export const fixture = Effect.fn('Channels.test.fixture')(function* (
-  email = `${NodeCrypto.randomUUID()}@example.test`,
-) {
+export const fixture = Effect.fn('Channels.test.fixture')(function* () {
   const database = yield* Database
   const person = Person.make({
     id: PersonId.make(NodeCrypto.randomUUID()),
     name: 'Channel test',
-    email,
+    email: `${NodeCrypto.randomUUID()}@example.test`,
     image: null,
   })
   const sessionId = SessionId.make(NodeCrypto.randomUUID())

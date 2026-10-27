@@ -11,7 +11,6 @@ import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
-import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
   'first',
   'reload',
@@ -32,7 +31,6 @@ export const features = [
   'settings',
   'notes',
   'discord',
-  'texting-discord',
 ]
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -296,7 +294,6 @@ const recipes = {
   reading,
   settings: settingsProof,
   discord: discordProof,
-  'texting-discord': textingDiscordProof,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
@@ -307,7 +304,6 @@ const blocked = {
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
-  ...textingDiscordBlocked(),
 }
 const realBlocked = {
   ...blocked,

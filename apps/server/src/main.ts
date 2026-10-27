@@ -12,7 +12,7 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node'
-import { channelProviderLayer } from './channels/combined.ts'
+import { photonLayer } from './channels/photon.ts'
 import { channelStoreLayer } from './channels/store.ts'
 import { channelLedgerLayer } from './channels/ledger.ts'
 import { channelReceiverLayer } from './channels/inbound.ts'
@@ -123,7 +123,7 @@ const serverProgram = Effect.gen(function* () {
   const foundation = Layer.mergeAll(
     changesLayer,
     tallyLayer,
-    channelProviderLayer,
+    photonLayer,
     runtimeLayer,
     companyStoreLayer,
     settingsStoreLayer,

@@ -1,4 +1,3 @@
-import { discordServiceId } from './discord.ts'
 import { ExecutorEvents } from '../watches/events.ts'
 import * as NodeHttp from 'node:http'
 import { expect } from '@effect/vitest'
@@ -430,10 +429,7 @@ const decodeHostedJson = Schema.decodeUnknownEffect(Schema.Json)
  */
 export function remoteEntries<Entry extends { readonly id: ServiceId }>(entries: readonly Entry[]) {
   return entries.filter(
-    (entry) =>
-      Option.isNone(googleService(entry.id)) &&
-      keyedService(entry.id) === undefined &&
-      entry.id !== discordServiceId,
+    (entry) => Option.isNone(googleService(entry.id)) && keyedService(entry.id) === undefined,
   )
 }
 

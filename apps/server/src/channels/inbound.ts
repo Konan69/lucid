@@ -3,7 +3,6 @@ import { NotFound, ThreadAudience, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
-import { loadDiscordPeople } from '../connections/discord.ts'
 import { submissionId } from '../runtime/identity.ts'
 import {
   Conversation,
@@ -15,7 +14,7 @@ import { findThread } from '../threads/access.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { ChannelLedger } from './ledger.ts'
 import type { StoredLink } from './model.ts'
-import { ChannelProvider, type ChannelInbound } from './provider.ts'
+import { type ChannelInbound } from './provider.ts'
 import { ChannelStore, channelActor } from './store.ts'
 
 /** Linked text uses the app's Thread creation and Conversation admission, always in personal scope. */
@@ -25,8 +24,6 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
   const ledger = yield* ChannelLedger
   const threads = yield* ThreadStore
   const conversation = yield* Conversation
-  const provider = yield* ChannelProvider
-  const discordPeople = yield* loadDiscordPeople
 
   /** Deleted or shared Threads cannot inherit phone authority; the next text opens a private Thread. */
   const threadFor = Effect.fn('Channels.threadFor')(function* (
@@ -65,10 +62,6 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     body: string,
   ) {
     const actor = yield* channelActor(link.personId).pipe(Effect.provideService(Database, database))
-    if (message.channel === 'Discord' && !discordPeople.has(actor.person.email.toLowerCase())) {
-      yield* Effect.logInfo('Ignored a Discord channel message outside early access')
-      return
-    }
     const threadId = yield* threadFor(actor, link, body)
     const key = `channel:${message.channel}:${message.id}`
     // Route before admission: even an immediately completed Run must know where its reply belongs.
@@ -78,7 +71,6 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
       channel: message.channel,
       since: link.since,
       threadId,
-      place: message.place === undefined ? null : message.place,
     })
     const runId = submissionId(threadId, key)
     yield* conversation
@@ -101,15 +93,6 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     if (!(yield* ledger.receive(message))) return
     const link = yield* links.byAddress(message.channel, message.sender)
     if (Option.isNone(link)) {
-      if (yield* links.redeem(message.channel, message.sender, message.text)) {
-        yield* provider.send({
-          channel: message.channel,
-          address: message.sender,
-          text: "Connected. Message me here, or mention me in any channel, and I'll answer.",
-          place: message.place,
-        })
-        return
-      }
       yield* Effect.logInfo('Ignored a channel message without a link')
       return
     }

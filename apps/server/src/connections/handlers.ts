@@ -24,7 +24,6 @@ import {
   authorIntegration,
   testIntegration,
 } from './integrations.ts'
-import { requireDiscordAccess, withoutDiscord } from './discord.ts'
 import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
@@ -60,16 +59,13 @@ export const connectionHandlers = {
   WatchConnections: () => live('WatchConnections', [], load),
   /** The public catalog has no workspace scope; searching still requires a signed-in Person. */
   FindServices: Effect.fn('Rpc.FindServices')(function* (request: FindServicesRequest) {
-    const { person } = yield* requirePerson()
-    const store = yield* ConnectionStore
-    return withoutDiscord(store.discordPeople, person, yield* store.find(request.query))
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).find(request.query)
   }),
   /** Connecting an account always requires a signed-in Person. */
   BeginConnection: Effect.fn('Rpc.BeginConnection')(function* (request: BeginConnectionRequest) {
-    const { person } = yield* requirePerson()
-    const store = yield* ConnectionStore
-    yield* requireDiscordAccess(store.discordPeople, person, request.service)
-    return yield* store.begin(yield* requireActor(), request)
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).begin(yield* requireActor(), request)
   }),
   /** Reopening authorization uses the same management authority as removal. */
   ResumeConnection: Effect.fn('Rpc.ResumeConnection')(function* ({
@@ -126,12 +122,6 @@ export const connectionHandlers = {
   /** Connection requests are contributions made by Vivid in a Run. */
   OfferConnection: Effect.fn('Rpc.OfferConnection')(function* (request: OfferConnectionRequest) {
     yield* requireVivid()
-    const actor = yield* requireActor()
-    yield* requireDiscordAccess(
-      (yield* ConnectionStore).discordPeople,
-      actor.person,
-      request.service,
-    )
-    return yield* offerConnection(actor, request)
+    return yield* offerConnection(yield* requireActor(), request)
   }),
 }

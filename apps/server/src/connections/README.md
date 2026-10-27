@@ -1,7 +1,5 @@
 # Executor integration proofs
 
-Discord uses a Person-supplied token and six authored tools; `discord.live.test.ts` proves discovery on a disposable Executor without calling Discord.
-
 The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, upstream tag
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 

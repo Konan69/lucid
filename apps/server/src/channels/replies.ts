@@ -19,7 +19,6 @@ export type ChannelEnding = typeof ChannelEnding.Type
 
 /** Vivid's conservative chunk budget; Spectrum declares no text-size limit. */
 const replyLimit = ChannelTextLimit.make(4000)
-const discordReplyLimit = ChannelTextLimit.make(2000)
 
 /** Bounds one provider send acceptance, so every completed chunk renews reply progress.
  * Source: unmeasured. Spectrum exposes no send-progress/cancellation signal; expiry preserves
@@ -41,10 +40,7 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     reply: string,
   ) {
     const notSent = () => ledger.record(route.runId, 'not-sent')
-    const parts = splitChannelText(
-      channelText(reply),
-      route.channel === 'Discord' ? discordReplyLimit : replyLimit,
-    )
+    const parts = splitChannelText(channelText(reply), replyLimit)
     if (parts.length === 0) {
       yield* notSent()
       return
@@ -53,19 +49,12 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     yield* Effect.forEach(
       parts,
       Effect.fn('Channels.sendPart')(function* (text) {
-        yield* provider
-          .send({
-            channel: route.channel,
-            address,
-            text,
-            place: route.place === null ? undefined : route.place,
-          })
-          .pipe(
-            Effect.timeoutOrElse({
-              duration: CHUNK_ACCEPTANCE_LIMIT,
-              orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
-            }),
-          )
+        yield* provider.send({ channel: route.channel, address, text }).pipe(
+          Effect.timeoutOrElse({
+            duration: CHUNK_ACCEPTANCE_LIMIT,
+            orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
+          }),
+        )
         sent++
       }),
       { discard: true },
