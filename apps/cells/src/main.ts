@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
@@ -38,6 +39,7 @@ interface CellState {
     deleteAlarm(): Promise<void>
   }
   blockConcurrencyWhile<A>(body: () => Promise<A>): Promise<A>
+  waitUntil(promise: Promise<unknown>): void
   abort(reason: string): never
 }
 
@@ -190,6 +192,9 @@ export class Person extends DurableObject<CellState, Environment> {
     if (request.method === 'POST')
       await this.#arm({ ...runtime.person.harness.wake(), active: true })
     const response = await runtime.fetch(request)
+    // Pi keeps committing after admission. Keep that event live until its work is idle so
+    // a later Stop can settle cancellation through celld's event-bound input gate.
+    this.#state.waitUntil(runtime.person.harness.waitForIdle(BACKGROUND_CONTEXT))
     await this.#arm(runtime.person.harness.wake())
     return response
   }
