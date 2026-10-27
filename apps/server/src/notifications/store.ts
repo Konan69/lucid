@@ -1,4 +1,4 @@
-import { and, desc, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -7,7 +7,9 @@ import {
   Notification,
   NotificationListResponse,
   NotificationReadResponse,
+  type PersonId,
   type ReadNotificationsRequest,
+  type ThreadId,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
@@ -88,6 +90,34 @@ const makeStore = (database: Database['Service']) => {
   })
   return { list, read, unreadCount }
 }
+
+/** A write inside another domain's transaction (`Database.transaction`). */
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+
+/**
+ * Marks read what a Person was told about one Thread, inside the transaction that records them
+ * reading it (`ThreadStore.markRead`), and says how many notices that changed. Only the reader's
+ * own notices move; the caller announces, so the read and its notices are one live change.
+ */
+export const readThreadNotices = Effect.fn('NotificationStore.readThread')(function* (
+  tx: Transaction,
+  personId: PersonId,
+  threadId: ThreadId,
+) {
+  const now = yield* Clock.currentTimeMillis
+  const rows = yield* tx
+    .update(notifications)
+    .set({ readAt: now })
+    .where(
+      and(
+        eq(notifications.personId, personId),
+        eq(notifications.conversationId, threadId),
+        isNull(notifications.readAt),
+      ),
+    )
+    .returning({ id: notifications.id })
+  return rows.length
+})
 
 export class NotificationStore extends Context.Service<
   NotificationStore,
