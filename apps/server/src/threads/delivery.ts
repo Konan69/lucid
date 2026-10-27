@@ -35,7 +35,7 @@ import {
   type ServerDelivery,
 } from './conversation.ts'
 import { keyedPermits } from '../runtime/keyed.ts'
-import { flueMessage } from './message.ts'
+import { runtimeMessage } from './message.ts'
 import { notifiesFrom } from './place.ts'
 import { Presence } from './presence.ts'
 import {
@@ -178,7 +178,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-/** The current Conversation wire contract maps precise admission errors until durable observation owns uncertainty. */
+/** Retry only uncertain keyed attempts. A definite refusal is final for this sending request. */
 const admitRuntime = Effect.fn('Conversation.admitRuntime')(
   (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
     runtime.admit(input).pipe(
@@ -241,12 +241,12 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const changes = yield* Changes
   const scope = yield* Effect.scope
   const observe = yield* makeObserve()
-  // Serialize reservation through Flue receipt, never the response itself. Pending admissions
+  // Serialize reservation through the runtime receipt, never the response itself. Pending admissions
   // recheck under one Thread permit; SQL still protects turn allocation without spanning runtime I/O.
   const admissions = keyedPermits<ThreadId>()
   const withDatabase = Effect.provideService(Database, database)
 
-  // Runs with an observer in this process. A delivery Flue recognises as a repeat does not mean
+  // Runs with an observer in this process. A delivery the runtime recognises as a repeat does not mean
   // someone is watching it: the first attempt may have failed between admission and observation.
   // Whether to observe is decided by this set, never by what the runtime says about repeats.
   const observed = new Set<RunId>()
@@ -269,7 +269,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   /**
    * The server never joins a different Person's delivery into a response in progress. The locked
-   * reservation refuses it with the first Person's name before any message or signal reaches Flue.
+   * reservation refuses it with the first Person's name before any message or signal reaches the runtime.
    */
   const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(
     function* (delivery: Delivery) {
@@ -295,7 +295,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         origin: delivery.origin,
       })
       const said = previewOf(delivery.message)
-      // Replay completes inside the reservation match; only a new reserved turn reaches Flue.
+      // Replay completes inside the reservation match; only a new reserved turn reaches the runtime.
       const turn = yield* TurnReservation.match<Effect.Effect<number | Admitted, Conflict>>(
         reservation,
         {
@@ -317,7 +317,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
         return yield* admitRuntime(runtime, {
           threadId: thread.id,
-          message: flueMessage(thread.audience, from, delivery.message, turn),
+          message: runtimeMessage(thread.audience, from, delivery.message, turn),
           origin: { creator: creator.id, creatorName: creator.name },
           idempotencyKey: delivery.idempotencyKey,
           clientKey: delivery.clientKey,
@@ -359,7 +359,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 
-  // A server restarting while Runs are in progress picks each one back up: Flue still knows
+  // A server restarting while Runs are in progress picks each one back up: the runtime still knows
   // how they ended, or says it does not, and either way the row stops claiming it is working.
   yield* Effect.forEach(yield* runs.working, resume, { discard: true })
 

@@ -168,9 +168,8 @@ function contextOf(history: AttributedHistory, input: LearningInput): Option.Opt
   return Option.some(bounded(Option.fromUndefinedOr([...replies.values()].at(-1)), recent))
 }
 
-/** Runtime.read is the existing authenticated Flue client path. The installed SDK's history()
- * issues this same GET ?view=history, without pagination; nothing is copied into product tables.
- * A failed read logs once, without conversation content, and retains isolated-exchange learning. */
+/** Read canonical Pi state through the authenticated runtime adapter. Only persisted receipts
+ * attribute messages to Runs; a failed context read never undoes the settled response. */
 export const conversationContext = Effect.fn('Learning.context')(
   function* (runtime: Pick<RuntimeService, 'read'>, input: LearningInput) {
     const unavailable = () =>

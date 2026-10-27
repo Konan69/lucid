@@ -1,4 +1,3 @@
-import { DatabaseUnavailable } from '@vivid/contracts'
 import { readThreadHistory } from './history.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Ref } from 'effect'
@@ -55,19 +54,11 @@ import { productFixture, productLayer } from './testing.ts'
 
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
-type Receipt =
-  | 'Kept'
-  | 'LostOnce'
-  | 'UnsavedOnce'
-  | 'AbortLostOnce'
-  | 'InterruptedOnce'
-  | 'LostThrice'
-  | 'AbortNotTaken'
+type Receipt = 'Kept' | 'LostOnce' | 'AbortLostOnce' | 'AbortNotTaken'
 
-/** Adapt only the socket. HTTP requests still cross the production router into real Pi on SQLite. */
+/** Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable PostgreSQL. */
 const transport = (process: Effect.Success<ReturnType<typeof start>>, receipt: Receipt) => {
   let lost = false
-  let lostReceipts = 0
   return HttpClient.make((request) =>
     Effect.gen(function* () {
       const url = new URL(request.url)
@@ -101,22 +92,8 @@ const transport = (process: Effect.Success<ReturnType<typeof start>>, receipt: R
       if (receipt === 'AbortNotTaken' && url.pathname.endsWith('/abort'))
         return HttpClientResponse.fromWeb(request, new Response('{"aborted":false}'))
       const response = yield* process.send(path, { method: request.method, body })
-      if (
-        receipt === 'InterruptedOnce' &&
-        !lost &&
-        request.method === 'POST' &&
-        response.status === 202
-      ) {
+      if (receipt === 'LostOnce' && !lost && request.method === 'POST' && response.status === 202) {
         lost = true
-        return yield* Effect.never
-      }
-      if (
-        ((receipt === 'LostThrice' && lostReceipts < 3) || (receipt === 'LostOnce' && !lost)) &&
-        request.method === 'POST' &&
-        response.status === 202
-      ) {
-        lost = true
-        lostReceipts += 1
         return HttpClientResponse.fromWeb(
           request,
           new Response('{"error":"Unavailable"}', { status: 503 }),
@@ -167,16 +144,8 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
   const stopped = yield* Queue.unbounded<void>()
   const reported = yield* Queue.unbounded<string>()
   const titles = yield* Ref.make(0)
-  let unsaved = false
   const observed = RunStore.of({
     ...store,
-    admitted: (admission) => {
-      if (receipt === 'UnsavedOnce' && !unsaved) {
-        unsaved = true
-        return Effect.fail(new DatabaseUnavailable({ message: 'Receipt write interrupted' }))
-      }
-      return store.admitted(admission)
-    },
     end: (id, ending) =>
       store
         .end(id, ending)
@@ -241,8 +210,8 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
       ...store,
       get: (id: RunId) =>
         store.list(rows.threadId).pipe(
-          Effect.flatMap((runs) => {
-            const run = runs.find((entry) => entry.id === id)
+          Effect.flatMap((recorded) => {
+            const run = recorded.find((entry) => entry.id === id)
             return run === undefined
               ? Effect.fail(new NotFound({ message: 'Run not found' }))
               : Effect.succeed(run)

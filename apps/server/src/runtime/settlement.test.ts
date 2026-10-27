@@ -4,7 +4,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { requestRuntime } from './transport.ts'
 import { expect, layer } from '@effect/vitest'
-import { Effect, Fiber, Option } from 'effect'
+import { Effect, Fiber, Option, Predicate } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { observeRun } from './settlement.ts'
 
@@ -16,7 +16,10 @@ const refusedUrl = Effect.callback<string>((resume) => {
   const listener = NodeNet.createServer()
   listener.listen(0, '127.0.0.1', () => {
     const address = listener.address()
-    if (address === null || typeof address === 'string') return listener.close()
+    if (address === null || Predicate.isString(address)) {
+      listener.close()
+      expect.fail('A bound TCP listener has an address and port')
+    }
     listener.close(() => resume(Effect.succeed(`http://127.0.0.1:${address.port}/state`)))
   })
 })
@@ -24,7 +27,7 @@ const refusedUrl = Effect.callback<string>((resume) => {
 layer(NodeHttpClient.layerUndici)((it) => {
   // Production, 26 October 2026: the runtime was unavailable for longer than 90 seconds and the
   // server recorded the Run as ended while Flue kept working on it, so every later tool call of
-  // that Run was refused. Only Flue's settlement ends a Run; an unreachable runtime does not.
+  // that Run was refused. Only the runtime's settlement ends a Run; an unreachable runtime does not.
   it.effect('keeps waiting on a Run while its runtime cannot be reached', () =>
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient

@@ -22,6 +22,7 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Ref, Schema, Stream } fr
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
+import { nativeTool } from '@vivid/agent-runtime/tooltesting'
 import { computerSandbox, machineTools } from '@vivid/agent-runtime/sandbox'
 import { Scope as ToolScope, scopedRunner } from '@vivid/agent-runtime/scope'
 import type { Actor } from '../auth/access.ts'
@@ -51,7 +52,7 @@ import {
  * A Computer for tests that is a real SSH server on this machine (`ssh/peer.ts`): its shell and
  * its files are real, and they are reached through the same connection code a Boat machine is.
  * It starts asleep; `ensure` wakes it and is counted, so a test can say what woke it. It replaces
- * only the provider: the store, the takeover and idle rules, the outcomes and Flue's own tools
+ * only the provider: the store, the takeover and idle rules, the outcomes and Pi's tools
  * are the ones production uses. What it cannot show is Boat: authorizing the key, an address
  * that changes on resume, and a machine that refuses SSH just after a wake.
  */
@@ -154,7 +155,7 @@ const textOf = (result: { readonly content: ReadonlyArray<{ readonly type: strin
 describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer tools", () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect(
-      'writes, edits and reads a file and runs a command with Flue’s own tools, and only then wakes the Computer',
+      'writes, edits and reads a file and runs a command with the runtime tools, and only then wakes the Computer',
       () =>
         Effect.gen(function* () {
           const { server, wakes, machine } = yield* standIn()
@@ -211,12 +212,15 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
           )
           // The stand-in's home is its own fresh directory; on a Computer it is the user's home.
           const sandbox = computerSandbox(scopedRunner(scope), server.home)
-          // Flue's workspace discovery asks these when a conversation starts; none reaches the
-          // machine, so nothing has woken it.
-          expect(yield* Effect.promise(() => sandbox.exists('AGENTS.md'))).toBe(false)
+          const tools = machineTools(sandbox)
+          const read = nativeTool(tools[0])
+          const write = nativeTool(tools[1])
+          const edit = nativeTool(tools[2])
+          const bash = nativeTool(tools[3])
+          const grep = nativeTool(tools[4])
+          const glob = nativeTool(tools[5])
+          // Tool construction performs no workspace discovery or RPC.
           expect(yield* Ref.get(wakes)).toBe(0)
-
-          const [read, write, edit, bash, grep, glob] = machineTools(sandbox)
           const said = <A extends { readonly content: ReadonlyArray<{ readonly type: string }> }>(
             result: () => Promise<A>,
           ) => Effect.promise(result).pipe(Effect.map(textOf))
@@ -253,10 +257,8 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
           )
 
           // A refusal by the machine is a sentence for the model, not a crash.
-          const missing = yield* Effect.tryPromise(() =>
-            read.execute('call', { path: 'absent.txt' }),
-          ).pipe(Effect.flip)
-          expect(String(missing.cause)).toContain('There is no file at that path.')
+          const missing = yield* said(() => read.execute('call', { path: 'absent.txt' }))
+          expect(missing).toContain('There is no file at that path.')
           // One wake served every call.
           expect(yield* Ref.get(wakes)).toBe(1)
         }).pipe(Effect.scoped),

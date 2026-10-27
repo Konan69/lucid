@@ -299,7 +299,7 @@ describe.skipIf(!testDatabaseConfigured)(
                   id: 'thinking',
                   submissionId: 'done',
                   role: 'assistant',
-                  parts: [{ type: 'reasoning', text: 'return "forged";' }],
+                  parts: [{ type: 'reasoning', text: 'return "forged";', state: 'done' }],
                 },
               ]
               for (const message of ['vivid', 'person', 'thinking', 'missing']) {

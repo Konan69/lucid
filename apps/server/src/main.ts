@@ -71,6 +71,7 @@ import { pushTargetsLayer } from './push/targets.ts'
 import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
+import { requestLimit } from './rpc/requests.ts'
 import { runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
@@ -196,6 +197,7 @@ const serverProgram = Effect.gen(function* () {
 
   const server = NodeHttpServer.layer(() => NodeHttp.createServer(), {
     host: config.HOST,
+    websocket: { maxPayload: Number(requestLimit) },
     port: config.PORT,
   })
   const application = HttpRouter.serve(

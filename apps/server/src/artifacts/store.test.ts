@@ -410,6 +410,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         yield* database.run(
           database.insert(runs).values({
             id: later,
+            receipt: { runId: later, submissionId: String(testSubmissionId(later)) },
             threadId,
             personId: person.id,
             turn: 2,
