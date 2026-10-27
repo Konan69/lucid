@@ -12,6 +12,9 @@ import {
   RuntimeStopped,
   RuntimeSubmissionPath,
   RuntimeThreadPath,
+  RuntimeHistoryBody,
+  RuntimeHistoryAnswer,
+  RuntimePersonId,
   type ThreadId,
 } from '@vivid/contracts'
 import { Effect, Layer, Option, Redacted, Schema, Stream } from 'effect'
@@ -20,6 +23,7 @@ import * as HttpRouter from 'effect/http/HttpRouter'
 import type * as HttpServerError from 'effect/http/HttpServerError'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
+import { loadHistory } from './history.ts'
 import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
@@ -264,11 +268,27 @@ const health = Effect.fn('Runtime.health')(function* () {
   })
 })
 
+/** History is private to the addressed cell and cannot import another Person's Threads. */
+const history = Effect.fn('Runtime.history')(function* () {
+  yield* authorize()
+  const path = yield* HttpRouter.schemaPathParams(Schema.Struct({ personId: RuntimePersonId }))
+  const person = yield* Person
+  const body = yield* HttpServerRequest.schemaBodyJson(RuntimeHistoryBody)
+  if (
+    person.personId !== path.personId ||
+    body.threads.some((thread) => thread.origin.creator !== path.personId)
+  )
+    return yield* new WrongThread()
+  const result = yield* loadHistory(person, body)
+  return yield* HttpServerResponse.schemaJson(RuntimeHistoryAnswer)(result)
+})
+
 const THREAD = '/persons/:personId/threads/:threadId'
 
 /** The whole HTTP surface. Anything else is refused the same way whether or not it exists. */
 export const routes = Layer.mergeAll(
   HttpRouter.add('GET', '/health', answered(health())),
+  HttpRouter.add('POST', '/persons/:personId/history', answered(history())),
   HttpRouter.add('POST', THREAD, answered(admission())),
   HttpRouter.add('POST', `${THREAD}/abort`, answered(stop())),
   HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),

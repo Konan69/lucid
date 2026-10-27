@@ -324,6 +324,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
   })
 
   return {
+    notes,
     send,
     link: (path: string) => Effect.flatMap(call(reading(path, 'text/event-stream')), linked),
     bytes: (path: string) => Effect.flatMap(call(reading(path, '*/*')), bytesOf),

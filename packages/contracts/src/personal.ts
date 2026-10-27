@@ -39,6 +39,7 @@ export const MemoryTaskId = Schema.Int.check(Schema.isGreaterThan(0)).pipe(
   Schema.brand('MemoryTaskId'),
 )
 export const MemorySource = Schema.TaggedUnion({
+  HistoryLoad: {},
   ThreadRun: { threadId: ThreadId, taskId: MemoryTaskId },
   CellRun: { personId: PersonId, taskId: MemoryTaskId },
 })

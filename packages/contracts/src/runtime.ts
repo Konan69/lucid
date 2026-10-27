@@ -1,6 +1,7 @@
 import * as Schema from 'effect/Schema'
 import { PersonId, ThreadId } from './identity.js'
-import { RunFailure } from './threads.js'
+import { RunFailure, ThreadOrigin } from './threads.js'
+import { Note } from './personal.js'
 
 /**
  * The HTTP surface of the conversation runtime (Pi Durable), which only the application server
@@ -116,3 +117,148 @@ export const RuntimeRefusal = Schema.Struct({
   ]),
 })
 export interface RuntimeRefusal extends Schema.Schema.Type<typeof RuntimeRefusal> {}
+
+/** Historical Pi drafts use the model message shape supported by the source reader. */
+const HistoryText = Schema.Struct({
+  type: Schema.Literal('text'),
+  text: Schema.String,
+  textSignature: Schema.optionalKey(Schema.String),
+})
+const HistoryImage = Schema.Struct({
+  type: Schema.Literal('image'),
+  data: Schema.String,
+  mimeType: Schema.String,
+})
+const HistoryUsage = Schema.Struct({
+  input: Schema.Finite,
+  output: Schema.Finite,
+  cacheRead: Schema.Finite,
+  cacheWrite: Schema.Finite,
+  totalTokens: Schema.Finite,
+  cacheWrite1h: Schema.optionalKey(Schema.Finite),
+  reasoning: Schema.optionalKey(Schema.Finite),
+  cost: Schema.Struct({
+    input: Schema.Finite,
+    output: Schema.Finite,
+    cacheRead: Schema.Finite,
+    cacheWrite: Schema.Finite,
+    total: Schema.Finite,
+  }),
+})
+const HistoryMessage = Schema.Union([
+  Schema.Struct({
+    role: Schema.Literal('user'),
+    timestamp: Schema.Finite,
+    content: Schema.Union([
+      Schema.String,
+      Schema.Array(Schema.Union([HistoryText, HistoryImage])).pipe(Schema.mutable),
+    ]),
+  }),
+  Schema.Struct({
+    role: Schema.Literal('assistant'),
+    timestamp: Schema.Finite,
+    content: Schema.Array(
+      Schema.Union([
+        HistoryText,
+        Schema.Struct({
+          type: Schema.Literal('thinking'),
+          thinking: Schema.String,
+          thinkingSignature: Schema.optionalKey(Schema.String),
+          redacted: Schema.optionalKey(Schema.Boolean),
+        }),
+        Schema.Struct({
+          type: Schema.Literal('toolCall'),
+          id: Schema.String,
+          name: Schema.String,
+          arguments: Schema.Record(Schema.String, Schema.Json),
+          thoughtSignature: Schema.optionalKey(Schema.String),
+        }),
+      ]),
+    ).pipe(Schema.mutable),
+    api: Schema.String,
+    provider: Schema.String,
+    model: Schema.String,
+    usage: HistoryUsage,
+    stopReason: Schema.Literals([
+      'pending',
+      'stop',
+      'length',
+      'toolUse',
+      'error',
+      'aborted',
+      'deferred',
+    ]),
+    errorMessage: Schema.optionalKey(Schema.String),
+    responseModel: Schema.optionalKey(Schema.String),
+    responseId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    role: Schema.Literal('toolResult'),
+    timestamp: Schema.Finite,
+    toolCallId: Schema.String,
+    toolName: Schema.String,
+    isError: Schema.Boolean,
+    content: Schema.Array(Schema.Union([HistoryText, HistoryImage])).pipe(Schema.mutable),
+    details: Schema.optionalKey(Schema.Json),
+    durationMs: Schema.optionalKey(Schema.Finite),
+  }),
+])
+export const RuntimeHistoryDraft = Schema.Struct({
+  kind: Schema.NonEmptyString,
+  model: Schema.optionalKey(Schema.Array(HistoryMessage)),
+  data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+})
+
+/** References name earlier deliveries, never guessed native submission or entry numbers. */
+export const RuntimeHistoryEntry = Schema.TaggedUnion({
+  Entry: { draft: RuntimeHistoryDraft },
+  Delivery: { draft: RuntimeHistoryDraft, requestId: Schema.NonEmptyString },
+  Run: { inputs: Schema.Array(Schema.NonEmptyString) },
+  Response: {
+    draft: RuntimeHistoryDraft,
+    inputs: Schema.Array(
+      Schema.Struct({
+        requestId: Schema.NonEmptyString,
+        outcome: Schema.Literals(['completed', 'failed', 'aborted']),
+      }),
+    ),
+  },
+})
+export type RuntimeHistoryEntry = typeof RuntimeHistoryEntry.Type
+export const RuntimeHistoryThread = Schema.Struct({
+  threadId: ThreadId,
+  origin: ThreadOrigin,
+  entries: Schema.Array(RuntimeHistoryEntry),
+})
+export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
+export const RuntimeHistoryBody = Schema.Struct({
+  threads: Schema.Array(RuntimeHistoryThread),
+  notes: Schema.Array(Note),
+})
+export type RuntimeHistoryBody = typeof RuntimeHistoryBody.Type
+
+/** Failed Threads remain explicit while successful Threads retain their stable receipt map. */
+export const RuntimeHistoryResult = Schema.TaggedUnion({
+  Loaded: {
+    threadId: ThreadId,
+    deliveries: Schema.Array(
+      Schema.Struct({ requestId: Schema.NonEmptyString, submissionId: RuntimeSubmissionId }),
+    ),
+  },
+  Refused: {
+    threadId: ThreadId,
+    reason: Schema.Literals([
+      'ExistingConversation',
+      'ChangedHistory',
+      'InvalidHistory',
+      'Unavailable',
+    ]),
+  },
+})
+export const RuntimeHistoryAnswer = Schema.Struct({ threads: Schema.Array(RuntimeHistoryResult) })
+export type RuntimeHistoryAnswer = typeof RuntimeHistoryAnswer.Type
+/** The durable map is also the input to the server's receipt adoption command. */
+export const RuntimeHistoryMap = Schema.Array(
+  Schema.Struct({ personId: RuntimePersonId, ...RuntimeHistoryResult.cases.Loaded.fields }),
+)
+export type RuntimeHistoryMap = typeof RuntimeHistoryMap.Type

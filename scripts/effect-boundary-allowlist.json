@@ -114,5 +114,10 @@
     "file": "packages/agent/runtime/src/cell.ts",
     "classification": "third-party-adapter",
     "symbols": ["openCell"]
+  },
+  {
+    "file": "packages/agent/runtime/src/history.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["responded", "append"]
   }
 ]
