@@ -19,6 +19,13 @@ const Shown = Schema.Array(
 )
 const decodeShown = Schema.decodeUnknownResult(Schema.fromJsonString(Shown))
 const decodeLabel = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.String))
+/** `agent-browser tab --json`: tabs carry stable ids like `t1`; positions are not accepted. */
+const Tabs = Schema.Struct({
+  data: Schema.Struct({
+    tabs: Schema.Array(Schema.Struct({ tabId: Schema.String, active: Schema.Boolean })),
+  }),
+})
+const decodeTabs = Schema.decodeUnknownResult(Schema.fromJsonString(Tabs))
 
 /** This browser's targets among a list: the Person's phone may hold others. */
 const browsersIn = (list) =>
@@ -104,6 +111,10 @@ async function journey(state, id, directory, { run, capture }) {
   )
 
   // The Person is away: another tab in front, and Vivid works in a Thread this page is not on.
+  const app = Result.getOrThrow(decodeTabs(await run(['tab', '--json']))).data.tabs.find(
+    (tab) => tab.active,
+  )
+  NodeAssert.ok(app, 'Missing the app tab')
   await run(['tab', 'new', 'about:blank'])
   const away = crypto.randomUUID()
   await rpc(
@@ -120,7 +131,7 @@ async function journey(state, id, directory, { run, capture }) {
     'notify',
   )
   await settled(state, away, 1, 'Completed', directory)
-  await run(['tab', '0'])
+  await run(['tab', app.tabId])
   await run([
     'wait',
     '--fn',
