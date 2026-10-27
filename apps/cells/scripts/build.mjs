@@ -1,11 +1,11 @@
 import * as NodeChildProcess from 'node:child_process'
+import * as NodeEvents from 'node:events'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import { Result, Schema } from 'effect'
-import { withPrivateConfig } from '../../../infra/cli.mjs'
 
 const Deployment = Schema.Struct({
   worker: Schema.Literal('vivid-cells'),
@@ -58,13 +58,8 @@ async function bundle({ action, config, receipt, flags }) {
   process.once('SIGINT', interrupt)
   process.once('SIGTERM', terminate)
   try {
-    await new Promise((resolve, reject) => {
-      child.once('error', reject)
-      child.once('close', (code, signal) => {
-        if (code === 0) resolve()
-        else reject(new Error(`celld exited with ${signal ?? `code ${code}`}`))
-      })
-    })
+    const [code, signal] = await NodeEvents.once(child, 'close')
+    if (code !== 0) throw new Error(`celld exited with ${signal ?? `code ${code}`}`)
   } finally {
     process.off('SIGINT', interrupt)
     process.off('SIGTERM', terminate)
@@ -83,7 +78,23 @@ async function main() {
   const [action = 'build', config, receipt, ...flags] = process.argv.slice(2)
   if (!['build', 'deploy'].includes(action)) throw new Error('Expected build or deploy')
   if (action === 'deploy' && !config) {
-    await withPrivateConfig((path) => bundle({ action, config: path, receipt, flags }))
+    // The infrastructure CLI owns the private config, then re-enters with explicit file paths.
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      [NodeURL.fileURLToPath(new URL('../../../infra/cli.mjs', import.meta.url)), 'deploy'],
+      { stdio: 'inherit' },
+    )
+    const interrupt = () => child.kill('SIGINT')
+    const terminate = () => child.kill('SIGTERM')
+    process.once('SIGINT', interrupt)
+    process.once('SIGTERM', terminate)
+    try {
+      const [code, signal] = await NodeEvents.once(child, 'close')
+      if (code !== 0) throw new Error(`Worker deployment exited with ${signal ?? `code ${code}`}`)
+    } finally {
+      process.off('SIGINT', interrupt)
+      process.off('SIGTERM', terminate)
+    }
     return
   }
   await bundle({ action, config, receipt, flags })

@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
-import { cellInputs } from '../infra/inputs.mjs'
+import { cellInputs } from '../infra/inputs.ts'
 import { verifyImage } from './images.mjs'
 
 const assert = NodeAssert

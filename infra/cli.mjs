@@ -34,7 +34,7 @@ async function run(command, args) {
  * celld 0.6.2 accepts vars only in the deployed config. Keep credentials out of argv, tracked
  * files and stdout. Native deploy owns bundling, Text modules, manifests and the current pointer.
  */
-export async function withPrivateConfig(command) {
+async function withPrivateConfig(command) {
   const variables = await Effect.runPromise(
     Config.Redacted('VIVID_CELL_VARS').pipe(
       Effect.flatMap((value) => decodeVariables(Redacted.value(value))),
@@ -73,7 +73,7 @@ async function main() {
       NodeURL.fileURLToPath(new URL('../apps/cells/scripts/build.mjs', import.meta.url)),
       'deploy',
       path,
-      NodeURL.fileURLToPath(new URL('../.cache/cells-deployment.json', import.meta.url)),
+      NodeURL.fileURLToPath(new URL('../apps/cells/dist/deployment.json', import.meta.url)),
       ...args,
     ])
   })

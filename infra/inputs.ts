@@ -4,12 +4,14 @@ import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 
+const decodePackages = Schema.decodeUnknownResult(
+  Schema.fromJsonString(Schema.Array(Schema.Struct({ path: Schema.String }))),
+)
+
 /** pnpm owns workspace traversal, including the runtime's transitive client imports. */
 export const cellInputs = (root = NodeURL.fileURLToPath(new URL('../', import.meta.url))) => {
   const packages = Result.getOrThrow(
-    Schema.decodeUnknownResult(
-      Schema.fromJsonString(Schema.Array(Schema.Struct({ path: Schema.String }))),
-    )(
+    decodePackages(
       NodeChildProcess.execFileSync(
         'pnpm',
         ['--filter', '@vivid/cells...', 'list', '--depth', '-1', '--json'],

@@ -5,7 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
 import { cellVariables, cellsUrl, railwayCells } from './cells.ts'
-import { cellInputs } from './inputs.mjs'
+import { cellInputs } from './inputs.ts'
 import { repository } from './github.ts'
 import type { DeploymentTarget } from './targets.ts'
 
