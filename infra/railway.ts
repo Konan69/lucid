@@ -1,9 +1,11 @@
 import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
+import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
-import { cellsUrl, railwayCells } from './cells.ts'
+import { cellVariables, cellsUrl, railwayCells } from './cells.ts'
+import { cellInputs } from './inputs.mjs'
 import { repository } from './github.ts'
 import type { DeploymentTarget } from './targets.ts'
 
@@ -37,7 +39,7 @@ const listenHost = '::'
  * 7 October 2026 a person ran the deploy, which uploaded a working tree for Railway to build, so
  * production held `main` only when someone had remembered to. Railway builds the server's
  * Dockerfile, the server's image exports the phone
- * app's update, and the server's pre-deploy command migrates.
+ * app's update, and the server's pre-deploy command migrates and publishes the Worker.
  *
  * Railway's GitHub app must be able to read the repository; that was proved on a disposable
  * project before this was written. A push is deployed without this stack seeing it, so nothing
@@ -62,6 +64,7 @@ const builtFromMain = {
  * app's build reads them.
  */
 const serverInputs = [
+  ...cellInputs(),
   '/apps/server/**',
   '/apps/web/**',
   '/apps/mobile/**',
@@ -70,6 +73,7 @@ const serverInputs = [
   '/packages/**',
   '/patches/**',
   '/scripts/migrate.mjs',
+  '/infra/cli.mjs',
   '/scripts/sentry-upload.mjs',
   '/package.json',
   '/pnpm-lock.yaml',
@@ -277,7 +281,17 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
   })
 
-  yield* railwayCells(project, target, environment)
+  /**
+   * Keep the existing logical id and mount path so the first cell deploy preserves every notes
+   * SQLite file. Volume.ts permits a disconnected volume; Plan.ts sees no service dependency.
+   * ServiceProvider.ts deletes only the old service, leaving this retained volume declared.
+   */
+  yield* Railway.Volume('RuntimeMemory', {
+    project,
+    mountPath: '/var/lib/vivid/memory',
+  }).pipe(RemovalPolicy.retain())
+
+  const storage = yield* railwayCells(project, target)
 
   /** The server keeps product PostgreSQL and relays private runtime calls to the native fleet. */
   const server = yield* Railway.Service('Server', {
@@ -294,9 +308,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /**
      * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
-     * deployment serving.
+     * deployment serving. The matching Worker is published before the new server takes traffic.
      */
-    preDeploy: { command: 'node scripts/migrate.mjs server' },
+    preDeploy: {
+      command: 'node scripts/migrate.mjs server && node apps/cells/scripts/build.mjs deploy',
+    },
     env: {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,
@@ -307,6 +323,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
        * domain does not exist until the service does, so it cannot be a resource output here.
        */
       PUBLIC_URL: 'https://${{RAILWAY_PUBLIC_DOMAIN}}',
+      ...storage,
+      VIVID_CELL_VARS: cellVariables(environment, privateUrl(serviceNames.server, ports.server)),
       VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,

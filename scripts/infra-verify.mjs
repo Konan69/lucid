@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import { cellInputs } from '../infra/inputs.mjs'
 import { verifyImage } from './images.mjs'
 
 const assert = NodeAssert
@@ -386,7 +387,10 @@ const assertContainerPolicy = (root) => {
     {
       name: 'Server',
       dockerfilePath: 'apps/server/Dockerfile',
-      stages: { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
+      stages: {
+        build: ['@vivid/server', '@vivid/web', '@vivid/cells'],
+        updates: ['@vivid/mobile'],
+      },
     },
   ]) {
     const declaration = railwaySource.match(
@@ -400,7 +404,11 @@ const assertContainerPolicy = (root) => {
     assert.notEqual(named, null, `${name} must say which paths rebuild it`)
     const listed = railwaySource.match(new RegExp(`^const ${named[1]} = \\[([\\s\\S]*?)^\\]`, 'm'))
     assert.notEqual(listed, null, `${name} must list its watched paths in infra/railway.ts`)
-    const patterns = [...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1])
+    assert.match(listed[1], /\.\.\.cellInputs\(\)/, 'server must watch the cells workspace closure')
+    const patterns = [
+      ...cellInputs(root),
+      ...[...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1]),
+    ]
     const configInputs = verifyImage({ root, dockerfile: source(root, dockerfilePath), stages })
     assert.deepEqual(
       unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns, configInputs),
@@ -478,6 +486,16 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
   assertContainerPolicy(root)
+  assert.match(
+    source(root, 'infra/railway.ts'),
+    /Railway\.Volume\('RuntimeMemory', \{[^}]*mountPath: '\/var\/lib\/vivid\/memory',[^}]*\}\)\.pipe\(RemovalPolicy\.retain\(\)\)/,
+    'retain the existing runtime volume',
+  )
+  assert.match(
+    source(root, 'infra/cells.ts'),
+    /Cloudflare\.R2\.Bucket\('CellsStorage',[\s\S]*?\.pipe\(RemovalPolicy\.retain\(\)\)/,
+    'retain the durable cells bucket',
+  )
   assertRuntimePolicy(
     source(root, 'apps/cells/wrangler.jsonc'),
     source(root, 'packages/agent/runtime/src/cell.ts'),

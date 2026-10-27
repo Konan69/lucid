@@ -1,5 +1,5 @@
 import * as Cloudflare from 'alchemy/Cloudflare'
-import * as Command from 'alchemy/Command'
+import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
@@ -32,19 +32,16 @@ const nodes = [
 
 export const cellsUrl = 'http://cells-a.railway.internal:5173'
 
-/**
- * Native deployments precede the first node start. Mapping the deployment dependency to the
- * unchanged bucket URI orders creation without restarting nodes when only the Worker changes.
- * Alchemy beta.81 owns R2, Railway and the finite native deploy command.
- */
+/** Infrastructure owns storage and nodes. The server's pre-deploy step publishes the Worker. */
 export const railwayCells = Effect.fn('railwayCells')(function* (
   project: Railway.Project,
   target: DeploymentTarget,
-  environment: InfrastructureEnvironment,
 ) {
   const accessKey = yield* requiredSecret('VIVID_CELLS_ACCESS_KEY_ID')
   const secretKey = yield* requiredSecret('VIVID_CELLS_SECRET_ACCESS_KEY')
-  const bucket = yield* Cloudflare.R2.Bucket('CellsStorage', { name: `${target.stackName}-cells` })
+  const bucket = yield* Cloudflare.R2.Bucket('CellsStorage', {
+    name: `${target.stackName}-cells`,
+  }).pipe(RemovalPolicy.retain())
   const storage = {
     CELLD_BUCKET: Output.map(bucket.bucketName, (name) => `s3://${name}`),
     S3_ENDPOINT: Output.map(bucket.accountId, (id) => `https://${id}.r2.cloudflarestorage.com`),
@@ -52,38 +49,6 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
     AWS_ACCESS_KEY_ID: accessKey,
     AWS_SECRET_ACCESS_KEY: secretKey,
   }
-  /** Qualify storage on first use or changed credentials, independently of Worker source updates. */
-  const diagnosis = yield* Command.Exec('CellsStorageCheck', {
-    command: 'celld diagnose --json',
-    cwd: '.',
-    env: storage,
-    memo: { include: [], lockfile: false },
-  })
-  const program = yield* Command.Exec('CellsProgram', {
-    command: 'pnpm --filter @vivid/cells exec node ../../infra/cli.mjs deploy',
-    cwd: '.',
-    env: {
-      ...storage,
-      CELLD_BUCKET: Output.all(bucket.bucketName, diagnosis.hash.input).pipe(
-        Output.map(([name]) => `s3://${name}`),
-      ),
-      VIVID_CELL_VARS: cellVariables(environment, 'http://vivid-server.railway.internal:8787'),
-    },
-    memo: {
-      include: [
-        'apps/cells/**',
-        'packages/agent/runtime/**',
-        'packages/agent/skills/**',
-        'packages/contracts/**',
-        'infra/cli.mjs',
-        'tsconfig.base.json',
-      ],
-      lockfile: true,
-    },
-  })
-  const deployedBucket = Output.all(bucket.bucketName, program.hash.input).pipe(
-    Output.map(([name]) => `s3://${name}`),
-  )
   for (const node of nodes) {
     const service = yield* Railway.Service(node.id, {
       project,
@@ -94,7 +59,6 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
       healthcheckPath: '/.well-known/celld/health',
       env: {
         ...storage,
-        CELLD_BUCKET: deployedBucket,
         CELLD_ADDR: '[::]:5173',
         CELLD_INTERNAL_ADDR: '[::]:8081',
         CELLD_ADVERTISE: `${node.name}.railway.internal:8081`,
@@ -103,4 +67,5 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
     })
     yield* Railway.Volume(`${node.id}Data`, { project, service, mountPath: '/var/lib/celld' })
   }
+  return storage
 })

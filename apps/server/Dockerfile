@@ -5,10 +5,17 @@ WORKDIR /app
 ENV COREPACK_HOME=/opt/corepack
 COPY package.json ./
 RUN corepack enable && corepack install
+# The server publishes the matching Worker in its pre-deploy step, using celld's release installer.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gzip \
+  && curl -fsSL https://celld.dev/install.sh -o /tmp/celld-install.sh \
+  && CELLD_VERSION=v0.6.2 CELLD_INSTALL_ROOT=/usr/local sh /tmp/celld-install.sh \
+  && celld --version \
+  && rm -rf /var/lib/apt/lists/* /tmp/celld-install.sh
 
 FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/cells/package.json apps/cells/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
 # The phone app's Markdown renderer is a packed tarball beside its package.json (`file:deps/...`);
 # an install that reads the lockfile needs it there before any of `apps/mobile` is copied.
@@ -25,15 +32,13 @@ COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
 COPY packages/compiler packages/compiler
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
-# The server takes `@vivid/agent-runtime` only as a devDependency, for tests that import the
-# runtime's tools by name; the runtime ships in its own image (`packages/agent/runtime/Dockerfile`).
-# Excluding it keeps its dependency closure (Pi, AgentFS) out of the store this image copies,
-# while the server's own devDependencies, `tsx` among them, stay installed for its start command.
-RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter '!@vivid/agent-runtime' --filter @vivid/web...
+# The cells closure includes the runtime and esbuild needed to publish the Worker.
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter @vivid/cells... --filter @vivid/web...
 # Shared phone packages extend the root Hermes profile; Vite and tsx resolve it too.
 COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
 COPY apps/server apps/server
+COPY apps/cells apps/cells
 COPY apps/web apps/web
 COPY apps/desktop/src/shared apps/desktop/src/shared
 # Which commit this build is, for Settings and error reports (`@vivid/contracts` build.ts). Railway
@@ -70,10 +75,12 @@ COPY --from=build --chmod=0644 /app/tsconfig.base.json /app/tsconfig.hermes.json
 COPY --from=build --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/packages packages
 COPY --from=build --chown=node:node /app/apps/server apps/server
+COPY --from=build --chown=node:node /app/apps/cells apps/cells
 COPY --from=build --chown=node:node /app/apps/web/dist apps/web/dist
 COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updates
 # Preserve the existing ordered migration entry for deployment pre-start jobs.
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
+COPY --chown=node:node infra/cli.mjs infra/cli.mjs
 # The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`),
 # under a name the host does not set at run time, so the image's own value is the one read.
 ARG RAILWAY_GIT_COMMIT_SHA=""

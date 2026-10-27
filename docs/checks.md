@@ -22,6 +22,16 @@ workspace source + shared rules/configs → Turbo task hash
 
 ## The gate
 
+Devbox gates require Node 24, the repository's pinned pnpm, Docker, and celld 0.6.2 on PATH.
+Install celld with its official installer before running the build stage.
+
+```sh
+curl -fsSL https://celld.dev/install.sh -o /tmp/celld-install.sh
+CELLD_VERSION=v0.6.2 sh /tmp/celld-install.sh
+export PATH="$HOME/.local/bin:$PATH"
+celld --version
+```
+
 `pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook, a run on another machine and each GitHub job select stages from it.
 
 ```text

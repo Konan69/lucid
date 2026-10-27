@@ -134,12 +134,16 @@ or production conversion is claimed.
   pinned, each with its own small volume and its own private name. A node advertises that name to
   its peers through the bucket. Replicas of one service would share one name, so each node is its
   own service.
-- **One Cloudflare R2 bucket,** checked with `celld diagnose` for conditional writes before first
-  use.
-- **The cell program** deploys through Alchemy using celld's native deployment protocol.
-  Nodes pick up a new version without a restart.
-- **The server** gets `VIVID_CELLS_URL` and the runtime token. The `runtime` service and its
-  volume go away.
+- **One retained Cloudflare R2 bucket** holds the durable cell data. `celld diagnose` must run
+  inside the private mesh once nodes exist. The deploy machine cannot reach their peer addresses.
+- **The cell program** publishes in the server's Railway pre-deploy step on a push to main,
+  after product migrations and before the new server takes traffic. Nodes pick up a new version
+  without a restart. Alchemy declares infrastructure only.
+- **The server** gets `VIVID_RUNTIME_URL`, the runtime token, storage credentials and private Worker
+  bindings. Its image includes celld 0.6.2 and the cells workspace dependency closure.
+- **The existing notes volume** keeps its `RuntimeMemory` logical id and `/var/lib/vivid/memory`
+  mount path with a retain policy. It has no service dependency, so removing the old runtime
+  service leaves the notes available for a later import.
 
 Scaling adds a node: one more service (`cells-c`) pointed at the same bucket. celld moves
 hibernated cells onto it by weight. It does not autoscale, and Railway does not autoscale

@@ -58,10 +58,10 @@ function checkStages(tasks, scripts) {
 /** Turbo replaces generic tasks with package overrides, so omitted hash fields silently lose checks. */
 function checkOverrides(tasks) {
   for (const [name, task] of Object.entries(tasks)) {
-    if (!/^@vivid\/[\w-]+#(lint|typecheck|test)$/u.test(name)) continue
+    if (!/^@vivid\/[\w-]+#(lint|typecheck|test|build)$/u.test(name)) continue
     const generic = tasks[name.slice(name.indexOf('#') + 1)]
     assert.notEqual(generic, undefined, `turbo.json: declare the generic task for ${name}`)
-    for (const field of ['inputs', 'outputs'])
+    for (const field of ['inputs', 'outputs', 'env', 'passThroughEnv'])
       if (generic[field] !== undefined)
         assert.deepEqual(task[field], generic[field], `turbo.json: ${name} must repeat ${field}`)
     for (const dependency of generic.dependsOn ?? [])
