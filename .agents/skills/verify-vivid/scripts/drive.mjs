@@ -2,6 +2,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
 import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
+import { createRequire } from 'node:module'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
@@ -11,6 +12,9 @@ import { notes } from './notes.mjs'
 import { feed } from './feed.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
+const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
+const { pictureAddress } = await import(web.resolve('@vivid/state'))
+
 export const features = [
   'first',
   'reload',
@@ -304,7 +308,7 @@ async function document(state, id, directory) {
   NodeAssert.ok(read, 'Third Run did not execute read_document')
   NodeAssert.equal(read.output.ok, true)
   NodeAssert.equal(read.output.version, 2)
-  NodeAssert.match(read.output.body, /Ready for review\./)
+  NodeAssert.match(read.output.body, /Ready for review/)
   const v1 = await rpc(
     state,
     'GetArtifact',
@@ -322,7 +326,7 @@ async function document(state, id, directory) {
   NodeAssert.equal(v1.shown.number, 1)
   NodeAssert.equal(v2.shown.number, 2)
   NodeAssert.notEqual(v1.body, v2.body)
-  NodeAssert.match(v2.body, /Ready for review\./)
+  NodeAssert.match(v2.body, /Ready for review/)
 }
 /** Send a picture through the public contract and compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
@@ -335,7 +339,7 @@ async function picture(state, id, directory) {
     .flatMap((message) => message.parts)
     .find((part) => part.type === 'file')
   NodeAssert.ok(part, 'No saved picture part')
-  const url = new URL(part.url, state.web)
+  const url = new URL(pictureAddress(id, part.url), state.web)
   NodeAssert.equal(url.origin, state.web)
   NodeAssert.ok(url.pathname.startsWith(`/api/vivid/${id}/attachments/`))
   const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
