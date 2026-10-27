@@ -107,7 +107,7 @@ async function launch() {
     })
     child = NodeChildProcess.spawn(
       process.execPath,
-      [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
+      ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
       {
         cwd: root,
         detached: true,
