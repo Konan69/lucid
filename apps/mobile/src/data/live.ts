@@ -33,6 +33,7 @@ import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
 import { makeNaming } from './name'
+import { makeNotifying } from './notifying'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -373,6 +374,8 @@ function makeLiveData(session: SignedIn) {
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
   const devices = makeDeviceDecisions(engine)
   const naming = makeNaming(engine, live.me)
+  // Notifications while the app is closed: the session's machine, started with the session.
+  const notifying = makeNotifying(engine)
 
   followLook(engine, live)
 
@@ -439,6 +442,7 @@ function makeLiveData(session: SignedIn) {
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
      */
     sending: makeSending(engine),
+    notifying,
     gone,
     seenThread,
     typingIn,

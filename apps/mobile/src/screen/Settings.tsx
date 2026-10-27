@@ -8,15 +8,16 @@ import {
   type Theme,
   mayChangeAppearance,
 } from '@vivid/contracts'
-import { channelWords, naming } from '@vivid/state'
+import { channelWords, naming, notifying } from '@vivid/state'
 import { Data, Effect, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
-import { ScrollView, Switch, View } from 'react-native'
+import { Linking, ScrollView, Switch, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
 import { reportsWords, runningWords } from '../data/build'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
+import { turnNotificationsOff, turnNotificationsOn, useNotifying } from '../data/notifying'
 import { running, version, writeMoment } from '../data/running'
 import { serverName } from '../data/server'
 import { openNaming, useNaming } from '../data/name'
@@ -418,6 +419,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             />
           }
         />
+        <Away />
         <Row
           title="Time zone"
           detail={`${settings.timezone.replaceAll('_', ' ')}. Times like “tomorrow at 9” use this.`}
@@ -449,6 +451,59 @@ function Zone({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       onSave={(timezone) =>
         saveSettings(data, new PatchSettingsRequest({ timezone })).pipe(Effect.map(refusalOf))
+      }
+    />
+  )
+}
+
+const HERE = 'On this phone, even when Vivid is closed.'
+
+/** The row's words for each reading of the machine (`@vivid/state` `notifying.ts`). */
+const awayDetail = (reading: notifying.Reading): string =>
+  notifying.Reading.match(reading, {
+    Starting: () => HERE,
+    Unsupported: () => 'This phone cannot be notified while Vivid is closed.',
+    Blocked: () => 'Notifications are off for Vivid in this phone’s settings. Open them to allow.',
+    Off: () => HERE,
+    TurningOn: () => HERE,
+    On: () => HERE,
+    TurningOff: () => HERE,
+    Kept: () => 'Still on: Vivid could not be reached to turn it off. Try again.',
+    Refused: ({ reason }) =>
+      ({
+        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
+        Unavailable: 'This phone could not be set up for notifications. Try again.',
+        Unreachable: 'Vivid could not be reached. Try again.',
+      })[reason],
+  })
+
+/**
+ * Whether this phone is notified while Vivid is closed (`data/notifying.ts`). It belongs to this
+ * phone: a browser or another phone is turned on there. The switch is held while the phone or
+ * the server is being waited on, and the machine refuses a press then as well. Once the Person
+ * refused, only the phone's own settings can allow it, so the row opens them.
+ */
+function Away() {
+  const data = useLiveData()
+  const { colors: c } = useTheme()
+  const reading = useNotifying()
+  const blocked = notifying.Reading.guards.Blocked(reading)
+  return (
+    <Row
+      title="Notify me when something needs me"
+      detail={awayDetail(reading)}
+      wrap
+      onPress={blocked ? () => void Linking.openSettings() : undefined}
+      trailing={
+        <Switch
+          accessibilityLabel="Notify me when something needs me"
+          value={notifying.isOn(reading)}
+          disabled={
+            blocked || notifying.isWaiting(reading) || notifying.Reading.guards.Unsupported(reading)
+          }
+          trackColor={{ true: c.primary, false: c['subtle-strong'] }}
+          onValueChange={(on) => (on ? turnNotificationsOn(data) : turnNotificationsOff(data))}
+        />
       }
     />
   )
