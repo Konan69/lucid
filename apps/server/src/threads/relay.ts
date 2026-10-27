@@ -1,4 +1,4 @@
-import { Effect, Schedule, Schema, Stream } from 'effect'
+import { Effect, Predicate, Schedule, Schema, Stream } from 'effect'
 import {
   InvalidAttachment,
   MessageAttachment,
@@ -36,7 +36,7 @@ export const watchConversation = ({ threadId }: { readonly threadId: ThreadId })
           $(
             Schedule.min([Schedule.exponential('1500 millis'), Schedule.spaced('30 seconds')]),
           ).pipe(
-            Schedule.while(({ input }) => input._tag === 'RuntimeUnavailable'),
+            Schedule.while(({ input }) => Predicate.isTagged(input, 'RuntimeUnavailable')),
             Schedule.jittered,
           ),
         ),
