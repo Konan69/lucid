@@ -14,12 +14,13 @@ import { runtimeHeaders } from '@vivid/contracts/auth'
 import { Context, Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
+import type * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { routes } from '../src/app.ts'
 import { productLayer, type Acting } from '../src/client.ts'
-import { Models } from '../src/models.ts'
+import { Models, type ModelsService } from '../src/models.ts'
 import { Persons, personsLayer } from '../src/persons.ts'
 import { RuntimeSettings } from '../src/settings.ts'
 import { builtinSkillsLayer } from '../src/skills.ts'
@@ -49,6 +50,8 @@ export interface World {
   readonly faux: FauxProviderHandle
   /** Every Acting pair a product client was built for, in order. */
   readonly asked: Array<Acting>
+  readonly requests: Array<HttpClientRequest.HttpClientRequest>
+  readonly models: ModelsService
 }
 
 /**
@@ -65,15 +68,26 @@ export const world = Effect.fn('RuntimeFixture.world')(function* (
     }),
     (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
   )
+  const faux = fauxProvider({
+    provider: PROVIDER,
+    models: [{ id: MODEL }],
+    tokensPerSecond: options.tokensPerSecond,
+  })
+  const collection = createModels()
+  collection.setProvider(faux.provider)
   return {
     database: yield* disposableDatabase(),
     notes: NodePath.join(root, 'notes'),
-    faux: fauxProvider({
-      provider: PROVIDER,
-      models: [{ id: MODEL }],
-      tokensPerSecond: options.tokensPerSecond,
-    }),
+    faux,
     asked: [],
+    requests: [],
+    models: Models.of({
+      collection,
+      selected: { provider: PROVIDER, modelId: MODEL },
+      name: `${PROVIDER}/${MODEL}`,
+      // A retried model call backs off on Pi's own clock; here it does not wait.
+      settings: { retry: { baseDelayMs: 0 } },
+    }),
   } satisfies World
 })
 
@@ -84,14 +98,15 @@ export const world = Effect.fn('RuntimeFixture.world')(function* (
  * reports a failure to the model, so a case observes the runtime's own behaviour, and reads from
  * the attribution headers of each request whom the runtime asked as.
  */
-const serverLayer = (asked: Array<Acting>) =>
+const serverLayer = (given: World) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
+      given.requests.push(request)
       const thread = decodeThread(request.headers[runtimeHeaders.thread])
       const actor = decodePerson(request.headers[runtimeHeaders.actor])
       if (Option.isSome(thread) && Option.isSome(actor))
-        asked.push({ threadId: thread.value, personId: actor.value })
+        given.asked.push({ threadId: thread.value, personId: actor.value })
       return Effect.fail(
         new HttpClientError.HttpClientError({
           reason: new HttpClientError.TransportError({
@@ -197,23 +212,12 @@ const settingsOf = (given: World, options: { readonly idleMillis: number }) =>
  * product client on the fixture's transport, and the scripted model.
  */
 export const personsOn = (given: World, options: { readonly idleMillis: number }) => {
-  const models = createModels()
-  models.setProvider(given.faux.provider)
   return personsLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        productLayer.pipe(Layer.provide(serverLayer(given.asked))),
+        productLayer.pipe(Layer.provide(serverLayer(given))),
         builtinSkillsLayer,
-        Layer.succeed(
-          Models,
-          Models.of({
-            collection: models,
-            selected: { provider: PROVIDER, modelId: MODEL },
-            name: `${PROVIDER}/${MODEL}`,
-            // A retried model call backs off on Pi's own clock; here it does not wait.
-            settings: { retry: { baseDelayMs: 0 } },
-          }),
-        ),
+        Layer.succeed(Models, given.models),
       ),
     ),
     Layer.provideMerge(settingsOf(given, options)),
