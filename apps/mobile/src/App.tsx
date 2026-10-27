@@ -4,6 +4,7 @@ import {
   createNavigationContainerRef,
   NavigationContainer,
   StackActions,
+  type NavigationContainerRefWithCurrent,
 } from '@react-navigation/native'
 import {
   createNativeStackNavigator,
@@ -17,7 +18,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
-import { Front, makeFront } from './data/front'
+import { Front, makeFront, type FrontStore } from './data/front'
 import {
   Entry,
   entryAtom,
@@ -29,6 +30,7 @@ import {
 } from './data/live'
 import { forgotten, pageOf, type Place } from './data/place'
 import { heardReadAtom } from './data/hearing'
+import { listenForPresses } from './data/notifying'
 import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
@@ -61,6 +63,7 @@ import { Button, Face, GUTTER, Label } from './ui/ui'
 import {
   FrontProvider,
   MeProvider,
+  openPage,
   standsForHome,
   useFront,
   useMe,
@@ -323,6 +326,37 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
 const NOTHING = () => 0
 
 /**
+ * Opens what a pressed notification is about (`data/notifying.ts`): its Thread in Home's place,
+ * or the Feed in front when it is about none. The listener is the store's subscription, so it
+ * goes with the shell, as `useAfreshOnReturn` listens: a shell left behind by a change of
+ * workspace cannot move the new one.
+ */
+function usePressedNotifications(
+  front: FrontStore,
+  navigation: NavigationContainerRefWithCurrent<Routes>,
+) {
+  const [listen] = useState(
+    () => () =>
+      listenForPresses((thread) =>
+        Option.match(thread, {
+          onSome: (id) => {
+            front.open(id, false)
+            if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
+          },
+          onNone: () => {
+            if (!navigation.isReady()) return
+            // The stack as `keep` reads it: before there is one there is nothing to put Feed on.
+            Option.map(Option.fromUndefinedOr(navigation.getRootState()), (stack) =>
+              navigation.dispatch(openPage(stack, { name: 'Feed' })),
+            )
+          },
+        }),
+      ),
+  )
+  useSyncExternalStore(listen, NOTHING, NOTHING)
+}
+
+/**
  * Starts afresh when the Person comes back to an app that was put away for longer than a place is
  * kept (`KEPT_FOR`, `data/place.ts`): Home shows the greeting and nothing is open over it. A
  * phone that ended the app meanwhile is answered by what is kept instead (`placeIn`); this is the
@@ -413,6 +447,7 @@ function Shell() {
   }
   // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
   const [front] = useState(() => makeFront(start.thread))
+  usePressedNotifications(front, navigation)
   useAfreshOnReturn(
     // Kept again as the app is put away, so the time it was last seen is the time it went.
     () => keep(front.showing()),

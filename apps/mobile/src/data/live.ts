@@ -32,6 +32,7 @@ import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
+import { makeNotifying } from './notifying'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -371,6 +372,8 @@ function makeLiveData(session: SignedIn) {
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
   const devices = makeDeviceDecisions(engine)
+  // Notifications while the app is closed: the session's machine, started with the session.
+  const notifying = makeNotifying(engine)
 
   followLook(engine, live)
 
@@ -435,6 +438,7 @@ function makeLiveData(session: SignedIn) {
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
      */
     sending: makeSending(engine),
+    notifying,
     gone,
     seenThread,
     typingIn,
