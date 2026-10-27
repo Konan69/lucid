@@ -46,7 +46,8 @@ ownership. Each operation retains its own `cell-<uuid>/` evidence.
 ```
 
 Restart uses `/shutdown?handoff=preserve`. Move uses normal `/shutdown`, then restarts the node.
-Owner-loss kills only its captured generation, then restarts it. Both nodes keep their original
+Owner-loss kills only its captured generation and leaves it down. After the survivor proof,
+restart it explicitly with `verify cell start`. Both nodes keep their original
 native storage paths and run-scoped `CELLD_NODE` identities, matching celld's same-node reload
 pattern. They share the same disposable bucket. Before/after `/state` receipts retain
 native deployment and ownership counters. A node restart alone does not prove that a particular

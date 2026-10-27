@@ -245,7 +245,7 @@ async function stopNode(state, services, node, { operation, directory }) {
           'POST',
         ),
   ])
-  if (operation !== 'stop') {
+  if (operation !== 'stop' && operation !== 'owner-loss') {
     await startNode(state, services, node)
     await json(directory + '/after.json', await cellSnapshot(state))
   }
