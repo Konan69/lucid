@@ -146,7 +146,7 @@ export const tasks = runtime.table(
     primaryKey({ columns: [table.storeId, table.id] }),
     check(
       'tasks_status',
-      sql`${table.status} IN ('pending', 'running', 'waiting', 'completing', 'terminal')`,
+      sql`${table.status} IN ('pending', 'running', 'waiting', 'sleeping', 'completing', 'terminal')`,
     ),
     check('tasks_abort_requested', sql`${table.abortRequested} IN (0, 1)`),
     check('tasks_background', sql`${table.background} IN (0, 1)`),

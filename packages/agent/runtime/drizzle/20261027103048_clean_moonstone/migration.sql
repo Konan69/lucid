@@ -1,0 +1,1 @@
+ALTER TABLE "runtime"."tasks" DROP CONSTRAINT "tasks_status", ADD CONSTRAINT "tasks_status" CHECK ("status" IN ('pending', 'running', 'waiting', 'sleeping', 'completing', 'terminal'));

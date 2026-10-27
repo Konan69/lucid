@@ -22,6 +22,7 @@ export const ThreadConversation = defineDocFamily<
   version: 1,
   scope: 'session',
   family: true,
+  checkpointWhen: () => false,
   initial: (conversationId) => ({ conversationId }),
 })
 
@@ -44,6 +45,7 @@ export const ConversationThread = defineDocFamily<ThreadFacts, ThreadFacts>({
   version: 1,
   scope: 'conversation',
   family: true,
+  checkpointWhen: () => false,
   history: 'latest',
   fork: 'initial',
   initial: (facts) => facts,

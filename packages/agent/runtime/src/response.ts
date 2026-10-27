@@ -18,6 +18,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
+import { replyRecord } from './recovery.ts'
 import { runInputs } from './deliveries.ts'
 import { isDeliveryEntry } from './delivery.ts'
 import { classify } from './failure.ts'
@@ -91,6 +92,7 @@ export const Answered = defineDocFamily<{ by: number }, number>({
   version: 1,
   scope: 'conversation',
   family: true,
+  checkpointWhen: () => false,
   history: 'latest',
   fork: 'initial',
   initial: (by) => ({ by }),
@@ -248,7 +250,7 @@ export const recordResponse: (
   const own = Option.some(new Set<number>(run.inputs.map((input) => input.entry)))
   const measured = yield* measure(conversation, first.entry, answer, own)
   const timed = {
-    outcome: outcomeOf(first),
+    outcome: outcomeOf(yield* replyRecord(harness, first)),
     inputs: run.inputs.map((input) => ({ submission: input.id, entry: input.entry })),
     startedAt: Option.getOrElse(measured.startedAt, () => run.finishedAt),
     finishedAt: run.finishedAt,
@@ -458,12 +460,13 @@ export const settlement: (
   submission: Submission,
   wait: boolean,
 ) {
-  const record = yield* wait
+  const stored = yield* wait
     ? Effect.tryPromise({
         try: (signal) => submission.wait(withAbortSignal(signal, BACKGROUND_CONTEXT)),
         catch: (cause) => new PiRejected({ cause }),
       })
     : pi(() => submission.status(BACKGROUND_CONTEXT))
+  const record = yield* replyRecord(harness, stored)
   if (record.type !== 'input' || record.status === 'queued' || record.status === 'placed')
     return RuntimeSettlement.cases.Pending.make({})
   if (record.status === 'unanswered') return unanswered(record)

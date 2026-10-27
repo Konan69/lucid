@@ -18,6 +18,7 @@ import { Deferred, Effect, Option, Queue, Stream } from 'effect'
 import type { StoreUnavailable } from '../storage/errors.ts'
 import type { PersonsService } from '../persons.ts'
 import { conversationOf, pi, ThreadConversation, type PiRejected } from '../threads.ts'
+import { replyRecord } from '../recovery.ts'
 import { isSubmissionId, outcomeOf } from '../response.ts'
 import { projector, unsettled, type Outcome, type Projected, type Viewed } from './project.ts'
 
@@ -112,7 +113,7 @@ const endings = (harness: Harness) => {
         if (submission === undefined) continue
         const record = yield* pi(() => submission.status(BACKGROUND_CONTEXT))
         if (record.status === 'done' || record.status === 'unanswered')
-          outcomes.set(id, outcomeOf(record))
+          outcomes.set(id, outcomeOf(yield* replyRecord(harness, record)))
       }
     }),
   }

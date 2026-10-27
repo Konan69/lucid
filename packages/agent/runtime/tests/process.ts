@@ -196,14 +196,18 @@ const settingsOf = (given: World, options: { readonly idleMillis: number }) =>
  * while it owns them (`lifetime.ts`). The production Persons Layer, the production skills and
  * product client on the fixture's transport, and the scripted model.
  */
-export const personsOn = (given: World, options: { readonly idleMillis: number }) => {
+export const personsOn = (
+  given: World,
+  options: { readonly idleMillis: number },
+  skills = builtinSkillsLayer,
+) => {
   const models = createModels()
   models.setProvider(given.faux.provider)
   return personsLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         productLayer.pipe(Layer.provide(serverLayer(given.asked))),
-        builtinSkillsLayer,
+        skills,
         Layer.succeed(
           Models,
           Models.of({
@@ -227,9 +231,10 @@ export const storesOf = (given: World, options: { readonly idleMillis: number })
 export const start = Effect.fn('RuntimeFixture.start')(function* (
   given: World,
   options: { readonly idleMillis: number },
+  skills = builtinSkillsLayer,
 ) {
   const context = yield* Layer.build(
-    personsOn(given, options).pipe(Layer.provideMerge(storesOf(given, options))),
+    personsOn(given, options, skills).pipe(Layer.provideMerge(storesOf(given, options))),
   )
   const handler = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provide(context))
 

@@ -7,7 +7,9 @@ import { parseJsonc } from './jsonc.mjs'
 import { hermesConfigErrors } from './hermes.mjs'
 
 export const versions = Object.freeze({
-  '@earendil-works/pi-ai': '0.87.1',
+  '@earendil-works/chord': '1.4.0',
+  '@earendil-works/pi-ai': '1.4.0',
+  '@earendil-works/pi-durable': '1.4.0',
   '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
   '@maschwenk/tsrslint': '0.1.5',
@@ -147,7 +149,9 @@ const requiredByManifest = Object.freeze({
     'vite',
   ],
   'packages/agent/runtime/package.json': [
+    '@earendil-works/chord',
     '@earendil-works/pi-ai',
+    '@earendil-works/pi-durable',
     '@effect/platform-node',
     '@flue/cli',
     '@flue/postgres',

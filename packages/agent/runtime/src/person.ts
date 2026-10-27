@@ -1,5 +1,11 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import { createRegistry, Harness, type AgentChange } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  GenerationTask,
+  Harness,
+  ToolTask,
+  type AgentChange,
+} from '@earendil-works/pi-durable'
 import type { PersonId } from '@vivid/contracts'
 import { Deferred, Effect, type Scope } from 'effect'
 import { definition, offered } from './agents/vivid.ts'
@@ -15,6 +21,7 @@ import type { StoreUnavailable } from './storage/errors.ts'
 import { Stores } from './storage/stores.ts'
 import { followSettlements } from './settled.ts'
 import { BuiltinSkills } from './skills.ts'
+import { endParked } from './recovery.ts'
 import { PiRejected } from './threads.ts'
 import { tools } from './tools/index.ts'
 
@@ -98,6 +105,7 @@ export const openPerson: (
   const ready = yield* Deferred.make<Harness>()
   const opened = Deferred.await(ready)
 
+  const background = yield* Effect.scope
   const notes = yield* Notes
   const all = tools(
     scopeResolver(opened, product),
@@ -127,9 +135,24 @@ export const openPerson: (
             settings: {
               ...models.settings,
               ...QUEUES,
+              afterFailedRun: 'continue',
             },
-            onReport: (error) => {
-              void run(reported(error))
+            onReport: (error, info) => {
+              const replyParked =
+                info.type === 'task_parked' &&
+                (info.task.kind === GenerationTask.definition.name ||
+                  info.task.kind === ToolTask.definition.name)
+              const handle = replyParked
+                ? Effect.flatMap(opened, (current) => endParked(current, info.task, personId))
+                : reported(error)
+              void run(
+                handle.pipe(
+                  Effect.catchTag('PiRejected', () =>
+                    Effect.logWarning('A parked reply could not be ended', { personId }),
+                  ),
+                  Effect.forkIn(background),
+                ),
+              )
             },
           },
           BACKGROUND_CONTEXT,
@@ -141,8 +164,8 @@ export const openPerson: (
     }).pipe(Effect.onError(() => Effect.promise(() => storage.close(BACKGROUND_CONTEXT)))),
     closeHarness,
   )
-  yield* Deferred.succeed(ready, harness)
   const { quiet } = yield* followSettlements(harness)
+  yield* Deferred.succeed(ready, harness)
   return {
     personId,
     harness,

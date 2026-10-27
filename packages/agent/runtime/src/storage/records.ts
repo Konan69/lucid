@@ -162,6 +162,11 @@ const TaskResult = Schema.Union(Object.values(taskOutcomes)).pipe(Schema.toTagge
 const taskStates = {
   pending: Schema.Struct({ status: Schema.tag('pending'), checkpoint: Schema.MutableJson }),
   running: Schema.Struct({ status: Schema.tag('running'), checkpoint: Schema.MutableJson }),
+  sleeping: Schema.Struct({
+    status: Schema.tag('sleeping'),
+    until: Schema.Finite,
+    checkpoint: Schema.MutableJson,
+  }),
   waiting: Schema.Struct({
     status: Schema.tag('waiting'),
     checkpoint: Schema.MutableJson,
@@ -181,6 +186,7 @@ export const TaskEnvelope = Schema.Struct({
   version: Schema.Finite,
   background: Schema.Boolean,
   abortRequested: Schema.Boolean,
+  restarts: Schema.optionalKey(Schema.Int),
   input: Schema.optionalKey(Schema.MutableJson),
   owner: Schema.optionalKey(Schema.Int),
   memos: Schema.optionalKey(Schema.Record(Schema.String, Schema.MutableJson)),
