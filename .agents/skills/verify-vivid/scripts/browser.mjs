@@ -14,6 +14,7 @@ import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
 import { memoryBrowser } from './memorybrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
+import { owedBrowser } from './owedbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -60,6 +61,7 @@ const recipes = {
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
+  owed: { check: 'owed' },
   replies: { check: 'replies' },
   first: {
     phrase:
@@ -115,6 +117,11 @@ const specialRecipes = {
     drive: deviceBrowser,
     scope:
       'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
+  },
+  owed: {
+    drive: owedBrowser,
+    scope:
+      'Waiting-on row tracked from the composer, shown on the web Feed, resolved by its check and absent after reload; see scope.json.',
   },
   feed: {
     drive: feedBrowser,
@@ -350,7 +357,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny'].includes(feature) && state.modelKind !== 'real'
+    ['memory', 'question', 'approve', 'deny', 'owed'].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
