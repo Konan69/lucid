@@ -3,7 +3,7 @@ import { NotFound, ThreadAudience, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -66,13 +66,13 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     const key = `channel:${message.channel}:${message.id}`
     // Route before admission: even an immediately completed Run must know where its reply belongs.
     yield* ledger.route({
-      runId: submissionId(threadId, key),
+      runId: deliveryRunId(threadId, key),
       personId: actor.person.id,
       channel: message.channel,
       since: link.since,
       threadId,
     })
-    const runId = submissionId(threadId, key)
+    const runId = deliveryRunId(threadId, key)
     yield* conversation
       .deliver({
         threadId,

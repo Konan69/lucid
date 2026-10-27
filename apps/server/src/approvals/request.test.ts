@@ -7,7 +7,7 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { answerKey } from '../inputs/answers.ts'
 import { inputRequests } from '../inputs/tables.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { EARLIER_CHARACTERS, REQUEST_CHARACTERS, personRequest } from './request.ts'
 import {
   delivery,
@@ -43,7 +43,7 @@ const answeredRequest = Effect.fn('RequestTest.answered')(function* (
       createdAt: 1,
     }),
   )
-  return submissionId(threadId, answerKey(id))
+  return deliveryRunId(threadId, answerKey(id))
 })
 
 /** The reviewer must read the request, never Vivid's account of it or somebody else's words. */

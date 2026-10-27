@@ -83,6 +83,7 @@ export const threadTitlesLayer = Layer.effect(
     /** History failures never fall back to a partial or invented conversation. */
     const contents = Effect.fn('ThreadTitles.contents')(function* (thread: ThreadId) {
       const history = yield* readConversationHistory(runtime, thread).pipe(
+        withDatabase,
         Effect.scoped,
         Effect.timeout('5 seconds'),
         Effect.mapError(() => ThreadTitleHistoryUnavailable.make({ thread })),

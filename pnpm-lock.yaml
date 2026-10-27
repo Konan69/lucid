@@ -711,9 +711,6 @@ importers:
       '@effect/sql-pg':
         specifier: 4.0.2
         version: 4.0.2(effect@4.0.2)
-      '@flue/sdk':
-        specifier: 'catalog:'
-        version: 2.2.2
       '@helix-db/helix-db':
         specifier: 3.0.4
         version: 3.0.4

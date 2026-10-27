@@ -1,3 +1,4 @@
+import { testSubmissionId } from '../approvals/testing.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
@@ -47,15 +48,21 @@ const runtimeHistoryLayer = Layer.effectContext(
       admit: () => Effect.die('Artifact tests do not admit deliveries'),
       settled: () => Effect.never,
       stop: () => Effect.die('Artifact tests do not stop responses'),
+      watch: () => Stream.never,
       read: Effect.fn('Artifacts.test.history')(function* ({ threadId }) {
         const history = (yield* Ref.get(responses)).filter((entry) => entry.threadId === threadId)
         return HttpClientResponse.fromWeb(
           HttpClientRequest.get('https://runtime.example.test'),
           new Response(
             JSON.stringify({
-              messages: history.map((entry) => ({
+              working: false,
+              queued: 0,
+              messages: history.map((entry, index) => ({
+                id: `document-${index}`,
+                purpose: 'assistant',
+                display: 'visible',
                 role: 'assistant',
-                submissionId: entry.runId,
+                submissionId: String(testSubmissionId(entry.runId)),
                 parts: [
                   {
                     type: 'dynamic-tool',
@@ -69,7 +76,7 @@ const runtimeHistoryLayer = Layer.effectContext(
               settlements: history
                 .filter((entry) => entry.settled)
                 .map((entry) => ({
-                  submissionId: entry.runId,
+                  submissionId: String(testSubmissionId(entry.runId)),
                   outcome: 'completed',
                 })),
             }),
@@ -169,6 +176,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
       origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
       startedAt: yield* Clock.currentTimeMillis,
       admittedAt: yield* Clock.currentTimeMillis,
+      receipt: { runId, submissionId: String(testSubmissionId(runId)) },
     }),
   )
   yield* Ref.update(yield* Responses, (entries) => [

@@ -267,7 +267,9 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
   summaries: ReadonlyMap<PersonId, PersonSummary>,
 ) {
   const person = yield* summaryFor(summaries, row.personId)
+  const receipt = row.receipt === null ? undefined : yield* decodeReceipt(row.receipt)
   return Run.make({
+    submissionId: receipt === undefined ? undefined : String(receipt.submissionId),
     id: row.id,
     threadId: row.threadId,
     turn: row.turn,
@@ -439,16 +441,23 @@ const makeEnd = (database: DatabaseService) =>
     )
   })
 
-/** The query remains lazy and repeatable while the service exposes an Effect value. */
-const makeWorking = (database: DatabaseService) =>
-  database
-    .run(
-      database
-        .select({ id: runs.id, threadId: runs.threadId, personId: runs.personId })
-        .from(runs)
-        .where(eq(runs.state, 'working')),
-    )
-    .pipe(Effect.withSpan('RunStore.working'))
+/** Receiptless reservations have no runtime identity to observe after a server crash.
+ * The cutover importer carries working legacy Runs; only saved Pi receipts resume here. */
+const makeWorking = Effect.fn('RunStore.working')(function* (database: DatabaseService) {
+  const rows = yield* database.run(database.select().from(runs).where(eq(runs.state, 'working')))
+  const resumed = yield* Effect.forEach(
+    rows,
+    Effect.fn('RunStore.resume')(function* (run) {
+      if (run.receipt === null) {
+        yield* makeEnd(database)(run.id, RunEnding.cases.Unknown.make({}))
+        return []
+      }
+      yield* decodeReceipt(run.receipt)
+      return [{ id: run.id, threadId: run.threadId, personId: run.personId }]
+    }),
+  )
+  return resumed.flat()
+})
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('RunStore.list')(function* (threadId: ThreadId) {

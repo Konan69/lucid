@@ -1,27 +1,86 @@
-import * as Effect from 'effect/Effect'
-import * as Stream from 'effect/Stream'
+import { Effect, Schema, Stream } from 'effect'
 import {
+  InvalidAttachment,
+  MessageAttachment,
   InvalidRequest,
-  type ConversationFrame,
+  NotFound,
   type SendToThreadRequest,
   type ThreadId,
 } from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { Forbidden } from '@vivid/contracts'
+import { sessionWorkspace } from '../auth/session.ts'
+import { requirePerson } from '../auth/access.ts'
+import { Runtime } from '../runtime/client.ts'
+import { requireThread } from './access.ts'
+import { authorized } from './reach.ts'
+import { Conversation, DeliveryMessage, DeliverySpeaker, StoredRunOrigin } from './conversation.ts'
+import { messageFingerprint, messagePictures } from './pictures.ts'
+import { messageKey } from './key.ts'
+import { RunStore } from './runs.ts'
 
-/**
- * The conversation a Person's client reads and sends to, whichever runtime holds the Thread.
- *
- * Contract stubs for the two-backend move (plan: `~/agency/vivid-lanes/briefs/two-backends-plan.md`).
- * `watchConversation` checks the Person and the Thread, then sends one `Whole` built from the
- * Thread's runtime and every later change. `sendToThread` validates the pictures as the gateway's
- * send does and admits the delivery through `Conversation.admit`, answering with the Run.
- */
-export const watchConversation = (
-  _request: { readonly threadId: ThreadId },
-): Stream.Stream<ConversationFrame, InvalidRequest> =>
-  Stream.fail(InvalidRequest.make({ message: 'WatchConversation is not implemented yet.' }))
+const encodePictures = Schema.encodeEffect(Schema.toCodecJson(Schema.Array(MessageAttachment)))
 
-export const sendToThread = Effect.fn('Rpc.SendToThread')(function* (
-  _request: SendToThreadRequest,
-) {
-  return yield* InvalidRequest.make({ message: 'SendToThread is not implemented yet.' })
+/** Every new link checks current session and audience before pulling any runtime frame. */
+export const watchConversation = ({ threadId }: { readonly threadId: ThreadId }) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const auth = yield* AuthContext
+      if (!AuthState.$is('Person')(auth))
+        return yield* new Forbidden({ message: 'Only a signed-in Person can watch' })
+      const thread = yield* requireThread(threadId, auth.person.id)
+      const runtime = yield* Runtime
+      return authorized(
+        runtime.watch(thread.personId, thread.id).pipe(
+          Stream.mapAccumEffect(
+            () => false,
+            (seen, frame) =>
+              seen
+                ? Effect.succeed([true, [frame]] as const)
+                : sessionWorkspace(auth.person.id, auth.sessionId).pipe(
+                    Effect.andThen(requireThread(thread.id, auth.person.id)),
+                    Effect.as([true, [frame]] as const),
+                  ),
+          ),
+        ),
+        thread,
+        {
+          personId: auth.person.id,
+          sessionId: auth.sessionId,
+        },
+      )
+    }),
+  )
+
+/** Picture checks and immutable fingerprints precede reservation, as they did in the HTTP gateway. */
+export const sendToThread = Effect.fn('Rpc.SendToThread')(function* (request: SendToThreadRequest) {
+  const auth = yield* requirePerson()
+  const thread = yield* requireThread(request.threadId, auth.person.id)
+  const pictures = yield* encodePictures(request.pictures).pipe(
+    Effect.mapError(
+      () => new InvalidAttachment({ message: 'Send a picture with valid attachment fields.' }),
+    ),
+  )
+  const attachments = yield* messagePictures(
+    { kind: 'user', body: request.text, idempotencyKey: request.key, attachments: pictures },
+    thread,
+  )
+  // A picture may be the whole send, but an empty composer must reserve no Run.
+  if (request.text.length === 0 && attachments.length === 0)
+    return yield* new InvalidRequest({ message: 'A message needs text or a picture' })
+  const receipt = yield* (yield* Conversation).admit({
+    threadId: thread.id,
+    personId: auth.person.id,
+    speaker: DeliverySpeaker.cases.Acting.make({}),
+    message: DeliveryMessage.cases.Said.make({ body: request.text, attachments }),
+    origin: StoredRunOrigin.cases.Message.make({
+      fingerprint: messageFingerprint(request.text, attachments),
+    }),
+    idempotencyKey: messageKey(auth.person.id, request.key),
+    clientKey: request.key,
+  })
+  const runs = yield* (yield* RunStore).list(thread.id)
+  const run = runs.find((candidate) => candidate.id === receipt.runId)
+  if (run === undefined) return yield* new NotFound({ message: 'Admitted Run not found' })
+  return { run }
 })

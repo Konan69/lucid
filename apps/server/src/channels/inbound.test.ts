@@ -16,7 +16,7 @@ import {
 } from '../threads/conversation.ts'
 import { RunStore } from '../threads/runs.ts'
 import { ThreadStore } from '../threads/store.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { ChannelReceiver } from './inbound.ts'
 import { ChannelReplies, channelRepliesLayer } from './replies.ts'
 import { ChannelStore } from './store.ts'
@@ -230,7 +230,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             responseId: first.run.id,
           })
           yield* control.finish(first.run.id, response)
-          yield* control.finish(submissionId(first.threadId, second.idempotencyKey), response)
+          yield* control.finish(deliveryRunId(first.threadId, second.idempotencyKey), response)
           yield* Queue.take(control.endings)
           yield* Queue.take(control.endings)
           expect((yield* Ref.get(control.sends)).map((send) => send.text)).toEqual([
@@ -283,7 +283,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
               projectId: null,
             })
             yield* store.attach(test.actor, found.value, thread.id)
-            const runId = submissionId(thread.id, 'before-restart')
+            const runId = deliveryRunId(thread.id, 'before-restart')
             yield* (yield* ChannelLedger).route({
               runId,
               threadId: thread.id,
@@ -356,7 +356,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             message: DeliveryMessage.cases.Said.make({ body: 'app text' }),
             idempotencyKey: key,
           })
-          yield* test.finish(submissionId(first.threadId, key), 'App result')
+          yield* test.finish(deliveryRunId(first.threadId, key), 'App result')
           expect(yield* Ref.get((yield* ChannelControl).sends)).toEqual([])
         }).pipe(Effect.scoped),
       ),

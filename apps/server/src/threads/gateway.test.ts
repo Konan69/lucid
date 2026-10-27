@@ -128,7 +128,7 @@ const updates = () =>
     HttpClientRequest.get('http://runtime.test'),
     new Response(
       new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(hello) }),
-      { headers: { 'content-type': 'text/event-stream' } },
+      { headers: { 'content-type': 'image/png' } },
     ),
   )
 
@@ -159,7 +159,7 @@ const requestRead = Effect.fn('GatewayTest.requestRead')(function* (
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(
-          new Request(`http://gateway.test/api/vivid/${test.threadId}?view=updates`, {
+          new Request(`http://gateway.test/api/vivid/${test.threadId}/attachments/picture`, {
             headers: { authorization: `Bearer ${test.token}`, host: 'gateway.test' },
           }),
         ),
