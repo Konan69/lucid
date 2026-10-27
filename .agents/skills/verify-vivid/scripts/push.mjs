@@ -66,7 +66,7 @@ export async function pushBrowser(state, id, directory, { run, capture }) {
   await run(['wait', '--fn', `Boolean(${rowButton})`])
   await capture('row-off')
   NodeAssert.equal(
-    Result.getOrThrow(decodeLabel(await run(['eval', `JSON.stringify(${rowButton}.innerText)`]))),
+    Result.getOrThrow(decodeLabel(await run(['eval', `${rowButton}.innerText`]))),
     'Turn on',
   )
   await run(['eval', `${rowButton}.click()`])
@@ -111,9 +111,7 @@ export async function pushBrowser(state, id, directory, { run, capture }) {
     '--fn',
     `(async () => (await ${shown}).some(n => n.title === ${JSON.stringify(TITLE)}))()`,
   ])
-  const notifications = Result.getOrThrow(
-    decodeShown(await run(['eval', `${shown}.then(JSON.stringify)`])),
-  )
+  const notifications = Result.getOrThrow(decodeShown(await run(['eval', shown])))
   await json(directory + '/notifications.json', notifications)
   const mine = notifications.find((n) => n.title === TITLE)
   NodeAssert.equal(mine.data.threadId, away, 'The notification names the Thread it is about')
