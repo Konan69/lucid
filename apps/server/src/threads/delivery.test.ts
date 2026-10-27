@@ -15,6 +15,7 @@ import {
   WindowAction,
   WindowResult,
   Conflict,
+  DatabaseUnavailable,
   PersonId,
   Company,
   Workspace,
@@ -27,7 +28,7 @@ import {
   SendToThreadRequest,
   ThreadId,
 } from '@vivid/contracts'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import {
   Clock,
   Deferred,
@@ -820,7 +821,8 @@ layer(
           const waiting = yield* Deferred.make<void>()
           const settled = yield* Deferred.make<void>()
           let reads = 0
-          // Fail the first address read and first receipt read through the real SQL adapter.
+          // The first address read and first receipt read lose their connection, the way a pool
+          // reset or failover answers; the server must keep the Run working and read again.
           const interruptedReads = Layer.succeed(
             Database,
             Database.of({
@@ -843,9 +845,10 @@ layer(
                 Effect.suspend(() => {
                   reads += 1
                   if (reads !== 1 && reads !== 3) return database.run(operation)
-                  return database.run(database.execute(sql`select 1 / 0`)).pipe(
-                    Effect.tapError(() => Queue.offer(failed, undefined)),
-                    Effect.andThen(database.run(operation)),
+                  return Queue.offer(failed, undefined).pipe(
+                    Effect.andThen(
+                      Effect.fail(new DatabaseUnavailable({ message: 'Database is unavailable' })),
+                    ),
                   )
                 }),
             }),
