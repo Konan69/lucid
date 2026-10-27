@@ -41,24 +41,17 @@ const shown = `navigator.serviceWorker.getRegistrations().then(all => Promise.al
 
 /**
  * Grants this origin notifications through Chrome's own permission API, as a Person's Allow does.
- * agent-browser keeps its tabs in a browser context of its own, so the grant names the context of
- * the owned tab; a grant to the default context would leave this page unanswered.
+ * Chrome keeps such a grant only while the DevTools connection that made it is open, so the
+ * connection is handed back and closed when the journey ends.
  */
 async function grant(state, run) {
   const address = (await run(['get', 'cdp-url'])).trim().replace(/^"|"$/gu, '')
   const browser = await connect(address)
-  try {
-    const { targetInfos } = await browser.send('Target.getTargets')
-    const page = targetInfos.find((t) => t.type === 'page' && t.url.startsWith(state.web))
-    NodeAssert.ok(page, 'Missing owned browser tab')
-    await browser.send('Browser.grantPermissions', {
-      origin: new URL(state.web).origin,
-      permissions: ['notifications'],
-      browserContextId: page.browserContextId,
-    })
-  } finally {
-    browser.close()
-  }
+  await browser.send('Browser.grantPermissions', {
+    origin: new URL(state.web).origin,
+    permissions: ['notifications'],
+  })
+  return browser
 }
 
 /**
@@ -66,10 +59,18 @@ async function grant(state, run) {
  * Vivid notify the Person from another Thread while the app's tab is in the background, and read
  * the notification the service worker showed.
  */
-export async function pushBrowser(state, id, directory, { run, capture }) {
+export async function pushBrowser(state, id, directory, browser) {
+  const granted = await grant(state, browser.run)
+  try {
+    await journey(state, id, directory, browser)
+  } finally {
+    granted.close()
+  }
+}
+
+async function journey(state, id, directory, { run, capture }) {
   const before = await rpc(state, 'ListPushTargets', undefined, directory, 'targets-before')
   const browsersBefore = browsersIn(before).length
-  await grant(state, run)
   await run(['open', state.web + '/t/' + id + '?settings=general'])
   await run(['wait', '--fn', `Boolean(${rowButton})`])
   NodeAssert.equal(
