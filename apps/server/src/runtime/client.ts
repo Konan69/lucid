@@ -1,5 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { Context, Effect, Layer, Match, Option, Predicate, Redacted, Schema, Stream } from 'effect'
+import * as Schedule from 'effect/Schedule'
 import type * as Scope from 'effect/Scope'
 import * as HttpClient from 'effect/http/HttpClient'
 import type * as HttpClientError from 'effect/http/HttpClientError'
@@ -25,7 +26,7 @@ import {
   type ThreadOrigin,
 } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
-import { Database, decodeStored } from '../database/client.ts'
+import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { findThread } from '../threads/access.ts'
 import { Admitted } from '../threads/conversation.ts'
@@ -152,7 +153,10 @@ export interface RuntimeService {
   readonly admit: (
     input: AdmissionInput,
   ) => Effect.Effect<Admission, AdmissionRefused | AdmissionUncertain>
-  readonly settled: (threadId: ThreadId, runId: RunId) => Effect.Effect<Settlement>
+  readonly settled: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<Settlement, DatabaseInfrastructureError>
   readonly stop: (threadId: ThreadId) => Effect.Effect<boolean, RuntimeUnavailable>
   readonly read: (
     read: ConversationRead,
@@ -257,14 +261,23 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
   })
   const settled: RuntimeService['settled'] = Effect.fn('Runtime.settled')(
     function* (threadId, runId) {
-      const address = yield* addressOf(threadId)
-      const [row] = yield* database.run(
-        database
-          .select({ receipt: runs.receipt })
-          .from(runs)
-          .where(and(eq(runs.id, runId), eq(runs.threadId, threadId))),
+      // A failed server read says nothing about the runtime's Run. Reconnect on its observation cadence.
+      const thread = yield* findThread(threadId).pipe(
+        Effect.provideService(Database, database),
+        Effect.retry(Schedule.spaced('1 second')),
       )
+      if (Option.isNone(thread)) return Settlement.cases.Unknown.make({})
+      const address = { personId: thread.value.personId, threadId }
+      const [row] = yield* database
+        .run(
+          database
+            .select({ receipt: runs.receipt })
+            .from(runs)
+            .where(and(eq(runs.id, runId), eq(runs.threadId, threadId))),
+        )
+        .pipe(Effect.retry(Schedule.spaced('1 second')))
       if (row === undefined || row.receipt === null) return Settlement.cases.Unknown.make({})
+      // Corrupt product data is a typed storage failure, never evidence that Pi ended the reply.
       const receipt = yield* decodeReceipt(row.receipt)
       return yield* observeRun(
         Effect.gen(function* () {
@@ -280,7 +293,6 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         }).pipe(Effect.scoped),
       )
     },
-    (effect) => effect.pipe(Effect.orElseSucceed(() => Settlement.cases.Unknown.make({}))),
   )
   const stop: RuntimeService['stop'] = Effect.fn('Runtime.stop')(function* (threadId) {
     const address = yield* addressOf(threadId)

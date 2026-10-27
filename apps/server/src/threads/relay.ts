@@ -9,7 +9,6 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Forbidden } from '@vivid/contracts'
-import { sessionWorkspace } from '../auth/session.ts'
 import { requirePerson } from '../auth/access.ts'
 import { Runtime } from '../runtime/client.ts'
 import { requireThread } from './access.ts'
@@ -30,25 +29,10 @@ export const watchConversation = ({ threadId }: { readonly threadId: ThreadId })
         return yield* new Forbidden({ message: 'Only a signed-in Person can watch' })
       const thread = yield* requireThread(threadId, auth.person.id)
       const runtime = yield* Runtime
-      return authorized(
-        runtime.watch(thread.personId, thread.id).pipe(
-          Stream.mapAccumEffect(
-            () => false,
-            (seen, frame) =>
-              seen
-                ? Effect.succeed([true, [frame]] as const)
-                : sessionWorkspace(auth.person.id, auth.sessionId).pipe(
-                    Effect.andThen(requireThread(thread.id, auth.person.id)),
-                    Effect.as([true, [frame]] as const),
-                  ),
-          ),
-        ),
-        thread,
-        {
-          personId: auth.person.id,
-          sessionId: auth.sessionId,
-        },
-      )
+      return authorized(runtime.watch(thread.personId, thread.id), thread, {
+        personId: auth.person.id,
+        sessionId: auth.sessionId,
+      })
     }),
   )
 

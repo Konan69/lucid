@@ -2,6 +2,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
+import * as Schedule from 'effect/Schedule'
 import {
   Conflict,
   NotFound,
@@ -178,11 +179,19 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-/** Retry only uncertain keyed attempts. A definite refusal is final for this sending request. */
+/** Retry uncertain keyed attempts within one admission budget so retries cannot triple the Thread permit hold. */
 const admitRuntime = Effect.fn('Conversation.admitRuntime')(
   (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
     runtime.admit(input).pipe(
-      Effect.retry({ while: (error) => Predicate.isTagged(error, 'AdmissionUncertain'), times: 2 }),
+      Effect.retry({
+        while: (error) => Predicate.isTagged(error, 'AdmissionUncertain'),
+        schedule: Schedule.exponential('1 second').pipe(Schedule.upTo({ times: 2 })),
+      }),
+      Effect.timeoutOrElse({
+        duration: '30 seconds',
+        orElse: () =>
+          Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
+      }),
       Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
         Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
       ),

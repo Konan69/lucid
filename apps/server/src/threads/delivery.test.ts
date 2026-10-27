@@ -23,11 +23,13 @@ import {
   RuntimeUnavailable,
   RuntimeRunRequest,
   RuntimeSubmissionId,
+  RuntimeSettlement,
   SendToThreadRequest,
   ThreadId,
 } from '@vivid/contracts'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import {
+  Clock,
   Deferred,
   Effect,
   Fiber,
@@ -42,6 +44,7 @@ import {
   Schema,
   Stream,
 } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
@@ -177,6 +180,7 @@ type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
+  const attempted = yield* Queue.unbounded<void>()
   const failure = yield* Ref.make(Option.none<AdmissionRefused | AdmissionUncertain>())
   const reads = yield* Ref.make(0)
   const readHeaders = yield* Ref.make({
@@ -189,6 +193,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
       yield* Ref.update(requests, (all) => [...all, input])
+      yield* Queue.offer(attempted, undefined)
       const rejected = yield* Ref.get(failure)
       if (Option.isSome(rejected)) return yield* rejected.value
       const id = deliveryRunId(input.threadId, input.idempotencyKey)
@@ -234,7 +239,18 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   })
   const finish = (id: RunId) =>
     settle(id, Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }))
-  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders, observers }
+  return {
+    runtime,
+    admitted,
+    requests,
+    attempted,
+    finish,
+    settle,
+    failure,
+    reads,
+    readHeaders,
+    observers,
+  }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -790,6 +806,112 @@ layer(
           }),
         ),
     )
+    layer(
+      databaseLayer.pipe(
+        Layer.provideMerge(silentChangesLayer),
+        Layer.provideMerge(testConfigLayer),
+      ),
+    )('Settlement clock', (clockIt) => {
+      clockIt.effect('database read failures leave a Run working until the runtime settles', () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const database = yield* Database
+          const failed = yield* Queue.unbounded<void>()
+          const waiting = yield* Deferred.make<void>()
+          const settled = yield* Deferred.make<void>()
+          let reads = 0
+          // Fail the first address read and first receipt read through the real SQL adapter.
+          const interruptedReads = Layer.succeed(
+            Database,
+            Database.of({
+              _: database._,
+              query: database.query,
+              $with: database.$with,
+              $cache: database.$cache,
+              $count: database.$count.bind(database),
+              with: database.with.bind(database),
+              select: database.select.bind(database),
+              selectDistinct: database.selectDistinct.bind(database),
+              selectDistinctOn: database.selectDistinctOn.bind(database),
+              insert: database.insert.bind(database),
+              update: database.update.bind(database),
+              delete: database.delete.bind(database),
+              refreshMaterializedView: database.refreshMaterializedView.bind(database),
+              execute: database.execute.bind(database),
+              transaction: (operation) => database.transaction(operation),
+              run: (operation) =>
+                Effect.suspend(() => {
+                  reads += 1
+                  if (reads !== 1 && reads !== 3) return database.run(operation)
+                  return database.run(database.execute(sql`select 1 / 0`)).pipe(
+                    Effect.tapError(() => Queue.offer(failed, undefined)),
+                    Effect.andThen(database.run(operation)),
+                  )
+                }),
+            }),
+          )
+          const http = HttpClient.make((request) =>
+            Deferred.succeed(waiting, undefined).pipe(
+              Effect.andThen(Deferred.await(settled)),
+              Effect.as(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify(
+                      RuntimeSettlement.cases.Done.make({
+                        answeredBy: RuntimeSubmissionId.make(1),
+                        reply: 'Finished',
+                        toolCalls: 0,
+                      }),
+                    ),
+                    { headers: { 'content-type': 'application/json' } },
+                  ),
+                ),
+              ),
+            ),
+          )
+          const context = yield* Layer.build(
+            runtimeLayer.pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+              Layer.provide(testConfigLayer),
+              Layer.provide(interruptedReads),
+            ),
+          )
+          const runtime = yield* Runtime.pipe(Effect.provideContext(context))
+          const observing = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(
+                Layer.merge(
+                  test.services,
+                  Layer.succeed(Runtime, { ...test.runtime, settled: runtime.settled }),
+                ),
+              ),
+            ),
+          )
+          const conversation = yield* Conversation.pipe(Effect.provideContext(observing))
+          const receipt = yield* conversation.admit(said(test.threadId, test.ben))
+          const store = yield* RunStore
+          for (let failure = 0; failure < 2; failure += 1) {
+            yield* Queue.take(failed)
+            expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+              'Working',
+            ])
+            yield* TestClock.adjust('1 second')
+          }
+          yield* Deferred.await(waiting)
+          expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+            'Working',
+          ])
+          yield* Deferred.succeed(settled, undefined)
+          expect(yield* Queue.take(test.ended)).toBe(receipt.runId)
+          expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+            'Completed',
+          ])
+        }).pipe(Effect.scoped),
+      )
+    })
+
     // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
     const admissionFailures = [
       {
@@ -821,13 +943,25 @@ layer(
                   const message = said(test.threadId, test.ada)
                   const runId = deliveryRunId(test.threadId, message.idempotencyKey)
                   yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
-                  const rejected = yield* Effect.result(test.conversation.admit(message))
+                  const rejecting = yield* test.conversation
+                    .admit(message)
+                    .pipe(Effect.result, Effect.forkChild)
+                  if (failure.name === 'uncertain') {
+                    yield* Queue.take(test.attempted)
+                    yield* TestClock.adjust('1 second')
+                    expect(yield* Ref.get(test.requests)).toHaveLength(2)
+                    yield* TestClock.adjust('2 seconds')
+                  }
+                  const rejected = yield* Fiber.join(rejecting)
                   expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
                     RuntimeUnavailable,
                   )
                   const recorded = yield* (yield* RunStore).list(test.threadId)
                   expect(recorded.map((run) => run.state)).toEqual([
-                    RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+                    RunState.cases.Failed.make({
+                      finishedAt: yield* Clock.currentTimeMillis,
+                      reason: 'Delivery',
+                    }),
                   ])
                   const attempts = failure.name === 'uncertain' ? 3 : 1
                   expect(yield* Ref.get(test.requests)).toHaveLength(attempts)
