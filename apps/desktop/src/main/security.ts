@@ -108,6 +108,7 @@ export function isAllowedBridgeRequest(
       'GetDeviceLink',
       'RefreshDeviceLink',
       'ShowColorScheme',
+      'ShowNotification',
     ])(request) && isTrustedDocument(url, server, chooser)
   )
 }
