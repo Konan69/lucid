@@ -143,7 +143,7 @@ const targets = notifying.Targets.of({
     changing((client) => client.RegisterPushTarget({ destination })).pipe(
       Effect.flatMap(
         Result.match({
-          onFailure: () => Effect.fail(new notifying.TargetsRefused({})),
+          onFailure: (failure) => Effect.fail(notifying.targetsRefused(failure)),
           onSuccess: ({ target }) => Effect.succeed(target),
         }),
       ),
@@ -152,7 +152,7 @@ const targets = notifying.Targets.of({
     changing((client) => client.RemovePushTarget({ id: target.id })).pipe(
       Effect.flatMap(
         Result.match({
-          onFailure: () => Effect.fail(new notifying.TargetsRefused({})),
+          onFailure: (failure) => Effect.fail(notifying.targetsRefused(failure)),
           onSuccess: () => Effect.void,
         }),
       ),

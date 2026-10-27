@@ -102,7 +102,7 @@ const targetsOf = (engine: ReturnType<typeof makeLive>) =>
         .pipe(
           Effect.flatMap(
             Result.match({
-              onFailure: () => Effect.fail(new notifying.TargetsRefused({})),
+              onFailure: (failure) => Effect.fail(notifying.targetsRefused(failure)),
               onSuccess: ({ target }) => Effect.succeed(target),
             }),
           ),
@@ -113,7 +113,7 @@ const targetsOf = (engine: ReturnType<typeof makeLive>) =>
         .pipe(
           Effect.flatMap(
             Result.match({
-              onFailure: () => Effect.fail(new notifying.TargetsRefused({})),
+              onFailure: (failure) => Effect.fail(notifying.targetsRefused(failure)),
               onSuccess: () => Effect.void,
             }),
           ),
