@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "db:generate:product": "drizzle-kit generate --config product-drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate",
-    "db:migrate:product": "drizzle-kit migrate --config product-drizzle.config.ts"
+    "db:migrate:product": "drizzle-kit migrate --config product-drizzle.config.ts",
+    "runs:adopt": "tsx src/threads/adoption/main.ts"
   },
   "dependencies": {
     "@earendil-works/pi-codemode": "1.0.0",
