@@ -1,9 +1,10 @@
 import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { PushDestination, PushTarget } from '@vivid/contracts'
-import { Context, Effect, type Layer, Option, Schema } from 'effect'
+import { Context, Effect, type Layer, Option, Predicate, Schema } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
+import type { ProductFailure } from './live.js'
 
 /**
  * Notifications that reach the Person while Vivid is closed, as one machine for every surface.
@@ -64,12 +65,23 @@ export class DeviceRefused extends Schema.TaggedError<DeviceRefused>()(
   { title: 'NotifyingDeviceRefused' },
 ) {}
 
-/** The server could not be reached, or refused the address. */
+/**
+ * The server could not be reached (`Unreachable`), or answered and refused the address
+ * (`Unavailable`: this device's address is not one it will send to).
+ */
+const TargetsReason = Schema.Literals(['Unreachable', 'Unavailable'])
+
 export class TargetsRefused extends Schema.TaggedError<TargetsRefused>()(
   'NotifyingTargetsRefused',
-  {},
+  { reason: TargetsReason },
   { title: 'NotifyingTargetsRefused' },
 ) {}
+
+/** The refusal for a call the live engine answered with this failure: transport or answer. */
+export const targetsRefused = (failure: ProductFailure) =>
+  new TargetsRefused({
+    reason: Predicate.isTagged(failure, 'RpcClientError') ? 'Unreachable' : 'Unavailable',
+  })
 
 /** What a device does; see `Device`. */
 export interface DeviceService {
@@ -109,6 +121,13 @@ class AttemptFailed extends Schema.TaggedError<AttemptFailed>()(
   'NotifyingAttemptFailed',
   { attempt: AttemptId, reason: Schema.Literals(['Blocked', ...Refusal.literals]) },
   { title: 'NotifyingAttemptFailed' },
+) {}
+
+/** Registering failed for one attempt: the server was not reached, or refused the address. */
+class RegisterFailed extends Schema.TaggedError<RegisterFailed>()(
+  'NotifyingRegisterFailed',
+  { attempt: AttemptId, reason: TargetsReason },
+  { title: 'NotifyingRegisterFailed' },
 ) {}
 
 const OnFields = { destination: PushDestination, target: PushTarget }
@@ -186,7 +205,9 @@ const machine = Machine.make({
     register: (input: { readonly attempt: AttemptId; readonly destination: PushDestination }) =>
       Targets.use((targets) => targets.register(input.destination)).pipe(
         Effect.map((target) => ({ ...input, target })),
-        Effect.mapError(() => new AttemptFailed({ attempt: input.attempt, reason: 'Unreachable' })),
+        Effect.mapError(
+          (error) => new RegisterFailed({ attempt: input.attempt, reason: error.reason }),
+        ),
       ),
     // The server forgets first: an address the device let go of while the server still sends to
     // it would be refused by the push service, but the server would keep trying it.
@@ -291,7 +312,7 @@ const machine = Machine.make({
           declinable: true,
           resolve: (context) =>
             context.error.attempt === context.state.attempt
-              ? context.select.refused({ data: { reason: 'Unreachable' } })
+              ? context.select.refused({ data: { reason: context.error.reason } })
               : context.decline(),
         },
       },
