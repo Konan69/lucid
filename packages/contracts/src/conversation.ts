@@ -3,13 +3,13 @@ import { Schema } from 'effect'
 /**
  * One Thread's conversation as a screen reads it, and how it travels to a screen.
  *
- * Two runtimes hold conversations while Threads move from Flue to Pi Durable (Konan, 27 October
- * 2026: "can keep two backends in the meantime"). Neither sends its own view to a client. The
- * server builds this state from whichever runtime holds the Thread and sends it once whole and
- * afterwards as changes, the way Pi sends its own view (`@earendil-works/pi-durable` README,
- * "Watching a Conversation": a snapshot, then the operations of each commit; a client that joins
- * late or reconnects starts from the current state and nothing is replayed). A screen reads the
- * same state whichever runtime is under it, so no client knows which one that is.
+ * The runtime holds the conversation (Pi Durable: transcript entries and the live document of the
+ * reply being written). It does not send that to a client: Pi's own view carries the system prompt
+ * and internal documents, which no screen may read. The runtime projects it into the state below
+ * and sends that state once whole and afterwards as changes, the way Pi sends its own view
+ * (`@earendil-works/pi-durable` README, "Watching a Conversation": a snapshot, then the operations
+ * of each commit; a client that joins late or reconnects starts from the current state and nothing
+ * is replayed). The server checks the Person and the Thread and relays the frames.
  *
  * The message and part shapes are the ones the web Thread and the phone's Chat already draw.
  * They were Flue's client types (`FlueConversationMessage` of `@flue/sdk` 2.2.2); they are

@@ -3,9 +3,8 @@ import { PersonId, ThreadId } from './identity.js'
 import { RunFailure } from './threads.js'
 
 /**
- * The HTTP surface of the Pi Durable runtime, the second of the two conversation runtimes while
- * Threads move off Flue (Flue's surface is `RuntimeAdmissionBody` and its neighbours in
- * `threads.ts`). Only the application server calls it. Every
+ * The HTTP surface of the conversation runtime (Pi Durable), which only the application server
+ * calls. Every
  * route but `/health` carries the runtime token as a bearer credential and names the Person whose
  * conversations are meant and the Thread:
  *

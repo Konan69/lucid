@@ -234,8 +234,8 @@ export const Run = Schema.Struct({
   id: RunId,
   /**
    * The runtime's name for the delivery that started this Run, which is how the conversation
-   * refers to it. Absent until the runtime admitted it. Flue names it the same as `id`; Pi Durable
-   * numbers deliveries per Person, so a Pi name means nothing outside its Thread's creator.
+   * refers to it. Absent until the runtime admitted it. Pi Durable numbers deliveries per Person,
+   * so the name means nothing outside its Thread's creator; product ids stay globally unique.
    */
   submissionId: Schema.optional(Schema.String),
   threadId: ThreadId,
