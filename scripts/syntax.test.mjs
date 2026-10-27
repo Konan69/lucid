@@ -28,7 +28,7 @@ const cases = [
     findings: [
       {
         file: 'fixture.ts',
-        symbol: 'A',
+        symbol: '#go',
         kind: 'async-function',
         line: 1,
         column: 11,
