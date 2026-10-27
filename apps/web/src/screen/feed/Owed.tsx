@@ -45,18 +45,23 @@ export function Owed({
 }) {
   const standings = useStandings()
   return (
-    <section aria-labelledby="owed-heading">
-      <div className="flex items-end gap-3 px-3 pb-1">
-        <h2 id="owed-heading" className="flex-1 text-label font-title text-ink-3">
+    // The rows' fill runs past the page's text edge, so their words line up with the head's.
+    <section aria-labelledby="owed-heading" className="-mx-4">
+      {/* The caption, and over the rows' tracks the word for the tick every line is cut by: the
+          tracks span the same width as this line, so the word sits over the tick. */}
+      <div className="relative px-4 pb-1">
+        <h2 id="owed-heading" className="text-label font-title text-ink-3">
           Waiting on
         </h2>
-        {/* Over the track column, the word for the tick every row's line is cut by. */}
-        <span aria-hidden className="relative hidden h-4 w-40 shrink-0 lg:block">
-          <Mark at={owed.TRACK_NOW} span={0} className="-translate-x-1/2 text-meta text-ink-3">
+        <span aria-hidden className="absolute inset-x-4 bottom-1">
+          <Mark
+            at={owed.TRACK_NOW}
+            span={0}
+            className="bottom-0 w-max -translate-x-1/2 text-meta text-ink-3"
+          >
             Now
           </Mark>
         </span>
-        <span className="hidden w-32 shrink-0 lg:block" />
       </div>
       <ul className="flex flex-col">
         {waiting.map((record) => (
@@ -106,7 +111,7 @@ function Row({
         <ContextMenu>
           <ContextMenuTrigger
             render={
-              <div className="group/owed relative rounded-row p-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover has-focus-visible:bg-wash-hover" />
+              <div className="group/owed relative rounded-row px-4 py-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover has-focus-visible:bg-wash-hover" />
             }
           >
             <div className="flex items-start gap-3">
@@ -120,12 +125,13 @@ function Row({
                 </button>
                 <span className="font-meta">{record.what}</span>
               </p>
-              <Track record={record} now={now} className="mt-1 hidden w-40 shrink-0 lg:block" />
-              <div className="relative flex w-32 shrink-0 items-center justify-end gap-1">
+              {/* The slot yields (docs/08): its words at rest, the actions on hover or focus, in
+                  the same place, so nothing in the row moves. Where there is no hover, both. */}
+              <div className="relative flex shrink-0 items-center justify-end gap-1 pt-px">
                 <Actions record={record} onOpen={onOpen} />
                 <span
                   className={cn(
-                    'shrink-0 text-label whitespace-nowrap tabular-nums',
+                    'text-label whitespace-nowrap tabular-nums group-hover/owed:invisible group-has-focus-visible/owed:invisible group-has-aria-expanded/owed:invisible pointer-coarse:visible',
                     timing.late ? 'text-danger' : 'text-ink-2',
                   )}
                 >
@@ -133,7 +139,7 @@ function Row({
                 </span>
               </div>
             </div>
-            <Track record={record} now={now} className="mt-2.5 lg:hidden" />
+            <Track record={record} now={now} className="mt-2.5" />
             <p className="mt-1.5 line-clamp-2 text-label font-meta text-pretty wrap-break-word text-ink-3">
               {detail}
             </p>
@@ -157,13 +163,13 @@ function Row({
 }
 
 /**
- * The check and the menu beside a row's due words. Hidden at rest so the list stays quiet; shown
- * while the row is hovered or something in it has focus, and always where there is no hover.
- * They sit above the row's open cover (`relative z-10`), so pressing them does not open it.
+ * The check and the menu in a row's slot. Hidden at rest so the list stays quiet; shown in place of
+ * the due words while the row is hovered or something in it has focus, and beside them where there
+ * is no hover. They sit above the row's open cover (`z-10`), so pressing them does not open it.
  */
 function Actions({ record, onOpen }: { record: owed.Waiting; onOpen: () => void }) {
   return (
-    <span className="relative z-10 flex shrink-0 items-center opacity-0 transition-opacity duration-(--dur-fast) group-hover/owed:opacity-100 group-has-focus-visible/owed:opacity-100 has-aria-expanded:opacity-100 pointer-coarse:opacity-100">
+    <span className="absolute inset-e-0 -top-1 z-10 flex items-center opacity-0 group-hover/owed:opacity-100 group-has-focus-visible/owed:opacity-100 has-aria-expanded:opacity-100 pointer-coarse:static pointer-coarse:opacity-100">
       <Button
         variant="ghost"
         size="icon-sm"

@@ -98,7 +98,6 @@ export function FeedView({
       .length
   const standing = feed.standingOf(needs)
   const head = owed.headOf(open, said.timing, now)
-  const rest = Option.flatMap(head, (made) => made.rest)
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -113,16 +112,9 @@ export function FeedView({
                 owed, what needs them. Never a greeting. */}
             <h1 className="mt-2.5 font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
               {Option.match(head, { onNone: () => standing.lead, onSome: ({ lead }) => lead })}
-              {Option.isSome(rest) && <span className="block text-ink-3">{rest.value}</span>}
             </h1>
             <p className="mt-3 text-dialog text-pretty text-ink-2">
-              {Option.isNone(head) ? (
-                EMPTY
-              ) : (
-                <>
-                  <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
-                </>
-              )}
+              <Standing head={head} standing={standing} />
             </p>
           </div>
           {/* On a narrow screen Vivid's face heads the page; on a wide one it heads its own column. */}
@@ -193,6 +185,33 @@ export function FeedView({
       </div>
     </section>
   )
+}
+
+/**
+ * The line under the head's sentence. With something owed: the record that matters now, bold, then
+ * what needs the Person; or, with none of them urgent, the Feed's standing line. With nothing
+ * owed the head already said the standing, so this says how something comes to be owed.
+ */
+function Standing({
+  head,
+  standing,
+}: {
+  head: Option.Option<owed.Head>
+  standing: ReturnType<typeof feed.standingOf>
+}) {
+  if (Option.isNone(head)) return EMPTY
+  return Option.match(head.value.rest, {
+    onSome: (rest) => (
+      <>
+        <b className="font-title text-ink">{rest}</b> {standing.lead}
+      </>
+    ),
+    onNone: () => (
+      <>
+        <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
+      </>
+    ),
+  })
 }
 
 /** What the head says under the standing line when nobody owes the Person anything. */
