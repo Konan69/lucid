@@ -6,6 +6,7 @@ import {
 import {
   isStandingLayer,
   MemoryAuthority,
+  MemorySource,
   MemoryRevision,
   NoteAddress,
   NoteConflict,
@@ -247,7 +248,9 @@ const write = Effect.fn('Notes.write')(function* (database: SqliteDatabase, inpu
   const encoded = yield* encodeAuthority(authority).pipe(
     Effect.mapError(() => NotesUnavailable.make({})),
   )
-  const updatedAt = Date.now()
+  const updatedAt = MemorySource.guards.HistoryLoad(authority.source)
+    ? authority.source.updatedAt
+    : Date.now()
   const result = yield* attempt(() =>
     database.transaction(
       // @effect-diagnostics-next-line asyncFunction:off -- Chord owns the Promise transaction callback and its queued handle.

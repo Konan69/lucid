@@ -74,7 +74,7 @@ const classifyDriverError = (error: DriverError): DatabaseInfrastructureError =>
   })
 }
 
-const mapDriverErrors = <A, E, R>(
+export const mapDriverErrors = <A, E, R>(
   operation: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R> => {
   // SAFETY: mapError replaces every DriverError variant and preserves all other success, error, and requirement types.

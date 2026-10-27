@@ -64,6 +64,7 @@ interface Writing {
   readonly placed: Map<string, Placed>
   readonly unsettled: Set<string>
   answer: Option.Option<EntryId>
+  detail: Option.Option<string>
 }
 
 /** References must already have been placed. Throwing inside Pi's public commit rolls it back. */
@@ -112,9 +113,11 @@ const responded = (writing: Writing, item: typeof RuntimeHistoryEntry.cases.Resp
       writing.tx.settleSubmission(at.submission, {
         status: 'unanswered',
         reason: input.outcome === 'aborted' ? 'aborted' : 'history_failed',
+        detail: Option.getOrNull(writing.detail),
       })
   })
   writing.answer = Option.none()
+  writing.detail = Option.none()
   return Promise.all(
     placed.slice(1).map((joined) =>
       writing.tx
@@ -142,7 +145,16 @@ const append = (writing: Writing, item: RuntimeHistoryEntry): Promise<void> =>
   RuntimeHistoryEntry.match(item, {
     Entry: ({ draft }) =>
       writing.tx.appendEntry(writing.conversationId, draftOf(draft)).then((entry) => {
-        if (draft.kind === 'pi.assistant') writing.answer = Option.some(entry.id)
+        if (draft.kind === 'pi.assistant') {
+          writing.answer = Option.some(entry.id)
+          const assistant =
+            draft.model === undefined
+              ? undefined
+              : draft.model.find((message) => message.role === 'assistant')
+          writing.detail = Option.fromUndefinedOr(
+            assistant === undefined ? undefined : assistant.errorMessage,
+          )
+        }
       }),
     Delivery: ({ draft, requestId }) => {
       if (writing.placed.has(requestId)) throw new InvalidHistory()
@@ -197,6 +209,7 @@ const write = (
         placed: new Map(),
         unsettled: new Set(),
         answer: Option.none(),
+        detail: Option.none(),
       }
       return thread.entries
         .reduce<Promise<void>>(
@@ -278,6 +291,7 @@ const loadNotes = Effect.fn('History.notes')(function* (
         saved.description !== note.description ||
         saved.body !== note.body ||
         saved.basis !== note.basis ||
+        saved.updatedAt !== note.updatedAt ||
         !MemorySource.guards.HistoryLoad(saved.authority.source)
       )
         return yield* new InvalidHistory()
@@ -290,7 +304,7 @@ const loadNotes = Effect.fn('History.notes')(function* (
         expected: MemoryRevision.make(0),
         authority: MemoryAuthority.make({
           actor: person.personId,
-          source: MemorySource.cases.HistoryLoad.make({}),
+          source: MemorySource.cases.HistoryLoad.make({ updatedAt: note.updatedAt }),
         }),
       }),
     )

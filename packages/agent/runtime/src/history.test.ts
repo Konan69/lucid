@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
+  ConversationState,
   Note,
   NoteFile,
   NoteSearch,
@@ -14,9 +15,10 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
-import { scenario, ada, admit, delivery } from '../tests/requests.ts'
+import { scenario, ada, admit, delivery, settled } from '../tests/requests.ts'
 import { conversationOf, pi } from './threads.ts'
 
+const decodeState = Schema.decodeUnknownEffect(ConversationState)
 const decodeAnswer = Schema.decodeUnknownEffect(RuntimeHistoryAnswer)
 
 /** HTTP load is backed by real native SQLite, including receipt settlements and the FTS triggers. */
@@ -85,7 +87,7 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
         body: 'A copper kettle lives here.',
         basis: 'said',
       })
-      const body = RuntimeHistoryBody.make({ threads, notes: [note] })
+      const body = RuntimeHistoryBody.make({ threads, notes: [{ ...note, updatedAt: 1234 }] })
       const path = `/persons/${ada}/history`
       const first = yield* runtime.send(path, { method: 'POST', body })
       expect(first.status).toBe(200)
@@ -137,7 +139,11 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
         NoteSearch.make({ query: 'copper', layer: null, limit: 10, offset: 0 }),
       )
       expect(search.entries.map((hit) => hit.file)).toEqual([note.file])
-      expect((yield* runtime.notes.read(ada, note)).revision).toBe(1)
+      expect(yield* runtime.notes.read(ada, note)).toMatchObject({
+        revision: 1,
+        updatedAt: 1234,
+        basis: 'said',
+      })
       for (const [index, thread] of threads.entries()) {
         const after = yield* runtime.persons.use(ada, ({ harness }) =>
           Effect.gen(function* () {
@@ -170,4 +176,163 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
       })
     }),
   ),
+)
+
+const threadId = ThreadId.make('history-outcomes')
+const input = (requestId: string) =>
+  RuntimeHistoryEntry.cases.Delivery.make({
+    requestId,
+    draft: { kind: 'pi.user', model: [{ role: 'user', content: requestId, timestamp: 1 }] },
+  })
+const response = (inputs: typeof RuntimeHistoryEntry.cases.Response.Type.inputs) =>
+  RuntimeHistoryEntry.cases.Response.make({
+    inputs,
+    draft: {
+      kind: 'vivid.response',
+      data: { outcome: 'completed', startedAt: 1, finishedAt: 2, toolCallCount: 0 },
+    },
+  })
+const outcomes = RuntimeHistoryBody.make({
+  notes: [],
+  threads: [
+    {
+      threadId,
+      origin: { creator: ada, creatorName: 'Ada' },
+      entries: [
+        input('first'),
+        input('joined'),
+        RuntimeHistoryEntry.cases.Run.make({ inputs: ['first', 'joined'] }),
+        RuntimeHistoryEntry.cases.Entry.make({
+          draft: { kind: 'pi.assistant', model: [fauxAssistantMessage('Both answered')] },
+        }),
+        response([
+          { requestId: 'first', outcome: 'completed' },
+          { requestId: 'joined', outcome: 'completed' },
+        ]),
+        input('failed'),
+        RuntimeHistoryEntry.cases.Run.make({ inputs: ['failed'] }),
+        RuntimeHistoryEntry.cases.Entry.make({
+          draft: {
+            kind: 'pi.assistant',
+            model: [
+              fauxAssistantMessage('', {
+                stopReason: 'error',
+                errorMessage: '429 Too many requests',
+              }),
+            ],
+          },
+        }),
+        response([{ requestId: 'failed', outcome: 'failed' }]),
+        input('stopped'),
+        RuntimeHistoryEntry.cases.Run.make({ inputs: ['stopped'] }),
+        response([{ requestId: 'stopped', outcome: 'aborted' }]),
+        response([]),
+        RuntimeHistoryEntry.cases.Entry.make({
+          draft: {
+            kind: 'pi.user',
+            model: [{ role: 'user', content: 'Unsettled words', timestamp: 3 }],
+          },
+        }),
+      ],
+    },
+  ],
+})
+
+/** Imported settlements remain readable, and a later live response joins only its own Run. */
+it.effect(
+  'loads joined, failed, stopped and unsettled history before answering a new delivery',
+  () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const loaded = yield* decodeAnswer(
+          (yield* runtime.send(`/persons/${ada}/history`, { method: 'POST', body: outcomes })).body,
+        )
+        const [thread] = loaded.threads
+        if (thread === undefined || !RuntimeHistoryResult.guards.Loaded(thread))
+          return yield* Effect.die('History refused')
+        expect(thread.deliveries.map((row) => row.requestId)).toEqual([
+          'first',
+          'joined',
+          'failed',
+          'stopped',
+        ])
+        const [host, joined, failed, stopped] = thread.deliveries
+        if (
+          host === undefined ||
+          joined === undefined ||
+          failed === undefined ||
+          stopped === undefined
+        )
+          return yield* Effect.die('Host absent')
+        for (const receipt of thread.deliveries) {
+          const actual = yield* settled(runtime, ada, threadId, receipt.submissionId)
+          if (receipt.requestId === 'failed')
+            expect(actual).toEqual(
+              RuntimeSettlement.cases.Failed.make({ failure: 'RateLimited', status: 429 }),
+            )
+          else if (receipt.requestId === 'stopped')
+            expect(actual).toEqual(RuntimeSettlement.cases.Stopped.make({}))
+          else
+            expect(actual).toEqual(
+              RuntimeSettlement.cases.Done.make({
+                answeredBy: host.submissionId,
+                reply: 'Both answered',
+                toolCalls: 0,
+              }),
+            )
+        }
+        given.faux.setResponses([fauxAssistantMessage('A live answer')])
+        const live = yield* admit(
+          runtime,
+          ada,
+          delivery(threadId, 'live-delivery', { body: 'New words' }),
+        )
+        expect(yield* settled(runtime, ada, threadId, live.submissionId)).toEqual(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: live.submissionId,
+            reply: 'A live answer',
+            toolCalls: 0,
+          }),
+        )
+        const page = yield* runtime.send(`/persons/${ada}/threads/${threadId}/state`, {
+          method: 'GET',
+        })
+        const state = yield* decodeState(page.body)
+        expect(state.working).toBe(false)
+        expect(state.queued).toBe(0)
+        expect(state.settlements).toEqual([
+          {
+            submissionId: String(host.submissionId),
+            answeredBy: String(host.submissionId),
+            outcome: 'completed',
+          },
+          {
+            submissionId: String(joined.submissionId),
+            answeredBy: String(host.submissionId),
+            outcome: 'completed',
+          },
+          { submissionId: String(failed.submissionId), outcome: 'failed' },
+          { submissionId: String(stopped.submissionId), outcome: 'aborted' },
+          {
+            submissionId: String(live.submissionId),
+            answeredBy: String(live.submissionId),
+            outcome: 'completed',
+          },
+        ])
+        expect(state.messages).toContainEqual(
+          expect.objectContaining({
+            purpose: 'assistant',
+            submissionId: String(live.submissionId),
+            parts: [expect.objectContaining({ text: 'A live answer' })],
+          }),
+        )
+        expect(state.messages).toContainEqual(
+          expect.objectContaining({
+            purpose: 'user',
+            parts: [expect.objectContaining({ text: 'Unsettled words' })],
+          }),
+        )
+        return undefined
+      }),
+    ),
 )

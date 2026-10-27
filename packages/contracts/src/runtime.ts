@@ -233,7 +233,7 @@ export const RuntimeHistoryThread = Schema.Struct({
 export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
 export const RuntimeHistoryBody = Schema.Struct({
   threads: Schema.Array(RuntimeHistoryThread),
-  notes: Schema.Array(Note),
+  notes: Schema.Array(Schema.Struct({ ...Note.fields, updatedAt: Schema.Finite })),
 })
 export type RuntimeHistoryBody = typeof RuntimeHistoryBody.Type
 

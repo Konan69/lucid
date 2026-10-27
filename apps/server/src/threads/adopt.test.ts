@@ -14,7 +14,13 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { StoredRunOrigin } from './conversation.ts'
-import { adoptRuns } from './adopt.ts'
+import {
+  HistoryThreadMissing,
+  HistoryCreatorMismatch,
+  HistoryMapDuplicate,
+  HistoryReceiptMismatch,
+  adoptRuns,
+} from './adopt.ts'
 import { RunStore, runStoreLayer } from './runs.ts'
 import { runs, threads } from './tables.ts'
 
@@ -72,6 +78,26 @@ layer(runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)))((it) => {
             }),
           },
         ])
+        const [mapped] = map
+        if (mapped === undefined) return yield* Effect.die('Map fixture absent')
+        expect(
+          yield* adoptRuns([{ ...mapped, threadId: ThreadId.make('unknown-thread') }]).pipe(
+            Effect.flip,
+          ),
+        ).toBeInstanceOf(HistoryThreadMissing)
+        expect(
+          yield* adoptRuns([{ ...mapped, personId: PersonId.make('another-person') }]).pipe(
+            Effect.flip,
+          ),
+        ).toBeInstanceOf(HistoryCreatorMismatch)
+        expect(yield* adoptRuns([mapped, mapped]).pipe(Effect.flip)).toBeInstanceOf(
+          HistoryMapDuplicate,
+        )
+        expect(
+          yield* adoptRuns([
+            { ...mapped, deliveries: [...mapped.deliveries, ...mapped.deliveries] },
+          ]).pipe(Effect.flip),
+        ).toBeInstanceOf(HistoryMapDuplicate)
         expect(yield* adoptRuns(map)).toBeGreaterThanOrEqual(3)
         const read = database.run(
           database.select().from(runs).where(eq(runs.threadId, threadId)).orderBy(runs.turn),
@@ -90,6 +116,14 @@ layer(runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)))((it) => {
         expect(ended.map((run) => run.state._tag)).toEqual(['Completed', 'Completed', 'Unknown'])
         yield* store.working
         expect(yield* store.list(threadId)).toEqual(ended)
+        yield* database.run(
+          database
+            .update(runs)
+            .set({ receipt: { runId: 'another-run', submissionId: '7' } })
+            .where(eq(runs.threadId, threadId)),
+        )
+        expect(yield* adoptRuns(map).pipe(Effect.flip)).toBeInstanceOf(HistoryReceiptMismatch)
+        return undefined
       }).pipe(Effect.scoped),
     )
   })
