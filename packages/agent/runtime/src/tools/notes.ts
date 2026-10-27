@@ -20,12 +20,15 @@ import { TOOL_LIST_LIMIT, TOOL_TEXT_LIMIT } from './result.ts'
 import { summary, text } from './inputs.ts'
 import type { RunNote } from './scope.ts'
 
-const file = v.pipe(v.string(), v.regex(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u))
+const addressMessage = `Standing pages use their layer name as the file name: ${StandingLayer.literals.map((layer) => `${layer}/${layer}.md`).join(', ')}. Ordinary facts use layer memory and a descriptive Markdown basename without a layer prefix.`
+const file = v.pipe(
+  v.string(),
+  v.regex(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u),
+  v.description(addressMessage),
+)
 const layer = v.optional(v.picklist(MemoryLayer.literals), 'memory')
 const revision = v.pipe(v.number(), v.integer(), v.minValue(0))
 const validAddress = Schema.is(NoteAddress)
-const addressMessage =
-  'Standing pages use their layer name as the file name, for example soul/soul.md.'
 
 const writeInput = v.pipe(
   v.object({
