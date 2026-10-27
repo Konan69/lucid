@@ -39,14 +39,22 @@ const rowButton = `Array.from(document.querySelectorAll('[role="dialog"] div')).
 /** Notifications every registration of this origin is showing, as plain values. */
 const shown = `navigator.serviceWorker.getRegistrations().then(all => Promise.all(all.map(r => r.getNotifications()))).then(lists => lists.flat().map(n => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })))`
 
-/** Grants this origin notifications through Chrome's own permission API, as a Person's Allow does. */
+/**
+ * Grants this origin notifications through Chrome's own permission API, as a Person's Allow does.
+ * agent-browser keeps its tabs in a browser context of its own, so the grant names the context of
+ * the owned tab; a grant to the default context would leave this page unanswered.
+ */
 async function grant(state, run) {
   const address = (await run(['get', 'cdp-url'])).trim().replace(/^"|"$/gu, '')
   const browser = await connect(address)
   try {
+    const { targetInfos } = await browser.send('Target.getTargets')
+    const page = targetInfos.find((t) => t.type === 'page' && t.url.startsWith(state.web))
+    NodeAssert.ok(page, 'Missing owned browser tab')
     await browser.send('Browser.grantPermissions', {
       origin: new URL(state.web).origin,
       permissions: ['notifications'],
+      browserContextId: page.browserContextId,
     })
   } finally {
     browser.close()
@@ -64,12 +72,18 @@ export async function pushBrowser(state, id, directory, { run, capture }) {
   await grant(state, run)
   await run(['open', state.web + '/t/' + id + '?settings=general'])
   await run(['wait', '--fn', `Boolean(${rowButton})`])
+  NodeAssert.equal(
+    Result.getOrThrow(decodeLabel(await run(['eval', 'Notification.permission']))),
+    'granted',
+    'The grant must reach the page before it reads this browser',
+  )
   await capture('row-off')
   NodeAssert.equal(
     Result.getOrThrow(decodeLabel(await run(['eval', `${rowButton}.innerText`]))),
     'Turn on',
   )
-  await run(['eval', `${rowButton}.click()`])
+  // A real press: the browser takes a permission question only inside a user gesture.
+  await run(['find', 'role', 'button', 'click', '--name', 'Turn on', '--exact'])
   // The machine reads On once the server has the subscription: the row then offers Turn off.
   await run(['wait', '--fn', `${rowButton}?.innerText === 'Turn off' && !${rowButton}.disabled`])
   await capture('row-on')
@@ -120,7 +134,7 @@ export async function pushBrowser(state, id, directory, { run, capture }) {
   // Turning off removes the target and the subscription; a reload stays off.
   await run(['open', state.web + '/t/' + id + '?settings=general'])
   await run(['wait', '--fn', `${rowButton}?.innerText === 'Turn off' && !${rowButton}.disabled`])
-  await run(['eval', `${rowButton}.click()`])
+  await run(['find', 'role', 'button', 'click', '--name', 'Turn off', '--exact'])
   await run(['wait', '--fn', `${rowButton}?.innerText === 'Turn on' && !${rowButton}.disabled`])
   await run(['reload'])
   await run(['wait', '--fn', `${rowButton}?.innerText === 'Turn on' && !${rowButton}.disabled`])
