@@ -1,4 +1,4 @@
-import { Effect, Schema, Stream } from 'effect'
+import { Effect, Schedule, Schema, Stream } from 'effect'
 import {
   InvalidAttachment,
   MessageAttachment,
@@ -20,7 +20,7 @@ import { RunStore } from './runs.ts'
 
 const encodePictures = Schema.encodeEffect(Schema.toCodecJson(Schema.Array(MessageAttachment)))
 
-/** Every new link checks current session and audience before pulling any runtime frame. */
+/** Keep a public watch open across owner loss, with access checks covering every runtime link. */
 export const watchConversation = ({ threadId }: { readonly threadId: ThreadId }) =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -29,7 +29,20 @@ export const watchConversation = ({ threadId }: { readonly threadId: ThreadId })
         return yield* new Forbidden({ message: 'Only a signed-in Person can watch' })
       const thread = yield* requireThread(threadId, auth.person.id)
       const runtime = yield* Runtime
-      return authorized(runtime.watch(thread.personId, thread.id), thread, {
+      // Every reopened runtime link starts with Whole. Use the client's reconnect pacing while
+      // celld finds the successor; authorization stays outside recovery so removal interrupts it.
+      const frames = runtime.watch(thread.personId, thread.id).pipe(
+        Stream.retry(($) =>
+          $(
+            Schedule.min([Schedule.exponential('1500 millis'), Schedule.spaced('30 seconds')]),
+          ).pipe(
+            Schedule.while(({ input }) => input._tag === 'RuntimeUnavailable'),
+            Schedule.jittered,
+          ),
+        ),
+        Stream.repeat(Schedule.spaced('1500 millis').pipe(Schedule.jittered)),
+      )
+      return authorized(frames, thread, {
         personId: auth.person.id,
         sessionId: auth.sessionId,
       })
