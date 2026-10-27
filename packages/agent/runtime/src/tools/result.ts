@@ -16,7 +16,7 @@ import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
-import type { NoteConflict, NoteMissing, NotesUnavailable } from '../notes.ts'
+import type { NoteConflict, NoteMissing, NotesUnavailable, NoteSearchInvalid } from '../notes.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
@@ -34,6 +34,7 @@ export type ToolFailure =
   | NoteConflict
   | NoteMissing
   | NotesUnavailable
+  | NoteSearchInvalid
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -198,6 +199,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
       NotesUnavailable: () =>
         failure(
           'Your notes cannot be read or changed right now; say so, and do not claim it is saved.',
+        ),
+      NoteSearchInvalid: () =>
+        failure(
+          'The memory search expression is invalid. Use FTS5 words, quoted phrases or prefix* and correct any unmatched quotes.',
         ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),

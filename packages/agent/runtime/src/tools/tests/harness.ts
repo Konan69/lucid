@@ -153,6 +153,7 @@ export function nativeTool(tool: ToolRegistration) {
 export const unusedNotes: Notes['Service'] = Notes.of({
   index: () => Effect.die('Unexpected note index'),
   list: () => Effect.die('Unexpected note listing'),
+  search: () => Effect.die('Unexpected note search'),
   read: () => Effect.die('Unexpected note read'),
   write: () => Effect.die('Unexpected note write'),
   delete: () => Effect.die('Unexpected note delete'),

@@ -9,6 +9,7 @@ import {
   NoteReadResult,
   NoteWriteResult,
   NoteDeleteResult,
+  NoteSearchResult,
 } from '@vivid/agent-runtime/notes'
 import {
   PersonId,
@@ -18,8 +19,10 @@ import {
   NoteRetraction,
   NoteListing,
   NotePage,
+  NoteSearch,
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261027123834_memory/migration.sql'
+import searchMigration from './memory/migrations/20261027133147_memory-search/migration.sql'
 import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
@@ -40,6 +43,7 @@ interface PersonStub {
   fetch(request: Request): Promise<Response>
   noteIndex(): Promise<NoteIndex>
   listNotes(listing: NoteListing): Promise<NotePage>
+  searchNotes(search: NoteSearch): Promise<typeof NoteSearchResult.Encoded>
   readNote(address: NoteAddress): Promise<typeof NoteReadResult.Encoded>
   writeNote(write: NoteWrite): Promise<typeof NoteWriteResult.Encoded>
   deleteNote(retraction: NoteRetraction): Promise<typeof NoteDeleteResult.Encoded>
@@ -57,12 +61,14 @@ interface Environment {
 const HEARTBEAT = 60_000
 const decodePerson = Schema.decodeUnknownEffect(PersonId)
 const decodeListing = Schema.decodeUnknownEffect(NoteListing)
+const decodeSearch = Schema.decodeUnknownEffect(NoteSearch)
 const decodeAddress = Schema.decodeUnknownEffect(NoteAddress)
 const decodeWrite = Schema.decodeUnknownEffect(NoteWrite)
 const decodeRetraction = Schema.decodeUnknownEffect(NoteRetraction)
 const encodeRead = Schema.encodeEffect(NoteReadResult)
 const encodeWrite = Schema.encodeEffect(NoteWriteResult)
 const encodeRetraction = Schema.encodeEffect(NoteDeleteResult)
+const encodeSearch = Schema.encodeEffect(NoteSearchResult)
 const personOption = Schema.decodeUnknownOption(PersonId)
 /** One celld cell owns all Threads created by one Person, their Harness, and their notes. */
 export class Person {
@@ -85,7 +91,10 @@ export class Person {
     if (current === null || current > fallback) await this.#state.storage.setAlarm(fallback)
     const personId = await Effect.runPromise(decodePerson(this.#state.id.name))
     const notes = await Effect.runPromise(
-      openNotes(new DurableObjectSqliteDatabase(this.#state.storage), memoryMigration),
+      openNotes(new DurableObjectSqliteDatabase(this.#state.storage), [
+        memoryMigration,
+        searchMigration,
+      ]),
     )
     const bound = Notes.of({
       index: (person) =>
@@ -96,6 +105,13 @@ export class Person {
         person === personId
           ? notes.list(listing)
           : this.#remote(() => environment.PERSONS.getByName(person).listNotes(listing), NotePage),
+      search: (person, search) =>
+        person === personId
+          ? notes.search(search)
+          : this.#remote(
+              () => environment.PERSONS.getByName(person).searchNotes(search),
+              NoteSearchResult,
+            ).pipe(Effect.flatMap(Effect.fromResult)),
       read: (person, address) =>
         person === personId
           ? notes.read(address)
@@ -194,6 +210,19 @@ export class Person {
       decodeListing(listing).pipe(
         Effect.flatMap((value) => notes.list(value)),
         Effect.mapError(() => NotesUnavailable.make({})),
+      ),
+    )
+  }
+  /** Preserve invalid-query errors through native RPC so the model can correct its expression. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
+  async searchNotes(search: NoteSearch) {
+    const { notes } = await this.#ready
+    return Effect.runPromise(
+      decodeSearch(search).pipe(
+        Effect.flatMap((value) => notes.search(value)),
+        Effect.catchTag('SchemaError', () => Effect.fail(NotesUnavailable.make({}))),
+        Effect.result,
+        Effect.flatMap(encodeSearch),
       ),
     )
   }

@@ -40,12 +40,16 @@ describe('layered personal memory', () => {
           (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
         )
         const migration = yield* Effect.tryPromise(() =>
-          NodeFSP.readFile(
-            new URL(
-              '../../../../apps/cells/src/memory/migrations/20261027123834_memory/migration.sql',
-              import.meta.url,
+          Promise.all(
+            ['20261027123834_memory', '20261027133147_memory-search'].map((name) =>
+              NodeFSP.readFile(
+                new URL(
+                  `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
+                  import.meta.url,
+                ),
+                'utf8',
+              ),
             ),
-            'utf8',
           ),
         )
         const path = NodePath.join(directory, 'person.sqlite')

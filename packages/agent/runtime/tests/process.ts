@@ -183,15 +183,19 @@ const bytesOf = Effect.fn('RuntimeFixture.bytesOf')(function* (
   }
 })
 
-/** Fixtures apply the same generated SQL that the cell bundles, on their disposable native database. */
+/** Fixtures apply the same ordered cell migrations to disposable native SQLite. */
 const memoryMigration = Effect.tryPromise({
   try: () =>
-    NodeFSP.readFile(
-      new URL(
-        '../../../../apps/cells/src/memory/migrations/20261027123834_memory/migration.sql',
-        import.meta.url,
+    Promise.all(
+      ['20261027123834_memory', '20261027133147_memory-search'].map((name) =>
+        NodeFSP.readFile(
+          new URL(
+            `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
+            import.meta.url,
+          ),
+          'utf8',
+        ),
       ),
-      'utf8',
     ),
   catch: () => new FixtureFailed(),
 })
@@ -214,6 +218,8 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
       Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.index())),
     list: (person, listing) =>
       Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.list(listing))),
+    search: (person, search) =>
+      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.search(search))),
     read: (person, file) =>
       Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.read(file))),
     write: (person, write) =>

@@ -107,6 +107,28 @@ export const NotePage = Schema.Struct({
 })
 export type NotePage = typeof NotePage.Type
 
+/** Search pages follow native FTS5 relevance order within one Person's memory. */
+export const NoteSearch = Schema.Struct({
+  query: Schema.NonEmptyString.check(Schema.isPattern(/\S/u)),
+  layer: Schema.NullOr(MemoryLayer),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  limit: NoteListing.fields.limit,
+})
+export type NoteSearch = typeof NoteSearch.Type
+export const NoteHit = Schema.Struct({ ...NoteLine.fields, excerpt: Schema.String })
+export const NoteSearchPage = Schema.Struct({
+  entries: Schema.Array(NoteHit),
+  nextOffset: Schema.NullOr(NoteSearch.fields.offset),
+})
+export type NoteSearchPage = typeof NoteSearchPage.Type
+
+/** The model can correct an FTS expression; unavailable storage requires different handling. */
+export class NoteSearchInvalid extends Schema.TaggedError<NoteSearchInvalid>()(
+  'NoteSearchInvalid',
+  {},
+  { title: 'Invalid memory search expression' },
+) {}
+
 /** Full standing pages and a derived index form the existing single response snapshot. */
 export const NoteIndex = Schema.Struct({
   standing: Schema.Array(SavedNote),

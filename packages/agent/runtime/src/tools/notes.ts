@@ -11,6 +11,7 @@ import {
   NoteRetraction,
   NoteListing,
   NoteCursor,
+  NoteSearch,
 } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
@@ -149,11 +150,54 @@ function listNotes(runTool: RunNote) {
   })
 }
 
+/** Native FTS5 syntax supports terms, quoted phrases and prefixes without another retrieval service. */
+function searchNotes(runTool: RunNote) {
+  return defineTool({
+    name: Tool.search_notes,
+    description:
+      'Search stored Markdown across memory layers with SQLite FTS5. Use words, "quoted phrases", prefix*, AND/OR/NOT. Results are ranked excerpts. Read bodies with read_note; continue with next_offset using the same query and layer.',
+    input: v.object({
+      summary,
+      query: v.pipe(
+        v.string(),
+        v.minLength(1),
+        v.check((value) => value.trim().length > 0),
+      ),
+      layer: v.optional(v.nullable(v.picklist(MemoryLayer.literals)), null),
+      offset: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0)), 0),
+      limit: v.optional(
+        v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(TOOL_LIST_LIMIT)),
+        TOOL_LIST_LIMIT,
+      ),
+    }),
+    run({ data, signal }) {
+      return runTool(
+        (authority) =>
+          Effect.gen(function* () {
+            const notes = yield* Notes
+            const page = yield* notes.search(
+              authority.actor,
+              NoteSearch.make({
+                query: data.query,
+                layer: data.layer,
+                offset: data.offset,
+                limit: data.limit,
+              }),
+            )
+            return { output: { entries: page.entries, next_offset: page.nextOffset } }
+          }),
+        { signal, tool: 'search_notes' },
+      )
+    },
+  })
+}
+
 /** Existing note verbs address all layers. The host, not arguments, supplies source and actor. */
 export function noteTools(runTool: RunNote) {
   return [
     readNote(runTool),
     listNotes(runTool),
+    searchNotes(runTool),
     defineTool({
       name: Tool.write_note,
       description:

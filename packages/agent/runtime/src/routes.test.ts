@@ -165,11 +165,15 @@ describe('the runtime over HTTP', () => {
             fauxToolCall('list_notes', { summary: 'Find saved plans', layer: 'memory', limit: 1 }),
             { stopReason: 'toolUse' },
           ),
+          fauxAssistantMessage(
+            fauxToolCall('search_notes', { summary: 'Find the lasting detail', query: 'lasting' }),
+            { stopReason: 'toolUse' },
+          ),
           fauxAssistantMessage('Read the complete plan.'),
         ])
         const receipt = yield* admit(runtime, ada, delivery('long-memory', 'long-note'))
         expect(yield* settled(runtime, ada, 'long-memory', receipt.submissionId)).toMatchObject({
-          toolCalls: 4,
+          toolCalls: 5,
           reply: 'Read the complete plan.',
         })
         const response = yield* runtime.send(`${threadPath(ada, 'long-memory')}/state`, {
@@ -177,6 +181,20 @@ describe('the runtime over HTTP', () => {
         })
         const state = yield* decodeState(response.body)
         const parts = state.messages.flatMap((message) => message.parts)
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'search_notes',
+            output: {
+              entries: [
+                expect.objectContaining({
+                  file: 'plan.md',
+                  excerpt: expect.stringContaining('lasting'),
+                }),
+              ],
+              next_offset: null,
+            },
+          }),
+        )
         expect(parts).toContainEqual(
           expect.objectContaining({
             toolName: 'list_notes',

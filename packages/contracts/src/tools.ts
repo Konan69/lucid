@@ -32,6 +32,7 @@ export const ToolName = Schema.Literals([
   'run_code',
   'save_skill',
   'search_library',
+  'search_notes',
   'stop_watching',
   'suggest_replies',
   'test_integration',

@@ -112,6 +112,7 @@ const STEPS = {
   // These tools already render as unknown steps. Total coverage must preserve those words.
   read_note: UNKNOWN,
   list_notes: UNKNOWN,
+  search_notes: UNKNOWN,
   write_note: UNKNOWN,
   delete_note: UNKNOWN,
   make_integration: UNKNOWN,

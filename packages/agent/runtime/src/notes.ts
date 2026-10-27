@@ -13,6 +13,10 @@ import {
   NoteLine,
   NoteCursor,
   NotePage,
+  NoteHit,
+  NoteSearchInvalid,
+  NoteSearchPage,
+  type NoteSearch,
   SavedNote,
   type NoteListing,
   type NoteWrite,
@@ -21,7 +25,15 @@ import {
 } from '@vivid/contracts'
 import { Context, Effect, Schema } from 'effect'
 
-export { Note, NoteFile, NoteIndex, NoteLine, NoteAddress, NoteConflict } from '@vivid/contracts'
+export {
+  Note,
+  NoteFile,
+  NoteIndex,
+  NoteLine,
+  NoteAddress,
+  NoteConflict,
+  NoteSearchInvalid,
+} from '@vivid/contracts'
 
 /** Failed persistence never means the Person has no memories. */
 export class NotesUnavailable extends Schema.TaggedError<NotesUnavailable>()(
@@ -48,6 +60,10 @@ interface NotesService {
     person: PersonId,
     listing: NoteListing,
   ) => Effect.Effect<NotePage, NotesUnavailable>
+  readonly search: (
+    person: PersonId,
+    search: NoteSearch,
+  ) => Effect.Effect<NoteSearchPage, NoteSearchInvalid | NotesUnavailable>
   readonly read: (
     person: PersonId,
     address: NoteAddress,
@@ -72,6 +88,7 @@ const Row = Schema.Struct({
 })
 const decodeNote = Schema.decodeUnknownEffect(Row)
 const decodeLines = Schema.decodeUnknownEffect(Schema.Array(NoteLine))
+const decodeHits = Schema.decodeUnknownEffect(Schema.Array(NoteHit))
 const encodeAuthority = Schema.encodeEffect(storedAuthority)
 const RevisionRow = Schema.Struct({ revision: MemoryRevision })
 const decodeRevision = Schema.decodeUnknownEffect(RevisionRow)
@@ -163,6 +180,35 @@ const list = Effect.fn('Notes.list')(function* (database: SqliteDatabase, listin
   const last = entries.at(-1)
   const next = lines.length > listing.limit && last !== undefined ? NoteCursor.make(last) : null
   return NotePage.make({ entries, next })
+})
+
+/** MATCH stays a bound parameter. Native rank/snippet handle retrieval without copying bodies into the prompt. */
+const search = Effect.fn('Notes.search')(function* (database: SqliteDatabase, input: NoteSearch) {
+  const rows = yield* Effect.tryPromise({
+    try: () =>
+      database.all<object>(
+        `SELECT n.layer, n.file, n.kind, n.description, n.basis, n.revision,
+          n.updated_at AS updatedAt, snippet(memory_search, 2, '', '', '…', 64) AS excerpt
+        FROM memory_search JOIN memory_notes n ON n.rowid = memory_search.rowid
+        WHERE memory_search MATCH ? AND n.body IS NOT NULL AND (? IS NULL OR n.layer = ?)
+        ORDER BY memory_search.rank, n.layer, n.file LIMIT ? OFFSET ?`,
+        input.query,
+        input.layer,
+        input.layer,
+        input.limit + 1,
+        input.offset,
+      ),
+    // SQLite's FTS parser emits these diagnostics before executing the read; other failures remain storage failures.
+    catch: (cause) =>
+      cause instanceof Error && /fts5: syntax error|unterminated string/u.test(cause.message)
+        ? NoteSearchInvalid.make({})
+        : NotesUnavailable.make({}),
+  })
+  const hits = yield* decodeHits(rows).pipe(Effect.mapError(() => NotesUnavailable.make({})))
+  return NoteSearchPage.make({
+    entries: hits.slice(0, input.limit),
+    nextOffset: hits.length > input.limit ? input.offset + input.limit : null,
+  })
 })
 
 /** An absent body is a local retraction, distinct from unavailable storage. */
@@ -275,22 +321,20 @@ const retract = Effect.fn('Notes.delete')(function* (
   if (result.outcome === 'missing') return yield* NoteMissing.make({ address, revision: actual })
 })
 /**
- * Drizzle generates the supplied SQL. Chord applies it atomically on the same queue as Pi,
- * with a distinct ledger. No driver, direct storage access or hand-authored DDL is needed.
+ * Chord applies ordered migrations on the same queue as Pi, with a distinct ledger. The base
+ * table is Drizzle-generated; the owner approved the native FTS5 migration on 27 October 2026.
  */
 export const openNotes = Effect.fn('Notes.open')(function* (
   database: SqliteDatabase,
-  migration: string,
+  migrations: ReadonlyArray<string>,
 ) {
   yield* attempt(() =>
     applySqliteMigrations(
       database,
-      [
-        {
-          version: 1,
-          statements: migration.split('--> statement-breakpoint'),
-        },
-      ],
+      migrations.map((migration, ordinal) => ({
+        version: ordinal + 1,
+        statements: migration.split('--> statement-breakpoint'),
+      })),
       { table: 'memory_migrations' },
     ),
   )
@@ -298,6 +342,7 @@ export const openNotes = Effect.fn('Notes.open')(function* (
   return {
     index: () => index(database),
     list: (listing: NoteListing) => list(database, listing),
+    search: (input: NoteSearch) => search(database, input),
     read: (address: NoteAddress) => read(database, address),
     write: (input: NoteWrite) => write(database, input),
     delete: (input: NoteRetraction) => retract(database, input),
@@ -313,4 +358,8 @@ export const NoteWriteResult = Schema.toCodecJson(
 )
 export const NoteDeleteResult = Schema.toCodecJson(
   Schema.Result(Schema.Boolean, Schema.Union([NoteConflict, NoteMissing, NotesUnavailable])),
+)
+
+export const NoteSearchResult = Schema.toCodecJson(
+  Schema.Result(NoteSearchPage, Schema.Union([NoteSearchInvalid, NotesUnavailable])),
 )
