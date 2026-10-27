@@ -38,49 +38,88 @@ import {
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
-    it.effect('unwatched sends become durable drafts while watched and contained writes run', () =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
-          const observed = yield* Observation
-          const gate = yield* Gate
-          const action = ProposedAction.make({
-            ...connectionAction,
-            summary: 'Send the signed NDA to Dami at dami@example.test',
-            target: ActionTarget.cases.Connection.make({
-              connectionId: ConnectionId.make('test-connection'),
-              account: 'Work mail',
-              tool: 'send_email',
-              input: { to: 'dami@example.test', body: 'Here is the signed NDA.' },
-            }),
-          })
-          const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
-          const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
-          const message = StoredRunOrigin.cases.Message.make({})
-          const contained = Review.cases.Reviewed.make({
-            asked: 0.95,
-            beyond: 0.1,
-            contained: 0.95,
-          })
-          for (const [origin, review, effect, allowRule, expected] of [
-            [watch, reviewed, 'write', false, 'ApprovalRequired'],
-            [message, reviewed, 'write', false, 'Allowed'],
-            [watch, Review.cases.Unreviewed.make({}), 'write', false, 'ApprovalRequired'],
-            [watch, contained, 'write', false, 'Allowed'],
-            [watch, reviewed, 'write', true, 'ApprovalRequired'],
-            [watch, contained, 'destructive', true, 'ApprovalRequired'],
-          ] as const) {
+    const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
+    const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
+    const message = StoredRunOrigin.cases.Message.make({})
+    const decision = StoredRunOrigin.cases.Decision.make({})
+    const unreviewed = Review.cases.Unreviewed.make({})
+    const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
+    for (const [name, place, origin, review, effect, allowRule, expected] of [
+      ['background send', 'Background', watch, reviewed, 'write', false, 'ApprovalRequired'],
+      ['watched send', 'Conversation', message, reviewed, 'write', false, 'Allowed'],
+      [
+        'unreviewed background send',
+        'Background',
+        watch,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      ['contained background write', 'Background', watch, contained, 'write', false, 'Allowed'],
+      [
+        'background send with Allow',
+        'Background',
+        watch,
+        reviewed,
+        'write',
+        true,
+        'ApprovalRequired',
+      ],
+      [
+        'background delete with Allow',
+        'Background',
+        watch,
+        contained,
+        'destructive',
+        true,
+        'ApprovalRequired',
+      ],
+      [
+        'expiry continuation',
+        'Background',
+        decision,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      [
+        'unresolved runtime origin',
+        'Background',
+        null,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      ['unreviewed watched send', 'Conversation', message, unreviewed, 'write', false, 'Allowed'],
+    ] as const) {
+      it.effect(`${name} is ${expected}`, () =>
+        Effect.gen(function* () {
+          const context = yield* Layer.build(trustTestServices)
+          return yield* Effect.gen(function* () {
+            const observed = yield* Observation
+            const gate = yield* Gate
+            const action = ProposedAction.make({
+              ...connectionAction,
+              summary: 'Send the signed NDA to Dami at dami@example.test',
+              target: ActionTarget.cases.Connection.make({
+                connectionId: ConnectionId.make('test-connection'),
+                account: 'Work mail',
+                tool: 'send_email',
+                input: { to: 'dami@example.test', body: 'Here is the signed NDA.' },
+              }),
+            })
             const test = yield* fixture()
             const database = yield* Database
             yield* database.run(
-              database
-                .update(threads)
-                .set({ place: 'Background' })
-                .where(eq(threads.id, test.personalId)),
+              database.update(threads).set({ place }).where(eq(threads.id, test.personalId)),
             )
-            yield* recordRuns(test.personalId, [
-              { id: 'acting', personId: test.personal.person.id, origin, working: true },
-            ])
+            if (origin !== null)
+              yield* recordRuns(test.personalId, [
+                { id: 'acting', personId: test.personal.person.id, origin, working: true },
+              ])
             if (allowRule)
               yield* (yield* RuleStore).create(test.personal, {
                 action: 'Send email',
@@ -101,11 +140,11 @@ layer(testDatabaseLayer)((it) => {
                 [['approval']],
               )
             }
-          }
-          expect(yield* Ref.get(observed.notices)).toEqual([])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
-    )
+            expect(yield* Ref.get(observed.notices)).toEqual([])
+          }).pipe(Effect.scoped, Effect.provide(context))
+        }),
+      )
+    }
 
     /** A Never is counted at its Gate, with no rule prose in telemetry. */
     it.effect('records the Gate refusal once with only action kinds', () => {

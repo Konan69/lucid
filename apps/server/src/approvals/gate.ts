@@ -6,7 +6,6 @@ import {
   RunId,
   ThreadId,
   NotFound,
-  unwatched,
   type Person,
   type ProposedAction,
   type Workspace,
@@ -14,7 +13,8 @@ import {
 import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
-import { actingRun, RunStore } from '../threads/runs.ts'
+import { actingRun } from '../threads/runs.ts'
+import { requireThread } from '../threads/access.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -197,20 +197,17 @@ export const gateLayer = Layer.effect(
     const audit = yield* Audit
     const reviewer = yield* Reviewer
     const database = yield* Database
-    const runs = yield* RunStore
-    /** Only containment authorizes background work, using the resolved Run rather than a newer delivery. */
+    /** Background Threads need containment even after expiry or without an admitted Run. */
     const checkUnwatched = Effect.fn('Gate.checkUnwatched')(function* (
       actor: Actor,
       action: ProposedAction,
       origin: ActionOrigin,
     ) {
-      if (action.effect === 'read' || ActionOrigin.guards.RuntimeThread(origin))
-        return Option.none()
-      const run = (yield* runs.list(origin.threadId)).find(
-        (candidate) => candidate.id === origin.runId,
+      if (action.effect === 'read') return Option.none()
+      const thread = yield* requireThread(origin.threadId, actor.person.id).pipe(
+        Effect.provideService(Database, database),
       )
-      if (run === undefined) return yield* new NotFound({ message: 'Acting Run not found' })
-      if (!unwatched(run.origin)) return Option.none()
+      if (thread.place !== 'Background') return Option.none()
       const review = yield* reviewer.review(actor, action)
       if (unwatchedOutcome(action.effect, review) === 'Ask')
         return Option.some<GateDecision>(yield* ask(approvals, actor, action))

@@ -51,7 +51,6 @@ import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { RuleJudge, RulesNotJudged } from '../rules/judge.ts'
 import { ruleStoreLayer } from '../rules/store.ts'
 import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
-import { runStoreLayer } from '../threads/runs.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
@@ -210,11 +209,9 @@ const ports = Layer.effectContext(
 const foundation = auditLayer.pipe(Layer.provideMerge(ports))
 const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
 /** Production stores over the test ports, for a test that composes the gate with other production Layers. */
-export const storeServices = Layer.mergeAll(
-  approvalStoreLayer,
-  inputStoreLayer,
-  runStoreLayer,
-).pipe(Layer.provideMerge(policy))
+export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
+  Layer.provideMerge(policy),
+)
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
 export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
 /** Complete fixtures remain available to suites that compose their own dependency graph. */
