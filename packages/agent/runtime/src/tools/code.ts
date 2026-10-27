@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import { Tool, BrowserAction, CodeFailure, CodeOutcome, ReadPageOutcome } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { CodeTiming, CodeToolTimeout } from '@vivid/contracts/code'

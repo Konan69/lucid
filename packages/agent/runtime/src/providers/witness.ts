@@ -146,7 +146,7 @@ function bearerOf(args: Parameters<FetchFunction>): Option.Option<string> {
 
 /**
  * A refusal's text with the request's own bearer value replaced, before anything keeps it. Pi
- * turns a refusal's body into the reply's `errorMessage`, which Flue persists in the conversation
+ * turns a refusal's body into the reply's `errorMessage`, which Pi Durable persists in the conversation
  * (`conversation-stream-store` stream events, the submission's settlement) and streams to every
  * client: a provider that echoes the key would otherwise put it in a Person's Thread.
  */

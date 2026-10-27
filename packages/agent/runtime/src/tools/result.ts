@@ -131,7 +131,7 @@ const session = Result.getOrThrow(
   ),
 )
 
-/** Only a successful Computer operation proves an active session. Flue's enclosing submission
+/** Only a successful Computer operation proves an active session. Pi's enclosing submission
  * identifies the Thread/Run; the receipt adds no owner handle or provider authority. The relay
  * checks the viewer's own cookie again, including when this receipt is read in a shared Thread.
  */

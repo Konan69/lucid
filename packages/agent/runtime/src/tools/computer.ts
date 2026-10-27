@@ -1,4 +1,5 @@
-import { useSandbox, type SandboxFactory } from '@flue/runtime'
+import { defineTool as durableTool } from '@earendil-works/pi-durable'
+import { executeCall, executionResult, toolResult } from './tool.ts'
 import { Type } from '@earendil-works/pi-ai'
 import {
   Tool,
@@ -148,15 +149,6 @@ function browserAction(input: typeof browseInput.Type.action): BrowserAction {
   )
 }
 
-/**
- * Mounts Vivid's Computer for this conversation: Flue's own file and shell tools on the real
- * machine, with `use_desktop`, `browse` and the Person's computer beside them. Nothing else is
- * registered. Availability and takeover still belong to the server.
- */
-export function mountComputer(runTool: RunTool, run: RunScoped) {
-  useSandbox(computerSandboxFactory(runTool, run))
-}
-
 const browseDescription =
   'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask for a page on their computer or in their browser; their desktop app must be connected. computer is its own field beside action, never inside it: { computer: "person", action: { kind: "open", address } }. Screenshot returns a picture. If approval is requested, stop and wait.'
 
@@ -178,93 +170,101 @@ const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
   Object.assign({}, desktopDocument.schema, { $defs: desktopDocument.definitions }),
 )
 
-/** Browse uses the same Flue native image path as use_desktop; screenshots never enter bounded JSON. */
+/** Browse uses the same Pi native image path as use_desktop; screenshots never enter bounded JSON. */
 export function browseModelTool(runTool: RunTool) {
-  return {
+  return durableTool({
     name: Tool.browse,
-    label: 'Browse',
     description: browseDescription,
     parameters: browserParameters,
+    outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
     /** The same Effect schema owns decoding and model parameters; the server owns authority. */
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Flue input is untrusted; decode the shared browser model schema.
-    execute(_call: string, input: unknown, signal?: AbortSignal) {
-      const parsed = decodeBrowse(input)
-      if (Result.isFailure(parsed))
-        return Promise.resolve({
-          content: [{ type: 'text' as const, text: 'The browser request is invalid.' }],
-          details: { ok: false },
-          terminate: false,
-        })
-      let picture = Option.none<string>()
-      const cancellation = signal === undefined ? new AbortController().signal : signal
-      return runTool(
-        browseProgram(parsed.success, (bytes) => {
-          picture = Option.some(bytes)
-        }),
-        {
-          signal: cancellation,
-          tool: 'browse',
-        },
-      ).then((result) => pictureResult(result, picture))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Pi input is untrusted; decode the shared browser model schema.
+    execute(input, _api, context) {
+      return executionResult(
+        executeCall(
+          (signal) => {
+            const parsed = decodeBrowse(input)
+            if (Result.isFailure(parsed))
+              return Promise.resolve({
+                content: [{ type: 'text' as const, text: 'The browser request is invalid.' }],
+                details: { ok: false },
+                terminate: false,
+              })
+            let picture = Option.none<string>()
+            return runTool(
+              browseProgram(parsed.success, (bytes) => {
+                picture = Option.some(bytes)
+              }),
+              {
+                signal,
+                tool: 'browse',
+              },
+            ).then((result) => pictureResult(result, picture))
+          },
+          context,
+          { name: 'browse' },
+        ).then((result) => toolResult('browse', result)),
+        context,
+      )
     },
-  }
+  })
 }
 
-/** Native AgentTool content preserves image bytes through Flue's model messages and attachment
+/** Native AgentTool content preserves image bytes through Pi's model messages and attachment
  * store. Ordinary defineTool would stringify them, and settle would truncate them to 4,000 chars.
  * Only bounded human metadata uses runTool; picture bytes travel separately in this invocation.
- * Flue 2.1 docs reference/sandbox-api; conversation-stream-store persistToolResultContent. */
+ * Pi stores image blocks in the tool-result transcript separately from display details. */
 export function desktopModelTool(runTool: RunTool) {
-  return {
+  return durableTool({
     name: Tool.use_desktop,
-    label: 'Use the Computer desktop',
     description:
       'Look at the Computer or use its pointer and keyboard. Every completed action returns a picture. If approval is requested, stop and wait.',
     parameters: desktopParameters,
+    outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
     /** Decode before RPC; capture only a successful receipt, after the server Gate and takeover check. */
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Flue adapter inputs are unknown; decode the authoritative RPC schema before any execution.
-    execute(_call: string, input: unknown, signal?: AbortSignal) {
-      const request = decodeDesktop(input)
-      if (Result.isFailure(request)) {
-        const refusal = {
-          content: [{ type: 'text' as const, text: 'The desktop request is invalid.' }],
-          details: { ok: false },
-          terminate: false,
-        }
-        return Promise.resolve(refusal)
-      }
-      let picture = Option.none<string>()
-      const cancellation = signal === undefined ? new AbortController().signal : signal
-      return runTool(
-        Effect.gen(function* () {
-          const { client } = yield* Scope
-          const outcome = yield* client.UseDesktop({
-            action: request.success.action,
-            summary: request.success.summary,
-          })
-          if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
-            yield* warnFailure('use_desktop', outcome._tag)
-          if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view.picture)
-          return desktopOutcome(outcome)
-        }),
-        { signal: cancellation, tool: 'use_desktop' },
-      ).then((result) => pictureResult(result, picture))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Pi adapter inputs are unknown; decode the authoritative RPC schema before any execution.
+    execute(input, _api, context) {
+      return executionResult(
+        executeCall(
+          (signal) => {
+            const request = decodeDesktop(input)
+            if (Result.isFailure(request)) {
+              const refusal = {
+                content: [{ type: 'text' as const, text: 'The desktop request is invalid.' }],
+                details: { ok: false },
+                terminate: false,
+              }
+              return Promise.resolve(refusal)
+            }
+            let picture = Option.none<string>()
+            return runTool(
+              Effect.gen(function* () {
+                const { client } = yield* Scope
+                const outcome = yield* client.UseDesktop({
+                  action: request.success.action,
+                  summary: request.success.summary,
+                })
+                if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
+                  yield* warnFailure('use_desktop', outcome._tag)
+                if (DesktopOutcome.guards.Completed(outcome))
+                  picture = Option.some(outcome.view.picture)
+                return desktopOutcome(outcome)
+              }),
+              { signal, tool: 'use_desktop' },
+            ).then((result) => pictureResult(result, picture))
+          },
+          context,
+          { name: 'use_desktop' },
+        ).then((result) => toolResult('use_desktop', result)),
+        context,
+      )
     },
-  }
+  })
 }
 
-/**
- * Flue's one machine slot holds the acting Person's real Computer (`sandbox.ts`). A factory's
- * `tools` replaces Flue's default six, so the list is those six built on that Computer, plus the
- * tools that return pictures: Flue passes image content to the model only from this list
- * (reference/sandbox-api, "SandboxToolFactory"). Flue resolves the factory once per submission;
- * the acting Person stays fixed while deliveries join that response (agents/vivid.ts).
- */
-export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
-  return {
-    createSandbox: () => Promise.resolve(computerSandbox(run, COMPUTER_HOME)),
-    tools: (sandbox) => [...machineTools(sandbox), ...pictureTools(runTool)],
-  } satisfies SandboxFactory
+/** The core registers these tools directly; Computer authority still belongs to the server. */
+export function computerTools(runTool: RunTool, run: RunScoped) {
+  return [...machineTools(computerSandbox(run, COMPUTER_HOME)), ...pictureTools(runTool)]
 }
 
 /** The tools whose results carry a picture. */

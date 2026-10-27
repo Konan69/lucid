@@ -1,3 +1,5 @@
+import { defineTool as durableTool } from '@earendil-works/pi-durable'
+import { executeCall, executionResult, toolResult } from './tool.ts'
 import { Type } from '@earendil-works/pi-ai'
 import {
   Tool,
@@ -102,34 +104,46 @@ const program = Effect.fn('ComputerTool.person')(function* (
   return { ...windowOutcome(outcome), computer: 'person' as const }
 })
 
-/** Same native Flue image adapter as use_desktop; window pictures never enter bounded JSON. */
+/** Same native Pi image adapter as use_desktop; window pictures never enter bounded JSON. */
 export function personComputerModelTool(runTool: RunTool) {
-  return {
+  return durableTool({
     name: Tool.use_person_computer,
-    label: 'Use the person’s computer',
     description: personComputerDescription,
     parameters,
-    /** The Flue boundary supplies unknown input and cancellation; decode before making any RPC. */
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Flue tool input is untrusted; Effect owns its ingress schema.
-    execute(_call: string, value: unknown, signal?: AbortSignal) {
-      const parsed = decode(value)
-      if (Result.isFailure(parsed))
-        return Promise.resolve(
-          pictureResult(
-            { output: { ok: false, message: 'The app request is invalid.' }, terminate: false },
-            Option.none(),
-          ),
-        )
-      let picture = Option.none<string>()
-      return runTool(
-        program(parsed.success, (bytes) => {
-          picture = Option.some(bytes)
-        }),
-        {
-          signal: signal === undefined ? new AbortController().signal : signal,
-          tool: 'use_person_computer',
-        },
-      ).then((result) => pictureResult(result, picture))
+    outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
+    /** The Pi boundary supplies unknown input and cancellation; decode before making any RPC. */
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Pi tool input is untrusted; Effect owns its ingress schema.
+    execute(value, _api, context) {
+      return executionResult(
+        executeCall(
+          (signal) => {
+            const parsed = decode(value)
+            if (Result.isFailure(parsed))
+              return Promise.resolve(
+                pictureResult(
+                  {
+                    output: { ok: false, message: 'The app request is invalid.' },
+                    terminate: false,
+                  },
+                  Option.none(),
+                ),
+              )
+            let picture = Option.none<string>()
+            return runTool(
+              program(parsed.success, (bytes) => {
+                picture = Option.some(bytes)
+              }),
+              {
+                signal,
+                tool: 'use_person_computer',
+              },
+            ).then((result) => pictureResult(result, picture))
+          },
+          context,
+          { name: 'use_person_computer' },
+        ).then((result) => toolResult('use_person_computer', result)),
+        context,
+      )
     },
-  }
+  })
 }

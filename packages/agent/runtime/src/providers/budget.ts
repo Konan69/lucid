@@ -1,36 +1,29 @@
 import type { ProviderStreams, StreamOptions } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import type { HarnessSettings } from '@earendil-works/pi-durable'
 import { Option } from 'effect'
 import { witness } from './witness.ts'
 
-/** Pi's Chat Completions adapter, which every provider Vivid declares speaks. */
+/** Both gateways speak Chat Completions; its lazy adapter loads only when a request needs it. */
 export const completions = openAICompletionsApi()
 
-/**
- * Pi 0.87.1 openai-completions retries only create(...).withResponse(), before emitting start
- * or consuming the stream. Its public options cover 5xx (including 520–524) and connection
- * failures, as well as 408/409/429 and provider retry headers; defaults are zero retries.
- * Allow two retries per Pi request. Source: unmeasured, bounds repeated pre-stream failures;
- * exhausted failures reach Flue. Pi's abortable backoff honors the request's AbortSignal.
- * maxRetryDelayMs: 0 is Pi's public opt-out from rejecting a provider's Retry-After value
- * (dist/utils/provider-retry.js, validateServerRetryDelayMs). Its abortableSleep clears the timer
- * and rejects on the caller's AbortSignal, including during a provider-requested delay.
- * Flue 2.2.2 useModel has no request options, so supply these at its public Provider API seam.
- * This adapter never replays a stream after assistant content or a tool delta. Flue separately
- * retries some failed turns up to three times, without a public content guard or retry option:
- * witness can replay an empty 400 once within each of three Pi attempts, at most six HTTP
- * requests per Pi request. Four Flue turn attempts can therefore make twenty-four HTTP requests
- * and replay partial output.
- */
+/** Pi owns abortable provider backoff; honor Retry-After without an arbitrary delay ceiling. */
 export const requestBudget = { maxRetries: 2, maxRetryDelayMs: 0 }
 
-/** Preserve caller options while the shared seam owns its bounded retries and HTTP evidence. */
-const budget = <Given extends Pick<StreamOptions, 'fetch'>>(options: Option.Option<Given>) =>
+/**
+ * Durable generation.js and compaction.js forward settings.stream into pi-ai. settings.retry
+ * instead owns durable generation attempts, whose default three retries preserve main's turn
+ * recovery. Keep those defaults and bound only HTTP establishment here. The witness separately
+ * replays one readable empty 400, so a request can still make up to six HTTP sends.
+ */
+export const settings = { stream: requestBudget } satisfies HarnessSettings
+
+/** Wrap only transport evidence; retry policy arrives from the Harness rather than the provider. */
+const observed = <Given extends Pick<StreamOptions, 'fetch'>>(options: Option.Option<Given>) =>
   Option.match(options, {
-    onNone: () => ({ ...requestBudget, fetch: witness(globalThis.fetch.bind(globalThis)) }),
+    onNone: () => ({ fetch: witness(globalThis.fetch.bind(globalThis)) }),
     onSome: (given) => ({
       ...given,
-      ...requestBudget,
       fetch: witness(
         Option.getOrElse(Option.fromUndefinedOr(given.fetch), () =>
           globalThis.fetch.bind(globalThis),
@@ -39,10 +32,10 @@ const budget = <Given extends Pick<StreamOptions, 'fetch'>>(options: Option.Opti
     }),
   })
 
-/** Both gateways witness the caller's fetch (or the platform fetch) at Pi's public request seam. */
-export const budgeted: ProviderStreams = {
+/** Both gateways witness the caller's fetch, or the platform fetch, at Pi's public request seam. */
+export const witnessed: ProviderStreams = {
   stream: (model, context, options) =>
-    completions.stream(model, context, budget(Option.fromUndefinedOr(options))),
+    completions.stream(model, context, observed(Option.fromUndefinedOr(options))),
   streamSimple: (model, context, options) =>
-    completions.streamSimple(model, context, budget(Option.fromUndefinedOr(options))),
+    completions.streamSimple(model, context, observed(Option.fromUndefinedOr(options))),
 }

@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import { Tool, PostOutcome } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'

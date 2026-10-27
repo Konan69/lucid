@@ -1,4 +1,9 @@
-import type { AssistantMessage, Context, ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
+import type {
+  AssistantMessage,
+  TranscriptContext as Context,
+  ToolCall,
+  ToolResultMessage,
+} from '@earendil-works/pi-ai'
 import {
   fauxAssistantMessage,
   fauxText,
