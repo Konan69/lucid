@@ -157,7 +157,7 @@ export async function settled(state, thread, count, terminal = 'Completed', dire
         if (packet._tag === 'Exit' && packet.exit._tag === 'Failure') throw new Error(line)
         if (packet._tag !== 'Chunk') continue
         for (const value of packet.values) {
-          const detail = decode(ThreadDetail, value)
+          const detail = decode(RpcSerialization.ndjson.codecFor(ThreadDetail), value)
           if (
             detail.runs.length === count &&
             detail.runs.every((run) => run.state._tag === terminal)

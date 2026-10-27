@@ -17,7 +17,7 @@ export function noteSteps() {
       prompt:
         'Please remember that I prefer meetings before noon, because afternoons are for writing.',
       change: 'write',
-      note: /before noon/iu,
+      note: /before (?:12:00 )?noon/iu,
       says: [],
     },
     {
