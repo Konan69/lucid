@@ -1,15 +1,20 @@
 import * as Effect from 'effect/Effect'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   BRIDGE_NAMESPACE,
   BRIDGE_INVOKE_CHANNEL,
+  BRIDGE_EVENT_CHANNEL,
   REPORTING_ARGUMENT,
   BridgeRequest,
   BridgeResponse,
+  BridgeEvent,
   type ColorSchemePreference,
+  DesktopNotification,
   type VividDesktopBridge,
   decodeBridgeResponse,
+  decodeBridgeEventResult,
   encodeBridgeRequest,
 } from '../shared/bridge.ts'
 import { SettingsSaveFailed } from '../shared/settings.ts'
@@ -75,6 +80,7 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     GoogleSignInEnded: answered,
     GoogleSignInCancelled: answered,
     ColorSchemeShown: answered,
+    NotificationShown: answered,
   })
 })
 
@@ -167,6 +173,29 @@ const showColorScheme = Effect.fn('DesktopPreload.showColorScheme')(function* (
   return yield* new UnexpectedBridgeResponse({})
 })
 
+const decodeNotification = Schema.decodeUnknownEffect(DesktopNotification)
+
+/** Asks the shell to show a notification; main decides whether its window is in front. */
+const showNotification = Effect.fn('DesktopPreload.showNotification')(function* (
+  value: DesktopNotification,
+) {
+  const notification = yield* decodeNotification(value)
+  const response = yield* invoke(BridgeRequest.cases.ShowNotification.make({ notification }))
+  if (BridgeResponse.guards.NotificationShown(response)) return undefined
+  return yield* new UnexpectedBridgeResponse({})
+})
+
+/** Who hears a pressed notification. The page subscribes once, as it loads. */
+const openedListeners = new Set<(opened: { readonly threadId: string | null }) => void>()
+
+// One decoded adapter for the event channel's notification events, as `pages.ts` has its own.
+ipcRenderer.on(BRIDGE_EVENT_CHANNEL, (_event, payload) => {
+  const result = decodeBridgeEventResult(payload)
+  if (Result.isFailure(result) || !BridgeEvent.guards.NotificationOpened(result.success)) return
+  const opened = { threadId: result.success.threadId }
+  for (const listener of openedListeners) listener(opened)
+})
+
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
   // Main says so by an argument on this process (`REPORTING_ARGUMENT`), read here once.
@@ -190,6 +219,15 @@ const bridge: VividDesktopBridge = {
     cancel: () => Effect.runPromise(cancelSignIn()),
   },
   colorScheme: { show: (preference) => Effect.runPromise(showColorScheme(preference)) },
+  notifications: {
+    show: (notification) => Effect.runPromise(showNotification(notification)),
+    onOpened: (listener) => {
+      openedListeners.add(listener)
+      return () => {
+        openedListeners.delete(listener)
+      }
+    },
+  },
 }
 // Preload limits the visible API; main independently checks the actual sender frame on every call.
 const chooserDocument =
@@ -205,5 +243,6 @@ contextBridge.exposeInMainWorld(
         device: bridge.device,
         signIn: bridge.signIn,
         colorScheme: bridge.colorScheme,
+        notifications: bridge.notifications,
       },
 )

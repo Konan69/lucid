@@ -6,6 +6,7 @@ import {
   BridgeResponse,
   InvalidBridgeMessage,
   type ColorSchemePreference,
+  type DesktopNotification,
   decodeBridgeRequest,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
@@ -27,6 +28,8 @@ export interface BridgeHandlers {
   readonly device: { readonly state: () => DeviceLink; readonly wake: () => void }
   /** Makes the look the Person chose the window's own scheme (`ColorSchemeController.show`). */
   readonly showColorScheme: (preference: ColorSchemePreference) => void
+  /** Shows a notification as the system's own, unless the window is in front (`notices.ts`). */
+  readonly showNotification: (notification: DesktopNotification) => void
   readonly settings: DesktopSettings['Service']
   readonly onServerChanged: (value: ServerSettings) => void
   readonly openExternal: (
@@ -118,6 +121,11 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
       Effect.sync(() => {
         handlers.showColorScheme(preference)
         return BridgeResponse.cases.ColorSchemeShown.make({})
+      }),
+    ShowNotification: ({ notification }) =>
+      Effect.sync(() => {
+        handlers.showNotification(notification)
+        return BridgeResponse.cases.NotificationShown.make({})
       }),
     Pages: ({ request: pagesRequest }) =>
       handlers.pages(pagesRequest).pipe(

@@ -91,6 +91,7 @@ describe('desktop server selection', () => {
             getAppVersion: () => '1.0.0',
             device: unlinked,
             showColorScheme: () => undefined,
+            showNotification: () => undefined,
             signIn: noSignIn,
             openExternal: () => Effect.void,
             pages: () => Effect.fail(new PageUnavailable({})),
