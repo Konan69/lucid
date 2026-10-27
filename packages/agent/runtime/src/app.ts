@@ -9,7 +9,6 @@ import {
   RuntimeAttachmentPath,
   RuntimeRefusal,
   RuntimeSettlement,
-  RuntimeSettlementSearch,
   RuntimeStopped,
   RuntimeSubmissionPath,
   RuntimeThreadPath,
@@ -24,12 +23,11 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
-import { Persons } from './persons.ts'
+import { Person, type PersonConversations } from './person.ts'
 import { isSubmissionId, settlement, submissionOf } from './response.ts'
 import { RuntimeSettings } from './settings.ts'
 import { frames, whole } from './state/link.ts'
 import { picture } from './state/pictures.ts'
-import type { StoreUnavailable } from './storage/errors.ts'
 import { conversationOf, pi, type PiRejected, type ThreadUnknown } from './threads.ts'
 
 /** The caller did not present the runtime token. */
@@ -69,14 +67,22 @@ const refuse = (error: RuntimeRefusal['error'], status: number) =>
 const authorize = Effect.fn('Runtime.authorize')(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
   const settings = yield* RuntimeSettings
-  const supplied = Buffer.from(
-    Option.getOrElse(Option.fromUndefinedOr(request.headers.authorization), () => ''),
+  if (
+    !isAuthorized(
+      Option.getOrElse(Option.fromUndefinedOr(request.headers.authorization), () => ''),
+      settings.token,
+    )
   )
-  const expected = Buffer.from(`Bearer ${Redacted.value(settings.token)}`)
-  if (supplied.length !== expected.length || !NodeCrypto.timingSafeEqual(supplied, expected))
     return yield* new Unauthorized()
   return yield* Effect.void
 })
+
+/** The Worker and the bound router enforce the same private credential boundary. */
+export const isAuthorized = (authorization: string, token: Redacted.Redacted) => {
+  const supplied = Buffer.from(authorization)
+  const expected = Buffer.from(`Bearer ${Redacted.value(token)}`)
+  return supplied.length === expected.length && NodeCrypto.timingSafeEqual(supplied, expected)
+}
 
 /**
  * Every refusal has one status and one tag; a cause never crosses, because a schema issue or a
@@ -99,7 +105,6 @@ const answered = <R>(
     | UnknownSubmission
     | ThreadUnknown
     | PiRejected
-    | StoreUnavailable
     | Schema.SchemaError
     | HttpServerError.HttpServerError
     | HttpBody.HttpBodyError,
@@ -116,11 +121,17 @@ const answered = <R>(
       ThreadUnknown: () => refuse('UnknownThread', 404),
       UnknownSubmission: () => refuse('UnknownSubmission', 404),
       PiRejected: () => unavailable('PiRejected'),
-      StoreUnavailable: () => unavailable('StoreUnavailable'),
     }),
     // Encoding one of the fixed bodies above cannot fail; this names what is sent if it ever does.
     Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 500 })),
   )
+
+/** A route may only address the Person whose native cell owns this router. */
+const bound = Effect.fn('Runtime.bound')(function* (path: RuntimeThreadPath) {
+  const person = yield* Person
+  if (person.personId !== path.personId) return yield* new WrongThread()
+  return person
+})
 
 /**
  * Admit one delivery. The body is the contract the server encodes with, so the two cannot drift.
@@ -134,8 +145,8 @@ const admission = Effect.fn('Runtime.admission')(function* () {
   const body = yield* HttpServerRequest.schemaBodyJson(RuntimeAdmissionBody)
   if (body.threadId !== path.threadId || body.initialData.creator !== path.personId)
     return yield* new WrongThread()
-  const persons = yield* Persons
-  const receipt = yield* persons.use(path.personId, (person) => admit(person, body))
+  const person = yield* bound(path)
+  const receipt = yield* admit(person, body)
   return yield* HttpServerResponse.schemaJson(RuntimeAdmissionReceipt)(receipt, { status: 202 })
 })
 
@@ -147,10 +158,8 @@ const admission = Effect.fn('Runtime.admission')(function* () {
 const stop = Effect.fn('Runtime.stop')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeThreadPath)
-  const persons = yield* Persons
-  const aborted = yield* persons.use(path.personId, ({ harness }) =>
-    stopThread(harness, path.threadId),
-  )
+  const person = yield* bound(path)
+  const aborted = yield* stopThread(person.harness, path.threadId)
   return yield* HttpServerResponse.schemaJson(RuntimeStopped)({ aborted })
 })
 
@@ -166,41 +175,26 @@ const stopThread = Effect.fn('Runtime.stopThread')(function* (
   return busy
 })
 
-/** How long a waiting settlement read is held before it answers `Pending` and the caller asks again. */
-const WAIT = '25 seconds'
-
-/**
- * The committed status of one submission. With `?wait` the request is held until the submission
- * settles, the caller goes away, or the bound passes; whichever ends the wait ends only the
- * wait. The Person's conversations stay open while a caller is waiting on them.
- */
+/** The terminal wait endpoint. Pi owns waiting and the request owns only its cancellation. */
 const settled = Effect.fn('Runtime.settled')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeSubmissionPath)
-  const search = yield* HttpServerRequest.schemaSearchParams(RuntimeSettlementSearch)
-  const persons = yield* Persons
-  const outcome = yield* persons.use(path.personId, ({ harness }) =>
-    readSettlement(harness, path, search.wait !== undefined),
-  )
+  const person = yield* bound(path)
+  const outcome = yield* readSettlement(person.harness, path)
   return yield* HttpServerResponse.schemaJson(RuntimeSettlement)(outcome)
 })
 
-/** Find the submission through its Thread, then read or wait for its settlement. */
+/** Resolve through the Thread before waiting, so another Thread's submission remains unknown. */
 const readSettlement = Effect.fn('Runtime.readSettlement')(function* (
   harness: Harness,
   path: RuntimeSubmissionPath,
-  wait: boolean,
 ) {
   const conversation = yield* conversationOf(harness, path.threadId)
   if (Option.isNone(conversation)) return yield* new UnknownThread()
   if (!isSubmissionId(path.submissionId)) return yield* new UnknownSubmission()
   const submission = yield* submissionOf(harness, conversation.value.id, path.submissionId)
   if (Option.isNone(submission)) return yield* new UnknownSubmission()
-  if (!wait) return yield* settlement(harness, submission.value, false)
-  return yield* settlement(harness, submission.value, true).pipe(
-    Effect.timeoutOption(WAIT),
-    Effect.map(Option.getOrElse(() => RuntimeSettlement.cases.Pending.make({}))),
-  )
+  return yield* settlement(harness, submission.value)
 })
 
 const encodeFrame = Schema.encodeEffect(
@@ -215,8 +209,8 @@ const HEARTBEAT = ': alive\n\n'
  * The heartbeat is merged in and ends with the frames, so a link the runtime has ended is seen
  * to end.
  */
-const stateEvents = (persons: Effect.Success<typeof Persons>, path: RuntimeThreadPath) =>
-  frames(persons, path.personId, path.threadId).pipe(
+const stateEvents = (person: PersonConversations, path: RuntimeThreadPath) =>
+  frames(person.harness, path.threadId).pipe(
     Stream.mapEffect((frame) => encodeFrame(frame)),
     Stream.map((json) => `data: ${json}\n\n`),
     Stream.merge(Stream.tick('15 seconds').pipe(Stream.drop(1), Stream.as(HEARTBEAT)), {
@@ -234,14 +228,14 @@ const state = Effect.fn('Runtime.state')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeThreadPath)
   const request = yield* HttpServerRequest.HttpServerRequest
-  const persons = yield* Persons
+  const person = yield* bound(path)
   const accept = request.headers.accept
   if (accept !== undefined && accept.includes('text/event-stream'))
-    return HttpServerResponse.stream(stateEvents(persons, path), {
+    return HttpServerResponse.stream(stateEvents(person, path), {
       contentType: 'text/event-stream',
       headers: { 'cache-control': 'no-store' },
     })
-  const current = yield* persons.use(path.personId, ({ harness }) => whole(harness, path.threadId))
+  const current = yield* whole(person.harness, path.threadId)
   return yield* HttpServerResponse.schemaJson(ConversationState)(current)
 })
 
@@ -249,14 +243,10 @@ const state = Effect.fn('Runtime.state')(function* () {
 const attachment = Effect.fn('Runtime.attachment')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeAttachmentPath)
-  const persons = yield* Persons
-  const found = yield* persons.use(path.personId, ({ harness }) =>
-    Effect.gen(function* () {
-      const conversation = yield* conversationOf(harness, path.threadId)
-      if (Option.isNone(conversation)) return yield* new UnknownThread()
-      return yield* picture(conversation.value, path.attachmentId)
-    }),
-  )
+  const person = yield* bound(path)
+  const conversation = yield* conversationOf(person.harness, path.threadId)
+  if (Option.isNone(conversation)) return yield* new UnknownThread()
+  const found = yield* picture(conversation.value, path.attachmentId)
   if (Option.isNone(found)) return yield* refuse('NotFound', 404)
   return HttpServerResponse.uint8Array(found.value.bytes, {
     contentType: found.value.mediaType,

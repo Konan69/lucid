@@ -1,10 +1,12 @@
-import type { Harness } from '@earendil-works/pi-durable'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import { LiveDoc, type Harness } from '@earendil-works/pi-durable'
+import { MemoryAuthority, MemorySource, MemoryTaskId } from '@vivid/contracts'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Layer, Option } from 'effect'
 import { NobodyToActFor, type ProductService } from './client.ts'
 import { answering } from './deliveries.ts'
 import { recoverAuthority, resolveAuthority, type DeliveryAuthority } from './delivery.ts'
-import { threadOf } from './threads.ts'
+import { pi, threadOf } from './threads.ts'
 import type { ToolFailure } from './tools/result.ts'
 import { Scope, type ResolveScope } from './tools/scope.ts'
 
@@ -67,4 +69,28 @@ export const resolveCall: (
         Effect.fail(nobody('The conversation could not be read to find who this is for.')),
       ),
     ),
+)
+
+/** Source the native Run from Pi's committed live document, not the model or the tool task id. */
+export const resolveMemoryCall: (
+  harness: Effect.Effect<Harness>,
+  product: ProductService,
+  call: Parameters<ResolveScope>[0],
+) => Effect.Effect<MemoryAuthority, ToolFailure> = Effect.fn('Authority.resolveMemoryCall')(
+  function* (harness, product, call) {
+    const { acting } = yield* resolveCall(harness, product, call)
+    const opened = yield* harness
+    const live = yield* pi(() =>
+      opened.snapshot(LiveDoc, call.conversationId, BACKGROUND_CONTEXT),
+    ).pipe(Effect.mapError(() => nobody('The source Run could not be read.')))
+    if (live === undefined || live.run === undefined)
+      return yield* nobody('There is no active Run behind this memory call.')
+    return MemoryAuthority.make({
+      actor: acting.personId,
+      source: MemorySource.cases.ThreadRun.make({
+        threadId: acting.threadId,
+        taskId: MemoryTaskId.make(live.run.taskId),
+      }),
+    })
+  },
 )

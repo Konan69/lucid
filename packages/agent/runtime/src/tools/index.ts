@@ -1,6 +1,6 @@
 import * as NodeAsyncHooks from 'node:async_hooks'
 import { Effect, type Layer } from 'effect'
-import type { PersonId } from '@vivid/contracts'
+import type { MemoryAuthority } from '@vivid/contracts'
 import type { Notes } from '../notes.ts'
 import type { ToolFailure } from './result.ts'
 import { defineTool as durableTool, type ToolRegistration } from '@earendil-works/pi-durable'
@@ -34,7 +34,7 @@ import { skillTools } from './skills.ts'
  * The core supplies its configured note directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
-  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<PersonId, ToolFailure>,
+  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryAuthority, ToolFailure>,
   notes: Notes['Service'],
 ): ToolRegistration[] {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()

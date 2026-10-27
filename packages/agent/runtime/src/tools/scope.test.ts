@@ -131,11 +131,6 @@ it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC ca
                     HttpServer.formatAddress((yield* HttpServer.HttpServer).address),
                   ),
                   token: Redacted.make('test-runtime-token'),
-                  notesDirectory: '/fixture/notes',
-                  databaseUrl: Redacted.make('postgres://fixture.invalid/conversations'),
-                  idleMillis: 600_000,
-                  host: '127.0.0.1',
-                  port: 0,
                 })
               }),
             ),

@@ -441,29 +441,23 @@ export const submissionOf: (
 )
 
 /**
- * The committed status of one submission. With `wait` it is Pi's own wait: it resolves in the
- * commit that settles the submission, and interrupting this fiber cancels only the wait, never
- * the work (Pi `src/harness/submissions.ts` `wait`).
+ * Wait directly on Pi's terminal receipt. Cancelling the HTTP request cancels only this wait,
+ * never the submission. In-progress state belongs to the conversation watch.
  */
 export const settlement: (
   harness: Harness,
   submission: Submission,
-  wait: boolean,
-) => Effect.Effect<RuntimeSettlement, PiRejected> = Effect.fn('Response.settlement')(function* (
-  harness: Harness,
-  submission: Submission,
-  wait: boolean,
-) {
-  const record = yield* wait
-    ? Effect.tryPromise({
-        try: (signal) => submission.wait(withAbortSignal(signal, BACKGROUND_CONTEXT)),
-        catch: (cause) => new PiRejected({ cause }),
-      })
-    : pi(() => submission.status(BACKGROUND_CONTEXT))
-  if (record.type !== 'input' || record.status === 'queued' || record.status === 'placed')
-    return RuntimeSettlement.cases.Pending.make({})
-  if (record.status === 'unanswered') return unanswered(record)
-  return Option.getOrElse(yield* done(harness, record), () =>
-    RuntimeSettlement.cases.Failed.make({ failure: 'Unexplained' }),
-  )
-})
+) => Effect.Effect<RuntimeSettlement, PiRejected> = Effect.fn('Response.settlement')(
+  function* (harness, submission) {
+    const record = yield* Effect.tryPromise({
+      try: (signal) => submission.wait(withAbortSignal(signal, BACKGROUND_CONTEXT)),
+      catch: (cause) => new PiRejected({ cause }),
+    })
+    if (record.type !== 'input')
+      return yield* new PiRejected({ cause: 'Pi wait returned a non-input submission' })
+    if (record.status === 'unanswered') return unanswered(record)
+    return Option.getOrElse(yield* done(harness, record), () =>
+      RuntimeSettlement.cases.Failed.make({ failure: 'Unexplained' }),
+    )
+  },
+)

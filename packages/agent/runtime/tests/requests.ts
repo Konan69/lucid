@@ -5,12 +5,11 @@ import {
   RuntimeSettlement,
   type RuntimeSubmissionId,
 } from '@vivid/contracts'
-import { Effect, Schema, type Scope, Stream } from 'effect'
+import { Effect, Schema, type Scope } from 'effect'
 import { start, world, type World } from './process.ts'
 
 export const ada = PersonId.make('person-7f3a')
 export const grace = PersonId.make('person-c41d')
-export const IDLE = 60_000
 
 const decodeReceipt = Schema.decodeUnknownEffect(RuntimeAdmissionReceipt)
 export const decodeSettlement = Schema.decodeUnknownEffect(RuntimeSettlement)
@@ -72,19 +71,12 @@ export const settled = Effect.fn('RuntimeRequests.settled')(function* (
   threadId: string,
   id: RuntimeSubmissionId,
 ) {
-  const response = yield* runtime.send(`${threadPath(person, threadId)}/submissions/${id}?wait=1`, {
+  const response = yield* runtime.send(`${threadPath(person, threadId)}/submissions/${id}`, {
     method: 'GET',
   })
   expect(response.status).toBe(200)
   return yield* decodeSettlement(response.body)
 })
-
-/** A Person rests once their work and every write a settlement set off are done (`persons.ts`). */
-export const untilResting = (runtime: Runtime, person: PersonId) =>
-  runtime.persons.watch.pipe(
-    Stream.filter((open) => open.some((entry) => entry.personId === person && entry.resting)),
-    Stream.runHead,
-  )
 
 export const scenario = <A, E>(
   body: (given: World, runtime: Runtime) => Effect.Effect<A, E, Scope.Scope>,
@@ -92,6 +84,6 @@ export const scenario = <A, E>(
   Effect.scoped(
     Effect.gen(function* () {
       const given = yield* world()
-      return yield* body(given, yield* start(given, { idleMillis: IDLE }))
+      return yield* body(given, yield* start(given))
     }),
   )

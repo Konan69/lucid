@@ -1,6 +1,6 @@
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import type { VividRpcClient } from '@vivid/client-runtime'
-import type { PersonId } from '@vivid/contracts'
+import type { MemoryAuthority } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Predicate } from 'effect'
 import { Notes } from '../notes.ts'
 import type { Acting } from '../client.ts'
@@ -85,15 +85,15 @@ export type RunScoped = ReturnType<typeof scopedRunner>
  * The caller supplies the Notes layer so tool definitions can load without runtime settings.
  */
 export function noteRunner(
-  person: () => Effect.Effect<PersonId, ToolFailure>,
+  authority: () => Effect.Effect<MemoryAuthority, ToolFailure>,
   notes: Notes['Service'],
 ) {
   return function runNote(
-    operation: (person: PersonId) => Effect.Effect<ToolResult, ToolFailure, Notes>,
+    operation: (authority: MemoryAuthority) => Effect.Effect<ToolResult, ToolFailure, Notes>,
     { signal, tool }: { readonly signal: AbortSignal; readonly tool: string },
   ) {
     const program = Effect.gen(function* () {
-      return yield* operation(yield* person())
+      return yield* operation(yield* authority())
     }).pipe(Effect.provideService(Notes, notes))
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- Pi's local note tool callback requires a Promise.
     return Effect.runPromise(settle(program, tool), { signal })

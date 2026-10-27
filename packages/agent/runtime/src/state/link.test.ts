@@ -16,7 +16,6 @@ import { describe, expect, it } from '@effect/vitest'
 import { ConversationFrame, ConversationState, emptyConversation, ThreadId } from '@vivid/contracts'
 import { Deferred, Effect, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { databaseConfigured } from '../../tests/database.ts'
 import { held } from '../../tests/process.ts'
 import { conversationOf, pi } from '../threads.ts'
 import { transcript } from './link.ts'
@@ -28,7 +27,6 @@ import {
   scenario,
   settled,
   threadPath,
-  untilResting,
   type Runtime,
 } from '../../tests/requests.ts'
 
@@ -89,7 +87,7 @@ const replay = Effect.fn('LinkTest.replay')(function* (
   }
 })
 
-describe.skipIf(!databaseConfigured)('the state link', () => {
+describe('the state link', () => {
   it.effect('sends the whole state, then the changes of a reply with a tool call', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
@@ -420,7 +418,7 @@ describe.skipIf(!databaseConfigured)('the state link', () => {
       ),
   )
 
-  it.effect('lets the Person rest once the last reader has gone', () =>
+  it.effect('ends a state link once its reader leaves', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
         given.faux.setResponses([fauxAssistantMessage('hi')])
@@ -428,9 +426,7 @@ describe.skipIf(!databaseConfigured)('the state link', () => {
         yield* settled(runtime, ada, 'thread-1', receipt.submissionId)
         const link = yield* runtime.link(`${threadPath(ada, 'thread-1')}/state`)
         yield* link.frame
-        // While the link is read the Person is held; the countdown to close starts only after.
         yield* link.leave
-        yield* untilResting(runtime, ada)
         expect(yield* link.event).toEqual(Option.none())
       }),
     ),

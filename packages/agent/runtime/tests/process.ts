@@ -11,7 +11,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { ConversationFrame, PersonId, ThreadId } from '@vivid/contracts'
 import { runtimeHeaders } from '@vivid/contracts/auth'
-import { Context, Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import type * as HttpClientRequest from 'effect/http/HttpClientRequest'
@@ -21,11 +21,13 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { routes } from '../src/app.ts'
 import { productLayer, type Acting } from '../src/client.ts'
 import { Models, type ModelsService } from '../src/models.ts'
-import { Persons, personsLayer } from '../src/persons.ts'
 import { RuntimeSettings } from '../src/settings.ts'
-import { builtinSkillsLayer } from '../src/skills.ts'
-import { storesLayer } from '../src/storage/stores.ts'
-import { disposableDatabase } from './database.ts'
+import { builtinSkillsLayer } from './skills.ts'
+import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
+import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
+import { openPerson, Person } from '../src/person.ts'
+import { openNotes, Notes, NotesUnavailable } from '../src/notes.ts'
+import { RcMap } from 'effect'
 
 const TOKEN = 'fixture-runtime-token'
 const PROVIDER = 'fixture'
@@ -38,15 +40,11 @@ export class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
   { title: 'Runtime fixture failed' },
 ) {}
 
-/**
- * What survives a restart of the process under test: its database (a disposable copy of the
- * migrated template, `tests/database.ts`), the notes directory, the scripted model (its queue of
- * answers is the "provider", which does not restart with the runtime), and the record of whom
- * the server was asked as.
- */
+/** Native SQLite files and the scripted provider survive a simulated cell restart. The case
+ * retains its activated Person names so start can drive their recovery without a client. */
 export interface World {
-  readonly database: string
-  readonly notes: string
+  readonly directory: string
+  readonly people: Set<PersonId>
   readonly faux: FauxProviderHandle
   /** Every Acting pair a product client was built for, in order. */
   readonly asked: Array<Acting>
@@ -76,8 +74,8 @@ export const world = Effect.fn('RuntimeFixture.world')(function* (
   const collection = createModels()
   collection.setProvider(faux.provider)
   return {
-    database: yield* disposableDatabase(),
-    notes: NodePath.join(root, 'notes'),
+    directory: root,
+    people: new Set(),
     faux,
     asked: [],
     requests: [],
@@ -185,57 +183,110 @@ const bytesOf = Effect.fn('RuntimeFixture.bytesOf')(function* (
   }
 })
 
-/**
- * The real process wiring minus the socket: the production routes, the production Persons and
- * Stores Layers on the world's database, the production skills, with the model and the server
- * supplied. Requests enter through the router as they would from the network. Closing the scope
- * this runs in is the process stopping; running it again on the same world is the next process.
- */
-/** The settings a fixture process runs with: the world's database and notes, the fixture token. */
-const settingsOf = (given: World, options: { readonly idleMillis: number }) =>
-  Layer.succeed(
-    RuntimeSettings,
-    RuntimeSettings.of({
-      notesDirectory: given.notes,
-      databaseUrl: Redacted.make(given.database),
-      token: Redacted.make(TOKEN),
-      serverUrl: new URL('http://server.invalid'),
-      idleMillis: options.idleMillis,
-      host: '127.0.0.1',
-      port: 0,
-    }),
-  )
-
-/**
- * Every Person's conversations and what they need, but not the stores: what `main.ts` builds
- * while it owns them (`lifetime.ts`). The production Persons Layer, the production skills and
- * product client on the fixture's transport, and the scripted model.
- */
-export const personsOn = (given: World, options: { readonly idleMillis: number }) => {
-  return personsLayer.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        productLayer.pipe(Layer.provide(serverLayer(given))),
-        builtinSkillsLayer,
-        Layer.succeed(Models, given.models),
+/** Fixtures apply the same generated SQL that the cell bundles, on their disposable native database. */
+const memoryMigration = Effect.tryPromise({
+  try: () =>
+    NodeFSP.readFile(
+      new URL(
+        '../../../../apps/cells/src/memory/migrations/20261027123834_memory/migration.sql',
+        import.meta.url,
       ),
+      'utf8',
     ),
-    Layer.provideMerge(settingsOf(given, options)),
-  )
+  catch: () => new FixtureFailed(),
+})
+
+type Cell = {
+  readonly person: Effect.Success<ReturnType<typeof openPerson>>
+  readonly notes: Effect.Success<ReturnType<typeof openNotes>>
 }
 
-/** The production Stores Layer on the world's database. */
-export const storesOf = (given: World, options: { readonly idleMillis: number }) =>
-  storesLayer.pipe(Layer.provide(settingsOf(given, options)))
-
-export const start = Effect.fn('RuntimeFixture.start')(function* (
-  given: World,
-  options: { readonly idleMillis: number },
-) {
+/**
+ * Tests host each Person on Pi's first-party file-backed SQLite adapter. This fixture emulates
+ * cell activation only; celld ownership and alarms require the parent's real host proof.
+ */
+export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) {
+  // Activation failures mean unavailable memory only at this note-tool boundary.
+  const noteCell = (person: PersonId) =>
+    RcMap.get(cells, person).pipe(Effect.mapError(() => NotesUnavailable.make({})))
+  const notes = Notes.of({
+    index: (person) =>
+      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.index())),
+    read: (person, file) =>
+      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.read(file))),
+    write: (person, write) =>
+      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.write(write))),
+    delete: (person, file) =>
+      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.delete(file))),
+  })
   const context = yield* Layer.build(
-    personsOn(given, options).pipe(Layer.provideMerge(storesOf(given, options))),
+    Layer.mergeAll(
+      productLayer.pipe(Layer.provide(serverLayer(given))),
+      builtinSkillsLayer,
+      Layer.succeed(Models, given.models),
+      Layer.succeed(Notes, notes),
+    ).pipe(
+      Layer.provideMerge(
+        Layer.succeed(
+          RuntimeSettings,
+          RuntimeSettings.of({
+            token: Redacted.make(TOKEN),
+            serverUrl: new URL('http://server.invalid'),
+          }),
+        ),
+      ),
+    ),
   )
-  const handler = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provide(context))
+  const cells: RcMap.RcMap<
+    PersonId,
+    Cell,
+    | FixtureFailed
+    | import('../src/threads.ts').PiRejected
+    | import('../src/notes.ts').NotesUnavailable
+  > = yield* RcMap.make({
+    idleTimeToLive: Infinity,
+    lookup: (personId: PersonId) =>
+      Effect.gen(function* () {
+        const database = yield* Effect.acquireRelease(
+          Effect.tryPromise({
+            try: () => openNodeSqliteDatabase(NodePath.join(given.directory, `${personId}.sqlite`)),
+            catch: () => new FixtureFailed(),
+          }),
+          (connection) => Effect.promise(connection.close.bind(connection)),
+        )
+        const storage = yield* Effect.tryPromise({
+          try: () => SqliteStorage.open(database, { prefix: 'pi_' }),
+          catch: () => new FixtureFailed(),
+        })
+        const localNotes = yield* openNotes(database, yield* memoryMigration)
+        const person = yield* openPerson(personId, storage, undefined).pipe(Effect.provide(context))
+        given.people.add(personId)
+        person.harness.resume()
+        return { person, notes: localNotes }
+      }),
+  })
+  const persons = {
+    use: <A, E, R>(personId: PersonId, use: (person: Cell['person']) => Effect.Effect<A, E, R>) =>
+      Effect.scoped(Effect.flatMap(RcMap.get(cells, personId), (cell) => use(cell.person))),
+  }
+  for (const person of given.people) yield* persons.use(person, () => Effect.void)
+  const handler = yield* HttpRouter.toHttpEffect(routes)
+
+  const call = (request: Request) => {
+    const personId = new URL(request.url).pathname.split('/')[2]
+    const person = PersonId.make(personId === undefined ? 'fixture-health' : personId)
+    return persons.use(person, (bound) =>
+      handler.pipe(
+        Effect.provideService(Person, bound),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(request),
+        ),
+        Effect.provide(context),
+        Effect.scoped,
+      ),
+    )
+  }
 
   const send = Effect.fn('RuntimeFixture.send')(function* (
     path: string,
@@ -251,14 +302,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (
         ? { method: input.method, headers }
         : { method: input.method, headers, body: JSON.stringify(input.body) },
     )
-    const response = yield* handler.pipe(
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(request),
-      ),
-      Effect.provide(context),
-      Effect.scoped,
-    )
+    const response = yield* call(request)
     const web = HttpServerResponse.toWeb(response)
     return {
       status: web.status,
@@ -266,20 +310,11 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (
     }
   })
 
-  const call = (request: Request) =>
-    handler.pipe(
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(request),
-      ),
-      Effect.provide(context),
-      Effect.scoped,
-    )
   return {
     send,
     link: (path: string) => Effect.flatMap(call(reading(path, 'text/event-stream')), linked),
     bytes: (path: string) => Effect.flatMap(call(reading(path, '*/*')), bytesOf),
-    persons: Context.get(context, Persons),
+    persons,
   }
 })
 

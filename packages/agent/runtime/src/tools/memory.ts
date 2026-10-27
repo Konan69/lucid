@@ -1,8 +1,8 @@
 import { defineTool } from './tool.ts'
-import { Tool, MemoryKind } from '@vivid/contracts'
+import { Tool, MemoryKind, MemoryScope } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
-import { summary, forCompany, text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
@@ -18,7 +18,7 @@ export function memoryTools(runTool: RunTool) {
     defineTool({
       name: Tool.recall,
       description:
-        'Look up relevant memories. Confirm current facts through a Connection before acting.',
+        'Look up Company knowledge. Personal memory lives in the layered notes. Confirm current facts through a Connection before acting.',
       input: v.object({ summary, query: text('The person, preference or fact to recall.', 400) }),
       /** Provenance and scope are projected into names rather than raw records. */
       run({ data, signal }) {
@@ -26,7 +26,11 @@ export function memoryTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const response = yield* client.Recall({ query: data.query, limit: 25 })
-            return { output: views.memories(response.memories) }
+            return {
+              output: views.memories(
+                response.memories.filter((memory) => MemoryScope.guards.Company(memory.scope)),
+              ),
+            }
           }),
           { signal, tool: 'recall' },
         )
@@ -35,12 +39,12 @@ export function memoryTools(runTool: RunTool) {
     defineTool({
       name: Tool.remember,
       description:
-        'Save a fact or preference when asked. Share with the Company only when the person explicitly asks.',
+        'Save Company knowledge only when the person explicitly asks to share it with the Company. Use write_note for personal memory.',
       input: v.object({
         summary,
         kind: v.pipe(v.picklist(MemoryKind.literals), v.description('The kind of memory.')),
         content: text('A self-contained fact or preference.', 1000),
-        forCompany,
+        forCompany: v.literal(true),
       }),
       /** Saving confirms content without exposing a Memory or Person reference. */
       run({ data, signal }) {

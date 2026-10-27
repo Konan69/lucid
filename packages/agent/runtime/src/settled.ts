@@ -1,6 +1,6 @@
 import type { EntryId, Harness, SubmissionRecord } from '@earendil-works/pi-durable'
 import { Array as Arr, Deferred, Effect, Order, Queue, type Scope } from 'effect'
-import { placeWaiting, release } from './deliveries.ts'
+import { release } from './deliveries.ts'
 import { recordResponse } from './response.ts'
 
 type Settled = SubmissionRecord & { readonly type: 'input' }
@@ -32,14 +32,13 @@ interface Barrier {
  * commit), and a Session publishes each commit to its listeners (`subscribeCommits`). So this
  * reads settlements from the commits themselves:
  *
- * - deliveries a failed run left waiting are placed (`deliveries.ts` `placeWaiting`);
  * - each settled delivery's kept record is released (the frozen context, `deliveries.ts`);
  * - the inputs that were placed and settled together are one run, and its metadata entry is
  *   appended (`response.ts`).
  *
  * A listener may not call the Session, so it only queues what it saw and one fiber does the
  * work in order. `quiet` waits until everything queued before it has been done (it queues a
- * marker and waits for the fiber to reach it); the host runs it before it closes an idle Person.
+ * marker and waits for the fiber to reach it).
  * None of this is durable: what a kill or a late settlement during close leaves is under "Known
  * limits" in this package's `AGENTS.md`.
  */
@@ -64,8 +63,6 @@ export const followSettlements: (
     }
     const conversations = new Set(batch.settled.map((record) => record.conversationId))
     for (const conversationId of conversations) {
-      // First, so deliveries a failed run left waiting are not kept waiting by what follows.
-      yield* placeWaiting(harness, conversationId)
       const inputs = Arr.sort(
         batch.settled.filter((record) => record.conversationId === conversationId).filter(isPlaced),
         oldestFirst,

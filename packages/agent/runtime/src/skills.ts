@@ -1,34 +1,7 @@
-import * as NodeFSP from 'node:fs/promises'
 import { Type } from '@earendil-works/pi-ai'
 import { defineExtension, defineTool, section, type Extension } from '@earendil-works/pi-durable'
-import { manifest } from '@vivid/skills'
-import { Context, Effect, Layer, Schema } from 'effect'
-import { parseSkill, type LoadedSkill } from './frontmatter.ts'
-
-/** A shipped skill file is missing from the installation: a packaging fault, found at startup. */
-export class SkillUnreadable extends Schema.TaggedError<SkillUnreadable>()(
-  'SkillUnreadable',
-  { name: Schema.String },
-  { title: 'Shipped skill file unreadable' },
-) {}
-
-/** The package's exports own where the Markdown is, wherever the runtime is installed. */
-const readSkill = Effect.fn('Skills.read')(function* (name: string) {
-  return yield* Effect.tryPromise({
-    try: () =>
-      NodeFSP.readFile(new URL(import.meta.resolve(`@vivid/skills/${name}/SKILL.md`)), 'utf8'),
-    catch: () => new SkillUnreadable({ name }),
-  })
-})
-
-/** The manifest is the catalogue's order, the same for every Person and every response. */
-export const loadSkills = Effect.fn('Skills.load')(function* () {
-  return yield* Effect.forEach(manifest, (entry) =>
-    readSkill(entry.runtimeName).pipe(
-      Effect.flatMap((content) => parseSkill(content, entry.runtimeName)),
-    ),
-  )
-})
+import { Context } from 'effect'
+import type { LoadedSkill } from './frontmatter.ts'
 
 /** The catalogue heading matches the instructions that direct the model to Available Skills. */
 export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
@@ -57,11 +30,10 @@ export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
 
 export const ACTIVATE_SKILL = 'activate_skill'
 
-/** The catalogue and activation tool read only skills loaded at startup. An interrupted
+/** The catalogue and activation tool read only the bundled skills. An interrupted
  * activation may run again because it has no side effects. */
-export const skillsExtension = Effect.fn('Skills.extension')(function* () {
-  const skills = yield* loadSkills()
-  return defineExtension({
+export const skillsExtension = (skills: ReadonlyArray<LoadedSkill>) =>
+  defineExtension({
     name: 'skills',
     sections: [section('skills', () => skillsSection(skills), { tag: false })],
     tools: [
@@ -83,7 +55,6 @@ export const skillsExtension = Effect.fn('Skills.extension')(function* () {
       }),
     ],
   })
-})
 
 /**
  * The built-in skills, read from the installation once when the process starts: every Person's
@@ -92,5 +63,3 @@ export const skillsExtension = Effect.fn('Skills.extension')(function* () {
 export class BuiltinSkills extends Context.Service<BuiltinSkills, Extension>()(
   'vivid/Runtime/BuiltinSkills',
 ) {}
-
-export const builtinSkillsLayer = Layer.effect(BuiltinSkills, skillsExtension())

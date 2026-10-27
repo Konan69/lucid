@@ -8,15 +8,8 @@ import type {
   EntryRecord,
   Harness,
 } from '@earendil-works/pi-durable'
-import {
-  ConversationFrame,
-  emptyConversation,
-  type PersonId,
-  type ThreadId,
-} from '@vivid/contracts'
+import { ConversationFrame, emptyConversation, type ThreadId } from '@vivid/contracts'
 import { Deferred, Effect, Option, Queue, Stream } from 'effect'
-import type { StoreUnavailable } from '../storage/errors.ts'
-import type { PersonsService } from '../persons.ts'
 import { conversationOf, pi, ThreadConversation, type PiRejected } from '../threads.ts'
 import { isSubmissionId, outcomeOf } from '../response.ts'
 import { projector, unsettled, type Outcome, type Projected, type Viewed } from './project.ts'
@@ -254,23 +247,16 @@ const follow = Effect.fn('StateLink.follow')(function* (
   yield* Effect.promise(() => watch.closed)
 })
 
-/**
- * The frames of one Thread's state for as long as somebody reads them. The Person's
- * conversations are held open for exactly that long: the link runs inside `persons.use`, in a
- * fiber of the stream's scope, so a reader that goes away interrupts it, which stops the watch
- * and lets the Person rest. The stream ends when the Harness closes; the reader opens another.
- */
-export const frames = (persons: PersonsService, personId: PersonId, threadId: ThreadId) =>
-  Stream.callback<ConversationFrame, PiRejected | StoreUnavailable>(
+/** Follow the bound cell's Harness until the reader leaves or Pi closes its watch. */
+export const frames = (harness: Harness, threadId: ThreadId) =>
+  Stream.callback<ConversationFrame, PiRejected>(
     (queue) =>
-      persons
-        .use(personId, ({ harness }) => Effect.scoped(follow(harness, threadId, queue)))
-        .pipe(
-          Effect.matchCauseEffect({
-            onFailure: (cause) => Queue.failCause(queue, cause),
-            onSuccess: () => Queue.end(queue),
-          }),
-          Effect.forkScoped,
-        ),
+      Effect.scoped(follow(harness, threadId, queue)).pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) => Queue.failCause(queue, cause),
+          onSuccess: () => Queue.end(queue),
+        }),
+        Effect.forkScoped,
+      ),
     { bufferSize: 16, strategy: 'suspend' },
   )

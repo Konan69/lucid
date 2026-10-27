@@ -9,45 +9,38 @@
     "./scope": "./src/tools/scope.ts",
     "./signins": "./src/tools/signins.ts",
     "./testing": "./tests/process.ts",
-    "./tooltesting": "./src/tools/tests/harness.ts"
+    "./tooltesting": "./src/tools/tests/harness.ts",
+    "./cell": "./src/cell.ts",
+    "./notes": "./src/notes.ts"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "check:types": "pnpm typecheck",
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
     "test": "node ../../../scripts/test.mjs",
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
-    "types": "node ../../../scripts/types.mjs tsconfig.types.json",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.2.0",
-    "@earendil-works/pi-ai": "1.2.0",
-    "@earendil-works/pi-durable": "1.2.0",
-    "@effect/platform-node": "catalog:",
+    "@earendil-works/chord": "catalog:",
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-durable": "catalog:",
     "@openuidev/lang-core": "catalog:",
     "@valibot/to-json-schema": "1.7.1",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
-    "agentfs-sdk": "0.6.4",
     "effect": "catalog:",
-    "pg": "catalog:",
-    "tsx": "catalog:",
-    "valibot": "catalog:",
-    "drizzle-orm": "catalog:"
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "catalog:",
     "drizzle-kit": "catalog:",
     "drizzle-orm": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@effect/platform-node": "catalog:"
   }
 }

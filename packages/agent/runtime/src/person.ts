@@ -1,24 +1,27 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import { createRegistry, Harness, type AgentChange } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  Harness,
+  type AgentChange,
+  type Storage,
+  type HarnessOptions,
+} from '@earendil-works/pi-durable'
 import type { PersonId } from '@vivid/contracts'
-import { Deferred, Effect, type Scope } from 'effect'
+import { Context, Deferred, Effect, type Scope } from 'effect'
 import { definition, offered } from './agents/vivid.ts'
-import { resolveCall, scopeResolver } from './authority.ts'
+import { resolveMemoryCall, scopeResolver } from './authority.ts'
 import { Product } from './client.ts'
 import type { ContextSources } from './context.ts'
 import { opening } from './deliveries.ts'
 import { Notes } from './notes.ts'
 import { Models } from './models.ts'
 import { joinHooks } from './response.ts'
-import { RuntimeSettings } from './settings.ts'
-import type { StoreUnavailable } from './storage/errors.ts'
-import { Stores } from './storage/stores.ts'
 import { followSettlements } from './settled.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
 import { tools } from './tools/index.ts'
 
-/** One Person's conversations, open: Pi's Harness on that Person's own store (`storage/store.ts`). */
+/** One Person's conversations on the native storage supplied by its host. */
 export interface PersonConversations {
   readonly personId: PersonId
   readonly harness: Harness
@@ -32,6 +35,11 @@ export interface PersonConversations {
   /** Waits until nothing a settlement set off is still being written (`settled.ts`). */
   readonly quiet: Effect.Effect<void>
 }
+
+/** The router is bound to this Person. It cannot open another Person from a route parameter. */
+export class Person extends Context.Service<Person, PersonConversations>()(
+  'vivid/Runtime/Person',
+) {}
 
 /**
  * Pi reports what did not fail the caller (a throwing hook or section) and, once, what failed
@@ -58,31 +66,22 @@ const closeHarness = (harness: Harness) =>
   Effect.tryPromise(() => harness.close(BACKGROUND_CONTEXT)).pipe(Effect.ignore)
 
 /**
- * Open one Person's conversations for the life of the enclosing scope.
- *
- * Acquired in this order and released in the reverse: the Person's store, found or made in the
- * shared tables (`storage/stores.ts`), and Pi's Harness over it (closing the Harness closes the
- * store, Pi `src/session/session.ts` `close`), then the fiber that follows settlements. So the
- * fiber stops first, and the Harness joins its running tasks and closes the store. Closing a
- * store releases nothing shared: the connections belong to the process.
- *
- * Pi runs a prompt section, a hook and a tool as Promise callbacks. They are given `run`, which
- * runs an Effect with the services this open captured; it is the one bridge from Pi's callbacks
- * back into Effect for this Person. Those callbacks need the Harness, which does not exist until
- * the registry holding them has been given to `Harness.open`; `ready` hands it over. Pi calls
- * none of them before `resume()` or a submission, both of which come after.
+ * Pi owns the native storage and its task scheduler. The cell owns this scope, and onWake
+ * delegates sleep and active-work alarms to celld without a process registry or owner fence.
+ * Callbacks capture the services once and wait for Harness.open before using the Harness.
  */
-export const openPerson: (
+export const openPerson = Effect.fn('Person.open')(function* (
   personId: PersonId,
-) => Effect.Effect<
+  storage: Storage,
+  onWake: HarnessOptions['onWake'],
+): Effect.fn.Return<
   PersonConversations,
-  StoreUnavailable | PiRejected,
-  RuntimeSettings | Product | Models | BuiltinSkills | Stores | Notes | Scope.Scope
-> = Effect.fn('Person.open')(function* (personId: PersonId) {
+  PiRejected,
+  Product | Models | BuiltinSkills | Notes | Scope.Scope
+> {
   const product = yield* Product
   const models = yield* Models
   const skills = yield* BuiltinSkills
-  const storage = yield* (yield* Stores).open(personId)
 
   const services = yield* Effect.context()
   // oxlint-disable-next-line vivid/no-runpromise-in-library -- The one bridge from Pi's Promise callbacks (sections, hooks) into Effect for this Person's Harness.
@@ -93,8 +92,7 @@ export const openPerson: (
   const notes = yield* Notes
   const all = tools(
     scopeResolver(opened, product),
-    (call) =>
-      Effect.map(resolveCall(opened, product, call), (authority) => authority.acting.personId),
+    (call) => resolveMemoryCall(opened, product, call),
     notes,
   )
   const registry = createRegistry()
@@ -119,7 +117,9 @@ export const openPerson: (
             settings: {
               ...models.settings,
               ...QUEUES,
+              afterFailedRun: 'continue',
             },
+            onWake,
             onReport: (error) => {
               void run(reported(error))
             },
@@ -133,8 +133,8 @@ export const openPerson: (
     }).pipe(Effect.onError(() => Effect.promise(() => storage.close(BACKGROUND_CONTEXT)))),
     closeHarness,
   )
-  yield* Deferred.succeed(ready, harness)
   const { quiet } = yield* followSettlements(harness)
+  yield* Deferred.succeed(ready, harness)
   return {
     personId,
     harness,

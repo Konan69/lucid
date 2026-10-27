@@ -1,3 +1,7 @@
+import * as NodeFSP from 'node:fs/promises'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
+import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { Notes } from '../../notes.ts'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
@@ -11,7 +15,6 @@ import {
   defineExtension,
   Harness,
   hook,
-  MemoryStorage,
   ToolResultEntry,
   ToolTask,
   type ToolExecutionResult,
@@ -33,67 +36,79 @@ export async function roundTrip(
   value: Schema.JsonObject,
   signal: AbortSignal,
 ) {
-  const args = Result.getOrThrow(decodeArguments(value))
-  const faux = fauxProvider({ tokensPerSecond: 0 })
-  const models = createModels()
-  models.setProvider(faux.provider)
-  faux.setResponses([
-    fauxAssistantMessage(fauxToolCall(tool.name, args, { id: 'fixture-call' }), {
-      stopReason: 'toolUse',
-    }),
-    fauxAssistantMessage('Finished.'),
-  ])
-  let reported: ToolExecutionResult = {}
-  const registry = createRegistry()
-  registry.install(
-    defineExtension({
-      name: 'fixture',
-      tools: [tool],
-      hooks: [
-        hook(ToolTask, {
-          afterTool: (_call, result) => {
-            reported = result
-            return undefined
-          },
-        }),
-      ],
-    }),
-  )
-  const harness = await Harness.open(new MemoryStorage(), { models, registry }, BACKGROUND_CONTEXT)
-  const root = await harness.root(BACKGROUND_CONTEXT, {
-    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-  })
-  const cancel = () => {
-    void root.abort(BACKGROUND_CONTEXT)
-  }
-  signal.addEventListener('abort', cancel, { once: true })
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-tool-'))
   return (
     Promise.resolve()
-      // @effect-diagnostics-next-line asyncFunction:off -- Test fixture drives the Promise-only Pi Harness public API.
+      // @effect-diagnostics-next-line asyncFunction:off -- The fixture owns the native storage through the complete Pi Promise lifecycle.
       .then(async () => {
-        const submission = await root.submit(
-          { type: 'input', content: 'Run the tool.' },
+        const args = Result.getOrThrow(decodeArguments(value))
+        const faux = fauxProvider({ tokensPerSecond: 0 })
+        const models = createModels()
+        models.setProvider(faux.provider)
+        faux.setResponses([
+          fauxAssistantMessage(fauxToolCall(tool.name, args, { id: 'fixture-call' }), {
+            stopReason: 'toolUse',
+          }),
+          fauxAssistantMessage('Finished.'),
+        ])
+        let reported: ToolExecutionResult = {}
+        const registry = createRegistry()
+        registry.install(
+          defineExtension({
+            name: 'fixture',
+            tools: [tool],
+            hooks: [
+              hook(ToolTask, {
+                afterTool: (_call, result) => {
+                  reported = result
+                  return undefined
+                },
+              }),
+            ],
+          }),
+        )
+        const harness = await Harness.open(
+          await openNodeSqliteStorage(NodePath.join(directory, 'person.sqlite'), { prefix: 'pi_' }),
+          { models, registry },
           BACKGROUND_CONTEXT,
         )
-        await submission.wait(BACKGROUND_CONTEXT)
-        const entries = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT)
-        const entry = entries.items.find((candidate) => ToolResultEntry.is(candidate))
-        const message =
-          entry === undefined || entry.model === undefined ? undefined : entry.model[0]
-        if (message === undefined || message.role !== 'toolResult')
-          throw new Error('Pi did not persist a tool result.')
-        if (!message.isError) expect(message.details).toEqual(reported.details)
-        return {
-          message,
-          terminate: reported.control !== undefined && reported.control.terminate === true,
-          calls: faux.state.callCount,
+        const root = await harness.root(BACKGROUND_CONTEXT, {
+          agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+        })
+        const cancel = () => {
+          void root.abort(BACKGROUND_CONTEXT)
         }
+        signal.addEventListener('abort', cancel, { once: true })
+        return (
+          Promise.resolve()
+            // @effect-diagnostics-next-line asyncFunction:off -- Test fixture drives the Promise-only Pi Harness public API.
+            .then(async () => {
+              const submission = await root.submit(
+                { type: 'input', content: 'Run the tool.' },
+                BACKGROUND_CONTEXT,
+              )
+              await submission.wait(BACKGROUND_CONTEXT)
+              const entries = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT)
+              const entry = entries.items.find((candidate) => ToolResultEntry.is(candidate))
+              const message =
+                entry === undefined || entry.model === undefined ? undefined : entry.model[0]
+              if (message === undefined || message.role !== 'toolResult')
+                throw new Error('Pi did not persist a tool result.')
+              if (!message.isError) expect(message.details).toEqual(reported.details)
+              return {
+                message,
+                terminate: reported.control !== undefined && reported.control.terminate === true,
+                calls: faux.state.callCount,
+              }
+            })
+            // @effect-diagnostics-next-line asyncFunction:off -- Test fixture drives the Promise-only Pi Harness public API.
+            .finally(async () => {
+              signal.removeEventListener('abort', cancel)
+              await harness.close(BACKGROUND_CONTEXT)
+            })
+        )
       })
-      // @effect-diagnostics-next-line asyncFunction:off -- Test fixture drives the Promise-only Pi Harness public API.
-      .finally(async () => {
-        signal.removeEventListener('abort', cancel)
-        await harness.close(BACKGROUND_CONTEXT)
-      })
+      .finally(() => NodeFSP.rm(directory, { recursive: true, force: true }))
   )
 }
 

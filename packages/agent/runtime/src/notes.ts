@@ -1,345 +1,292 @@
-import * as NodeFS from 'node:fs'
-import * as NodePath from 'node:path'
-import { MemoryKind, type PersonId } from '@vivid/contracts'
-import type { AgentFS } from 'agentfs-sdk'
-import * as Arr from 'effect/Array'
-import type * as Cause from 'effect/Cause'
-import * as Context from 'effect/Context'
-import * as Duration from 'effect/Duration'
-import * as Effect from 'effect/Effect'
-import * as Layer from 'effect/Layer'
-import * as Latch from 'effect/Latch'
-import * as RcMap from 'effect/RcMap'
-import * as Option from 'effect/Option'
-import * as Order from 'effect/Order'
-import * as Schema from 'effect/Schema'
-import * as Scope from 'effect/Scope'
+import {
+  applySqliteMigrations,
+  type SqliteDatabase,
+  type SqliteExecutor,
+} from '@earendil-works/chord/sqlite'
+import {
+  isStandingLayer,
+  MemoryAuthority,
+  MemoryRevision,
+  NoteAddress,
+  NoteConflict,
+  NoteIndex,
+  NoteLine,
+  SavedNote,
+  type NoteWrite,
+  type NoteRetraction,
+  type PersonId,
+} from '@vivid/contracts'
+import { Context, Effect, Schema } from 'effect'
 
-/**
- * Vivid's memory: one small filesystem per Person, in one SQLite file (AgentFS), holding one note
- * per thing Vivid knows. Design, references and the proof behind it: docs/25-memory.md.
- *
- * The notes sit beside the runtime, not behind the application server, on purpose: the runtime is
- * the part of Vivid that will later run on the Person's own device, and there these are simply
- * local files. A Person's whole memory moves by copying one file.
- *
- * The folder of notes is the filesystem root and holds nothing else. In the first live run of the
- * design a model given room outside the folder wrote its index to the wrong place.
- */
+export {
+  Note,
+  NoteFile,
+  NoteIndex,
+  NoteLine,
+  NoteAddress,
+  NoteConflict,
+  NOTE_BODY_LIMIT,
+} from '@vivid/contracts'
 
-/** A note's file name: short, lower-case, hyphenated, flat. Subfolders would hide a note from the index. */
-export const NoteFile = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u),
-).pipe(Schema.brand('NoteFile'))
-export type NoteFile = typeof NoteFile.Type
-
-/**
- * The longest note body. A tool result is cut at 4,000 characters before the model sees it
- * (`tools/result.ts`, `bounded`), so a longer note could be written and never read back whole.
- */
-export const NOTE_BODY_LIMIT = 3500
-
-/**
- * One thing Vivid knows. `description` is the single line the model sees on every response and
- * uses to decide whether to open the note; `body` is the fact itself, with the reason and how to
- * apply it when it is a preference or a decision. The kinds are the product's one memory vocabulary.
- */
-export const Note = Schema.Struct({
-  file: NoteFile,
-  kind: MemoryKind,
-  description: Schema.NonEmptyString.check(Schema.isMaxLength(200)),
-  body: Schema.NonEmptyString.check(Schema.isMaxLength(NOTE_BODY_LIMIT)),
-})
-export interface Note extends Schema.Schema.Type<typeof Note> {}
-
-/** A note as it appears in the index: everything but its body. */
-export const NoteLine = Schema.Struct({
-  file: NoteFile,
-  kind: MemoryKind,
-  description: Schema.String,
-})
-export interface NoteLine extends Schema.Schema.Type<typeof NoteLine> {}
-
-/**
- * The index for one response: the notes changed most recently, within a budget, and whether older
- * ones were left out. It is derived from the notes themselves on every response and never stored,
- * so it cannot drift from them (a hand-kept index file can).
- */
-export const NoteIndex = Schema.Struct({
-  lines: Schema.Array(NoteLine),
-  more: Schema.Boolean,
-})
-export interface NoteIndex extends Schema.Schema.Type<typeof NoteIndex> {}
-
-/** The store could not be opened, read or written. Never reported to the model as "no notes". */
+/** Failed persistence never means the Person has no memories. */
 export class NotesUnavailable extends Schema.TaggedError<NotesUnavailable>()(
   'NotesUnavailable',
   {},
-  { title: 'NotesUnavailable' },
+  { title: 'Notes unavailable' },
 ) {}
 
-/** The runtime's bounded set of open stores is full; the Person's file has not failed. */
-export class NotesAtCapacity extends Schema.TaggedError<NotesAtCapacity>()(
-  'NotesAtCapacity',
-  {},
-  { title: 'NotesAtCapacity' },
-) {}
-
-/** No note has that file name. */
+/** Retractions retain the last revision so an old writer cannot resurrect a removed entry. */
 export class NoteMissing extends Schema.TaggedError<NoteMissing>()(
   'NoteMissing',
-  { file: NoteFile },
-  { title: 'NoteMissing' },
+  {
+    address: NoteAddress,
+    revision: MemoryRevision,
+  },
+  { title: 'Memory entry absent' },
 ) {}
 
-/**
- * How much index goes in front of the model, in characters of file name and description. About
- * 2,000 tokens, the size Cloudflare's Think gives its writable memory block; at the measured 83
- * characters a line that is close to a hundred notes.
- */
 export const INDEX_BUDGET = 8000
 
-const Header = Schema.Struct({ kind: MemoryKind, description: Schema.NonEmptyString })
-const decodeHeader = Schema.decodeUnknownOption(Header)
-const decodeNote = Schema.decodeUnknownEffect(Note)
-
-/**
- * The stored form: a header between `---` lines, then the body. It is the layout of Claude Code's
- * memory files, so a Person can read and edit a note as an ordinary Markdown file once the notes
- * are files on their own machine. `description` is folded to one line so it cannot pose as a
- * second header field.
- */
-function stored(note: Note) {
-  const description = note.description.replace(/\s+/gu, ' ').trim()
-  return `---\nkind: ${note.kind}\ndescription: ${description}\n---\n\n${note.body.trim()}\n`
-}
-
-/** Read the header and body back. A file that is not in the stored form is not a note. */
-function parsed(text: string) {
-  const match = /^---\nkind: (.*)\ndescription: (.*)\n---\n\n([\s\S]*)$/u.exec(text)
-  if (match === null) return Option.none<{ kind: MemoryKind; description: string; body: string }>()
-  const [, kind, description, body] = match
-  if (body === undefined)
-    return Option.none<{ kind: MemoryKind; description: string; body: string }>()
-  return Option.map(decodeHeader({ kind, description }), (header) => ({
-    kind: header.kind,
-    description: header.description,
-    body: body.trimEnd(),
-  }))
-}
-
-/** A Person's identifier becomes part of a path on disk, so only a plain identifier is accepted. */
-const SAFE_PERSON = /^[A-Za-z0-9_-]{1,128}$/u
-
-/** Stable owner policy; zero idle closes immediately, while an infinite TTL would defeat the bound. */
-export const NotesSettings = Schema.Struct({
-  directory: Schema.NonEmptyString,
-  capacity: Schema.Int.check(Schema.isGreaterThan(0)),
-  idle: Schema.Duration.check(Schema.makeFilter(Duration.isFinite)),
-}).pipe(Schema.brand('NotesSettings'))
-export type NotesSettings = typeof NotesSettings.Type
-
-/** SQLite persistence and handle ownership stay inside this runtime authority. */
 interface NotesService {
-  readonly index: (person: PersonId) => Effect.Effect<NoteIndex, NotesUnavailable | NotesAtCapacity>
+  readonly index: (person: PersonId) => Effect.Effect<NoteIndex, NotesUnavailable>
   readonly read: (
     person: PersonId,
-    file: NoteFile,
-  ) => Effect.Effect<Note, NoteMissing | NotesUnavailable | NotesAtCapacity>
+    address: NoteAddress,
+  ) => Effect.Effect<SavedNote, NoteMissing | NotesUnavailable>
   readonly write: (
     person: PersonId,
-    note: Note,
-  ) => Effect.Effect<boolean, NotesUnavailable | NotesAtCapacity>
+    write: NoteWrite,
+  ) => Effect.Effect<SavedNote, NoteConflict | NotesUnavailable>
   readonly delete: (
     person: PersonId,
-    file: NoteFile,
-  ) => Effect.Effect<void, NoteMissing | NotesUnavailable | NotesAtCapacity>
+    retraction: NoteRetraction,
+  ) => Effect.Effect<void, NoteConflict | NoteMissing | NotesUnavailable>
 }
 
-/** The authority owns both persistence and resource lifetime, rather than a hidden process cache. */
+/** The cell binds acting authority and owns persistence. There is no process registry. */
 export class Notes extends Context.Service<Notes, NotesService>()('@vivid/runtime/Notes') {}
 
-/**
- * Import the native SDK only on first use. Each Promise is one unsafe operation; a runtime that
- * never opens notes does not need to load its platform binary. AgentFS 0.6.4 open creates parents
- * only for its default location, so an explicit notes directory must be made first.
- */
-const openStore = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
-  const sdk = yield* Effect.tryPromise({
-    try: () => import('agentfs-sdk'),
-    catch: () => NotesUnavailable.make({}),
-  })
-  yield* Effect.tryPromise({
-    try: () => NodeFS.promises.mkdir(directory, { recursive: true }),
-    catch: () => NotesUnavailable.make({}),
-  })
-  return yield* Effect.tryPromise({
-    try: () => sdk.AgentFS.open({ path: NodePath.join(directory, `${person}.db`) }),
-    catch: () => NotesUnavailable.make({}),
-  })
+const storedAuthority = Schema.fromJsonString(MemoryAuthority)
+const Row = Schema.Struct({
+  ...SavedNote.fields,
+  authority: storedAuthority,
 })
+const decodeNote = Schema.decodeUnknownEffect(Row)
+const decodeLines = Schema.decodeUnknownEffect(Schema.Array(NoteLine))
+const encodeAuthority = Schema.encodeEffect(storedAuthority)
+const RevisionRow = Schema.Struct({ revision: MemoryRevision })
+const decodeRevision = Schema.decodeUnknownEffect(RevisionRow)
+const decodeRevisionValue = Schema.decodeUnknownEffect(MemoryRevision)
+const select =
+  'layer, file, kind, description, body, basis, revision, updated_at AS updatedAt, authority'
 
-/** Native close rejection is typed and ignored only at release, so it cannot become a defect. */
-const closeStore = (store: AgentFS) =>
+/** Narrow Promise interop to chord's public executor. Its transaction owns rollback and queueing. */
+const attempt = <A>(call: () => Promise<A>) =>
   Effect.tryPromise({
-    try: () => store.close(),
-    catch: () => NotesUnavailable.make({}),
-  }).pipe(Effect.ignore)
-
-const isMissing = Schema.is(Schema.Struct({ code: Schema.Literal('ENOENT') }))
-const isNoteFile = Schema.is(NoteFile)
-
-/** AgentFS cannot cancel native I/O. Retain the operation lease until the whole SDK call settles. */
-function attempt<A>(file: NoteFile, call: () => Promise<A>) {
-  return Effect.tryPromise({
     try: call,
-    catch: (cause) => (isMissing(cause) ? NoteMissing.make({ file }) : NotesUnavailable.make({})),
-  }).pipe(Effect.uninterruptible)
-}
-
-/**
- * The index for one response. Entries are listed with their statistics in one query
- * (`readdirPlus`), newest change first, and each note is read for its header. A file that is not
- * in the stored form is left out: it is not a note Vivid wrote.
- */
-const noteIndex = Effect.fn('Notes.storeIndex')(function* (store: AgentFS) {
-  const fs = store.fs
-  const entries = yield* Effect.tryPromise({
-    try: () => fs.readdirPlus('/'),
     catch: () => NotesUnavailable.make({}),
-  }).pipe(Effect.uninterruptible)
-  const files = Arr.sortWith(
-    entries.filter((entry) => isNoteFile(entry.name)),
-    (entry) => entry.stats.mtime,
-    Order.flip(Order.Number),
+  })
+
+/** A never-written address is revision zero. A retracted address keeps its real revision. */
+const revisionOf = Effect.fn('Notes.revision')(function* (
+  tx: SqliteExecutor,
+  address: NoteAddress,
+) {
+  const row = yield* attempt(() =>
+    tx.get<object>(
+      'SELECT revision FROM memory_notes WHERE layer = ? AND file = ?',
+      address.layer,
+      address.file,
+    ),
   )
-  const lines: Array<NoteLine> = []
-  let used = 0
-  for (const entry of files) {
-    const file = NoteFile.make(entry.name)
-    const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
-    if (Option.isNone(note)) continue
-    used += file.length + note.value.description.length
-    if (used > INDEX_BUDGET && lines.length > 0) return NoteIndex.make({ lines, more: true })
-    lines.push(NoteLine.make({ file, kind: note.value.kind, description: note.value.description }))
-  }
-  return NoteIndex.make({ lines, more: false })
+  if (row === undefined) return MemoryRevision.make(0)
+  return (yield* decodeRevision(row).pipe(Effect.mapError(() => NotesUnavailable.make({}))))
+    .revision
 })
 
-/** One note, whole. */
-const readNote = Effect.fn('Notes.storeRead')(function* (store: AgentFS, file: NoteFile) {
-  const fs = store.fs
-  const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
-  if (Option.isNone(note)) return yield* NoteMissing.make({ file })
-  // Persisted text is unknown input: a malformed body must be missing, never a constructor defect.
-  return yield* decodeNote({ file, ...note.value }).pipe(
-    Effect.mapError(() => NoteMissing.make({ file })),
-  )
-})
-
-/** Write a note, replacing the one with that file name if it exists. Reports which happened. */
-const writeNote = Effect.fn('Notes.storeWrite')(function* (store: AgentFS, note: Note) {
-  const fs = store.fs
-  const replaced = yield* attempt(note.file, () => fs.stat(`/${note.file}`)).pipe(
-    Effect.as(true),
-    Effect.catchTag('NoteMissing', () => Effect.succeed(false)),
-  )
-  yield* attempt(note.file, () => fs.writeFile(`/${note.file}`, stored(note)))
-  return replaced
-})
-
-/** Delete a note. A file name with no note is a precise failure, never a silent success. */
-const deleteNote = Effect.fn('Notes.storeDelete')(function* (store: AgentFS, file: NoteFile) {
-  const fs = store.fs
-  yield* attempt(file, () => fs.unlink(`/${file}`))
-})
-
-/**
- * One scoped RcMap owns every store. Effect 4.0.2 get leases the entry until the operation's scope
- * closes, so neither idle expiry nor capacity can close it between its native calls.
- *
- * Only the failed lookup invalidates. tapError sits OUTSIDE acquireRelease: acquisition is
- * uninterruptible, but expiry/owner close can remove its entry while native open is pending.
- * Restoring interruption before tapError prevents that old failure removing a new healthy
- * entry for the same Person (RcMap.invalidate is by key, not entry identity). Successful opens
- * always register close before interruption is restored. Invalidation starts immediately in a
- * detached fiber: when no caller remains, closing the entry awaits this lookup's exit and must
- * not run inside the lookup itself. Source: RcMap.ts get/release/invalidate and internal/effect.ts
- * acquireRelease/fiberRunIn in installed Effect 4.0.2.
- */
-export const make = Effect.fn('Notes.make')(function* (settings: NotesSettings) {
-  // Own sequential finalization even when the caller provides a parallel scope.
-  const owner = yield* Scope.fork(yield* Effect.scope)
-  const stores: RcMap.RcMap<PersonId, AgentFS, NotesUnavailable | Cause.ExceededCapacityError> =
-    yield* RcMap.make({
-      capacity: settings.capacity,
-      idleTimeToLive: settings.idle,
-      lookup: (person: PersonId) =>
-        Effect.acquireRelease(openStore(settings.directory, person), closeStore).pipe(
-          Effect.tapError(() =>
-            Effect.forkDetach(RcMap.invalidate(stores, person), { startImmediately: true }),
-          ),
+/** Build an atomic snapshot, loading only standing bodies and the bounded index headers. */
+const index = Effect.fn('Notes.index')(function* (database: SqliteDatabase) {
+  const rows = yield* attempt(() =>
+    database.transaction(
+      // @effect-diagnostics-next-line asyncFunction:off -- Chord owns the Promise transaction callback and its queued handle.
+      async (tx) => ({
+        standing: await tx.all<object>(
+          `SELECT ${select} FROM memory_notes WHERE body IS NOT NULL AND layer IN ('self', 'soul', 'person', 'attention') ORDER BY layer`,
         ),
-    }).pipe(Scope.provide(owner))
-  let closed = false
-  let active = 0
-  const drained = Latch.makeUnsafe(true)
-  // RcMap shutdown closes entries regardless of reference counts. Stop admission and await
-  // operation scopes before its finalizer runs, including a cancelled caller's native receipt.
-  yield* Scope.addFinalizer(
-    owner,
-    Effect.suspend(() => {
-      closed = true
-      return drained.await
-    }),
-  )
-
-  /** Admission and release cannot be interrupted. Operations stay cancellable between SDK calls. */
-  const using = <A, E>(operation: Effect.Effect<A, E, Scope.Scope>) =>
-    Effect.acquireUseRelease(
-      Effect.suspend(() => {
-        if (closed) return Effect.fail(NotesUnavailable.make({}))
-        active++
-        drained.closeUnsafe()
-        return Effect.void
+        lines: await tx.all<object>(
+          'SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt FROM memory_notes WHERE body IS NOT NULL ORDER BY updated_at DESC, layer, file',
+        ),
       }),
-      () => Effect.scoped(operation),
-      () =>
-        Effect.sync(() => {
-          active--
-          if (active === 0) drained.openUnsafe()
-        }),
-    )
-  const opened = Effect.fn('Notes.lease')(function* (person: PersonId) {
-    // Validate before capacity admission; an unsafe disk path is never a full-store failure.
-    if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
-    return yield* RcMap.get(stores, person).pipe(
-      Effect.catchTag('ExceededCapacityError', () =>
-        Effect.logWarning('Notes store capacity reached').pipe(
-          Effect.andThen(Effect.fail(NotesAtCapacity.make({}))),
-        ),
-      ),
-    )
-  })
-  return Notes.of({
-    index: Effect.fn('Notes.index')(function* (person: PersonId) {
-      return yield* noteIndex(yield* opened(person)).pipe(
-        Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
-      )
-    }, using),
-    read: Effect.fn('Notes.read')(function* (person: PersonId, file: NoteFile) {
-      return yield* readNote(yield* opened(person), file)
-    }, using),
-    write: Effect.fn('Notes.write')(function* (person: PersonId, note: Note) {
-      return yield* writeNote(yield* opened(person), note).pipe(
-        Effect.catchTag('NoteMissing', () => Effect.fail(NotesUnavailable.make({}))),
-      )
-    }, using),
-    delete: Effect.fn('Notes.delete')(function* (person: PersonId, file: NoteFile) {
-      return yield* deleteNote(yield* opened(person), file)
-    }, using),
+    ),
+  )
+  const standing = yield* Effect.forEach(rows.standing, (row) => decodeNote(row)).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  const notes = yield* decodeLines(rows.lines).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  const lines: NoteLine[] = []
+  let used = 0
+  let more = false
+  for (const note of notes) {
+    const size = JSON.stringify(note).length
+    if (!isStandingLayer(note.layer) && used + size > INDEX_BUDGET) {
+      more = true
+      break
+    }
+    if (!isStandingLayer(note.layer)) {
+      used += size
+      lines.push(note)
+    }
+  }
+  return NoteIndex.make({ standing, lines, more })
+})
+
+/** An absent body is a local retraction, distinct from unavailable storage. */
+const read = Effect.fn('Notes.read')(function* (database: SqliteDatabase, address: NoteAddress) {
+  const row = yield* attempt(() =>
+    database.get<object>(
+      `SELECT ${select} FROM memory_notes WHERE layer = ? AND file = ? AND body IS NOT NULL`,
+      address.layer,
+      address.file,
+    ),
+  )
+  if (row === undefined)
+    return yield* NoteMissing.make({ address, revision: yield* revisionOf(database, address) })
+  return yield* decodeNote(row).pipe(Effect.mapError(() => NotesUnavailable.make({})))
+})
+
+/** Compare and replace inside one native transaction. Stale callers receive the actual revision. */
+const write = Effect.fn('Notes.write')(function* (database: SqliteDatabase, input: NoteWrite) {
+  const { note, authority, expected } = input
+  const encoded = yield* encodeAuthority(authority).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  const updatedAt = Date.now()
+  const result = yield* attempt(() =>
+    database.transaction(
+      // @effect-diagnostics-next-line asyncFunction:off -- Chord owns the Promise transaction callback and its queued handle.
+      async (tx) => {
+        const row = await tx.get<{ revision: number }>(
+          'SELECT revision FROM memory_notes WHERE layer = ? AND file = ?',
+          note.layer,
+          note.file,
+        )
+        const actual = row === undefined ? 0 : row.revision
+        if (actual !== expected) return { actual, saved: false }
+        await tx.run(
+          `INSERT INTO memory_notes (layer, file, kind, description, body, basis, revision, updated_at, authority)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (layer, file) DO UPDATE SET
+        kind=excluded.kind, description=excluded.description, body=excluded.body, basis=excluded.basis,
+        revision=excluded.revision, updated_at=excluded.updated_at, authority=excluded.authority`,
+          note.layer,
+          note.file,
+          note.kind,
+          note.description.replace(/\s+/gu, ' ').trim(),
+          note.body,
+          note.basis,
+          actual + 1,
+          updatedAt,
+          encoded,
+        )
+        return { actual: actual + 1, saved: true }
+      },
+    ),
+  )
+  const revision = yield* decodeRevisionValue(result.actual).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  if (!result.saved)
+    return yield* NoteConflict.make({
+      address: NoteAddress.make(note),
+      expected,
+      actual: revision,
+    })
+  return SavedNote.make({
+    ...note,
+    description: note.description.replace(/\s+/gu, ' ').trim(),
+    revision,
+    updatedAt,
+    authority,
   })
 })
 
-/** The Layer owns the map's scope, independently of the shorter scopes of its operations. */
-export const layer = (settings: NotesSettings) => Layer.effect(Notes, make(settings))
+/** Remove content locally, retaining a revision fence. This is not the full forget contract. */
+const retract = Effect.fn('Notes.delete')(function* (
+  database: SqliteDatabase,
+  input: NoteRetraction,
+) {
+  const { address, expected } = input
+  const encoded = yield* encodeAuthority(input.authority).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  const result = yield* attempt(() =>
+    database.transaction(
+      // @effect-diagnostics-next-line asyncFunction:off -- Chord owns the Promise transaction callback and its queued handle.
+      async (tx) => {
+        const row = await tx.get<{ revision: number; body: string | null }>(
+          'SELECT revision, body FROM memory_notes WHERE layer = ? AND file = ?',
+          address.layer,
+          address.file,
+        )
+        const actual = row === undefined ? 0 : row.revision
+        if (actual !== expected) return { actual, outcome: 'conflict' as const }
+        if (row === undefined || row.body === null) return { actual, outcome: 'missing' as const }
+        await tx.run(
+          'UPDATE memory_notes SET body = NULL, description = ?, revision = ?, updated_at = ?, authority = ? WHERE layer = ? AND file = ?',
+          '',
+          actual + 1,
+          Date.now(),
+          encoded,
+          address.layer,
+          address.file,
+        )
+        return { actual: actual + 1, outcome: 'removed' as const }
+      },
+    ),
+  )
+  const actual = yield* decodeRevisionValue(result.actual).pipe(
+    Effect.mapError(() => NotesUnavailable.make({})),
+  )
+  if (result.outcome === 'conflict') return yield* NoteConflict.make({ address, expected, actual })
+  if (result.outcome === 'missing') return yield* NoteMissing.make({ address, revision: actual })
+})
+/**
+ * Drizzle generates the supplied SQL. Chord applies it atomically on the same queue as Pi,
+ * with a distinct ledger. No driver, direct storage access or hand-authored DDL is needed.
+ */
+export const openNotes = Effect.fn('Notes.open')(function* (
+  database: SqliteDatabase,
+  migration: string,
+) {
+  yield* attempt(() =>
+    applySqliteMigrations(
+      database,
+      [
+        {
+          version: 1,
+          statements: migration.split('--> statement-breakpoint'),
+        },
+      ],
+      { table: 'memory_migrations' },
+    ),
+  )
+
+  return {
+    index: () => index(database),
+    read: (address: NoteAddress) => read(database, address),
+    write: (input: NoteWrite) => write(database, input),
+    delete: (input: NoteRetraction) => retract(database, input),
+  }
+})
+
+/** Native RPC transports the existing typed outcomes, including stale-revision conflicts. */
+export const NoteReadResult = Schema.toCodecJson(
+  Schema.Result(SavedNote, Schema.Union([NoteMissing, NotesUnavailable])),
+)
+export const NoteWriteResult = Schema.toCodecJson(
+  Schema.Result(SavedNote, Schema.Union([NoteConflict, NotesUnavailable])),
+)
+export const NoteDeleteResult = Schema.toCodecJson(
+  Schema.Result(Schema.Boolean, Schema.Union([NoteConflict, NoteMissing, NotesUnavailable])),
+)

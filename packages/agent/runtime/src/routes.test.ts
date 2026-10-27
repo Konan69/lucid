@@ -8,21 +8,7 @@ import {
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
 import { describe, expect, it } from '@effect/vitest'
 import { ConversationState, PersonId, RuntimeSettlement, ThreadId } from '@vivid/contracts'
-import {
-  Array as Arr,
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Option,
-  Order,
-  Schema,
-  Scope,
-  Stream,
-} from 'effect'
-import * as Pg from 'pg'
-import * as TestClock from 'effect/testing/TestClock'
-import { databaseConfigured } from '../tests/database.ts'
+import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
 import { held, start, world } from '../tests/process.ts'
 import {
   ada,
@@ -30,17 +16,13 @@ import {
   decodeSettlement,
   delivery,
   grace,
-  IDLE,
   scenario,
   settled,
   threadPath,
-  untilResting,
   type Runtime,
 } from '../tests/requests.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY } from './response.ts'
-import { PLACED_ENTRY } from './deliveries.ts'
 import { SIGNAL_ENTRY } from './delivery.ts'
-import { RuntimeOwned } from './storage/errors.ts'
 import { conversationOf, pi } from './threads.ts'
 
 const decodeResponse = Schema.decodeUnknownEffect(ResponseData)
@@ -59,22 +41,7 @@ const transcript = (runtime: Runtime, person: PersonId, threadId: string) =>
     }),
   )
 
-/** The Persons each store belongs to, read straight from the world's database. */
-const storeOwners = (database: string) =>
-  Effect.promise(() => {
-    const client = new Pg.Client({ connectionString: database })
-    return client
-      .connect()
-      .then(() =>
-        client.query('SELECT id::text AS id, person_id FROM runtime.stores ORDER BY person_id'),
-      )
-      .then((result) =>
-        result.rows.map((row) => ({ id: String(row.id), personId: String(row.person_id) })),
-      )
-      .finally(() => client.end())
-  })
-
-describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
+describe('the runtime over HTTP', () => {
   it.effect('answers a Person and tells the model what main told it', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
@@ -120,7 +87,6 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
         expect(context).toBeGreaterThan(instruction)
         expect(skills).toBeGreaterThan(context)
         expect(model.prompt).toContain(' in the UTC time zone.')
-        expect(model.prompt).toContain('What you remember: nothing yet.')
         expect(model.prompt).toContain('- **deep-research** — ')
         expect(model.prompt).not.toContain(ada)
         // Main's order: the Computer's tools, the skill tool, then the product tools.
@@ -355,14 +321,14 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
         given.faux.setResponses([interrupted.factory, afterwards])
 
         const first = yield* Scope.make()
-        const before = yield* start(given, { idleMillis: IDLE }).pipe(Scope.provide(first))
+        const before = yield* start(given).pipe(Scope.provide(first))
         const receipt = yield* admit(before, ada, delivery('thread-1', 'key-1'))
         yield* interrupted.entered
         // The process stops in the middle of the model's answer.
         yield* Scope.close(first, Exit.void)
 
         // The next process, on the same database. Nothing is sent to it before the reply resumes.
-        const after = yield* start(given, { idleMillis: IDLE })
+        const after = yield* start(given)
         const prompt = yield* Deferred.await(resumed)
         // The context frozen for the response came back from the store, not from memory.
         expect(prompt).toContain('Context for this response')
@@ -400,11 +366,6 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
           delivery('grace-thread', 'key-g', { creator: grace }),
         )
         yield* settled(runtime, grace, 'grace-thread', theirs.submissionId)
-        // One store row each, keyed by an opaque id that is not the Person's.
-        const owners = yield* storeOwners(given.database)
-        expect(owners.map((owner) => owner.personId)).toEqual(Arr.sort([ada, grace], Order.String))
-        expect(new Set(owners.map((owner) => owner.id)).size).toBe(2)
-        for (const owner of owners) expect(owner.id).not.toBe(owner.personId)
         // Ada's Thread does not exist in Grace's store, and cannot be put there.
         expect(
           yield* runtime.send(
@@ -424,69 +385,6 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
             body: delivery('ada-thread', 'key-y'),
           }),
         ).toMatchObject({ status: 400 })
-      }),
-    ),
-  )
-
-  it.effect('does not start a second runtime while one holds the conversations', () =>
-    scenario((given, runtime) =>
-      Effect.gen(function* () {
-        given.faux.setResponses([fauxAssistantMessage('held here')])
-        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
-        yield* settled(runtime, ada, 'thread-1', receipt.submissionId)
-        // A second runtime on the same database while the first still runs: it opens nothing.
-        const other = yield* Effect.exit(start(given, { idleMillis: IDLE }))
-        expect(Exit.isFailure(other)).toBe(true)
-        if (Exit.isFailure(other)) expect(Cause.squash(other.cause)).toBeInstanceOf(RuntimeOwned)
-        // The first is untouched and still answers.
-        expect(
-          RuntimeSettlement.guards.Done(
-            yield* settled(runtime, ada, 'thread-1', receipt.submissionId),
-          ),
-        ).toBe(true)
-        expect(given.faux.state.callCount).toBe(1)
-      }),
-    ),
-  )
-
-  it.effect('closes a Person who is idle and opens them again on the next delivery', () =>
-    scenario((given, runtime) =>
-      Effect.gen(function* () {
-        const heard = yield* Deferred.make<ReadonlyArray<unknown>>()
-        const second: FauxResponseFactory = (context) => {
-          Deferred.doneUnsafe(
-            heard,
-            Effect.succeed(
-              context.messages.flatMap((message) =>
-                message.role === 'user' ? [message.content] : [],
-              ),
-            ),
-          )
-          return fauxAssistantMessage('again')
-        }
-        given.faux.setResponses([fauxAssistantMessage('first'), second])
-        const first = yield* admit(runtime, ada, delivery('thread-1', 'key-1', { body: 'one' }))
-        yield* settled(runtime, ada, 'thread-1', first.submissionId)
-        yield* untilResting(runtime, ada)
-        yield* TestClock.adjust(IDLE)
-        yield* runtime.persons.watch.pipe(
-          Stream.filter((open) => open.length === 0),
-          Stream.runHead,
-        )
-        // Closed, not lost: the next delivery opens the same store and the model reads the Thread.
-        const next = yield* admit(
-          runtime,
-          ada,
-          delivery('thread-1', 'key-2', { body: 'two', turn: 2 }),
-        )
-        expect(yield* settled(runtime, ada, 'thread-1', next.submissionId)).toEqual(
-          RuntimeSettlement.cases.Done.make({
-            answeredBy: next.submissionId,
-            reply: 'again',
-            toolCalls: 0,
-          }),
-        )
-        expect(yield* Deferred.await(heard)).toEqual(['one', 'two'])
       }),
     ),
   )
@@ -720,29 +618,13 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
         ])
         const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
         const response = yield* runtime.send(
-          `${threadPath(ada, 'thread-1')}/submissions/${receipt.submissionId}?wait=1`,
+          `${threadPath(ada, 'thread-1')}/submissions/${receipt.submissionId}`,
           { method: 'GET' },
         )
         expect(yield* decodeSettlement(response.body)).toEqual(
           RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 403 }),
         )
         expect(JSON.stringify(response.body)).not.toContain('SECRET')
-      }),
-    ),
-  )
-
-  it.effect('does not start when the database of conversations cannot be reached', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const given = yield* world()
-        // Nothing listens on port 1: the store can be neither locked nor read.
-        const started = yield* Effect.exit(
-          start(
-            { ...given, database: 'postgres://vivid:vivid@127.0.0.1:1/absent' },
-            { idleMillis: IDLE },
-          ),
-        )
-        expect(Exit.isFailure(started)).toBe(true)
       }),
     ),
   )
@@ -780,46 +662,6 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
           expect(given.faux.state.callCount).toBe(2)
         }),
       ),
-  )
-
-  it.effect('lets a Person close when all that waits is a write of the runtime’s own', () =>
-    scenario((given, runtime) =>
-      Effect.gen(function* () {
-        const failing = yield* held(
-          fauxAssistantMessage('', { stopReason: 'error', errorMessage: '401 invalid api key' }),
-        )
-        given.faux.setResponses([failing.factory])
-        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
-        yield* failing.entered
-        // The write that places waiting deliveries, arriving while a run is going: Pi queues it,
-        // and the run then fails without a boundary, so it is left waiting alone.
-        yield* runtime.persons.use(ada, ({ harness }) =>
-          Effect.gen(function* () {
-            const conversation = yield* conversationOf(harness, ThreadId.make('thread-1'))
-            if (Option.isNone(conversation)) return yield* Effect.void
-            return yield* pi(() =>
-              conversation.value.submit(
-                { type: 'write', entry: { kind: PLACED_ENTRY, edits: [] } },
-                BACKGROUND_CONTEXT,
-              ),
-            )
-          }),
-        )
-        yield* failing.release
-        yield* settled(runtime, ada, 'thread-1', receipt.submissionId)
-        yield* untilResting(runtime, ada)
-        yield* TestClock.adjust(IDLE)
-        yield* runtime.persons.watch.pipe(
-          Stream.filter((open) => open.length === 0),
-          Stream.runHead,
-        )
-        // Nothing of it is left to hold the next process open either.
-        const work = yield* runtime.persons.use(ada, ({ harness }) =>
-          pi(() => harness.inspect(BACKGROUND_CONTEXT)),
-        )
-        expect([work.tasks.length, work.submissions.length]).toEqual([0, 0])
-      }),
-    ),
   )
 
   it.effect('refuses a caller without the runtime token and answers health without one', () =>

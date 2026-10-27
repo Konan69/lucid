@@ -54,7 +54,7 @@ export const THREAD_KEY = 'thread'
 /**
  * A call into Pi rejected. That is not by itself a failed store: Pi rejects one call for an
  * invalid request or a commit callback that threw and stays sound (Pi README, Errors). A store
- * that did fail closes its Harness, which is what the host acts on (`persons.ts`).
+ * that did fail closes its Harness, which resets the owning cell.
  */
 export class PiRejected extends Schema.TaggedError<PiRejected>()(
   'PiRejected',
