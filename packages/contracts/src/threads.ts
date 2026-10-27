@@ -192,6 +192,9 @@ export const RunOrigin = Schema.TaggedUnion({
 })
 export type RunOrigin = typeof RunOrigin.Type
 
+/** Work no Person is watching may only act without a decision when the action is contained. */
+export const unwatched = RunOrigin.isAnyOf(['Watch'])
+
 /**
  * Why a Run failed, in the terms a Person would act on. Waiting helps with `RateLimited`; trying
  * again helps with `TimedOut` and `NoAnswer` (the model returned nothing at all); `ModelUnavailable`

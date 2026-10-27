@@ -6,6 +6,7 @@ import {
   RunId,
   ThreadId,
   NotFound,
+  unwatched,
   type Person,
   type ProposedAction,
   type Workspace,
@@ -13,7 +14,7 @@ import {
 import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
-import { actingRun } from '../threads/runs.ts'
+import { actingRun, RunStore } from '../threads/runs.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -135,7 +136,7 @@ import { RuleStore } from '../rules/store.ts'
 import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
-import { reviewOutcome } from './policy.ts'
+import { reviewOutcome, unwatchedOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
 
 /** Whether the action is on the Person's own computer: only that Person may decide an Approval for it. */
@@ -185,6 +186,17 @@ const reviewable = (action: ProposedAction) =>
   ActionTarget.guards.Connection(action.target) ||
   (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
 
+/** Use the resolved acting Run, never a newer delivery that may have joined its response. */
+const isUnwatched = Effect.fn('Gate.isUnwatched')(function* (
+  store: RunStore['Service'],
+  origin: ActionOrigin,
+) {
+  if (ActionOrigin.guards.RuntimeThread(origin)) return false
+  const run = (yield* store.list(origin.threadId)).find((run) => run.id === origin.runId)
+  if (run === undefined) return yield* new NotFound({ message: 'Acting Run not found' })
+  return unwatched(run.origin)
+})
+
 /** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
 export const gateLayer = Layer.effect(
   Gate,
@@ -195,12 +207,13 @@ export const gateLayer = Layer.effect(
     const audit = yield* Audit
     const reviewer = yield* Reviewer
     const database = yield* Database
+    const runs = yield* RunStore
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
         // All callers previously resolved origin before Gate.check. Keep that authority check
         // here when removing the duplicated proposal field, including actions allowed immediately.
-        yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
+        const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
         if (action.effect === 'read' && exposure === 'Ordinary')
           return yield* allow(audit, actor, action)
         const binding = yield* rules.list(actor)
@@ -238,6 +251,13 @@ export const gateLayer = Layer.effect(
           exposure === 'PersonalInShared'
         )
           return yield* ask(approvals, actor, action)
+        // A standing Allow and a high "asked" score never authorize outward background work.
+        if (action.effect !== 'read' && (yield* isUnwatched(runs, origin))) {
+          const review = yield* reviewer.review(actor, action)
+          if (unwatchedOutcome(action.effect, review) === 'Ask')
+            return yield* ask(approvals, actor, action)
+          return yield* allow(audit, actor, action)
+        }
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
         // to let "Allow updating projects" authorize deleting one, so that goes to the review.

@@ -51,6 +51,7 @@ import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { RuleJudge, RulesNotJudged } from '../rules/judge.ts'
 import { ruleStoreLayer } from '../rules/store.ts'
 import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
+import { runStoreLayer } from '../threads/runs.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
@@ -213,7 +214,9 @@ export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pi
   Layer.provideMerge(policy),
 )
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
-export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
+export const trustTestServices = gateLayer.pipe(
+  Layer.provideMerge(Layer.merge(storeServices, runStoreLayer)),
+)
 /** Complete fixtures remain available to suites that compose their own dependency graph. */
 export const stores = storeServices.pipe(Layer.provideMerge(testDatabaseLayer))
 export const trustTestLayer = trustTestServices.pipe(Layer.provideMerge(testDatabaseLayer))
