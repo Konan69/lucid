@@ -169,14 +169,12 @@ async function phoneIdentity(state, check) {
 /** Person activation must traverse the real product gateway after native deployment. */
 async function nativeCells(state, check) {
   await check('disposable fleet bucket', async () => {
-    const output = await command([
-      'docker',
-      'inspect',
-      '--format',
-      '{{.State.Running}} {{.State.Health.Status}} {{index .Config.Labels "vivid.verify"}} {{range (index .NetworkSettings.Ports "9000/tcp")}}{{.HostIp}}:{{.HostPort}}{{end}}',
-      state.bucketContainer,
-    ])
-    return { ok: output === `true healthy ${state.run} 127.0.0.1:${state.ports.bucket}` }
+    if (!(await ownsPort(state.processes.bucket, state.ports.bucket)))
+      return { ok: false, reason: 'No owned native MinIO listener' }
+    const response = await fetch(`http://127.0.0.1:${state.ports.bucket}/minio/health/live`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    return { ok: response.ok, status: response.status }
   })
   await check('native cell deployment', async () => ({
     ok: true,

@@ -20,8 +20,6 @@ export async function owned(state) {
     ['helixContainer', 'vivid-verify-helix-'],
     ['executorContainer', 'vivid-verify-executor-'],
     ['executorExporter', 'vivid-verify-exporter-'],
-    ['bucketContainer', 'vivid-verify-bucket-'],
-    ['bucketSetup', 'vivid-verify-bucket-setup-'],
   ])
     if (state[field] !== undefined && state[field] !== prefix + state.run)
       throw new Error('Container ownership mismatch')
@@ -134,7 +132,7 @@ export async function recover(state) {
       'web',
       'runtime',
       'runtime-peer',
-      'bucket-events',
+      'bucket',
       'server',
       'database-events',
       'catalog',
@@ -152,8 +150,6 @@ export async function recover(state) {
     state.helixContainer,
     state.executorContainer,
     state.executorExporter,
-    state.bucketSetup,
-    state.bucketContainer,
   ].filter(Boolean)) {
     if (names.includes(name)) {
       const label = await command([

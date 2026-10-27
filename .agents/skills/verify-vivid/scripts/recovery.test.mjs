@@ -115,11 +115,11 @@ NodeTest.test(
 
 /** A supervisor crash must not strand a separately captured product child. */
 NodeTest.test(
-  'crash cleanup stops both runtime generations and preserves evidence on repeated cleanup',
+  'crash cleanup stops both runtimes and the native bucket and preserves evidence',
   async (context) => {
     const state = await fixture(context)
     const closed = []
-    for (const role of ['runtime', 'runtime-peer']) {
+    for (const role of ['runtime', 'runtime-peer', 'bucket']) {
       const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
         stdio: ['pipe', 'ignore', 'ignore'],
         detached: true,
@@ -140,6 +140,7 @@ NodeTest.test(
     NodeAssert.equal(first.code, 0, first.output)
     NodeAssert.equal(await alive(state.processes.runtime), false)
     NodeAssert.equal(await alive(state.processes['runtime-peer']), false)
+    NodeAssert.equal(await alive(state.processes.bucket), false)
     await Promise.all(closed)
     const second = await cli(['cleanup', state.run])
     NodeAssert.equal(second.code, 0, second.output)

@@ -420,7 +420,7 @@ async function clean() {
     'web',
     'runtime',
     'runtime-peer',
-    'bucket-events',
+    'bucket',
     'server',
     'catalog',
     'executor-events',
@@ -448,8 +448,6 @@ async function clean() {
     state.helixContainer,
     state.executorContainer,
     state.executorExporter,
-    state.bucketSetup,
-    state.bucketContainer,
   ].filter(Boolean)) {
     if (containers.includes(container)) {
       try {

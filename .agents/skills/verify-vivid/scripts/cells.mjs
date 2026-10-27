@@ -1,10 +1,9 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeEvents from 'node:events'
+import * as NodeCrypto from 'node:crypto'
 import { Schema } from 'effect'
 import { decodeText, BucketCredentials, NativeState, NativeDeployment } from './receipts.mjs'
 import { alive, ownsPort, root, signal, json, terminate } from './process.mjs'
-
-const bucketImage = 'quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z'
 
 /** All fleet credentials and native SQLite files belong to this run's disposable scratch. */
 async function fleetEnvironment(state, cleanEnv) {
@@ -22,114 +21,52 @@ async function fleetEnvironment(state, cleanEnv) {
   }
 }
 
-/** Docker health events prove bucket readiness. The pinned MinIO image includes curl and mc. */
+/** The native bucket owns only a captured PID and scratch data. Its listener event is followed
+ * by the public health check before deployment can write to the disposable bucket. */
 async function bucket(state, services) {
   const { cleanEnv } = services
   const credentials = { access: 'verify-' + crypto.randomUUID(), secret: crypto.randomUUID() }
   await json(state.scratch + '/bucket.json', credentials)
-  state.bucketContainer = 'vivid-verify-bucket-' + state.run
-  state.bucketSetup = 'vivid-verify-bucket-setup-' + state.run
-  await services.save()
-  await services.run(
-    [
-      'docker',
-      'run',
-      '--detach',
-      '--name',
-      state.bucketContainer,
-      '--label',
-      'vivid.verify=' + state.run,
-      '-p',
-      `127.0.0.1:${state.ports.bucket}:9000`,
-      '-e',
-      'MINIO_ROOT_USER',
-      '-e',
-      'MINIO_ROOT_PASSWORD',
-      '--health-cmd',
-      'curl -fsS http://127.0.0.1:9000/minio/health/ready',
-      '--health-interval',
-      '1s',
-      '--health-timeout',
-      '3s',
-      '--health-retries',
-      '30',
-      bucketImage,
-      'server',
-      '/data',
-      '--address',
-      ':9000',
-    ],
+  const binary = await services.run(['sh', '-c', 'command -v minio'], { env: cleanEnv })
+  await json(state.evidence + '/bucket-binary.json', {
+    binary,
+    version: await services.run([binary, '--version'], { env: cleanEnv }),
+    sha256: NodeCrypto.createHash('sha256')
+      .update(await NodeFSP.readFile(binary))
+      .digest('hex'),
+  })
+  const child = await services.own(
+    'bucket',
+    [binary, 'server', state.scratch + '/bucket', '--address', `127.0.0.1:${state.ports.bucket}`],
     {
       env: {
         ...cleanEnv,
         MINIO_ROOT_USER: credentials.access,
         MINIO_ROOT_PASSWORD: credentials.secret,
+        MINIO_BROWSER: 'off',
       },
-      heavy: true,
-      redactions: Object.values(credentials),
-      log: state.evidence + '/bucket-start.json',
     },
   )
-  const health = await services.run([
-    'docker',
-    'inspect',
-    '--format',
-    '{{.State.Health.Status}}',
-    state.bucketContainer,
-  ])
-  if (health !== 'healthy') {
-    const events = await services.own('bucket-events', [
-      'docker',
-      'events',
-      '--since',
-      state.started,
-      '--filter',
-      'container=' + state.bucketContainer,
-      '--filter',
-      'event=health_status',
-      '--format',
-      '{{.Action}}',
-    ])
-    try {
-      await signal(
-        events,
-        events.stdout,
-        'data',
-        (bytes) => bytes.toString().includes('health_status: healthy'),
-        60_000,
-      )
-    } finally {
-      const closed = NodeEvents.once(events, 'close')
-      events.kill('SIGTERM')
-      await closed
-    }
-  }
+  await signal(child, child, 'output', (bytes) => bytes.toString().includes('API:'))
+  const response = await fetch(`http://127.0.0.1:${state.ports.bucket}/minio/health/live`)
+  await json(state.evidence + '/bucket-health.json', { status: response.status })
+  if (!response.ok) throw new Error('Native MinIO health refused')
+  const authorization = credentials.access + ':' + credentials.secret
   await services.run(
     [
-      'docker',
-      'run',
-      '--rm',
-      '--network',
-      'host',
-      '--name',
-      state.bucketSetup,
-      '--label',
-      'vivid.verify=' + state.run,
-      '-e',
-      'MC_HOST_verify',
-      '--entrypoint',
-      'mc',
-      bucketImage,
-      'mb',
-      'verify/vivid',
+      'curl',
+      '-fsS',
+      '--aws-sigv4',
+      'aws:amz:us-east-1:s3',
+      '--user',
+      authorization,
+      '-X',
+      'PUT',
+      `http://127.0.0.1:${state.ports.bucket}/vivid`,
     ],
     {
-      env: {
-        ...cleanEnv,
-        MC_HOST_verify: `http://${credentials.access}:${credentials.secret}@127.0.0.1:${state.ports.bucket}`,
-      },
-      heavy: true,
-      redactions: Object.values(credentials),
+      env: cleanEnv,
+      redactions: [...Object.values(credentials), authorization],
       log: state.evidence + '/bucket-create.json',
     },
   )
