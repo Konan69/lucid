@@ -163,6 +163,7 @@ allowBuilds:
   # its manifest (`enriched-markdown` in apps/mobile/package.json), as T3 Code mobile allows it.
   'react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz': true
 
+patchedDependencies:
   '@openuidev/react-lang@1.0.0': patches/@openuidev__react-lang@1.0.0.patch
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch
