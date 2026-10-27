@@ -322,7 +322,6 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /** Pi runs its TypeScript entry and migrates its own tables before taking traffic. */
     startCommand: 'pnpm --filter @vivid/agent-runtime start',
     preDeploy: { command: 'pnpm --filter @vivid/agent-runtime db:migrate' },
-    /** The old process must release its store lock before the replacement starts. */
     overlapSeconds: 0,
     env: {
       DATABASE_URL: databaseUrl,

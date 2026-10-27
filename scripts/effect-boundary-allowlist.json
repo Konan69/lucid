@@ -143,11 +143,6 @@
     "symbols": ["preparePdfjs"]
   },
   {
-    "file": "apps/server/src/runtime/client.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["makeRuntime"]
-  },
-  {
     "file": "apps/server/src/auth/session.ts",
     "classification": "third-party-adapter",
     "symbols": ["authenticate"]

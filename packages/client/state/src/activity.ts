@@ -114,7 +114,6 @@ const STEPS = {
   write_note: UNKNOWN,
   delete_note: UNKNOWN,
   make_integration: UNKNOWN,
-  task: UNKNOWN,
   search_library: {
     said: {
       running: 'Searching the Library',
