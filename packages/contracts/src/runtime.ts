@@ -12,7 +12,7 @@ import { RunFailure } from './threads.js'
  *   answers 202 with `RuntimeAdmissionReceipt`.
  * - `POST /persons/:personId/threads/:threadId/abort` stops the Thread's work: `RuntimeStopped`.
  * - `GET /persons/:personId/threads/:threadId/submissions/:submissionId` answers
- *   `RuntimeSettlement`; with `?wait=1` it holds the request until the submission settles.
+ *   `RuntimeSettlement` once the submission settles. Cancelling the request ends only the wait.
  * - `GET /persons/:personId/threads/:threadId/state` answers the Thread's `ConversationState`
  *   as JSON. Asked with `accept: text/event-stream` it is the state link instead: Server-Sent
  *   Events, each event's `data` one `ConversationFrame` as JSON (`Whole` first, then `Changes`),
@@ -60,11 +60,6 @@ export const RuntimeSubmissionPath = Schema.Struct({
 })
 export interface RuntimeSubmissionPath extends Schema.Schema.Type<typeof RuntimeSubmissionPath> {}
 
-/** The search of the settlement read: any `wait` value asks the runtime to hold the request. */
-export const RuntimeSettlementSearch = Schema.Struct({
-  wait: Schema.optionalKey(Schema.String),
-})
-
 /**
  * The runtime holds the delivery durably. `repeated` says the key was already admitted when this
  * request arrived; two first attempts sent at the same moment are one delivery and may both say
@@ -83,9 +78,8 @@ export const RuntimeStopped = Schema.Struct({ aborted: Schema.Boolean })
 export interface RuntimeStopped extends Schema.Schema.Type<typeof RuntimeStopped> {}
 
 /**
- * The committed state of one submission, enough for the server to settle its Run.
+ * The committed terminal state of one submission, enough for the server to settle its Run.
  *
- * - `Pending`: admitted and not answered yet, waiting its turn or being answered.
  * - `Done`: answered. `answeredBy` is the submission whose response answered it: itself, or the
  *   one whose response it joined, so several Runs that end together claim one answer once.
  *   `reply` is the words of the final answer, and `toolCalls` counts the tools the response
@@ -96,7 +90,6 @@ export interface RuntimeStopped extends Schema.Schema.Type<typeof RuntimeStopped
  * - `Stopped`: it was stopped, or withdrawn before it was placed.
  */
 export const RuntimeSettlement = Schema.TaggedUnion({
-  Pending: {},
   Done: {
     answeredBy: RuntimeSubmissionId,
     reply: Schema.String,

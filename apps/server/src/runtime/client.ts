@@ -283,7 +283,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         Effect.gen(function* () {
           const response = yield* requestRuntime(
             http,
-            request(address, `/submissions/${receipt.submissionId}?wait=1`, 'GET'),
+            request(address, `/submissions/${receipt.submissionId}`, 'GET'),
             address,
           )
           const value = yield* HttpClientResponse.schemaBodyJson(RuntimeSettlement)(response).pipe(

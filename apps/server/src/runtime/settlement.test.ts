@@ -4,9 +4,9 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { requestRuntime } from './transport.ts'
 import { expect, layer } from '@effect/vitest'
-import { Effect, Fiber, Option, Predicate } from 'effect'
+import { Effect, Fiber, Predicate } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { observeRun } from './settlement.ts'
+import { observeRun, Settlement } from './settlement.ts'
 
 /**
  * An address nothing listens on: a port the system handed out and that was closed again, so a
@@ -35,7 +35,7 @@ layer(NodeHttpClient.layerUndici)((it) => {
       const read = requestRuntime(http, HttpClientRequest.get(url), {
         personId: PersonId.make('unreachable'),
         threadId: ThreadId.make('thread'),
-      }).pipe(Effect.as(Option.none()), Effect.scoped)
+      }).pipe(Effect.as(Settlement.cases.Stopped.make({})), Effect.scoped)
       const observing = yield* Effect.forkChild(observeRun(read))
       yield* Effect.yieldNow
       yield* TestClock.adjust('2 hours')
