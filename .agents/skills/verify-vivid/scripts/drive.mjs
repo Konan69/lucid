@@ -1,6 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
-import { chat, history, rpc, settled, json } from './wire.mjs'
+import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
@@ -140,6 +140,77 @@ async function reload(state, id, directory) {
   NodeAssert.equal(page.messages.filter((message) => message.role === 'user').length, 2)
   const last = page.messages.filter((m) => m.role === 'assistant').at(-1)
   NodeAssert.match(words({ messages: [last] }), /amber-orchid/i)
+}
+/** A long ordinary reply supplies real streamed words to interrupt, without holding a tool.
+ * Pi's abort commits the partial and settles its submission; cancelling our observer does not
+ * stop work (Pi Durable 1.2/1.4 spec sections 2.2 and 5.4). An early answer fails this recipe. */
+export async function stop(state, id, directory, browser) {
+  NodeAssert.equal(state.modelKind, 'real', 'Stop requires a real model')
+  const phrase =
+    'Write a detailed 10000-word guide to planning a community garden, covering site selection, soil, irrigation, planting, maintenance and harvest. Write the guide directly in this reply as plain paragraphs. Do not create a document or ask questions.'
+  if (browser) {
+    await browser.capture('before')
+    await browser.run(['find', 'label', 'Message Vivid', 'fill', phrase])
+    await browser.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  } else await admit(state, id, phrase, directory)
+  for await (const active of conversation(state, id, { directory, name: 'active-stream' })) {
+    NodeAssert.equal(active.settlements.length, 0, 'Run ended before Stop could be exercised')
+    if (
+      !active.working ||
+      !active.messages.some(
+        (message) =>
+          message.purpose === 'assistant' &&
+          message.parts.some(
+            (part) => part.type === 'text' && part.state === 'streaming' && part.text.trim(),
+          ),
+      )
+    )
+      continue
+    const detail = await rpc(state, 'GetThread', { id }, directory, 'active-thread')
+    NodeAssert.equal(detail.runs.length, 1)
+    const run = detail.runs[0]
+    NodeAssert.equal(run.state._tag, 'Working', 'Captured Run is already terminal')
+    NodeAssert.ok(run.submissionId, 'Active Run has no runtime submission')
+    const partial = words({
+      messages: active.messages.filter(
+        (message) => message.purpose === 'assistant' && message.submissionId === run.submissionId,
+      ),
+    })
+    NodeAssert.ok(partial.trim(), 'Streaming reply does not belong to the captured Run')
+    await json(directory + '/active.json', { run, page: active, partial })
+    if (browser) await browser.run(['find', 'role', 'button', 'click', '--name', 'Stop', '--exact'])
+    else await rpc(state, 'StopThread', { id }, directory)
+    const ended = await settled(state, id, 1, 'Stopped', directory)
+    NodeAssert.equal(ended.runs[0].id, run.id, 'Stop settled a different Run')
+    const page = await history(state, id, directory)
+    NodeAssert.equal(page.working, false, 'Conversation is still working after Stop')
+    NodeAssert.equal(page.queued, 0)
+    NodeAssert.deepEqual(page.settlements, [{ submissionId: run.submissionId, outcome: 'aborted' }])
+    NodeAssert.ok(
+      page.messages.every((message) => message.parts.every((part) => part.state !== 'streaming')),
+      'A reply part is still streaming after Stop',
+    )
+    NodeAssert.ok(
+      words({
+        messages: page.messages.filter((message) => message.purpose === 'assistant'),
+      }).startsWith(partial),
+      'Stop lost the streamed partial reply',
+    )
+    const reopened = await history(state, id, directory, 'reloaded-history')
+    NodeAssert.equal(reopened.working, false, 'Reload restarted the conversation')
+    NodeAssert.equal(reopened.queued, 0)
+    NodeAssert.deepEqual(reopened.settlements, page.settlements)
+    // Timing metadata is written after Pi settles; message identity and content are durable now.
+    NodeAssert.deepEqual(
+      reopened.messages.map((message) => ({ id: message.id, parts: message.parts })),
+      page.messages.map((message) => ({ id: message.id, parts: message.parts })),
+    )
+    const reloaded = await rpc(state, 'GetThread', { id }, directory, 'reloaded-thread')
+    NodeAssert.deepEqual(reloaded.runs, ended.runs, 'Reload changed or restarted the stopped Run')
+    await rows(state, id, directory)
+    return page
+  }
+  throw new Error('No active streamed reply to stop')
 }
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
@@ -285,6 +356,7 @@ async function picture(state, id, directory) {
 const recipes = {
   first,
   reload,
+  stop,
   tool,
   replies: offer,
   question,
@@ -300,7 +372,6 @@ const recipes = {
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
   approve:
     'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
   deny: 'Needs an actual pending proposal from a connected disposable Integration.',
@@ -319,7 +390,11 @@ export async function drive(state, feature) {
   const unavailable =
     state.modelKind === 'real'
       ? realBlocked
-      : { ...blocked, notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.' }
+      : {
+          ...blocked,
+          stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
+          notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.',
+        }
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name

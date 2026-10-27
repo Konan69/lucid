@@ -5,7 +5,7 @@ import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat } from './wire.mjs'
-import { features } from './drive.mjs'
+import { features, stop } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
@@ -47,12 +47,12 @@ const missing = {
   picture: 'No browser recipe for the composer file input yet',
   approve: 'No connected disposable Integration to produce a pending Approval',
   deny: 'No connected disposable Integration to produce a pending Approval',
-  stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
 }
 const recipes = {
+  stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
   notes: { check: 'notes' },
@@ -79,6 +79,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  stop: {
+    drive: stopBrowser,
+    scope:
+      'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
+  },
   watch: {
     drive: watchBrowser,
     scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
@@ -127,6 +132,40 @@ function replyCount(text) {
 /** The same presence assertion must reject the pre-follow-up DOM and pass after rendering. */
 function requireReply(count) {
   assert.equal(count, 1, 'Expected exactly one assistant message with the exact reply')
+}
+
+/** The shared Stop proof uses the actual composer control. Exact rendered text waits for the
+ * web's reveal to finish before reload, so animation timing cannot truncate the comparison. */
+async function stopBrowser(state, id, directory, client) {
+  const page = await stop(state, id, directory, client)
+  const text = page.messages
+    .filter((message) => message.purpose === 'assistant')
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n\n')
+  for (const stage of ['stopped', 'reloaded']) {
+    if (stage === 'reloaded') await client.run(['reload'])
+    await client.run(['wait', '[aria-label="Message Vivid"]'])
+    await exactReply(client.run, text, directory, stage)
+    assert.equal(
+      await dom(client.run, `Boolean(document.querySelector('button[aria-label="Stop"]'))`),
+      false,
+    )
+    await client.capture(stage)
+  }
+  const reopened = await history(state, id, directory, 'browser-reloaded-history')
+  assert.equal(reopened.working, false, 'Browser reload restarted the conversation')
+  assert.equal(reopened.queued, 0)
+  assert.deepEqual(reopened.settlements, page.settlements)
+  assert.deepEqual(
+    reopened.messages.map((message) => ({ id: message.id, parts: message.parts })),
+    page.messages.map((message) => ({ id: message.id, parts: message.parts })),
+  )
+  const detail = await rpc(state, 'GetThread', { id }, directory, 'browser-reloaded-thread')
+  assert.equal(detail.runs.length, 1, 'Browser reload created another Run')
+  assert.equal(detail.runs[0].state._tag, 'Stopped')
+  assert.equal(detail.runs[0].submissionId, page.settlements[0].submissionId)
 }
 
 /** Retain counts at each DOM boundary so HTTP history cannot substitute for visible replies. */
@@ -265,11 +304,16 @@ async function journey(state, feature) {
     feature === 'notes' && state.modelKind !== 'real'
       ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
       : missing[feature]
-  if (reason) {
+  const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
+  if (reason || stopBlocked) {
     const verdict = {
       ...base,
       verdict: 'blocked',
-      reason: missing[feature] ? 'no browser recipe: ' + reason : reason,
+      reason: stopBlocked
+        ? 'Stop requires a real model; rehearsal cannot prove interruption.'
+        : missing[feature]
+          ? 'no browser recipe: ' + reason
+          : reason,
     }
     await json(directory + '/verdict.json', verdict)
     console.log(JSON.stringify(verdict))

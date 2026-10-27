@@ -191,7 +191,7 @@ export async function admit(state, thread, text, directory, name = 'chat', attac
 
 /** Follow the public conversation link, checking Pi's delta operations before applying them.
  * Every observation owns and closes its HTTP stream, including a first-snapshot history read. */
-async function* conversation(state, thread, { directory, name, ready }) {
+export async function* conversation(state, thread, { directory, name, ready }) {
   const account = decodeText(
     Account,
     await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'),
