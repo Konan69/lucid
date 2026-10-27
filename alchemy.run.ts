@@ -1,5 +1,6 @@
 import * as Alchemy from 'alchemy'
 import * as Command from 'alchemy/Command'
+import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Docker from 'alchemy/Docker'
 import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
@@ -7,6 +8,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
+import { cellVariables } from './infra/cells.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
@@ -58,48 +60,18 @@ const localStack = () =>
             'apps/server/drizzle.config.ts',
             'apps/server/product-drizzle/**',
             'apps/server/product-drizzle.config.ts',
-            'packages/agent/runtime/drizzle/**',
-            'packages/agent/runtime/drizzle.config.ts',
             'scripts/migrate.mjs',
           ],
           lockfile: true,
         },
       })
 
-      /**
-       * These are intentionally local processes, not ECS services. The product
-       * needs stable localhost callback URLs today; `Command.Dev` is a scoped,
-       * restartable process and is a no-op outside dev mode. See
-       * `alchemy/lib/Command/Dev.d.ts`.
-       */
+      /** Native celld dev owns local SQLite and reloads the same Worker definition used by the fleet. */
       yield* Command.Dev(target.runtimeProcessId, {
-        command: 'pnpm --filter @vivid/agent-runtime start',
-        cwd: './packages/agent/runtime',
-        env: {
-          /**
-           * Unused by the process. Reading the migration output makes Alchemy order this process
-           * after migrations, so it never boots against a schema that does not exist yet.
-           */
-          VIVID_MIGRATIONS_HASH: migrations.hash.input,
-          DATABASE_URL: databaseUrl,
-          HOST: '127.0.0.1',
-          PORT: '5173',
-          OPENCODE_API_KEY: environment.openCodeKey,
-          ...Option.match(environment.openRouterKey, {
-            onNone: () => ({}),
-            onSome: (key) => ({ OPENROUTER_API_KEY: key }),
-          }),
-          EXPLABS_API_KEY: environment.modelGatewayKey,
-          VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-          VIVID_SERVER_URL: target.serverUrl,
-          VIVID_MODEL: environment.model,
-          /**
-           * Vivid's notes: one SQLite file for each Person, beside the runtime
-           * (`packages/agent/runtime/src/notes.ts`). The runtime does not start without the
-           * directory. Locally it lives with the runtime's other state, which Git ignores.
-           */
-          VIVID_MEMORY_DIR: '.state/notes',
-        },
+        command:
+          'pnpm --filter @vivid/cells exec node ../../infra/cli.mjs dev --host 127.0.0.1 --port 5173',
+        cwd: '.',
+        env: { VIVID_CELL_VARS: cellVariables(environment, target.serverUrl) },
       })
 
       yield* Command.Dev(target.serverProcessId, {
@@ -171,7 +143,12 @@ const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
     {
-      providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
+      providers: Layer.mergeAll(
+        Railway.providers(),
+        Cloudflare.providers(),
+        Command.providers(),
+        GitHub.providers(),
+      ),
       /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
       state: hostedState(deployTarget.stackName),
     },
