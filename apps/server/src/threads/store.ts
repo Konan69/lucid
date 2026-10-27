@@ -26,6 +26,7 @@ import { appendAudit, AuditAttribution } from '../audit/record.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { companyColumnOf, inWorkspace, type Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
+import { readThreadNotices } from '../notifications/store.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
 import { projectTable } from '../projects/tables.ts'
 import {
@@ -254,7 +255,13 @@ const requireProject = Effect.fn('ThreadStore.requireProject')(function* (
   return rows.length === 0 ? yield* new NotFound({ message: 'Project not found' }) : projectId
 })
 
-/** Key share protects authorization against deletion; receipt and Person notice commit together. */
+/**
+ * Key share protects authorization against deletion; receipt and Person notice commit together.
+ * Reading a Thread also reads this Person's notifications about it: a notice says "go and look at
+ * this Thread", and once they have, it is seen. Until 27 October 2026 a notice stayed unread in
+ * Notifications after its Thread had been opened (the owner, on his iPhone). The notifications
+ * part is announced only when a notice changed, so an ordinary read wakes only the activity lists.
+ */
 const makeMarkRead = (database: DatabaseService) =>
   Effect.fn('ThreadStore.markRead')(function* (personId: PersonId, id: ThreadId) {
     yield* database.transaction((tx) =>
@@ -268,7 +275,11 @@ const makeMarkRead = (database: DatabaseService) =>
             target: [threadReads.threadId, threadReads.personId],
             set: { readAt: now },
           })
-        yield* announce(tx, [Topic.part('activity')(Topic.person(personId))])
+        const seen = yield* readThreadNotices(tx, personId, id)
+        const person = Topic.person(personId)
+        const activity = Topic.part('activity')(person)
+        // One notice per write, naming every part it moved.
+        yield* announce(tx, seen > 0 ? [activity, Topic.part('notifications')(person)] : [activity])
       }),
     )
   })
