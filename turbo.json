@@ -270,6 +270,17 @@
         "!SENTRY_AUTH_TOKEN"
       ],
       "passThroughEnv": ["CI", "EXPO_NO_TELEMETRY"]
+    },
+    "@vivid/cells#build": {
+      "dependsOn": ["checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/sentry-upload.mjs",
+        "$TURBO_ROOT$/patches/**"
+      ],
+      "outputs": ["dist/**"],
+      "env": []
     }
   }
 }

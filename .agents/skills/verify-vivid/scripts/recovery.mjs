@@ -16,21 +16,15 @@ export async function owned(state) {
     state.container !== 'vivid-verify-' + state.run
   )
     throw new Error('Verification ownership mismatch')
-  if (
-    state.helixContainer !== undefined &&
-    state.helixContainer !== 'vivid-verify-helix-' + state.run
-  )
-    throw new Error('Helix ownership mismatch')
-  if (
-    state.executorContainer !== undefined &&
-    state.executorContainer !== 'vivid-verify-executor-' + state.run
-  )
-    throw new Error('Executor ownership mismatch')
-  if (
-    state.executorExporter !== undefined &&
-    state.executorExporter !== 'vivid-verify-exporter-' + state.run
-  )
-    throw new Error('Executor exporter ownership mismatch')
+  for (const [field, prefix] of [
+    ['helixContainer', 'vivid-verify-helix-'],
+    ['executorContainer', 'vivid-verify-executor-'],
+    ['executorExporter', 'vivid-verify-exporter-'],
+    ['bucketContainer', 'vivid-verify-bucket-'],
+    ['bucketSetup', 'vivid-verify-bucket-setup-'],
+  ])
+    if (state[field] !== undefined && state[field] !== prefix + state.run)
+      throw new Error('Container ownership mismatch')
   if ((await NodeFSP.realpath(evidence)) !== evidence)
     throw new Error('Evidence directory is a symlink')
   const scratch = await NodeFSP.lstat(state.scratch).catch((error) => {
@@ -139,6 +133,8 @@ export async function recover(state) {
       'browser-tunnel',
       'web',
       'runtime',
+      'runtime-peer',
+      'bucket-events',
       'server',
       'database-events',
       'catalog',
@@ -156,6 +152,8 @@ export async function recover(state) {
     state.helixContainer,
     state.executorContainer,
     state.executorExporter,
+    state.bucketSetup,
+    state.bucketContainer,
   ].filter(Boolean)) {
     if (names.includes(name)) {
       const label = await command([
@@ -243,6 +241,8 @@ export async function recoverPrevious(cache) {
       state.helixContainer,
       state.executorContainer,
       state.executorExporter,
+      state.bucketSetup,
+      state.bucketContainer,
     ].filter(Boolean)
     if (state.cleaned && !scratch && containers.every((container) => !names.includes(container)))
       continue

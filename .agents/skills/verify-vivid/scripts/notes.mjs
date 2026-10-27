@@ -14,7 +14,8 @@ export function noteSteps() {
   return [
     {
       name: 'create',
-      prompt: 'Please remember that I prefer meetings before noon, because afternoons are for writing.',
+      prompt:
+        'Please remember that I prefer meetings before noon, because afternoons are for writing.',
       change: 'write',
       note: /before noon/iu,
       says: [],
@@ -27,7 +28,8 @@ export function noteSteps() {
     },
     {
       name: 'replace',
-      prompt: 'That has changed: I now prefer meetings after three, because mornings are for writing.',
+      prompt:
+        'That has changed: I now prefer meetings after three, because mornings are for writing.',
       change: 'replace',
       note: /after (three|3)/iu,
       says: [],
@@ -93,8 +95,10 @@ export async function noteReceipt(page, run, step, directory, known) {
     if (step.change === 'write') {
       assert.equal(write.output.replaced, false)
       known.file = write.input.file
+      known.layer = write.output.layer
     } else {
       assert.equal(write.input.file, known.file, 'The correction made a second note')
+      assert.equal(write.output.layer, known.layer, 'The correction changed layers')
       assert.equal(write.output.replaced, true)
     }
   }
@@ -102,9 +106,21 @@ export async function noteReceipt(page, run, step, directory, known) {
     assert.equal(writes.length, 0, 'Unexpected write in delete')
     assert.equal(deletes.length, 1, 'Expected one note deleted')
     assert.equal(deletes[0].state, 'output-available')
-    assert.deepEqual(deletes[0].output, { ok: true, deleted: known.file })
+    assert.deepEqual(deletes[0].output, {
+      ok: true,
+      retracted: known.file,
+      layer: known.layer,
+      forget_complete: false,
+    })
   }
-  await json(directory + '/receipt.json', { step: step.name, run, file: known.file, calls, text })
+  await json(directory + '/receipt.json', {
+    step: step.name,
+    run,
+    file: known.file,
+    layer: known.layer,
+    calls,
+    text,
+  })
   return text
 }
 
@@ -112,7 +128,10 @@ export async function noteReceipt(page, run, step, directory, known) {
 export async function notes(state, id, directory) {
   assert.equal(state.modelKind, 'real', 'Notes requires a real model; rehearsal cannot prove it')
   const steps = noteSteps()
-  await json(directory + '/steps.json', steps.map(({ name, prompt, change }) => ({ name, prompt, change })))
+  await json(
+    directory + '/steps.json',
+    steps.map(({ name, prompt, change }) => ({ name, prompt, change })),
+  )
   const known = { file: undefined }
   for (const [index, step] of steps.entries()) {
     const evidence = directory + '/' + step.name

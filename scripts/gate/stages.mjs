@@ -34,12 +34,13 @@ export const stages = [
   { name: 'format', lane: 'checks', tasks: ['format:root'] },
   // `types` emits the declarations that `typecheck` consumers read; Turbo orders them.
   { name: 'typecheck', lane: 'checks', tasks: ['types', 'typecheck', 'typecheck:root'] },
-  // Qualified tasks select only image artifacts. Their source-only prerequisites avoid
-  // desktop binaries and the phone's generic export. Bundlers share the serialized checks lane.
+  // Qualified tasks select production artifacts, including the native cell deployment receipt.
+  // Source-only prerequisites avoid desktop binaries and the phone's generic export.
+  // Bundlers share the serialized checks lane.
   {
     name: 'build',
     lane: 'checks',
-    tasks: ['@vivid/web#build', '@vivid/mobile#build:updates'],
+    tasks: ['@vivid/web#build', '@vivid/mobile#build:updates', '@vivid/cells#build'],
   },
   // Tooling integration proofs run compilers on small fixtures beside the application tests.
   { name: 'tooling', lane: 'tests', tasks: ['test:tooling'] },

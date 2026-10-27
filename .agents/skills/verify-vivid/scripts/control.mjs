@@ -54,6 +54,10 @@ async function launch() {
     'server',
     'web',
     'runtime',
+    'runtimePeer',
+    'runtimeOperator',
+    'runtimePeerOperator',
+    'bucket',
     'executor',
     'catalog',
   ])
@@ -162,12 +166,17 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
     if (action === 'doctor') await doctor(state)
-    else if (action === 'cleanup') {
+    else if (action === 'cell') {
+      const [operation = 'state', role = 'runtime', scope] = args.filter(
+        (arg) => !arg.startsWith('pi-'),
+      )
+      console.log(JSON.stringify(await control(state, { action: 'cell', operation, role, scope })))
+    } else if (action === 'cleanup') {
       const result = await recover(state)
       console.log(JSON.stringify(result))
       await dependenciesCleanup()

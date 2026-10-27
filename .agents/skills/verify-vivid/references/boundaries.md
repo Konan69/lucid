@@ -5,12 +5,11 @@ Person cell with a native Pi Durable Harness over Durable Object SQLite. Product
 Helix remain disposable labelled containers. Pi's `onWake`/alarm pattern drives durable work;
 celld owns activation, ownership, and idle lifecycle.
 
-This stack is not yet wired. The existing launcher starts the old Node runtime and invokes its
-PG migration command. The custom PG adapter is being deleted, and cell host, Notes,
-infrastructure, and verification integration are in progress. Report cell-backed runtime
-journeys as blocked until Launch and Doctor use the real cell host. Old PG-adapter tests,
-Node startup, and rehearsal verdicts do not prove that integration. Require terminal waiting,
-abort, Notes, pictures, and state-link reconnect after a cell move through the real product.
+The launcher source packages the shipped Worker with celld 0.6.2, supplies a disposable MinIO
+bucket and starts two native nodes. It has not yet passed a real Launch or product journey.
+Require native terminal waiting, abort, Notes, pictures and state-link reconnect after an owner
+move through the real product. Doctor establishes readiness and empty Person activation, not
+model behavior or recovery. Read [native cell controls](cells.md) before those proofs.
 
 Only model credentials are read from development key sources. Launch never imports application database URLs, Computer identities or production service credentials. Synthetic auth/Google configuration and a fresh VAPID pair belong to the disposable instance. Boat and Photon adapters remain explicitly unconfigured. Launch owns a disposable Executor beta.23 with a private Verify Pulse catalogue and loopback callbacks. The Watch recipe connects that Integration through real Connect. No Computer, Google login, channel delivery or push delivery is proved. Failures at these external boundaries remain failures. A connected disposable authority is required before those features can pass.
 

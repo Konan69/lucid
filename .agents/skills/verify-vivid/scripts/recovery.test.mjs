@@ -115,27 +115,32 @@ NodeTest.test(
 
 /** A supervisor crash must not strand a separately captured product child. */
 NodeTest.test(
-  'crash cleanup stops the recorded Pi runtime and preserves evidence on repeated cleanup',
+  'crash cleanup stops both runtime generations and preserves evidence on repeated cleanup',
   async (context) => {
     const state = await fixture(context)
-    const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
-      stdio: ['pipe', 'ignore', 'ignore'],
-      detached: true,
-    })
-    const closed = NodeEvents.once(child, 'close')
-    context.after(async () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.stdin.end()
-        await closed
-      }
-    })
-    state.processes.runtime = await identity(child.pid)
+    const closed = []
+    for (const role of ['runtime', 'runtime-peer']) {
+      const child = NodeChildProcess.spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+        stdio: ['pipe', 'ignore', 'ignore'],
+        detached: true,
+      })
+      const exit = NodeEvents.once(child, 'close')
+      closed.push(exit)
+      context.after(async () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.stdin.end()
+          await exit
+        }
+      })
+      state.processes[role] = await identity(child.pid)
+      NodeAssert.equal(await alive(state.processes[role]), true)
+    }
     await NodeFSP.writeFile(state.evidence + '/state.json', JSON.stringify(state, null, 2))
-    NodeAssert.equal(await alive(state.processes.runtime), true)
     const first = await cli(['cleanup', state.run])
     NodeAssert.equal(first.code, 0, first.output)
-    await closed
     NodeAssert.equal(await alive(state.processes.runtime), false)
+    NodeAssert.equal(await alive(state.processes['runtime-peer']), false)
+    await Promise.all(closed)
     const second = await cli(['cleanup', state.run])
     NodeAssert.equal(second.code, 0, second.output)
     await NodeFSP.access(state.evidence + '/state.json')

@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "deploy": "node scripts/build.mjs deploy",
     "typecheck": "node ../../scripts/types.mjs tsconfig.json",
     "lint": "node ../../scripts/lint.mjs"
   },
@@ -14,5 +16,8 @@
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "esbuild": "catalog:"
   }
 }

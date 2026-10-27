@@ -184,7 +184,7 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const unwired = unwiredNames({
     serverNames,
     runtimeNames,
-    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}`,
+    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}\n${source(root, 'infra/cells.ts')}`,
     serverImage: imageSettings(source(root, 'apps/server/Dockerfile')),
   })
   for (const name of unwired) assert.fail(`${name} is read by an app but not wired by Alchemy`)
@@ -233,27 +233,32 @@ const assertPackagePolicy = (packageDocument) => {
   )
 }
 
-const assertStackPolicy = (stackSource, infrastructureSources) => {
+const assertStackPolicy = (stackSource, localDependencies) => {
+  const localStart = stackSource.indexOf('const localStack =')
+  const hostedStart = stackSource.indexOf('const railwayStack =')
+  assert.ok(localStart >= 0 && hostedStart > localStart, 'local and hosted graphs must be separate')
+  const localGraph = stackSource.slice(localStart, hostedStart)
+  const localSources = `${localGraph}\n${localDependencies}`
   assert.doesNotMatch(
-    infrastructureSources,
-    /alchemy\/(Cloudflare|Neon)/,
-    'removed cloud providers must not be imported',
+    localSources,
+    /alchemy\/(Cloudflare|Neon|AWS)|\b(Cloudflare|Neon|AWS)\./,
+    'local stack must not load cloud providers',
   )
-  // Railway is the one hosted provider. It may be loaded only for a Railway target, so
-  // `alchemy dev` on the local target never needs a Railway credential.
+  // Railway compute and hosted R2 load only for a Railway target. The local graph never
+  // requires their provider credentials.
   assert.match(
     stackSource,
     /deployTarget\.database === 'railway' \? railwayStack\(\) : localStack\(\)/,
     'Railway providers must load only for a Railway target',
   )
-  assert.doesNotMatch(stackSource, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
+  assert.doesNotMatch(localGraph, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
   assert.doesNotMatch(
-    infrastructureSources,
+    localSources,
     /AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/,
     'local stack must not require AWS credentials',
   )
   assert.doesNotMatch(
-    stackSource,
+    localGraph,
     /alchemy\/AWS/,
     'local stack must not load AWS providers: they boot the Floci emulator for nothing',
   )
@@ -463,13 +468,12 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertPackagePolicy(decodePackageDocument(source(root, 'package.json')))
   const stackSource = source(root, 'alchemy.run.ts')
   const databaseSource = source(root, 'infra/database.ts')
-  const infrastructureSources = [
-    stackSource,
+  const localDependencies = [
     databaseSource,
     source(root, 'infra/env.ts'),
     source(root, 'infra/targets.ts'),
   ].join('\n')
-  assertStackPolicy(stackSource, infrastructureSources)
+  assertStackPolicy(stackSource, localDependencies)
   assertDatabasePolicy(databaseSource)
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))

@@ -7,17 +7,17 @@ description: Verify Vivid behaviour through its real server entry, web client, f
 
 Read the [feature map](features/README.md), the touched feature and [runtime boundaries](references/boundaries.md). Product source stays unchanged. The chosen runtime is one celld Person cell with native Pi Durable Object SQLite, defined in [Runtime cells](../../../docs/27-runtime-cells.md). PostgreSQL remains product-only.
 
-Cell-backed verification is currently blocked. The launcher still starts the old Node runtime
-and invokes a runtime PG migration command. The PG adapter is being deleted; cell host, Notes,
-infrastructure, and launcher integration are in progress. The commands below describe the
-verification workflow, not a working cell launch. Replace the launcher integration before using
-its verdicts for cell-backed behavior. A missing recipe or authority is blocked, never verified.
+The launcher source uses native celld 0.6.2 and the shipped Worker. This integration has not yet
+passed a real Launch or product journey. Treat it as unproven until the combined head passes
+Launch, Doctor, the touched journeys and Cleanup. Read [native cell controls](references/cells.md)
+for the packaging boundary and wake, restart, owner-loss and move proofs. A missing recipe or
+authority is blocked, never verified.
 
 ## Host and credentials
 
 Run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Never use cloudbox-vivid. If no devbox is reachable, stop and report verification blocked. Evidence records selected alias, Boat sandbox id, hostname and boot identity. Launch checks the alias against the box's `BOAT_ID` (stable across restarts) in `./scripts/settings.mjs`; refresh that mapping only when a devbox is replaced. Keep provider keys in a private file such as `~/.config/vivid/verify.env` (mode 0600) and pass it as `VIVID_VERIFY_KEY_FILE`.
 
-On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, Python 3 with pidfd, flock, agent-browser 0.39.0 or later and Chrome. Install a compatible agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
+On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, celld 0.6.2 on PATH, Python 3 with pidfd, flock, agent-browser 0.39.0 or later and Chrome. The cells package owns pinned esbuild through its manifest. Install a compatible agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
 Set `VIVID_VERIFY_KEY_FILE` to an explicit private env file, or export the provider keys for this run. No development env or CLI auth store is read automatically. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. Do not copy [local Claude settings](../../../.claude/settings.local.json) or CLI auth stores into the proof checkout or evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. EXPLABS_API_KEY is required by the real server memory/title model. No production infrastructure setting is imported.
 
@@ -30,13 +30,17 @@ VIVID_VERIFY_DEVBOX=cloudbox-konan VIVID_VERIFY_KEY_FILE=/private/verify.env .ag
 .agents/skills/verify-vivid/verify doctor pi-<printed-id>
 ```
 
-Require exit 0 and `worthy: true` from doctor. Launch captures HEAD, `git status --porcelain=v1 -uall` and a SHA-256 hash of `git diff --binary HEAD`. Dirty trees are labelled dirty in state, doctor and every verdict. Untracked paths, byte lengths and file contents also feed the hash. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch removes instance/provider.json immediately after reading it. The launch finally block and both cleanup paths remove it even if later teardown fails. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
+Require exit 0 and `worthy: true` from doctor. This establishes stack readiness and native Person activation, not a model response or recovery proof. Launch captures HEAD, `git status --porcelain=v1 -uall` and a SHA-256 hash of `git diff --binary HEAD`. Dirty trees are labelled dirty in state, doctor and every verdict. Untracked paths, byte lengths and file contents also feed the hash. A clean commit claim requires a clean run at that commit. A changed tree or HEAD requires a new launch. Launch removes instance/provider.json immediately after reading it. The launch finally block and both cleanup paths remove it even if later teardown fails. Launch writes `.cache/verify/current`; omitted ids select that pointer, never the newest directory. Prefer an explicit id in reports and scripts.
 
-Each run owns fresh ports, labelled containers, synthetic Better Auth account, build outputs,
-Vite caches, and captured process generations. The current launcher executes the old
-`packages/agent/runtime/src/main.ts` through `tsx` with a disposable Notes directory. Cell-backed
-launch must instead own disposable celld storage, native Pi SQLite, and its alarm lifecycle.
-Until that integration lands, runtime readiness is blocked. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Readiness requires actual product health, runtime model health, Helix health, web build/proxy and successful signup/signin. Startup failure keeps evidence and attempts cleanup.
+Each run owns fresh ports, labelled PostgreSQL, Helix and MinIO containers, a synthetic Better
+Auth account, build outputs, Vite caches and captured process generations. Native deployment
+uses the actual `apps/cells/wrangler.jsonc`, including its Markdown and SQL Text rules. Two celld
+nodes share a disposable bucket and keep separate native SQLite directories in scratch. Private
+Worker bindings carry server, token and model authority. No runtime PG migration or Node runtime
+listener is used. The heavy lock is `.cache/verify-heavy.lock` inside this checkout. Startup failure
+keeps evidence and attempts cleanup. Doctor checks deployment versions and opens an empty
+conversation through the real gateway. The Worker health route has no selected-model field;
+only a real-model journey proves that provider works.
 
 ## Drive the touched feature
 

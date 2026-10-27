@@ -22,6 +22,8 @@ import { phoneCleanup } from './phonecleanup.mjs'
 import { executor } from './executor.mjs'
 import { authSecret } from './settings.mjs'
 import { decodeText, RuntimeHealth } from './receipts.mjs'
+import { startCells, cellControl, cellSnapshot } from './cells.mjs'
+import { rpc, history } from './wire.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -71,13 +73,16 @@ async function own(role, argv, options = {}) {
     ...options,
   })
   children.set(role, child)
-  child.observed = { data: [], message: [] }
+  const output = []
+  child.observed = { data: output, output, message: [] }
   child.stdout?.on('data', (bytes) => {
     child.observed.data.push(bytes)
+    child.emit('output', bytes)
     log.write(bytes)
   })
   child.stderr?.on('data', (bytes) => {
     child.observed.data.push(bytes)
+    child.emit('output', bytes)
     log.write(bytes)
   })
   child.on('message', (value) => child.observed.message.push(value))
@@ -196,11 +201,6 @@ async function database() {
       heavy: true,
       log: state.evidence + '/' + name.replace(':', '-') + '.json',
     })
-  await run(['pnpm', '--filter', '@vivid/agent-runtime', 'db:migrate'], {
-    env,
-    heavy: true,
-    log: state.evidence + '/runtime-migrate.json',
-  })
 }
 
 /** The product entry exposes HTTP health but no IPC readiness receipt. Launch probes that
@@ -293,7 +293,6 @@ async function launch() {
     VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime}`,
     VIVID_SERVER_URL: state.server,
     VIVID_RUNTIME_TOKEN: token,
-    VIVID_MEMORY_DIR: state.scratch + '/memory',
     VIVID_MODEL: state.model,
     VIVID_HELIX_URL: `http://127.0.0.1:${state.ports.helix}`,
     VIVID_BUILD_COMMIT: state.head,
@@ -321,28 +320,21 @@ async function launch() {
     },
   )
   await serverReady(serverChild)
-  const runtimeRequire = NodeModule.createRequire(root + '/packages/agent/runtime/package.json')
-  const runtime = await own(
-    'runtime',
-    [
-      process.execPath,
-      '--import',
-      runtimeRequire.resolve('tsx'),
-      root + '/packages/agent/runtime/src/main.ts',
-    ],
+  await startCells(
+    state,
+    { run, own, save, cleanEnv },
     {
-      cwd: state.scratch,
-      env: { ...env, HOST: '127.0.0.1', PORT: String(state.ports.runtime) },
+      ...provider,
+      VIVID_RUNTIME_TOKEN: token,
+      VIVID_SERVER_URL: state.server,
+      VIVID_MODEL: state.model,
     },
-  )
-  await signal(runtime, runtime.stdout, 'data', (bytes) =>
-    bytes.toString().includes('Listening on '),
   )
   const runtimeHealth = await fetch(env.VIVID_RUNTIME_URL + '/health')
   const runtimeValue = decodeText(RuntimeHealth, await runtimeHealth.text())
   await json(state.evidence + '/runtime-health.json', runtimeValue)
-  if (!runtimeHealth.ok || runtimeValue.model !== state.model || runtimeValue.status !== 'ok')
-    throw new Error('Selected Pi runtime health refused')
+  if (!runtimeHealth.ok || runtimeValue.service !== 'vivid-cells' || runtimeValue.status !== 'ok')
+    throw new Error('Native Worker health refused')
   await run([process.execPath, skill + '/scripts/dev.mjs', 'build', state.scratch], {
     cwd: root + '/apps/web',
     env: { ...cleanEnv, VIVID_SERVER_URL: state.server },
@@ -363,6 +355,13 @@ async function launch() {
   const webHealth = await fetch(state.web + '/health')
   if (!(await webHealth.json()).ok) throw new Error('Proxy health refused')
   await signedIn()
+  const probe = state.evidence + '/cell-activation'
+  await NodeFSP.mkdir(probe)
+  const thread = crypto.randomUUID()
+  await rpc(state, 'CreateThread', { id: thread, title: 'Cell activation', projectId: null }, probe)
+  await history(state, thread, probe)
+  await json(probe + '/fleet.json', await cellSnapshot(state))
+  state.cellProbe = thread
   state.ready = true
   state.launchSeconds = (Date.now() - Date.parse(state.started)) / 1000
   await save()
@@ -416,7 +415,16 @@ async function clean() {
     await terminate(owned, 'SIGTERM', true)
     await closed
   }
-  for (const role of ['browser-tunnel', 'web', 'runtime', 'server', 'catalog', 'executor-events']) {
+  for (const role of [
+    'browser-tunnel',
+    'web',
+    'runtime',
+    'runtime-peer',
+    'bucket-events',
+    'server',
+    'catalog',
+    'executor-events',
+  ]) {
     const child = children.get(role)
     if (!child || child.exitCode !== null || child.signalCode !== null) continue
     try {
@@ -440,6 +448,8 @@ async function clean() {
     state.helixContainer,
     state.executorContainer,
     state.executorExporter,
+    state.bucketSetup,
+    state.bucketContainer,
   ].filter(Boolean)) {
     if (containers.includes(container)) {
       try {
@@ -517,6 +527,10 @@ async function dispatch(input) {
     state.commands[input.process.pid] = input.process
     await save()
     return { captured: true }
+  }
+  if (input.action === 'cell') {
+    if (cleaning || !state.ready) throw new Error('Verification is not ready for cell controls')
+    return cellControl(state, { run, own, save, cleanEnv, children }, input)
   }
   if (input.action === 'cleanup') {
     await cleanup()
