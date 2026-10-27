@@ -30,7 +30,8 @@ const nodes = [
   { id: 'CellsB', name: 'cells-b' },
 ] as const
 
-export const cellsUrl = 'http://cells-a.railway.internal:5173'
+/** Every node's private address: the server moves to the next one when a node cannot be reached. */
+export const cellsUrl = nodes.map(({ name }) => `http://${name}.railway.internal:5173`).join(',')
 
 /** Infrastructure owns storage and nodes. The server's pre-deploy step publishes the Worker. */
 export const railwayCells = Effect.fn('railwayCells')(function* (
