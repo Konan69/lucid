@@ -143,11 +143,9 @@ const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
     {
-      providers: Layer.mergeAll(
-        Railway.providers(),
-        Cloudflare.providers(),
-        Command.providers(),
-        GitHub.providers(),
+      /** Cloudflare's providers carry the HttpClient the others use, so they are built first. */
+      providers: Layer.mergeAll(Railway.providers(), Command.providers(), GitHub.providers()).pipe(
+        Layer.provideMerge(Cloudflare.providers()),
       ),
       /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
       state: hostedState(deployTarget.stackName),

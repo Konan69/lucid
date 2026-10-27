@@ -26,7 +26,10 @@ async function main() {
     throw new Error('deploy requires a private Wrangler config and a receipt path')
   const binary = 'celld'
   const version = await execute(binary, ['--version'])
-  if (version.stdout.trim() !== 'celld 0.6.2') throw new Error('celld 0.6.2 is required')
+  if (version.stdout.trim() !== 'celld 0.6.2')
+    throw new Error(
+      'celld 0.6.2 is required on PATH: CELLD_VERSION=v0.6.2 curl -fsSL https://celld.dev/install.sh | sh',
+    )
 
   /** celld owns bundling and its deployment format. Dry runs retain only a build receipt;
    * deploy writes the actual modules and manifest to the selected fleet bucket. */

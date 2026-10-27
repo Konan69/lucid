@@ -284,11 +284,6 @@
       "owner": "docs/checks.md",
       "paths": ["apps/web/TYPECHECK.md"],
       "reason": "VCOS reference architecture citation, not a Vivid source file."
-    },
-    {
-      "owner": ".agents/skills/verify-vivid/SKILL.md",
-      "paths": ["packages/agent/runtime/src/main.ts"],
-      "reason": "The blocked launcher description names its deleted Node entry as the boundary still awaiting cell packaging."
     }
   ]
 }
