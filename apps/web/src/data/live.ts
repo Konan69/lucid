@@ -62,6 +62,8 @@ export const live = {
   devices: one((client) => client.WatchDevices()),
   /** What Vivid's own work in background Threads brings the Person: the Feed (`screen/Feed.tsx`). */
   feed: one((client) => client.WatchFeed()),
+  /** Who owes the Person what, which Vivid keeps and chases (`screen/feed/Owed.tsx`). */
+  owed: one((client) => client.WatchOwed()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }

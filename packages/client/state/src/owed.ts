@@ -263,11 +263,17 @@ const sentence = (words: string) =>
  * now (the first in the server's order is the soonest due), said only when it is late or due
  * within a day. `None` when nothing is owed: the head then says the Feed's own standing.
  */
+/** The head's sentence: a bold lead, then, when there is one, the record that matters most now. */
+export interface Head {
+  readonly lead: string
+  readonly rest: Option.Option<string>
+}
+
 export const headOf = (
   waiting: ReadonlyArray<Waiting>,
   timing: (record: Owed, now: number) => { readonly words: string; readonly late: boolean },
   now: number,
-): Option.Option<{ readonly lead: string; readonly rest: Option.Option<string> }> =>
+): Option.Option<Head> =>
   Option.map(Option.fromUndefinedOr(waiting[0]), (first) => {
     const people = new Set(waiting.map((record) => record.from.trim().toLowerCase())).size
     const lead = people === 1 ? `${first.from} owes you.` : `${people} people owe you.`
@@ -290,6 +296,9 @@ const TRACK_BACK_DAYS = 14
 const TRACK_AHEAD_DAYS = 6
 const DAY_MS = 86_400_000
 
+/** Where now sits on every track, from 0 to 1: the same place on each row. */
+export const TRACK_NOW = TRACK_BACK_DAYS / (TRACK_BACK_DAYS + TRACK_AHEAD_DAYS)
+
 /** A moment's place on a track, from 0 (its left end) to 1 (its right end), and whether it fell off. */
 interface Placed {
   readonly at: number
@@ -303,7 +312,6 @@ interface Placed {
  * `clipped` so the surface can fade that end instead of claiming a date it cannot show.
  */
 export interface Track {
-  readonly now: number
   readonly since: Placed
   readonly chased: Option.Option<Placed>
   readonly due: Option.Option<Placed>
@@ -320,7 +328,6 @@ export const trackOf = (record: Waiting, now: number): Track => {
   }
   const due = Option.fromNullOr(record.due)
   return {
-    now: TRACK_BACK_DAYS / span,
     since: place(record.since),
     chased: Option.map(nudgeOf(record), ({ lastAt }) => place(lastAt)),
     due: Option.map(due, place),
