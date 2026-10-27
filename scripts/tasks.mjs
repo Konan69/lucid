@@ -97,7 +97,7 @@ function checkTestEnvironment(tasks) {
 /** Shipping overrides keep the production hash while excluding source-map upload authority. */
 function checkBuild(tasks) {
   const web = read(Turbo, '../apps/web/turbo.json').tasks.build
-  for (const task of [tasks['@vivid/agent-runtime#build'], web]) {
+  for (const task of [web]) {
     for (const field of ['inputs', 'outputs', 'passThroughEnv'])
       assert.deepEqual(
         task[field],
@@ -135,4 +135,8 @@ checkOverrides(tasks)
 checkTestEnvironment(tasks)
 checkBuild(tasks)
 checkWorkflow()
+// Pi has no bundle, but its source still participates in every generic gate check.
+const runtime = read(Manifest, '../packages/agent/runtime/package.json')
+for (const task of ['types', 'typecheck', 'lint', 'test'])
+  assert.notEqual(runtime.scripts[task], undefined, `runtime: missing gate task ${task}`)
 console.log('Task policy passed')

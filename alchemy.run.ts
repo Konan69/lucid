@@ -58,6 +58,8 @@ const localStack = () =>
             'apps/server/drizzle.config.ts',
             'apps/server/product-drizzle/**',
             'apps/server/product-drizzle.config.ts',
+            'packages/agent/runtime/drizzle/**',
+            'packages/agent/runtime/drizzle.config.ts',
             'scripts/migrate.mjs',
           ],
           lockfile: true,
@@ -71,7 +73,7 @@ const localStack = () =>
        * `alchemy/lib/Command/Dev.d.ts`.
        */
       yield* Command.Dev(target.runtimeProcessId, {
-        command: 'pnpm dev -- --host 127.0.0.1 --port 5173',
+        command: 'pnpm --filter @vivid/agent-runtime start',
         cwd: './packages/agent/runtime',
         env: {
           /**
@@ -80,6 +82,7 @@ const localStack = () =>
            */
           VIVID_MIGRATIONS_HASH: migrations.hash.input,
           DATABASE_URL: databaseUrl,
+          HOST: '127.0.0.1',
           PORT: '5173',
           OPENCODE_API_KEY: environment.openCodeKey,
           ...Option.match(environment.openRouterKey, {

@@ -170,8 +170,12 @@ const assertEnvironmentWiring = (root, stackSource) => {
   ]
   const runtimeNames = new Set()
   for (const file of runtimeFiles) {
-    for (const name of extractEnvironmentNames(NodeFS.readFileSync(file, 'utf8')))
-      runtimeNames.add(name)
+    const text = NodeFS.readFileSync(file, 'utf8')
+    for (const name of extractEnvironmentNames(text)) runtimeNames.add(name)
+    for (const match of text.matchAll(
+      /Config\.(?:NonEmptyString|String|Redacted|URL)\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g,
+    ))
+      runtimeNames.add(match[1])
   }
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
@@ -315,13 +319,14 @@ const assertDatabasePolicy = (databaseSource) => {
 
 const assertMigrationPolicy = (migrationSource) => {
   const serverMigration = migrationSource.search(/name: ["']server["']/)
-  // The product tables moved from the Flue runtime into the server as a second migration owner
-  // with its own history; it still runs after the server's auth and tenancy tables.
+  // Product tables run after auth and tenancy; Pi owns the conversation tables after both.
   const productMigration = migrationSource.search(/name: ["']server-product["']/)
   assert.ok(
     serverMigration >= 0 && serverMigration < productMigration,
     'migration order must be server → server-product',
   )
+  const runtimeMigration = migrationSource.search(/name: ["']runtime["']/)
+  assert.ok(productMigration < runtimeMigration, 'migration order must be product → runtime')
   assert.doesNotMatch(
     migrationSource,
     /name: ["']connectors["']/,
@@ -382,7 +387,7 @@ const assertContainerPolicy = (root) => {
     {
       name: 'Runtime',
       dockerfilePath: 'packages/agent/runtime/Dockerfile',
-      stages: { build: ['@vivid/agent-runtime'] },
+      stages: { build: [] },
     },
     {
       name: 'Server',
@@ -420,6 +425,62 @@ const assertContainerPolicy = (root) => {
       `${name} Railway startCommand must match image CMD`,
     )
   }
+}
+
+/** The Pi process keeps its conversations in the product database, in tables its own pre-deploy
+ * step migrates (the process never migrates) while the server's step migrates only the server's
+ * owners; it builds no bundle. One replica, with no overlap, so a replacement never meets the old
+ * process's advisory lock. */
+export const assertRuntimePolicy = (local, hosted, dockerfile) => {
+  const localRuntime = local.match(
+    /Command\.Dev\(target\.runtimeProcessId, \{([\s\S]*?)^      \}\)/m,
+  )
+  const hostedRuntime = hosted.match(/Railway\.Service\('Runtime', \{([\s\S]*?)^  \}\)/m)
+  assert.notEqual(localRuntime, null, 'local runtime declaration is missing')
+  assert.notEqual(hostedRuntime, null, 'hosted runtime declaration is missing')
+  for (const block of [localRuntime[1], hostedRuntime[1]]) {
+    assert.match(
+      block,
+      /pnpm --filter @vivid\/agent-runtime start/,
+      'runtime must start the Node process',
+    )
+    assert.match(block, /DATABASE_URL: databaseUrl,/, 'runtime must wire its conversation database')
+    assert.doesNotMatch(
+      block,
+      /VIVID_RUNTIME_STATE_DIR\s*:/,
+      'runtime conversations no longer live in a state directory',
+    )
+  }
+  assert.match(
+    localRuntime[1],
+    /VIVID_MIGRATIONS_HASH: migrations\.hash\.input/,
+    'local runtime must start after the migrations that create its tables',
+  )
+  assert.match(
+    hostedRuntime[1],
+    /preDeploy: \{ command: 'pnpm --filter @vivid\/agent-runtime db:migrate' \}/,
+    'runtime must migrate its own tables before it deploys',
+  )
+  assert.match(
+    hosted,
+    /preDeploy: \{ command: 'node scripts\/migrate\.mjs server' \}/,
+    'server must migrate only its own owners',
+  )
+  assert.match(
+    hostedRuntime[1],
+    /overlapSeconds: 0/,
+    'runtime replacement must release locks before starting',
+  )
+  assert.match(
+    hosted,
+    /Railway\.Volume\('RuntimeMemory', \{ project, service: runtime, mountPath: memoryPath \}\)/,
+    'retain the existing runtime volume',
+  )
+  assert.doesNotMatch(
+    dockerfile,
+    /agent-runtime build|dist\/server\.mjs|flue build/,
+    'runtime image must not build a Flue bundle',
+  )
 }
 
 const assertRepositoryPolicy = (root) => {
@@ -463,6 +524,11 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
   assertContainerPolicy(root)
+  assertRuntimePolicy(
+    stackSource,
+    source(root, 'infra/railway.ts'),
+    source(root, 'packages/agent/runtime/Dockerfile'),
+  )
   assertRepositoryPolicy(root)
   return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }
 }

@@ -179,7 +179,7 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
 })
 
 /**
- * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
+ * The hosted product on Railway: PostgreSQL, the Pi runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
@@ -301,7 +301,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
 
   /**
-   * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
+   * Pi keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
    * Person's notes: one SQLite file each (`packages/agent/runtime/src/notes.ts`), which sits beside
    * the runtime because that is the part of Vivid that later runs on the Person's own device. The
    * volume below holds them across deployments, and `VIVID_MEMORY_DIR` is what turns notes on.
@@ -319,10 +319,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     port: ports.runtime,
     publicDomain: false,
     healthcheckPath: '/health',
-    /** Bare Node runs the bundled workspace sources; a retained dashboard command cannot bypass it. */
-    startCommand: 'node packages/agent/runtime/dist/server.mjs',
-    /** Flue migrates its own schema at startup; clear any inherited pre-deploy command. */
-    preDeploy: { command: null },
+    /** Pi runs its TypeScript entry and migrates its own tables before taking traffic. */
+    startCommand: 'pnpm --filter @vivid/agent-runtime start',
+    preDeploy: { command: 'pnpm --filter @vivid/agent-runtime db:migrate' },
+    /** The old process must release its store lock before the replacement starts. */
+    overlapSeconds: 0,
     env: {
       DATABASE_URL: databaseUrl,
       HOST: listenHost,
@@ -365,7 +366,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
      * deployment serving.
      */
-    preDeploy: { command: 'node scripts/migrate.mjs' },
+    preDeploy: { command: 'node scripts/migrate.mjs server' },
     env: {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,
