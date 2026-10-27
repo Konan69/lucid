@@ -149,8 +149,10 @@ async function database() {
       'POSTGRES_DB=verify',
       '-p',
       `127.0.0.1:${state.ports.database}:5432`,
+      // TCP, not the socket: the image's first-boot init server answers on the socket only and
+      // then restarts, so a socket check passes before the real server accepts connections.
       '--health-cmd',
-      'pg_isready -U verify -d verify',
+      'pg_isready -h 127.0.0.1 -U verify -d verify',
       '--health-interval',
       '1s',
       '--health-timeout',
