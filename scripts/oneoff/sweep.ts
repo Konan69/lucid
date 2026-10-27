@@ -1,5 +1,6 @@
 import {
   RuntimeHistoryEntry,
+  RuntimeHistoryInput,
   RuntimeHistoryThread,
   type PersonId,
 } from '../../packages/contracts/src/index.ts'
@@ -41,7 +42,10 @@ const carriedOf = (
 }
 
 /** The old fold stays one-off; its output becomes the product route's native entry drafts. */
-export const historyThread = (carried: Carried): RuntimeHistoryThread =>
+export const historyThread = (
+  carried: Carried,
+  failures: Logged['failures'],
+): RuntimeHistoryThread =>
   RuntimeHistoryThread.make({
     threadId: carried.threadId,
     origin: carried.origin,
@@ -73,10 +77,15 @@ export const historyThread = (carried: Carried): RuntimeHistoryThread =>
         Responded: ({ data, inputs }) =>
           RuntimeHistoryEntry.cases.Response.make({
             draft: { kind: 'vivid.response', data: { ...data } },
-            inputs: inputs.map((input) => ({
-              requestId: input.submission,
-              outcome: input.outcome,
-            })),
+            inputs: inputs.map((input) => {
+              const requestId = input.submission
+              if (input.outcome === 'failed')
+                return RuntimeHistoryInput.cases.failed.make({
+                  requestId,
+                  failure: Option.getOrNull(Option.fromUndefinedOr(failures.get(requestId))),
+                })
+              return RuntimeHistoryInput.make({ requestId, outcome: input.outcome })
+            }),
           }),
       }),
     ),
@@ -92,10 +101,11 @@ export const sweep = Effect.fn('HistoryReader.sweep')(function* () {
       continue
     }
     const person = stream.product.value
-    const carried = yield* Effect.fromResult(carriedOf(stream, yield* source.read(stream.path)))
+    const logged = yield* source.read(stream.path)
+    const carried = yield* Effect.fromResult(carriedOf(stream, logged))
     if (carried.origin.creator !== person)
       return yield* new CreatorMismatch({ threadId: stream.threadId })
-    const history = historyThread(carried)
+    const history = historyThread(carried, logged.failures)
     const threads = people.get(person)
     if (threads === undefined) people.set(person, [history])
     else threads.push(history)

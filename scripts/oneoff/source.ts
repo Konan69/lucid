@@ -1,4 +1,4 @@
-import { PersonId, ThreadId } from '../../packages/contracts/src/index.ts'
+import { PersonId, ThreadId, RunFailure } from '../../packages/contracts/src/index.ts'
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { Pool, type PoolClient } from 'pg'
 
@@ -31,6 +31,7 @@ export interface StoredFile {
 export interface Logged {
   readonly batches: ReadonlyArray<string>
   readonly files: ReadonlyArray<StoredFile>
+  readonly failures: ReadonlyMap<string, RunFailure>
 }
 
 /** The source database could not be read. The cause stays in the process; it is never printed. */
@@ -84,6 +85,10 @@ const decodeFiles = Schema.decodeUnknownEffect(
       bytes: Schema.Uint8Array,
     }),
   ),
+)
+
+const decodeFailures = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ request_id: Schema.NonEmptyString, failure_reason: RunFailure })),
 )
 
 const unavailable = (cause: unknown) => new SourceUnavailable({ cause })
@@ -169,12 +174,22 @@ const readStream = Effect.fn('FlueSource.read')(function* (pool: Pool, path: str
          WHERE stream_path = $1 ORDER BY attachment_id`,
         [path],
       ),
-    ]).then(([batches, files]) => ({ batches: batches.rows, files: files.rows })),
+      client.query(
+        "SELECT receipt->>'runId' AS request_id, failure_reason FROM vivid_runs WHERE thread_id=$1 AND failure_reason IS NOT NULL AND receipt IS NOT NULL",
+        [path.slice('agents/vivid/'.length)],
+      ),
+    ]).then(([batches, files, failures]) => ({
+      batches: batches.rows,
+      files: files.rows,
+      failures: failures.rows,
+    })),
   )
   const batches = yield* decodeBatches(read.batches).pipe(Effect.mapError(unavailable))
   const files = yield* decodeFiles(read.files).pipe(Effect.mapError(unavailable))
+  const failures = yield* decodeFailures(read.failures).pipe(Effect.mapError(unavailable))
   return {
     batches: batches.map((batch) => batch.data),
+    failures: new Map(failures.map((run) => [run.request_id, run.failure_reason])),
     files: files.map((file) => ({
       attachmentId: file.attachment_id,
       conversationId: file.conversation_id,
