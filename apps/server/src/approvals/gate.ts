@@ -81,12 +81,13 @@ export interface GateService {
    * The working model never decides this. A `read` passes. A `write` or `destructive` action is
    * weighed against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a
    * Company's rules are binding on every Member, and a Person's own rules can only make things
-   * stricter. With no rule, the default is to run, and that includes a write on the Person's
+   * stricter. For watched work with no rule, the default is to run, including a write on the Person's
    * own browser (owner decision, 4 October 2026; see the ask group below): only an action that uses something of the
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
    * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
+   * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
    */
   readonly check: (
     actor: Actor,
@@ -186,17 +187,6 @@ const reviewable = (action: ProposedAction) =>
   ActionTarget.guards.Connection(action.target) ||
   (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
 
-/** Use the resolved acting Run, never a newer delivery that may have joined its response. */
-const isUnwatched = Effect.fn('Gate.isUnwatched')(function* (
-  store: RunStore['Service'],
-  origin: ActionOrigin,
-) {
-  if (ActionOrigin.guards.RuntimeThread(origin)) return false
-  const run = (yield* store.list(origin.threadId)).find((run) => run.id === origin.runId)
-  if (run === undefined) return yield* new NotFound({ message: 'Acting Run not found' })
-  return unwatched(run.origin)
-})
-
 /** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
 export const gateLayer = Layer.effect(
   Gate,
@@ -208,6 +198,24 @@ export const gateLayer = Layer.effect(
     const reviewer = yield* Reviewer
     const database = yield* Database
     const runs = yield* RunStore
+    /** Only containment authorizes background work, using the resolved Run rather than a newer delivery. */
+    const checkUnwatched = Effect.fn('Gate.checkUnwatched')(function* (
+      actor: Actor,
+      action: ProposedAction,
+      origin: ActionOrigin,
+    ) {
+      if (action.effect === 'read' || ActionOrigin.guards.RuntimeThread(origin))
+        return Option.none()
+      const run = (yield* runs.list(origin.threadId)).find(
+        (candidate) => candidate.id === origin.runId,
+      )
+      if (run === undefined) return yield* new NotFound({ message: 'Acting Run not found' })
+      if (!unwatched(run.origin)) return Option.none()
+      const review = yield* reviewer.review(actor, action)
+      if (unwatchedOutcome(action.effect, review) === 'Ask')
+        return Option.some<GateDecision>(yield* ask(approvals, actor, action))
+      return Option.some<GateDecision>(yield* allow(audit, actor, action))
+    })
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
@@ -252,12 +260,8 @@ export const gateLayer = Layer.effect(
         )
           return yield* ask(approvals, actor, action)
         // A standing Allow and a high "asked" score never authorize outward background work.
-        if (action.effect !== 'read' && (yield* isUnwatched(runs, origin))) {
-          const review = yield* reviewer.review(actor, action)
-          if (unwatchedOutcome(action.effect, review) === 'Ask')
-            return yield* ask(approvals, actor, action)
-          return yield* allow(audit, actor, action)
-        }
+        const background = yield* checkUnwatched(actor, action, origin)
+        if (Option.isSome(background)) return background.value
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
         // to let "Allow updating projects" authorize deleting one, so that goes to the review.
