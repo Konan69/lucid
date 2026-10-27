@@ -7,7 +7,13 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
 import { describe, expect, it } from '@effect/vitest'
-import { ConversationState, PersonId, RuntimeSettlement, ThreadId } from '@vivid/contracts'
+import {
+  ConversationFrame,
+  ConversationState,
+  PersonId,
+  RuntimeSettlement,
+  ThreadId,
+} from '@vivid/contracts'
 import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
 import { held, start, world } from '../tests/process.ts'
 import {
@@ -42,6 +48,31 @@ const transcript = (runtime: Runtime, person: PersonId, threadId: string) =>
   )
 
 describe('the runtime over HTTP', () => {
+  it.effect('opens a pre-cell Thread empty and its next message starts the conversation', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const path = threadPath(ada, 'pre-cell-thread')
+        const response = yield* runtime.send(`${path}/state`, { method: 'GET' })
+        expect(response.status).toBe(200)
+        expect(yield* decodeState(response.body)).toMatchObject({ messages: [], working: false })
+        const link = yield* runtime.link(`${path}/state`)
+        const first = yield* link.frame
+        expect(first._tag).toBe('Whole')
+        if (ConversationFrame.guards.Whole(first)) expect(first.state.messages).toEqual([])
+        given.faux.setResponses([() => fauxAssistantMessage('A new conversation')])
+        const receipt = yield* admit(runtime, ada, delivery('pre-cell-thread', 'first-new-message'))
+        expect(yield* settled(runtime, ada, 'pre-cell-thread', receipt.submissionId)).toMatchObject(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: 'A new conversation',
+            toolCalls: 0,
+          }),
+        )
+        yield* link.leave
+      }),
+    ),
+  )
+
   it.effect('answers a Person and tells the model what main told it', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {

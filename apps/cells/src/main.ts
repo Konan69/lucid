@@ -1,3 +1,4 @@
+import { DurableObject } from 'cloudflare:workers'
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
@@ -23,6 +24,8 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261027123834_memory/migration.sql'
 import searchMigration from './memory/migrations/20261027133147_memory-search/migration.sql'
+import identityMigration from './memory/migrations/20261027180221_memory-id/migration.sql'
+import identitySearchMigration from './memory/migrations/20261027180232_memory-search-id/migration.sql'
 import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
@@ -71,7 +74,7 @@ const encodeRetraction = Schema.encodeEffect(NoteDeleteResult)
 const encodeSearch = Schema.encodeEffect(NoteSearchResult)
 const personOption = Schema.decodeUnknownOption(PersonId)
 /** One celld cell owns all Threads created by one Person, their Harness, and their notes. */
-export class Person {
+export class Person extends DurableObject<CellState, Environment> {
   readonly #state: CellState
   readonly #ready: Promise<{
     readonly runtime: Awaited<ReturnType<typeof openCell>>
@@ -79,6 +82,7 @@ export class Person {
   }>
 
   constructor(state: CellState, environment: Environment) {
+    super(state, environment)
     this.#state = state
     this.#ready = state.blockConcurrencyWhile(() => this.#open(environment))
   }
@@ -94,6 +98,8 @@ export class Person {
       openNotes(new DurableObjectSqliteDatabase(this.#state.storage), [
         memoryMigration,
         searchMigration,
+        identityMigration,
+        identitySearchMigration,
       ]),
     )
     const bound = Notes.of({

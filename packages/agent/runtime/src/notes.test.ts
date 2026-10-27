@@ -41,7 +41,12 @@ describe('layered personal memory', () => {
         )
         const migration = yield* Effect.tryPromise(() =>
           Promise.all(
-            ['20261027123834_memory', '20261027133147_memory-search'].map((name) =>
+            [
+              '20261027123834_memory',
+              '20261027133147_memory-search',
+              '20261027180221_memory-id',
+              '20261027180232_memory-search-id',
+            ].map((name) =>
               NodeFSP.readFile(
                 new URL(
                   `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,

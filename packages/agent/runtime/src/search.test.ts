@@ -33,7 +33,7 @@ const legacy = Note.make({
   file: NoteFile.make('zz-legacy.md'),
   kind: 'preference',
   description: 'Meeting preference',
-  body: 'Quasarneedle: morning meetings work best.',
+  body: 'Quasarneedle: morning meetings work best. Send a follow-up email: x.',
   basis: 'said',
 })
 const query = NoteSearch.make({ query: 'quasarneedle', layer: null, offset: 0, limit: 1 })
@@ -53,7 +53,12 @@ describe('personal memory FTS5', () => {
           )
           const migrations = yield* Effect.tryPromise(() =>
             Promise.all(
-              ['20261027123834_memory', '20261027133147_memory-search'].map((name) =>
+              [
+                '20261027123834_memory',
+                '20261027133147_memory-search',
+                '20261027180221_memory-id',
+                '20261027180232_memory-search-id',
+              ].map((name) =>
                 NodeFSP.readFile(
                   new URL(
                     `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -75,12 +80,34 @@ describe('personal memory FTS5', () => {
               const database = yield* open
               const previous = yield* openNotes(database, migrations.slice(0, 1))
               yield* previous.write(
+                NoteWrite.make({
+                  note: Note.make({
+                    ...legacy,
+                    file: NoteFile.make('filler-first.md'),
+                    body: 'Discarded.',
+                  }),
+                  expected: MemoryRevision.make(0),
+                  authority,
+                }),
+              )
+              yield* previous.write(
                 NoteWrite.make({ note: legacy, expected: MemoryRevision.make(0), authority }),
               )
               const notes = yield* openNotes(database, migrations)
               expect((yield* notes.search(query)).entries.map((entry) => entry.file)).toEqual([
                 legacy.file,
               ])
+              for (const text of [
+                'follow-up',
+                'email: x',
+                '"follow-up email"',
+                'follow*',
+                'quasarneedle OR absent',
+              ]) {
+                expect(
+                  (yield* notes.search(NoteSearch.make({ ...query, query: text }))).entries,
+                ).toMatchObject([{ file: legacy.file }])
+              }
               for (let number = 0; number < 40; number++) {
                 yield* notes.write(
                   NoteWrite.make({
@@ -147,9 +174,15 @@ describe('personal memory FTS5', () => {
                 }),
               )
               expect((yield* notes.search(query)).entries).toEqual([])
-              expect(
-                yield* Effect.flip(notes.search(NoteSearch.make({ ...query, query: '"' }))),
-              ).toBeInstanceOf(NoteSearchInvalid)
+              for (const text of ['"', 'AND']) {
+                expect(
+                  yield* Effect.flip(notes.search(NoteSearch.make({ ...query, query: text }))),
+                ).toBeInstanceOf(NoteSearchInvalid)
+              }
+              yield* Effect.promise(() =>
+                database.run("DELETE FROM memory_notes WHERE file LIKE 'filler-%'"),
+              )
+              yield* Effect.promise(() => database.run('VACUUM'))
             }),
           )
           yield* Effect.scoped(

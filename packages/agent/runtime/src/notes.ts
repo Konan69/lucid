@@ -182,27 +182,43 @@ const list = Effect.fn('Notes.list')(function* (database: SqliteDatabase, listin
   return NotePage.make({ entries, next })
 })
 
+/** Quote words before FTS5 sees punctuation as column filters or operators. Quoted phrases,
+ * trailing prefix stars and the documented boolean operators retain their search meaning. */
+const matchQuery = (query: string) => {
+  const terms = query.match(/"(?:[^"]|"")*"\*?|[^\s"]+|"/gu)
+  if (terms === null || terms.some((term) => term === '"'))
+    return Effect.fail(NoteSearchInvalid.make({}))
+  return Effect.succeed(
+    terms
+      .map((term) => {
+        if (term.startsWith('"') || /^(AND|OR|NOT)$/u.test(term)) return term
+        const prefix = term.endsWith('*')
+        const word = prefix ? term.slice(0, -1) : term
+        return `"${word}"${prefix ? '*' : ''}`
+      })
+      .join(' '),
+  )
+}
+
 /** MATCH stays a bound parameter. Native rank/snippet handle retrieval without copying bodies into the prompt. */
 const search = Effect.fn('Notes.search')(function* (database: SqliteDatabase, input: NoteSearch) {
+  const query = yield* matchQuery(input.query)
   const rows = yield* Effect.tryPromise({
     try: () =>
       database.all<object>(
         `SELECT n.layer, n.file, n.kind, n.description, n.basis, n.revision,
           n.updated_at AS updatedAt, snippet(memory_search, 2, '', '', '…', 64) AS excerpt
-        FROM memory_search JOIN memory_notes n ON n.rowid = memory_search.rowid
+        FROM memory_search JOIN memory_notes n ON n.id = memory_search.rowid
         WHERE memory_search MATCH ? AND n.body IS NOT NULL AND (? IS NULL OR n.layer = ?)
         ORDER BY memory_search.rank, n.layer, n.file LIMIT ? OFFSET ?`,
-        input.query,
+        query,
         input.layer,
         input.layer,
         input.limit + 1,
         input.offset,
       ),
-    // SQLite's FTS parser emits these diagnostics before executing the read; other failures remain storage failures.
-    catch: (cause) =>
-      cause instanceof Error && /fts5: syntax error|unterminated string/u.test(cause.message)
-        ? NoteSearchInvalid.make({})
-        : NotesUnavailable.make({}),
+    // A MATCH rejection is an invalid search, never evidence that memory is unavailable.
+    catch: () => NoteSearchInvalid.make({}),
   })
   const hits = yield* decodeHits(rows).pipe(Effect.mapError(() => NotesUnavailable.make({})))
   return NoteSearchPage.make({
