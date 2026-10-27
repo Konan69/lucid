@@ -40,7 +40,7 @@ export type DeliveryMessage = typeof DeliveryMessage.Type
  * the Person Vivid acts for, whatever started it.
  */
 export const StoredRunOrigin = Schema.TaggedUnion({
-  // The immutable message fingerprint lives with its reservation, not in Flue-owned history.
+  // The immutable message fingerprint lives with its reservation, not in runtime-owned history.
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
   FirstConversation: {},

@@ -29,6 +29,7 @@ import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
+import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
 /**
@@ -77,11 +78,10 @@ const liveLayer = RpcServer.layer(VividRpc).pipe(
  * The same calls over plain HTTP, for callers that want one answer and no socket: the runtime's
  * tools, scripts, and a client whose socket is down.
  */
-const requestLayer = RpcServer.layerHttp({
-  group: VividRpc,
-  path: '/api/rpc',
-  protocol: 'http',
-}).pipe(Layer.provide(RpcSerialization.layerNdjson))
+const requestLayer = RpcServer.layer(VividRpc).pipe(
+  Layer.provide(requestProtocolLayer),
+  Layer.provide(RpcSerialization.layerNdjson),
+)
 
 export const rpcServerLayer = Layer.mergeAll(liveLayer, requestLayer).pipe(
   Layer.provide(rpcHandlersLayer),

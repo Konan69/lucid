@@ -42,7 +42,7 @@ export const RunEnding = Schema.TaggedUnion({
 })
 export type RunEnding = typeof RunEnding.Type
 
-/** A busy Thread keeps its first Person's authority; only a reserved turn may reach Flue. */
+/** A busy Thread keeps its first Person's authority; only a reserved turn may reach the runtime. */
 export const TurnReservation = Schema.TaggedUnion({
   Reserved: { turn: Schema.Finite },
   Replayed: { turn: Schema.Finite, receipt: Admitted },
@@ -77,9 +77,8 @@ export class NoActingRun extends Schema.TaggedError<NoActingRun>()(
  * `vivid_runs.person_id` is the Person each Run acts for, written when the Run was reserved. This
  * is what stops something that belongs to one Person (their own computer) being used by a Run
  * another member of a shared Thread started. Same-Person deliveries may join the live response;
- * its host is the earlier submission (`runtime/settlement.ts` hostOf and Flue 2.2.2
- * readSubmissionReply). Check every admitted working Run's authority before choosing that host
- * by turn. A reserved turn the runtime has not accepted is also `working`, so only admitted
+ * Pi identifies the host in settlement's `answeredBy`. Check every admitted working Run's
+ * authority before choosing that host by turn. A reserved turn the runtime has not accepted is also `working`, so only admitted
  * Runs count, as in `start` below.
  */
 export const actingRun = Effect.fn('RunStore.actingRun')(function* (
@@ -173,7 +172,7 @@ export interface RunStoreService {
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
   }) => Effect.Effect<TurnReservation, Conflict | DatabaseInfrastructureError>
-  /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
+  /** Records acceptance after the runtime returns its receipt, and reopens a failed delivery on retry. */
   readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
   /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
   readonly scope: (
@@ -194,7 +193,7 @@ export interface RunStoreService {
 
 /**
  * The record of every Run: which Thread, for which Person, why it started and how it ended.
- * Flue's history has the words; this has the attribution Flue does not keep.
+ * the runtime's history has the words; this has the attribution the runtime does not keep.
  */
 export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivid/RunStore') {}
 
@@ -300,9 +299,8 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
 })
 
 /**
- * The server never joins a different Person's delivery into a response in progress. Flue 2.1
- * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
- * before calling Flue is mandatory. The working-Person check and turn reservation share the
+ * The server never joins a different Person's delivery into a response in progress. Check
+ * acting authority before runtime admission. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
  * Same-Person server deliveries still join. An admitted replay returns its original receipt before Busy;
  * unadmitted reservations remain subject to the current working authority.
@@ -364,7 +362,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
     )
   })
 
-/** The acting Person survives runtime restarts without entering Flue history. */
+/** The acting Person survives runtime restarts without entering the runtime history. */
 const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
   Effect.fn('RunStore.scope')(function* ({ threadId, turn }) {
     const [row] = yield* database.run(

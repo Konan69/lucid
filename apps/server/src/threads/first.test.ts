@@ -121,7 +121,10 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
       yield* Ref.update(deliveries, (all) => [...all, delivery])
       // A missing receipt exercises the production RuntimeUnavailable path after reservation.
       if (yield* Ref.getAndSet(refuseAdmission, false))
-        return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response('{"error":"InvalidRequest"}', { status: 400 }),
+        )
       return HttpClientResponse.fromWeb(
         request,
         new Response(

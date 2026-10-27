@@ -58,6 +58,33 @@ const fixture = Effect.fn('Run.test.fixture')(function* () {
 layer(testLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Run failure persistence', () => {
     it.effect(
+      'startup ends receiptless work once and retains admitted Pi work for observation',
+      () =>
+        Effect.gen(function* () {
+          const { personId, threadId } = yield* fixture()
+          const store = yield* RunStore
+          const pending = RunId.make(NodeCrypto.randomUUID())
+          const admitted = RunId.make(NodeCrypto.randomUUID())
+          for (const id of [pending, admitted])
+            yield* reserve({
+              id,
+              personId,
+              threadId,
+              origin: StoredRunOrigin.cases.Message.make({}),
+            })
+          yield* store.admitted({ runId: admitted, submissionId: RuntimeSubmissionId.make(7) })
+          expect(
+            (yield* store.working).filter((run) => run.threadId === threadId).map((run) => run.id),
+          ).toEqual([admitted])
+          const before = yield* store.list(threadId)
+          expect(before.map((run) => run.state._tag)).toEqual(['Unknown', 'Working'])
+          expect(before.map((run) => run.submissionId)).toEqual([undefined, '7'])
+          yield* store.working
+          expect(yield* store.list(threadId)).toEqual(before)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
       'persists the classified reason once and reads legacy failed rows as Unexplained',
       () =>
         Effect.gen(function* () {

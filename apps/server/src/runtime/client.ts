@@ -1,5 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm'
-import { Context, Effect, Layer, Match, Option, Redacted, Schema, Stream } from 'effect'
+import { Context, Effect, Layer, Match, Option, Predicate, Redacted, Schema, Stream } from 'effect'
 import type * as Scope from 'effect/Scope'
 import * as HttpClient from 'effect/http/HttpClient'
 import type * as HttpClientError from 'effect/http/HttpClientError'
@@ -52,28 +52,21 @@ export class AdmissionRefused extends Schema.TaggedError<AdmissionRefused>()(
   'AdmissionRefused',
   {
     threadId: ThreadId,
-    /** The Run this request would have started: the id the runtime derives from the Thread and key. */
+    /** The Run this request would have started: the product id derived from the Thread and key. */
     runId: RunId,
     reason: Schema.Literals(['Encoding', 'Address', 'Rejected']),
   },
   { title: 'Runtime admission refused' },
 ) {}
 
-/**
- * A request may already be durable; lost transport or receipt evidence cannot prove refusal.
- *
- * `Conflict`: the runtime rejected this request because the key already names a different persisted
- * input. That is not a refusal of the Run and not proof that this request's input is held: the
- * stored input may be an earlier attempt of the same Run. The answer is deterministic for a frozen
- * request, so sending it again cannot change it.
- */
+/** Transport or invalid receipt evidence cannot prove whether this keyed request is already durable. */
 export class AdmissionUncertain extends Schema.TaggedError<AdmissionUncertain>()(
   'AdmissionUncertain',
   {
     threadId: ThreadId,
-    /** The Run whose admission cannot be told: the id the runtime derives from the Thread and key. */
+    /** The Run whose admission cannot be told: the product id derived from the Thread and key. */
     runId: RunId,
-    reason: Schema.Literals(['Transport', 'TimedOut', 'Status', 'Conflict', 'Receipt']),
+    reason: Schema.Literals(['Transport', 'TimedOut', 'Status', 'Receipt']),
   },
   { title: 'Runtime admission uncertain' },
 ) {}
@@ -186,6 +179,7 @@ interface Transport {
 }
 
 const unavailable = () => RuntimeUnavailable.make({ message: 'Vivid could not be reached' })
+const transportFailed = (address: Address) => () => RuntimeTransportFailed.make(address)
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 
 /** Admission owns its response through receipt decoding, even after headers arrived. */
@@ -280,7 +274,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             address,
           )
           const value = yield* HttpClientResponse.schemaBodyJson(RuntimeSettlement)(response).pipe(
-            Effect.mapError(() => RuntimeTransportFailed.make(address)),
+            Effect.mapError(transportFailed(address)),
           )
           return settlementOf(value, address.personId)
         }).pipe(Effect.scoped),
@@ -319,7 +313,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         ).pipe(Effect.mapError(unavailable))
         return conversationFrames(response, address).pipe(
           Stream.mapError((error) =>
-            error._tag === 'ConversationTooLarge' ? error : unavailable(),
+            Predicate.isTagged(error, 'ConversationTooLarge') ? error : unavailable(),
           ),
         )
       }),
@@ -339,6 +333,7 @@ export const documentRun = Effect.fn('Runtime.documentRun')(function* (
     threadId,
     suffix: '',
   })
+  if (response.status !== 200) return yield* unavailable()
   const state = yield* HttpClientResponse.schemaBodyJson(ConversationState)(response).pipe(
     Effect.mapError(unavailable),
   )

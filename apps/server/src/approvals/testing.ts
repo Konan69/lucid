@@ -429,10 +429,15 @@ const HistoryMessage = Schema.Struct({
   parts: Schema.Array(Schema.Json),
 })
 
+const decodeHistoryMessage = Schema.decodeUnknownResult(HistoryMessage)
+
 /** Fixture wire messages use the canonical runtime projection, including its required display fields. */
-export const historyMessage = (input: unknown, index: number) => {
+export const historyMessage = (
+  input: Schema.Json | typeof HistoryMessage.Encoded,
+  index: number,
+) => {
   // A malformed fixture cannot exercise the canonical history boundary.
-  const message = Result.getOrThrow(Schema.decodeUnknownResult(HistoryMessage)(input))
+  const message = Result.getOrThrow(decodeHistoryMessage(input))
   return {
     ...message,
     id: message.id === undefined ? `message-${index}` : message.id,
@@ -473,7 +478,7 @@ export const delivery = (threadId: ThreadId, run: string, tagName: string | null
       }
 
 export const history = (
-  messages: ReadonlyArray<unknown>,
+  messages: ReadonlyArray<Schema.Json | typeof HistoryMessage.Encoded>,
   settled: ReadonlyArray<string> = [],
   incarnation = 'test-runtime-incarnation',
 ) => ({
