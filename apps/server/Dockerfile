@@ -85,6 +85,8 @@ COPY --chown=node:node infra/cli.mjs infra/cli.mjs
 # under a name the host does not set at run time, so the image's own value is the one read.
 ARG RAILWAY_GIT_COMMIT_SHA=""
 ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA
+# The installer preserves mktemp's private release directory; node must traverse it at pre-deploy.
+RUN chmod -R a+rX /usr/local/lib/celld
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
