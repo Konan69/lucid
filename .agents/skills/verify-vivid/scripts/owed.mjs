@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict'
-import { Tool } from '@vivid/contracts'
+import { ResolveOwedRequest, Tool } from '@vivid/contracts'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 
 /**
@@ -60,7 +60,7 @@ export async function owed(state, id, directory) {
   await rpc(
     state,
     'ResolveOwed',
-    { id: record.id, how: 'The Person marked it received on the Feed.' },
+    ResolveOwedRequest.make({ id: record.id, how: 'The Person marked it received on the Feed.' }),
     directory,
   )
   const closed = await trackedRecord(state, directory, 'resolved')
