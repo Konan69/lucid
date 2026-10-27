@@ -33,7 +33,6 @@ export const ToolName = Schema.Literals([
   'search_library',
   'stop_watching',
   'suggest_replies',
-  'task',
   'test_integration',
   'use_desktop',
   'use_person_computer',
