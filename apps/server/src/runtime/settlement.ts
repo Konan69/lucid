@@ -17,18 +17,18 @@ const isRejected = Schema.is(RuntimeRejected)
 /** Person-local response numbers need a global claim key so channels send joined answers once. */
 export const settlementOf = (settled: RuntimeSettlement, personId: PersonId): Settlement =>
   RuntimeSettlement.match(settled, {
-    Done: ({ answeredBy, reply, toolCalls }) =>
+    Done: ({ answeredBy, reply, toolCalls }): Settlement =>
       reply.trim().length === 0 && toolCalls === 0
         ? Settlement.cases.Failed.make({ reason: 'NoAnswer' })
         : Settlement.cases.Completed.make({
             reply,
             responseId: RunId.make(`response_${personId}_${answeredBy}`),
           }),
-    Failed: ({ failure, status }) =>
+    Failed: ({ failure, status }): Settlement =>
       status === undefined
         ? Settlement.cases.Failed.make({ reason: failure })
         : Settlement.cases.Failed.make({ reason: failure, providerStatus: status }),
-    Stopped: () => Settlement.cases.Stopped.make({}),
+    Stopped: (): Settlement => Settlement.cases.Stopped.make({}),
   })
 
 /** Pi holds the request until settlement. Reconnection never imposes a product deadline on its Run. */
@@ -42,6 +42,6 @@ export const observeRun = Effect.fn('Durable.observe')(function* <
         Predicate.isTagged(error, 'RuntimeTransportFailed') ||
         (isRejected(error) && error.refusal.error === 'Unavailable'),
     }),
-    Effect.catch(() => Effect.succeed(Settlement.cases.Unknown.make({}))),
+    Effect.orElseSucceed(() => Settlement.cases.Unknown.make({})),
   )
 })

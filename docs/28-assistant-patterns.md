@@ -124,7 +124,7 @@ sentence and wait for a yes. Never start it on your own"), `grok-bot/grok-bot.md
 email or messages unasked… Replying is sending").
 
 **Vivid today.** Watches fire on Integration events and `post` puts one card per piece of work on
-the Feed (`apps/server/src/watches/receiver.ts` `BACKGROUND_INSTRUCTION`, `tools/feed.ts`).
+the Feed (`apps/server/src/watches/receiver.ts` `BACKGROUND_INSTRUCTION`, `packages/agent/runtime/src/tools/feed.ts`).
 `notify_person` pushes when the server allows. No pacing, no stated source on a card, no
 preferences record, no "offer, don't start" rule, and a background Run that chooses to send is
 judged by the same review as a foreground one (`approvals/policy.ts`).
@@ -166,7 +166,7 @@ only) from `/agent_notes/` (research, written by the Dreamer, who may only sugge
 (`packages/agent/runtime/src/notes.ts`, AgentFS), plus the Helix knowledge base. No identity, no
 dated trail, no bank, no people pages, no background consolidation, no told-versus-guessed mark.
 
-**Vivid shape.** Tables in the Person's cell (`docs/27`, "the notes and dreams tables of the
+**Vivid shape.** Tables in the Person's cell ([runtime cells](27-runtime-cells.md), "the notes and dreams tables of the
 memory design"), one vocabulary:
 
 | Layer                    | What it holds                                                                       | Who writes it                                   |
@@ -206,7 +206,7 @@ stay quiet"), `:82` (nightly reflection around 3am local: gather preferences, re
 priorities, update `user_state.md`).
 
 **Vivid shape.** A Run of a second kind in the Person's cell, on the cell's alarm
-(`docs/27`, "Dreaming runs in the cell on its alarm"): after a conversation goes quiet, and once a
+([runtime cells](27-runtime-cells.md), "Dreaming runs in the cell on its alarm"): after a conversation goes quiet, and once a
 night at about 03:00 in the Person's time zone. It gets read tools only: every connected Integration, reads only (**decided 27 October: "yes,
 every integration, read-only"**), the Library, the web, the memory layers, writes `research` and `dreams`, and ends with one _finding_
 to the main Run or nothing. A finding is a Signal, not a message: Vivid reads it the way it reads
