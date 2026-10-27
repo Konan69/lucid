@@ -285,6 +285,18 @@ const sourceDatabase = Effect.fn('FlueCarryTest.source')(function* () {
   return source
 })
 
+/** The source fixture's folded snapshot, including its real attachment bytes. */
+const pictured = (records: ReadonlyArray<Schema.JsonObject>) =>
+  Result.getOrThrow(
+    Result.flatMap(decodeRecords(JSON.stringify([BIRTH, ...records])), (decoded) =>
+      fold(
+        KEPT,
+        decoded,
+        new Map([[PICTURE.id, { mimeType: 'image/png', bytes: Buffer.from([1, 2, 3]) }]]),
+      ),
+    ),
+  )
+
 /**
  * Sol's second sequence: a partial reply with `stopReason: error`, Flue's interruption advisory,
  * and the settlement `failed`. Pi ids come from one sequence per store: the user entry is 10 and
@@ -744,28 +756,18 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
             ada,
             OTHER,
           ])
-          yield* Effect.scoped(
+          const original = pictured(REPLY_BATCHES.flat())
+          const before = yield* Effect.scoped(
             Effect.gen(function* () {
               const runtime = yield* start(given, { idleMillis: IDLE })
               yield* runtime.persons.use(ada, (person) =>
                 ensureConversation(person.harness, OTHER, { creator: ada, creatorName: 'Ada' }),
               )
+              yield* runtime.persons.use(ada, (person) => carry(person.harness, original))
+              yield* untilResting(runtime, ada)
+              return yield* read(runtime, KEPT)
             }),
           )
-
-          const first = yield* importFlue(given, source, [])
-          expect(first.code).toBe(1)
-          expect(first.output).toContain(
-            JSON.stringify({
-              outcome: 'failed',
-              threadId: OTHER,
-              personId: ada,
-              entries: 0,
-              reason: 'created by the runtime before import',
-            }),
-          )
-          expect(first.output).toContain('"carried":1,"already":0,"skipped":1,"failed":1')
-          const before = yield* importedState(given)
           expect(before.messages).toHaveLength(2)
           expect(before.messages).toContainEqual(
             expect.objectContaining({
@@ -805,8 +807,33 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
         VALUES ($1, 3, 'w', 1, 3, $2)`,
             [`agents/vivid/${KEPT}`, JSON.stringify(added)],
           )
-          expect((yield* importFlue(given, source, [])).code).toBe(1)
-          const after = yield* importedState(given)
+          const imported = yield* importFlue(given, source, [])
+          expect(imported.code).toBe(1)
+          expect(imported.output).toContain(
+            JSON.stringify({
+              outcome: 'failed',
+              threadId: OTHER,
+              personId: ada,
+              entries: 0,
+              reason: 'created by the runtime before import',
+            }),
+          )
+          expect(imported.output).toContain('"carried":1,"already":0,"skipped":1,"failed":1')
+          const after = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* start(given, { idleMillis: IDLE })
+              const state = yield* read(runtime, KEPT)
+              const entries = yield* entryCount(given.database)
+              expect(
+                yield* runtime.persons.use(ada, (person) =>
+                  carry(person.harness, pictured([...REPLY_BATCHES.flat(), ...added])),
+                ),
+              ).toEqual(Landed.AlreadyThere())
+              expect(yield* read(runtime, KEPT)).toEqual(state)
+              expect(yield* entryCount(given.database)).toBe(entries)
+              return state
+            }),
+          )
           expect(
             after.messages.flatMap((message) =>
               message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
@@ -828,40 +855,42 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
       ),
   )
 
-  it.effect('repairs mappings without Flue and keeps repeat imports unchanged', () =>
+  it.effect('repairs missing mappings without Flue and retains existing Pi receipts', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const given = yield* world()
-        const source = yield* sourceDatabase()
-        expect((yield* importFlue(given, source, [])).code).toBe(1)
-        const after = yield* importedState(given)
-        const mapped = yield* query(
-          given.database,
-          'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
+        const after = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* start(given, { idleMillis: IDLE })
+            yield* runtime.persons.use(ada, (person) => carry(person.harness, history(KEPT)))
+            yield* untilResting(runtime, ada)
+            return yield* read(runtime, KEPT)
+          }),
         )
-        expect(mapped).toHaveLength(1)
-        yield* query(given.database, 'DELETE FROM runtime.imported_submissions')
+        const mapped = after.settlements.map((settlement, index) => ({
+          person_id: ada,
+          flue_submission_id: `sub_${index + 1}`,
+          submission_id: settlement.submissionId,
+        }))
+        // One prior upsert survived; the other mapping is missing after the interrupted pass.
+        for (const mapping of mapped.slice(0, 1))
+          yield* query(
+            given.database,
+            'INSERT INTO runtime.imported_submissions VALUES ($1, $2, $3)',
+            [mapping.person_id, mapping.flue_submission_id, mapping.submission_id],
+          )
+        const entries = yield* entryCount(given.database)
         const repaired = yield* importFlue(given, 'postgres://unreachable.invalid/flue', ['--map'])
         expect(repaired.code, repaired.output).toBe(0)
-        expect(repaired.output).toContain('"mapped":1')
+        expect(repaired.output).toContain('"mapped":2')
         expect(
           yield* query(
             given.database,
             'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
           ),
         ).toEqual(mapped)
-        const entries = yield* entryCount(given.database)
-        const repeated = yield* importFlue(given, source, [])
-        expect(repeated.code).toBe(1)
-        expect(repeated.output).toContain('"carried":0,"already":1,"skipped":1,"failed":1')
         expect(yield* importedState(given)).toEqual(after)
         expect(yield* entryCount(given.database)).toBe(entries)
-        expect(
-          yield* query(
-            given.database,
-            'SELECT * FROM runtime.imported_submissions ORDER BY flue_submission_id',
-          ),
-        ).toEqual(mapped)
       }),
     ),
   )
