@@ -11,44 +11,43 @@ import { chat, settled, history, json } from './wire.mjs'
  * nothing. The file is the one Vivid chose for the first note, read from that receipt.
  */
 export function noteSteps() {
+  const project = 'Cedar ' + crypto.randomUUID()
   return [
     {
       name: 'create',
-      prompt:
-        'Please remember that I prefer meetings before noon, because afternoons are for writing.',
+      prompt: `Please remember that for project ${project}, I prefer meetings before noon, because afternoons are for writing.`,
       change: 'write',
       note: /before (?:12:00 )?noon/iu,
       says: [],
     },
     {
       name: 'read-original',
-      prompt: 'When do I like to have meetings, and why?',
+      prompt: `When do I like to have meetings for project ${project}, and why?`,
       change: 'none',
       says: [/noon/iu, /writ/iu],
     },
     {
       name: 'replace',
-      prompt:
-        'That has changed: I now prefer meetings after three, because mornings are for writing.',
+      prompt: `That has changed: for project ${project}, I now prefer meetings after three, because mornings are for writing.`,
       change: 'replace',
       note: /after (three|3)/iu,
       says: [],
     },
     {
       name: 'read-replacement',
-      prompt: 'So when should you book my meetings now?',
+      prompt: `So when should you book my meetings for project ${project} now?`,
       change: 'none',
       says: [/three|3/iu],
     },
     {
       name: 'delete',
-      prompt: 'Please forget my meeting preference.',
+      prompt: `Please forget my meeting preference for project ${project}.`,
       change: 'delete',
       says: [],
     },
     {
       name: 'read-missing',
-      prompt: 'Do you still have a note of when I like meetings?',
+      prompt: `Do you still have a note of when I like meetings for project ${project}?`,
       change: 'none',
       says: [],
     },
@@ -78,6 +77,11 @@ function callsOf(page, run) {
  */
 export async function noteReceipt(page, run, step, directory, known) {
   const { calls, text } = callsOf(page, run)
+  assert.equal(
+    calls.filter((part) => part.state === 'output-error').length,
+    0,
+    'Tool error in ' + step.name,
+  )
   const writes = calls.filter((part) => part.toolName === Tool.write_note)
   const deletes = calls.filter((part) => part.toolName === Tool.delete_note)
   assert.ok(text.length > 0, 'No assistant reply in ' + step.name)
