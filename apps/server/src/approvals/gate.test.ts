@@ -2,13 +2,13 @@ import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
+import { eq } from 'drizzle-orm'
 import {
   ActionTarget,
   AuditEvent,
   BrowserAction,
   BrowseTarget,
   ConnectionId,
-  FeedItem,
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
@@ -19,6 +19,7 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { readFeed } from '../feed/read.ts'
 import { RuleStore } from '../rules/store.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { threads } from '../threads/tables.ts'
 import { Gate, GateDecision } from './gate.ts'
 import { Review } from './policy.ts'
 import { ApprovalStore } from './store.ts'
@@ -55,7 +56,11 @@ layer(testDatabaseLayer)((it) => {
           const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
           const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
           const message = StoredRunOrigin.cases.Message.make({})
-          const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
+          const contained = Review.cases.Reviewed.make({
+            asked: 0.95,
+            beyond: 0.1,
+            contained: 0.95,
+          })
           for (const [origin, review, effect, allowRule, expected] of [
             [watch, reviewed, 'write', false, 'ApprovalRequired'],
             [message, reviewed, 'write', false, 'Allowed'],
@@ -65,6 +70,13 @@ layer(testDatabaseLayer)((it) => {
             [watch, contained, 'destructive', true, 'ApprovalRequired'],
           ] as const) {
             const test = yield* fixture()
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(threads)
+                .set({ place: 'Background' })
+                .where(eq(threads.id, test.personalId)),
+            )
             yield* recordRuns(test.personalId, [
               { id: 'acting', personId: test.personal.person.id, origin, working: true },
             ])
@@ -82,12 +94,12 @@ layer(testDatabaseLayer)((it) => {
             expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
             if (GateDecision.guards.ApprovalRequired(decision)) {
               expect(approvals[0]?.action).toEqual(proposed)
-              const feed = yield* readFeed(yield* Database, test.personal.person.id)
+              const feed = yield* readFeed(database, test.personal.person.id)
               expect(feed.items).toHaveLength(1)
-              expect(FeedItem.guards.Waiting(feed.items[0])).toBe(true)
+              expect(feed.items[0]).toMatchObject({ _tag: 'Waiting', asking: ['approval'] })
             }
           }
-          expect(yield* Ref.get(observed.actions)).toEqual([])
+          expect(yield* Ref.get(observed.notices)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )
