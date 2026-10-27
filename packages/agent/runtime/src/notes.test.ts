@@ -14,6 +14,7 @@ import {
   NoteFile,
   NoteRetraction,
   NoteWrite,
+  NoteListing,
   PersonId,
   ThreadId,
 } from '@vivid/contracts'
@@ -84,6 +85,18 @@ describe('layered personal memory', () => {
             const snapshot = yield* notes.index()
             expect(snapshot.standing.map((note) => note.layer)).toEqual(['soul'])
             expect(snapshot.lines.map((line) => line.layer)).toEqual(['memory'])
+            const firstPage = yield* notes.list(
+              NoteListing.make({ layer: null, after: null, limit: 1 }),
+            )
+            expect(firstPage.entries).toHaveLength(1)
+            expect(firstPage.next).not.toBeNull()
+            const secondPage = yield* notes.list(
+              NoteListing.make({ layer: null, after: firstPage.next, limit: 1 }),
+            )
+            expect(secondPage.next).toBeNull()
+            expect([...firstPage.entries, ...secondPage.entries].map((note) => note.file)).toEqual(
+              expect.arrayContaining(['meetings.md', 'soul.md']),
+            )
             const rendered = contextInstruction(
               VividContext.make({
                 ...emptyContext,

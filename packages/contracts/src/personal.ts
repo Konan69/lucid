@@ -24,8 +24,7 @@ export const NoteFile = Schema.String.check(
 ).pipe(Schema.brand('NoteFile'))
 export type NoteFile = typeof NoteFile.Type
 
-/** Four singleton pages are bounded at write ingress so preload never truncates their guidance. */
-export const NOTE_BODY_LIMIT = 3500
+/** Standing pages have canonical addresses; storage does not impose a prompt-size limit. */
 const addressCheck = Schema.makeFilter<{ readonly layer: MemoryLayer; readonly file: NoteFile }>(
   (address) =>
     !isStandingLayer(address.layer) || address.file === `${address.layer}.md`
@@ -56,7 +55,7 @@ export const Note = Schema.Struct({
   ...NoteAddress.fields,
   kind: MemoryKind,
   description: Schema.NonEmptyString.check(Schema.isMaxLength(200), Schema.isPattern(/\S/u)),
-  body: Schema.NonEmptyString.check(Schema.isMaxLength(NOTE_BODY_LIMIT)),
+  body: Schema.NonEmptyString,
   basis: MemoryBasis,
 }).check(addressCheck)
 export type Note = typeof Note.Type
@@ -90,6 +89,23 @@ export const NoteLine = Schema.Struct({
   updatedAt: Schema.Finite,
 })
 export type NoteLine = typeof NoteLine.Type
+
+/** Newest-first keyset pagination stays independent of the bounded response index. */
+export const NoteCursor = Schema.Struct({
+  ...NoteAddress.fields,
+  updatedAt: Schema.Finite,
+})
+export const NoteListing = Schema.Struct({
+  layer: Schema.NullOr(MemoryLayer),
+  after: Schema.NullOr(NoteCursor),
+  limit: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export type NoteListing = typeof NoteListing.Type
+export const NotePage = Schema.Struct({
+  entries: Schema.Array(NoteLine),
+  next: Schema.NullOr(NoteCursor),
+})
+export type NotePage = typeof NotePage.Type
 
 /** Full standing pages and a derived index form the existing single response snapshot. */
 export const NoteIndex = Schema.Struct({

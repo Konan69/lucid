@@ -42,15 +42,20 @@ interface BoundedOutput {
   readonly truncated: boolean
 }
 
+/** Existing model-visible text budget; memory reads page to this limit instead of limiting storage. */
+export const TOOL_TEXT_LIMIT = 4000
+/** Existing list output budget; retrieval pages must fit without losing their continuation. */
+export const TOOL_LIST_LIMIT = 25
+
 /** Each nested list and text is bounded; its containing object records any lost content. */
 function bounded(value: Schema.Json): BoundedOutput {
   if (Predicate.isString(value))
-    return { value: value.slice(0, 4000), truncated: value.length > 4000 }
+    return { value: value.slice(0, TOOL_TEXT_LIMIT), truncated: value.length > TOOL_TEXT_LIMIT }
   if (isList(value)) {
-    const items = value.slice(0, 25).map(bounded)
+    const items = value.slice(0, TOOL_LIST_LIMIT).map(bounded)
     return {
       value: items.map((item) => item.value),
-      truncated: value.length > 25 || items.some((item) => item.truncated),
+      truncated: value.length > TOOL_LIST_LIMIT || items.some((item) => item.truncated),
     }
   }
   if (!isObject(value)) return { value, truncated: false }

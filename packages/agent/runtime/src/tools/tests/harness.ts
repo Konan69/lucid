@@ -152,6 +152,7 @@ export function nativeTool(tool: ToolRegistration) {
 /** Catalogue tests that exercise RPC never use notes; fail if that assumption changes. */
 export const unusedNotes: Notes['Service'] = Notes.of({
   index: () => Effect.die('Unexpected note index'),
+  list: () => Effect.die('Unexpected note listing'),
   read: () => Effect.die('Unexpected note read'),
   write: () => Effect.die('Unexpected note write'),
   delete: () => Effect.die('Unexpected note delete'),

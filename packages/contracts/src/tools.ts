@@ -17,6 +17,7 @@ export const ToolName = Schema.Literals([
   'find_tools',
   'glob',
   'grep',
+  'list_notes',
   'list_watches',
   'make_integration',
   'notify_person',

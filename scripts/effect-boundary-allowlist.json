@@ -99,6 +99,7 @@
       "blockConcurrencyWhile",
       "fetch",
       "noteIndex",
+      "listNotes",
       "readNote",
       "writeNote",
       "deleteNote",

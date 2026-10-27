@@ -125,6 +125,92 @@ describe('the runtime over HTTP', () => {
     ),
   )
 
+  it.effect('stores long Markdown and reads every page through the note tools', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const body = '# Plan\n\n' + 'A lasting detail.\n'.repeat(400) + '\nThe final detail.'
+        given.faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall('write_note', {
+              summary: 'Remember the plan',
+              layer: 'memory',
+              file: 'plan.md',
+              expected_revision: 0,
+              basis: 'said',
+              kind: 'workstream',
+              description: 'The complete plan',
+              note: body,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('read_note', {
+              summary: 'Read the plan',
+              file: 'plan.md',
+              offset: 0,
+              characters: 4000,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('read_note', {
+              summary: 'Read the rest of the plan',
+              file: 'plan.md',
+              offset: 4000,
+              characters: 4000,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('list_notes', { summary: 'Find saved plans', layer: 'memory', limit: 1 }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('Read the complete plan.'),
+        ])
+        const receipt = yield* admit(runtime, ada, delivery('long-memory', 'long-note'))
+        expect(yield* settled(runtime, ada, 'long-memory', receipt.submissionId)).toMatchObject({
+          toolCalls: 4,
+          reply: 'Read the complete plan.',
+        })
+        const response = yield* runtime.send(`${threadPath(ada, 'long-memory')}/state`, {
+          method: 'GET',
+        })
+        const state = yield* decodeState(response.body)
+        const parts = state.messages.flatMap((message) => message.parts)
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'list_notes',
+            output: {
+              entries: [expect.objectContaining({ layer: 'memory', file: 'plan.md' })],
+              next_cursor: null,
+            },
+          }),
+        )
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'read_note',
+            output: expect.objectContaining({
+              note: body.slice(0, 4000),
+              next_offset: 4000,
+              complete: false,
+              total_characters: body.length,
+            }),
+          }),
+        )
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'read_note',
+            output: expect.objectContaining({
+              note: body.slice(4000),
+              next_offset: null,
+              complete: true,
+            }),
+          }),
+        )
+      }),
+    ),
+  )
+
   it.effect('keeps suggested replies in the persisted conversation state', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {

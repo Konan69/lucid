@@ -10,7 +10,15 @@ import {
   NoteWriteResult,
   NoteDeleteResult,
 } from '@vivid/agent-runtime/notes'
-import { PersonId, NoteAddress, NoteIndex, NoteWrite, NoteRetraction } from '@vivid/contracts'
+import {
+  PersonId,
+  NoteAddress,
+  NoteIndex,
+  NoteWrite,
+  NoteRetraction,
+  NoteListing,
+  NotePage,
+} from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261027123834_memory/migration.sql'
 import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
@@ -31,6 +39,7 @@ interface CellState {
 interface PersonStub {
   fetch(request: Request): Promise<Response>
   noteIndex(): Promise<NoteIndex>
+  listNotes(listing: NoteListing): Promise<NotePage>
   readNote(address: NoteAddress): Promise<typeof NoteReadResult.Encoded>
   writeNote(write: NoteWrite): Promise<typeof NoteWriteResult.Encoded>
   deleteNote(retraction: NoteRetraction): Promise<typeof NoteDeleteResult.Encoded>
@@ -47,6 +56,7 @@ interface Environment {
  */
 const HEARTBEAT = 60_000
 const decodePerson = Schema.decodeUnknownEffect(PersonId)
+const decodeListing = Schema.decodeUnknownEffect(NoteListing)
 const decodeAddress = Schema.decodeUnknownEffect(NoteAddress)
 const decodeWrite = Schema.decodeUnknownEffect(NoteWrite)
 const decodeRetraction = Schema.decodeUnknownEffect(NoteRetraction)
@@ -82,6 +92,10 @@ export class Person {
         person === personId
           ? notes.index()
           : this.#remote(() => environment.PERSONS.getByName(person).noteIndex(), NoteIndex),
+      list: (person, listing) =>
+        person === personId
+          ? notes.list(listing)
+          : this.#remote(() => environment.PERSONS.getByName(person).listNotes(listing), NotePage),
       read: (person, address) =>
         person === personId
           ? notes.read(address)
@@ -171,6 +185,17 @@ export class Person {
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async noteIndex() {
     return Effect.runPromise((await this.#ready).notes.index())
+  }
+  /** Validate the page request at native RPC ingress; the target is this already named Person. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
+  async listNotes(listing: NoteListing) {
+    const { notes } = await this.#ready
+    return Effect.runPromise(
+      decodeListing(listing).pipe(
+        Effect.flatMap((value) => notes.list(value)),
+        Effect.mapError(() => NotesUnavailable.make({})),
+      ),
+    )
   }
   /** Encode typed absence and conflicts so native RPC cannot flatten them into unavailability. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.

@@ -11,22 +11,17 @@ import {
   NoteConflict,
   NoteIndex,
   NoteLine,
+  NoteCursor,
+  NotePage,
   SavedNote,
+  type NoteListing,
   type NoteWrite,
   type NoteRetraction,
   type PersonId,
 } from '@vivid/contracts'
 import { Context, Effect, Schema } from 'effect'
 
-export {
-  Note,
-  NoteFile,
-  NoteIndex,
-  NoteLine,
-  NoteAddress,
-  NoteConflict,
-  NOTE_BODY_LIMIT,
-} from '@vivid/contracts'
+export { Note, NoteFile, NoteIndex, NoteLine, NoteAddress, NoteConflict } from '@vivid/contracts'
 
 /** Failed persistence never means the Person has no memories. */
 export class NotesUnavailable extends Schema.TaggedError<NotesUnavailable>()(
@@ -49,6 +44,10 @@ export const INDEX_BUDGET = 8000
 
 interface NotesService {
   readonly index: (person: PersonId) => Effect.Effect<NoteIndex, NotesUnavailable>
+  readonly list: (
+    person: PersonId,
+    listing: NoteListing,
+  ) => Effect.Effect<NotePage, NotesUnavailable>
   readonly read: (
     person: PersonId,
     address: NoteAddress,
@@ -140,6 +139,30 @@ const index = Effect.fn('Notes.index')(function* (database: SqliteDatabase) {
     }
   }
   return NoteIndex.make({ standing, lines, more })
+})
+
+/** Fetch one keyset page in SQLite so older entries remain reachable beyond the prompt index. */
+const list = Effect.fn('Notes.list')(function* (database: SqliteDatabase, listing: NoteListing) {
+  const parameters: Array<string | number | null> = [listing.layer, listing.layer]
+  let after = ''
+  if (listing.after !== null) {
+    after = 'AND (updated_at, layer, file) < (?, ?, ?)'
+    parameters.push(listing.after.updatedAt, listing.after.layer, listing.after.file)
+  }
+  const rows = yield* attempt(() =>
+    database.all<object>(
+      `SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt
+      FROM memory_notes WHERE body IS NOT NULL AND (? IS NULL OR layer = ?) ${after}
+      ORDER BY updated_at DESC, layer DESC, file DESC LIMIT ?`,
+      ...parameters,
+      listing.limit + 1,
+    ),
+  )
+  const lines = yield* decodeLines(rows).pipe(Effect.mapError(() => NotesUnavailable.make({})))
+  const entries = lines.slice(0, listing.limit)
+  const last = entries.at(-1)
+  const next = lines.length > listing.limit && last !== undefined ? NoteCursor.make(last) : null
+  return NotePage.make({ entries, next })
 })
 
 /** An absent body is a local retraction, distinct from unavailable storage. */
@@ -274,6 +297,7 @@ export const openNotes = Effect.fn('Notes.open')(function* (
 
   return {
     index: () => index(database),
+    list: (listing: NoteListing) => list(database, listing),
     read: (address: NoteAddress) => read(database, address),
     write: (input: NoteWrite) => write(database, input),
     delete: (input: NoteRetraction) => retract(database, input),
