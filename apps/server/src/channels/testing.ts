@@ -120,9 +120,11 @@ const ports = Layer.effectContext(
           textTo: ChannelAddress.make('+12025550100'),
         })
       }),
-      unenrol: Effect.fn('Channels.test.unenrol')((_, id) =>
-        Ref.update(unenrols, (all) => [...all, id]),
-      ),
+      unenrol: Effect.fn('Channels.test.unenrol')(function* (_channel, id) {
+        const refusal = yield* Ref.get(failure)
+        if (Option.isSome(refusal)) return yield* refusal.value
+        yield* Ref.update(unenrols, (all) => [...all, id])
+      }),
       inbound: Stream.unwrap(
         Effect.gen(function* () {
           yield* Queue.offer(connections, undefined)
