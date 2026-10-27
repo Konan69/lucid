@@ -28,17 +28,23 @@ RUN pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/age
 # Vite follows shared packages' root Hermes profile while bundling their source.
 COPY tsconfig.base.json tsconfig.hermes.json hermes.d.ts ./
 COPY packages packages
-# Gate and image use the same workspace bundling and bare-Node output checks.
-RUN pnpm --filter @vivid/agent-runtime build
 
 FROM base AS production
 ENV NODE_ENV=production
+ENV HOST=0.0.0.0
 ENV PORT=5173
+# pnpm/bin/pnpm.mjs:nativeBinary downloads beside its Corepack wrapper on first use.
+# Carry the warmed cache so the non-root entry needs no download or write to that directory.
 COPY --from=build --chown=node:node /opt/corepack /opt/corepack
 COPY --from=build --chmod=0644 /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+COPY --from=build --chmod=0644 /app/tsconfig.base.json ./
+# pnpm's virtual store and package-local symlinks, including tsx and the workspace sources the
+# runtime imports as TypeScript. The process is `tsx src/main.ts`, as the application server's is:
+# there is no bundle, so there is no second copy of Effect and nothing to verify after a build.
 COPY --from=build --chown=node:node /app/node_modules node_modules
-# Includes runtime node_modules and every workspace dependency its symlinks point to.
 COPY --from=build --chown=node:node /app/packages packages
+# Conversations live in the product database (DATABASE_URL); notes live under the directory the
+# deployment mounts and names in VIVID_MEMORY_DIR, which is not in the image.
 USER node
 EXPOSE 5173
 # Docker's named health settings apply only to observations, never the lifetime of a Run.
@@ -49,4 +55,4 @@ EXPOSE 5173
 # Docker requires literal durations in these instruction options; they cannot reference ENV/ARG.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-CMD ["node", "packages/agent/runtime/dist/server.mjs"]
+CMD ["pnpm", "--filter", "@vivid/agent-runtime", "start"]

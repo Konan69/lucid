@@ -41,12 +41,7 @@ catalog:
   '@effect/platform-node': 4.0.2
   '@effect/sql-pg': 4.0.2
   '@effect/vitest': 4.0.2
-  '@flue/cli': 2.2.2
-  '@flue/postgres': 2.2.2
-  '@flue/react': 2.2.2
-  '@flue/runtime': 2.2.2
   '@flue/sdk': 2.2.2
-  '@flue/vite': 2.2.2
   '@openuidev/cli': 0.4.1
   '@openuidev/lang-core': 1.0.0
   '@openuidev/react-lang': 1.0.0
@@ -168,8 +163,6 @@ allowBuilds:
   # its manifest (`enriched-markdown` in apps/mobile/package.json), as T3 Code mobile allows it.
   'react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz': true
 
-patchedDependencies:
-  '@flue/runtime@2.2.2': patches/@flue__runtime@2.2.2.patch
   '@openuidev/react-lang@1.0.0': patches/@openuidev__react-lang@1.0.0.patch
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch

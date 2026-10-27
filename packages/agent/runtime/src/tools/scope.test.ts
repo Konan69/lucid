@@ -1,120 +1,149 @@
-import { describe, expect, it } from '@effect/vitest'
+import { unusedNotes } from './tests/harness.ts'
 import * as NodeHttp from 'node:http'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
-import { ConfigProvider, Effect, Layer, Option } from 'effect'
-import { PersonId, ReadPageOutcome, ReadPageRequest, ThreadId } from '@vivid/contracts'
+import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { PersonId, ReadPageRequest, ReadPageOutcome, ThreadId } from '@vivid/contracts'
 import { AuthContext, AuthState, runtimeHeaders } from '@vivid/contracts/auth'
 import { RpcAuthMiddleware, RpcFailure } from '@vivid/contracts/rpc'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServer from 'effect/http/HttpServer'
-import * as RpcSerialization from 'effect/rpc/RpcSerialization'
-import * as RpcServer from 'effect/rpc/RpcServer'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
-import { scopeLayer } from './scope.ts'
+import * as RpcServer from 'effect/rpc/RpcServer'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import { Product, productLayer } from '../client.ts'
+import { RuntimeSettings } from '../settings.ts'
+import { tools } from './index.ts'
+import { describe, expect, it } from '@effect/vitest'
+import { Effect, Layer, Redacted } from 'effect'
 import { codeTools } from './code.ts'
-import { toolRunner } from './scope.ts'
-import { asActing } from '../client.ts'
+import { NobodyToActFor } from '../client.ts'
+import { Scope, toolRunner } from './scope.ts'
+import { invoke } from './tests/harness.ts'
 
-/** Tool authority comes from the server or the private Thread creator, independently of model input. */
-describe('Tool authority', () => {
-  it.live('keeps the attributed HTTP RPC client alive until the Flue tool finishes', () =>
+/** Authority acquisition fails inside the same settled scope as execution; no model input can
+ * manufacture a client when the core has no acting Person for this call. */
+describe('explicit tool authority', () => {
+  it.effect('settles missing attribution before tools can access the RPC client', () =>
     Effect.gen(function* () {
-      const headers: Record<string, string>[] = []
-      const group = RpcGroup.make(
-        Rpc.make('ReadPage', {
-          payload: ReadPageRequest,
-          success: ReadPageOutcome,
-          error: RpcFailure,
+      const layer = Layer.effect(
+        Scope,
+        Effect.fail(new NobodyToActFor({ message: 'No Person for this call.' })),
+      )
+      const [, page] = codeTools(toolRunner(layer))
+      const result = yield* Effect.promise(() =>
+        invoke(page, {
+          data: { summary: 'Read the page', address: 'https://example.test' },
+          signal: new AbortController().signal,
         }),
-      ).middleware(RpcAuthMiddleware)
-      const routes = RpcServer.layerHttp({ group, path: '/api/rpc', protocol: 'http' }).pipe(
-        Layer.provide(
-          group.toLayer({
-            ReadPage: () =>
-              Effect.succeed(
-                ReadPageOutcome.cases.Read.make({
-                  address: 'https://example.com',
-                  title: 'Example Domain',
-                  text: 'Example',
-                  truncated: false,
-                }),
-              ),
-          }),
-        ),
-        Layer.provide(
-          Layer.succeed(RpcAuthMiddleware, (effect, options) => {
-            headers.push(options.headers)
-            return Effect.provideService(effect, AuthContext, AuthState.Runtime())
-          }),
-        ),
-        Layer.provide(RpcSerialization.layerNdjson),
       )
-      const server = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
-        Layer.provideMerge(
-          NodeHttpServer.layer(NodeHttp.createServer, { host: '127.0.0.1', port: 0 }),
-        ),
-      )
-      yield* Effect.gen(function* () {
-        const address = HttpServer.formatAddress((yield* HttpServer.HttpServer).address)
-        const config = ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            VIVID_SERVER_URL: address,
-            VIVID_RUNTIME_TOKEN: 'test-runtime-token',
-          }),
-        )
-        const scope = scopeLayer(
-          'test-thread',
-          { kind: 'user', body: 'Read it.' },
-          Option.some({ creator: PersonId.make('test-person'), creatorName: 'Test' }),
-        ).pipe(Layer.provide(config))
-        const [, page] = codeTools(toolRunner(scope))
-        const result = yield* Effect.promise(() =>
-          Promise.resolve(
-            page.run({
-              data: { summary: 'Example page', address: 'https://example.com' },
-              signal: new AbortController().signal,
-              toolCallId: 'test-call',
-              log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
-            }),
-          ),
-        )
-        expect(result).toMatchObject({ output: { ok: true, title: 'Example Domain' } })
-        expect(headers).toHaveLength(1)
-        expect(headers[0]).toMatchObject({
-          authorization: 'Bearer test-runtime-token',
-          [runtimeHeaders.thread]: 'test-thread',
-          [runtimeHeaders.actor]: 'test-person',
-        })
-        // Separate reads inside the server's longer scope must acquire distinct attributed clients.
-        yield* Effect.gen(function* () {
-          const clients: object[] = []
-          for (let call = 0; call < 2; call++) {
-            const result = yield* asActing(
-              Option.some({
-                threadId: ThreadId.make('test-thread'),
-                personId: PersonId.make('test-person'),
-              }),
-              (client) => {
-                clients.push(client)
-                return client.ReadPage({ address: 'https://example.com' })
-              },
-            )
-            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- This partial assertion matches the response tag and title; it does not construct a domain value.
-            expect(result).toMatchObject({ _tag: 'Read', title: 'Example Domain' })
-          }
-          expect(clients[0]).not.toBe(clients[1])
-          expect(headers).toHaveLength(3)
-        }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromUnknown({
-              VIVID_SERVER_URL: address,
-              VIVID_RUNTIME_TOKEN: 'test-runtime-token',
-            }),
-          ),
-        )
-      }).pipe(Effect.provide(yield* Layer.build(server)))
+      expect(result).toEqual({
+        output: { ok: false, message: 'There is no person behind this message to act for.' },
+        terminate: false,
+      })
     }),
   )
 })
+
+/** The core supplies a resolver, while the real attributed HTTP client owns wire headers and
+ * transport lifetime. Pi must keep that Layer alive until the tool's receipt is persisted. */
+it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC call', () =>
+  Effect.gen(function* () {
+    const headers: Record<string, string>[] = []
+    const group = RpcGroup.make(
+      Rpc.make('ReadPage', {
+        payload: ReadPageRequest,
+        success: ReadPageOutcome,
+        error: RpcFailure,
+      }),
+    ).middleware(RpcAuthMiddleware)
+    const routes = RpcServer.layerHttp({ group, path: '/api/rpc', protocol: 'http' }).pipe(
+      Layer.provide(
+        group.toLayer({
+          ReadPage: () =>
+            Effect.succeed(
+              ReadPageOutcome.cases.Read.make({
+                address: 'https://example.test',
+                title: 'Example',
+                text: 'Page',
+                truncated: false,
+              }),
+            ),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(RpcAuthMiddleware, (effect, options) => {
+          headers.push(options.headers)
+          return Effect.provideService(effect, AuthContext, AuthState.Runtime())
+        }),
+      ),
+      Layer.provide(RpcSerialization.layerNdjson),
+    )
+    const server = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+      Layer.provideMerge(
+        NodeHttpServer.layer(NodeHttp.createServer, { host: '127.0.0.1', port: 0 }),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      const product = yield* Product
+      const acting = {
+        personId: PersonId.make('scope-person'),
+        threadId: ThreadId.make('scope-thread'),
+      }
+      const definitions = tools(
+        () =>
+          Layer.effect(
+            Scope,
+            Effect.gen(function* () {
+              return Scope.of({ acting, client: yield* VividRpcClient })
+            }),
+          ).pipe(Layer.provide(product.as(acting))),
+        () => Effect.die('Unexpected note authority'),
+        unusedNotes,
+      )
+      const page = definitions.find((tool) => tool.name === 'read_page')
+      if (page === undefined) expect.fail('Missing read_page tool.')
+      const receipt = yield* Effect.promise(() =>
+        invoke(page, {
+          data: { summary: 'Read the page', address: 'https://example.test' },
+          signal: new AbortController().signal,
+        }),
+      )
+      expect(receipt.output).toMatchObject({ ok: true, title: 'Example' })
+      expect(headers).toHaveLength(1)
+      expect(headers[0]).toMatchObject({
+        authorization: 'Bearer test-runtime-token',
+        [runtimeHeaders.actor]: 'scope-person',
+        [runtimeHeaders.thread]: 'scope-thread',
+      })
+      expect(JSON.stringify(receipt)).not.toMatch(/scope-person|scope-thread|test-runtime-token/)
+    }).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- This live test is the HTTP fixture entry point and owns both server and client scopes.
+      Effect.provide(
+        productLayer.pipe(
+          Layer.provide(
+            Layer.effect(
+              RuntimeSettings,
+              Effect.gen(function* () {
+                return RuntimeSettings.of({
+                  serverUrl: new URL(
+                    HttpServer.formatAddress((yield* HttpServer.HttpServer).address),
+                  ),
+                  token: Redacted.make('test-runtime-token'),
+                  notesDirectory: '/fixture/notes',
+                  databaseUrl: Redacted.make('postgres://fixture.invalid/conversations'),
+                  idleMillis: 600_000,
+                  host: '127.0.0.1',
+                  port: 0,
+                })
+              }),
+            ),
+          ),
+          Layer.provide(NodeHttpClient.layerUndici),
+        ),
+      ),
+      Effect.provide(yield* Layer.build(server)),
+    )
+  }).pipe(Effect.scoped),
+)

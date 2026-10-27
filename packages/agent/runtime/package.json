@@ -7,49 +7,48 @@
     ".": "./src/index.ts",
     "./sandbox": "./src/tools/sandbox.ts",
     "./scope": "./src/tools/scope.ts",
-    "./signins": "./src/tools/signins.ts"
+    "./signins": "./src/tools/signins.ts",
+    "./testing": "./tests/process.ts",
+    "./tooltesting": "./src/tools/tests/harness.ts"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
     "check:types": "pnpm typecheck",
-    "dev": "vite dev",
-    "docs": "flue docs",
-    "start": "node dist/server.mjs",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
     "test": "node ../../../scripts/test.mjs",
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
-    "db:generate": "echo 'Flue owns runtime schema migrations'",
-    "db:migrate": "echo 'Flue owns runtime schema migrations'",
-    "types": "node ../../../scripts/types.mjs tsconfig.types.json"
+    "types": "node ../../../scripts/types.mjs tsconfig.types.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "import:flue": "tsx src/flue/main.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/chord": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-durable": "1.2.0",
     "@effect/platform-node": "catalog:",
-    "@flue/postgres": "catalog:",
-    "@flue/runtime": "catalog:",
     "@openuidev/lang-core": "catalog:",
+    "@valibot/to-json-schema": "1.7.1",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
     "agentfs-sdk": "0.6.4",
-    "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "hono": "catalog:",
     "pg": "catalog:",
+    "tsx": "catalog:",
     "valibot": "catalog:",
-    "zod": "catalog:"
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@flue/cli": "catalog:",
-    "@flue/sdk": "catalog:",
-    "@flue/vite": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
-    "vite": "catalog:",
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
     "vitest": "catalog:"
   }
 }

@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import { SUGGESTED_REPLIES_MOST, SUGGESTED_REPLY_LONGEST, Tool } from '@vivid/contracts'
 import * as v from 'valibot'
 import { text } from './inputs.ts'
@@ -13,8 +13,8 @@ const reply = text(
  * taps (Claude Duet and ChatGPT draw theirs the same way). A tap sends the words as the Person's
  * own next message, exactly as if typed.
  *
- * Nothing is recorded anywhere but the call itself. Flue keeps the tool part, with its input, in
- * the conversation history the clients already read (`offeredReplies` in `@vivid/state`), so no
+ * Nothing is recorded anywhere but the call itself. Pi keeps the tool call, with its input, in
+ * the conversation history the clients already read (`ConversationState` tool blocks), so no
  * table, RPC or server call is needed, and the tool answers at once. The clients show the
  * suggestions only under the newest reply while Vivid is not working, so they are gone as soon as
  * the Person says anything or Vivid starts again.
@@ -35,7 +35,7 @@ export function followTools() {
           v.description('One to three replies, the most likely first.'),
         ),
       }),
-      /** The input is the whole effect: Flue stores it in the conversation as this call's part. */
+      /** The input is the whole effect: Pi stores it in the conversation as this call's part. */
       run() {
         return { output: { ok: true } }
       },
