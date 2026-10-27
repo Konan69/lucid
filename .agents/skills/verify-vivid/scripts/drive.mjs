@@ -1,3 +1,5 @@
+import { approve, deny } from './approval.mjs'
+import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
 import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
@@ -218,6 +220,7 @@ export async function stop(state, id, directory, browser) {
 }
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
+  if (state.modelKind === 'real') return realQuestion(state, id, directory)
   await chat(state, id, 'ask me', directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
   NodeAssert.equal(detail.requests.length, 1)
@@ -364,6 +367,8 @@ const recipes = {
   tool,
   replies: offer,
   question,
+  approve,
+  deny,
   picture,
   document,
   devices,
@@ -376,16 +381,9 @@ const recipes = {
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  approve:
-    'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
-  deny: 'Needs an actual pending proposal from a connected disposable Integration.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
-}
-const realBlocked = {
-  ...blocked,
-  question: 'Question HTTP recipe is rehearsal-only; real-model question recipe is blocked',
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
@@ -393,9 +391,11 @@ export async function drive(state, feature) {
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
   const unavailable =
     state.modelKind === 'real'
-      ? realBlocked
+      ? blocked
       : {
           ...blocked,
+          approve: 'Approval requires a real model.',
+          deny: 'Denial requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.',
         }

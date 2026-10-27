@@ -57,7 +57,11 @@ export async function watchBrowser(state, id, directory, { run, capture }) {
       ]),
     )
     await run(['find', 'role', 'button', 'click', '--name', name, '--exact'])
-    await run(['wait', '--fn', '!(' + available + ')'])
+    await run([
+      'wait',
+      '--fn',
+      `!Array.from(document.querySelectorAll('[role="dialog"] h4')).some(heading => heading.textContent.trim() === 'Verify Pulse')`,
+    ])
     await capture('disconnected')
   })
 }

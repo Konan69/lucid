@@ -16,7 +16,7 @@ const decodeText = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Strin
 
 /** Read only the open dialog's semantic groups. Hidden source and background Home cannot satisfy them. */
 async function groups(run) {
-  const expression = `Array.from(document.querySelectorAll('[role="dialog"] section')).filter(section => section.querySelector('h3') && section.querySelector('ul')).map(section => ({ purpose: section.querySelector('h3').innerText.trim(), names: Array.from(section.querySelectorAll('ul > li')).map(li => li.innerText.split('\\n')[0].trim()) }))`
+  const expression = `Array.from(document.querySelectorAll('[role="dialog"] section')).filter(section => section.querySelector('h3') && section.querySelector('h3').innerText.trim() !== 'Connected' && section.querySelector('ul')).map(section => ({ purpose: section.querySelector('h3').innerText.trim(), names: Array.from(section.querySelectorAll('ul > li')).map(li => li.innerText.split('\\n')[0].trim()) }))`
   return Result.getOrThrow(decodeGroups(await run(['eval', 'JSON.stringify(' + expression + ')'])))
 }
 
@@ -73,6 +73,7 @@ async function memory(state, context, browser) {
 /** Drive the actual Settings tabs and catalog search, without starting any external authorization. */
 export async function settingsBrowser(state, id, directory, browser) {
   const { run, capture } = browser
+  const before = await rpc(state, 'ListConnections', undefined, directory, 'before-browsing')
   await memory(state, { id, directory }, browser)
   const navigation = Result.getOrThrow(
     decodeNavigation(
@@ -156,7 +157,7 @@ export async function settingsBrowser(state, id, directory, browser) {
   await json(directory + '/search-groups.json', results)
   await capture('catalog-search')
   const connections = await rpc(state, 'ListConnections', undefined, directory, 'after-browsing')
-  NodeAssert.deepEqual(connections.connections, [], 'Browsing started an external connection')
+  NodeAssert.deepEqual(connections.connections, before.connections, 'Browsing changed a connection')
   await json(directory + '/scope.json', {
     modelCalls: 0,
     blocked: settingsLimits,

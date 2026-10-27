@@ -1,3 +1,5 @@
+import { approve, deny } from './approval.mjs'
+import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import * as assert from 'node:assert/strict'
@@ -43,14 +45,14 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  question: 'No browser recipe for the multi-question controls yet',
-  approve: 'No connected disposable Integration to produce a pending Approval',
-  deny: 'No connected disposable Integration to produce a pending Approval',
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
 }
 const recipes = {
+  approve: { check: 'approve' },
+  deny: { check: 'deny' },
+  question: { check: 'question' },
   stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
@@ -83,6 +85,18 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  approve: {
+    drive: approve,
+    scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
+  },
+  deny: {
+    drive: deny,
+    scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
+  },
+  question: {
+    drive: question,
+    scope: 'Real model question card, actual choice, Decision Run continuation and reload',
+  },
   stop: {
     drive: stopBrowser,
     scope:
@@ -336,8 +350,8 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    feature === 'notes' && state.modelKind !== 'real'
-      ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
+    ['notes', 'question', 'approve', 'deny'].includes(feature) && state.modelKind !== 'real'
+      ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
   if (reason || stopBlocked) {
@@ -432,7 +446,11 @@ async function journey(state, feature) {
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
     if (feature in specialRecipes) {
-      await specialRecipes[feature].drive(state, id, directory, { run, capture })
+      await specialRecipes[feature].drive(state, id, directory, {
+        run,
+        capture,
+        exactReply: (text, stage) => exactReply(run, text, directory, stage),
+      })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
