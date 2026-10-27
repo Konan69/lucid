@@ -87,7 +87,8 @@ async function main() {
 if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
   // The config owner observes IPC closure even when the invoking wrapper is killed with SIGKILL.
   // It terminates its own child and removes the private file without relying on the dead wrapper.
-  if (process.connected) process.once('disconnect', () => process.kill(process.pid, 'SIGTERM'))
+  const parentLost = () => process.kill(process.pid, 'SIGTERM')
+  if (process.connected) process.once('disconnect', parentLost)
   const command = process.connected
     ? main()
     : run(
@@ -95,12 +96,17 @@ if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
         [process.argv[1], ...process.argv.slice(2)],
         ['inherit', 'inherit', 'inherit', 'ipc'],
       )
-  await command.catch((error) => {
-    let reason = error instanceof Error ? error.message : String(error)
-    for (const [name, value] of Object.entries(process.env))
-      if (/KEY|TOKEN|SECRET|VARS/.test(name) && value)
-        reason = reason.replaceAll(value, '[redacted]')
-    process.stderr.write(`Native cell command failed: ${reason}\n`)
-    process.exitCode = 1
-  })
+  await command
+    .catch((error) => {
+      let reason = error instanceof Error ? error.message : String(error)
+      for (const [name, value] of Object.entries(process.env))
+        if (/KEY|TOKEN|SECRET|VARS/.test(name) && value)
+          reason = reason.replaceAll(value, '[redacted]')
+      process.stderr.write(`Native cell command failed: ${reason}\n`)
+      process.exitCode = 1
+    })
+    .finally(() => {
+      process.off('disconnect', parentLost)
+      if (process.connected) process.disconnect()
+    })
 }
