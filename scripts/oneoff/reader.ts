@@ -1,7 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodePath from 'node:path'
-import * as NodeURL from 'node:url'
 import { Effect, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
@@ -66,14 +65,13 @@ const post = Effect.fn('HistoryReader.post')(function* (input: {
   )
 })
 
-/** The command runs only after every Thread loaded and after the map is durably replaced. */
+/** Adoption follows the durable map write, including partial maps from refused Threads. */
 const adopt = (map: string) =>
   Effect.callback<void, ReaderFailed>((resume) => {
-    const root = NodeURL.fileURLToPath(new URL('../../', import.meta.url))
     const child = NodeChildProcess.spawn(
       'pnpm',
       ['--filter', '@vivid/server', 'runs:adopt', NodePath.resolve(map)],
-      { cwd: root, stdio: ['ignore', 'ignore', 'ignore'] },
+      { stdio: ['ignore', 'inherit', 'inherit'] },
     )
     child.once('error', () => resume(Effect.fail(new ReaderFailed({ operation: 'runs:adopt' }))))
     child.once('close', (code) =>
@@ -84,7 +82,7 @@ const adopt = (map: string) =>
     })
   })
 
-/** Read all sources first, import per Person, retain successful maps on refusal, and adopt only a complete load. */
+/** Read sources first, retain successful maps and adopt them before reporting refused Threads. */
 export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inputs) {
   const people = yield* sweep()
   const notes = yield* readNotes(input.notes)
@@ -94,7 +92,7 @@ export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inpu
     catch: failed('token file'),
   })
   const map: Array<RuntimeHistoryMap[number]> = []
-  let refused = false
+  const refused: string[] = []
   for (const [person, threads] of people) {
     const memory = notes.get(person)
     const answer = yield* post({
@@ -107,7 +105,7 @@ export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inpu
       return yield* new ReaderFailed({ operation: 'cell omitted Thread results' })
     for (const result of answer.threads) {
       if (RuntimeHistoryResult.guards.Refused(result)) {
-        refused = true
+        refused.push(result.threadId)
         yield* Effect.logError('History refused', {
           personId: person,
           threadId: result.threadId,
@@ -125,11 +123,11 @@ export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inpu
       ),
     catch: failed('map file'),
   })
-  if (refused)
-    return yield* new ReaderFailed({
-      operation: 'one or more Threads refused; receipts not adopted',
-    })
   yield* adopt(input.map)
+  if (refused.length > 0)
+    return yield* new ReaderFailed({
+      operation: `Threads refused after partial receipt adoption: ${refused.join(', ')}`,
+    })
   return {
     people: people.size,
     threads: map.length,

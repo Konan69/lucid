@@ -8,7 +8,7 @@ import { Pool } from 'pg'
 import { expect, it } from '@effect/vitest'
 import { Config, Effect, Schema } from 'effect'
 import { NoteFile, NoteSearch, RuntimeHistoryMap } from '../../packages/contracts/src/index.ts'
-import { scenario } from '../../packages/agent/runtime/tests/requests.ts'
+import { scenario, admit, delivery } from '../../packages/agent/runtime/tests/requests.ts'
 import { SOURCE_TABLES, BIRTH, REPLY_BATCHES, PICTURE, ROOT, ada } from './fixture.ts'
 
 const thread = 'earlier-thread'
@@ -34,7 +34,12 @@ it.effect(
               .query(
                 'DROP TABLE IF EXISTS flue_attachments, flue_conversation_stream_batches, flue_conversation_streams',
               )
-              .then(() => pool.query('DELETE FROM vivid_conversations WHERE id=$1', [thread]))
+              .then(() =>
+                pool.query('DELETE FROM vivid_conversations WHERE id IN ($1,$2)', [
+                  thread,
+                  'refused-thread',
+                ]),
+              )
               .then(() => pool.query('DELETE FROM "user" WHERE id=$1', [ada])),
           ).pipe(Effect.asVoid),
         )
@@ -90,14 +95,17 @@ it.effect(
         const notes = NodePath.join(directory, 'notes')
         yield* Effect.tryPromise(() => NodeFSP.mkdir(notes))
         const notePath = NodePath.join(notes, `${ada}.db`)
-        yield* Effect.acquireUseRelease(
+        const noteTime = yield* Effect.acquireUseRelease(
           Effect.tryPromise(() => AgentFS.open({ path: notePath })),
           (store) =>
             Effect.tryPromise(() =>
-              store.fs.writeFile(
-                '/kettle.md',
-                '---\nkind: preference\ndescription: Copper kettle\n---\n\nUse the copper kettle.\n',
-              ),
+              store.fs
+                .writeFile(
+                  '/kettle.md',
+                  '---\nkind: preference\ndescription: Copper kettle\n---\n\nUse the copper kettle.\n',
+                )
+                .then(() => store.fs.stat('/kettle.md'))
+                .then((stat) => stat.mtime * 1000),
             ),
           (store) => Effect.promise(() => store.close()),
         )
@@ -144,15 +152,26 @@ it.effect(
         const address = server.address()
         if (address === null || typeof address === 'string')
           return yield* Effect.die('No test port')
+        const bundle = NodePath.join(directory, 'reader.cjs')
+        yield* Effect.callback<void>((resume) => {
+          const child = NodeChildProcess.spawn(
+            process.execPath,
+            ['scripts/oneoff/bundle.mjs', bundle],
+            { stdio: 'inherit' },
+          )
+          child.once('error', (error) => resume(Effect.die(error)))
+          child.once('close', (code) =>
+            resume(code === 0 ? Effect.void : Effect.die('Bundle failed')),
+          )
+          return Effect.sync(() => {
+            if (child.exitCode === null) child.kill('SIGTERM')
+          })
+        })
         const invoke = Effect.callback<{ code: number | null; output: string }>((resume) => {
           const child = NodeChildProcess.spawn(
-            'pnpm',
+            process.execPath,
             [
-              '--filter',
-              '@vivid/server',
-              'exec',
-              'tsx',
-              '../../scripts/oneoff/main.ts',
+              bundle,
               '--source',
               url,
               '--notes',
@@ -181,6 +200,7 @@ it.effect(
         })
         const first = yield* invoke
         expect(first.output).toContain('History and receipts migrated')
+        expect(first.output).toContain('Run receipts adopted')
         expect(first.code).toBe(0)
         const firstMap = yield* Effect.tryPromise(() => NodeFSP.readFile(map, 'utf8'))
         const rows = yield* decodeMap(firstMap)
@@ -206,9 +226,45 @@ it.effect(
           adopted,
         )
         expect(
-          (yield* runtime.notes.read(ada, { layer: 'memory', file: NoteFile.make('kettle.md') }))
-            .revision,
-        ).toBe(1)
+          yield* runtime.notes.read(ada, { layer: 'memory', file: NoteFile.make('kettle.md') }),
+        ).toMatchObject({ revision: 1, updatedAt: noteTime, basis: 'said' })
+        const refused = 'refused-thread'
+        yield* query(
+          'INSERT INTO vivid_conversations (id,person_id,title,title_source,updated_at) VALUES ($1,$2,$3,$4,$5)',
+          [refused, ada, 'Already used', 'Person', 1],
+        )
+        yield* query(
+          'INSERT INTO flue_conversation_streams (path,identity_json,incarnation) VALUES ($1,$2,$3)',
+          [
+            `agents/vivid/${refused}`,
+            JSON.stringify({ agentName: 'vivid', instanceId: refused }),
+            'inc',
+          ],
+        )
+        yield* query(
+          'INSERT INTO flue_conversation_stream_batches (path,seq,producer_id,producer_epoch,producer_sequence,data) SELECT $1,seq,producer_id,producer_epoch,producer_sequence,data FROM flue_conversation_stream_batches WHERE path=$2',
+          [`agents/vivid/${refused}`, path],
+        )
+        yield* query(
+          'INSERT INTO flue_attachments SELECT $1, attachment_id, mime_type, byte_size, digest, conversation_id, bytes, created_at FROM flue_attachments WHERE stream_path=$2',
+          [`agents/vivid/${refused}`, path],
+        )
+        yield* admit(runtime, ada, delivery(refused, 'already-native', { creator: ada }))
+        yield* query('UPDATE vivid_runs SET receipt=$1 WHERE id=$2', [
+          JSON.stringify({ runId: 'sub_1', offset: '0', incarnation: 'inc' }),
+          run,
+        ])
+        const partial = yield* invoke
+        expect(partial.code).not.toBe(0)
+        expect(partial.output).toContain('Run receipts adopted')
+        expect(partial.output).toContain(refused)
+        expect((yield* query('SELECT receipt FROM vivid_runs WHERE id=$1', [run])).rows[0]).toEqual(
+          adopted,
+        )
+        yield* query('DELETE FROM flue_conversation_stream_batches WHERE path=$1', [
+          `agents/vivid/${refused}`,
+        ])
+        yield* query('DELETE FROM vivid_conversations WHERE id=$1', [refused])
         expect(yield* Effect.tryPromise(() => NodeFSP.readFile(notePath))).toEqual(original)
         expect(
           (yield* query('SELECT data FROM flue_conversation_stream_batches ORDER BY seq')).rows,
