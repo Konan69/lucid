@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { panel, usePanel } from './data/panel'
 import { Me } from './data/me'
+import { startNotifying } from './data/notifying'
 import { warm } from './data/warm'
 import { router, threadOnScreen } from './router'
 import type { FileRoutesById } from './tree.gen'
@@ -26,7 +27,8 @@ import { Sayings } from './ui/Sayings'
 // The lists of the places beside Threads are begun the moment it is known who is signed in, and
 // held open from then on: a Person who goes to the Library a fifth of a second after the page shows
 // should find it drawn. It is heard from the query itself, so it happens once and before any
-// screen asks. What it begins is a few small subscriptions on the socket `me` came over.
+// screen asks. What it begins is a few small subscriptions on the socket `me` came over. It is
+// also when notifications start: an address this browser holds is registered for this session.
 const stopWaiting = engine.registry.subscribe(
   live.me.atom,
   (me) => {
@@ -36,6 +38,7 @@ const stopWaiting = engine.registry.subscribe(
     queueMicrotask(() => {
       stopWaiting()
       warm.places()
+      startNotifying()
     })
   },
   { immediate: true },

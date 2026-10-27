@@ -33,6 +33,7 @@ import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } fr
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import { offerNotifications } from '../data/notifying'
 import { router } from '../router'
 import { link } from '../data/runtime'
 import { orSay } from '../data/said'
@@ -501,6 +502,8 @@ function Conversation({
    */
   const send = useCallback(
     (text: string, key: string, pictures: ReadonlyArray<Picture>) => {
+      // In the press itself, so the browser may ask: once only, while the Person was never asked.
+      offerNotifications()
       if (unnamed) {
         void change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
       }

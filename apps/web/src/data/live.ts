@@ -12,6 +12,7 @@ import { Option, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { change, changing, start } from './app'
+import { showOnDesktop } from './notifying'
 import { router, threadOnScreen } from '../router'
 import { engine } from './runtime'
 import { said, sayWith } from './said'
@@ -162,6 +163,8 @@ engine.registry.subscribe(live.notifications.answers, (result) => {
   }
   const here = threadOnScreen()
   for (const notice of fresh) {
+    // The desktop app also shows it as the system's own, while its window is not in front.
+    showOnDesktop(notice)
     const threadId = notice.threadId
     if (threadId === null) {
       sayWith(notice.title, Option.none(), notice.id)
