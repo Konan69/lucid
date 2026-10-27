@@ -292,7 +292,7 @@ async function launch() {
     VIVID_TEST_DATABASE_URL: databaseUrl(),
     AUTH_SECRET: authSecret,
     PORT: String(state.ports.server),
-    VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime}`,
+    VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime},http://127.0.0.1:${state.ports.runtimePeer}`,
     VIVID_SERVER_URL: state.server,
     VIVID_RUNTIME_TOKEN: token,
     VIVID_MODEL: state.model,
@@ -332,7 +332,7 @@ async function launch() {
       VIVID_MODEL: state.model,
     },
   )
-  const runtimeHealth = await fetch(env.VIVID_RUNTIME_URL + '/health')
+  const runtimeHealth = await fetch(`http://127.0.0.1:${state.ports.runtime}/health`)
   const runtimeValue = decodeText(RuntimeHealth, await runtimeHealth.text())
   await json(state.evidence + '/runtime-health.json', runtimeValue)
   if (!runtimeHealth.ok || runtimeValue.service !== 'vivid-cells' || runtimeValue.status !== 'ok')
