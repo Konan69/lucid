@@ -262,11 +262,6 @@ const assertStackPolicy = (stackSource, infrastructureSources) => {
     /Command\.Dev\(target\.serverProcessId/,
     'server must be an Alchemy-managed process',
   )
-  assert.match(
-    stackSource,
-    /Command\.Dev\(target\.runtimeProcessId/,
-    'runtime must be an Alchemy-managed process',
-  )
   // The local stack's resources are the machine's own Docker and processes, so its state stays in
   // that checkout. Production's state lives in the hosted store (`infra/state.ts`): read from a
   // checkout's `.alchemy`, every other machine would plan to create production again.
@@ -319,14 +314,13 @@ const assertDatabasePolicy = (databaseSource) => {
 
 const assertMigrationPolicy = (migrationSource) => {
   const serverMigration = migrationSource.search(/name: ["']server["']/)
-  // Product tables run after auth and tenancy; Pi owns the conversation tables after both.
+  // Product tables run after auth and tenancy. Cell SQLite is migrated at activation.
   const productMigration = migrationSource.search(/name: ["']server-product["']/)
   assert.ok(
     serverMigration >= 0 && serverMigration < productMigration,
     'migration order must be server → server-product',
   )
-  const runtimeMigration = migrationSource.search(/name: ["']runtime["']/)
-  assert.ok(productMigration < runtimeMigration, 'migration order must be product → runtime')
+  assert.doesNotMatch(migrationSource, /name: ["']runtime["']/, 'runtime has no PostgreSQL owner')
   assert.doesNotMatch(
     migrationSource,
     /name: ["']connectors["']/,
@@ -385,11 +379,6 @@ const assertContainerPolicy = (root) => {
   assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
   for (const { name, dockerfilePath, stages } of [
     {
-      name: 'Runtime',
-      dockerfilePath: 'packages/agent/runtime/Dockerfile',
-      stages: { build: [] },
-    },
-    {
       name: 'Server',
       dockerfilePath: 'apps/server/Dockerfile',
       stages: { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
@@ -427,59 +416,20 @@ const assertContainerPolicy = (root) => {
   }
 }
 
-/** The Pi process keeps its conversations in the product database, in tables its own pre-deploy
- * step migrates (the process never migrates) while the server's step migrates only the server's
- * owners; it builds no bundle. One replica, with no overlap, so a replacement never meets the old
- * process's advisory lock. */
-export const assertRuntimePolicy = (local, hosted, dockerfile) => {
-  const localRuntime = local.match(
-    /Command\.Dev\(target\.runtimeProcessId, \{([\s\S]*?)^      \}\)/m,
-  )
-  const hostedRuntime = hosted.match(/Railway\.Service\('Runtime', \{([\s\S]*?)^  \}\)/m)
-  assert.notEqual(localRuntime, null, 'local runtime declaration is missing')
-  assert.notEqual(hostedRuntime, null, 'hosted runtime declaration is missing')
-  for (const block of [localRuntime[1], hostedRuntime[1]]) {
-    assert.match(
-      block,
-      /pnpm --filter @vivid\/agent-runtime start/,
-      'runtime must start the Node process',
-    )
-    assert.match(block, /DATABASE_URL: databaseUrl,/, 'runtime must wire its conversation database')
-    assert.doesNotMatch(
-      block,
-      /VIVID_RUNTIME_STATE_DIR\s*:/,
-      'runtime conversations no longer live in a state directory',
-    )
-  }
+/** The authored cell target owns Person SQLite. Provider packaging is a separate infra concern. */
+export const assertRuntimePolicy = (config, cell) => {
+  assert.match(config, /"main": "src\/main.ts"/, 'cells must name their native Worker entry')
+  assert.match(config, /"name": "PERSONS", "class_name": "Person"/, 'Person cells must be bound')
+  assert.match(config, /"new_sqlite_classes": \["Person"\]/, 'Person cells must own SQLite')
   assert.match(
-    localRuntime[1],
-    /VIVID_MIGRATIONS_HASH: migrations\.hash\.input/,
-    'local runtime must start after the migrations that create its tables',
-  )
-  assert.match(
-    hostedRuntime[1],
-    /preDeploy: \{ command: 'pnpm --filter @vivid\/agent-runtime db:migrate' \}/,
-    'runtime must migrate its own tables before it deploys',
-  )
-  assert.match(
-    hosted,
-    /preDeploy: \{ command: 'node scripts\/migrate\.mjs server' \}/,
-    'server must migrate only its own owners',
-  )
-  assert.match(
-    hostedRuntime[1],
-    /overlapSeconds: 0/,
-    'runtime replacement must release locks before starting',
-  )
-  assert.match(
-    hosted,
-    /Railway\.Volume\('RuntimeMemory', \{ project, service: runtime, mountPath: memoryPath \}\)/,
-    'retain the existing runtime volume',
+    cell,
+    /openDurableObjectSqliteStorage\(input.storage/,
+    'Pi must use native cell storage',
   )
   assert.doesNotMatch(
-    dockerfile,
-    /agent-runtime build|dist\/server\.mjs/,
-    'runtime image must run TypeScript without a bundle',
+    cell,
+    /DATABASE_URL|NodeHttpServer/,
+    'cells must not restore the Node/PG host',
   )
 }
 
@@ -525,9 +475,8 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
   assertContainerPolicy(root)
   assertRuntimePolicy(
-    stackSource,
-    source(root, 'infra/railway.ts'),
-    source(root, 'packages/agent/runtime/Dockerfile'),
+    source(root, 'apps/cells/wrangler.jsonc'),
+    source(root, 'packages/agent/runtime/src/cell.ts'),
   )
   assertRepositoryPolicy(root)
   return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }

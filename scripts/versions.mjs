@@ -7,9 +7,9 @@ import { parseJsonc } from './jsonc.mjs'
 import { hermesConfigErrors } from './hermes.mjs'
 
 export const versions = Object.freeze({
-  '@earendil-works/chord': '1.2.0',
-  '@earendil-works/pi-ai': '1.2.0',
-  '@earendil-works/pi-durable': '1.2.0',
+  '@earendil-works/chord': '1.4.0',
+  '@earendil-works/pi-ai': '1.4.0',
+  '@earendil-works/pi-durable': '1.4.0',
   '@valibot/to-json-schema': '1.7.1',
   '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
@@ -143,6 +143,7 @@ const requiredByManifest = Object.freeze({
     'tailwindcss',
     'vite',
   ],
+  'apps/cells/package.json': ['@earendil-works/chord', '@earendil-works/pi-durable', 'effect'],
   'packages/agent/runtime/package.json': [
     '@earendil-works/chord',
     '@earendil-works/pi-ai',
@@ -150,11 +151,8 @@ const requiredByManifest = Object.freeze({
     '@valibot/to-json-schema',
     '@effect/platform-node',
     '@types/node',
-    '@types/pg',
     'drizzle-orm',
     'effect',
-    'pg',
-    'tsx',
     'drizzle-kit',
     'valibot',
   ],

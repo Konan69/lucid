@@ -56,7 +56,7 @@ const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json)
 
 type Receipt = 'Kept' | 'LostOnce' | 'AbortLostOnce' | 'AbortNotTaken'
 
-/** Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable PostgreSQL. */
+/** Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable native SQLite. */
 const transport = (process: Effect.Success<ReturnType<typeof start>>, receipt: Receipt) => {
   let lost = false
   return HttpClient.make((request) =>
@@ -122,7 +122,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
   const rows = yield* productFixture()
   const database = yield* Database
   const given = yield* world()
-  const process = yield* start(given, { idleMillis: 60_000 })
+  const process = yield* start(given)
   const person = yield* findPerson(rows.personId)
   if (Option.isNone(person)) expect.fail('Fixture Person missing')
   const sessionId = SessionId.make(NodeCrypto.randomUUID())

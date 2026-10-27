@@ -135,8 +135,11 @@ checkOverrides(tasks)
 checkTestEnvironment(tasks)
 checkBuild(tasks)
 checkWorkflow()
-// Pi has no bundle, but its source still participates in every generic gate check.
+// The runtime library and its native cell entry both participate in the generic checks.
 const runtime = read(Manifest, '../packages/agent/runtime/package.json')
 for (const task of ['types', 'typecheck', 'lint', 'test'])
   assert.notEqual(runtime.scripts[task], undefined, `runtime: missing gate task ${task}`)
+const cells = read(Manifest, '../apps/cells/package.json')
+for (const task of ['typecheck', 'lint'])
+  assert.notEqual(cells.scripts[task], undefined, `cells: missing gate task ${task}`)
 console.log('Task policy passed')

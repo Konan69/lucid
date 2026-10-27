@@ -88,6 +88,7 @@ export const Answered = defineDocFamily<{ by: number }, number>({
   version: 1,
   scope: 'conversation',
   family: true,
+  checkpointWhen: () => false,
   history: 'latest',
   fork: 'initial',
   initial: (by) => ({ by }),

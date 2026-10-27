@@ -20,6 +20,7 @@
     "apps/web/src/tree.gen.ts",
     "**/drizzle/**/snapshot.json",
     "**/product-drizzle/**/snapshot.json",
+    "apps/cells/src/memory/migrations/**/snapshot.json",
     "apps/mobile/android/**",
     "apps/mobile/ios/**",
     "packages/design/tokens/src/native.ts",

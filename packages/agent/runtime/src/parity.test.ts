@@ -12,19 +12,19 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { ConfigProvider, Effect, Exit, Predicate, Schema, Scope } from 'effect'
-import { databaseConfigured } from '../tests/database.ts'
 import { held, start, world, type World } from '../tests/process.ts'
 import {
   ada,
   admit,
   delivery,
-  IDLE,
   scenario,
   settled,
   threadPath,
   type Runtime,
 } from '../tests/requests.ts'
-import { storesOn } from '../tests/stores.ts'
+import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
+import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
+import * as NodePath from 'node:path'
 import { whole } from './state/link.ts'
 import { ensureConversation } from './threads.ts'
 import { codeOutcome } from './tools/code.ts'
@@ -73,7 +73,7 @@ const requests = (given: World) =>
     )
     .join('\n')
 
-describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
+describe('main runtime parity on Pi', () => {
   it.effect('reopens the persisted SQLite note after runtime stop', () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -82,6 +82,8 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
           summary: 'Keep the preference',
           file: 'tea.md',
           kind: 'preference',
+          expected_revision: 0,
+          basis: 'said',
           description: 'Tea preference',
           note: 'Ada prefers green tea.',
         }
@@ -96,23 +98,27 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
         ])
         const first = yield* Scope.make()
         yield* Effect.addFinalizer(() => Scope.close(first, Exit.void))
-        const before = yield* start(given, { idleMillis: IDLE }).pipe(Scope.provide(first))
+        const before = yield* start(given).pipe(Scope.provide(first))
         const written = yield* admit(before, ada, delivery(THREAD, 'write'))
         yield* settled(before, ada, THREAD, written.submissionId)
         expect((yield* read(before)).messages.flatMap((message) => message.parts)).toContainEqual(
           expect.objectContaining({
             toolName: 'write_note',
-            output: { ok: true, file: 'tea.md', replaced: false },
+            output: expect.objectContaining({ ok: true, file: 'tea.md', replaced: false }),
           }),
         )
         yield* Scope.close(first, Exit.void)
-        const after = yield* start(given, { idleMillis: IDLE })
+        const after = yield* start(given)
         const opened = yield* admit(after, ada, delivery(THREAD, 'read', { turn: 2 }))
         yield* settled(after, ada, THREAD, opened.submissionId)
         expect((yield* read(after)).messages.flatMap((message) => message.parts)).toContainEqual(
           expect.objectContaining({
             toolName: 'read_note',
-            output: { kind: 'preference', description: 'Tea preference', note: note.note },
+            output: expect.objectContaining({
+              kind: 'preference',
+              description: 'Tea preference',
+              note: note.note,
+            }),
           }),
         )
       }),
@@ -264,7 +270,7 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
         given.faux.setResponses([fauxAssistantMessage(text)])
         const first = yield* Scope.make()
         yield* Effect.addFinalizer(() => Scope.close(first, Exit.void))
-        const before = yield* start(given, { idleMillis: IDLE }).pipe(Scope.provide(first))
+        const before = yield* start(given).pipe(Scope.provide(first))
         const link = yield* before.link(`${path}/state`)
         const opening = yield* link.frame
         if (!ConversationFrame.guards.Whole(opening)) expect.fail('opening state')
@@ -302,7 +308,7 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
         )
         yield* link.leave
         yield* Scope.close(first, Exit.void)
-        const after = yield* start(given, { idleMillis: IDLE })
+        const after = yield* start(given)
         expect(words(yield* read(after))).toBe(words(stopped))
         expect(yield* settled(after, ada, THREAD, receipt.submissionId)).toEqual(
           RuntimeSettlement.cases.Stopped.make({}),
@@ -315,11 +321,16 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
     Effect.scoped(
       Effect.gen(function* () {
         const given = yield* world()
-        const stores = yield* storesOn(given.database)
+        const database = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            openNodeSqliteDatabase(NodePath.join(given.directory, 'terminal.sqlite')),
+          ),
+          (value) => Effect.promise(() => value.close()),
+        )
         const models = createModels()
         models.setProvider(given.faux.provider)
         const registry = createRegistry()
-        // Exercise Vivid's production termination mapping against real Pi and PostgreSQL.
+        // Exercise Vivid's production termination mapping against real Pi and native SQLite.
         registry.install(
           defineExtension({
             name: 'terminal',
@@ -345,7 +356,7 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
             { stopReason: 'toolUse' },
           ),
         ])
-        const storage = yield* stores.open(ada)
+        const storage = yield* Effect.promise(() => SqliteStorage.open(database))
         const harness = yield* Effect.acquireRelease(
           Effect.promise(() => Harness.open(storage, { models, registry }, BACKGROUND_CONTEXT)),
           (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
@@ -402,18 +413,15 @@ describe.skipIf(!databaseConfigured)('main runtime parity on Pi', () => {
             .map((model) => model.id),
         ).toEqual(['script', 'paced'])
         const given = yield* world()
-        const runtime = yield* start(
-          {
-            ...given,
-            models: {
-              collection: selected.models,
-              selected: selected.model,
-              name: selected.modelName,
-              settings: selected.settings,
-            },
+        const runtime = yield* start({
+          ...given,
+          models: {
+            collection: selected.models,
+            selected: selected.model,
+            name: selected.modelName,
+            settings: selected.settings,
           },
-          { idleMillis: IDLE },
-        )
+        })
         const receipt = yield* admit(
           runtime,
           ada,

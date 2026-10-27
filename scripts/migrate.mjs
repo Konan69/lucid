@@ -37,7 +37,7 @@ const waitForDatabase = Effect.fn('migrate.waitForDatabase')(function* () {
   return yield* Effect.fail(new Error('PostgreSQL did not accept connections within 30 seconds'))
 })
 
-/** Auth and product migrate before Pi's conversation tables; hosted services select their owner. */
+/** PostgreSQL owns auth and product only. Each Person cell applies its own SQLite migration. */
 const migrations = [
   {
     name: 'server',
@@ -50,12 +50,6 @@ const migrations = [
     service: 'server',
     cwd: 'apps/server',
     args: ['exec', 'drizzle-kit', 'migrate', '--config', 'product-drizzle.config.ts'],
-  },
-  {
-    name: 'runtime',
-    service: 'runtime',
-    cwd: 'packages/agent/runtime',
-    args: ['db:migrate'],
   },
 ]
 

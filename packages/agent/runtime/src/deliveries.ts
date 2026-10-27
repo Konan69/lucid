@@ -35,6 +35,7 @@ export const DeliveryRecord = defineDocFamily<{ kept: string }, string>({
   version: 1,
   scope: 'conversation',
   family: true,
+  checkpointWhen: () => false,
   history: 'latest',
   fork: 'initial',
   initial: (kept) => ({ kept }),

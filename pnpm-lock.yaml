@@ -167,6 +167,15 @@ catalogs:
     '@alchemy.run/frontend-frameworks':
       specifier: 2.0.0-beta.81
       version: 2.0.0-beta.81
+    '@earendil-works/chord':
+      specifier: 1.4.0
+      version: 1.4.0
+    '@earendil-works/pi-ai':
+      specifier: 1.4.0
+      version: 1.4.0
+    '@earendil-works/pi-durable':
+      specifier: 1.4.0
+      version: 1.4.0
     '@effect/ai-openrouter':
       specifier: 4.0.2
       version: 4.0.2
@@ -457,6 +466,27 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
+
+  apps/cells:
+    dependencies:
+      '@earendil-works/chord':
+        specifier: 'catalog:'
+        version: 1.4.0
+      '@earendil-works/pi-durable':
+        specifier: 'catalog:'
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4)
+      '@vivid/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent/runtime
+      '@vivid/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@vivid/skills':
+        specifier: workspace:*
+        version: link:../../packages/agent/skills
+      effect:
+        specifier: 4.0.2
+        version: 4.0.2
 
   apps/desktop:
     dependencies:
@@ -930,17 +960,14 @@ importers:
   packages/agent/runtime:
     dependencies:
       '@earendil-works/chord':
-        specifier: 1.2.0
-        version: 1.2.0
+        specifier: 'catalog:'
+        version: 1.4.0
       '@earendil-works/pi-ai':
-        specifier: 1.2.0
-        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
+        specifier: 'catalog:'
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
       '@earendil-works/pi-durable':
-        specifier: 1.2.0
-        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
-      '@effect/platform-node':
-        specifier: 4.0.2
-        version: 4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0))
+        specifier: 'catalog:'
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
       '@openuidev/lang-core':
         specifier: 'catalog:'
         version: 1.0.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(zod@4.5.4)
@@ -956,37 +983,28 @@ importers:
       '@vivid/skills':
         specifier: workspace:*
         version: link:../skills
-      agentfs-sdk:
-        specifier: 0.6.4
-        version: 0.6.4
-      drizzle-orm:
-        specifier: 1.0.0-rc.5-ab785fc
-        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(expo-sqlite@57.0.4(expo@57.0.31)(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0))(pg@8.23.0)(typebox@1.3.7)(valibot@1.5.0)(zod@4.5.4)
       effect:
         specifier: 4.0.2
         version: 4.0.2
-      pg:
-        specifier: 'catalog:'
-        version: 8.23.0
-      tsx:
-        specifier: 'catalog:'
-        version: 4.23.13
       valibot:
         specifier: 'catalog:'
         version: 1.5.0
     devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.2
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
-      '@types/pg':
-        specifier: 'catalog:'
-        version: 8.23.1
       drizzle-kit:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
+      drizzle-orm:
+        specifier: 1.0.0-rc.5-ab785fc
+        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20261009.1)(@effect/sql-d1@4.0.2(effect@4.0.2))(@effect/sql-pg@4.0.2(effect@4.0.2))(@effect/sql-sqlite-do@4.0.2(effect@4.0.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.2)(expo-sqlite@57.0.4(expo@57.0.31)(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0))(pg@8.23.0)(typebox@1.3.7)(valibot@1.5.0)(zod@4.5.4)
       vitest:
         specifier: 'catalog:'
         version: 5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
@@ -1025,8 +1043,8 @@ importers:
   packages/client/state:
     dependencies:
       '@earendil-works/chord':
-        specifier: 1.2.0
-        version: 1.2.0
+        specifier: 'catalog:'
+        version: 1.4.0
       '@typeonce/effect-machine':
         specifier: 'catalog:'
         version: 0.46.0(effect@4.0.2)
@@ -1880,12 +1898,12 @@ packages:
   '@drizzle-team/brocli@0.12.1':
     resolution: {integrity: sha512-yHwomvolVafvUXhy5TdiJVkuNCxXn+bKOs2aWiWEQh/5YaV97Oa/abJz3dmx7lxgIUsUlS1Jl4mEfvJPo3YsVw==}
 
-  '@earendil-works/chord@1.2.0':
-    resolution: {integrity: sha512-Xh3M5B4D9YotOyBXyVbZ/5WfoUwP6Kt+TheCIDLxLCUx72UExuxZF//hNmIQGD13EkAHf2svKpXr/rCCT1gXTg==}
+  '@earendil-works/chord@1.4.0':
+    resolution: {integrity: sha512-dTbgyz4xgDS5KAUFx1bFENqj0Cr1N3tYxJJOYStc6g6HS78FSBZydyoCwLoddiQRF+VgRS0fpgAi+iKxjZ3BQA==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-ai@1.2.0':
-    resolution: {integrity: sha512-U5/1zXqfV1on7/9sbez03tT4Ru49Lvfb4+zXSDK3DBKF5cRk6KxvAOTOY3HJ4jimlZth+rs7vbJqN6iBQAoNuQ==}
+  '@earendil-works/pi-ai@1.4.0':
+    resolution: {integrity: sha512-hQM/C4+1w8rHYACzDDf+0vQMnEnpzIop1tptIERVgR3ZeT/hHSzBNG8PaWPgxWQjqSeKCyBZSyp8uTT6eKK1pQ==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
@@ -1897,8 +1915,8 @@ packages:
     resolution: {integrity: sha512-23CNAXpS9DuLzPMyYuvrXVVio46x4YhffCgCqaWmF7F5H8PooqjrQvX4ucF6M0BhUd+x2tV6r1J0dv8cCME4Cg==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-durable@1.2.0':
-    resolution: {integrity: sha512-2kDyK7HVCTcxf3CTHkDR0rRGCUfIpoZr76fC6n/KZDu7hkDWR62anEujIkJ+8sKjtNpEM+zyKW3bi2NIEUyiCw==}
+  '@earendil-works/pi-durable@1.4.0':
+    resolution: {integrity: sha512-EtIyXH1MBSXdJSkodmy+CYXuwfve3gPrD4GNCZ0XmuRWLPupwRlNQ7fdaXjRcLoKb6SWkT/yEzK+sMmrqvYK+Q==}
     engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-telemetry@1.4.0':
@@ -5222,34 +5240,6 @@ packages:
     cpu: [arm64]
     os: [win32]
 
-  '@tursodatabase/database-common@0.4.4':
-    resolution: {integrity: sha512-iuSYWgBQEETjwfWOmi3E4Q++jQTb+VOPXeaKozQqW8fXtgU6ZaYUMmWbqQVMGSS9sAWZlZi9qyPVz0rkT8zoqQ==}
-
-  '@tursodatabase/database-darwin-arm64@0.4.4':
-    resolution: {integrity: sha512-nQMYrJY1X0sNgNWdbuPdbNCL9S/Ei9KLMwx3hFdyUDYJWU0h7o+kZv50QoNXB7vb7LmEBMeVWZaVEQbHd/Ionw==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@tursodatabase/database-linux-arm64-gnu@0.4.4':
-    resolution: {integrity: sha512-6vnnKBgAgfKhspr+nScPevOSrrnZwNJKuUbiHMSagOqNDZCzOAGDcfeC83sKd2QvZquR17l6V3tFxcFN5FnByQ==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@tursodatabase/database-linux-x64-gnu@0.4.4':
-    resolution: {integrity: sha512-N63wK6ow6wPmD1/BjBhbrR8/Ifo6+A6zavpzgsT5YABVC4wGZBvJ1TvSz935R9n5E8eqQNY8jKiQPJLwpgOjdw==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@tursodatabase/database-win32-x64-msvc@0.4.4':
-    resolution: {integrity: sha512-TYEl5FaUAImgZew05FvxvcFWLb1AQ+Zeyw/ApEbBDqS7mQmbz8VGs4iq04ECzJG2esfBR+zrLdDEG3X1BnaDTg==}
-    cpu: [x64]
-    os: [win32]
-
-  '@tursodatabase/database@0.4.4':
-    resolution: {integrity: sha512-QkQ0qLp0AY8dC9BOrIMyeyUXoFCvhlRaH+wcg013OvzYufSmDnnzg44U0tQkmnXYfUZEIp+IpADO/UeGNL0M2Q==}
-
   '@typeonce/effect-machine@0.46.0':
     resolution: {integrity: sha512-Fsvvzf2htH6XqrROyBlEonneuVvZjlTqdoXlY7cNnttN6gb/jWVZJDGtssehfKiN83NRLqT4Df22/Y9UiuK2vg==}
     engines: {node: '>=20'}
@@ -5497,17 +5487,6 @@ packages:
     resolution: {integrity: sha512-d8OWDVdZMgjhLUT9ZPgSv/BdFFF9pVuscC0JdUSz3bjwE15gcp6u/o0/JooM2yyAWC49KThFhXlgTXRa9B7yng==}
     engines: {node: '>=18.18'}
     hasBin: true
-
-  agentfs-sdk@0.6.4:
-    resolution: {integrity: sha512-exhzph6u+jZlh2V24O0Af9j9iweNYQ4Yb7M1SEYKE9ljxB/kKVaiaumK2zsTW/Pmi8kqPSezGvqqpi4+vkZTfQ==}
-    peerDependencies:
-      '@tursodatabase/serverless': ^0.2.4
-      just-bash: '>=2.0.0'
-    peerDependenciesMeta:
-      '@tursodatabase/serverless':
-        optional: true
-      just-bash:
-        optional: true
 
   ajv-formats@2.1.1:
     resolution: {integrity: sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==}
@@ -5906,9 +5885,6 @@ packages:
   buffer-image-size@0.6.4:
     resolution: {integrity: sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ==}
     engines: {node: '>=4.0'}
-
-  buffer@6.0.3:
-    resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
 
   buildcheck@0.0.7:
     resolution: {integrity: sha512-lHblz4ahamxpTmnsk+MNTRWsjYKv965MwOrSJyeD588rR3Jcu7swE+0wN5F+PbL5cjgu/9ObkhfzEPuofEMwLA==}
@@ -7492,9 +7468,6 @@ packages:
   iconv-lite@0.7.3:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
     engines: {node: '>=0.10.0'}
-
-  ieee754@1.2.1:
-    resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -11465,11 +11438,12 @@ snapshots:
 
   '@drizzle-team/brocli@0.12.1': {}
 
-  '@earendil-works/chord@1.2.0':
+  '@earendil-works/chord@1.4.0':
     dependencies:
+      '@earendil-works/pi-telemetry': 1.4.0
       typebox: 1.3.27
 
-  '@earendil-works/pi-ai@1.2.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)':
+  '@earendil-works/pi-ai@1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
       '@anthropic-ai/sdk': 0.129.0(zod@4.5.4)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
@@ -11494,6 +11468,31 @@ snapshots:
       - ws
       - zod
 
+  '@earendil-works/pi-ai@1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.129.0(zod@4.5.4)
+      '@aws-sdk/client-bedrock-runtime': 3.1127.0
+      '@earendil-works/pi-telemetry': 1.4.0
+      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)
+      '@smithy/node-http-handler': 4.12.1
+      http-proxy-agent: 9.1.0(supports-color@8.1.1)
+      https-proxy-agent: 9.1.0(supports-color@8.1.1)
+      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4)
+      partial-json: 0.1.7
+      typebox: 1.3.27
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@modelcontextprotocol/sdk'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - kerberos
+      - supports-color
+      - undici
+      - utf-8-validate
+      - ws
+      - zod
+
   '@earendil-works/pi-codemode@1.0.0':
     dependencies:
       quickjs-wasi: 3.6.2
@@ -11502,11 +11501,34 @@ snapshots:
     dependencies:
       quickjs-wasi: 3.6.2
 
-  '@earendil-works/pi-durable@1.2.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)':
+  '@earendil-works/pi-durable@1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)':
     dependencies:
-      '@earendil-works/chord': 1.2.0
-      '@earendil-works/pi-ai': 1.2.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
+      '@earendil-works/chord': 1.4.0
+      '@earendil-works/pi-ai': 1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.21.3)(zod@4.5.4)
       '@earendil-works/pi-codemode': 1.4.0
+      '@earendil-works/pi-telemetry': 1.4.0
+      '@silvia-odwyer/photon': 0.3.3
+      diff: 8.0.4
+      typebox: 1.3.27
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@modelcontextprotocol/sdk'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - kerberos
+      - supports-color
+      - undici
+      - utf-8-validate
+      - ws
+      - zod
+
+  '@earendil-works/pi-durable@1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4)':
+    dependencies:
+      '@earendil-works/chord': 1.4.0
+      '@earendil-works/pi-ai': 1.4.0(@aws-sdk/credential-provider-node@3.972.82)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@smithy/signature-v4@5.7.3)(supports-color@8.1.1)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4)
+      '@earendil-works/pi-codemode': 1.4.0
+      '@earendil-works/pi-telemetry': 1.4.0
       '@silvia-odwyer/photon': 0.3.3
       diff: 8.0.4
       typebox: 1.3.27
@@ -14888,29 +14910,6 @@ snapshots:
   '@turbo/windows-arm64@2.11.2':
     optional: true
 
-  '@tursodatabase/database-common@0.4.4': {}
-
-  '@tursodatabase/database-darwin-arm64@0.4.4':
-    optional: true
-
-  '@tursodatabase/database-linux-arm64-gnu@0.4.4':
-    optional: true
-
-  '@tursodatabase/database-linux-x64-gnu@0.4.4':
-    optional: true
-
-  '@tursodatabase/database-win32-x64-msvc@0.4.4':
-    optional: true
-
-  '@tursodatabase/database@0.4.4':
-    dependencies:
-      '@tursodatabase/database-common': 0.4.4
-    optionalDependencies:
-      '@tursodatabase/database-darwin-arm64': 0.4.4
-      '@tursodatabase/database-linux-arm64-gnu': 0.4.4
-      '@tursodatabase/database-linux-x64-gnu': 0.4.4
-      '@tursodatabase/database-win32-x64-msvc': 0.4.4
-
   '@typeonce/effect-machine@0.46.0(effect@4.0.2)':
     dependencies:
       effect: 4.0.2
@@ -15157,12 +15156,6 @@ snapshots:
   agent-base@9.0.0: {}
 
   agent-cli-detector@0.1.7: {}
-
-  agentfs-sdk@0.6.4:
-    dependencies:
-      '@tursodatabase/database': 0.4.4
-      '@tursodatabase/database-common': 0.4.4
-      buffer: 6.0.3
 
   ajv-formats@2.1.1:
     dependencies:
@@ -15702,11 +15695,6 @@ snapshots:
     dependencies:
       '@types/node': 24.13.6
     optional: true
-
-  buffer@6.0.3:
-    dependencies:
-      base64-js: 1.5.1
-      ieee754: 1.2.1
 
   buildcheck@0.0.7:
     optional: true
@@ -17581,8 +17569,6 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
-  ieee754@1.2.1: {}
-
   ignore@5.3.2: {}
 
   import-fresh@3.3.1:
@@ -19001,6 +18987,14 @@ snapshots:
       '@smithy/signature-v4': 5.7.3
       undici: 8.11.2
       ws: 8.21.3
+      zod: 4.5.4
+
+  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.11.2)(ws@8.22.0)(zod@4.5.4):
+    optionalDependencies:
+      '@aws-sdk/credential-provider-node': 3.972.82
+      '@smithy/signature-v4': 5.7.3
+      undici: 8.11.2
+      ws: 8.22.0
       zod: 4.5.4
 
   openid-client@6.8.8:
