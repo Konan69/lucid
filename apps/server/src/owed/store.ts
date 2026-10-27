@@ -21,6 +21,8 @@ import { owed } from './tables.ts'
 const decodeOwed = decodeStored(Owed, 'owed record')
 const encodeState = encodeStored(OwedState, 'owed state')
 
+type Change = Pick<Owed, 'due' | 'blockedOn' | 'nextStep' | 'state'>
+
 /** The Person owns the list even in a Company. Terminal records retain their closure evidence. */
 const makeStore = (database: Database['Service']) => {
   /** Open work comes first by deadline; closed records follow by most recent change. */
@@ -74,7 +76,7 @@ const makeStore = (database: Database['Service']) => {
   const write = Effect.fn('OwedStore.write')(function* (
     actor: Actor,
     id: OwedId,
-    change: (record: Owed, now: number) => Owed,
+    change: (record: Owed, now: number) => Change,
   ) {
     const record = yield* database.transaction((tx) =>
       Effect.gen(function* () {
@@ -112,13 +114,11 @@ const makeStore = (database: Database['Service']) => {
     request: UpdateOwedRequest,
   ) {
     return yield* write(actor, request.id, (record) =>
-      Owed.make(
-        Struct.assign(record, {
-          due: request.due,
-          blockedOn: request.blockedOn,
-          nextStep: request.nextStep,
-        }),
-      ),
+      Struct.assign(record, {
+        due: request.due,
+        blockedOn: request.blockedOn,
+        nextStep: request.nextStep,
+      }),
     )
   })
   /** A confirmed nudge adds one to the persisted count, at its supplied sending time. */
@@ -127,14 +127,12 @@ const makeStore = (database: Database['Service']) => {
     request: NudgedOwedRequest,
   ) {
     return yield* write(actor, request.id, (record) =>
-      Owed.make(
-        Struct.assign(record, {
-          state: OwedState.cases.Nudged.make({
-            lastAt: request.at,
-            count: OwedState.guards.Nudged(record.state) ? record.state.count + 1 : 1,
-          }),
+      Struct.assign(record, {
+        state: OwedState.cases.Nudged.make({
+          lastAt: request.at,
+          count: OwedState.guards.Nudged(record.state) ? record.state.count + 1 : 1,
         }),
-      ),
+      }),
     )
   })
   /** Resolution preserves the evidence of what arrived. */
@@ -143,17 +141,13 @@ const makeStore = (database: Database['Service']) => {
     request: ResolveOwedRequest,
   ) {
     return yield* write(actor, request.id, (record, at) =>
-      Owed.make(
-        Struct.assign(record, { state: OwedState.cases.Resolved.make({ at, how: request.how }) }),
-      ),
+      Struct.assign(record, { state: OwedState.cases.Resolved.make({ at, how: request.how }) }),
     )
   })
   /** Dropping retains the reason so the same commitment is not silently tracked again. */
   const drop = Effect.fn('OwedStore.drop')(function* (actor: Actor, request: DropOwedRequest) {
     return yield* write(actor, request.id, (record, at) =>
-      Owed.make(
-        Struct.assign(record, { state: OwedState.cases.Dropped.make({ at, why: request.why }) }),
-      ),
+      Struct.assign(record, { state: OwedState.cases.Dropped.make({ at, why: request.why }) }),
     )
   })
   return { list, track, update, nudged, resolve, drop }
