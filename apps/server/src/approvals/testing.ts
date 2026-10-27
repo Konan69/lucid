@@ -26,6 +26,7 @@ import {
   ProposedAction,
   Run,
   RunId,
+  RuntimeSubmissionId,
   RunOrigin,
   RunState,
   ThreadId,
@@ -159,8 +160,7 @@ const ports = Layer.effectContext(
         if (Option.isSome(failure)) return yield* failure.value
         return {
           runId: RunId.make(`test-${delivery.idempotencyKey}`),
-          offset: '0',
-          incarnation: 'test',
+          submissionId: RuntimeSubmissionId.make(1),
         }
       }),
       /** Delivery returns a test Run while recording the exact signal and idempotency key. */
@@ -395,6 +395,10 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
         state: run.working ? 'working' : 'completed',
         startedAt: index + 1,
         admittedAt: index + 1,
+        receipt: {
+          runId: testRunId(threadId, run.id),
+          submissionId: String(testSubmissionId(testRunId(threadId, run.id))),
+        },
       })),
     ),
   )
@@ -402,7 +406,51 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
 
 /** A test Run id, or the real derived id when the name is already one (an answer's Run). */
 export const testRunId = (threadId: ThreadId, name: string) =>
-  RunId.make(name.startsWith('sub_ik_') ? name : `${threadId}-${name}`)
+  RunId.make(name.startsWith('run_') ? name : `${threadId}-${name}`)
+
+/** Stable Person-local submission numbers let historical fixture messages join their saved receipts. */
+export const testSubmissionId = (id: string) =>
+  RuntimeSubmissionId.make(
+    Number.parseInt(NodeCrypto.createHash('sha256').update(id).digest('hex').slice(0, 12), 16) + 1,
+  )
+
+const HistoryMessage = Schema.Struct({
+  id: Schema.optionalKey(Schema.String),
+  role: Schema.String,
+  purpose: Schema.optionalKey(Schema.String),
+  display: Schema.optionalKey(Schema.String),
+  submissionId: Schema.optionalKey(Schema.String),
+  signal: Schema.optionalKey(
+    Schema.Struct({
+      tagName: Schema.String,
+      attributes: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ),
+  parts: Schema.Array(Schema.Json),
+})
+
+/** Fixture wire messages use the canonical runtime projection, including its required display fields. */
+export const historyMessage = (input: unknown, index: number) => {
+  // A malformed fixture cannot exercise the canonical history boundary.
+  const message = Result.getOrThrow(Schema.decodeUnknownResult(HistoryMessage)(input))
+  return {
+    ...message,
+    id: message.id === undefined ? `message-${index}` : message.id,
+    purpose: message.purpose === undefined ? message.role : message.purpose,
+    display: message.display === undefined ? 'visible' : message.display,
+    submissionId:
+      message.submissionId === undefined
+        ? undefined
+        : String(testSubmissionId(message.submissionId)),
+    signal:
+      message.signal === undefined
+        ? undefined
+        : {
+            ...message.signal,
+            attributes: message.signal.attributes === undefined ? {} : message.signal.attributes,
+          },
+  }
+}
 
 /** One finished text part, as Flue's history holds a message's words. */
 export const textPart = (value: string) => [{ type: 'text', text: value, state: 'done' }]
@@ -437,8 +485,13 @@ export const history = (
           JSON.stringify({
             v: 1,
             incarnation,
-            messages,
-            settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
+            messages: messages.map(historyMessage),
+            working: false,
+            queued: 0,
+            settlements: settled.map((id) => ({
+              submissionId: String(testSubmissionId(id)),
+              outcome: 'completed',
+            })),
           }),
           {
             headers: { 'content-type': 'application/json' },

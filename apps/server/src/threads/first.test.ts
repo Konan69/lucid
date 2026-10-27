@@ -30,7 +30,6 @@ import { silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime, runtimeLayer } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
 import { Conversation } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
 import { threadHandlers } from './handlers.ts'
@@ -127,9 +126,8 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
         request,
         new Response(
           JSON.stringify({
-            submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-            offset: '1',
-            uid: 'first-test',
+            submissionId: delivery.turn,
+            repeated: false,
           }),
           { headers: { 'content-type': 'application/json' }, status: 202 },
         ),
@@ -140,6 +138,7 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     runtimeLayer.pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
       Layer.provide(testConfigLayer),
+      Layer.provide(Layer.succeed(Database, yield* Database)),
     ),
   )
   const transport = yield* Runtime.pipe(Effect.provideContext(transportContext))

@@ -9,6 +9,7 @@ import {
   PersonId,
   type Run,
   RunId,
+  RuntimeSubmissionId,
   type RuntimeUnavailable,
   type ThreadId,
 } from '@vivid/contracts'
@@ -66,6 +67,8 @@ export interface Delivery {
   readonly origin: StoredRunOrigin
   /** Repeating a delivery with the same key starts nothing new and returns the same Run. */
   readonly idempotencyKey: string
+  /** The sending client recognises its optimistic message by this opaque key. */
+  readonly clientKey?: string
 }
 
 /** Only the ordinary chat path moves past questions; server signals and channel text do not. */
@@ -87,13 +90,10 @@ export interface ChannelDelivery extends Delivery {
 }
 export type ServerDelivery = SignalDelivery | ChannelDelivery
 
-/** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
+/** A durable runtime submission is distinct from the product reservation that admitted it. */
 export const Admitted = Schema.Struct({
   runId: RunId,
-  /** Where this delivery's events begin in the Thread's stream. */
-  offset: Schema.String,
-  /** The conversation's incarnation in the runtime. */
-  incarnation: Schema.String,
+  submissionId: Schema.FiniteFromString.pipe(Schema.decodeTo(RuntimeSubmissionId)),
 })
 export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 

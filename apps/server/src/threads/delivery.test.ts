@@ -3,8 +3,6 @@ import { DeviceRegistry } from '../computers/device.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
-import { createFlueClient } from '@flue/sdk'
-import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   InputAnswer,
@@ -24,6 +22,8 @@ import {
   RunState,
   RuntimeUnavailable,
   RuntimeRunRequest,
+  RuntimeSubmissionId,
+  SendToThreadRequest,
   ThreadId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
@@ -47,7 +47,11 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import * as HttpClient from 'effect/http/HttpClient'
-import * as HttpServer from 'effect/http/HttpServer'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { authenticate } from '../auth/session.ts'
+import { requireThread } from './access.ts'
+import { messagePictures, IncomingMessage } from './pictures.ts'
+import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -66,7 +70,7 @@ import {
   Settlement,
   runtimeLayer,
 } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -184,7 +188,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       yield* Ref.update(requests, (all) => [...all, input])
       const rejected = yield* Ref.getAndSet(failure, Option.none())
       if (Option.isSome(rejected)) return yield* rejected.value
-      const id = submissionId(input.threadId, input.idempotencyKey)
+      const id = deliveryRunId(input.threadId, input.idempotencyKey)
       const repeated = settlements.has(id)
       if (!repeated) {
         settlements.set(id, yield* Deferred.make<Settlement>())
@@ -192,8 +196,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       }
       return Admission.make({
         runId: id,
-        offset: repeated ? '-1' : String(input.turn),
-        incarnation: 'test',
+        submissionId: RuntimeSubmissionId.make(input.turn),
         repeated,
       })
     }),
@@ -206,6 +209,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       })
     }),
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
+    watch: () => Stream.never,
     read: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
       return HttpClientResponse.fromWeb(
@@ -392,20 +396,44 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
   )
 })
 
-/** Tests send precisely the JSON and session a web or mobile client would use. */
-const post = (test: Harness, body: Schema.JsonObject) =>
-  gateway(
-    test,
-    new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${test.token}`,
-        host: 'gateway.test',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }),
+/** The handler receives contract-decoded input and the authenticated Person, as RPC dispatch does.
+ * Invalid wire pictures exercise the shared validator before they can become typed RPC input. */
+const post = Effect.fn('Relay.test.send')(function* (test: Harness, body: Schema.JsonObject) {
+  const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
+  const context = AuthState.Person(auth)
+  const sent = yield* Schema.decodeUnknownEffect(IncomingMessage)(body)
+  const thread = yield* requireThread(test.threadId, auth.person.id)
+  const input = yield* messagePictures(sent, thread).pipe(Effect.result)
+  if (Result.isFailure(input)) {
+    return HttpServerResponse.jsonUnsafe(
+      { error: { _tag: input.failure._tag, message: input.failure.message } },
+      { status: input.failure._tag === 'AttachmentTooLarge' ? 413 : 400 },
+    )
+  }
+  const request = yield* Schema.decodeEffect(SendToThreadRequest)({
+    threadId: test.threadId,
+    text: sent.body,
+    pictures: input.success,
+    key: sent.idempotencyKey === undefined ? NodeCrypto.randomUUID() : sent.idempotencyKey,
+  }).pipe(Effect.result)
+  if (Result.isFailure(request))
+    return HttpServerResponse.jsonUnsafe(
+      { error: { message: 'A message needs text or a picture' } },
+      { status: 400 },
+    )
+  const result = yield* sendToThread(request.success).pipe(
+    Effect.provideService(AuthContext, context),
+    Effect.provideService(Conversation, test.conversation),
+    Effect.result,
   )
+  if (Result.isSuccess(result))
+    return HttpServerResponse.jsonUnsafe(result.success, { status: 202 })
+  const error = result.failure
+  return HttpServerResponse.jsonUnsafe(
+    { error: { message: error.message } },
+    { status: error._tag === 'Conflict' ? 409 : error._tag === 'InvalidRequest' ? 400 : 503 },
+  )
+})
 
 /** Stable tags and Person-facing sentences are observable without decoding internal Effect errors. */
 const expectPictureRefusal = (
@@ -546,7 +574,7 @@ layer(
           ])
           const admitted = (yield* Ref.get(test.admitted))[0]
           if (admitted === undefined) expect.fail('Missing answer delivery')
-          yield* test.finish(submissionId(test.threadId, admitted.idempotencyKey))
+          yield* test.finish(deliveryRunId(test.threadId, admitted.idempotencyKey))
           yield* post(test, { kind: 'user', body: 'Continue.', idempotencyKey: 'after-answer' })
           expect(
             (yield* test.inputs.inThread(test.threadId)).find((input) => input.id === request.id),
@@ -600,7 +628,7 @@ layer(
           Option.some(
             AdmissionRefused.make({
               threadId: test.threadId,
-              runId: submissionId(test.threadId, delivery.idempotencyKey),
+              runId: deliveryRunId(test.threadId, delivery.idempotencyKey),
               reason: 'Rejected',
             }),
           ),
@@ -778,7 +806,7 @@ layer(
                   const test = yield* harness()
                   // The error names the Run its request would have started, as the real client's does.
                   const message = said(test.threadId, test.ada)
-                  const runId = submissionId(test.threadId, message.idempotencyKey)
+                  const runId = deliveryRunId(test.threadId, message.idempotencyKey)
                   yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
                   const rejected = yield* Effect.result(test.conversation.admit(message))
                   expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
@@ -815,7 +843,7 @@ layer(
         expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         yield* test.finish(ada.runId)
         const ben = yield* test.conversation.admit(message)
-        expect(ben.offset).toBe('2')
+        expect(ben.submissionId).toBe(2)
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
           test.ada,
           test.ben,
@@ -946,14 +974,14 @@ layer(
                 Effect.forkScoped,
               )
               expect(yield* Queue.take(test.blocked)).toBe(
-                submissionId(test.threadId, delivery.idempotencyKey),
+                deliveryRunId(test.threadId, delivery.idempotencyKey),
               )
               expect(yield* Ref.get(test.admitted)).toHaveLength(1)
               const busy = yield* Fiber.join(pending)
               expect(Result.isFailure(busy) && busy.failure).toBeInstanceOf(Conflict)
               yield* test.finish(ada.runId)
               const admitted = yield* test.conversation.deliver(delivery)
-              expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
+              expect(admitted.id).toBe(deliveryRunId(test.threadId, delivery.idempotencyKey))
               expect(RunState.guards.Working(admitted.state)).toBe(true)
               expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
                 test.ada,
@@ -985,31 +1013,8 @@ layer(
       () =>
         Effect.gen(function* () {
           const test = yield* harness()
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          const send = Effect.fn('Gateway.test.send')(function* () {
-            return yield* handle.pipe(
-              Effect.provideService(Conversation, test.conversation),
-              Effect.provideService(Runtime, test.runtime),
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                HttpServerRequest.fromWeb(
-                  new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                    method: 'POST',
-                    headers: {
-                      authorization: `Bearer ${test.token}`,
-                      host: 'gateway.test',
-                      'content-type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      kind: 'user',
-                      body: 'Please help',
-                      idempotencyKey: 'lost-http-response',
-                    }),
-                  }),
-                ),
-              ),
-            )
-          })
+          const send = () =>
+            post(test, { kind: 'user', body: 'Please help', idempotencyKey: 'lost-http-response' })
           const first = yield* send()
           // Discarding the first response represents admission succeeding before HTTP delivery fails.
           const repeated = yield* send()
@@ -1029,25 +1034,7 @@ layer(
       Effect.gen(function* () {
         const test = yield* harness()
         yield* test.conversation.admit(said(test.threadId, test.ada))
-        const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-        const response = yield* handle.pipe(
-          Effect.provideService(Conversation, test.conversation),
-          Effect.provideService(Runtime, test.runtime),
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(
-              new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                method: 'POST',
-                headers: {
-                  authorization: `Bearer ${test.token}`,
-                  host: 'gateway.test',
-                  'content-type': 'application/json',
-                },
-                body: JSON.stringify({ kind: 'user', body: 'Please help' }),
-              }),
-            ),
-          ),
-        )
+        const response = yield* post(test, { kind: 'user', body: 'Please help' })
         expect(response.status).toBe(409)
         expect(response.body).toHaveProperty(
           'text',
@@ -1084,9 +1071,8 @@ layer(
                 request,
                 new Response(
                   JSON.stringify({
-                    submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-                    offset: '1',
-                    uid: 'test',
+                    submissionId: delivery.turn,
+                    repeated: false,
                   }),
                   { status: 202, headers: { 'content-type': 'application/json' } },
                 ),
@@ -1097,6 +1083,7 @@ layer(
             runtimeLayer.pipe(
               Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
               Layer.provide(testConfigLayer),
+              Layer.provide(Layer.succeed(Database, yield* Database)),
             ),
           )
           const transport = yield* Runtime.pipe(Effect.provideContext(runtimeContext))
@@ -1123,53 +1110,22 @@ layer(
           ])
         }).pipe(Effect.scoped),
     )
-    it.effect(
-      'accepts the installed Flue client’s image wire shape through the private gateway',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness()
-          yield* privateThread(test)
-          const serverContext = yield* Layer.build(NodeHttpServer.layerTest)
-          const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(serverContext))
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          yield* server
-            .serve(
-              handle.pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.provideService(Runtime, test.runtime),
-              ),
-            )
-            .pipe(Effect.provideContext(serverContext))
-          const url = new URL(HttpServer.formatAddress(server.address))
-          url.hostname = '127.0.0.1'
-          url.pathname = `/api/vivid/${test.threadId}`
-          const client = createFlueClient({
-            url: url.href,
-            token: test.token,
-          })
-          const receipt = yield* Effect.tryPromise(() =>
-            client.send({
-              message: {
-                kind: 'user',
-                body: 'Look',
-                attachments: [
-                  {
-                    type: 'image',
-                    mimeType: png.mimeType,
-                    data: png.data,
-                    filename: png.filename,
-                  },
-                ],
-              },
-            }),
-          )
-          expect(yield* (yield* RunStore).list(test.threadId)).toMatchObject([
-            { id: receipt.submissionId },
-          ])
-          expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
-            message: { kind: 'user', attachments: [png] },
-          })
-        }).pipe(Effect.scoped),
+    it.effect('the sending key survives a private picture-only RPC send', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        yield* privateThread(test)
+        const response = yield* post(test, {
+          kind: 'user',
+          body: '',
+          attachments: [png],
+          idempotencyKey: 'picture-key',
+        })
+        expect(response.status).toBe(202)
+        expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
+          clientKey: 'picture-key',
+          message: { kind: 'user', body: '', attachments: [png] },
+        })
+      }).pipe(Effect.scoped),
     )
     it.effect('accepts four pictures and a picture exactly at the decoded 5 MB limit', () =>
       Effect.gen(function* () {

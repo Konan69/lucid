@@ -84,9 +84,9 @@ const saidBy = (
   answered: ReadonlySet<string>,
 ) => {
   const mine = new Map<string, RequestRun>(runs.map((run) => [run.id, run]))
-  const settled = new Set(history.settlements.map((settlement) => settlement.submissionId))
+  const settled = new Set(history.settlements.map((settlement) => settlement.runId))
   return history.messages.flatMap((message): ReadonlyArray<Said> => {
-    const run = message.submissionId === undefined ? undefined : mine.get(message.submissionId)
+    const run = message.runId === undefined ? undefined : mine.get(message.runId)
     if (run === undefined || !spoken(run, message, answered)) return []
     const text = textOf(message).trim()
     return text.length === 0 ? [] : [{ current: run.working && !settled.has(run.id), text }]

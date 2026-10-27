@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import { RuntimeSubmissionId } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
@@ -264,7 +265,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
-            yield* runs.admitted({ runId: id, offset: '0', incarnation: 'test' })
+            yield* runs.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
             expect(yield* automaticallyNotifies(id)).toBe(false)
             const auth = AuthState.Vivid({
               person: owner.person,
@@ -312,7 +313,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')
-          yield* runs.admitted({ runId: id, offset: '0', incarnation: 'test' })
+          yield* runs.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
           const auth = AuthState.Vivid({
             person: owner.person,
             workspace: owner.auth.workspace,

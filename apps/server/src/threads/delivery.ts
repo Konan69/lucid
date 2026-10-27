@@ -20,7 +20,7 @@ import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
@@ -181,13 +181,12 @@ const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not foun
 /** The current Conversation wire contract maps precise admission errors until durable observation owns uncertainty. */
 const admitRuntime = Effect.fn('Conversation.admitRuntime')(
   (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
-    runtime
-      .admit(input)
-      .pipe(
-        Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
-          Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
-        ),
+    runtime.admit(input).pipe(
+      Effect.retry({ while: (error) => Predicate.isTagged(error, 'AdmissionUncertain'), times: 2 }),
+      Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
+        Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
       ),
+    ),
 )
 
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
@@ -288,7 +287,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       const speaker = yield* personOf(delivery.personId)
       const from = yield* speakerName(delivery, thread, speaker)
       const creator = yield* personOf(thread.personId)
-      const id = submissionId(thread.id, delivery.idempotencyKey)
+      const id = deliveryRunId(thread.id, delivery.idempotencyKey)
       const reservation = yield* runs.start({
         id,
         threadId: thread.id,
@@ -321,6 +320,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
           message: flueMessage(thread.audience, from, delivery.message, turn),
           origin: { creator: creator.id, creatorName: creator.name },
           idempotencyKey: delivery.idempotencyKey,
+          clientKey: delivery.clientKey,
           turn,
           scope: deliveryScope,
         })
@@ -351,8 +351,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
       return {
         runId: admission.runId,
-        offset: admission.offset,
-        incarnation: admission.incarnation,
+        submissionId: admission.submissionId,
       } satisfies Admitted
     },
     (effect, delivery) => admissions.withPermit(delivery.threadId, effect),

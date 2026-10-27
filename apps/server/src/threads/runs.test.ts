@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import { RuntimeSubmissionId } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Person, PersonId, RunId, RunState, SessionId, ThreadId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
@@ -118,7 +119,7 @@ layer(testLayer)((it) => {
               threadId,
               origin: StoredRunOrigin.cases.Message.make({}),
             })
-            yield* store.admitted({ runId: id, offset: '0', incarnation: 'test' })
+            yield* store.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
           }
           expect(yield* actionOrigin(actor)).toEqual(
             ActionOrigin.cases.Run.make({ threadId, runId: host }),
@@ -130,7 +131,7 @@ layer(testLayer)((it) => {
             threadId,
             origin: StoredRunOrigin.cases.Message.make({}),
           })
-          yield* store.admitted({ runId: foreign, offset: '0', incarnation: 'test' })
+          yield* store.admitted({ runId: foreign, submissionId: RuntimeSubmissionId.make(1) })
           // Admission prevents this state normally; old or inconsistent rows must still fail closed.
           yield* database.run(
             database.update(runs).set({ personId: other.personId }).where(eq(runs.id, foreign)),

@@ -7,6 +7,7 @@ import type { StoredThread } from '../threads/access.ts'
 import { MemoryExchange, MemoryExtraction, type MemoryCandidate } from './extract.js'
 import { MemoryAccess } from './store.js'
 import { conversationContext } from './history.ts'
+import { Database } from '../database/client.ts'
 import { Runtime } from '../runtime/client.ts'
 
 export interface LearningInput {
@@ -76,13 +77,16 @@ export const learningLayer = Layer.effect(
     const changes = yield* Changes
     const audit = yield* Audit
     const runtime = yield* Runtime
+    const database = yield* Database
     const dependencies = { access, changes, audit }
     return Learning.of({
       afterRun: Effect.fn('Learning.afterRun')(
         function* (input: LearningInput) {
           if (input.said.trim().length === 0) return
           const actor = yield* access.actorFor(input.thread, input.person)
-          const context = yield* conversationContext(runtime, input)
+          const context = yield* conversationContext(runtime, input).pipe(
+            Effect.provideService(Database, database),
+          )
           const known = yield* access.recall(actor, {
             query: `${input.said}\n${input.replied}`.slice(0, 400),
             limit: 12,

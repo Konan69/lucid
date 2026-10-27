@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import type { FlueConversationState } from '@flue/sdk'
+import type { ConversationState } from '@vivid/contracts'
 import { ComputerState, EgressStatus, PatchSettingsRequest } from '@vivid/contracts'
 import { Array as Arr, Config, Effect, Option, Schema, Stream } from 'effect'
 import { type ChainFixture, chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
@@ -59,7 +59,7 @@ const decodeReceipt = Schema.decodeUnknownOption(Receipt)
  * first. A receipt for another page, a refused step, or an echo page with no address in it
  * (an error page, a blocked request) is not one.
  */
-const echoed = (state: FlueConversationState, page: URL) =>
+const echoed = (state: ConversationState, page: URL) =>
   toolParts(state).flatMap((part) => {
     if (part.toolName !== 'browse' || part.state !== 'output-available') return []
     return Option.match(decodeReceipt(part.output), {

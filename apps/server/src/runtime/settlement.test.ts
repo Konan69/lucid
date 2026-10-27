@@ -1,8 +1,10 @@
 import * as NodeNet from 'node:net'
-import { createFlueClient } from '@flue/sdk'
-import { describe, expect, it } from '@effect/vitest'
-import { RunId } from '@vivid/contracts'
-import { Effect, Fiber } from 'effect'
+import { NodeHttpClient } from '@effect/platform-node'
+import { HttpClient, HttpClientRequest } from 'effect/http'
+import { PersonId, ThreadId } from '@vivid/contracts'
+import { requestRuntime } from './transport.ts'
+import { expect, layer } from '@effect/vitest'
+import { Effect, Fiber, Option } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { observeRun } from './settlement.ts'
 
@@ -13,20 +15,25 @@ import { observeRun } from './settlement.ts'
 const refusedUrl = Effect.callback<string>((resume) => {
   const listener = NodeNet.createServer()
   listener.listen(0, '127.0.0.1', () => {
-    // SAFETY: a TCP listener bound to a host and port reports AddressInfo (`net.Server.address`, Node 24).
-    const { port } = listener.address() as NodeNet.AddressInfo
-    listener.close(() => resume(Effect.succeed(`http://127.0.0.1:${port}/agents/vivid/thread`)))
+    const address = listener.address()
+    if (address === null || typeof address === 'string') return listener.close()
+    listener.close(() => resume(Effect.succeed(`http://127.0.0.1:${address.port}/state`)))
   })
 })
 
-describe('observeRun', () => {
+layer(NodeHttpClient.layerUndici)((it) => {
   // Production, 26 October 2026: the runtime was unavailable for longer than 90 seconds and the
   // server recorded the Run as ended while Flue kept working on it, so every later tool call of
   // that Run was refused. Only Flue's settlement ends a Run; an unreachable runtime does not.
   it.effect('keeps waiting on a Run while its runtime cannot be reached', () =>
     Effect.gen(function* () {
-      const client = createFlueClient({ url: yield* refusedUrl, token: 'unused' })
-      const observing = yield* Effect.forkChild(observeRun(client, RunId.make('run-unreachable')))
+      const http = yield* HttpClient.HttpClient
+      const url = yield* refusedUrl
+      const read = requestRuntime(http, HttpClientRequest.get(url), {
+        personId: PersonId.make('unreachable'),
+        threadId: ThreadId.make('thread'),
+      }).pipe(Effect.as(Option.none()), Effect.scoped)
+      const observing = yield* Effect.forkChild(observeRun(read))
       yield* Effect.yieldNow
       yield* TestClock.adjust('2 hours')
       expect(observing.pollUnsafe()).toBeUndefined()
