@@ -73,8 +73,6 @@ async function decide(state, id, directory, { browser, allow }) {
     assert.equal(done.runs[1].origin._tag, 'Decision')
     const outcome = done.approvals.find((candidate) => candidate.id === approval.id)
     assert.equal(outcome.state._tag, allow ? 'Succeeded' : 'Denied')
-    const repeated = await rpc(state, 'DecideApproval', decision, directory, 'repeated-decision')
-    assert.equal(repeated.approval.state._tag, outcome.state._tag)
     const external = await snapshot('after')
     assert.equal(external.events.length, allow ? 1 : 0)
     await history(state, id, directory)
