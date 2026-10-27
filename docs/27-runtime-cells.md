@@ -5,6 +5,10 @@ deleted now. The cell host, Notes, infrastructure wiring, and cell-backed produc
 are not yet proven. Product PostgreSQL remains. This decision authorizes no production deploy,
 reset, or live-data change.
 
+The approved memory, Markdown, prompt and Dreamer behavior is defined by
+[Assistant patterns](28-assistant-patterns.md). The cell is its persistence and execution host;
+it is not a separate, flat Notes design. Those behavior features are not yet implemented.
+
 ## The decision
 
 Each Person's agent runtime runs as one celld Durable Object cell, named by `PersonId`. The cell

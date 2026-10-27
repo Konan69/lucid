@@ -2,8 +2,8 @@
 
 Status: chosen placement, integration in progress. [Runtime cells](27-runtime-cells.md) puts
 Notes beside the native Pi Harness in one celld Person cell. There is no separate `Memory`
-cell, `apps/memory` deployment, or server `MemoryCells` client. Cell-backed Notes behavior
-and lifecycle have not yet been proven.
+cell, `apps/memory` deployment, or server `MemoryCells` client. The approved layered-memory and behavior contracts are in
+[Assistant patterns](28-assistant-patterns.md). Cell-backed behavior and lifecycle are not yet proven.
 
 ## Ownership
 
@@ -13,13 +13,14 @@ A shared Thread lives in its creator's cell; another speaker's Notes still belon
 speaker and require an authorized cross-cell call through the server. Missing Notes authority
 must fail explicitly, never appear as an empty index.
 
-Helix stays the deep memory layer on the server, with its knowledge graph and embeddings
-searched on demand. It does not replace standing Notes. The response reads its Notes index
-once and freezes it with the delivery's context.
+The chosen policy parks Helix for personal memory and keeps it mainly for Company knowledge.
+Personal memory uses the layers in [Assistant patterns](28-assistant-patterns.md#4-memory-in-layers).
+Existing Helix calls are pre-cutover implementation, not the personal-memory target. A response
+receives its standing context and bounded memory index once, frozen for that response.
 
 AgentFS files, `VIVID_MEMORY_DIR`, and a central runtime volume are the pre-cell implementation
-being replaced. Production conversation storage is native Pi Durable Object SQLite, and Notes
-share that cell. PostgreSQL remains the product database.
+being replaced. Target conversation storage is native Pi Durable Object SQLite, and personal memory
+shares that cell. PostgreSQL remains the product database.
 
 ## Notes behavior
 
@@ -27,13 +28,17 @@ Preserve `read_note`, `write_note`, and `delete_note`, the bounded index, correc
 existing note, and forgetting it on request. A Person's question must not rewrite their Notes.
 Tool receipts and recalled content are the observable proof, not a claim in the assistant's text.
 
-The earlier memory design also proposed provenance, versions, and dreaming. Those remain
-unbuilt extensions; their descriptions here do not make them prerequisites for the host change.
-Provenance links a note to its source Thread and Message. Versioned writes reject stale edits
-rather than overwrite them. Dreaming consolidates notes against their sources after a delay.
-Any future dreaming work uses Pi's native durable tasks and the shared `onWake`/alarm lifecycle
-inside the Person cell. It does not add a second host timer or scheduler. Product Watch schedules
-remain on the server.
+The chosen behavior is layered memory, not flat Notes: `self`, `soul`, `person`, `memory`,
+`days`, `bank`, `people`, `dreams`, `attention`, and `research`. Markdown remains its content
+format. Each entry records whether the Person said it or Vivid inferred it, its source and time.
+Updates are versioned. The prompt and memory layers drive behavior together; their full contract
+is [Assistant patterns](28-assistant-patterns.md), not a second design here.
+
+The Dreamer is chosen but unbuilt. It runs around 03:00 in the Person's time zone and after a
+substantial conversation goes quiet. It reads connected Integrations, Library, web and memory;
+it writes research and dreams, and reports findings to Vivid. It does not contact people, send,
+spend or use the Computer. Use Pi's native durable tasks and celld's shared wake/alarm lifecycle.
+Do not add another timer or scheduler. Product Watch schedules remain on the server.
 
 ## Historical celld proof
 

@@ -1,6 +1,10 @@
 # Memory: a filesystem per Person, and Helix as the knowledge base
 
-**Status:** the direction was recorded on 4 October 2026; "What exists today" was checked against
+**Status:** historical pre-cell design. The chosen placement is [memory in the Person cell](26-memory-cells.md);
+its behavior and layers are defined by [Assistant patterns](28-assistant-patterns.md). The
+AgentFS/filesystem examples below record earlier work, not the target architecture.
+
+The direction was recorded on 4 October 2026; "What exists today" was checked against
 the code on 24 October 2026. Personal SQLite notes and their response index are implemented.
 The filesystem-slot proof below is historical: production uses typed note tools, while the
 Computer owns Flue's filesystem slot. Computer mounting and device sync remain unfinished.
