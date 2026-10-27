@@ -257,6 +257,29 @@ const redeemLink = ({
   )
 }
 
+/** An enrolment channel's receipt is kept until the provider agrees, so a failed unenrol retries. */
+const unenrolLink = ({
+  database,
+  provider,
+  announce,
+  byPerson,
+}: Pick<LinkAuthority, 'database' | 'provider' | 'announce' | 'byPerson'>) =>
+  Effect.fn('Channels.unenrol')(function* (actor: Actor, channel: Channel) {
+    const prior = yield* byPerson(actor.person.id, channel)
+    if (Option.isSome(prior)) {
+      yield* provider.unenrol(channel, prior.value.enrolmentId)
+      yield* database.run(
+        database
+          .delete(channelLinks)
+          .where(
+            and(eq(channelLinks.personId, actor.person.id), eq(channelLinks.channel, channel)),
+          ),
+      )
+      yield* announce(actor)
+    }
+    return ChannelLink.make({ channel, standing: ChannelStanding.cases.NotConnected.make({}) })
+  })
+
 /** Linking owns personal persistence and provider enrolment; handlers contain no business decisions. */
 const makeChannels = Effect.fn('Channels.makeStore')(function* (
   discordPeople: ReadonlySet<string>,
@@ -326,10 +349,17 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* (
     byAddress,
   })
 
-  /** Delete codes before links so a concurrent redemption cannot outlive disconnect. */
+  const unenrol = unenrolLink({ database, provider, announce, byPerson })
+
+  /**
+   * A code channel (Discord) deletes codes before links in one transaction, so a concurrent
+   * redemption cannot outlive disconnect. An enrolment channel (iMessage) unenrols first and keeps
+   * its receipt until the provider agrees, so a failed unenrol can be retried.
+   */
   const disconnect = Effect.fn('Channels.disconnect')(
     function* (actor: Actor, channel: Channel) {
       if (!provider.channels.includes(channel)) return yield* new ChannelUnavailable({ channel })
+      if (Option.isNone(provider.codeAddress(channel))) return yield* unenrol(actor, channel)
       const deleted = yield* database.transaction((tx) =>
         tx
           .delete(channelCodes)
@@ -348,11 +378,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* (
             ),
           ),
       )
-      for (const row of deleted) {
-        const link = yield* decodeLink(row)
-        yield* provider.unenrol(channel, link.enrolmentId)
-      }
-      yield* announce(actor)
+      if (deleted.length > 0) yield* announce(actor)
       return ChannelLink.make({ channel, standing: ChannelStanding.cases.NotConnected.make({}) })
     },
     (effect) => gate.withPermit(effect),
