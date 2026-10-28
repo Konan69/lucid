@@ -14,7 +14,8 @@ const when = makeWhen(thisReader())
  *
  * - a meta row, where it is from and when, quiet;
  * - the title, which opens the background Thread so the whole exchange can be read;
- * - what Vivid says, a sentence or two;
+ * - what Vivid says, a sentence, only when the drawing does not say it (29 October 2026: a card
+ *   said its one fact three times);
  * - the thing itself, an OpenUI program drawn by the renderer a reply uses, in a band of the
  *   primary's soft tint that runs to the card's edges;
  * - the card's own buttons under it: the way out first, the answer last (v9: "yh buttons are
@@ -53,7 +54,10 @@ export function Card({
 }) {
   const [chosen, setChosen] = useState<feed.Chosen>({})
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
-  const words = Option.match(post, { onNone: () => ask.words, onSome: (made) => made.words })
+  const words = Option.match(post, {
+    onNone: () => Option.some(ask.words),
+    onSome: (made) => Option.fromNullOr(made.words),
+  })
   const display = Option.flatMap(post, (made) => Option.fromNullOr(made.display))
   return (
     <article ref={seen} className="overflow-hidden rounded-composer bg-surface-3 p-4 edge">
@@ -70,9 +74,12 @@ export function Card({
           {title}
         </button>
       </h2>
-      <p className="mt-1 text-title text-pretty text-ink-2">{words}</p>
+      {Option.isSome(words) && (
+        <p className="mt-1 text-title text-pretty text-ink-2">{words.value}</p>
+      )}
       {/* The band takes back the card's 16 px each side, so the drawing runs edge to edge; with
-          no bar under it, it runs out at the foot too. */}
+          no bar under it, it runs out at the foot too. Without words it sits the same 14 px under
+          the title. */}
       {Option.isSome(display) && (
         <div
           className={cn(
