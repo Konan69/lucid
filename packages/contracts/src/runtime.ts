@@ -1,7 +1,7 @@
 import * as Schema from 'effect/Schema'
 import { PersonId, ThreadId } from './identity.js'
 import { RunFailure, ThreadOrigin } from './threads.js'
-import { Note } from './personal.js'
+import { MemoryEntry } from './memory.js'
 
 /**
  * The HTTP surface of the conversation runtime (Pi Durable), which only the application server
@@ -240,9 +240,9 @@ export const RuntimeHistoryThread = Schema.Struct({
 export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
 export const RuntimeHistoryBody = Schema.Struct({
   threads: Schema.Array(RuntimeHistoryThread),
-  // Note's address check remains valid when only its source timestamp is added.
-  notes: Schema.Array(
-    Note.mapFields((fields) => ({ ...fields, updatedAt: Schema.Finite }), {
+  // The entry's address check remains valid when only its source timestamp is added.
+  memory: Schema.Array(
+    MemoryEntry.mapFields((fields) => ({ ...fields, updatedAt: Schema.Finite }), {
       unsafePreserveChecks: true,
     }),
   ),

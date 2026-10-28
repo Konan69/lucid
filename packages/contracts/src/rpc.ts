@@ -142,7 +142,6 @@ import {
   LibraryFolderId,
   LibraryItemId,
   MembershipId,
-  MemoryId,
   RuleId,
   SkillId,
   ThreadId,
@@ -162,12 +161,12 @@ import {
 } from './library.js'
 import {
   CorrectMemoryRequest,
-  MemoryBrief,
-  MemoryListResponse,
-  MemoryResponse,
-  RecallRequest,
-  RecallResponse,
-  RememberRequest,
+  ForgetMemoryRequest,
+  MemoryAddress,
+  MemoryIndex,
+  MemoryListing,
+  MemoryPage,
+  SavedMemory,
 } from './memory.js'
 import {
   NotificationListResponse,
@@ -767,22 +766,18 @@ const OfferConnection = Rpc.make('OfferConnection', {
 })
 
 // ── Memory ─────────────────────────────────────────────────────────────────
-const ListMemory = Rpc.make('ListMemory', { ...call, success: MemoryListResponse })
-const WatchMemory = Rpc.make('WatchMemory', { ...live, success: MemoryListResponse })
-/** The page Vivid reads when a Run starts. */
-const GetMemoryBrief = Rpc.make('GetMemoryBrief', { ...call, success: MemoryBrief })
-const Recall = Rpc.make('Recall', { ...call, payload: RecallRequest, success: RecallResponse })
-const Remember = Rpc.make('Remember', {
-  ...call,
-  payload: RememberRequest,
-  success: MemoryResponse,
-})
+// The acting Person's own memory, read from and written to their cell.
+/** What Vivid reads every response: the standing pages whole and the newest lines. */
+const GetMemoryIndex = Rpc.make('GetMemoryIndex', { ...call, success: MemoryIndex })
+/** Older lines than the index shows, newest first, one layer or all. */
+const ListMemory = Rpc.make('ListMemory', { ...call, payload: MemoryListing, success: MemoryPage })
+const ReadMemory = Rpc.make('ReadMemory', { ...call, payload: MemoryAddress, success: SavedMemory })
 const CorrectMemory = Rpc.make('CorrectMemory', {
   ...call,
   payload: CorrectMemoryRequest,
-  success: MemoryResponse,
+  success: SavedMemory,
 })
-const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: { id: MemoryId } })
+const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: ForgetMemoryRequest })
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
@@ -1070,11 +1065,9 @@ export const VividRpc = RpcGroup.make(
   UseTool,
   UseDisplayTool,
   OfferConnection,
+  GetMemoryIndex,
   ListMemory,
-  WatchMemory,
-  GetMemoryBrief,
-  Recall,
-  Remember,
+  ReadMemory,
   CorrectMemory,
   ForgetMemory,
   ListSkills,

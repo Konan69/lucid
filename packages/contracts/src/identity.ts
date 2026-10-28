@@ -56,9 +56,6 @@ export type ServiceId = typeof ServiceId.Type
 /** Connection identifier: one authorized relationship with an external account. */
 export const ConnectionId = Schema.String.pipe(Schema.brand('ConnectionId'))
 export type ConnectionId = typeof ConnectionId.Type
-/** Memory record identifier. */
-export const MemoryId = Schema.String.pipe(Schema.brand('MemoryId'))
-export type MemoryId = typeof MemoryId.Type
 /** Skill identifier: one saved procedure. */
 export const SkillId = Schema.String.pipe(Schema.brand('SkillId'))
 export type SkillId = typeof SkillId.Type
