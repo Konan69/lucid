@@ -6,6 +6,7 @@ import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
+import { host, provider, selection } from './settings.mjs'
 import * as NodeChildProcess from 'node:child_process'
 import {
   root,
@@ -35,7 +36,6 @@ async function selected() {
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
-  const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
   await NodeFSP.mkdir(cache, { recursive: true })
   await recoverPrevious(cache)
@@ -164,7 +164,7 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
@@ -221,7 +221,7 @@ try {
             {
               heavy: true,
               log: state.evidence + '/phone-command.json',
-              env: { ...process.env, VIVID_VERIFY_DEVBOX: state.devbox },
+              env: { ...process.env, ...selection(state) },
               record: (process) => control(state, { action: 'capture', process }),
             },
           ),

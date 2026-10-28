@@ -4,7 +4,7 @@ Model requirement: real for every journey except `thread`. The idle baseline mak
 
 ## Drive the phone
 
-Read [Android setup](../references/android.md). Select a devbox with `~/bin/devbox-pick`. Provision it from the PC with one command, even after a snapshot restore emptied both Android directories.
+Read [Android setup](../references/android.md). On the PC, attach the running host-GPU Windows emulator with `verify android attach pc <serial>` and launch with `VIVID_VERIFY_HOST=pc`. Otherwise select a devbox with `~/bin/devbox-pick` and provision it from the PC with one command, even after a snapshot restore emptied both Android directories.
 
 ```sh
 .agents/skills/verify-vivid/verify android provision cloudbox-konan3
@@ -30,7 +30,7 @@ The command holds the devbox Android lock until its finally block closes the pri
 
 ## Active journeys
 
-After Launch and Doctor at a clean head, run `verify phone all <run>` for one APK installation and one private device session. Each named journey is also available as `verify phone <journey> <run>`. A phone command always stops its captured emulator in finally, so provision again before the next phone command. `all` continues after an individual journey fails and retains its crash logcat, snapshot and screenshot.
+After Launch and Doctor at a clean head, run `verify phone all <run>` for one APK installation and one private device session. Each named journey is also available as `verify phone <journey> <run>`. On a devbox a phone command always stops its captured emulator in finally, so provision again before the next phone command; the PC's attached emulator stays up. `all` continues after an individual journey fails and retains its crash logcat, snapshot and screenshot.
 
 | Journey           | Phone actions and required receipts                                                                                                                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,4 +60,4 @@ The Thread drawer deliberately shows title, attention dot and time, without last
 
 The launcher does not forward VIVID_DECISIONS into Worker vars. Learning therefore uses its installed decisions-off mode, which considers every exchange. No Jev claim follows. There is no public learner-completion stream. The recipe checks CellRun memory after a real new-Thread recall, without sleeps or polling; failure can mean the background task was still pending at that observation. Report the exact observations rather than claiming it never learns.
 
-A working Thread's thinking orb previously crashed software renderers. Provision uses `-gpu swiftshader`. Retain crash logcat and the last snapshot when it fails. No iOS, desktop, native notification delivery or external provider account is proved by these Android recipes.
+A working Thread's thinking orb previously crashed software renderers. Devbox provision uses `-gpu swiftshader`; the PC uses the host GPU and attach refuses a software renderer. Retain crash logcat and the last snapshot when it fails. No iOS, desktop, native notification delivery or external provider account is proved by these Android recipes.

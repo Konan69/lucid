@@ -13,15 +13,30 @@ export const Apk = Schema.Struct({
   origin: Schema.String,
   mode: Schema.String,
 })
-export const Device = Schema.Struct({
-  adb: Process,
-  emulator: Process,
-  serial: Schema.String,
-  alias: Schema.String,
-  hostname: Schema.String,
-  boot: Schema.String,
-  sdk: Schema.String,
-  avd: Schema.String,
+/** A devbox emulator and its private adb server are captured Linux generations the run stops.
+ * The PC's emulator runs on Windows and the PC's ordinary adb server sees it; the run owns
+ * neither, so the receipt holds no process authority, only the serial and adb port it attached. */
+export const Device = Schema.TaggedUnion({
+  devbox: {
+    adb: Process,
+    emulator: Process,
+    serial: Schema.String,
+    alias: Schema.String,
+    hostname: Schema.String,
+    boot: Schema.String,
+    sdk: Schema.String,
+    avd: Schema.String,
+  },
+  pc: {
+    serial: Schema.String,
+    alias: Schema.String,
+    hostname: Schema.String,
+    boot: Schema.String,
+    sdk: Schema.String,
+    adbPort: Schema.Number,
+    avd: Schema.String,
+    renderer: Schema.String,
+  },
 })
 export const Phone = Schema.Struct({
   run: Schema.String,

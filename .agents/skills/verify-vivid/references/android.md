@@ -1,4 +1,19 @@
-# Set up an Android devbox
+# Set up the Android host
+
+## The PC (preferred)
+
+The PC runs the Android emulator on Windows with `-gpu host`, so the guest composes through the emulator's GLES translator on the real GPU. Devbox emulators have only software renderers, and the QEMU host render thread crashed there as soon as the thinking orb drew. WSL uses mirrored networking, so Windows and WSL share localhost: the WSL adb server sees the Windows emulator and `adb reverse` lands on the WSL proof stack. Run only the WSL adb (`~/android_sdk/platform-tools/adb`, server port 5037); a second Windows adb server fights over the port.
+
+Start the AVD headless from WSL (no window on the desktop):
+
+```sh
+powershell.exe -NoProfile -Command 'Start-Process -WindowStyle Hidden -FilePath "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -ArgumentList "-avd Vivid_Android_Studio -no-window -gpu host -no-snapshot -no-audio -no-boot-anim -port 5580 -memory 3072 -cores 4"'
+.agents/skills/verify-vivid/verify android attach pc emulator-5580
+```
+
+Attach installs the cached phone tools below, requires the serial in adb's inventory, `sys.boot_completed`, and a SurfaceFlinger GLES line that is not SwiftShader, llvmpipe or lavapipe. It zeroes the animation scales and writes `device.json` with `_tag: pc`, the serial, adb port and renderer. The run owns neither the emulator nor adb: liveness is adb answering the boot property, phone cleanup removes only its reverse mapping and agent-device daemon, and the emulator stays up for the next phone command without re-attaching. Stop it yourself only if you started it. `verify android status pc` prints the receipt and lease. The PC's SDK in `~/android_sdk` builds the APK.
+
+## A devbox
 
 Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote Boat sandbox id must match `../scripts/hosts.mjs`. The current hostname is recorded rather than used as permanent identity: Boat changes it on restart. The production Computer is refused.
 
@@ -40,7 +55,7 @@ The APK cache verifies bytes against SHA-256 before reuse. A tooling-only commit
 
 The pool uses [AGP finalizeDsl](https://developer.android.com/reference/tools/gradle-api/8.13/com/android/build/api/variant/AndroidComponentsExtension) and [CMake job pools](https://cmake.org/cmake/help/v3.22/variable/CMAKE_JOB_POOLS.html), without patching SDK internals.
 
-The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. The dedicated adb server uses port 15037, leaving the host's ordinary adb server alone.
+The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. On a devbox the dedicated adb server uses port 15037, leaving the host's ordinary adb server alone; on the PC the receipt names the PC's adb port.
 
 ## Inspect through agent-device
 

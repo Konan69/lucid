@@ -3,7 +3,8 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import { command, json, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
-import { readPhone } from './phonewire.mjs'
+import { Device, readPhone } from './phonewire.mjs'
+import { adbPort, reachable } from './device.mjs'
 
 /** Both normal completion and abandoned-run recovery use the same captured device generations.
  * The private agent-device daemon verifies its own PID receipt through its public stop command. */
@@ -17,7 +18,7 @@ export async function phoneCleanup(state) {
     HOME: home,
     AGENT_DEVICE_STATE_DIR: phone.stateDir,
     PATH: cache + '/node/bin:' + phone.device.sdk + '/platform-tools:' + process.env.PATH,
-    ANDROID_ADB_SERVER_PORT: '15037',
+    ANDROID_ADB_SERVER_PORT: adbPort(phone.device),
   }
   const cli = [
     cache + '/node/bin/node',
@@ -39,19 +40,7 @@ export async function phoneCleanup(state) {
     }
   }
   await reverseCleanup({ phone, env, directory, port: state.ports.web }, failures)
-  const stopped = []
-  for (const role of ['emulator', 'adb']) stopped.push(await stopCaptured(phone.device[role], true))
-  const status = await command(
-    [
-      'ps',
-      '-p',
-      String(phone.device.emulator.pid) + ',' + phone.device.adb.pid,
-      '-o',
-      'pid,ppid,args',
-    ],
-    { log: directory + '/ps-cleanup.json' },
-  ).catch((error) => error.message)
-  const surviving = (await alive(phone.device.emulator)) || (await alive(phone.device.adb))
+  const { stopped, status, surviving } = await stopDevice(phone.device, directory)
   await json(directory + '/cleanup.json', { stopped, surviving, status, failures })
   if (surviving || failures.length)
     throw new Error('Phone cleanup failed; inspect ' + directory + '/cleanup.json')
@@ -59,9 +48,25 @@ export async function phoneCleanup(state) {
   await NodeFSP.rm(leasePath, { force: true })
 }
 
+/** A devbox run stops its captured emulator and adb generations. The PC run attached to an
+ * emulator and adb server it did not start, so it leaves both running and stops nothing. */
+async function stopDevice(device, directory) {
+  if (Device.guards.pc(device))
+    return { stopped: [], status: 'attached; not owned', surviving: false }
+  const stopped = []
+  for (const role of ['emulator', 'adb']) stopped.push(await stopCaptured(device[role], true))
+  const status = await command(
+    ['ps', '-p', String(device.emulator.pid) + ',' + device.adb.pid, '-o', 'pid,ppid,args'],
+    { log: directory + '/ps-cleanup.json' },
+  ).catch((error) => error.message)
+  const surviving = (await alive(device.emulator)) || (await alive(device.adb))
+  return { stopped, status, surviving }
+}
+
 /** Reverse mappings belong to this disposable emulator and must disappear before its adb stops. */
 async function reverseCleanup({ phone, env, directory, port }, failures) {
-  if (!(await alive(phone.device.adb)) || !(await alive(phone.device.emulator))) return
+  if (Device.guards.devbox(phone.device) && !(await alive(phone.device.adb))) return
+  if (!(await reachable(phone.device))) return
   try {
     const adb = [phone.device.sdk + '/platform-tools/adb', '-s', phone.device.serial, 'reverse']
     const listing = await command([...adb, '--list'], {

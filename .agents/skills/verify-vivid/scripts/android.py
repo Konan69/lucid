@@ -240,7 +240,7 @@ def main():
                 if role in receipt:
                     stop(receipt[role])
             raise
-        receipt.update(alias=alias, hostname=socket.gethostname(), seconds=round(time.monotonic() - started, 3),
+        receipt.update(_tag='devbox', alias=alias, hostname=socket.gethostname(), seconds=round(time.monotonic() - started, 3),
                        installed=missing, sdk=str(SDK), avd=str(AVD), boot=BOOT)
         write(location, receipt)
         print(json.dumps(receipt))

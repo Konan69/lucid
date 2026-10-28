@@ -5,3 +5,8 @@ export const hosts = {
   'cloudbox-konan2': 'bx_8b9c35bp',
   'cloudbox-konan3': 'bx_5suus7qp',
 }
+
+/** The developer PC runs the proof stack in WSL and the Android emulator on Windows' GPU.
+ * Its WSL systemd machine id survives WSL and Windows restarts, as BOAT_ID does on a devbox,
+ * and is read locally; hostnames are shared by Windows and WSL and identify nothing. */
+export const pc = { alias: 'pc', machineId: 'c0645291cfa343108194237d1b3cf5ba' }

@@ -3,13 +3,14 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeAssert from 'node:assert/strict'
-import { command, json, alive, identity } from './process.mjs'
+import { command, json, identity, alive } from './process.mjs'
+import { adbPort, reachable } from './device.mjs'
 import { host } from './settings.mjs'
 import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
 import { stopCaptured } from './recovery.mjs'
-import { readAccount, readDevice, readState } from './phonewire.mjs'
+import { Device, readAccount, readDevice, readState } from './phonewire.mjs'
 import { rpc, history } from './wire.mjs'
 import { phoneUI } from './phoneui.mjs'
 import * as flows from './phoneflow.mjs'
@@ -79,7 +80,7 @@ async function journey(state, name, ui, native) {
   let verdict
   let id
   try {
-    if (!(await alive(native.device.emulator))) {
+    if (!(await reachable(native.device))) {
       await json(ui.directory + '/verdict.json', {
         verdict: 'blocked',
         journey: name,
@@ -103,7 +104,7 @@ async function journey(state, name, ui, native) {
       await rpc(state, 'GetThread', { id }, ui.directory, 'failed-thread').catch(() => {})
       await history(state, id, ui.directory, 'failed-history').catch(() => {})
     }
-    if (await alive(native.device.emulator)) await ui.capture('failure').catch(() => {})
+    if (await reachable(native.device)) await ui.capture('failure').catch(() => {})
     else await json(ui.directory + '/emulator-exited.json', native.device)
   }
   await json(ui.directory + '/verdict.json', {
@@ -117,6 +118,7 @@ async function journey(state, name, ui, native) {
     model: state.model,
     modelKind: state.modelKind,
     alias: state.devbox,
+    hostKind: native.device._tag,
     hostname: state.hostname,
     run: state.run,
     evidence: ui.directory,
@@ -160,8 +162,8 @@ export async function phone(state, feature) {
   )
   NodeAssert.equal(device.hostname, state.hostname)
   NodeAssert.equal(device.alias, state.devbox)
-  NodeAssert.ok(await alive(device.emulator), 'Run verify android provision before phone')
-  NodeAssert.ok(await alive(device.adb), 'Owned adb is not alive')
+  NodeAssert.ok(await reachable(device), 'Run verify android provision or attach before phone')
+  if (Device.guards.devbox(device)) NodeAssert.ok(await alive(device.adb), 'Owned adb is not alive')
   const lease = cache + '/lease.json'
   const prior = await NodeFSP.stat(lease).catch((error) => {
     if (error.code === 'ENOENT') return null
@@ -179,7 +181,11 @@ export async function phone(state, feature) {
   await json(state.scratch + '/phone.json', receipt)
   await json(directory + '/receipt.json', receipt)
   await NodeFSP.copyFile(cache + '/motion.json', directory + '/motion.json')
-  const env = { ...phoneEnvironment, AGENT_DEVICE_STATE_DIR: receipt.stateDir }
+  const env = {
+    ...phoneEnvironment,
+    ANDROID_ADB_SERVER_PORT: adbPort(device),
+    AGENT_DEVICE_STATE_DIR: receipt.stateDir,
+  }
   let count = 0
   let logDirectory = directory
   const execute = (argv, redactions = []) =>
@@ -248,13 +254,14 @@ export async function phone(state, feature) {
           ? 'idle native navigation; no model behaviour'
           : 'Android journeys; see per-journey verdicts',
       alias: state.devbox,
+      hostKind: device._tag,
       hostname: state.hostname,
       serial: device.serial,
       origin: phoneOrigin,
       evidence: directory,
     })
     if (recording) await stopCaptured(recording, true)
-    if (await alive(device.emulator)) await run(['close', 'work.vivid.mobile']).catch(() => {})
+    if (await reachable(device)) await run(['close', 'work.vivid.mobile']).catch(() => {})
     await phoneCleanup(state)
   }
 }
