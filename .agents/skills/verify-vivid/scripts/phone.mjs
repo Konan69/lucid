@@ -178,6 +178,7 @@ export async function phone(state, feature) {
   await json(lease, receipt)
   await json(state.scratch + '/phone.json', receipt)
   await json(directory + '/receipt.json', receipt)
+  await NodeFSP.copyFile(cache + '/motion.json', directory + '/motion.json')
   const env = { ...phoneEnvironment, AGENT_DEVICE_STATE_DIR: receipt.stateDir }
   let count = 0
   let logDirectory = directory

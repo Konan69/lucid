@@ -65,3 +65,5 @@ Invoke the pinned launcher at `~/.cache/vivid-android/tools/node_modules/agent-d
 A durable host lease prevents another checkout from taking an emulator left by a killed phone worker. SDK provision and stop refuse that lease; recover it with `verify cleanup` in the owning checkout.
 
 Always finish with `verify cleanup` and, for provision-only runs, the PC's `verify android stop <alias>`. Inspect the saved process receipts and `ps` output. Stop uses PID, Linux start ticks and boot identity, so a recycled PID grants no authority.
+
+Provision sets animator_duration_scale, transition_animation_scale and window_animation_scale to zero before Vivid starts. It reads each value back into the private cache motion receipt; the phone command retains that receipt as phone/motion.json. The Send journey captures consecutive reduced-orb frames before checking the reply stream. A missing frame after an emulator exit cannot confirm that the asynchronous orb hook reached its static branch.

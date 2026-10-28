@@ -15,6 +15,9 @@ const saved = (page) => page.messages.map(({ id, role, parts }) => ({ id, role, 
 /** Type and send on Android, observe streaming, then prove both navigation and process recovery. */
 export async function send(state, id, ui) {
   await ui.send(longReply)
+  await ui.visible('Vivid: Thinking')
+  await ui.capture('reduced-orb-first')
+  await ui.capture('reduced-orb-second')
   await streaming(state, id, ui.directory)
   await ui.visible('amber-orchid')
   await ui.capture('streaming')
