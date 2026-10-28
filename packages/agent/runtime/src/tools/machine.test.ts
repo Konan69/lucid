@@ -1,4 +1,4 @@
-import { unusedNotes } from './tests/harness.ts'
+import { unusedMemory } from './tests/harness.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { vi } from 'vitest'
 import {
@@ -482,8 +482,8 @@ it.effect('keeps another Computer’s same-path mutation independent after cance
     let calls = 0
     const definitions = catalogue(
       () => (++calls === 1 ? ada.layer : dami.layer),
-      () => Effect.die('Unexpected note authority'),
-      unusedNotes,
+      () => Effect.die('Unexpected memory authority'),
+      unusedMemory,
     )
     const write = definitions.find((tool) => tool.name === 'write')
     if (write === undefined) expect.fail('Missing write tool.')
@@ -530,8 +530,8 @@ it.effect('probes each Computer before choosing rg or grep', () =>
     let calls = 0
     const definitions = catalogue(
       () => (++calls === 1 ? ada.layer : dami.layer),
-      () => Effect.die('Unexpected note authority'),
-      unusedNotes,
+      () => Effect.die('Unexpected memory authority'),
+      unusedMemory,
     )
     const grep = definitions.find((tool) => tool.name === 'grep')
     if (grep === undefined) expect.fail('Missing grep tool.')

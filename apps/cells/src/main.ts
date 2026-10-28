@@ -5,28 +5,26 @@ import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/stor
 import type { Wake } from '@earendil-works/pi-durable'
 import { isAuthorized, openCell } from '@vivid/agent-runtime/cell'
 import {
-  Notes,
-  NotesUnavailable,
-  openNotes,
-  NoteReadResult,
-  NoteWriteResult,
-  NoteDeleteResult,
-  NoteSearchResult,
-} from '@vivid/agent-runtime/notes'
+  Memory,
+  MemoryUnavailable,
+  openMemory,
+  MemoryReadResult,
+  MemoryWriteResult,
+  MemoryDeleteResult,
+  MemorySearchResult,
+} from '@vivid/agent-runtime/memory'
 import {
   PersonId,
-  NoteAddress,
-  NoteIndex,
-  NoteWrite,
-  NoteRetraction,
-  NoteListing,
-  NotePage,
-  NoteSearch,
+  MemoryAddress,
+  MemoryIndex,
+  MemoryWrite,
+  MemoryRetraction,
+  MemoryListing,
+  MemoryPage,
+  MemorySearch,
 } from '@vivid/contracts'
-import memoryMigration from './memory/migrations/20261027123834_memory/migration.sql'
-import searchMigration from './memory/migrations/20261027133147_memory-search/migration.sql'
-import identityMigration from './memory/migrations/20261027180221_memory-id/migration.sql'
-import identitySearchMigration from './memory/migrations/20261027180232_memory-search-id/migration.sql'
+import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
+import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
 import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
@@ -43,15 +41,15 @@ interface CellState {
   abort(reason: string): never
 }
 
-/** Native stubs carry only this cell's local notes. No method accepts another Person's id. */
+/** Native stubs carry only this cell's local memory. No method accepts another Person's id. */
 interface PersonStub {
   fetch(request: Request): Promise<Response>
-  noteIndex(): Promise<NoteIndex>
-  listNotes(listing: NoteListing): Promise<NotePage>
-  searchNotes(search: NoteSearch): Promise<typeof NoteSearchResult.Encoded>
-  readNote(address: NoteAddress): Promise<typeof NoteReadResult.Encoded>
-  writeNote(write: NoteWrite): Promise<typeof NoteWriteResult.Encoded>
-  deleteNote(retraction: NoteRetraction): Promise<typeof NoteDeleteResult.Encoded>
+  memoryIndex(): Promise<MemoryIndex>
+  listMemory(listing: MemoryListing): Promise<MemoryPage>
+  searchMemory(search: MemorySearch): Promise<typeof MemorySearchResult.Encoded>
+  readMemory(address: MemoryAddress): Promise<typeof MemoryReadResult.Encoded>
+  writeMemory(write: MemoryWrite): Promise<typeof MemoryWriteResult.Encoded>
+  deleteMemory(retraction: MemoryRetraction): Promise<typeof MemoryDeleteResult.Encoded>
 }
 interface Environment {
   readonly PERSONS: { getByName(person: PersonId): PersonStub }
@@ -65,22 +63,22 @@ interface Environment {
  */
 const HEARTBEAT = 60_000
 const decodePerson = Schema.decodeUnknownEffect(PersonId)
-const decodeListing = Schema.decodeUnknownEffect(NoteListing)
-const decodeSearch = Schema.decodeUnknownEffect(NoteSearch)
-const decodeAddress = Schema.decodeUnknownEffect(NoteAddress)
-const decodeWrite = Schema.decodeUnknownEffect(NoteWrite)
-const decodeRetraction = Schema.decodeUnknownEffect(NoteRetraction)
-const encodeRead = Schema.encodeEffect(NoteReadResult)
-const encodeWrite = Schema.encodeEffect(NoteWriteResult)
-const encodeRetraction = Schema.encodeEffect(NoteDeleteResult)
-const encodeSearch = Schema.encodeEffect(NoteSearchResult)
+const decodeListing = Schema.decodeUnknownEffect(MemoryListing)
+const decodeSearch = Schema.decodeUnknownEffect(MemorySearch)
+const decodeAddress = Schema.decodeUnknownEffect(MemoryAddress)
+const decodeWrite = Schema.decodeUnknownEffect(MemoryWrite)
+const decodeRetraction = Schema.decodeUnknownEffect(MemoryRetraction)
+const encodeRead = Schema.encodeEffect(MemoryReadResult)
+const encodeWrite = Schema.encodeEffect(MemoryWriteResult)
+const encodeRetraction = Schema.encodeEffect(MemoryDeleteResult)
+const encodeSearch = Schema.encodeEffect(MemorySearchResult)
 const personOption = Schema.decodeUnknownOption(PersonId)
-/** One celld cell owns all Threads created by one Person, their Harness, and their notes. */
+/** One celld cell owns all Threads created by one Person, their Harness, and their memory. */
 export class Person extends DurableObject<CellState, Environment> {
   readonly #state: CellState
   readonly #ready: Promise<{
     readonly runtime: Awaited<ReturnType<typeof openCell>>
-    readonly notes: Effect.Success<ReturnType<typeof openNotes>>
+    readonly memory: Effect.Success<ReturnType<typeof openMemory>>
   }>
 
   constructor(state: CellState, environment: Environment) {
@@ -96,50 +94,48 @@ export class Person extends DurableObject<CellState, Environment> {
     const current = await this.#state.storage.getAlarm()
     if (current === null || current > fallback) await this.#state.storage.setAlarm(fallback)
     const personId = await Effect.runPromise(decodePerson(this.#state.id.name))
-    const notes = await Effect.runPromise(
-      openNotes(new DurableObjectSqliteDatabase(this.#state.storage), [
+    const memory = await Effect.runPromise(
+      openMemory(new DurableObjectSqliteDatabase(this.#state.storage), [
         memoryMigration,
         searchMigration,
-        identityMigration,
-        identitySearchMigration,
       ]),
     )
-    const bound = Notes.of({
+    const bound = Memory.of({
       index: (person) =>
         person === personId
-          ? notes.index()
-          : this.#remote(() => environment.PERSONS.getByName(person).noteIndex(), NoteIndex),
+          ? memory.index()
+          : this.#remote(() => environment.PERSONS.getByName(person).memoryIndex(), MemoryIndex),
       list: (person, listing) =>
         person === personId
-          ? notes.list(listing)
-          : this.#remote(() => environment.PERSONS.getByName(person).listNotes(listing), NotePage),
+          ? memory.list(listing)
+          : this.#remote(() => environment.PERSONS.getByName(person).listMemory(listing), MemoryPage),
       search: (person, search) =>
         person === personId
-          ? notes.search(search)
+          ? memory.search(search)
           : this.#remote(
-              () => environment.PERSONS.getByName(person).searchNotes(search),
-              NoteSearchResult,
+              () => environment.PERSONS.getByName(person).searchMemory(search),
+              MemorySearchResult,
             ).pipe(Effect.flatMap(Effect.fromResult)),
       read: (person, address) =>
         person === personId
-          ? notes.read(address)
+          ? memory.read(address)
           : this.#remote(
-              () => environment.PERSONS.getByName(person).readNote(address),
-              NoteReadResult,
+              () => environment.PERSONS.getByName(person).readMemory(address),
+              MemoryReadResult,
             ).pipe(Effect.flatMap(Effect.fromResult)),
       write: (person, write) =>
         person === personId
-          ? notes.write(write)
+          ? memory.write(write)
           : this.#remote(
-              () => environment.PERSONS.getByName(person).writeNote(write),
-              NoteWriteResult,
+              () => environment.PERSONS.getByName(person).writeMemory(write),
+              MemoryWriteResult,
             ).pipe(Effect.flatMap(Effect.fromResult)),
       delete: (person, retraction) =>
         person === personId
-          ? notes.delete(retraction)
+          ? memory.delete(retraction)
           : this.#remote(
-              () => environment.PERSONS.getByName(person).deleteNote(retraction),
-              NoteDeleteResult,
+              () => environment.PERSONS.getByName(person).deleteMemory(retraction),
+              MemoryDeleteResult,
             ).pipe(Effect.flatMap(Effect.fromResult), Effect.asVoid),
     })
     const runtime = await openCell({
@@ -148,7 +144,7 @@ export class Person extends DurableObject<CellState, Environment> {
       onWake: (wake) => {
         void this.#arm(wake).catch(() => this.#state.abort('Pi alarm write failed'))
       },
-      notes: bound,
+      memory: bound,
       skills: await Effect.runPromise(skills),
       environment,
     })
@@ -157,17 +153,17 @@ export class Person extends DurableObject<CellState, Environment> {
     })
     await this.#arm(runtime.person.harness.wake())
     runtime.person.harness.resume()
-    return { runtime, notes }
+    return { runtime, memory }
   }
 
-  /** Native RPC is a real ingress, so decode its reply before exposing it to note tools. */
+  /** Native RPC is a real ingress, so decode its reply before exposing it to entry tools. */
   #remote<A, Encoded>(
     call: () => Promise<Encoded>,
     schema: Schema.Decoder<A>,
-  ): Effect.Effect<A, NotesUnavailable> {
-    return Effect.tryPromise({ try: call, catch: () => NotesUnavailable.make({}) }).pipe(
+  ): Effect.Effect<A, MemoryUnavailable> {
+    return Effect.tryPromise({ try: call, catch: () => MemoryUnavailable.make({}) }).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(schema)),
-      Effect.mapError(() => NotesUnavailable.make({})),
+      Effect.mapError(() => MemoryUnavailable.make({})),
     )
   }
 
@@ -208,30 +204,30 @@ export class Person extends DurableObject<CellState, Environment> {
     await this.#arm(runtime.person.harness.wake())
   }
 
-  /** Cross-cell memory calls expose only the notes of this already named cell. */
+  /** Cross-cell memory calls expose only the memory of this already named cell. */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
-  async noteIndex() {
-    return Effect.runPromise((await this.#ready).notes.index())
+  async memoryIndex() {
+    return Effect.runPromise((await this.#ready).memory.index())
   }
   /** Validate the page request at native RPC ingress; the target is this already named Person. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
-  async listNotes(listing: NoteListing) {
-    const { notes } = await this.#ready
+  async listMemory(listing: MemoryListing) {
+    const { memory } = await this.#ready
     return Effect.runPromise(
       decodeListing(listing).pipe(
-        Effect.flatMap((value) => notes.list(value)),
-        Effect.mapError(() => NotesUnavailable.make({})),
+        Effect.flatMap((value) => memory.list(value)),
+        Effect.mapError(() => MemoryUnavailable.make({})),
       ),
     )
   }
   /** Preserve invalid-query errors through native RPC so the model can correct its expression. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
-  async searchNotes(search: NoteSearch) {
-    const { notes } = await this.#ready
+  async searchMemory(search: MemorySearch) {
+    const { memory } = await this.#ready
     return Effect.runPromise(
       decodeSearch(search).pipe(
-        Effect.flatMap((value) => notes.search(value)),
-        Effect.catchTag('SchemaError', () => Effect.fail(NotesUnavailable.make({}))),
+        Effect.flatMap((value) => memory.search(value)),
+        Effect.catchTag('SchemaError', () => Effect.fail(MemoryUnavailable.make({}))),
         Effect.result,
         Effect.flatMap(encodeSearch),
       ),
@@ -239,12 +235,12 @@ export class Person extends DurableObject<CellState, Environment> {
   }
   /** Encode typed absence and conflicts so native RPC cannot flatten them into unavailability. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
-  async readNote(address: NoteAddress) {
-    const { notes } = await this.#ready
+  async readMemory(address: MemoryAddress) {
+    const { memory } = await this.#ready
     return Effect.runPromise(
       decodeAddress(address).pipe(
-        Effect.flatMap((value) => notes.read(value)),
-        Effect.catchTag('SchemaError', () => Effect.fail(NotesUnavailable.make({}))),
+        Effect.flatMap((value) => memory.read(value)),
+        Effect.catchTag('SchemaError', () => Effect.fail(MemoryUnavailable.make({}))),
         Effect.result,
         Effect.flatMap(encodeRead),
       ),
@@ -252,12 +248,12 @@ export class Person extends DurableObject<CellState, Environment> {
   }
   /** Only host calls carry write authority. The model never receives this native stub. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
-  async writeNote(write: NoteWrite) {
-    const { notes } = await this.#ready
+  async writeMemory(write: MemoryWrite) {
+    const { memory } = await this.#ready
     return Effect.runPromise(
       decodeWrite(write).pipe(
-        Effect.flatMap((value) => notes.write(value)),
-        Effect.catchTag('SchemaError', () => Effect.fail(NotesUnavailable.make({}))),
+        Effect.flatMap((value) => memory.write(value)),
+        Effect.catchTag('SchemaError', () => Effect.fail(MemoryUnavailable.make({}))),
         Effect.result,
         Effect.flatMap(encodeWrite),
       ),
@@ -265,13 +261,13 @@ export class Person extends DurableObject<CellState, Environment> {
   }
   /** A local retraction receipt never promises that cross-layer forgetting is complete. */
   // @effect-diagnostics-next-line asyncFunction:off -- Native celld RPC is a Promise boundary.
-  async deleteNote(retraction: NoteRetraction) {
-    const { notes } = await this.#ready
+  async deleteMemory(retraction: MemoryRetraction) {
+    const { memory } = await this.#ready
     return Effect.runPromise(
       decodeRetraction(retraction).pipe(
-        Effect.flatMap((value) => notes.delete(value)),
+        Effect.flatMap((value) => memory.delete(value)),
         Effect.as(true),
-        Effect.catchTag('SchemaError', () => Effect.fail(NotesUnavailable.make({}))),
+        Effect.catchTag('SchemaError', () => Effect.fail(MemoryUnavailable.make({}))),
         Effect.result,
         Effect.flatMap(encodeRetraction),
       ),

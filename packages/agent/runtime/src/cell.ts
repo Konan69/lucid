@@ -11,7 +11,7 @@ import { routes } from './app.ts'
 import { productLayer } from './client.ts'
 import type { LoadedSkill } from './frontmatter.ts'
 import { modelsLayer } from './models.ts'
-import { Notes } from './notes.ts'
+import { Memory } from './memory.ts'
 import { PiRejected } from './threads.ts'
 import { openPerson, Person } from './person.ts'
 import { settingsLayer } from './settings.ts'
@@ -27,7 +27,7 @@ export interface CellInput {
   readonly personId: PersonId
   readonly storage: DurableObjectSqliteStorage
   readonly onWake: NonNullable<HarnessOptions['onWake']>
-  readonly notes: Notes['Service']
+  readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<LoadedSkill>
   readonly environment: object
 }
@@ -42,7 +42,7 @@ export const openCell = (input: CellInput) => {
   )
   const dependencies = Layer.mergeAll(
     productLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-    Layer.succeed(Notes, input.notes),
+    Layer.succeed(Memory, input.memory),
     Layer.succeed(BuiltinSkills, skillsExtension(input.skills)),
   ).pipe(Layer.provideMerge(foundation))
   const person = Layer.effect(

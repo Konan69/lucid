@@ -31,7 +31,7 @@ export const scopeResolver =
       }),
     )
 
-/** Resolve delivery authority without acquiring the product client, so local notes survive a server outage. */
+/** Resolve delivery authority without acquiring the product client, so local memory survives a server outage. */
 export const resolveCall: (
   harness: Effect.Effect<Harness>,
   product: ProductService,

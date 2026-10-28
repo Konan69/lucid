@@ -2,7 +2,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { Notes } from '../../notes.ts'
+import { Memory } from '../../memory.ts'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import {
@@ -149,12 +149,12 @@ export function nativeTool(tool: ToolRegistration) {
   }
 }
 
-/** Catalogue tests that exercise RPC never use notes; fail if that assumption changes. */
-export const unusedNotes: Notes['Service'] = Notes.of({
-  index: () => Effect.die('Unexpected note index'),
-  list: () => Effect.die('Unexpected note listing'),
-  search: () => Effect.die('Unexpected note search'),
-  read: () => Effect.die('Unexpected note read'),
-  write: () => Effect.die('Unexpected note write'),
-  delete: () => Effect.die('Unexpected note delete'),
+/** Catalogue tests that exercise RPC never use memory; fail if that assumption changes. */
+export const unusedMemory: Memory['Service'] = Memory.of({
+  index: () => Effect.die('Unexpected entry index'),
+  list: () => Effect.die('Unexpected entry listing'),
+  search: () => Effect.die('Unexpected entry search'),
+  read: () => Effect.die('Unexpected entry read'),
+  write: () => Effect.die('Unexpected entry write'),
+  delete: () => Effect.die('Unexpected entry delete'),
 })

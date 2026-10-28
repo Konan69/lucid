@@ -74,24 +74,24 @@ const requests = (given: World) =>
     .join('\n')
 
 describe('main runtime parity on Pi', () => {
-  it.effect('reopens the persisted SQLite note after runtime stop', () =>
+  it.effect('reopens the persisted SQLite entry after runtime stop', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const given = yield* world()
-        const note = {
+        const entry = {
           summary: 'Keep the preference',
           file: 'tea.md',
           kind: 'preference',
           expected_revision: 0,
           basis: 'said',
           description: 'Tea preference',
-          note: 'Ada prefers green tea.',
+          body: 'Ada prefers green tea.',
         }
         given.faux.setResponses([
-          fauxAssistantMessage(fauxToolCall('write_note', note), { stopReason: 'toolUse' }),
+          fauxAssistantMessage(fauxToolCall('write_memory', entry), { stopReason: 'toolUse' }),
           fauxAssistantMessage('Remembered.'),
           fauxAssistantMessage(
-            fauxToolCall('read_note', { summary: 'Read the preference', file: 'tea.md' }),
+            fauxToolCall('read_memory', { summary: 'Read the preference', file: 'tea.md' }),
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage('Read it.'),
@@ -103,7 +103,7 @@ describe('main runtime parity on Pi', () => {
         yield* settled(before, ada, THREAD, written.submissionId)
         expect((yield* read(before)).messages.flatMap((message) => message.parts)).toContainEqual(
           expect.objectContaining({
-            toolName: 'write_note',
+            toolName: 'write_memory',
             output: expect.objectContaining({ ok: true, file: 'tea.md', replaced: false }),
           }),
         )
@@ -113,11 +113,11 @@ describe('main runtime parity on Pi', () => {
         yield* settled(after, ada, THREAD, opened.submissionId)
         expect((yield* read(after)).messages.flatMap((message) => message.parts)).toContainEqual(
           expect.objectContaining({
-            toolName: 'read_note',
+            toolName: 'read_memory',
             output: expect.objectContaining({
               kind: 'preference',
               description: 'Tea preference',
-              note: note.note,
+              entry: entry.entry,
             }),
           }),
         )

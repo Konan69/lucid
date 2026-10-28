@@ -4,6 +4,14 @@ import type { Harness } from '@earendil-works/pi-durable'
 import {
   ConversationFrame,
   ConversationState,
+  MemoryAddress,
+  MemoryConflict,
+  MemoryIndex,
+  MemoryListing,
+  MemoryPage,
+  MemoryRetraction,
+  MemoryWrite,
+  SavedMemory,
   RuntimeAdmissionBody,
   RuntimeAdmissionReceipt,
   RuntimeAttachmentPath,
@@ -24,6 +32,7 @@ import type * as HttpServerError from 'effect/http/HttpServerError'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { loadHistory } from './history.ts'
+import type { MemoryMissing, MemoryUnavailable } from './memory.ts'
 import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
@@ -294,12 +303,88 @@ const history = Effect.fn('Runtime.history')(function* () {
   return yield* HttpServerResponse.schemaJson(RuntimeHistoryAnswer)(result)
 })
 
+/**
+ * The Person's own memory, for the server's Settings handlers. Only this cell's Person is
+ * addressed: the server sends the acting Person's id, and another id is refused like a Thread
+ * that is not here. A stale revision answers with the conflict itself, so Settings can say what
+ * moved; an absent entry is NotFound; storage that cannot answer is Unavailable.
+ */
+const owner = Effect.fn('Runtime.memoryOwner')(function* () {
+  yield* authorize()
+  const path = yield* HttpRouter.schemaPathParams(Schema.Struct({ personId: RuntimePersonId }))
+  const person = yield* Person
+  if (person.personId !== path.personId) return yield* new WrongThread()
+  return person
+})
+
+const refusedMemory = (error: MemoryUnavailable | MemoryMissing | MemoryConflict) => {
+  switch (error._tag) {
+    case 'MemoryMissing':
+      return refuse('NotFound', 404)
+    case 'MemoryConflict':
+      return HttpServerResponse.schemaJson(MemoryConflict)(error, { status: 409 })
+    case 'MemoryUnavailable':
+      return unavailable(error._tag)
+  }
+}
+
+const memoryIndex = Effect.fn('Runtime.memoryIndex')(function* () {
+  const person = yield* owner()
+  return yield* person.sources.memory.index(person.personId).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(MemoryIndex)),
+    Effect.catchTag('MemoryUnavailable', refusedMemory),
+  )
+})
+
+const memoryList = Effect.fn('Runtime.memoryList')(function* () {
+  const person = yield* owner()
+  const listing = yield* HttpServerRequest.schemaBodyJson(MemoryListing)
+  return yield* person.sources.memory.list(person.personId, listing).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(MemoryPage)),
+    Effect.catchTag('MemoryUnavailable', refusedMemory),
+  )
+})
+
+const memoryRead = Effect.fn('Runtime.memoryRead')(function* () {
+  const person = yield* owner()
+  const address = yield* HttpServerRequest.schemaBodyJson(MemoryAddress)
+  return yield* person.sources.memory.read(person.personId, address).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+    Effect.catchTag(['MemoryMissing', 'MemoryUnavailable'], refusedMemory),
+  )
+})
+
+const memoryWrite = Effect.fn('Runtime.memoryWrite')(function* () {
+  const person = yield* owner()
+  const write = yield* HttpServerRequest.schemaBodyJson(MemoryWrite)
+  return yield* person.sources.memory.write(person.personId, write).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+    Effect.catchTag(['MemoryConflict', 'MemoryUnavailable'], refusedMemory),
+  )
+})
+
+const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {
+  const person = yield* owner()
+  const retraction = yield* HttpServerRequest.schemaBodyJson(MemoryRetraction)
+  return yield* person.sources.memory.delete(person.personId, retraction).pipe(
+    Effect.as(HttpServerResponse.empty({ status: 204 })),
+    Effect.catchTag(['MemoryConflict', 'MemoryMissing', 'MemoryUnavailable'], refusedMemory),
+  )
+})
+
+const MEMORY = '/persons/:personId/memory'
+
 const THREAD = '/persons/:personId/threads/:threadId'
 
 /** The whole HTTP surface. Anything else is refused the same way whether or not it exists. */
 export const routes = Layer.mergeAll(
   HttpRouter.add('GET', '/health', answered(health())),
   HttpRouter.add('POST', '/persons/:personId/history', answered(history())),
+  HttpRouter.add('GET', MEMORY, answered(memoryIndex())),
+  HttpRouter.add('POST', `${MEMORY}/list`, answered(memoryList())),
+  HttpRouter.add('POST', `${MEMORY}/read`, answered(memoryRead())),
+  HttpRouter.add('POST', `${MEMORY}/write`, answered(memoryWrite())),
+  HttpRouter.add('POST', `${MEMORY}/delete`, answered(memoryDelete())),
   HttpRouter.add('POST', THREAD, answered(admission())),
   HttpRouter.add('POST', `${THREAD}/abort`, answered(stop())),
   HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),

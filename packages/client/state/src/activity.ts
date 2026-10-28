@@ -47,7 +47,6 @@ const Answered = Schema.Struct({
   changed: Schema.OptionFromOptionalKey(Schema.Boolean),
   results: list,
   tools: list,
-  memories: list,
   watches: list,
   message: text,
 })
@@ -110,11 +109,11 @@ const UNKNOWN: Step = {
 
 const STEPS = {
   // These tools already render as unknown steps. Total coverage must preserve those words.
-  read_note: UNKNOWN,
-  list_notes: UNKNOWN,
-  search_notes: UNKNOWN,
-  write_note: UNKNOWN,
-  delete_note: UNKNOWN,
+  read_memory: UNKNOWN,
+  list_memory: UNKNOWN,
+  search_memory: UNKNOWN,
+  write_memory: UNKNOWN,
+  delete_memory: UNKNOWN,
   make_integration: UNKNOWN,
   search_library: {
     said: {
@@ -160,25 +159,6 @@ const STEPS = {
       failed: 'Could not offer the integration',
     },
     detail: (asked) => [said(asked.service)],
-  },
-  recall: {
-    said: {
-      running: 'Checking what it remembers',
-      done: 'Checked what it remembers',
-      failed: 'Could not reach its memory',
-    },
-    detail: (asked, answered) => [
-      quoted(asked.query),
-      counted(answered.memories, 'thing remembered', 'things remembered'),
-    ],
-  },
-  remember: {
-    said: {
-      running: 'Remembering',
-      done: 'Remembered',
-      failed: 'Could not remember that',
-    },
-    detail: (asked) => [said(asked.content)],
   },
   read_skill: {
     said: {
@@ -444,7 +424,6 @@ const NOTHING_ASKED: Asked = {
 const NOTHING_ANSWERED: Answered = {
   results: Option.none(),
   tools: Option.none(),
-  memories: Option.none(),
   watches: Option.none(),
   ok: Option.none(),
   created: Option.none(),

@@ -1,14 +1,24 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "1256f121-dbd0-43c2-a4c3-d5f83e0a0d4b",
+  "id": "f4e76109-fa7e-4526-b01a-a3c8f15c4c1c",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
   "ddl": [
     {
-      "name": "memory_notes",
+      "name": "memory_entries",
       "entityType": "tables"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": true,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -18,7 +28,7 @@
       "generated": null,
       "name": "layer",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -28,7 +38,7 @@
       "generated": null,
       "name": "file",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -38,7 +48,7 @@
       "generated": null,
       "name": "kind",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -48,7 +58,7 @@
       "generated": null,
       "name": "description",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -58,7 +68,7 @@
       "generated": null,
       "name": "body",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -68,7 +78,7 @@
       "generated": null,
       "name": "basis",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "integer",
@@ -78,7 +88,7 @@
       "generated": null,
       "name": "revision",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "integer",
@@ -88,7 +98,7 @@
       "generated": null,
       "name": "updated_at",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
     },
     {
       "type": "text",
@@ -98,17 +108,26 @@
       "generated": null,
       "name": "authority",
       "entityType": "columns",
-      "table": "memory_notes"
+      "table": "memory_entries"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "memory_entries_pk",
+      "table": "memory_entries",
+      "entityType": "pks"
     },
     {
       "columns": [
         "layer",
         "file"
       ],
-      "nameExplicit": false,
-      "name": "memory_notes_pk",
-      "entityType": "pks",
-      "table": "memory_notes"
+      "nameExplicit": true,
+      "name": "memory_entries_address",
+      "entityType": "uniques",
+      "table": "memory_entries"
     }
   ],
   "renames": []

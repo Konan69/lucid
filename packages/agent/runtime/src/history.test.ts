@@ -3,9 +3,9 @@ import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/provid
 import { expect, it } from '@effect/vitest'
 import {
   ConversationState,
-  Note,
-  NoteFile,
-  NoteSearch,
+  MemoryEntry,
+  MemoryFile,
+  MemorySearch,
   RuntimeHistoryBody,
   RuntimeHistoryAnswer,
   RuntimeHistoryResult,
@@ -22,7 +22,7 @@ const decodeState = Schema.decodeUnknownEffect(ConversationState)
 const decodeAnswer = Schema.decodeUnknownEffect(RuntimeHistoryAnswer)
 
 /** HTTP load is backed by real native SQLite, including receipt settlements and the FTS triggers. */
-it.effect('loads two complete histories once, keeps their maps, and indexes notes', () =>
+it.effect('loads two complete histories once, keeps their maps, and indexes memory', () =>
   scenario((_given, runtime) =>
     Effect.gen(function* () {
       const requestId = 'earlier-delivery'
@@ -79,15 +79,15 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
           entries,
         }),
       )
-      const note = Note.make({
+      const entry = MemoryEntry.make({
         layer: 'memory',
-        file: NoteFile.make('copper.md'),
+        file: MemoryFile.make('copper.md'),
         kind: 'fact',
         description: 'Copper kettle',
         body: 'A copper kettle lives here.',
         basis: 'said',
       })
-      const body = RuntimeHistoryBody.make({ threads, notes: [{ ...note, updatedAt: 1234 }] })
+      const body = RuntimeHistoryBody.make({ threads, memory: [{ ...entry, updatedAt: 1234 }] })
       const path = `/persons/${ada}/history`
       const first = yield* runtime.send(path, { method: 'POST', body })
       expect(first.status).toBe(200)
@@ -134,12 +134,12 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
         )
       }
       expect((yield* runtime.send(path, { method: 'POST', body })).body).toEqual(first.body)
-      const search = yield* runtime.notes.search(
+      const search = yield* runtime.memory.search(
         ada,
-        NoteSearch.make({ query: 'copper', layer: null, limit: 10, offset: 0 }),
+        MemorySearch.make({ query: 'copper', layer: null, limit: 10, offset: 0 }),
       )
-      expect(search.entries.map((hit) => hit.file)).toEqual([note.file])
-      expect(yield* runtime.notes.read(ada, note)).toMatchObject({
+      expect(search.entries.map((hit) => hit.file)).toEqual([entry.file])
+      expect(yield* runtime.memory.read(ada, entry)).toMatchObject({
         revision: 1,
         updatedAt: 1234,
         basis: 'said',
@@ -164,7 +164,7 @@ it.effect('loads two complete histories once, keeps their maps, and indexes note
       yield* admit(runtime, ada, delivery('native-thread', 'native-delivery'))
       const refused = yield* runtime.send(path, {
         method: 'POST',
-        body: { threads: [{ ...threads[0], threadId: 'native-thread' }], notes: [] },
+        body: { threads: [{ ...threads[0], threadId: 'native-thread' }], memory: [] },
       })
       expect(refused.body).toMatchObject({
         threads: [
@@ -193,7 +193,7 @@ const response = (inputs: typeof RuntimeHistoryEntry.cases.Response.Type.inputs)
     },
   })
 const outcomes = RuntimeHistoryBody.make({
-  notes: [],
+  memory: [],
   threads: [
     {
       threadId,

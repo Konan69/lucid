@@ -6,7 +6,7 @@ Model requirement: none for the implemented journeys. Launch still requires prov
 
 Personal Settings places General, What Vivid knows, Text Vivid, and Devices under You. People, Integrations, Rules, and Record belong under Your space. The [Settings screen](../../../../apps/web/src/screen/Settings.tsx) owns those groups.
 
-The empty [Memory screen](../../../../apps/web/src/screen/settings/Memory.tsx) calls the summary saved knowledge and says that Vivid's own notes are not shown. This checks truthful empty copy, not the content, recall, or privacy of model memory.
+The empty [Memory screen](../../../../apps/web/src/screen/settings/Memory.tsx) calls the summary saved knowledge and says that Vivid's own memory are not shown. This checks truthful empty copy, not the content, recall, or privacy of model memory.
 
 The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.tsx) places popular services under purpose headings. A typed search returns one Results group in catalog order. [purpose.ts](../../../../packages/client/state/src/purpose.ts) is shared with the phone. The shipped public RPC is `FindServices`, not `ListServices`.
 
@@ -21,7 +21,7 @@ After Launch and Doctor on the unchanged commit, run both recipes with the expli
 
 HTTP requires `ListMemory` to return no facts and an empty brief. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must remain empty.
 
-Browser opens Settings over its existing empty Thread. This avoids Home's separate arrival journey. It checks the empty knowledge copy before and after reload, then checks the Settings navigation groups. It clicks Integrations and compares the visible popular tiles to the real public catalog answer. Every service must appear once, in catalog order within its group. The visible purpose headings must follow the documented order. Gmail must be under Mail and calendar; Google Drive must be under Files and notes.
+Browser opens Settings over its existing empty Thread. This avoids Home's separate arrival journey. It checks the empty knowledge copy before and after reload, then checks the Settings navigation groups. It clicks Integrations and compares the visible popular tiles to the real public catalog answer. Every service must appear once, in catalog order within its group. The visible purpose headings must follow the documented order. Gmail must be under Mail and calendar; Google Drive must be under Files and memory.
 
 Typing Gmail in Search integrations must replace those groups with Results and the real search answer in order. The recipe waits for the actual result tiles, since the app retains the previous catalog while a request is pending. It captures `settings-navigation.json`, `popular-groups.json`, `search-groups.json`, public receipts, snapshots, and screenshots under `browser/settings/`. A final `ListConnections` confirms that browsing connected nothing.
 

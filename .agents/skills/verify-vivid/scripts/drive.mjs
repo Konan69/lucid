@@ -10,7 +10,7 @@ import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
-import { notes } from './notes.mjs'
+import { memory } from './memory.mjs'
 import { feed } from './feed.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
@@ -35,7 +35,7 @@ export const features = [
   'devices',
   'reading',
   'settings',
-  'notes',
+  'memory',
   'discord',
 ]
 export const png =
@@ -373,7 +373,7 @@ const recipes = {
   document,
   devices,
   feed,
-  notes,
+  memory,
   watch,
   reading,
   settings: settingsProof,
@@ -397,7 +397,7 @@ export async function drive(state, feature) {
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
-          notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.',
+          memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
         }
   let failed = false
   for (const name of chosen) {

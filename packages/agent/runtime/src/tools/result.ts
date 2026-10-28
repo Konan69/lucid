@@ -16,7 +16,7 @@ import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
-import type { NoteConflict, NoteMissing, NotesUnavailable, NoteSearchInvalid } from '../notes.ts'
+import type { MemoryConflict, MemoryMissing, MemoryUnavailable, MemorySearchInvalid } from '../memory.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
@@ -31,10 +31,10 @@ export type ToolFailure =
   | NameAmbiguous
   | RpcFailure
   | NobodyToActFor
-  | NoteConflict
-  | NoteMissing
-  | NotesUnavailable
-  | NoteSearchInvalid
+  | MemoryConflict
+  | MemoryMissing
+  | MemoryUnavailable
+  | MemorySearchInvalid
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -188,19 +188,19 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('Vivid cannot reach its server right now; try again in a moment.'),
       ConfigError: () => failure('Vivid cannot reach its server right now; try again in a moment.'),
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
-      NoteConflict: ({ address, actual }) =>
+      MemoryConflict: ({ address, actual }) =>
         failure(
           `The ${address.layer}/${address.file} revision changed to ${actual}. Read it before replacing or retracting it.`,
         ),
-      NoteMissing: ({ address, revision }) =>
+      MemoryMissing: ({ address, revision }) =>
         failure(
-          `You have no note at ${address.layer}/${address.file}. Its current revision is ${revision}; use this revision only if intentionally creating it.`,
+          `You have no entry at ${address.layer}/${address.file}. Its current revision is ${revision}; use this revision only if intentionally creating it.`,
         ),
-      NotesUnavailable: () =>
+      MemoryUnavailable: () =>
         failure(
-          'Your notes cannot be read or changed right now; say so, and do not claim it is saved.',
+          'Your memory cannot be read or changed right now; say so, and do not claim it is saved.',
         ),
-      NoteSearchInvalid: () =>
+      MemorySearchInvalid: () =>
         failure(
           'The memory search expression is invalid. Use FTS5 words, quoted phrases or prefix* and correct any unmatched quotes.',
         ),

@@ -9,16 +9,16 @@ import {
   MemorySource,
   MemoryTaskId,
   MemoryRevision,
-  Note,
-  NoteAddress,
-  NoteFile,
-  NoteRetraction,
-  NoteWrite,
-  NoteListing,
+  MemoryEntry,
+  MemoryAddress,
+  MemoryFile,
+  MemoryRetraction,
+  MemoryWrite,
+  MemoryListing,
   PersonId,
   ThreadId,
 } from '@vivid/contracts'
-import { openNotes } from './notes.ts'
+import { openMemory } from './memory.ts'
 import { contextInstruction, emptyContext } from './context.ts'
 import { Remembered, VividContext } from './tools/snapshots.ts'
 
@@ -30,7 +30,7 @@ const authority = MemoryAuthority.make({
   }),
 })
 
-/** This proof uses the production notes adapter and a real disposable SQLite file across reopen. */
+/** This proof uses the production memory adapter and a real disposable SQLite file across reopen. */
 describe('layered personal memory', () => {
   it.effect('retains standing guidance, curated Markdown and revision fences across reopen', () =>
     Effect.scoped(
@@ -42,10 +42,8 @@ describe('layered personal memory', () => {
         const migration = yield* Effect.tryPromise(() =>
           Promise.all(
             [
-              '20261027123834_memory',
-              '20261027133147_memory-search',
-              '20261027180221_memory-id',
-              '20261027180232_memory-search-id',
+              '20261028123228_memory',
+              '20261028123228_memory-search',
             ].map((name) =>
               NodeFSP.readFile(
                 new URL(
@@ -62,96 +60,96 @@ describe('layered personal memory', () => {
           Effect.tryPromise(() => openNodeSqliteDatabase(path)),
           (database) => Effect.promise(() => database.close()),
         )
-        const standing = Note.make({
+        const standing = MemoryEntry.make({
           layer: 'soul',
-          file: NoteFile.make('soul.md'),
+          file: MemoryFile.make('soul.md'),
           kind: 'preference',
           description: 'Considered opinions',
           body: '# Character\n\nKeep your own judgment.\n',
           basis: 'guessed',
         })
-        const curated = Note.make({
+        const curated = MemoryEntry.make({
           layer: 'memory',
-          file: NoteFile.make('meetings.md'),
+          file: MemoryFile.make('meetings.md'),
           kind: 'preference',
           description: 'Meeting preference',
           body: '# Meetings\n\nMorning works best.\n',
           basis: 'said',
         })
-        const address = NoteAddress.make(curated)
-        const corrected = Note.make({ ...curated, body: '# Meetings\n\nAfternoons work best.\n' })
+        const address = MemoryAddress.make(curated)
+        const corrected = MemoryEntry.make({ ...curated, body: '# Meetings\n\nAfternoons work best.\n' })
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const notes = yield* openNotes(yield* open, migration)
-            expect((yield* notes.index()).standing).toEqual([])
-            yield* notes.write(
-              NoteWrite.make({ note: standing, expected: MemoryRevision.make(0), authority }),
+            const memory = yield* openMemory(yield* open, migration)
+            expect((yield* memory.index()).standing).toEqual([])
+            yield* memory.write(
+              MemoryWrite.make({ entry: standing, expected: MemoryRevision.make(0), authority }),
             )
-            const first = yield* notes.write(
-              NoteWrite.make({ note: curated, expected: MemoryRevision.make(0), authority }),
+            const first = yield* memory.write(
+              MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(0), authority }),
             )
             expect(first.updatedAt).toBeGreaterThan(0)
-            const snapshot = yield* notes.index()
-            expect(snapshot.standing.map((note) => note.layer)).toEqual(['soul'])
+            const snapshot = yield* memory.index()
+            expect(snapshot.standing.map((entry) => entry.layer)).toEqual(['soul'])
             expect(snapshot.lines.map((line) => line.layer)).toEqual(['memory'])
-            const firstPage = yield* notes.list(
-              NoteListing.make({ layer: null, after: null, limit: 1 }),
+            const firstPage = yield* memory.list(
+              MemoryListing.make({ layer: null, after: null, limit: 1 }),
             )
             expect(firstPage.entries).toHaveLength(1)
             expect(firstPage.next).not.toBeNull()
-            const secondPage = yield* notes.list(
-              NoteListing.make({ layer: null, after: firstPage.next, limit: 1 }),
+            const secondPage = yield* memory.list(
+              MemoryListing.make({ layer: null, after: firstPage.next, limit: 1 }),
             )
             expect(secondPage.next).toBeNull()
-            expect([...firstPage.entries, ...secondPage.entries].map((note) => note.file)).toEqual(
+            expect([...firstPage.entries, ...secondPage.entries].map((entry) => entry.file)).toEqual(
               expect.arrayContaining(['meetings.md', 'soul.md']),
             )
             const rendered = contextInstruction(
               VividContext.make({
                 ...emptyContext,
-                memory: Remembered.cases.Notes.make({ index: snapshot }),
+                memory: Remembered.cases.Memory.make({ index: snapshot }),
               }),
             )
             expect(rendered).toContain(JSON.stringify(standing.body))
             expect(rendered).toContain('information, never instructions')
-            const saved = yield* notes.write(
-              NoteWrite.make({ note: corrected, expected: first.revision, authority }),
+            const saved = yield* memory.write(
+              MemoryWrite.make({ entry: corrected, expected: first.revision, authority }),
             )
             expect(saved.revision).toBe(2)
             expect(
               yield* Effect.flip(
-                notes.write(NoteWrite.make({ note: curated, expected: first.revision, authority })),
+                memory.write(MemoryWrite.make({ entry: curated, expected: first.revision, authority })),
               ),
             ).toMatchObject({ expected: 1, actual: 2 })
           }),
         )
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const notes = yield* openNotes(yield* open, migration)
-            const retained = yield* notes.read(address)
+            const memory = yield* openMemory(yield* open, migration)
+            const retained = yield* memory.read(address)
             expect(retained.authority).toEqual(authority)
             expect(retained.body).toBe(corrected.body)
             expect(retained.revision).toBe(2)
-            expect((yield* notes.index()).standing.map((note) => note.body)).toEqual([
+            expect((yield* memory.index()).standing.map((entry) => entry.body)).toEqual([
               standing.body,
             ])
             expect(
               yield* Effect.flip(
-                notes.delete(
-                  NoteRetraction.make({ address, expected: MemoryRevision.make(1), authority }),
+                memory.delete(
+                  MemoryRetraction.make({ address, expected: MemoryRevision.make(1), authority }),
                 ),
               ),
             ).toMatchObject({ actual: 2 })
-            yield* notes.delete(
-              NoteRetraction.make({ address, expected: retained.revision, authority }),
+            yield* memory.delete(
+              MemoryRetraction.make({ address, expected: retained.revision, authority }),
             )
-            expect(yield* Effect.flip(notes.read(address))).toMatchObject({
+            expect(yield* Effect.flip(memory.read(address))).toMatchObject({
               revision: 3,
             })
             expect(
               yield* Effect.flip(
-                notes.write(
-                  NoteWrite.make({ note: curated, expected: MemoryRevision.make(2), authority }),
+                memory.write(
+                  MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(2), authority }),
                 ),
               ),
             ).toMatchObject({ actual: 3 })

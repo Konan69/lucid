@@ -26,7 +26,7 @@ import { builtinSkillsLayer } from './skills.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { openPerson, Person } from '../src/person.ts'
-import { openNotes, Notes, NotesUnavailable } from '../src/notes.ts'
+import { openMemory, Memory, MemoryUnavailable } from '../src/memory.ts'
 import { RcMap } from 'effect'
 
 const TOKEN = 'fixture-runtime-token'
@@ -188,10 +188,8 @@ const memoryMigration = Effect.tryPromise({
   try: () =>
     Promise.all(
       [
-        '20261027123834_memory',
-        '20261027133147_memory-search',
-        '20261027180221_memory-id',
-        '20261027180232_memory-search-id',
+        '20261028123228_memory',
+        '20261028123228_memory-search',
       ].map((name) =>
         NodeFSP.readFile(
           new URL(
@@ -207,7 +205,7 @@ const memoryMigration = Effect.tryPromise({
 
 type Cell = {
   readonly person: Effect.Success<ReturnType<typeof openPerson>>
-  readonly notes: Effect.Success<ReturnType<typeof openNotes>>
+  readonly memory: Effect.Success<ReturnType<typeof openMemory>>
 }
 
 /**
@@ -215,29 +213,29 @@ type Cell = {
  * cell activation only; celld ownership and alarms require the parent's real host proof.
  */
 export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) {
-  // Activation failures mean unavailable memory only at this note-tool boundary.
-  const noteCell = (person: PersonId) =>
-    RcMap.get(cells, person).pipe(Effect.mapError(() => NotesUnavailable.make({})))
-  const notes = Notes.of({
+  // Activation failures mean unavailable memory only at this entry-tool boundary.
+  const entryCell = (person: PersonId) =>
+    RcMap.get(cells, person).pipe(Effect.mapError(() => MemoryUnavailable.make({})))
+  const memory = Memory.of({
     index: (person) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.index())),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.index())),
     list: (person, listing) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.list(listing))),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.list(listing))),
     search: (person, search) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.search(search))),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.search(search))),
     read: (person, file) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.read(file))),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.read(file))),
     write: (person, write) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.write(write))),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.write(write))),
     delete: (person, file) =>
-      Effect.scoped(Effect.flatMap(noteCell(person), (cell) => cell.notes.delete(file))),
+      Effect.scoped(Effect.flatMap(entryCell(person), (cell) => cell.memory.delete(file))),
   })
   const context = yield* Layer.build(
     Layer.mergeAll(
       productLayer.pipe(Layer.provide(serverLayer(given))),
       builtinSkillsLayer,
       Layer.succeed(Models, given.models),
-      Layer.succeed(Notes, notes),
+      Layer.succeed(Memory, memory),
     ).pipe(
       Layer.provideMerge(
         Layer.succeed(
@@ -255,7 +253,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
     Cell,
     | FixtureFailed
     | import('../src/threads.ts').PiRejected
-    | import('../src/notes.ts').NotesUnavailable
+    | import('../src/memory.ts').MemoryUnavailable
   > = yield* RcMap.make({
     idleTimeToLive: Infinity,
     lookup: (personId: PersonId) =>
@@ -271,11 +269,11 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
           try: () => SqliteStorage.open(database, { prefix: 'pi_' }),
           catch: () => new FixtureFailed(),
         })
-        const localNotes = yield* openNotes(database, yield* memoryMigration)
+        const localMemory = yield* openMemory(database, yield* memoryMigration)
         const person = yield* openPerson(personId, storage, undefined).pipe(Effect.provide(context))
         given.people.add(personId)
         person.harness.resume()
-        return { person, notes: localNotes }
+        return { person, memory: localMemory }
       }),
   })
   const persons = {
@@ -324,7 +322,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
   })
 
   return {
-    notes,
+    memory,
     send,
     link: (path: string) => Effect.flatMap(call(reading(path, 'text/event-stream')), linked),
     bytes: (path: string) => Effect.flatMap(call(reading(path, '*/*')), bytesOf),

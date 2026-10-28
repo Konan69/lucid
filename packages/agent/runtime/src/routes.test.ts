@@ -156,13 +156,13 @@ describe('the runtime over HTTP', () => {
     ),
   )
 
-  it.effect('stores long Markdown and reads every page through the note tools', () =>
+  it.effect('stores long Markdown and reads every page through the entry tools', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
         const body = '# Plan\n\n' + 'A lasting detail.\n'.repeat(400) + '\nThe final detail.'
         given.faux.setResponses([
           fauxAssistantMessage(
-            fauxToolCall('write_note', {
+            fauxToolCall('write_memory', {
               summary: 'Remember the plan',
               layer: 'memory',
               file: 'plan.md',
@@ -170,12 +170,12 @@ describe('the runtime over HTTP', () => {
               basis: 'said',
               kind: 'workstream',
               description: 'The complete plan',
-              note: body,
+              body,
             }),
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage(
-            fauxToolCall('read_note', {
+            fauxToolCall('read_memory', {
               summary: 'Read the plan',
               file: 'plan.md',
               offset: 0,
@@ -184,7 +184,7 @@ describe('the runtime over HTTP', () => {
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage(
-            fauxToolCall('read_note', {
+            fauxToolCall('read_memory', {
               summary: 'Read the rest of the plan',
               file: 'plan.md',
               offset: 4000,
@@ -193,16 +193,16 @@ describe('the runtime over HTTP', () => {
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage(
-            fauxToolCall('list_notes', { summary: 'Find saved plans', layer: 'memory', limit: 1 }),
+            fauxToolCall('list_memory', { summary: 'Find saved plans', layer: 'memory', limit: 1 }),
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage(
-            fauxToolCall('search_notes', { summary: 'Find the lasting detail', query: 'lasting' }),
+            fauxToolCall('search_memory', { summary: 'Find the lasting detail', query: 'lasting' }),
             { stopReason: 'toolUse' },
           ),
           fauxAssistantMessage('Read the complete plan.'),
         ])
-        const receipt = yield* admit(runtime, ada, delivery('long-memory', 'long-note'))
+        const receipt = yield* admit(runtime, ada, delivery('long-memory', 'long-entry'))
         expect(yield* settled(runtime, ada, 'long-memory', receipt.submissionId)).toMatchObject({
           toolCalls: 5,
           reply: 'Read the complete plan.',
@@ -214,7 +214,7 @@ describe('the runtime over HTTP', () => {
         const parts = state.messages.flatMap((message) => message.parts)
         expect(parts).toContainEqual(
           expect.objectContaining({
-            toolName: 'search_notes',
+            toolName: 'search_memory',
             output: {
               entries: [
                 expect.objectContaining({
@@ -228,7 +228,7 @@ describe('the runtime over HTTP', () => {
         )
         expect(parts).toContainEqual(
           expect.objectContaining({
-            toolName: 'list_notes',
+            toolName: 'list_memory',
             output: {
               entries: [expect.objectContaining({ layer: 'memory', file: 'plan.md' })],
               next_cursor: null,
@@ -237,9 +237,9 @@ describe('the runtime over HTTP', () => {
         )
         expect(parts).toContainEqual(
           expect.objectContaining({
-            toolName: 'read_note',
+            toolName: 'read_memory',
             output: expect.objectContaining({
-              note: body.slice(0, 4000),
+              entry: body.slice(0, 4000),
               next_offset: 4000,
               complete: false,
               total_characters: body.length,
@@ -248,9 +248,9 @@ describe('the runtime over HTTP', () => {
         )
         expect(parts).toContainEqual(
           expect.objectContaining({
-            toolName: 'read_note',
+            toolName: 'read_memory',
             output: expect.objectContaining({
-              note: body.slice(4000),
+              entry: body.slice(4000),
               next_offset: null,
               complete: true,
             }),

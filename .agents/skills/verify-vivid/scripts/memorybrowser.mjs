@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
-import { noteSteps, noteReceipt } from './notes.mjs'
+import { memorySteps, memoryReceipt } from './memory.mjs'
 import { settled, history, json } from './wire.mjs'
 
 /** CopyWords marks each finished text reply; its sequence must reach this Run, even when words repeat. */
@@ -48,10 +48,10 @@ async function latestReply(browser, page, currentRun, { directory, stage }) {
 }
 
 /** The composer drives every mutation; public receipts corroborate visible replies before and after reload. */
-export async function noteBrowser(state, id, directory, browser) {
-  assert.equal(state.modelKind, 'real', 'Notes requires a real model; rehearsal cannot prove it')
+export async function memoryBrowser(state, id, directory, browser) {
+  assert.equal(state.modelKind, 'real', 'Memory requires a real model; rehearsal cannot prove it')
   const { run, capture } = browser
-  const steps = noteSteps()
+  const steps = memorySteps()
   await json(
     directory + '/steps.json',
     steps.map(({ name, prompt, change }) => ({ name, prompt, change })),
@@ -65,7 +65,7 @@ export async function noteBrowser(state, id, directory, browser) {
     const detail = await settled(state, id, index + 1, 'Completed', evidence)
     const page = await history(state, id, evidence)
     const currentRun = detail.runs[index].submissionId
-    await noteReceipt(page, currentRun, step, evidence, known)
+    await memoryReceipt(page, currentRun, step, evidence, known)
     await latestReply(browser, page, currentRun, { directory: evidence, stage: 'after' })
     await capture(step.name + '-after')
     await run(['reload'])
@@ -80,7 +80,7 @@ export async function noteBrowser(state, id, directory, browser) {
     proved:
       'Web composer write, read, same-file replacement, read replacement, delete and missing read. Each tool receipt is checked and each reply survives reload.',
     unsupported: [
-      'Dedicated Notes list or editor; Notes are only exposed through the agent in this client',
+      'Dedicated Memory list or editor; Memory are only exposed through the agent in this client',
       'owner cancellation and idle capacity',
       'server process restart',
       'native phone and desktop controls',

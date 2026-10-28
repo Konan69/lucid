@@ -13,8 +13,8 @@ import {
   MemoryAuthority,
   MemoryRevision,
   MemorySource,
-  NoteAddress,
-  NoteWrite,
+  MemoryAddress,
+  MemoryWrite,
   RuntimeHistoryAnswer,
   RuntimeHistoryInput,
   RuntimeHistoryResult,
@@ -24,7 +24,7 @@ import {
   RuntimeHistoryEntry,
 } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
-import { Notes } from './notes.ts'
+import { Memory } from './memory.ts'
 import type { PersonConversations } from './person.ts'
 import { Answered, RESPONSE_ENTRY, RUN_ENTRY } from './response.ts'
 import {
@@ -274,43 +274,43 @@ const loadThread = Effect.fn('History.thread')(function* (
   })
 })
 
-/** Notes use compare-and-write revision zero. Identical imports leave their revision unchanged. */
-const loadNotes = Effect.fn('History.notes')(function* (
+/** Memory use compare-and-write revision zero. Identical imports leave their revision unchanged. */
+const loadMemory = Effect.fn('History.memory')(function* (
   person: PersonConversations,
   body: RuntimeHistoryBody,
 ) {
-  const notes = yield* Notes
-  for (const note of body.notes) {
-    const address = NoteAddress.make(note)
-    const existing = yield* notes.read(person.personId, address).pipe(
+  const memory = yield* Memory
+  for (const entry of body.memory) {
+    const address = MemoryAddress.make(entry)
+    const existing = yield* memory.read(person.personId, address).pipe(
       Effect.asSome,
-      Effect.catchTag('NoteMissing', (missing) =>
+      Effect.catchTag('MemoryMissing', (missing) =>
         missing.revision === 0 ? Effect.succeedNone : Effect.fail(new InvalidHistory()),
       ),
     )
     if (Option.isSome(existing)) {
       const saved = existing.value
       if (
-        saved.layer !== note.layer ||
-        saved.file !== note.file ||
-        saved.kind !== note.kind ||
-        saved.description !== note.description ||
-        saved.body !== note.body ||
-        saved.basis !== note.basis ||
-        saved.updatedAt !== note.updatedAt ||
+        saved.layer !== entry.layer ||
+        saved.file !== entry.file ||
+        saved.kind !== entry.kind ||
+        saved.description !== entry.description ||
+        saved.body !== entry.body ||
+        saved.basis !== entry.basis ||
+        saved.updatedAt !== entry.updatedAt ||
         !MemorySource.guards.HistoryLoad(saved.authority.source)
       )
         return yield* new InvalidHistory()
       continue
     }
-    yield* notes.write(
+    yield* memory.write(
       person.personId,
-      NoteWrite.make({
-        note,
+      MemoryWrite.make({
+        entry,
         expected: MemoryRevision.make(0),
         authority: MemoryAuthority.make({
           actor: person.personId,
-          source: MemorySource.cases.HistoryLoad.make({ updatedAt: note.updatedAt }),
+          source: MemorySource.cases.HistoryLoad.make({ updatedAt: entry.updatedAt }),
         }),
       }),
     )
@@ -322,7 +322,7 @@ export const loadHistory = Effect.fn('History.load')(function* (
   person: PersonConversations,
   body: RuntimeHistoryBody,
 ) {
-  yield* loadNotes(person, body).pipe(Effect.mapError((cause) => new PiRejected({ cause })))
+  yield* loadMemory(person, body).pipe(Effect.mapError((cause) => new PiRejected({ cause })))
   const threads = yield* Effect.forEach(body.threads, (thread) =>
     loadThread(person, thread).pipe(
       Effect.catchTag('PiRejected', (failure) =>

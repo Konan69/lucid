@@ -12,7 +12,7 @@ import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
-import { noteBrowser } from './notebrowser.mjs'
+import { memoryBrowser } from './memorybrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 
@@ -56,7 +56,7 @@ const recipes = {
   stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
-  notes: { check: 'notes' },
+  memory: { check: 'memory' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -350,7 +350,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['notes', 'question', 'approve', 'deny'].includes(feature) && state.modelKind !== 'real'
+    ['memory', 'question', 'approve', 'deny'].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
@@ -457,8 +457,8 @@ async function journey(state, feature) {
         thread: id,
         scope: specialRecipes[feature].scope,
       }
-    } else if (feature === 'notes') {
-      await noteBrowser(state, id, directory, {
+    } else if (feature === 'memory') {
+      await memoryBrowser(state, id, directory, {
         run,
         capture,
         render: (text) => dom(run, renderedReply(text)),
@@ -469,7 +469,7 @@ async function journey(state, feature) {
         verdict: 'proved',
         thread: id,
         scope:
-          'Notes tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
+          'Memory tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
       }
     } else {
       if (existing) {

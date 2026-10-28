@@ -2,7 +2,7 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import type { VividRpcClient } from '@vivid/client-runtime'
 import type { MemoryAuthority } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Predicate } from 'effect'
-import { Notes } from '../notes.ts'
+import { Memory } from '../memory.ts'
 import type { Acting } from '../client.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
 import { ComputerSaid } from './sandbox.ts'
@@ -79,25 +79,25 @@ export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
 export type RunScoped = ReturnType<typeof scopedRunner>
 
 /**
- * Local notes require the prepared Person authority, not a product RPC client. Resolve it
+ * Local memory requires the prepared Person authority, not a product RPC client. Resolve it
  * through the same production resolver as Scope, including durable recovery if needed. An
  * absent product server therefore cannot block local memory on an already attributed turn.
- * The caller supplies the Notes layer so tool definitions can load without runtime settings.
+ * The caller supplies the Memory layer so tool definitions can load without runtime settings.
  */
-export function noteRunner(
+export function memoryRunner(
   authority: () => Effect.Effect<MemoryAuthority, ToolFailure>,
-  notes: Notes['Service'],
+  memory: Memory['Service'],
 ) {
-  return function runNote(
-    operation: (authority: MemoryAuthority) => Effect.Effect<ToolResult, ToolFailure, Notes>,
+  return function runMemory(
+    operation: (authority: MemoryAuthority) => Effect.Effect<ToolResult, ToolFailure, Memory>,
     { signal, tool }: { readonly signal: AbortSignal; readonly tool: string },
   ) {
     const program = Effect.gen(function* () {
       return yield* operation(yield* authority())
-    }).pipe(Effect.provideService(Notes, notes))
-    // oxlint-disable-next-line vivid/no-runpromise-in-library -- Pi's local note tool callback requires a Promise.
+    }).pipe(Effect.provideService(Memory, memory))
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- Pi's local memory tool callback requires a Promise.
     return Effect.runPromise(settle(program, tool), { signal })
   }
 }
 
-export type RunNote = ReturnType<typeof noteRunner>
+export type RunMemory = ReturnType<typeof memoryRunner>

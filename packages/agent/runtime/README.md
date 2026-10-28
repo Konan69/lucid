@@ -6,7 +6,7 @@ this boundary. celld owns activation, ownership, and idle lifecycle. Pi owns tas
 deduplication, waiting, abort, and restart.
 
 The integration is transitioning from Pi Durable `1.2.0` to `1.4.0`. The custom PostgreSQL
-adapter is being deleted. The cell host, Notes, infrastructure, and verification integration
+adapter is being deleted. The cell host, Memory, infrastructure, and verification integration
 are in progress and have not been proven through the real product. Existing Node startup,
 Docker, and verifier commands do not establish a working cell runtime.
 
@@ -18,9 +18,8 @@ starting work, keep it armed while work is active, and call `harness.resume()` o
 celld supplies the single owner and SQLite durability. Vivid adds no central Persons map,
 idle timer, ownership lock, or recovery scheduler.
 
-Notes share the Person cell's database, separate from Pi's tables. Helix remains the server's
-knowledge graph and embeddings. Cell-backed Notes integration and its lifecycle proof remain
-required. A shared Thread lives in its creator's cell, but Notes belong to the acting Person.
+Memory shares the Person cell's database, separate from Pi's tables. Cell-backed Memory integration and its lifecycle proof remain
+required. A shared Thread lives in its creator's cell, but Memory belongs to the acting Person.
 Pictures, attachments, and tool image results must survive the host change.
 
 PostgreSQL remains the product database for auth, Company/Membership, Thread metadata, Runs,
@@ -57,7 +56,7 @@ tools with fixed inputs and reports real receipts. It proves plumbing, not model
 ## Required proof
 
 Runtime behavior tests must use native first-party persistent storage. Cell-backed product
-verification must drive the server gateway, Notes, pictures, abort, terminal waiting, and
+verification must drive the server gateway, Memory, pictures, abort, terminal waiting, and
 reconnect after ownership moves on a disposable devbox stack. The existing verifier still
 launches the old Node host and runtime migration command. Until its cell integration lands,
 report these journeys as blocked rather than verified.

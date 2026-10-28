@@ -1,4 +1,5 @@
-CREATE TABLE `memory_notes` (
+CREATE TABLE `memory_entries` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`layer` text NOT NULL,
 	`file` text NOT NULL,
 	`kind` text NOT NULL,
@@ -8,5 +9,5 @@ CREATE TABLE `memory_notes` (
 	`revision` integer NOT NULL,
 	`updated_at` integer NOT NULL,
 	`authority` text NOT NULL,
-	CONSTRAINT `memory_notes_pk` PRIMARY KEY(`layer`, `file`)
+	CONSTRAINT `memory_entries_address` UNIQUE(`layer`,`file`)
 );

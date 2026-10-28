@@ -7,8 +7,8 @@ deduplication, wait, abort, and restart. Product state and authorization remain 
 runtime tools call it through the schema-derived `VividRpcClient`.
 
 The existing integration is Pi Durable 1.2.0; the cell host targets 1.4.0. The custom PostgreSQL
-adapter is being deleted. Cell hosting, Notes, infrastructure wiring, and real product verification
-are in progress, not proven. Preserve pictures, Notes, and acting authority through that work.
+adapter is being deleted. Cell hosting, Memory, infrastructure wiring, and real product verification
+are in progress, not proven. Preserve pictures, Memory, and acting authority through that work.
 
 Read the installed packages before changing anything that touches Pi
 (`node_modules/@earendil-works/*/dist`), and the installed README for the same version. Never assume its API from memory; it is experimental and changes between releases.
@@ -55,7 +55,7 @@ Use the installed Pi README and source for the selected version. celld's `exampl
 another `agents/harness` SDK; it is a host-binding reference, not a replacement for pi-durable.
 The current verifier starts the old Node entry and invokes a runtime PG migration command.
 Cell-backed journeys are blocked until the launcher and recipes use the real cell host. Require
-proof on a disposable devbox, including wake, abort, terminal wait, Notes, pictures, and reconnect
+proof on a disposable devbox, including wake, abort, terminal wait, Memory, pictures, and reconnect
 across an owner move. A PG-adapter test or rehearsal does not prove those claims.
 
 ## Runtime contract

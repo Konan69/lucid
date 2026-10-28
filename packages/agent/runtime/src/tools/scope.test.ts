@@ -1,4 +1,4 @@
-import { unusedNotes } from './tests/harness.ts'
+import { unusedMemory } from './tests/harness.ts'
 import * as NodeHttp from 'node:http'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
@@ -99,8 +99,8 @@ it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC ca
               return Scope.of({ acting, client: yield* VividRpcClient })
             }),
           ).pipe(Layer.provide(product.as(acting))),
-        () => Effect.die('Unexpected note authority'),
-        unusedNotes,
+        () => Effect.die('Unexpected memory authority'),
+        unusedMemory,
       )
       const page = definitions.find((tool) => tool.name === 'read_page')
       if (page === undefined) expect.fail('Missing read_page tool.')

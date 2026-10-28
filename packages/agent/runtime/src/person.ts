@@ -13,7 +13,7 @@ import { resolveMemoryCall, scopeResolver } from './authority.ts'
 import { Product } from './client.ts'
 import type { ContextSources } from './context.ts'
 import { opening } from './deliveries.ts'
-import { Notes } from './notes.ts'
+import { Memory } from './memory.ts'
 import { Models } from './models.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
@@ -77,7 +77,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
 ): Effect.fn.Return<
   PersonConversations,
   PiRejected,
-  Product | Models | BuiltinSkills | Notes | Scope.Scope
+  Product | Models | BuiltinSkills | Memory | Scope.Scope
 > {
   const product = yield* Product
   const models = yield* Models
@@ -89,11 +89,11 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const ready = yield* Deferred.make<Harness>()
   const opened = Deferred.await(ready)
 
-  const notes = yield* Notes
+  const memory = yield* Memory
   const all = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
-    notes,
+    memory,
   )
   const registry = createRegistry()
   registry.install(
@@ -139,7 +139,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
     personId,
     harness,
     agent: { model: models.selected, thinkingLevel: THINKING, tools: offered(all, skills) },
-    sources: { product, notes },
+    sources: { product, memory },
     quiet,
   } satisfies PersonConversations
 })

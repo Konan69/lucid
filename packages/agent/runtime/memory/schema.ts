@@ -1,8 +1,8 @@
 import { integer, unique, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 /** One current revision per address. A retraction removes the body and retains its revision. */
-export const notes = sqliteTable(
-  'memory_notes',
+export const entries = sqliteTable(
+  'memory_entries',
   {
     id: integer().primaryKey({ autoIncrement: true }),
     layer: text().notNull(),
@@ -15,5 +15,5 @@ export const notes = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
     authority: text().notNull(),
   },
-  (table) => [unique('memory_notes_address').on(table.layer, table.file)],
+  (table) => [unique('memory_entries_address').on(table.layer, table.file)],
 )
