@@ -32,21 +32,21 @@ The command holds the devbox Android lock until its finally block closes the pri
 
 After Launch and Doctor at a clean head, run `verify phone all <run>` for one APK installation and one private device session. Each named journey is also available as `verify phone <journey> <run>`. A phone command always stops its captured emulator in finally, so provision again before the next phone command. `all` continues after an individual journey fails and retains its crash logcat, snapshot and screenshot.
 
-| Journey | Phone actions and required receipts |
-| --- | --- |
-| `thread` | Email sign-in, drawer selection, idle composer and public BePresent. |
-| `send` | Composer Send, streamed marker, leave/reopen, kill/relaunch, contextual follow-up, matching durable history and WatchThread settlement. |
-| `replies` | Send a natural question, tap a model-offered chip, compare its stored words with the next Person message. |
-| `question` | Ask the web recipe's Cedar/Willow prompt, choose Cedar on the phone, assert Answered and a Decision Run using Cedar. |
-| `approve` | Connect disposable Verify Pulse and add an Ask rule. Press Allow. Assert one provider event. |
-| `deny` | A separate Thread and Ask rule. Press Don’t allow. Assert no provider event. |
-| `stop` | Stop Vivid during real text, assert the same Run Stopped, retain partial after reopen, send and receive the next message. |
-| `picture` | Push an opaque red PNG into Android media storage, use Attach files and Photos, select it in the API-35 picker, send and recognize red, reopen with retained file parts and screenshot. |
-| `memory` | Tell a project preference, require write_memory, ask in a new Thread, require read_memory of the same address and a correct reply. |
+| Journey           | Phone actions and required receipts                                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `thread`          | Email sign-in, drawer selection, idle composer and public BePresent.                                                                                                                                                   |
+| `send`            | Composer Send, streamed marker, leave/reopen, kill/relaunch, contextual follow-up, matching durable history and WatchThread settlement.                                                                                |
+| `replies`         | Send a natural question, tap a model-offered chip, compare its stored words with the next Person message.                                                                                                              |
+| `question`        | Ask the web recipe's Cedar/Willow prompt, choose Cedar on the phone, assert Answered and a Decision Run using Cedar.                                                                                                   |
+| `approve`         | Connect disposable Verify Pulse and add an Ask rule. Press Allow. Assert one provider event.                                                                                                                           |
+| `deny`            | A separate Thread and Ask rule. Press Don’t allow. Assert no provider event.                                                                                                                                           |
+| `stop`            | Stop Vivid during real text, assert the same Run Stopped, retain partial after reopen, send and receive the next message.                                                                                              |
+| `picture`         | Push an opaque red PNG into Android media storage, use Attach files and Photos, select it in the API-35 picker, send and recognize red, reopen with retained file parts and screenshot.                                |
+| `memory`          | Tell a project preference, require write_memory, ask in a new Thread, require read_memory of the same address and a correct reply.                                                                                     |
 | `settings-memory` | Seed through the phone, open Settings and What Vivid knows, open the row, Correct, edit What Vivid remembers and In full, Save correction, relaunch, Forget this, confirm Forget, relaunch and compare GetMemoryIndex. |
-| `learning` | Mention a unique durable fact without a remember request. Require no reply write_memory, new-Thread recall and a stored entry with CellRun authority. |
-| `feed` | Leave a working Thread for Feed, observe its offscreen settlement and Unread through WatchThreads, capture the drawer row. |
-| `move` | Keep the phone watching streamed text, identify its resident Person owner, move that node, require the same Run, retained prefix, native owner change and a newly rendered completion marker. |
+| `learning`        | Mention a unique durable fact without a remember request. Require no reply write_memory, new-Thread recall and a stored entry with CellRun authority.                                                                  |
+| `feed`            | Leave a working Thread for Feed, observe its offscreen settlement and Unread through WatchThreads, capture the drawer row.                                                                                             |
+| `move`            | Keep the phone watching streamed text, identify its resident Person owner, move that node, require the same Run, retained prefix, native owner change and a newly rendered completion marker.                          |
 
 Each has `phone/<journey>/verdict.json`, public RPC receipts, numbered native command logs and named screenshots. Inspect the screenshots for the picture, unread dot/bold title and each decisive control. An assertion pass does not replace this visual check. The root phone receipt retains APK and device identity.
 
