@@ -1,6 +1,7 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
-import { history, json, settled } from './wire.mjs'
+import { history, json, settled, rpc } from './wire.mjs'
+import { assertTable } from './table.mjs'
 import { asked, offered } from './offer.mjs'
 import { streaming, textOf } from './phoneui.mjs'
 import { control } from './socket.mjs'
@@ -232,4 +233,96 @@ export async function picture(state, id, ui, adb) {
   NodeAssert.deepEqual(saved(reopened), saved(done.page))
   await ui.capture('picture-reopened')
   NodeAssert.ok((await NodeFSP.readFile(file)).length > 0)
+}
+
+/** The phone must render the model's real OpenUI cells, separately from its stored program. */
+export async function tool(state, id, ui) {
+  await ui.send(
+    'Show a rich interactive table using an openui-lang Table, not Markdown. Columns Project, Hours, Owner. Rows Research | 4 | Ada, Writing | 3 | Ben, Review | 2 | Cai. Title Workload.',
+  )
+  const done = await ui.completed(id, 1, 'table')
+  await assertTable(done.page)
+  await ui.visible('Hours')
+  const drawn = await ui.capture('table')
+  for (const cell of [
+    'Project',
+    'Hours',
+    'Owner',
+    'Research',
+    '4',
+    'Ada',
+    'Writing',
+    '3',
+    'Ben',
+    'Review',
+    '2',
+    'Cai',
+  ])
+    NodeAssert.ok(drawn.includes(JSON.stringify(cell)), 'Native table omitted a cell: ' + cell)
+  await ui.create('Table away ' + crypto.randomUUID().slice(0, 8))
+  await ui.visit(id)
+  await ui.visible('Hours')
+  await ui.capture('table-reopened')
+}
+
+/** Create and revise through Android's composer; immutable Artifact receipts establish the body.
+ * The phone has no GetArtifact caller, so this journey makes no native Artifact-opener claim. */
+export async function document(state, id, ui) {
+  await ui.send(
+    'Write me a document called Verification plan with the body: # Verification plan\nResearch, writing and review. Then say Plan saved in this reply.',
+  )
+  await ui.completed(id, 1, 'created')
+  const created = await rpc(
+    state,
+    'ListArtifacts',
+    { threadId: id },
+    ui.directory,
+    'created-artifacts',
+  )
+  NodeAssert.equal(created.artifacts.length, 1)
+  const artifact = created.artifacts[0]
+  NodeAssert.equal(artifact.title, 'Verification plan')
+  NodeAssert.equal(artifact.version, 1)
+  await ui.visible('Plan saved')
+  await ui.capture('document-created')
+  await ui.send(
+    'Add the sentence Ready for review to the end of the Verification plan document. Then say Plan updated in this reply.',
+  )
+  const revised = await ui.completed(id, 2, 'revised')
+  const list = await rpc(
+    state,
+    'ListArtifacts',
+    { threadId: id },
+    ui.directory,
+    'revised-artifacts',
+  )
+  NodeAssert.equal(list.artifacts.length, 1)
+  NodeAssert.equal(list.artifacts[0].id, artifact.id)
+  NodeAssert.equal(list.artifacts[0].version, 2)
+  const first = await rpc(
+    state,
+    'GetArtifact',
+    { id: artifact.id, version: 1 },
+    ui.directory,
+    'version-1',
+  )
+  const second = await rpc(
+    state,
+    'GetArtifact',
+    { id: artifact.id, version: 2 },
+    ui.directory,
+    'version-2',
+  )
+  NodeAssert.match(second.body, /Ready for review/u)
+  NodeAssert.notEqual(first.body, second.body)
+  await ui.visible('Plan updated')
+  await ui.capture('document-revised')
+  await ui.create('Document away ' + crypto.randomUUID().slice(0, 8))
+  await ui.visit(id)
+  await ui.visible('Plan updated')
+  NodeAssert.deepEqual(
+    saved(await history(state, id, ui.directory, 'document-reopened')),
+    saved(revised.page),
+  )
+  await ui.capture('document-reopened')
 }

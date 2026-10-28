@@ -164,7 +164,7 @@ try {
     )
   else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|replies|question|approve|deny|stop|picture|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
