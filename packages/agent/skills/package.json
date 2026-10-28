@@ -7,7 +7,7 @@
     ".": "./src/manifest.ts",
     "./manifest": "./src/manifest.ts",
     "./markdown": "./src/markdown.ts",
-    "./*/SKILL.md": "./*/SKILL.md"
+    "./*.md": "./*.md"
   },
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",

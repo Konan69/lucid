@@ -19,7 +19,7 @@ import { BuiltinSkills, skillsExtension } from './skills.ts'
 
 export { isAuthorized } from './app.ts'
 export { parseSkill } from './frontmatter.ts'
-export type { LoadedSkill } from './frontmatter.ts'
+export type { LoadedSkill, SkillFile } from './frontmatter.ts'
 
 /** Native cell resources and authority are explicit. A caller cannot substitute a Person id
  * to choose storage; celld supplies the storage of the already addressed cell. */

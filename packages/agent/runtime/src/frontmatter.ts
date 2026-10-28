@@ -1,8 +1,16 @@
 import { Effect, Option, Schema } from 'effect'
 
-/** A shipped skill's catalogue name, description and procedure body. Frontmatter accepts the
- * YAML subset shipped here. Names match their directories, descriptions are nonempty, and
- * unsupported syntax fails startup. Provenance metadata never enters the prompt. */
+/** One reference file shipped beside a SKILL.md, named by its path relative to the skill's folder
+ * (`references/displays.md`), the way the procedure body points at it. */
+export const SkillFile = Schema.Struct({
+  name: Schema.String.check(Schema.isPattern(/^references\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/u)),
+  body: Schema.NonEmptyString,
+})
+export interface SkillFile extends Schema.Schema.Type<typeof SkillFile> {}
+
+/** A shipped skill's catalogue name, description, procedure body and reference files. Frontmatter
+ * accepts the YAML subset shipped here. Names match their directories, descriptions are nonempty,
+ * and unsupported syntax fails startup. Provenance metadata never enters the prompt. */
 export const LoadedSkill = Schema.Struct({
   name: Schema.String.check(
     Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
@@ -10,6 +18,7 @@ export const LoadedSkill = Schema.Struct({
   ),
   description: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
   body: Schema.String,
+  files: Schema.Array(SkillFile),
 })
 export interface LoadedSkill extends Schema.Schema.Type<typeof LoadedSkill> {}
 export class SkillInvalid extends Schema.TaggedError<SkillInvalid>()(
@@ -73,8 +82,14 @@ function header(lines: ReadonlyArray<string>) {
 }
 
 /** Parse authored Markdown at filesystem ingress; a malformed release fails startup, never silently
- * removes a built-in procedure or borrows another skill's name. */
-export const parseSkill = Effect.fn('Skills.parse')(function* (content: string, name: string) {
+ * removes a built-in procedure or borrows another skill's name. A body that points at a reference
+ * file the release does not ship is malformed too: a bundle that forgot to import one fails here
+ * rather than leave the model reading a pointer to nothing. */
+export const parseSkill = Effect.fn('Skills.parse')(function* (
+  content: string,
+  name: string,
+  files: ReadonlyArray<SkillFile>,
+) {
   const match = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)([\s\S]*)$/u.exec(
     content.replace(/^\uFEFF/u, ''),
   )
@@ -86,7 +101,11 @@ export const parseSkill = Effect.fn('Skills.parse')(function* (content: string, 
     name: fields.get('name'),
     description: fields.get('description'),
     body: match[2].trim(),
+    files,
   }).pipe(Effect.mapError(() => new SkillInvalid({ name })))
   if (parsed.name !== name) return yield* new SkillInvalid({ name })
+  const shipped = new Set(parsed.files.map((file) => file.name))
+  for (const [pointer] of parsed.body.matchAll(/references\/[a-z0-9-]+\.md/gu))
+    if (!shipped.has(pointer)) return yield* new SkillInvalid({ name })
   return parsed
 })
