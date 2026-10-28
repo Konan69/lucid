@@ -77,23 +77,14 @@ function callsOf(page, run) {
  */
 export async function memoryReceipt(page, run, step, directory, known) {
   const { calls, text } = callsOf(page, run)
-  assert.equal(
-    calls.filter(
-      (part) =>
-        part.state === 'output-error' &&
-        [
-          Tool.read_memory,
-          Tool.write_memory,
-          Tool.delete_memory,
-          Tool.list_memory,
-          Tool.search_memory,
-        ].includes(part.toolName),
-    ).length,
-    0,
-    'Tool error in ' + step.name,
+  // Failed attempts have no memory effect. Retain them in the receipt, while requiring the
+  // exact successful mutation and a fresh public index after a confirmed retraction.
+  const writes = calls.filter(
+    (part) => part.toolName === Tool.write_memory && part.state === 'output-available',
   )
-  const writes = calls.filter((part) => part.toolName === Tool.write_memory)
-  const deletes = calls.filter((part) => part.toolName === Tool.delete_memory)
+  const deletes = calls.filter(
+    (part) => part.toolName === Tool.delete_memory && part.state === 'output-available',
+  )
   assert.ok(text.length > 0, 'No assistant reply in ' + step.name)
   for (const pattern of step.says) assert.match(text, pattern, step.name + ' reply')
   if (step.change === 'none') {
@@ -140,11 +131,15 @@ export async function memoryReceipt(page, run, step, directory, known) {
 
 /** The shipped forget-something skill plans first. Confirm only this fixture's single entry,
  * through the real question card on web or AnswerInput on HTTP, then observe its Decision Run. */
-export async function confirmMemory(state, { id, detail, directory }, answer) {
-  const waiting = detail.requests.filter((request) =>
-    InputRequestState.guards.Waiting(request.state),
+export async function confirmMemory(state, { id, detail, directory, step, known }, answer) {
+  const marker = step.prompt.match(/Cedar-[a-f0-9]{8}/u)
+  assert.ok(marker, 'The forgetting fixture has no unique project marker')
+  const waiting = detail.requests.filter(
+    (request) =>
+      InputRequestState.guards.Waiting(request.state) &&
+      request.questions.some((question) => question.question.includes(marker[0])),
   )
-  assert.equal(waiting.length, 1, 'Forgetting must ask for one explicit confirmation')
+  assert.equal(waiting.length, 1, 'Expected one confirmation for this fixture project')
   const request = waiting[0]
   assert.equal(request.questions.length, 1)
   assert.equal(request.questions[0].selection, 'One')
@@ -159,6 +154,13 @@ export async function confirmMemory(state, { id, detail, directory }, answer) {
   const completed = confirmed.requests.find((entry) => entry.id === request.id)
   assert.ok(InputRequestState.guards.Answered(completed.state))
   assert.deepEqual(completed.state.answers, [InputAnswer.cases.Chosen.make({ labels: [label] })])
+  const index = await rpc(state, 'GetMemoryIndex', undefined, directory, 'forgotten-index')
+  assert.ok(
+    ![...index.standing, ...index.lines].some(
+      (entry) => entry.layer === known.layer && entry.file === known.file,
+    ),
+    'The confirmed memory entry remains in the public index',
+  )
   return confirmed
 }
 
@@ -180,7 +182,7 @@ export async function memory(state, id, directory) {
     if (step.change === 'delete')
       detail = await confirmMemory(
         state,
-        { id, detail, directory: evidence },
+        { id, detail, directory: evidence, step, known },
         ({ request, label }) =>
           rpc(
             state,

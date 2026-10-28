@@ -67,7 +67,7 @@ export async function memoryBrowser(state, id, directory, browser) {
     if (step.change === 'delete')
       detail = await confirmMemory(
         state,
-        { id, detail, directory: evidence },
+        { id, detail, directory: evidence, step, known },
         async ({ label }) => {
           await run(['wait', 'section[aria-label="Vivid\'s question"]'])
           await capture('forget-confirmation')
