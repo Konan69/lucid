@@ -239,7 +239,7 @@ describe('the runtime over HTTP', () => {
           expect.objectContaining({
             toolName: 'read_memory',
             output: expect.objectContaining({
-              entry: body.slice(0, 4000),
+              body: body.slice(0, 4000),
               next_offset: 4000,
               complete: false,
               total_characters: body.length,
@@ -250,7 +250,7 @@ describe('the runtime over HTTP', () => {
           expect.objectContaining({
             toolName: 'read_memory',
             output: expect.objectContaining({
-              entry: body.slice(4000),
+              body: body.slice(4000),
               next_offset: null,
               complete: true,
             }),

@@ -85,7 +85,7 @@ function readMemory(runTool: RunMemory) {
                 file: entry.file,
                 kind: entry.kind,
                 description: entry.description,
-                entry: entry.body.slice(data.offset, end),
+                body: entry.body.slice(data.offset, end),
                 offset: data.offset,
                 next_offset: end < entry.body.length ? end : null,
                 total_characters: entry.body.length,

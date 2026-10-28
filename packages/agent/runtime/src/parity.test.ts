@@ -117,7 +117,7 @@ describe('main runtime parity on Pi', () => {
             output: expect.objectContaining({
               kind: 'preference',
               description: 'Tea preference',
-              entry: entry.entry,
+              body: entry.body,
             }),
           }),
         )
