@@ -32,7 +32,7 @@ import type * as HttpServerError from 'effect/http/HttpServerError'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { loadHistory } from './history.ts'
-import type { MemoryMissing, MemoryUnavailable } from './memory.ts'
+import type { MemoryUnavailable } from './memory.ts'
 import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
@@ -317,22 +317,16 @@ const owner = Effect.fn('Runtime.memoryOwner')(function* () {
   return person
 })
 
-const refusedMemory = (error: MemoryUnavailable | MemoryMissing | MemoryConflict) => {
-  switch (error._tag) {
-    case 'MemoryMissing':
-      return refuse('NotFound', 404)
-    case 'MemoryConflict':
-      return HttpServerResponse.schemaJson(MemoryConflict)(error, { status: 409 })
-    case 'MemoryUnavailable':
-      return unavailable(error._tag)
-  }
-}
+const missingMemory = () => refuse('NotFound', 404)
+const conflictedMemory = (conflict: MemoryConflict) =>
+  HttpServerResponse.schemaJson(MemoryConflict)(conflict, { status: 409 })
+const unavailableMemory = (error: MemoryUnavailable) => unavailable(error._tag)
 
 const memoryIndex = Effect.fn('Runtime.memoryIndex')(function* () {
   const person = yield* owner()
   return yield* person.sources.memory.index(person.personId).pipe(
     Effect.flatMap(HttpServerResponse.schemaJson(MemoryIndex)),
-    Effect.catchTag('MemoryUnavailable', refusedMemory),
+    Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
   )
 })
 
@@ -341,7 +335,7 @@ const memoryList = Effect.fn('Runtime.memoryList')(function* () {
   const listing = yield* HttpServerRequest.schemaBodyJson(MemoryListing)
   return yield* person.sources.memory.list(person.personId, listing).pipe(
     Effect.flatMap(HttpServerResponse.schemaJson(MemoryPage)),
-    Effect.catchTag('MemoryUnavailable', refusedMemory),
+    Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
   )
 })
 
@@ -350,7 +344,7 @@ const memoryRead = Effect.fn('Runtime.memoryRead')(function* () {
   const address = yield* HttpServerRequest.schemaBodyJson(MemoryAddress)
   return yield* person.sources.memory.read(person.personId, address).pipe(
     Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-    Effect.catchTag(['MemoryMissing', 'MemoryUnavailable'], refusedMemory),
+    Effect.catchTags({ MemoryMissing: missingMemory, MemoryUnavailable: unavailableMemory }),
   )
 })
 
@@ -359,7 +353,7 @@ const memoryWrite = Effect.fn('Runtime.memoryWrite')(function* () {
   const write = yield* HttpServerRequest.schemaBodyJson(MemoryWrite)
   return yield* person.sources.memory.write(person.personId, write).pipe(
     Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-    Effect.catchTag(['MemoryConflict', 'MemoryUnavailable'], refusedMemory),
+    Effect.catchTags({ MemoryConflict: conflictedMemory, MemoryUnavailable: unavailableMemory }),
   )
 })
 
@@ -368,7 +362,11 @@ const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {
   const retraction = yield* HttpServerRequest.schemaBodyJson(MemoryRetraction)
   return yield* person.sources.memory.delete(person.personId, retraction).pipe(
     Effect.as(HttpServerResponse.empty({ status: 204 })),
-    Effect.catchTag(['MemoryConflict', 'MemoryMissing', 'MemoryUnavailable'], refusedMemory),
+    Effect.catchTags({
+      MemoryConflict: conflictedMemory,
+      MemoryMissing: missingMemory,
+      MemoryUnavailable: unavailableMemory,
+    }),
   )
 })
 
