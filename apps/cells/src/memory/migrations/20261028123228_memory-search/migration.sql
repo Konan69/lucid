@@ -22,3 +22,6 @@ WHEN old.body IS NOT NULL BEGIN
   INSERT INTO memory_search(memory_search, rowid, file, description, body)
   VALUES ('delete', old.id, old.file, old.description, old.body);
 END;
+--> statement-breakpoint
+INSERT INTO memory_search(rowid, file, description, body)
+SELECT id, file, description, body FROM memory_entries WHERE body IS NOT NULL;
