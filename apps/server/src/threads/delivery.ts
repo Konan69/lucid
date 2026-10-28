@@ -66,12 +66,11 @@ const endingOf = (settlement: Settlement): RunEnding =>
     Unknown: () => RunEnding.cases.Unknown.make({}),
   })
 
-/** A Run being watched to its end, with the Person's words that started it when there were any. */
+/** A Run being watched to its end, and the Person it acts for. */
 interface Followed {
   readonly id: RunId
   readonly threadId: ThreadId
   readonly person: Person
-  readonly said: Option.Option<string>
 }
 
 /**
@@ -151,7 +150,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         Topic.part('activity'),
       ),
     )
-    // A reply transport failure must not prevent Thread state, or notifications from settling.
+    // A reply transport failure must not prevent Thread state or notifications from settling.
     yield* channels
       .ended({ runId: run.id, threadId: run.threadId, settlement })
       .pipe(
@@ -294,7 +293,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         {
           Reserved: (reserved) => Effect.succeed(reserved.turn),
           Replayed: (replayed) =>
-            follow({ id, threadId: thread.id, person: speaker, said }).pipe(
+            follow({ id, threadId: thread.id, person: speaker }).pipe(
               Effect.as(replayed.receipt),
             ),
           Busy: ({ person }) =>
@@ -341,7 +340,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       yield* changes.publish(
         audienceTopics(thread, yield* threads.participants(thread.id)).map(Topic.part('activity')),
       )
-      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
+      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker })
       return {
         runId: admission.runId,
         submissionId: admission.submissionId,
@@ -359,7 +358,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   function resume(run: WorkingRun) {
     return personOf(run.personId).pipe(
       Effect.flatMap((person) =>
-        follow({ id: run.id, threadId: run.threadId, person, said: Option.none() }),
+        follow({ id: run.id, threadId: run.threadId, person }),
       ),
       Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')),
     )
