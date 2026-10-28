@@ -315,7 +315,7 @@ describe('settled learning on native Pi SQLite', () => {
       ),
   )
 
-  it.effect('resolves a short answer from the previous Vivid reply', () =>
+  it.effect('resolves a short answer from the earlier turns of the Thread', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const seen: Schema.Json[] = []
@@ -343,7 +343,10 @@ describe('settled learning on native Pi SQLite', () => {
         yield* finished(runtime)
         expect(seen[1]).toMatchObject({
           messages: ['Green.'],
-          previousReply: 'What tea do you prefer?',
+          earlier: [
+            { from: 'person', text: 'Help me choose tea.' },
+            { from: 'vivid', text: 'What tea do you prefer?' },
+          ],
         })
         expect((yield* runtime.memory.read(ada, address)).body).toBe(entry.body)
       }),

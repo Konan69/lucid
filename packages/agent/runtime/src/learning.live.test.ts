@@ -24,7 +24,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_LEARNING'] !== '1')('Learning gate o
             const exchange = Exchange.make({
               person: 'Ada',
               messages: ['Green tea, always.'],
-              previousReply: 'What tea do you prefer?',
+              earlier: [{ from: 'vivid', text: 'What tea do you prefer?' }],
               reply: 'Okay.',
               replyWroteMemory: false,
               at: Date.UTC(2026, 9, 28, 12),
@@ -39,7 +39,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_LEARNING'] !== '1')('Learning gate o
               input: {
                 ...exchange,
                 messages: ['Forget that I prefer green tea. Do not keep that preference.'],
-                previousReply: null,
+                earlier: [],
                 reply: 'Removed.',
               },
             }).pipe(
