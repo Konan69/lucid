@@ -208,6 +208,8 @@ try {
     sourceUrl,
     '--notes',
     `${notesDirectory}/memory`,
+    '--helix',
+    `http://127.0.0.1:${state.ports.helix}`,
     '--cells',
     `http://127.0.0.1:${state.ports.runtime},http://127.0.0.1:${state.ports.runtimePeer}`,
     '--token',

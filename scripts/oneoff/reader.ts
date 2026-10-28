@@ -10,9 +10,11 @@ import {
   RuntimeHistoryAnswer,
   RuntimeHistoryMap,
   RuntimeHistoryResult,
+  RuntimePersonId,
 } from '../../packages/contracts/src/index.ts'
 import { sweep } from './sweep.ts'
 import { readNotes } from './notes.ts'
+import { readMemory } from './helix.ts'
 
 /** Operator errors identify the operation, never a database URL, token, message or notes body. */
 export class ReaderFailed extends Schema.TaggedError<ReaderFailed>()(
@@ -22,10 +24,20 @@ export class ReaderFailed extends Schema.TaggedError<ReaderFailed>()(
 ) {}
 export interface Inputs {
   readonly notes: string
-  readonly cells: ReadonlyArray<URL>
-  readonly token: string
-  readonly map: string
+  readonly helix: URL
+  readonly output:
+    | { readonly mode: 'dry-run'; readonly file: string }
+    | {
+        readonly mode: 'import'
+        readonly cells: ReadonlyArray<URL>
+        readonly token: string
+        readonly map: string
+      }
 }
+export const HistoryBodies = Schema.Array(
+  Schema.Struct({ personId: RuntimePersonId, body: RuntimeHistoryBody }),
+)
+const encodeBodies = Schema.encodeEffect(Schema.fromJsonString(HistoryBodies))
 const encodeMap = Schema.encodeEffect(Schema.fromJsonString(RuntimeHistoryMap))
 const failed = (operation: string) => () => new ReaderFailed({ operation })
 
@@ -86,20 +98,43 @@ const adopt = (map: string) =>
 export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inputs) {
   const people = yield* sweep()
   const notes = yield* readNotes(input.notes)
+  const learned = yield* readMemory(input.helix)
+  for (const [person, entries] of learned) {
+    const files = notes.get(person)
+    if (files === undefined) notes.set(person, entries)
+    else files.push(...entries)
+  }
   for (const person of notes.keys()) if (!people.has(person)) people.set(person, [])
+  const bodies = [...people].map(([personId, threads]) => ({
+    personId,
+    body: RuntimeHistoryBody.make({ threads, memory: notes.get(personId) ?? [] }),
+  }))
+  const output = input.output
+  if (output.mode === 'dry-run') {
+    const json = yield* encodeBodies(bodies)
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.writeFile(output.file, json, { mode: 0o600, flag: 'wx' }),
+      catch: failed('dry-run file'),
+    })
+    return {
+      people: people.size,
+      threads: bodies.reduce((count, row) => count + row.body.threads.length, 0),
+      deliveries: 0,
+    }
+  }
   const token = yield* Effect.tryPromise({
-    try: () => NodeFSP.readFile(input.token, 'utf8'),
+    try: () => NodeFSP.readFile(output.token, 'utf8'),
     catch: failed('token file'),
   })
   const map: Array<RuntimeHistoryMap[number]> = []
   const refused: string[] = []
-  for (const [person, threads] of people) {
-    const memory = notes.get(person)
+  for (const { personId: person, body } of bodies) {
+    const threads = body.threads
     const answer = yield* post({
-      cells: input.cells,
+      cells: output.cells,
       person,
       token: token.trim(),
-      body: RuntimeHistoryBody.make({ threads, notes: memory === undefined ? [] : memory }),
+      body,
     })
     if (answer.threads.length !== threads.length)
       return yield* new ReaderFailed({ operation: 'cell omitted Thread results' })
@@ -115,15 +150,15 @@ export const readHistory = Effect.fn('HistoryReader.run')(function* (input: Inpu
     }
   }
   const json = yield* encodeMap(map)
-  const temporary = `${input.map}.tmp`
+  const temporary = `${output.map}.tmp`
   yield* Effect.tryPromise({
     try: () =>
       NodeFSP.writeFile(temporary, json, { mode: 0o600 }).then(() =>
-        NodeFSP.rename(temporary, input.map),
+        NodeFSP.rename(temporary, output.map),
       ),
     catch: failed('map file'),
   })
-  yield* adopt(input.map)
+  yield* adopt(output.map)
   if (refused.length > 0)
     return yield* new ReaderFailed({
       operation: `Threads refused after partial receipt adoption: ${refused.join(', ')}`,

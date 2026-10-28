@@ -5,8 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { Effect, Schema } from 'effect'
 import {
   MemoryLayer,
-  Note,
-  NoteFile,
+  MemoryEntry,
+  MemoryFile,
   RuntimePersonId,
   type PersonId,
   type RuntimeHistoryBody,
@@ -21,7 +21,7 @@ class NotesUnreadable extends Schema.TaggedError<NotesUnreadable>()(
 const attempt = <A>(call: () => Promise<A>) =>
   Effect.tryPromise({ try: call, catch: () => new NotesUnreadable() })
 const decodePerson = Schema.decodeUnknownEffect(RuntimePersonId)
-const decodeNote = Schema.decodeUnknownEffect(Note)
+const decodeNote = Schema.decodeUnknownEffect(MemoryEntry)
 const layerOf = Schema.decodeUnknownOption(MemoryLayer)
 
 /** Match main's stored header and trimEnd rule, preserving the kind, description and Markdown body. */
@@ -99,7 +99,7 @@ const read = Effect.fn('HistoryReader.notes')(function* (directory: string, pers
       Effect.map((chunks) => Buffer.concat(chunks.map((chunk) => chunk.data)).toString('utf8')),
       Effect.mapError(() => new NotesUnreadable()),
     )
-  const notes: Array<RuntimeHistoryBody['notes'][number]> = []
+  const notes: Array<RuntimeHistoryBody['memory'][number]> = []
   for (const entry of yield* entries(1)) {
     if ((entry.mode & 0o170000) === 0o100000) {
       notes.push(
@@ -116,7 +116,7 @@ const read = Effect.fn('HistoryReader.notes')(function* (directory: string, pers
     if ((entry.mode & 0o170000) !== 0o040000 || layer._tag === 'None')
       return yield* new NotesUnreadable()
     for (const file of yield* entries(entry.ino)) {
-      if ((file.mode & 0o170000) !== 0o100000 || !Schema.is(NoteFile)(file.name))
+      if ((file.mode & 0o170000) !== 0o100000 || !Schema.is(MemoryFile)(file.name))
         return yield* new NotesUnreadable()
       notes.push(
         yield* parsed(
@@ -134,7 +134,7 @@ const read = Effect.fn('HistoryReader.notes')(function* (directory: string, pers
 /** Notes-only Persons are imported too; absence of a file is not an empty file opened by the SDK. */
 export const readNotes = Effect.fn('HistoryReader.allNotes')(function* (directory: string) {
   const files = yield* attempt(() => NodeFSP.readdir(directory))
-  const people = new Map<PersonId, Array<RuntimeHistoryBody['notes'][number]>>()
+  const people = new Map<PersonId, Array<RuntimeHistoryBody['memory'][number]>>()
   for (const file of files.filter((file) => file.endsWith('.db')).sort()) {
     const person = yield* decodePerson(file.slice(0, -3)).pipe(
       Effect.mapError(() => new NotesUnreadable()),

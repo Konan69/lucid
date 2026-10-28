@@ -9,18 +9,35 @@ pnpm --dir scripts/oneoff install --frozen-lockfile
 node scripts/oneoff/bundle.mjs /tmp/vivid-history-reader.cjs
 ```
 
-Copy that artifact into the server container. Run it from `/app`, with the runtime token in a mode-0600 file. Supply the database, notes directory, cell ingress URLs and map explicitly.
+Keep `vivid-helix` reachable until the export and import finish. Copy the bundle into the server container and run it from `/app`. First export the per-Person bodies for inspection. This mode reads the old sources and creates a mode-0600 file. It never calls a cell or `runs:adopt`. The output file must not already exist.
 
 ```sh
 node /tmp/vivid-history-reader.cjs \
   --source "$DATABASE_URL" \
   --notes /var/lib/vivid/memory \
+  --helix "$VIVID_HELIX_URL" \
+  --dry-run /tmp/history-bodies.json
+```
+
+Import from the same quiet sources, with the runtime token in a mode-0600 file.
+
+```sh
+node /tmp/vivid-history-reader.cjs \
+  --source "$DATABASE_URL" \
+  --notes /var/lib/vivid/memory \
+  --helix "$VIVID_HELIX_URL" \
   --cells "$VIVID_RUNTIME_URL" \
   --token /tmp/runtime-token \
   --map /tmp/history-map.json
 ```
 
-The reader opens its database source read-only. It copies each notes database and WAL to scratch before opening it read-only with Node SQLite. It preserves note modification times and uses basis `said`.
+The reader opens its database source read-only. It copies each notes database and WAL to scratch before opening it read-only with Node SQLite. It preserves note modification times and uses basis `said`. Helix receives only read batches. The reader carries every current record across all partitions, excluding superseded and forgotten records. Each goes to `learnedFrom.id`, including Persons without Threads or AgentFS notes. Company and Thread scopes remain in the body. The filename combines a content slug and twelve SHA-256 characters from the source id. `--helix` defaults to `VIVID_HELIX_URL` when omitted.
+
+Run the focused end-to-end proof on the assigned devbox. It owns disposable PostgreSQL, a labelled Helix container and native Pi SQLite files, and removes them after the test. The test prints the mapped entries.
+
+```sh
+node scripts/oneoff/proof.mjs
+```
 
 The map is replaced before `runs:adopt` starts. Adoption output stays visible. Refused Threads leave a partial map, still run adoption, and then exit nonzero with their ids. An identical rerun preserves the map and receipts.
 

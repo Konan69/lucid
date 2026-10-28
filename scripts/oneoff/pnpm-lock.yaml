@@ -169,6 +169,12 @@ importers:
       '@effect/platform-node':
         specifier: link:../../apps/server/node_modules/@effect/platform-node
         version: link:../../apps/server/node_modules/@effect/platform-node
+      '@helix-db/helix-db':
+        specifier: 3.0.4
+        version: 3.0.4
+      '@vivid/contracts':
+        specifier: link:../../packages/contracts
+        version: link:../../packages/contracts
       agentfs-sdk:
         specifier: 0.6.4
         version: 0.6.4
@@ -184,6 +190,10 @@ importers:
         version: 8.23.1
 
 packages:
+
+  '@helix-db/helix-db@3.0.4':
+    resolution: {integrity: sha512-8ehQ6aYMQe5KwTaaJeOTustPu4cvw9fKiQuH/ZMnrzNIJbxlN97wSU7+MhIvJ3aQdIaDD2P2BTDpDYxHSsmLNw==}
+    engines: {node: '>=20.0.0'}
 
   '@tursodatabase/database-common@0.4.4':
     resolution: {integrity: sha512-iuSYWgBQEETjwfWOmi3E4Q++jQTb+VOPXeaKozQqW8fXtgU6ZaYUMmWbqQVMGSS9sAWZlZi9qyPVz0rkT8zoqQ==}
@@ -301,6 +311,8 @@ packages:
     engines: {node: '>=0.4'}
 
 snapshots:
+
+  '@helix-db/helix-db@3.0.4': {}
 
   '@tursodatabase/database-common@0.4.4': {}
 

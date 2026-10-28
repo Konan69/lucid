@@ -4,16 +4,24 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { AgentFS } from 'agentfs-sdk'
+import { Client, g, Order, readBatch, writeBatch } from '@helix-db/helix-db'
 import { Pool } from 'pg'
 import { expect, it } from '@effect/vitest'
 import { Config, Effect, Schema } from 'effect'
-import { NoteFile, NoteSearch, RuntimeHistoryMap } from '../../packages/contracts/src/index.ts'
+import {
+  MemoryFile,
+  MemorySearch,
+  PersonId,
+  RuntimeHistoryMap,
+} from '../../packages/contracts/src/index.ts'
+import { HistoryBodies } from './reader.ts'
 import { scenario, admit, delivery } from '../../packages/agent/runtime/tests/requests.ts'
 import { SOURCE_TABLES, BIRTH, REPLY_BATCHES, PICTURE, ROOT, ada } from './fixture.ts'
 
 const thread = 'earlier-thread'
 const run = 'product-run'
 const decodeMap = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeHistoryMap))
+const decodeBodies = Schema.decodeUnknownEffect(Schema.fromJsonString(HistoryBodies))
 
 /** Exercise the shipped reader process over TCP, real legacy PG tables, AgentFS and native Pi SQLite. */
 it.effect(
@@ -110,6 +118,120 @@ it.effect(
           (store) => Effect.promise(() => store.close()),
         )
         const original = yield* Effect.tryPromise(() => NodeFSP.readFile(notePath))
+        const helixUrl = yield* Config.String('VIVID_TEST_HELIX_URL')
+        const helix = new Client(helixUrl)
+        const memoryOnly = PersonId.make('memory-only-person')
+        const fixtures = [
+          {
+            id: 'personal',
+            kind: 'preference',
+            content: 'Ada prefers jasmine tea.',
+            scope: { _tag: 'Person' },
+            partition: `p-${ada}`,
+            key: `person:${ada}`,
+            person: ada,
+            state: 'current',
+          },
+          {
+            id: 'company',
+            kind: 'decision',
+            content:
+              'The Company uses a silver teapot. ' +
+              'Everyone shares the tea after lunch. '.repeat(7),
+            scope: { _tag: 'Company' },
+            partition: 'c-earlier-company',
+            key: 'company',
+            person: ada,
+            state: 'current',
+          },
+          {
+            id: 'thread',
+            kind: 'fact',
+            content: 'The jasmine tea order arrives on Friday.',
+            scope: { _tag: 'Thread', threadId: thread, title: 'Earlier' },
+            partition: 'c-earlier-company',
+            key: `thread:${thread}`,
+            person: ada,
+            state: 'current',
+          },
+          {
+            id: 'only',
+            kind: 'fact',
+            content: 'Grace keeps an ivory teapot.',
+            scope: { _tag: 'Person' },
+            partition: `p-${memoryOnly}`,
+            key: `person:${memoryOnly}`,
+            person: memoryOnly,
+            state: 'current',
+          },
+          {
+            id: 'superseded',
+            kind: 'preference',
+            content: 'Ada preferred coffee.',
+            scope: { _tag: 'Person' },
+            partition: `p-${ada}`,
+            key: `person:${ada}`,
+            person: ada,
+            state: 'superseded',
+          },
+          {
+            id: 'forgotten',
+            kind: 'fact',
+            content: 'The forgotten tea order.',
+            scope: { _tag: 'Person' },
+            partition: `p-${ada}`,
+            key: `person:${ada}`,
+            person: ada,
+            state: 'forgotten',
+          },
+        ] as const
+        let seed = writeBatch()
+        for (const item of fixtures) {
+          const payload = {
+            memory: {
+              id: item.id,
+              kind: item.kind,
+              content: item.content,
+              scope: item.scope,
+              learnedIn: thread,
+              learnedFrom: { id: item.person, name: 'Ada' },
+              createdAt: 100,
+              updatedAt: 200,
+            },
+            aliases: [],
+            scope: item.key,
+          }
+          seed = seed.varAs(
+            item.id,
+            g().addN('Memory', {
+              tenant_id: item.partition,
+              memoryId: item.id,
+              scope: item.key,
+              payload: JSON.stringify(payload),
+              createdAt: 100,
+              updatedAt: 200,
+              isLatest: item.state !== 'superseded',
+              validTo: item.state === 'superseded' ? 200 : null,
+              deletedAt: item.state === 'forgotten' ? 200 : null,
+            }),
+          )
+        }
+        yield* Effect.tryPromise(() => helix.query(seed.returning([]).toQueryRequest()).send())
+        const sourceMemory = () =>
+          Effect.tryPromise(() =>
+            helix
+              .query(
+                readBatch()
+                  .varAs(
+                    'records',
+                    g().nWithLabel('Memory').orderBy('memoryId', Order.Asc).valueMap(null),
+                  )
+                  .returning(['records'])
+                  .toQueryRequest(),
+              )
+              .send(),
+          )
+        const originalMemory = yield* sourceMemory()
         const originalRows = (yield* query(
           'SELECT data FROM flue_conversation_stream_batches ORDER BY seq',
         )).rows
@@ -119,7 +241,9 @@ it.effect(
           NodeFSP.writeFile(token, 'fixture-runtime-token', { mode: 0o600 }),
         )
         const context = yield* Effect.context()
+        let posted = 0
         const server = NodeHttp.createServer((request, response) => {
+          posted += 1
           const chunks: Buffer[] = []
           request.on('data', (chunk: Buffer) => chunks.push(chunk))
           request.on('end', () => {
@@ -167,38 +291,98 @@ it.effect(
             if (child.exitCode === null) child.kill('SIGTERM')
           })
         })
-        const invoke = Effect.callback<{ code: number | null; output: string }>((resume) => {
-          const child = NodeChildProcess.spawn(
-            process.execPath,
-            [
-              bundle,
-              '--source',
-              url,
-              '--notes',
-              notes,
-              '--cells',
-              `http://127.0.0.1:${address.port}`,
-              '--token',
-              token,
-              '--map',
-              map,
+        const invoke = (extra: string[]) =>
+          Effect.callback<{ code: number | null; output: string }>((resume) => {
+            const child = NodeChildProcess.spawn(
+              process.execPath,
+              [
+                bundle,
+                '--source',
+                url,
+                '--notes',
+                notes,
+                '--cells',
+                `http://127.0.0.1:${address.port}`,
+                '--token',
+                token,
+                '--map',
+                map,
+                ...extra,
+              ],
+              {
+                env: { ...process.env, DATABASE_URL: url, VIVID_HELIX_URL: helixUrl },
+                stdio: ['ignore', 'pipe', 'pipe'],
+              },
+            )
+            let output = ''
+            child.stdout.on('data', (chunk: Buffer) => {
+              output += chunk.toString()
+            })
+            child.stderr.on('data', (chunk: Buffer) => {
+              output += chunk.toString()
+            })
+            child.once('error', (error) => resume(Effect.die(error)))
+            child.once('close', (code) => resume(Effect.succeed({ code, output })))
+            return Effect.sync(() => {
+              if (child.exitCode === null) child.kill('SIGTERM')
+            })
+          })
+        const exportFile = NodePath.join(directory, 'bodies.json')
+        const dry = yield* invoke(['--dry-run', exportFile])
+        expect(dry.code, dry.output).toBe(0)
+        expect(dry.output).toContain('History bodies exported')
+        expect(dry.output).not.toContain('Run receipts adopted')
+        expect(posted).toBe(0)
+        expect(
+          (yield* query('SELECT receipt FROM vivid_runs WHERE id=$1', [run])).rows[0].receipt,
+        ).toEqual({ runId: 'sub_1', offset: '0', incarnation: 'inc' })
+        const exported = yield* decodeBodies(
+          yield* Effect.tryPromise(() => NodeFSP.readFile(exportFile, 'utf8')),
+        )
+        const memoryBodies = exported.map(({ personId, body }) => ({
+          personId,
+          memory: body.memory,
+        }))
+        process.stdout.write(`Mapped memory entries ${JSON.stringify(memoryBodies)}\n`)
+        expect(memoryBodies.flatMap((row) => row.memory)).toHaveLength(5)
+        expect(
+          exported.filter((row) => row.personId === memoryOnly).map((row) => row.body),
+        ).toMatchObject([
+          {
+            threads: [],
+            memory: [
+              { body: 'Grace keeps an ivory teapot.', kind: 'fact', basis: 'said', updatedAt: 200 },
             ],
-            { env: { ...process.env, DATABASE_URL: url }, stdio: ['ignore', 'pipe', 'pipe'] },
-          )
-          let output = ''
-          child.stdout.on('data', (chunk: Buffer) => {
-            output += chunk.toString()
-          })
-          child.stderr.on('data', (chunk: Buffer) => {
-            output += chunk.toString()
-          })
-          child.once('error', (error) => resume(Effect.die(error)))
-          child.once('close', (code) => resume(Effect.succeed({ code, output })))
-          return Effect.sync(() => {
-            if (child.exitCode === null) child.kill('SIGTERM')
-          })
+          },
+        ])
+        const mapped = memoryBodies
+          .flatMap((row) => row.memory)
+          .filter((entry) => entry.file !== 'kettle.md')
+        expect(mapped).toHaveLength(4)
+        for (const entry of mapped) {
+          expect(entry.file).toMatch(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u)
+          expect(entry.description.length).toBeLessThanOrEqual(200)
+          expect(entry).toMatchObject({ layer: 'memory', basis: 'said', updatedAt: 200 })
+        }
+        expect(mapped.find((entry) => entry.kind === 'decision')).toMatchObject({
+          description:
+            'The Company uses a silver teapot. Everyone shares the tea after lunch. Everyone shares the tea after lunch. Everyone shares the tea after lunch. Everyone shares the tea after lunch. Everyone shares',
+          body: fixtures[1].content + '\n\nThis memory was for the whole Company.',
         })
-        const first = yield* invoke
+        expect(
+          mapped.some((entry) =>
+            entry.body.endsWith('This memory was learned in the Thread "Earlier".'),
+          ),
+        ).toBe(true)
+        expect(JSON.stringify(mapped)).not.toContain('preferred coffee')
+        expect(JSON.stringify(mapped)).not.toContain('forgotten tea')
+        const exportAgain = NodePath.join(directory, 'bodies-again.json')
+        expect((yield* invoke(['--helix', helixUrl, '--dry-run', exportAgain])).code).toBe(0)
+        expect(yield* Effect.tryPromise(() => NodeFSP.readFile(exportAgain, 'utf8'))).toBe(
+          yield* Effect.tryPromise(() => NodeFSP.readFile(exportFile, 'utf8')),
+        )
+        expect(posted).toBe(0)
+        const first = yield* invoke([])
         expect(first.output).toContain('History and receipts migrated')
         expect(first.output).toContain('Run receipts adopted')
         expect(first.code).toBe(0)
@@ -215,18 +399,39 @@ it.effect(
           method: 'GET',
         })
         expect(JSON.stringify(state.body)).toContain('A cat.')
-        const hits = yield* runtime.notes.search(
+        const hits = yield* runtime.memory.search(
           ada,
-          NoteSearch.make({ query: 'copper', layer: null, limit: 10, offset: 0 }),
+          MemorySearch.make({ query: 'copper', layer: null, limit: 10, offset: 0 }),
         )
-        expect(hits.entries.map((hit) => hit.file)).toEqual([NoteFile.make('kettle.md')])
-        expect((yield* invoke).code).toBe(0)
+        expect(hits.entries.map((hit) => hit.file)).toEqual([MemoryFile.make('kettle.md')])
+        const savedMemory = []
+        for (const { personId, memory } of memoryBodies) {
+          for (const entry of memory) savedMemory.push(yield* runtime.memory.read(personId, entry))
+          const found = yield* runtime.memory.search(
+            personId,
+            MemorySearch.make({
+              query: 'tea OR teapot OR kettle',
+              layer: null,
+              limit: 20,
+              offset: 0,
+            }),
+          )
+          expect(found.entries.map((entry) => entry.file).toSorted()).toEqual(
+            memory.map((entry) => entry.file).toSorted(),
+          )
+        }
+        expect((yield* invoke([])).code).toBe(0)
+        const reloadedMemory = []
+        for (const { personId, memory } of memoryBodies)
+          for (const entry of memory)
+            reloadedMemory.push(yield* runtime.memory.read(personId, entry))
+        expect(reloadedMemory).toEqual(savedMemory)
         expect(yield* Effect.tryPromise(() => NodeFSP.readFile(map, 'utf8'))).toBe(firstMap)
         expect((yield* query('SELECT receipt FROM vivid_runs WHERE id=$1', [run])).rows[0]).toEqual(
           adopted,
         )
         expect(
-          yield* runtime.notes.read(ada, { layer: 'memory', file: NoteFile.make('kettle.md') }),
+          yield* runtime.memory.read(ada, { layer: 'memory', file: MemoryFile.make('kettle.md') }),
         ).toMatchObject({ revision: 1, updatedAt: noteTime, basis: 'said' })
         const refused = 'refused-thread'
         yield* query(
@@ -254,7 +459,7 @@ it.effect(
           JSON.stringify({ runId: 'sub_1', offset: '0', incarnation: 'inc' }),
           run,
         ])
-        const partial = yield* invoke
+        const partial = yield* invoke([])
         expect(partial.code).not.toBe(0)
         expect(partial.output).toContain('Run receipts adopted')
         expect(partial.output).toContain(refused)
@@ -269,6 +474,7 @@ it.effect(
         expect(
           (yield* query('SELECT data FROM flue_conversation_stream_batches ORDER BY seq')).rows,
         ).toEqual(originalRows)
+        expect(yield* sourceMemory()).toEqual(originalMemory)
       }),
     ),
 )
