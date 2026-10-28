@@ -201,6 +201,35 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         }).pipe(Effect.scoped),
     )
 
+    it.effect('a card that is the drawing alone carries no words, and reads back with none', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* FeedStore
+        const thread = yield* background(test.ada, now - hour)
+        yield* TestClock.setTime(now)
+        const drawn = PostRequest.make({
+          title: 'Reply to Dana',
+          words: null,
+          display:
+            'root = Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft")',
+          actions: ['Send it'],
+        })
+
+        yield* store.post({ person: test.ada, thread, request: drawn })
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Waiting.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Mail',
+            at: now,
+            post: drawn,
+            seen: false,
+            asking: [],
+          }),
+        ])
+      }).pipe(Effect.scoped),
+    )
+
     it.effect(
       'an old Thread whose card is put away now is settled now, kept a day, then gone',
       () =>
