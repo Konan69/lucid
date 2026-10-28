@@ -1,7 +1,7 @@
 import type { ThreadId } from '@vivid/contracts'
 import type { LiveQuery } from '@vivid/state'
 import { warmConversation } from './sending'
-import { live } from './live'
+import { live, memory } from './live'
 import { engine } from './runtime'
 
 /**
@@ -61,7 +61,7 @@ export const warm = {
     begin(live.connections)
     begin(live.channels)
     begin(live.rules)
-    begin(live.memory)
+    memory.begin()
     begin(live.devices)
     begin(live.audit)
   },

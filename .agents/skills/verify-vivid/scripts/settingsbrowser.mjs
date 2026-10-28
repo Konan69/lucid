@@ -2,7 +2,7 @@ import * as NodeAssert from 'node:assert/strict'
 import { Channel } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { json, rpc } from './wire.mjs'
-import { catalog, settingsLimits } from './settingsproof.mjs'
+import { catalog, emptyMemory, settingsLimits } from './settingsproof.mjs'
 
 const Groups = Schema.Array(
   Schema.Struct({ purpose: Schema.String, names: Schema.Array(Schema.String) }),
@@ -39,34 +39,38 @@ function assertCatalog(actual, services, query) {
     )
 }
 
-/** The empty knowledge copy distinguishes searchable facts from Vivid's own notes, including after reload. */
+/** The sentence the Memory section shows while the Person's cell remembers nothing listed. */
+const EMPTY_MEMORY = 'When you tell Vivid something that matters later, it shows up here.'
+
+/**
+ * The empty memory list, read from the Person's cell, before and after reload. A reload opens
+ * Settings again, which reads the cell again. The section never says "notes" or "saved
+ * knowledge": the Person's memory is one memory, the one Vivid reads before it answers.
+ */
 async function memory(state, context, browser) {
   const { id, directory } = context
   const { run, capture } = browser
-  const knowledge = await rpc(state, 'ListMemory', undefined, directory, 'empty-knowledge')
-  NodeAssert.deepEqual(knowledge.memories, [], 'Recipe needs an unused disposable knowledge base')
-  NodeAssert.equal(knowledge.brief.text.trim(), '')
+  await emptyMemory(state, directory)
   await run(['open', state.web + '/t/' + id + '?settings=memory'])
-  for (const stage of ['knowledge', 'knowledge-reloaded']) {
+  const section = `Array.from(document.querySelectorAll('[role="dialog"] section')).find(section => section.querySelector('h3')?.innerText.trim() === 'What Vivid remembers')`
+  for (const stage of ['memory', 'memory-reloaded']) {
     await run([
       'wait',
       '--fn',
-      `Boolean(document.querySelector('[role="dialog"]')?.innerText.includes('Nothing saved yet.'))`,
+      `Boolean(${section}?.innerText.includes(${JSON.stringify(EMPTY_MEMORY)}))`,
     ])
     const value = Result.getOrThrow(
+      decodeText(await run(['eval', `JSON.stringify(${section}.innerText)`])),
+    )
+    const dialog = Result.getOrThrow(
       decodeText(
         await run(['eval', `JSON.stringify(document.querySelector('[role="dialog"]').innerText)`]),
       ),
     )
-    for (const words of [
-      'A summary of the saved knowledge below.',
-      'Nothing yet. Facts Vivid saves for reference are summed up here.',
-      'Facts Vivid can look up. Correct what is wrong, or remove what it should not keep.',
-      'Vivid’s own notes are not shown here.',
-    ])
-      NodeAssert.ok(value.includes(words), 'Missing visible knowledge wording ' + words)
+    NodeAssert.ok(!/\bnotes?\b/iu.test(value), 'The memory section says notes: ' + value)
+    NodeAssert.ok(!dialog.includes('saved knowledge'), 'Settings still says saved knowledge')
     await capture(stage)
-    if (stage === 'knowledge') await run(['reload'])
+    if (stage === 'memory') await run(['reload'])
   }
 }
 
@@ -165,6 +169,6 @@ export async function settingsBrowser(state, id, directory, browser) {
   })
   return {
     scope:
-      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
+      'Personal Settings groups, the empty memory list before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
   }
 }

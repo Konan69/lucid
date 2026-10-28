@@ -18,6 +18,7 @@ import {
   makeLive,
   makeSeenThread,
   makeSnapshots,
+  remembering,
   workspaceKey,
   type KeptQueries,
   type LiveQuery,
@@ -295,7 +296,6 @@ function makeLiveData(session: SignedIn) {
     audit: one((client) => client.WatchAudit()),
     /** What finished or needs the Person while they were elsewhere, newest first. */
     notifications: kept((client) => client.WatchNotifications()),
-    memory: one((client) => client.WatchMemory()),
     /** What Vivid knows how to do: the procedures it ships with and the ones it was taught. */
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
@@ -421,6 +421,11 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices,
+    /**
+     * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
+     * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
+     */
+    memory: remembering.make(engine),
     /**
      * Sending in a Thread: one machine for each Thread of the session (`data/sending.ts`), made
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.

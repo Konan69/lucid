@@ -1,133 +1,411 @@
-import { MemoryScope, type Memory as MemoryRecord } from '@vivid/contracts'
-import { Effect, Result } from 'effect'
+import { useAtomSet, useAtomValue } from '@effect/atom-react'
+import type { MemoryLine, SavedMemory } from '@vivid/contracts'
+import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
+import { ChevronDown } from 'lucide-react'
 import { useState } from 'react'
-import { act } from '../../data/app'
-import { changing, live, LiveState, useLive } from '../../data/live'
-import { orSay } from '../../data/said'
+import { memory } from '../../data/live'
 import { Button } from '../../ui/button'
-import { Input } from '../../ui/input'
-import { Awaiting, Empty, Section } from './Parts'
+import { cn } from '../../ui/cn'
+import { Markdown } from '../../ui/Markdown'
+import { Textarea } from '../../ui/textarea'
+import { Awaiting, Empty, Refusal, Section } from './Parts'
 
-const WHERE = (memory: MemoryRecord) =>
-  MemoryScope.match(memory.scope, {
-    Person: () => 'About you',
-    Company: () => 'The whole company knows',
-    Thread: ({ title }) => `From “${title}”`,
-  })
+const when = makeWhen(thisReader())
+
+/** The most a remembered sentence can hold, as `MemoryEntry` in the contract checks it. */
+const SENTENCE_LIMIT = 200
+
+/** Whether Vivid was told or worked it out, in the Person's words. */
+const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
 
 /**
- * The knowledge Vivid has saved for reference: each fact in a plain sentence, with where it
- * learned it, and the Person can correct or remove any of them. The page at the top is a summary
- * the server writes from those same facts.
+ * What Vivid remembers about the Person: the pages it keeps standing (about them, how to reach
+ * them, and Vivid's own name and character as it wrote them), each whole, then the newest things
+ * it remembers, one line each. It is the memory Vivid reads before every response, read from the
+ * Person's cell (`remembering` in `@vivid/state`). Opening a line reads it whole; from there the
+ * Person corrects it or has Vivid forget it.
  *
- * This is one of Vivid's two kinds of memory and the screen says so. `WatchMemory` returns the
- * knowledge base only (`apps/server/src/memory/handlers.ts`), which Vivid searches when it needs
- * a fact. What is in front of Vivid on every response is the list of its own notes
- * (`packages/agent/runtime/src/context.ts`), and this query does not return those. So nothing
- * here is called everything Vivid knows, the summary is not called what Vivid reads before it
- * answers, and forgetting a fact here is not said to remove it from the notes (docs/25-memory.md).
+ * The reading is the one begun as Settings opened (`warm.ts`), so the section is drawn without a
+ * wait; every opening of Settings reads it again.
  */
 export function Memory() {
-  const memory = useLive(live.memory)
-  if (LiveState.$is('Failed')(memory)) {
-    return (
-      <Section title="Saved knowledge">
-        <Empty>Unable to load saved knowledge right now. Try again in a moment.</Empty>
+  const [visit] = useState(memory.current)
+  const reading = useAtomValue(visit.reading)
+  const send = useAtomSet(visit.send)
+  const [opened] = useState(() => Date.now())
+  return <Remembered reading={reading} send={send} now={opened} />
+}
+
+/**
+ * Everything the section draws, from the visit's reading alone. It starts nothing itself, so
+ * every state can be drawn without a server behind it.
+ */
+export function Remembered({
+  reading,
+  send,
+  now,
+}: {
+  reading: remembering.Remembering
+  send: (event: remembering.Sent) => void
+  now: number
+}) {
+  return remembering.Remembering.match(reading, {
+    Reading: () => <Awaiting state={LiveState.Loading()} />,
+    Unread: () => (
+      <Section title="What Vivid remembers">
+        <div className="flex flex-col items-center gap-3 px-4 py-6">
+          <p className="text-center text-label text-ink-3">
+            Unable to load what Vivid remembers right now.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => send(remembering.events.Retry())}>
+            Try again
+          </Button>
+        </div>
       </Section>
-    )
-  }
-  if (!LiveState.$is('Ready')(memory)) return <Awaiting state={memory} />
-  const { brief, memories } = memory.value
+    ),
+    Shown: (shown) => <Shown shown={shown} send={send} now={now} />,
+  })
+}
+
+type ShownReading = typeof remembering.Remembering.cases.Shown.Type
+
+/** The standing pages, then the lines, then the way to older ones. */
+function Shown({
+  shown,
+  send,
+  now,
+}: {
+  shown: ShownReading
+  send: (event: remembering.Sent) => void
+  now: number
+}) {
+  const page = (layer: SavedMemory['layer']) =>
+    shown.standing.filter((standing) => standing.layer === layer)
+  const vivid = [...page('self'), ...page('soul')]
+  const open = remembering.openAddress(shown.entry)
+  // A line being forgotten leaves the list at once; it comes back if the cell refuses.
+  const lines = remembering.Entry.guards.Forgetting(shown.entry)
+    ? shown.lines.filter((line) => !remembering.isAt(line, open))
+    : shown.lines
   return (
     <>
-      <Section title="In short" detail="A summary of the saved knowledge below.">
-        <p className="px-4 py-3 text-label whitespace-pre-wrap text-ink-2">
-          {brief.text.trim().length === 0
-            ? 'Nothing yet. Facts Vivid saves for reference are summed up here.'
-            : brief.text}
-        </p>
-      </Section>
-      <Section
-        title="Saved knowledge"
-        detail="Facts Vivid can look up. Correct what is wrong, or remove what it should not keep. Vivid’s own notes are not shown here."
-      >
-        {memories.length === 0 && <Empty>Nothing saved yet.</Empty>}
-        {memories.map((item) => (
-          <MemoryRow key={item.id} memory={item} />
+      <Pages title="About you" pages={page('person')} />
+      <Pages title="How Vivid reaches you" pages={page('attention')} />
+      <Pages title="Vivid" pages={vivid} />
+      <Notice entry={shown.entry} />
+      <Section title="What Vivid remembers">
+        {lines.length === 0 && (
+          <Empty>When you tell Vivid something that matters later, it shows up here.</Empty>
+        )}
+        {lines.map((line) => (
+          <Line
+            key={`${line.layer}/${line.file}`}
+            line={line}
+            entry={remembering.isAt(line, open) ? shown.entry : CLOSED}
+            send={send}
+            now={now}
+          />
         ))}
+        <Older older={shown.older} send={send} />
       </Section>
     </>
   )
 }
 
-function MemoryRow({ memory }: { memory: MemoryRecord }) {
-  const [draft, setDraft] = useState<string | null>(null)
-  const forget = () =>
-    void act(
-      orSay(
-        changing((client) => client.ForgetMemory({ id: memory.id })),
-        'That could not be forgotten. Try again.',
-      ),
-    )
-  const [refused, setRefused] = useState(false)
+const CLOSED = remembering.Entry.cases.Closed.make({})
 
-  /** Saves a correction. The words stay in the field until it is saved; a refusal keeps them. */
-  function correct(content: string) {
-    return Effect.gen(function* () {
-      if (content.length === 0 || content === memory.content) {
-        setDraft(null)
-        return
-      }
-      const saved = yield* changing((client) => client.CorrectMemory({ id: memory.id, content }))
-      setRefused(Result.isFailure(saved))
-      if (Result.isSuccess(saved)) setDraft(null)
-    })
-  }
-
-  if (draft !== null) {
-    return (
-      <form
-        className="flex items-center gap-2 px-4 py-2.5"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void act(correct(draft.trim()))
-        }}
-      >
-        <Input
-          compact
-          // Editing was just asked for; the cursor belongs in the sentence being corrected.
-          // oxlint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
-          value={draft}
-          maxLength={1000}
-          aria-label="What Vivid should know instead"
-          aria-invalid={refused}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          className="flex-1"
-        />
-        <Button type="submit" size="sm">
-          {refused ? 'Try again' : 'Save'}
-        </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>
-          Cancel
-        </Button>
-      </form>
-    )
-  }
+/** One standing page's section, absent until Vivid has written the page. */
+function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemory> }) {
+  if (pages.length === 0) return null
   return (
-    <div className="group/memory flex min-h-14 items-center gap-3 px-4 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-label text-ink">{memory.content}</div>
-        <div className="text-label text-ink-3">
-          {WHERE(memory)} · learned from {memory.learnedFrom.name}
+    <Section title={title}>
+      {pages.map((standing) => (
+        // Settings reads at the label size; a reply's Markdown is drawn at the body size.
+        <div key={standing.file} className="px-4 py-3 break-words *:text-label">
+          <Markdown content={standing.body} />
         </div>
-      </div>
-      <Button size="sm" variant="ghost" onClick={() => setDraft(memory.content)}>
-        Correct
-      </Button>
-      <Button size="sm" variant="ghost" onClick={forget}>
-        Forget
-      </Button>
+      ))}
+    </Section>
+  )
+}
+
+/**
+ * What happened to an entry the Person is no longer looking at: one that could not be forgotten
+ * is back in the list, and one Vivid removed before their change reached it is gone.
+ */
+function Notice({ entry }: { entry: remembering.Entry }) {
+  if (remembering.Entry.guards.Unforgotten(entry)) {
+    return <Refusal message="That could not be forgotten, so it is back in the list. Try again." />
+  }
+  if (remembering.Entry.guards.Vanished(entry)) {
+    return <Refusal message="Vivid no longer remembers that, so it has left the list." />
+  }
+  return null
+}
+
+/**
+ * One remembered thing: its sentence, whether the Person said it or Vivid guessed it, and when
+ * it last changed. Pressed, it opens below itself with its whole text and what can be done with
+ * it; one line is open at a time.
+ */
+function Line({
+  line,
+  entry,
+  send,
+  now,
+}: {
+  line: MemoryLine
+  entry: remembering.Entry
+  send: (event: remembering.Sent) => void
+  now: number
+}) {
+  const expanded = remembering.Entry.match(entry, {
+    Closed: () => false,
+    Vanished: () => false,
+    Forgetting: () => false,
+    Unforgotten: () => false,
+    Opening: () => true,
+    Unopened: () => true,
+    Open: () => true,
+    Moved: () => true,
+    Editing: () => true,
+    Saving: () => true,
+    Unsaved: () => true,
+    Rereading: () => true,
+  })
+  const panel = `memory-${line.layer}-${line.file}`
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={expanded ? panel : undefined}
+        onClick={() =>
+          send(expanded ? remembering.events.Close() : remembering.events.Open({ line }))
+        }
+        className="flex min-h-14 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-start outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-label text-pretty break-words text-ink">
+            {line.description}
+          </span>
+          <span className="block text-label text-ink-3">
+            {BASIS[line.basis]} · <span className="tabular-nums">{when(line.updatedAt, now)}</span>
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden
+          className={cn('size-4 shrink-0 text-ink-3', expanded && 'rotate-180')}
+        />
+      </button>
+      {expanded && (
+        <div id={panel} className="px-4 pb-3">
+          <Opened entry={entry} send={send} />
+        </div>
+      )}
     </div>
   )
+}
+
+/** The open line's whole text, or the correction being written, or why neither is here. */
+function Opened({
+  entry,
+  send,
+}: {
+  entry: remembering.Entry
+  send: (event: remembering.Sent) => void
+}) {
+  return remembering.Entry.match(entry, {
+    Closed: () => null,
+    Vanished: () => null,
+    Forgetting: () => null,
+    Unforgotten: () => null,
+    Opening: () => <Waiting />,
+    Rereading: () => <Waiting />,
+    Unopened: ({ line }) => (
+      <div className="flex items-center gap-3">
+        <p className="flex-1 text-label text-ink-3">That could not be opened.</p>
+        <Button size="sm" variant="outline" onClick={() => send(remembering.events.Open({ line }))}>
+          Try again
+        </Button>
+      </div>
+    ),
+    Open: ({ entry: open }) => <Whole entry={open} moved={false} send={send} />,
+    Moved: ({ entry: open }) => <Whole entry={open} moved send={send} />,
+    Editing: ({ entry: open }) => <Correcting entry={open} saving={false} refused={false} send={send} />,
+    Saving: ({ entry: open }) => <Correcting entry={open} saving refused={false} send={send} />,
+    Unsaved: ({ entry: open }) => <Correcting entry={open} saving={false} refused send={send} />,
+  })
+}
+
+/** The still outline of a text on its way: two lines, so the row does not jump when it lands. */
+function Waiting() {
+  return (
+    <div aria-busy className="flex flex-col gap-2 py-1">
+      <span className="sr-only">One moment…</span>
+      <i aria-hidden className="h-3 w-3/4 rounded-full bg-wash-hover" />
+      <i aria-hidden className="h-3 w-1/2 rounded-full bg-wash-hover" />
+    </div>
+  )
+}
+
+/** An entry's whole text, with the two things the Person can do about it. */
+function Whole({
+  entry,
+  moved,
+  send,
+}: {
+  entry: SavedMemory
+  moved: boolean
+  send: (event: remembering.Sent) => void
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      {moved && (
+        <p role="status" className="text-label text-ink-2">
+          Vivid changed this while you had it open. This is what it says now.
+        </p>
+      )}
+      <div className="rounded-control bg-surface-2 px-3 py-2.5 break-words *:text-label">
+        <Markdown content={entry.body} />
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={() => send(remembering.events.Edit())}>
+          Correct
+        </Button>
+        <Button size="sm" variant="destructive" onClick={() => send(remembering.events.Forget())}>
+          Forget
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A correction being written: the sentence and the whole text, each as the entry has it until
+ * the Person changes it. The words live here and stay while the correction is sent and if it is
+ * refused; the field is drawn by this one element through all three states, so nothing is lost
+ * between them. What the Person corrects is something they said.
+ */
+function Correcting({
+  entry,
+  saving,
+  refused,
+  send,
+}: {
+  entry: SavedMemory
+  saving: boolean
+  refused: boolean
+  send: (event: remembering.Sent) => void
+}) {
+  const [sentence, setSentence] = useState(entry.description)
+  const [body, setBody] = useState(entry.body)
+  const said = sentence.trim()
+  // Nothing to save until both say something, and something other than they did.
+  const ready =
+    said.length > 0 &&
+    body.trim().length > 0 &&
+    (said !== entry.description || body !== entry.body)
+  return (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!ready) return
+        send(
+          remembering.events.Save({
+            change: {
+              layer: entry.layer,
+              file: entry.file,
+              kind: entry.kind,
+              description: said,
+              body,
+              basis: 'said',
+            },
+          }),
+        )
+      }}
+    >
+      <label className="flex flex-col gap-1.5">
+        <span className="text-label text-ink-2">What Vivid remembers</span>
+        {/* A sentence can run to 200 characters, so it wraps as it is written instead of
+            scrolling sideways in a one-line field. */}
+        <Textarea
+          // Correcting was just asked for; the cursor belongs in the sentence being corrected.
+          // oxlint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus
+          value={sentence}
+          maxLength={SENTENCE_LIMIT}
+          disabled={saving}
+          aria-invalid={refused}
+          onChange={(event) => setSentence(event.currentTarget.value)}
+          className="min-h-0 resize-none"
+        />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-label text-ink-2">In full</span>
+        <Textarea
+          value={body}
+          disabled={saving}
+          aria-invalid={refused}
+          onChange={(event) => setBody(event.currentTarget.value)}
+          className="max-h-80"
+        />
+      </label>
+      {refused && (
+        <p role="alert" className="text-label text-danger">
+          That correction could not be saved. What you wrote is still here.
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={saving || !ready}>
+          {saving ? 'Saving…' : refused ? 'Try again' : 'Save'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={() => send(remembering.events.Cancel())}
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/** The way to the older lines, while there are any. */
+function Older({
+  older,
+  send,
+}: {
+  older: remembering.Older
+  send: (event: remembering.Sent) => void
+}) {
+  const ask = () => send(remembering.events.ShowOlder())
+  return remembering.Older.match(older, {
+    None: () => null,
+    Resting: () => (
+      <div className="flex justify-center px-4 py-2">
+        <Button size="sm" variant="ghost" onClick={ask}>
+          Show older
+        </Button>
+      </div>
+    ),
+    Paging: () => (
+      <div className="flex justify-center px-4 py-2">
+        <Button size="sm" variant="ghost" disabled aria-busy>
+          Showing older…
+        </Button>
+      </div>
+    ),
+    Unpaged: () => (
+      <div className="flex items-center justify-center gap-3 px-4 py-2">
+        <p className="text-label text-ink-3">Older ones could not be loaded.</p>
+        <Button size="sm" variant="ghost" onClick={ask}>
+          Try again
+        </Button>
+      </div>
+    ),
+  })
 }

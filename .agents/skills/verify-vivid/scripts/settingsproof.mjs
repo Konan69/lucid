@@ -3,7 +3,7 @@ import { ServiceCatalog } from '@vivid/contracts'
 import { json, rpc } from './wire.mjs'
 
 export const settingsLimits = [
-  'Correct, Forget and populated knowledge need owned facts saved through the real product; this recipe checks only the empty view.',
+  'Correct, Forget, standing pages and a populated list need memory written through the real product; this recipe checks only the empty list.',
   'All eight purpose groups, including an unclassified service under More, need real catalog entries for each group. Built-in Google services establish Mail and calendar and Files and notes without remote authority.',
   'Company Settings grouping needs a disposable Company and its actual membership session.',
   'Phone and desktop native entry points need their own device runs.',
@@ -17,11 +17,20 @@ export async function catalog(state, directory, query, name) {
   return result.services
 }
 
-/** An unused disposable account supplies an honest empty knowledge view and the authored catalog. */
+/**
+ * What an unused disposable Person's cell remembers: no lines and nothing older. Standing pages
+ * are not asserted absent, since a new cell may hold pages Vivid writes before any conversation.
+ */
+export async function emptyMemory(state, directory) {
+  const index = await rpc(state, 'GetMemoryIndex', undefined, directory, 'empty-memory')
+  NodeAssert.deepEqual(index.lines, [], 'Recipe needs an unused disposable Person cell')
+  NodeAssert.equal(index.more, false, 'Recipe needs an unused disposable Person cell')
+  return index
+}
+
+/** An unused disposable account supplies an honest empty memory list and the authored catalog. */
 export async function settingsProof(state, _id, directory) {
-  const knowledge = await rpc(state, 'ListMemory', undefined, directory, 'empty-knowledge')
-  NodeAssert.deepEqual(knowledge.memories, [], 'Recipe needs an unused disposable knowledge base')
-  NodeAssert.equal(knowledge.brief.text.trim(), '')
+  await emptyMemory(state, directory)
   const popular = await catalog(state, directory, '', 'popular-services')
   for (const name of ['Gmail', 'Google Drive'])
     NodeAssert.ok(
@@ -35,7 +44,7 @@ export async function settingsProof(state, _id, directory) {
   await json(directory + '/scope.json', {
     modelCalls: 0,
     scope:
-      'Empty saved knowledge, public popular catalog and Gmail search, no connected accounts. Rendering and purpose groups require browser settings.',
+      'Empty memory list, public popular catalog and Gmail search, no connected accounts. Rendering and purpose groups require browser settings.',
     blocked: settingsLimits,
   })
 }
