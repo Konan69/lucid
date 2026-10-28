@@ -65,7 +65,7 @@ For Electron changes read the [desktop recipe](features/desktop.md), then run `.
 
 ## Android phone
 
-For Android work, read [the phone feature](features/phone.md) and [Android setup](references/android.md). From the PC run `verify android provision <devbox-pick alias>`. It rebuilds empty snapshot-excluded SDK and AVD directories, boots headless and reports the observed serial. In the same host's proof checkout run Launch, Doctor, `verify phone thread <run>`, Doctor, then Cleanup. The phone command uses the existing synthetic account and `adb reverse` to this run's server. Its snapshots, screenshots, APK checksum and cleanup receipts stay under `<evidence>/phone/`. It proves idle navigation only.
+For Android work, read [the phone feature](features/phone.md) and [Android setup](references/android.md). From the PC run `verify android provision <devbox-pick alias>`. It rebuilds empty snapshot-excluded SDK and AVD directories, boots headless and reports the observed serial. In the same host's proof checkout run Launch, Doctor, `verify phone thread <run>`, Doctor, then Cleanup. The phone command uses the existing synthetic account and `adb reverse` to this run's server. Its snapshots, screenshots, APK checksum and cleanup receipts stay under `<evidence>/phone/`. The `thread` baseline proves idle navigation only. `verify phone all <run>` drives the active journeys listed in the phone feature, each with its own verdict. Re-provision before a later phone command because Cleanup stops the captured emulator.
 
 ## Evidence and cleanup
 
