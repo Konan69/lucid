@@ -324,37 +324,45 @@ const unavailableMemory = (error: MemoryUnavailable) => unavailable(error._tag)
 
 const memoryIndex = Effect.fn('Runtime.memoryIndex')(function* () {
   const person = yield* owner()
-  return yield* person.sources.memory.index(person.personId).pipe(
-    Effect.flatMap(HttpServerResponse.schemaJson(MemoryIndex)),
-    Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
-  )
+  return yield* person.sources.memory
+    .index(person.personId)
+    .pipe(
+      Effect.flatMap(HttpServerResponse.schemaJson(MemoryIndex)),
+      Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
+    )
 })
 
 const memoryList = Effect.fn('Runtime.memoryList')(function* () {
   const person = yield* owner()
   const listing = yield* HttpServerRequest.schemaBodyJson(MemoryListing)
-  return yield* person.sources.memory.list(person.personId, listing).pipe(
-    Effect.flatMap(HttpServerResponse.schemaJson(MemoryPage)),
-    Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
-  )
+  return yield* person.sources.memory
+    .list(person.personId, listing)
+    .pipe(
+      Effect.flatMap(HttpServerResponse.schemaJson(MemoryPage)),
+      Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
+    )
 })
 
 const memoryRead = Effect.fn('Runtime.memoryRead')(function* () {
   const person = yield* owner()
   const address = yield* HttpServerRequest.schemaBodyJson(MemoryAddress)
-  return yield* person.sources.memory.read(person.personId, address).pipe(
-    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-    Effect.catchTags({ MemoryMissing: missingMemory, MemoryUnavailable: unavailableMemory }),
-  )
+  return yield* person.sources.memory
+    .read(person.personId, address)
+    .pipe(
+      Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+      Effect.catchTags({ MemoryMissing: missingMemory, MemoryUnavailable: unavailableMemory }),
+    )
 })
 
 const memoryWrite = Effect.fn('Runtime.memoryWrite')(function* () {
   const person = yield* owner()
   const write = yield* HttpServerRequest.schemaBodyJson(MemoryWrite)
-  return yield* person.sources.memory.write(person.personId, write).pipe(
-    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-    Effect.catchTags({ MemoryConflict: conflictedMemory, MemoryUnavailable: unavailableMemory }),
-  )
+  return yield* person.sources.memory
+    .write(person.personId, write)
+    .pipe(
+      Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+      Effect.catchTags({ MemoryConflict: conflictedMemory, MemoryUnavailable: unavailableMemory }),
+    )
 })
 
 const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {

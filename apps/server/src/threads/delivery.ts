@@ -293,9 +293,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         {
           Reserved: (reserved) => Effect.succeed(reserved.turn),
           Replayed: (replayed) =>
-            follow({ id, threadId: thread.id, person: speaker }).pipe(
-              Effect.as(replayed.receipt),
-            ),
+            follow({ id, threadId: thread.id, person: speaker }).pipe(Effect.as(replayed.receipt)),
           Busy: ({ person }) =>
             Effect.fail(
               Conflict.make({
@@ -357,9 +355,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   function resume(run: WorkingRun) {
     return personOf(run.personId).pipe(
-      Effect.flatMap((person) =>
-        follow({ id: run.id, threadId: run.threadId, person }),
-      ),
+      Effect.flatMap((person) => follow({ id: run.id, threadId: run.threadId, person })),
       Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')),
     )
   }

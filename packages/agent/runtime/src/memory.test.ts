@@ -41,10 +41,7 @@ describe('layered personal memory', () => {
         )
         const migration = yield* Effect.tryPromise(() =>
           Promise.all(
-            [
-              '20261028123228_memory',
-              '20261028123228_memory-search',
-            ].map((name) =>
+            ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
               NodeFSP.readFile(
                 new URL(
                   `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -77,7 +74,10 @@ describe('layered personal memory', () => {
           basis: 'said',
         })
         const address = MemoryAddress.make(curated)
-        const corrected = MemoryEntry.make({ ...curated, body: '# Meetings\n\nAfternoons work best.\n' })
+        const corrected = MemoryEntry.make({
+          ...curated,
+          body: '# Meetings\n\nAfternoons work best.\n',
+        })
         yield* Effect.scoped(
           Effect.gen(function* () {
             const memory = yield* openMemory(yield* open, migration)
@@ -101,9 +101,9 @@ describe('layered personal memory', () => {
               MemoryListing.make({ layer: null, after: firstPage.next, limit: 1 }),
             )
             expect(secondPage.next).toBeNull()
-            expect([...firstPage.entries, ...secondPage.entries].map((entry) => entry.file)).toEqual(
-              expect.arrayContaining(['meetings.md', 'soul.md']),
-            )
+            expect(
+              [...firstPage.entries, ...secondPage.entries].map((entry) => entry.file),
+            ).toEqual(expect.arrayContaining(['meetings.md', 'soul.md']))
             const rendered = contextInstruction(
               VividContext.make({
                 ...emptyContext,
@@ -118,7 +118,9 @@ describe('layered personal memory', () => {
             expect(saved.revision).toBe(2)
             expect(
               yield* Effect.flip(
-                memory.write(MemoryWrite.make({ entry: curated, expected: first.revision, authority })),
+                memory.write(
+                  MemoryWrite.make({ entry: curated, expected: first.revision, authority }),
+                ),
               ),
             ).toMatchObject({ expected: 1, actual: 2 })
           }),

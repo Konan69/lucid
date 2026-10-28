@@ -16,7 +16,12 @@ import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
-import type { MemoryConflict, MemoryMissing, MemoryUnavailable, MemorySearchInvalid } from '../memory.ts'
+import type {
+  MemoryConflict,
+  MemoryMissing,
+  MemoryUnavailable,
+  MemorySearchInvalid,
+} from '../memory.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json

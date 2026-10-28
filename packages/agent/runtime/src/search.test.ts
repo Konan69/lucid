@@ -53,10 +53,7 @@ describe('personal memory FTS5', () => {
           )
           const migrations = yield* Effect.tryPromise(() =>
             Promise.all(
-              [
-                '20261028123228_memory',
-                '20261028123228_memory-search',
-              ].map((name) =>
+              ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
                 NodeFSP.readFile(
                   new URL(
                     `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -120,9 +117,9 @@ describe('personal memory FTS5', () => {
                   }),
                 )
               }
-              expect((yield* memory.index()).lines.some((entry) => entry.file === legacy.file)).toBe(
-                false,
-              )
+              expect(
+                (yield* memory.index()).lines.some((entry) => entry.file === legacy.file),
+              ).toBe(false)
               expect((yield* memory.search(query)).entries[0]).toMatchObject({
                 file: legacy.file,
                 excerpt: expect.stringContaining('Quasarneedle'),
@@ -156,7 +153,10 @@ describe('personal memory FTS5', () => {
               ).toEqual([])
               yield* memory.write(
                 MemoryWrite.make({
-                  entry: MemoryEntry.make({ ...legacy, body: 'Nebula: evening meetings work best.' }),
+                  entry: MemoryEntry.make({
+                    ...legacy,
+                    body: 'Nebula: evening meetings work best.',
+                  }),
                   expected: MemoryRevision.make(1),
                   authority,
                 }),
@@ -187,7 +187,9 @@ describe('personal memory FTS5', () => {
             Effect.gen(function* () {
               const memory = yield* openMemory(yield* open, migrations)
               expect((yield* memory.search(query)).entries).toEqual([])
-              const retained = yield* memory.search(MemorySearch.make({ ...query, query: 'nebula' }))
+              const retained = yield* memory.search(
+                MemorySearch.make({ ...query, query: 'nebula' }),
+              )
               expect(retained.entries).toMatchObject([{ file: legacy.file, revision: 2 }])
             }),
           )

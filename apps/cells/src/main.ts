@@ -108,7 +108,10 @@ export class Person extends DurableObject<CellState, Environment> {
       list: (person, listing) =>
         person === personId
           ? memory.list(listing)
-          : this.#remote(() => environment.PERSONS.getByName(person).listMemory(listing), MemoryPage),
+          : this.#remote(
+              () => environment.PERSONS.getByName(person).listMemory(listing),
+              MemoryPage,
+            ),
       search: (person, search) =>
         person === personId
           ? memory.search(search)

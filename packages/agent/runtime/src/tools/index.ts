@@ -52,7 +52,9 @@ export function tools(
   const runMemory = memoryRunner(() => {
     const call = local.getStore()
     if (call === undefined)
-      return Effect.fail(new NobodyToActFor({ message: 'Memory tool execution has no delivery scope.' }))
+      return Effect.fail(
+        new NobodyToActFor({ message: 'Memory tool execution has no delivery scope.' }),
+      )
     return resolvePerson(call)
   }, memory)
   return catalogue(runTool, run, runMemory).map((definition) =>

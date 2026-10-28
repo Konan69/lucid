@@ -202,7 +202,10 @@ const matchQuery = (query: string) => {
 }
 
 /** MATCH stays a bound parameter. Native rank/snippet handle retrieval without copying bodies into the prompt. */
-const search = Effect.fn('Memory.search')(function* (database: SqliteDatabase, input: MemorySearch) {
+const search = Effect.fn('Memory.search')(function* (
+  database: SqliteDatabase,
+  input: MemorySearch,
+) {
   const query = yield* matchQuery(input.query)
   const rows = yield* Effect.tryPromise({
     try: () =>
@@ -336,7 +339,8 @@ const retract = Effect.fn('Memory.delete')(function* (
   const actual = yield* decodeRevisionValue(result.actual).pipe(
     Effect.mapError(() => MemoryUnavailable.make({})),
   )
-  if (result.outcome === 'conflict') return yield* MemoryConflict.make({ address, expected, actual })
+  if (result.outcome === 'conflict')
+    return yield* MemoryConflict.make({ address, expected, actual })
   if (result.outcome === 'missing') return yield* MemoryMissing.make({ address, revision: actual })
 })
 /**

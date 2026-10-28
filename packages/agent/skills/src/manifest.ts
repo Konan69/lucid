@@ -189,7 +189,15 @@ const definitions = [
     about:
       'Finds well-priced products that match what you asked for and checks each one is really available.',
     starter: false,
-    needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'browse', 'search_memory', 'ask_person'],
+    needs: [
+      'find_tools',
+      'use_tool',
+      'connect',
+      'read_page',
+      'browse',
+      'search_memory',
+      'ask_person',
+    ],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {
