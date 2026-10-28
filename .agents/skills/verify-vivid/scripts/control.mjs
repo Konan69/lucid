@@ -20,6 +20,7 @@ import {
   dependencyLink,
   checkout,
   capacity,
+  lock,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
@@ -149,7 +150,9 @@ async function launch() {
 
 try {
   if (action === 'launch') await launch()
-  else if (action === 'apk')
+  else if (action === 'apk') {
+    // The heavy lock lives in the checkout's cache, which only Launch created before.
+    await NodeFSP.mkdir(NodePath.dirname(lock), { recursive: true })
     console.log(
       await command(
         [
@@ -162,7 +165,7 @@ try {
         { heavy: true },
       ),
     )
-  else if (action === 'help')
+  } else if (action === 'help')
     console.log(
       'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
