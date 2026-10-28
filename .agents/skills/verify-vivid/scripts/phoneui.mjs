@@ -44,15 +44,10 @@ export function phoneUI(state, run, directory) {
     if (!snapshot.includes('"Close menu"') && !snapshot.includes('"Open menu"'))
       await run(['back', '--settle'])
     if (!snapshot.includes('"Close menu"')) await press('Open menu')
-    // Search hides the drawer's Feed row. Return the main menu before choosing a place.
-    const opened = await run(['snapshot', '-i', '--force-full'])
-    if (opened.includes('"Stop searching"')) await press('Stop searching')
   }
   const visit = async (id) => {
     const detail = await rpc(state, 'GetThread', { id }, directory, 'visit-' + id)
     await menu()
-    await press('Search threads')
-    await fill('Search threads', detail.thread.title)
     await press(detail.thread.title)
     await visible('Message Vivid')
     const opened = await run(['snapshot', '-i', '--force-full'])
