@@ -15,7 +15,11 @@ export const FeedCardState = Schema.Literals(['new', 'seen', 'done'] as const)
 export type FeedCardState = typeof FeedCardState.Type
 
 const Title = Schema.NonEmptyString.check(Schema.isMaxLength(120))
-/** What Vivid says about it, a sentence or two, as plain words. */
+/**
+ * What Vivid says about it, a sentence or two, as plain words. Absent when the display says it:
+ * a card said its one fact three times (the Thread's title, the card's title, then the words)
+ * before the drawing, and the owner called it duplicated (29 October 2026).
+ */
 const Words = Schema.NonEmptyString.check(Schema.isMaxLength(600))
 /**
  * The thing itself, drawn: one OpenUI Lang program, the same language a reply's display uses, so
@@ -33,7 +37,7 @@ const Actions = Schema.Array(FeedAction).check(Schema.isMaxLength(2))
 /** What Vivid put on a card: its words, the thing itself drawn, and what the Person can press. */
 export const FeedPost = Schema.Struct({
   title: Title,
-  words: Words,
+  words: Schema.NullOr(Words),
   display: Schema.NullOr(Display),
   actions: Actions,
 })
