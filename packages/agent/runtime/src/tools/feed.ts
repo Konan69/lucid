@@ -10,7 +10,7 @@ import { summary, text } from './inputs.ts'
  * whole contract the model gets, so it says when to post and when to stay quiet.
  */
 export const instructions =
-  'Put something on the Person’s Feed when work you did on your own (an Integration’s event woke you) found something that needs them or that they would want to know. Write it like a reply: a sentence or two, and a display when a picture says it better, with buttons for what they can do next. One card per piece of work: posting again from the same work replaces the card. If nothing needs them, do not post.'
+  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. The card is the thing itself, drawn: the letter you wrote, the numbers as a chart, the options as tiles, the page you made, as one openui-lang display. Words only for what the drawing cannot say, one sentence, never a restatement of the title. Buttons for what they can do next. One card per piece of work: posting again replaces the card. If nothing needs them, do not post.'
 
 /** The model sees whether its card is new or replaced, never the card's or Thread's identity. */
 const resultOf = (outcome: PostOutcome) =>
@@ -27,7 +27,12 @@ export function feedTools(runTool: RunTool) {
       input: v.object({
         summary,
         title: text('A short title: what needs them, as a question or a fact.', 120),
-        words: text('One or two sentences: why, and what you already did.', 600),
+        words: v.nullable(
+          text(
+            'One or two sentences only when the display does not say it; null when the drawing is the card.',
+            600,
+          ),
+        ),
         display: v.nullable(
           text(
             'The thing itself as one openui-lang program (no fence), or null when words say it all.',

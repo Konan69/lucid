@@ -29,6 +29,9 @@ $slot = "Wed 21 Oct at 9:00"
 wed = Col([Caption("Wed 21 Oct"), Row([Pressable([Text("9:00", "sm")], @Set($slot, "Wed 21 Oct at 9:00"), $slot == "Wed 21 Oct at 9:00", 2), Pressable([Text("10:30", "sm")], @Set($slot, "Wed 21 Oct at 10:30"), $slot == "Wed 21 Oct at 10:30", 2), Pressable([Text("1:30 PM", "sm")], @Set($slot, "Wed 21 Oct at 1:30 PM"), $slot == "Wed 21 Oct at 1:30 PM", 2)], 2, null, "start", true)], 1)
 thu = Col([Caption("Thu 22 Oct"), Row([Pressable([Text("9:00", "sm")], @Set($slot, "Thu 22 Oct at 9:00"), $slot == "Thu 22 Oct at 9:00", 2), Pressable([Text("11:00", "sm")], @Set($slot, "Thu 22 Oct at 11:00"), $slot == "Thu 22 Oct at 11:00", 2), Pressable([Text("2:00 PM", "sm")], @Set($slot, "Thu 22 Oct at 2:00 PM"), $slot == "Thu 22 Oct at 2:00 PM", 2)], 2, null, "start", true)], 1)
 acts = Row([Button("None of these work", @ToAssistant("None of these times work"), "ghost"), Button("Book " + $slot, @ToAssistant("Book Iyin for " + $slot))], 2, null, "end")`,
+  `A Feed card that is the letter itself, drafted and ready, with what it carries; the card's own buttons send it:
+
+root = Card([Caption("To Dana Bello"), Text("Dana, Friday at 10 works. I will bring the revised deck and the September numbers.", "sm"), Row([Badge("deck-v3.pdf"), Badge("september.xlsx")], 2)], "soft")`,
 ] as const
 
 /**
