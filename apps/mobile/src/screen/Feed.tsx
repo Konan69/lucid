@@ -306,7 +306,7 @@ function Waiting({
 
 /**
  * One card: where it is from and when, its title (which opens the background Thread), what Vivid
- * says, the thing itself in a band of the accent's soft tint running to the card's edges, and the
+ * says only when the drawing does not say it, the thing itself in a band of the accent's soft tint running to the card's edges, and the
  * card's own buttons. Buttons inside the display are inert here; what the Person picks inside it
  * still works and the buttons' words follow it (`feed.fill`).
  */
@@ -353,7 +353,10 @@ function Card({
     setChosen(next)
   }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
-  const words = Option.match(post, { onNone: () => ask.words, onSome: (made) => made.words })
+  const words = Option.match(post, {
+    onNone: () => Option.some(ask.words),
+    onSome: (made) => Option.fromNullOr(made.words),
+  })
   const display = Option.flatMap(post, (made) => Option.fromNullOr(made.display))
   return (
     <View
@@ -385,9 +388,11 @@ function Card({
           {title}
         </Label>
       </Pressable>
-      <Label size="footnote" tone="ink-2" style={{ marginTop: 4, fontWeight: '400' }}>
-        {words}
-      </Label>
+      {Option.isSome(words) && (
+        <Label size="footnote" tone="ink-2" style={{ marginTop: 4, fontWeight: '400' }}>
+          {words.value}
+        </Label>
+      )}
       {Option.isSome(display) && (
         <View
           style={{
