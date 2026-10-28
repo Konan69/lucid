@@ -165,6 +165,17 @@ const recover = Effect.fn('Learning.recover')(function* (
   return yield* recoverAuthority(threadId, turn).pipe(Effect.provide(context))
 }, Effect.scoped)
 
+/**
+ * The signal a delivery entry carries, `null` for a Person's plain words, or nothing when the
+ * entry is not something a Person said. Only a Person's own words are evidence about them: a
+ * Watch event, a decision on an approval or the first-conversation prompt is server content.
+ */
+const spokenSignal = Effect.fn('Learning.spokenSignal')(function* (entry: EntryRecord) {
+  if (entry.kind !== SIGNAL_ENTRY) return Option.some(null)
+  const signal = yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
+  return SPOKEN.has(signal.type) ? Option.some(signal) : Option.none()
+})
+
 /** A delivery keeps its own Person even when another speaker steered the same run. */
 const delivered = Effect.fn('Learning.delivered')(function* (
   harness: Harness,
@@ -187,18 +198,13 @@ const delivered = Effect.fn('Learning.delivered')(function* (
     thread,
     recover,
   )
-  const signal =
-    entry.kind === SIGNAL_ENTRY
-      ? yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
-      : null
-  // Only a Person's own words are evidence about them. A Watch event, a decision on an approval
-  // or the first-conversation prompt is server-produced content, never what the Person said.
-  if (signal !== null && !SPOKEN.has(signal.type)) return Option.none()
-  const name = signal === null ? thread.value.creatorName : signal.attributes.from
+  const signal = yield* spokenSignal(entry)
+  if (Option.isNone(signal)) return Option.none()
+  const name = signal.value === null ? thread.value.creatorName : signal.value.attributes.from
   return Option.some({
     personId: authority.acting.personId,
     name: name === undefined ? null : name,
-    message: signal === null ? prose(entry, 'user') : signal.body,
+    message: signal.value === null ? prose(entry, 'user') : signal.value.body,
     timezone: frozen.context.timezone.length === 0 ? null : frozen.context.timezone,
   })
 })
@@ -287,9 +293,9 @@ const gate = Effect.fn('Learning.gate')(function* (
   record: RecordAt<'gate'>,
   runtime: Runtime,
   context: PiContext,
-  learner: Extension,
-  host: PersonId,
+  learner: { readonly extension: Extension; readonly host: PersonId },
 ) {
+  const { host } = learner
   const group = record.input.groups[record.state.checkpoint.position]
   if (group === undefined) {
     yield* pi(() =>
@@ -316,8 +322,8 @@ const gate = Effect.fn('Learning.gate')(function* (
         }
       const child = await tx.createConversation({ ownership: { kind: 'task', taskId: record.id } })
       await configure(tx, child.id, {
-        extensions: [learner],
-        tools: learner.tools,
+        extensions: [learner.extension],
+        tools: learner.extension.tools,
         instructions: INSTRUCTIONS,
       })
       // The task runs in this cell's Harness, so its id is only meaningful beside this cell's
@@ -422,7 +428,7 @@ export const learning: (
     phases: {
       gate: (record, runtime, context) =>
         run(
-          gate(record, runtime, context, learner, host).pipe(
+          gate(record, runtime, context, { extension: learner, host }).pipe(
             Effect.provideService(Memory, memory),
             Effect.provideService(DecisionModel.DecisionModel, decision),
             failed(runtime, context),
