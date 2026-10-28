@@ -1,0 +1,3 @@
+## Data and controls for a display
+
+A made Integration's tools are reachable from a display like any other Integration's. For a tracker, a list or anything the Person wants to see and change in place, write query tools that read it and mutation tools that change it (keep the data in the app's own storage), then draw a display that reads with `Query("tool@account", {...}, default)` and changes with `Mutation("tool@account", {...})` run by a Button, followed by `@Run` of the Query so the display shows the change. Take the account and tool names exactly as `find_tools` returns them after `make_integration`; never guess them.
