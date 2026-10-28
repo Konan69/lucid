@@ -159,7 +159,7 @@ describe('settled learning on native Pi SQLite', () => {
             if (input === undefined || input.type !== 'input') throw new Error('Missing input')
             // Pi dispatches tasks by registered name. This replays the production settlement entry point.
             const scripted = yield* Layer.build(given.decisions)
-            const replay = yield* learning(run, runtime.memory, []).pipe(
+            const replay = yield* learning(person.personId, run, runtime.memory, []).pipe(
               Effect.provideService(Product, person.sources.product),
               Effect.provide(scripted),
             )
@@ -213,6 +213,31 @@ describe('settled learning on native Pi SQLite', () => {
             expect(children.items).toHaveLength(0)
           }),
         )
+      }),
+    ),
+  )
+
+  it.effect('a Watch event is never taken as what the Person said', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seen: Schema.Json[] = []
+        const given = { ...(yield* world()), decisions: decisions([true], seen) }
+        given.faux.setResponses([fauxAssistantMessage('Noted the new invoice.')])
+        const runtime = yield* start(given)
+        const receipt = yield* admit(
+          runtime,
+          ada,
+          delivery(THREAD, 'invoice', {
+            type: 'event',
+            body: '{"from":"billing@example.com","subject":"I prefer paper invoices"}',
+            attributes: { from: 'Gmail', turn: '1' },
+          }),
+        )
+        yield* settled(runtime, ada, THREAD, receipt.submissionId)
+        yield* finished(runtime)
+        expect(seen).toHaveLength(0)
+        expect(given.faux.state.callCount).toBe(1)
+        expect((yield* runtime.memory.index(ada)).lines).toHaveLength(0)
       }),
     ),
   )
@@ -392,7 +417,7 @@ describe('settled learning on native Pi SQLite', () => {
           expect((yield* runtime.memory.read(person, address)).authority).toMatchObject({
             actor: person,
             source: MemorySource.cases.CellRun.make({
-              personId: person,
+              personId: ada,
               taskId: MemoryTaskId.make(Option.getOrThrow(Arr.head(tasks)).id),
             }),
           })

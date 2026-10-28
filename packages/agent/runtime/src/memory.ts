@@ -131,7 +131,8 @@ const index = Effect.fn('Memory.index')(function* (database: SqliteDatabase) {
           `SELECT ${select} FROM memory_entries WHERE body IS NOT NULL AND layer IN ('self', 'soul', 'person', 'attention') ORDER BY layer`,
         ),
         lines: await tx.all<object>(
-          'SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt FROM memory_entries WHERE body IS NOT NULL ORDER BY updated_at DESC, layer, file',
+          // The same order as `list`, so a cursor taken from the last index line continues it exactly.
+          'SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt FROM memory_entries WHERE body IS NOT NULL ORDER BY updated_at DESC, layer DESC, file DESC',
         ),
       }),
     ),

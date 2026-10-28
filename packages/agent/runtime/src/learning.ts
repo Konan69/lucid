@@ -77,8 +77,8 @@ class LearningFailed extends Schema.TaggedError<LearningFailed>()(
 
 /** Authority is host-only. No Person or task id is passed in the learner's exchange. */
 const LearnerAuthority = defineDocFamily<
-  { personId: string; taskId: number },
-  { personId: string; taskId: number }
+  { personId: string; host: string; taskId: number },
+  { personId: string; host: string; taskId: number }
 >({
   kind: 'vivid.learner',
   version: 1,
@@ -152,6 +152,8 @@ const history = Effect.fn('Learning.history')(function* (
 
 const decodeKept = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Kept)))
 const decodeSignal = Schema.decodeUnknownEffect(SignalData)
+/** Signal types that carry a Person's own words: a message in a shared Thread, an answer. */
+const SPOKEN: ReadonlySet<string> = new Set(['message', 'answer'])
 
 /** Recover one attributed signal through the existing bare product authority. */
 const recover = Effect.fn('Learning.recover')(function* (
@@ -189,6 +191,9 @@ const delivered = Effect.fn('Learning.delivered')(function* (
     entry.kind === SIGNAL_ENTRY
       ? yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
       : null
+  // Only a Person's own words are evidence about them. A Watch event, a decision on an approval
+  // or the first-conversation prompt is server-produced content, never what the Person said.
+  if (signal !== null && !SPOKEN.has(signal.type)) return Option.none()
   const name = signal === null ? thread.value.creatorName : signal.attributes.from
   return Option.some({
     personId: authority.acting.personId,
@@ -283,6 +288,7 @@ const gate = Effect.fn('Learning.gate')(function* (
   runtime: Runtime,
   context: PiContext,
   learner: Extension,
+  host: PersonId,
 ) {
   const group = record.input.groups[record.state.checkpoint.position]
   if (group === undefined) {
@@ -314,8 +320,11 @@ const gate = Effect.fn('Learning.gate')(function* (
         tools: learner.tools,
         instructions: INSTRUCTIONS,
       })
+      // The task runs in this cell's Harness, so its id is only meaningful beside this cell's
+      // Person, which differs from the speaker when someone else spoke in this Person's Thread.
       await tx.doc(LearnerAuthority, child.id, LEARNER_KEY, {
         personId: group.personId,
+        host,
         taskId: record.id,
       })
       return {
@@ -396,12 +405,13 @@ const starter = (
 
 /** Pi owns durability and deduplication. The Person owns the Effect callback bridge. */
 export const learning: (
+  host: PersonId,
   run: RunLearning,
   memory: Memory['Service'],
   tools: ReadonlyArray<import('@earendil-works/pi-durable').ToolRegistration>,
 ) => Effect.Effect<Learning, never, DecisionModel.DecisionModel | Product> = Effect.fn(
   'Learning.make',
-)(function* (run, memory, tools) {
+)(function* (host, run, memory, tools) {
   const decision = yield* DecisionModel.DecisionModel
   const product = yield* Product
   const learner = learnerDefinition(tools)
@@ -412,7 +422,7 @@ export const learning: (
     phases: {
       gate: (record, runtime, context) =>
         run(
-          gate(record, runtime, context, learner).pipe(
+          gate(record, runtime, context, learner, host).pipe(
             Effect.provideService(Memory, memory),
             Effect.provideService(DecisionModel.DecisionModel, decision),
             failed(runtime, context),
@@ -474,11 +484,12 @@ export const learnerAuthority: (
   const actor = yield* decodePerson(scope.personId).pipe(
     Effect.mapError(() => new LearningFailed()),
   )
+  const host = yield* decodePerson(scope.host).pipe(Effect.mapError(() => new LearningFailed()))
   const taskId = yield* decodeTask(scope.taskId).pipe(Effect.mapError(() => new LearningFailed()))
   return Option.some(
     MemoryAuthority.make({
       actor,
-      source: MemorySource.cases.CellRun.make({ personId: actor, taskId }),
+      source: MemorySource.cases.CellRun.make({ personId: host, taskId }),
     }),
   )
 })

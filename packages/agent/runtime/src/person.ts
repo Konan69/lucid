@@ -102,7 +102,12 @@ export const openPerson = Effect.fn('Person.open')(function* (
     memory,
   )
   const registry = createRegistry()
-  const learn = yield* learning((program, signal) => run(program, { signal }), memory, all)
+  const learn = yield* learning(
+    personId,
+    (program, signal) => run(program, { signal }),
+    memory,
+    all,
+  )
   registry.install(learn.extension)
   registry.install(learn.learner)
   registry.install(
