@@ -61,7 +61,7 @@ export async function phoneCleanup(state) {
 
 /** Reverse mappings belong to this disposable emulator and must disappear before its adb stops. */
 async function reverseCleanup({ phone, env, directory, port }, failures) {
-  if (!(await alive(phone.device.adb))) return
+  if (!(await alive(phone.device.adb)) || !(await alive(phone.device.emulator))) return
   try {
     const adb = [phone.device.sdk + '/platform-tools/adb', '-s', phone.device.serial, 'reverse']
     const listing = await command([...adb, '--list'], {

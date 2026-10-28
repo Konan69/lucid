@@ -1,12 +1,14 @@
 import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeAssert from 'node:assert/strict'
-import { command, json, alive } from './process.mjs'
+import { command, json, alive, identity } from './process.mjs'
 import { host } from './settings.mjs'
 import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
+import { stopCaptured } from './recovery.mjs'
 import { readAccount, readDevice, readState } from './phonewire.mjs'
 import { rpc, history } from './wire.mjs'
 import { phoneUI } from './phoneui.mjs'
@@ -67,15 +69,27 @@ const recipes = {
 }
 
 /** Each recipe gets its own evidence, even when an earlier recipe or native renderer fails. */
-async function journey(state, name, ui, adb) {
+async function journey(state, name, ui, native) {
   let verdict
   let id
   try {
+    if (!(await alive(native.device.emulator))) {
+      await json(ui.directory + '/verdict.json', {
+        verdict: 'blocked',
+        journey: name,
+        head: state.head,
+        run: state.run,
+        model: state.model,
+        reason: 'Captured emulator exited during an earlier journey',
+        evidence: ui.directory,
+      })
+      return { verdict: 'blocked', journey: name }
+    }
     await ui.run(['open', 'work.vivid.mobile', '--foreground'])
     if (name !== 'thread')
       NodeAssert.equal(state.modelKind, 'real', 'Phone journey requires a real model')
     id = await ui.create('Phone ' + name + ' ' + crypto.randomUUID().slice(0, 8))
-    await recipes[name](state, id, ui, adb)
+    await recipes[name](state, id, ui, native.adb)
     verdict = { verdict: 'proved', thread: id }
   } catch (error) {
     verdict = { verdict: 'failed', thread: id, error: error.stack }
@@ -83,11 +97,8 @@ async function journey(state, name, ui, adb) {
       await rpc(state, 'GetThread', { id }, ui.directory, 'failed-thread').catch(() => {})
       await history(state, id, ui.directory, 'failed-history').catch(() => {})
     }
-    await adb(['logcat', '-d', '-b', 'crash']).catch(() => {})
-    await adb(['logcat', '-d', '-t', '1000', 'ReactNativeJS:V', 'AndroidRuntime:E', '*:S']).catch(
-      () => {},
-    )
-    await ui.capture('failure').catch(() => {})
+    if (await alive(native.device.emulator)) await ui.capture('failure').catch(() => {})
+    else await json(ui.directory + '/emulator-exited.json', native.device)
   }
   await json(ui.directory + '/verdict.json', {
     ...verdict,
@@ -168,6 +179,7 @@ export async function phone(state, feature) {
       redactions,
     )
   let verdict
+  let recording
   try {
     const artifact = await apk(state, (process) => control(state, { action: 'capture', process }))
     await json(directory + '/apk.json', artifact)
@@ -177,12 +189,28 @@ export async function phone(state, feature) {
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
     const adbRun = (args) => execute([adb, '-s', device.serial, ...args])
+    // Read logcat before the renderer can take the emulator down. A post-crash adb read waits
+    // forever for a vanished serial, so the captured collector is stopped through its receipt.
+    const log = await NodeFSP.open(directory + '/logcat.log', 'a', 0o600)
+    try {
+      const collector = NodeChildProcess.spawn(
+        adb,
+        ['-s', device.serial, 'logcat', '-v', 'threadtime', '*:W', 'ReactNativeJS:V'],
+        { env, stdio: ['ignore', log.fd, log.fd], detached: true },
+      )
+      recording = await identity(collector.pid)
+      await control(state, { action: 'capture', process: recording })
+    } finally {
+      await log.close()
+    }
     await enter(state, phoneUI(state, run, directory))
     const journeys = []
     for (const name of chosen) {
       logDirectory = directory + '/' + name
       await NodeFSP.mkdir(logDirectory, { recursive: true })
-      journeys.push(await journey(state, name, phoneUI(state, run, logDirectory), adbRun))
+      journeys.push(
+        await journey(state, name, phoneUI(state, run, logDirectory), { adb: adbRun, device }),
+      )
     }
     verdict = {
       verdict: journeys.every((entry) => entry.verdict === 'proved') ? 'proved' : 'failed',
@@ -213,7 +241,8 @@ export async function phone(state, feature) {
       origin: phoneOrigin,
       evidence: directory,
     })
-    await run(['close', 'work.vivid.mobile']).catch(() => {})
+    if (recording) await stopCaptured(recording, true)
+    if (await alive(device.emulator)) await run(['close', 'work.vivid.mobile']).catch(() => {})
     await phoneCleanup(state)
   }
 }
