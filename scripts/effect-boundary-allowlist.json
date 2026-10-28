@@ -10,6 +10,11 @@
     "symbols": ["attempt", "index", "write", "retract", "search"]
   },
   {
+    "file": "packages/agent/runtime/src/learning.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>", "gate", "starter"]
+  },
+  {
     "file": "packages/agent/runtime/src/providers/witness.ts",
     "classification": "third-party-adapter",
     "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
@@ -98,12 +103,12 @@
       "deleteAlarm",
       "blockConcurrencyWhile",
       "fetch",
-      "noteIndex",
-      "listNotes",
-      "searchNotes",
-      "readNote",
-      "writeNote",
-      "deleteNote",
+      "memoryIndex",
+      "listMemory",
+      "searchMemory",
+      "readMemory",
+      "writeMemory",
+      "deleteMemory",
       "#open",
       "#remote",
       "#arm",
