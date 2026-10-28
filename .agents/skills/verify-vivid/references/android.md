@@ -10,7 +10,7 @@ Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision com
 
 Provision requires SSH, Python 3 with pidfd, curl, unzip, flock, JDK 17 and writable `/dev/kvm` on the box. It checks load and available memory before heavy work. If KVM is inaccessible, restore the host's KVM access before retrying. A missing prerequisite is a failure.
 
-The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `../scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu guest`, two cores and 3 GiB memory. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
+The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `../scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu swiftshader`, two cores and 3 GiB memory. API 35 rejected guest rendering and silently selected lavapipe; the supported SwiftShader mode is explicit. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
 
 The SDK lives in `~/android_sdk` and the AVD in `~/vivid-emulator`. The provisioner retains these exclusions in `~/.boxignore`; this is the one intentional write outside the skill. Boat snapshots must exclude live disks and dependency caches. A restore can empty these directories. Repeating provision reconstructs missing packages and AVD state. A healthy running device takes the fast path.
 
@@ -65,3 +65,5 @@ Invoke the pinned launcher at `~/.cache/vivid-android/tools/node_modules/agent-d
 A durable host lease prevents another checkout from taking an emulator left by a killed phone worker. SDK provision and stop refuse that lease; recover it with `verify cleanup` in the owning checkout.
 
 Always finish with `verify cleanup` and, for provision-only runs, the PC's `verify android stop <alias>`. Inspect the saved process receipts and `ps` output. Stop uses PID, Linux start ticks and boot identity, so a recycled PID grants no authority.
+
+Provision sets animator_duration_scale, transition_animation_scale and window_animation_scale to zero before Vivid starts. It reads each value back into the private cache motion receipt; the phone command retains that receipt as phone/motion.json. The Send journey captures consecutive reduced-orb frames before checking the reply stream. A missing frame after an emulator exit cannot confirm that the asynchronous orb hook reached its static branch.

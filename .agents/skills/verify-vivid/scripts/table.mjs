@@ -20,7 +20,7 @@ function tables(node) {
   return []
 }
 
-/** This recipe requires literal cells; unsupported expressions fail rather than infer their values. */
+/** Cells must resolve to literal strings or numbers; the recipe does not evaluate executable expressions. */
 function cells(node) {
   NodeAssert.equal(node.k, 'Arr', 'Table columns and rows must be arrays')
   return node.els.map((cell) => {
@@ -39,11 +39,20 @@ export async function assertTable(page) {
       Array.from(part.text.matchAll(/```openui-lang\s*\n([\s\S]*?)```/g), (m) => m[1]),
     )
   NodeAssert.ok(programs.length > 0, 'No assistant openui-lang fence')
-  const candidates = programs.flatMap((program) =>
-    split(tokenize(program)).flatMap((statement) => tables(parseExpression(statement.tokens))),
-  )
+  const candidates = programs.flatMap((program) => {
+    const definitions = new Map(
+      split(tokenize(program)).map((statement) => [
+        statement.id,
+        parseExpression(statement.tokens),
+      ]),
+    )
+    return [...definitions.values()].flatMap(tables).map((table) => ({ table, definitions }))
+  })
   NodeAssert.equal(candidates.length, 1, 'Expected one assistant Table program')
-  const [headers, body] = candidates[0].args
+  const { table, definitions } = candidates[0]
+  const [headers, expression] = table.args
+  const body = expression.k === 'Ref' ? definitions.get(expression.n) : expression
+  NodeAssert.ok(body, 'Table rows reference an undefined array')
   NodeAssert.deepEqual(cells(headers), columns, 'Table columns differ')
   NodeAssert.equal(body.k, 'Arr', 'Table rows must be an array')
   NodeAssert.deepEqual(body.els.map(cells), rows, 'Table must contain all nine expected cells')

@@ -2,7 +2,7 @@ import * as NodeAssert from 'node:assert/strict'
 import { Channel } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { json, rpc } from './wire.mjs'
-import { catalog, emptyMemory, settingsLimits } from './settingsproof.mjs'
+import { catalog, settingsLimits } from './settingsproof.mjs'
 
 const Groups = Schema.Array(
   Schema.Struct({ purpose: Schema.String, names: Schema.Array(Schema.String) }),
@@ -42,33 +42,31 @@ function assertCatalog(actual, services, query) {
 /** The sentence the Memory section shows while the Person's cell remembers nothing listed. */
 const EMPTY_MEMORY = 'When you tell Vivid something that matters later, it shows up here.'
 
-/**
- * The empty memory list, read from the Person's cell, before and after reload. A reload opens
- * Settings again, which reads the cell again. The section never says "notes" or "saved
- * knowledge": the Person's memory is one memory, the one Vivid reads before it answers.
- */
+/** Earlier model journeys may have taught this Person. Compare Settings with its actual index,
+ * rather than requiring an unused account after the full-product run has already exchanged words. */
 async function memory(state, context, browser) {
   const { id, directory } = context
   const { run, capture } = browser
-  await emptyMemory(state, directory)
+  const index = await rpc(state, 'GetMemoryIndex', undefined, directory, 'memory-index')
+  const expected =
+    index.lines.length === 0 ? [EMPTY_MEMORY] : index.lines.map((line) => line.description)
   await run(['open', state.web + '/t/' + id + '?settings=memory'])
   const section = `Array.from(document.querySelectorAll('[role="dialog"] section')).find(section => section.querySelector('h3')?.innerText.trim() === 'What Vivid remembers')`
   for (const stage of ['memory', 'memory-reloaded']) {
     await run([
       'wait',
       '--fn',
-      `Boolean(${section}?.innerText.includes(${JSON.stringify(EMPTY_MEMORY)}))`,
+      `Boolean(${section}) && ${JSON.stringify(expected)}.every(words => ${section}.innerText.includes(words))`,
     ])
-    const value = Result.getOrThrow(
-      decodeText(await run(['eval', `JSON.stringify(${section}.innerText)`])),
-    )
-    const dialog = Result.getOrThrow(
+    const headings = Result.getOrThrow(
       decodeText(
-        await run(['eval', `JSON.stringify(document.querySelector('[role="dialog"]').innerText)`]),
+        await run([
+          'eval',
+          `JSON.stringify(Array.from(document.querySelectorAll('[role="dialog"] h3')).map(node => node.innerText).join(' '))`,
+        ]),
       ),
     )
-    NodeAssert.ok(!/\bnotes?\b/iu.test(value), 'The memory section says notes: ' + value)
-    NodeAssert.ok(!dialog.includes('saved knowledge'), 'Settings still says saved knowledge')
+    NodeAssert.ok(!/saved knowledge|\bnotes?\b/iu.test(headings), 'Obsolete Memory section heading')
     await capture(stage)
     if (stage === 'memory') await run(['reload'])
   }

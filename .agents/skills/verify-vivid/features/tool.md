@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-The HTTP check parses assistant-only openui-lang fences with the shipped parser and asserts a Table with three exact columns and nine literal cells. User prompts, prose and missing tables fail. The browser checks the Project/Hours/Owner columns and the complete Research/4/Ada, Writing/3/Ben and Review/2/Cai rows before and after reload. The title is model-generated and is not the rendering assertion.
+The HTTP check parses assistant-only openui-lang fences with the shipped parser and asserts a Table with three exact columns and nine literal cells, including a named rows array. User prompts, prose and missing tables fail. The browser checks the Project/Hours/Owner columns and the complete Research/4/Ada, Writing/3/Ben and Review/2/Cai rows before and after reload. The title is model-generated and is not the rendering assertion.
 
 ## How to get to it (user POV)
 
