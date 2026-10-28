@@ -58,7 +58,7 @@ export async function memoryBrowser(state, id, directory, browser) {
   )
   const known = { file: undefined }
   let count = 0
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     const evidence = directory + '/' + step.name
     await fs.mkdir(evidence, { recursive: true })
     await run(['find', 'label', 'Message Vivid', 'fill', step.prompt])
@@ -84,7 +84,7 @@ export async function memoryBrowser(state, id, directory, browser) {
     await run(['wait', '[aria-label="Message Vivid"]'])
     const reloaded = await history(state, id, evidence, 'reloaded-history')
     assert.deepEqual(reloaded.messages, page.messages)
-    assert.equal(reloaded.messages.filter((message) => message.role === 'user').length, count)
+    assert.equal(reloaded.messages.filter((message) => message.role === 'user').length, index + 1)
     await latestReply(browser, reloaded, currentRun, { directory: evidence, stage: 'reloaded' })
     await capture(step.name + '-reloaded')
   }
@@ -92,7 +92,7 @@ export async function memoryBrowser(state, id, directory, browser) {
     proved:
       'Web composer write, read, same-file replacement, read replacement, delete and missing read. Each tool receipt is checked and each reply survives reload.',
     unsupported: [
-      'Dedicated Memory list or editor; Memory are only exposed through the agent in this client',
+      'Dedicated Memory list or editor; this composer journey does not drive the Settings controls',
       'owner cancellation and idle capacity',
       'server process restart',
       'native phone and desktop controls',

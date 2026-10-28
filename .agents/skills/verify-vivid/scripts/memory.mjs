@@ -77,8 +77,8 @@ function callsOf(page, run) {
  */
 export async function memoryReceipt(page, run, step, directory, known) {
   const { calls, text } = callsOf(page, run)
-  // Failed attempts have no memory effect. Retain them in the receipt, while requiring the
-  // exact successful mutation and a fresh public index after a confirmed retraction.
+  // Retain failed attempts in evidence. Require the exact successful mutation and a fresh
+  // public index after a confirmed retraction; an interrupted call alone proves no outcome.
   const writes = calls.filter(
     (part) => part.toolName === Tool.write_memory && part.state === 'output-available',
   )

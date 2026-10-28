@@ -129,7 +129,7 @@ const specialRecipes = {
   settings: {
     drive: settingsBrowser,
     scope:
-      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
+      'Personal Settings groups, current memory index rendered before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
   },
 }
 for (const name of features)
