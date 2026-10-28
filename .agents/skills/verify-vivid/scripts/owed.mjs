@@ -56,7 +56,7 @@ export async function owed(state, id, directory) {
   assert.equal(state.modelKind, 'real', 'Tracking needs a real model; rehearsal cannot prove it')
   await chat(state, id, OWED_PROMPT, directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
-  await trackedReceipt(state, id, detail.runs[0].id, directory)
+  await trackedReceipt(state, id, detail.runs[0].submissionId, directory)
   const record = await trackedRecord(state, id, directory, 'listed')
   assert.ok(['Open', 'Nudged'].includes(record.state._tag), 'The new record is not open')
   await rpc(

@@ -18,7 +18,7 @@ export async function owedBrowser(state, id, directory, { run, capture }) {
   await run(['find', 'label', 'Message Vivid', 'fill', OWED_PROMPT])
   await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
   const detail = await settled(state, id, 1, 'Completed', directory)
-  await trackedReceipt(state, id, detail.runs[0].id, directory)
+  await trackedReceipt(state, id, detail.runs[0].submissionId, directory)
   const record = await trackedRecord(state, id, directory, 'listed')
   await capture('thread')
 
