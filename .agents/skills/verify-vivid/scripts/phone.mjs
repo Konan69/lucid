@@ -119,6 +119,24 @@ async function journey(state, name, ui, native) {
   return verdict
 }
 
+/** A captured collector preserves guest logs before a renderer failure can remove the serial.
+ * Post-crash adb reads wait indefinitely, so cleanup stops this already-recording generation. */
+async function logcat(state, { adb, serial, env, directory }) {
+  const log = await NodeFSP.open(directory + '/logcat.log', 'a', 0o600)
+  try {
+    const collector = NodeChildProcess.spawn(
+      adb,
+      ['-s', serial, 'logcat', '-v', 'threadtime', '*:W', 'ReactNativeJS:V'],
+      { env, stdio: ['ignore', log.fd, log.fd], detached: true },
+    )
+    const recording = await identity(collector.pid)
+    await control(state, { action: 'capture', process: recording })
+    return recording
+  } finally {
+    await log.close()
+  }
+}
+
 /** One phone command owns the host lease until finally has closed its session and stopped the
  * captured emulator. A killed worker leaves acquisition receipts for verify cleanup. */
 export async function phone(state, feature) {
@@ -189,20 +207,7 @@ export async function phone(state, feature) {
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
     const adbRun = (args) => execute([adb, '-s', device.serial, ...args])
-    // Read logcat before the renderer can take the emulator down. A post-crash adb read waits
-    // forever for a vanished serial, so the captured collector is stopped through its receipt.
-    const log = await NodeFSP.open(directory + '/logcat.log', 'a', 0o600)
-    try {
-      const collector = NodeChildProcess.spawn(
-        adb,
-        ['-s', device.serial, 'logcat', '-v', 'threadtime', '*:W', 'ReactNativeJS:V'],
-        { env, stdio: ['ignore', log.fd, log.fd], detached: true },
-      )
-      recording = await identity(collector.pid)
-      await control(state, { action: 'capture', process: recording })
-    } finally {
-      await log.close()
-    }
+    recording = await logcat(state, { adb, serial: device.serial, env, directory })
     await enter(state, phoneUI(state, run, directory))
     const journeys = []
     for (const name of chosen) {
