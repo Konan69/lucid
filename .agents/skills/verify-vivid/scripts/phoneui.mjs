@@ -24,8 +24,12 @@ async function target(run, label, role) {
 
 /** Every phone recipe uses the real controls; public receipts establish identity and settlement. */
 export function phoneUI(state, run, directory) {
-  const press = async (label, role = 'button') =>
-    run(['press', await target(run, label, role), '--settle'])
+  // Streaming intentionally keeps changing the tree. Do not ask Send/Stop to wait for UI quiet.
+  const press = async (label, role = 'button') => {
+    const ref = await target(run, label, role)
+    if (label === 'Send' || label === 'Stop Vivid') return run(['press', ref])
+    return run(['press', ref, '--settle'])
+  }
   const fill = async (label, value, redactions = []) =>
     run(['fill', await target(run, label, 'text-field'), value, '--settle'], redactions)
   const visible = async (words) => run(['wait', 'text', words, '60000'])

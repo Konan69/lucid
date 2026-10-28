@@ -8,7 +8,7 @@ import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
 import { readAccount, readDevice, readState } from './phonewire.mjs'
-import { rpc } from './wire.mjs'
+import { rpc, history } from './wire.mjs'
 import { phoneUI } from './phoneui.mjs'
 import * as flows from './phoneflow.mjs'
 import { approval } from './phoneapproval.mjs'
@@ -69,15 +69,20 @@ const recipes = {
 /** Each recipe gets its own evidence, even when an earlier recipe or native renderer fails. */
 async function journey(state, name, ui, adb) {
   let verdict
+  let id
   try {
     await ui.run(['open', 'work.vivid.mobile', '--foreground'])
     if (name !== 'thread')
       NodeAssert.equal(state.modelKind, 'real', 'Phone journey requires a real model')
-    const id = await ui.create('Phone ' + name + ' ' + crypto.randomUUID().slice(0, 8))
+    id = await ui.create('Phone ' + name + ' ' + crypto.randomUUID().slice(0, 8))
     await recipes[name](state, id, ui, adb)
     verdict = { verdict: 'proved', thread: id }
   } catch (error) {
-    verdict = { verdict: 'failed', error: error.stack }
+    verdict = { verdict: 'failed', thread: id, error: error.stack }
+    if (id) {
+      await rpc(state, 'GetThread', { id }, ui.directory, 'failed-thread').catch(() => {})
+      await history(state, id, ui.directory, 'failed-history').catch(() => {})
+    }
     await adb(['logcat', '-d', '-b', 'crash']).catch(() => {})
     await adb(['logcat', '-d', '-t', '1000', 'ReactNativeJS:V', 'AndroidRuntime:E', '*:S']).catch(
       () => {},
