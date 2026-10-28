@@ -51,3 +51,5 @@ process recovery. Use the supervisor's
 process receipts. Neither a control receipt nor a successful bundle proves Memory survived.
 
 Phone and desktop native clients need separate device runs. Cross-Person isolation, cross-Thread recall, index budgets, automatic preference selection, and concurrent edits are outside these recipes. No native dependency, app configuration, or binary changes belong to this verifier work.
+
+The forgetting step follows the shipped forget-something skill. It waits for the confirmation question, chooses the affirmative option for the fixture entry through AnswerInput or the visible web card, and checks the resulting Decision Run before asserting delete_memory. A pending confirmation is not a deletion failure.

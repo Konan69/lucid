@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
-import { memorySteps, memoryReceipt } from './memory.mjs'
+import { memorySteps, memoryReceipt, confirmMemory } from './memory.mjs'
 import { settled, history, json } from './wire.mjs'
 
 /** CopyWords marks each finished text reply; its sequence must reach this Run, even when words repeat. */
@@ -57,14 +57,26 @@ export async function memoryBrowser(state, id, directory, browser) {
     steps.map(({ name, prompt, change }) => ({ name, prompt, change })),
   )
   const known = { file: undefined }
-  for (const [index, step] of steps.entries()) {
+  let count = 0
+  for (const step of steps) {
     const evidence = directory + '/' + step.name
     await fs.mkdir(evidence, { recursive: true })
     await run(['find', 'label', 'Message Vivid', 'fill', step.prompt])
     await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
-    const detail = await settled(state, id, index + 1, 'Completed', evidence)
+    let detail = await settled(state, id, count + 1, 'Completed', evidence)
+    if (step.change === 'delete')
+      detail = await confirmMemory(
+        state,
+        { id, detail, directory: evidence },
+        async ({ label }) => {
+          await run(['wait', 'section[aria-label="Vivid\'s question"]'])
+          await capture('forget-confirmation')
+          await run(['find', 'text', label, 'click', '--exact'])
+        },
+      )
+    count = detail.runs.length
     const page = await history(state, id, evidence)
-    const currentRun = detail.runs[index].submissionId
+    const currentRun = detail.runs[count - 1].submissionId
     await memoryReceipt(page, currentRun, step, evidence, known)
     await latestReply(browser, page, currentRun, { directory: evidence, stage: 'after' })
     await capture(step.name + '-after')
@@ -72,7 +84,7 @@ export async function memoryBrowser(state, id, directory, browser) {
     await run(['wait', '[aria-label="Message Vivid"]'])
     const reloaded = await history(state, id, evidence, 'reloaded-history')
     assert.deepEqual(reloaded.messages, page.messages)
-    assert.equal(reloaded.messages.filter((message) => message.role === 'user').length, index + 1)
+    assert.equal(reloaded.messages.filter((message) => message.role === 'user').length, count)
     await latestReply(browser, reloaded, currentRun, { directory: evidence, stage: 'reloaded' })
     await capture(step.name + '-reloaded')
   }

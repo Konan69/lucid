@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
-import { Tool } from '@vivid/contracts'
-import { chat, settled, history, json } from './wire.mjs'
+import { Tool, InputAnswer, InputRequestState } from '@vivid/contracts'
+import { chat, settled, history, json, rpc } from './wire.mjs'
 
 /**
  * The Memory journey, asked as a Person asks (the owner, 26 October 2026: stop telling it which tool
@@ -138,6 +138,30 @@ export async function memoryReceipt(page, run, step, directory, known) {
   return text
 }
 
+/** The shipped forget-something skill plans first. Confirm only this fixture's single entry,
+ * through the real question card on web or AnswerInput on HTTP, then observe its Decision Run. */
+export async function confirmMemory(state, { id, detail, directory }, answer) {
+  const waiting = detail.requests.filter((request) =>
+    InputRequestState.guards.Waiting(request.state),
+  )
+  assert.equal(waiting.length, 1, 'Forgetting must ask for one explicit confirmation')
+  const request = waiting[0]
+  assert.equal(request.questions.length, 1)
+  assert.equal(request.questions[0].selection, 'One')
+  const options = request.questions[0].options.filter(
+    (option) => /^yes\b/iu.test(option.label) && /delete|forget|remove/iu.test(option.label),
+  )
+  assert.equal(options.length, 1, 'Expected one affirmative option for the named entry')
+  const label = options[0].label
+  await json(directory + '/confirmation.json', { request, label })
+  await answer({ request, label })
+  const confirmed = await settled(state, id, detail.runs.length + 1, 'Completed', directory)
+  const completed = confirmed.requests.find((entry) => entry.id === request.id)
+  assert.ok(InputRequestState.guards.Answered(completed.state))
+  assert.deepEqual(completed.state.answers, [InputAnswer.cases.Chosen.make({ labels: [label] })])
+  return confirmed
+}
+
 /** Person gateway admission and WatchThread settlement exercise shipped Memory tools without fixtures. */
 export async function memory(state, id, directory) {
   assert.equal(state.modelKind, 'real', 'Memory requires a real model; rehearsal cannot prove it')
@@ -147,13 +171,27 @@ export async function memory(state, id, directory) {
     steps.map(({ name, prompt, change }) => ({ name, prompt, change })),
   )
   const known = { file: undefined }
-  for (const [index, step] of steps.entries()) {
+  let count = 0
+  for (const step of steps) {
     const evidence = directory + '/' + step.name
     await fs.mkdir(evidence, { recursive: true })
     await chat(state, id, step.prompt, evidence)
-    const detail = await settled(state, id, index + 1, 'Completed', evidence)
+    let detail = await settled(state, id, count + 1, 'Completed', evidence)
+    if (step.change === 'delete')
+      detail = await confirmMemory(
+        state,
+        { id, detail, directory: evidence },
+        ({ request, label }) =>
+          rpc(
+            state,
+            'AnswerInput',
+            { id: request.id, answers: [InputAnswer.cases.Chosen.make({ labels: [label] })] },
+            evidence,
+          ),
+      )
+    count = detail.runs.length
     const page = await history(state, id, evidence)
-    await memoryReceipt(page, detail.runs[index].submissionId, step, evidence, known)
+    await memoryReceipt(page, detail.runs[count - 1].submissionId, step, evidence, known)
   }
   await json(directory + '/scope.json', {
     proved:
