@@ -217,7 +217,7 @@ export async function picture(state, id, ui, adb) {
     'What is the dominant color of the attached picture? Reply with one color word only.',
   )
   const done = await ui.completed(id, 1, 'picture')
-  NodeAssert.match(done.reply, /red/iu)
+  NodeAssert.match(done.reply.trim(), /^red[.!]?$/iu)
   const files = done.page.messages
     .filter((message) => message.role === 'user')
     .flatMap((message) => message.parts)
@@ -227,7 +227,7 @@ export async function picture(state, id, ui, adb) {
   await ui.capture('picture-sent')
   await ui.create('Picture away ' + crypto.randomUUID().slice(0, 8))
   await ui.visit(id)
-  await ui.visible('red')
+  await ui.visible(done.reply.trim())
   const reopened = await history(state, id, ui.directory, 'picture-reopened')
   NodeAssert.deepEqual(saved(reopened), saved(done.page))
   await ui.capture('picture-reopened')
