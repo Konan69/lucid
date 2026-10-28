@@ -39,6 +39,15 @@ export async function watchBrowser(state, id, directory, { run, capture }) {
   await run(['open', state.web + '/feed'])
   await run(['wait', '--text', marker])
   await run(['wait', '--text', proof.receipt])
+  // The card's own words sit straight under its title; a drawn card has none.
+  const sentences = decodeText(
+    Schema.Number,
+    await run([
+      'eval',
+      `Array.from(document.querySelectorAll('article')).find(card => card.textContent.includes(${JSON.stringify(marker)}))?.querySelectorAll(':scope > p').length ?? -1`,
+    ]),
+  )
+  NodeAssert.equal(sentences, 0, 'The Feed card shows words beside its drawing')
   await capture('feed')
   await run(['reload'])
   await run(['wait', '--text', marker])
