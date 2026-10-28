@@ -86,8 +86,8 @@ Ported from Claude Code's file memory; Letta's memory filesystem uses the same s
   delete a memory that turned out wrong; a memory can be stale, so check it before acting on it.
 
 The file name supplies the name. The `kind` vocabulary is Vivid's own: fact, preference, person,
-organization, decision and workstream (`packages/contracts/src/memory.ts`). The note tools use
-that same contract (`packages/agent/runtime/src/notes.ts`).
+organization, decision and workstream (`packages/contracts/src/memory.ts`). The memory tools use
+that same contract (`packages/agent/runtime/src/memory.ts`).
 
 ## The filesystem-slot direction and proof
 

@@ -2,10 +2,10 @@
   {
     "file": "packages/agent/runtime/src/tools/scope.ts",
     "classification": "third-party-adapter",
-    "symbols": ["runTool", "runScoped", "runNote"]
+    "symbols": ["runTool", "runScoped", "runMemory"]
   },
   {
-    "file": "packages/agent/runtime/src/notes.ts",
+    "file": "packages/agent/runtime/src/memory.ts",
     "classification": "third-party-adapter",
     "symbols": ["attempt", "index", "write", "retract", "search"]
   },
