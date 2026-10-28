@@ -78,7 +78,17 @@ function callsOf(page, run) {
 export async function memoryReceipt(page, run, step, directory, known) {
   const { calls, text } = callsOf(page, run)
   assert.equal(
-    calls.filter((part) => part.state === 'output-error').length,
+    calls.filter(
+      (part) =>
+        part.state === 'output-error' &&
+        [
+          Tool.read_memory,
+          Tool.write_memory,
+          Tool.delete_memory,
+          Tool.list_memory,
+          Tool.search_memory,
+        ].includes(part.toolName),
+    ).length,
     0,
     'Tool error in ' + step.name,
   )

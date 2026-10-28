@@ -50,7 +50,15 @@ export async function question(state, id, directory, browser) {
   if (browser) {
     for (const stage of ['answered', 'reloaded']) {
       if (stage === 'reloaded') await browser.run(['reload'])
-      await browser.exactReply(reply, stage)
+      // The chosen plan can be an OpenUI card. Compare its rendered name, not the source fence.
+      await browser.run([
+        'wait',
+        '--fn',
+        `(() => {
+        const reply = Array.from(document.querySelectorAll('button[aria-label="Copy message"]')).at(-1)
+        return Boolean(reply && reply.closest('li').innerText.includes('Cedar'))
+      })()`,
+      ])
       await browser.run([
         'wait',
         '--fn',
