@@ -21,6 +21,11 @@ export const cellVariables = (environment: InfrastructureEnvironment, serverUrl:
         onNone: () => ({}),
         onSome: (key) => ({ OPENROUTER_API_KEY: Redacted.value(key) }),
       }),
+      // Learning in the cell asks Jev first; absent means the cell's own default, which is off.
+      ...Option.match(environment.decisions, {
+        onNone: () => ({}),
+        onSome: (value) => ({ VIVID_DECISIONS: value }),
+      }),
     }),
   )
 
