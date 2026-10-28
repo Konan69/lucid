@@ -34,7 +34,7 @@ After Launch and Doctor at a clean head, run `verify phone all <run>` for one AP
 
 | Journey           | Phone actions and required receipts                                                                                                                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `thread`          | Email sign-in, drawer selection, idle composer and public BePresent.                                                                                                                                                   |
+| `thread`          | Email sign-in, drawer selection, idle composer, public BePresent and opening Feed.                                                                                                                                     |
 | `send`            | Composer Send, streamed marker, leave/reopen, kill/relaunch, contextual follow-up, matching durable history and WatchThread settlement.                                                                                |
 | `replies`         | Send a natural question, tap a model-offered chip, compare its stored words with the next Person message.                                                                                                              |
 | `question`        | Ask the web recipe's Cedar/Willow prompt, choose Cedar on the phone, assert Answered and a Decision Run using Cedar.                                                                                                   |

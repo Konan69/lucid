@@ -50,6 +50,10 @@ async function thread(state, id, ui) {
   NodeAssert.equal(detail.thread.id, id)
   NodeAssert.equal(detail.runs.length, 0)
   NodeAssert.ok(detail.present.some((seen) => seen.person.id === account.person))
+  await ui.menu()
+  await ui.press('Feed')
+  await ui.visible('Message Vivid')
+  await ui.capture('feed')
 }
 
 const recipes = {
