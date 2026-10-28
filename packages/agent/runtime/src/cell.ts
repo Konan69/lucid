@@ -14,7 +14,7 @@ import { modelsLayer } from './models.ts'
 import { Memory } from './memory.ts'
 import { PiRejected } from './threads.ts'
 import { openPerson, Person } from './person.ts'
-import { settingsLayer } from './settings.ts'
+import { decisionLayer, settingsLayer } from './settings.ts'
 import { BuiltinSkills, skillsExtension } from './skills.ts'
 
 export { isAuthorized } from './app.ts'
@@ -37,9 +37,11 @@ export interface CellInput {
  * celld owns activation and eviction, and Pi owns task recovery and queued inputs.
  */
 export const openCell = (input: CellInput) => {
-  const foundation = Layer.mergeAll(settingsLayer, modelsLayer).pipe(
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(input.environment))),
-  )
+  const foundation = Layer.mergeAll(
+    settingsLayer,
+    modelsLayer,
+    decisionLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(input.environment))))
   const dependencies = Layer.mergeAll(
     productLayer.pipe(Layer.provide(FetchHttpClient.layer)),
     Layer.succeed(Memory, input.memory),

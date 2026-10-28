@@ -14,6 +14,8 @@ import { Product } from './client.ts'
 import type { ContextSources } from './context.ts'
 import { opening } from './deliveries.ts'
 import { Memory } from './memory.ts'
+import { learning } from './learning.ts'
+import type { DecisionModel } from 'effect/ai'
 import { Models } from './models.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
@@ -32,7 +34,7 @@ export interface PersonConversations {
    */
   readonly agent: AgentChange
   readonly sources: ContextSources
-  /** Waits until nothing a settlement set off is still being written (`settled.ts`). */
+  /** Waits for queued settlement follow-ups, including learning admission. Pi owns background completion. */
   readonly quiet: Effect.Effect<void>
 }
 
@@ -77,15 +79,19 @@ export const openPerson = Effect.fn('Person.open')(function* (
 ): Effect.fn.Return<
   PersonConversations,
   PiRejected,
-  Product | Models | BuiltinSkills | Memory | Scope.Scope
+  Product | Models | BuiltinSkills | Memory | DecisionModel.DecisionModel | Scope.Scope
 > {
   const product = yield* Product
   const models = yield* Models
   const skills = yield* BuiltinSkills
 
   const services = yield* Effect.context()
-  // oxlint-disable-next-line vivid/no-runpromise-in-library -- The one bridge from Pi's Promise callbacks (sections, hooks) into Effect for this Person's Harness.
-  const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(services)(effect)
+  const run = <A, E>(
+    effect: Effect.Effect<A, E>,
+    options: { readonly signal?: AbortSignal } = {},
+  ) =>
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- Pi owns the Promise callback boundary for this Person.
+    Effect.runPromiseWith(services)(effect, options)
   const ready = yield* Deferred.make<Harness>()
   const opened = Deferred.await(ready)
 
@@ -96,6 +102,9 @@ export const openPerson = Effect.fn('Person.open')(function* (
     memory,
   )
   const registry = createRegistry()
+  const learn = yield* learning((program, signal) => run(program, { signal }), memory, all)
+  registry.install(learn.extension)
+  registry.install(learn.learner)
   registry.install(
     definition({
       tools: all,
@@ -133,7 +142,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
     }).pipe(Effect.onError(() => Effect.promise(() => storage.close(BACKGROUND_CONTEXT)))),
     closeHarness,
   )
-  const { quiet } = yield* followSettlements(harness)
+  const { quiet } = yield* followSettlements(harness, learn.start)
   yield* Deferred.succeed(ready, harness)
   return {
     personId,

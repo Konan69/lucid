@@ -24,6 +24,7 @@
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@effect/ai-typesafe": "catalog:",
     "@earendil-works/chord": "catalog:",
     "@earendil-works/pi-ai": "catalog:",
     "@earendil-works/pi-durable": "catalog:",

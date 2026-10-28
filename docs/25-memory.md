@@ -129,6 +129,17 @@ Helix is removed. Personal memory lives only in the Person cell. The server has 
 store, embeddings, recall or remember tools, or learning pass. The retained production service
 and volume are for the one-time migration; a follow-up removes their declarations.
 
+## How Vivid learns
+
+Vivid writes memory while replying (`write_memory`). After a Run settles, including a failed or
+stopped Run, the Person cell starts one deduplicated Pi task (`packages/agent/runtime/src/learning.ts`).
+It captures each speaker before the delivery context is released, asks Jev once per Person whether
+anything new is worth keeping, and runs a task-owned learner only for a yes. With decisions off
+(`VIVID_DECISIONS`) or unavailable, every exchange is considered. The learner writes that Person's
+`memory` layer through the same Memory service, with `CellRun` authority. Its checkpoint and
+submission request id survive reopening, so a resumed task does not submit twice. Learner
+conversations belong to no Thread and never start learning themselves.
+
 ## What exists today
 
 The shared memory contracts are in `packages/contracts/src/memory.ts`. Settings reads the index,

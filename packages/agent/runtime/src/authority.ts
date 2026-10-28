@@ -7,6 +7,7 @@ import { NobodyToActFor, type ProductService } from './client.ts'
 import { answering } from './deliveries.ts'
 import { recoverAuthority, resolveAuthority, type DeliveryAuthority } from './delivery.ts'
 import { pi, threadOf } from './threads.ts'
+import { learnerAuthority } from './learning.ts'
 import type { ToolFailure } from './tools/result.ts'
 import { Scope, type ResolveScope } from './tools/scope.ts'
 
@@ -78,6 +79,10 @@ export const resolveMemoryCall: (
   call: Parameters<ResolveScope>[0],
 ) => Effect.Effect<MemoryAuthority, ToolFailure> = Effect.fn('Authority.resolveMemoryCall')(
   function* (harness, product, call) {
+    const learning = yield* learnerAuthority(yield* harness, call.conversationId).pipe(
+      Effect.mapError(() => nobody('The learning authority could not be read.')),
+    )
+    if (Option.isSome(learning)) return learning.value
     const { acting } = yield* resolveCall(harness, product, call)
     const opened = yield* harness
     const live = yield* pi(() =>

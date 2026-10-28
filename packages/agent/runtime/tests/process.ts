@@ -28,6 +28,7 @@ import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { openPerson, Person } from '../src/person.ts'
 import { openMemory, Memory, MemoryUnavailable } from '../src/memory.ts'
 import { RcMap } from 'effect'
+import { DecisionModel } from 'effect/ai'
 
 const TOKEN = 'fixture-runtime-token'
 const PROVIDER = 'fixture'
@@ -43,6 +44,7 @@ export class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
 /** Native SQLite files and the scripted provider survive a simulated cell restart. The case
  * retains its activated Person names so start can drive their recovery without a client. */
 export interface World {
+  readonly decisions: Layer.Layer<DecisionModel.DecisionModel>
   readonly directory: string
   readonly people: Set<PersonId>
   readonly faux: FauxProviderHandle
@@ -74,6 +76,16 @@ export const world = Effect.fn('RuntimeFixture.world')(function* (
   const collection = createModels()
   collection.setProvider(faux.provider)
   return {
+    decisions: Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: { keep: { _tag: 'Probability' as const, probability: 0 } },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    ),
     directory: root,
     people: new Set(),
     faux,
@@ -187,10 +199,7 @@ const bytesOf = Effect.fn('RuntimeFixture.bytesOf')(function* (
 const memoryMigration = Effect.tryPromise({
   try: () =>
     Promise.all(
-      [
-        '20261028123228_memory',
-        '20261028123228_memory-search',
-      ].map((name) =>
+      ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
         NodeFSP.readFile(
           new URL(
             `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -235,6 +244,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
       productLayer.pipe(Layer.provide(serverLayer(given))),
       builtinSkillsLayer,
       Layer.succeed(Models, given.models),
+      given.decisions,
       Layer.succeed(Memory, memory),
     ).pipe(
       Layer.provideMerge(
