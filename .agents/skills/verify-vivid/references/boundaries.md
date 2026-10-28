@@ -6,7 +6,7 @@ celld owns activation, ownership, and idle lifecycle.
 
 The launcher source packages the shipped Worker with celld 0.6.2, supplies a disposable MinIO
 bucket and starts two native nodes. It has not yet passed a real Launch or product journey.
-Require native terminal waiting, abort, Notes, pictures and state-link reconnect after an owner
+Require native terminal waiting, abort, memory, pictures and state-link reconnect after an owner
 move through the real product. Doctor establishes readiness and empty Person activation, not
 model behavior or recovery. Read [native cell controls](cells.md) before those proofs.
 

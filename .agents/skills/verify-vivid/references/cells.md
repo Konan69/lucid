@@ -56,7 +56,7 @@ celld's `/evict/<scope>` and can refuse active work. Such a refusal is a failure
 
 ## Drive the recovery claims
 
-1. Run Launch, Doctor, HTTP first and notes, then their browser recipes with the real model.
+1. Run Launch, Doctor, HTTP first and memory, then their browser recipes with the real model.
    Keep the initial model, terminal settlement, history and tool receipts.
 2. Keep a real WatchConversation subscription open. Run move on its owner. Require a native
    owner change and automatic reconnect with the same history and no duplicate Run or reply.
@@ -66,7 +66,7 @@ celld's `/evict/<scope>` and can refuse active work. Such a refusal is a failure
    ownership, native terminal wait and real settled Run evidence. No sleep establishes a wake.
 4. Run HTTP stop and browser stop. Require the captured active Run to settle Stopped and the
    interrupted text to survive reload. Run picture and its browser recipe for retained bytes.
-5. Run restart and repeat Notes recall through the product. Compare native receipts and history.
+5. Run restart and repeat memory recall through the product. Compare native receipts and history.
    Local retraction never proves full forgetting. Repeat Doctor and Cleanup.
 
 Missing credentials, an incompatible binary, failed image pulls, failed native activation,
