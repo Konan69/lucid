@@ -121,7 +121,7 @@ function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemo
     <Section title={title}>
       {pages.map((standing) => (
         // Settings reads at the label size; a reply's Markdown is drawn at the body size.
-        <div key={standing.file} className="px-4 py-3 break-words *:text-label">
+        <div key={standing.file} className="px-4 py-3 wrap-break-word *:text-label">
           <Markdown content={standing.body} />
         </div>
       ))}
@@ -134,13 +134,21 @@ function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemo
  * is back in the list, and one Vivid removed before their change reached it is gone.
  */
 function Notice({ entry }: { entry: remembering.Entry }) {
-  if (remembering.Entry.guards.Unforgotten(entry)) {
-    return <Refusal message="That could not be forgotten, so it is back in the list. Try again." />
-  }
-  if (remembering.Entry.guards.Vanished(entry)) {
-    return <Refusal message="Vivid no longer remembers that, so it has left the list." />
-  }
-  return null
+  const said = remembering.Entry.match(entry, {
+    Unforgotten: () => 'That could not be forgotten, so it is back in the list. Try again.',
+    Vanished: () => 'Vivid no longer remembers that, so it has left the list.',
+    Closed: () => null,
+    Opening: () => null,
+    Unopened: () => null,
+    Open: () => null,
+    Moved: () => null,
+    Editing: () => null,
+    Saving: () => null,
+    Unsaved: () => null,
+    Rereading: () => null,
+    Forgetting: () => null,
+  })
+  return <Refusal message={said} />
 }
 
 /**
@@ -186,7 +194,7 @@ function Line({
         className="flex min-h-14 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-start outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
       >
         <span className="min-w-0 flex-1">
-          <span className="block text-label text-pretty break-words text-ink">
+          <span className="block text-label text-pretty wrap-break-word text-ink">
             {line.description}
           </span>
           <span className="block text-label text-ink-3">
@@ -232,7 +240,9 @@ function Opened({
     ),
     Open: ({ entry: open }) => <Whole entry={open} moved={false} send={send} />,
     Moved: ({ entry: open }) => <Whole entry={open} moved send={send} />,
-    Editing: ({ entry: open }) => <Correcting entry={open} saving={false} refused={false} send={send} />,
+    Editing: ({ entry: open }) => (
+      <Correcting entry={open} saving={false} refused={false} send={send} />
+    ),
     Saving: ({ entry: open }) => <Correcting entry={open} saving refused={false} send={send} />,
     Unsaved: ({ entry: open }) => <Correcting entry={open} saving={false} refused send={send} />,
   })
@@ -266,7 +276,7 @@ function Whole({
           Vivid changed this while you had it open. This is what it says now.
         </p>
       )}
-      <div className="rounded-control bg-surface-2 px-3 py-2.5 break-words *:text-label">
+      <div className="rounded-control bg-surface-2 px-3 py-2.5 wrap-break-word *:text-label">
         <Markdown content={entry.body} />
       </div>
       <div className="flex gap-2">
@@ -303,9 +313,7 @@ function Correcting({
   const said = sentence.trim()
   // Nothing to save until both say something, and something other than they did.
   const ready =
-    said.length > 0 &&
-    body.trim().length > 0 &&
-    (said !== entry.description || body !== entry.body)
+    said.length > 0 && body.trim().length > 0 && (said !== entry.description || body !== entry.body)
   return (
     <form
       className="flex flex-col gap-3"

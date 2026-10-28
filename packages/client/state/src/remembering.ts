@@ -254,14 +254,14 @@ const without = (shown: Shown, address: MemoryAddress): Shown => ({
 })
 
 /** An entry is opened by reading its whole text; one opening at a time. */
-const open = {
+const opening = {
   target: 'Shown.Entry.Opening',
   data: ({ event }: { readonly event: { readonly line: MemoryLine } }) => ({ line: event.line }),
 } as const
 const close = { target: 'Shown.Entry.Closed' } as const
 /** What an open entry takes: another entry, closing, correcting and forgetting it. */
 const opened = {
-  Open: open,
+  Open: opening,
   Close: close,
   Edit: {
     target: 'Shown.Entry.Editing',
@@ -278,7 +278,7 @@ const opened = {
 } as const
 /** What a correction being written takes: saving it, putting it away, or opening another. */
 const editing = {
-  Open: open,
+  Open: opening,
   Close: close,
   Cancel: {
     target: 'Shown.Entry.Open',
@@ -402,7 +402,7 @@ export const RememberingMachine = Machine.make({
         Entry: {
           initial: { target: 'Shown.Entry.Closed' },
           states: {
-            Closed: { on: { Open: open } },
+            Closed: { on: { Open: opening } },
             Opening: {
               invoke: {
                 src: 'read',
@@ -427,14 +427,16 @@ export const RememberingMachine = Machine.make({
                   resolve: ({ error, state, ancestors, select, decline }) =>
                     Predicate.isTagged(error, 'MemoryGone')
                       ? same(error.address, state.line)
-                        ? select.vanished({ update: { data: without(ancestors.Shown, state.line) } })
+                        ? select.vanished({
+                            update: { data: without(ancestors.Shown, state.line) },
+                          })
                         : decline()
                       : select.unopened({ data: { line: state.line } }),
                 },
               },
               on: { Close: close },
             },
-            Unopened: { on: { Open: open, Close: close } },
+            Unopened: { on: { Open: opening, Close: close } },
             Open: { on: opened },
             Moved: { on: opened },
             Editing: { on: editing },
@@ -515,8 +517,8 @@ export const RememberingMachine = Machine.make({
                 },
               },
             },
-            Unforgotten: { on: { Open: open } },
-            Vanished: { on: { Open: open, Close: close } },
+            Unforgotten: { on: { Open: opening } },
+            Vanished: { on: { Open: opening, Close: close } },
           },
         },
       },
@@ -571,23 +573,35 @@ const olderOf = (state: RememberingState, shown: Shown): Older =>
 const entryOf = (state: RememberingState): Entry =>
   Option.getOrElse(
     Option.firstSomeOf<Entry>([
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Opening'), Entry.cases.Opening.make),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Unopened'), Entry.cases.Unopened.make),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Open'), Entry.cases.Open.make),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Moved'), Entry.cases.Moved.make),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Editing'), Entry.cases.Editing.make),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Opening'), (value) =>
+        Entry.cases.Opening.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Unopened'), (value) =>
+        Entry.cases.Unopened.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Open'), (value) =>
+        Entry.cases.Open.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Moved'), (value) =>
+        Entry.cases.Moved.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Editing'), (value) =>
+        Entry.cases.Editing.make(value),
+      ),
       Option.map(RememberingStates.get(state, 'Shown.Entry.Saving'), ({ entry }) =>
         Entry.cases.Saving.make({ entry }),
       ),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Unsaved'), Entry.cases.Unsaved.make),
-      Option.map(RememberingStates.get(state, 'Shown.Entry.Rereading'), Entry.cases.Rereading.make),
-      Option.map(
-        RememberingStates.get(state, 'Shown.Entry.Forgetting'),
-        Entry.cases.Forgetting.make,
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Unsaved'), (value) =>
+        Entry.cases.Unsaved.make(value),
       ),
-      Option.map(
-        RememberingStates.get(state, 'Shown.Entry.Unforgotten'),
-        Entry.cases.Unforgotten.make,
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Rereading'), (value) =>
+        Entry.cases.Rereading.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Forgetting'), (value) =>
+        Entry.cases.Forgetting.make(value),
+      ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Unforgotten'), (value) =>
+        Entry.cases.Unforgotten.make(value),
       ),
       Option.map(
         Option.liftPredicate(state, (at) => RememberingStates.matches(at, 'Shown.Entry.Vanished')),

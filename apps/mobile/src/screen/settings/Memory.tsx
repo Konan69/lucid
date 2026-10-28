@@ -57,18 +57,7 @@ export function Memory() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[styles.page, styles.column]}
       >
-        {remembering.Remembering.match(reading, {
-          Reading: () => <Skeleton rows={4} />,
-          Unread: () => (
-            <Card>
-              <Label selectable size="label" tone="ink-2">
-                Unable to load what Vivid remembers right now.
-              </Label>
-              <Button label="Try again" onPress={() => send(remembering.events.Retry())} />
-            </Card>
-          ),
-          Shown: (shown) => <Shown shown={shown} send={send} now={opened} />,
-        })}
+        <Page reading={reading} send={send} now={opened} />
       </ScrollView>
       {remembering.Remembering.guards.Shown(reading) && (
         <Opened entry={reading.entry} send={send} now={opened} />
@@ -78,6 +67,49 @@ export function Memory() {
 }
 
 type ShownReading = typeof remembering.Remembering.cases.Shown.Type
+
+/** The visit's reading: still on its way, refused, or shown. */
+function Page({
+  reading,
+  send,
+  now,
+}: {
+  reading: remembering.Remembering
+  send: Send
+  now: number
+}) {
+  return remembering.Remembering.match(reading, {
+    Reading: () => <Skeleton rows={4} />,
+    Unread: () => (
+      <Card>
+        <Label selectable size="label" tone="ink-2">
+          Unable to load what Vivid remembers right now.
+        </Label>
+        <Button label="Try again" onPress={() => send(remembering.events.Retry())} />
+      </Card>
+    ),
+    Shown: (shown) => <Shown shown={shown} send={send} now={now} />,
+  })
+}
+
+/**
+ * The row under the list, when there is anything older. A function and not a component: a
+ * Section draws a separator above every row it is given, including one that draws nothing.
+ */
+const olderRow = (older: remembering.Older, send: Send) =>
+  remembering.Older.match(older, {
+    None: () => null,
+    Resting: () => <Row title="Show older" onPress={() => send(remembering.events.ShowOlder())} />,
+    Paging: () => <Row title="Showing older…" />,
+    Unpaged: () => (
+      <Row
+        wrap
+        title="Older ones could not be loaded"
+        detail="Tap to try again."
+        onPress={() => send(remembering.events.ShowOlder())}
+      />
+    ),
+  })
 
 /** The standing pages, then the rows, then the way to older ones. */
 function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: number }) {
@@ -111,21 +143,7 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
             onPress={() => send(remembering.events.Open({ line }))}
           />
         ))}
-        {remembering.Older.match(shown.older, {
-          None: () => null,
-          Resting: () => (
-            <Row title="Show older" onPress={() => send(remembering.events.ShowOlder())} />
-          ),
-          Paging: () => <Row title="Showing older…" />,
-          Unpaged: () => (
-            <Row
-              wrap
-              title="Older ones could not be loaded"
-              detail="Tap to try again."
-              onPress={() => send(remembering.events.ShowOlder())}
-            />
-          ),
-        })}
+        {olderRow(shown.older, send)}
       </Section>
     </>
   )
@@ -148,7 +166,13 @@ function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemo
 /** An entry's whole text, in the reply's Markdown. */
 function Whole({ text }: { text: string }) {
   return (
-    <Prose text={text} plain={text} fresh={false} marks={[]} onLink={(url) => void openWebLink(url)} />
+    <Prose
+      text={text}
+      plain={text}
+      fresh={false}
+      marks={[]}
+      onLink={(url) => void openWebLink(url)}
+    />
   )
 }
 
@@ -241,9 +265,7 @@ function Correcting({
   const said = sentence.trim()
   // Nothing to save until both say something, and something other than they did.
   const ready =
-    said.length > 0 &&
-    body.trim().length > 0 &&
-    (said !== entry.description || body !== entry.body)
+    said.length > 0 && body.trim().length > 0 && (said !== entry.description || body !== entry.body)
   const save = () =>
     send(
       remembering.events.Save({
