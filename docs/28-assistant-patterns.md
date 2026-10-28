@@ -163,7 +163,7 @@ only) from `/agent_notes/` (research, written by the Dreamer, who may only sugge
 (`dots/dreamer.md:7`).
 
 **Vivid today.** One layer: notes, one file per thing, written by the model during a reply
-(`packages/agent/runtime/src/notes.ts`, AgentFS), plus the Helix knowledge base. No identity, no
+in the Person cell. Helix is removed from the server. No identity, no
 dated trail, no bank, no people pages, no background consolidation, no told-versus-guessed mark.
 
 **Vivid shape.** Tables in the Person's cell ([runtime cells](27-runtime-cells.md), "the notes and dreams tables of the
@@ -183,8 +183,8 @@ memory design"), one vocabulary:
 Every row carries `said` or `guessed` (told by the Person, or inferred), a source (the Thread and
 message, or the run), and a time. Forgetting a thing retracts it across every layer, the Watches
 that mention it, and queued work, before Vivid says it is forgotten (Muse `forget.plan` and
-`forget.confirm`, `muse/skills/forget/SKILL.md:21`). Helix is parked for personal memory and
-kept mainly for Company knowledge (decision 8 below).
+`forget.confirm`, `muse/skills/forget/SKILL.md:21`). Personal memory lives only in the Person
+cell. Helix is removed (decision 8 below).
 
 The index the model sees each reply stays one line per row, newest first, within its budget
 (`context.ts`); `self`, `soul`, `person` and `attention` are always in it.
@@ -288,7 +288,7 @@ Each with the default this page assumes until the owner says otherwise.
    after a substantial conversation, at most a few a day (Muse).
 7. **Said versus guessed in replies.** Does Vivid say which when it uses a guessed fact?
    Default: it says "i think" for guessed and states said facts plainly.
-8. **Helix.** Decided (27 October): parked and paused, kept mostly for Company knowledge; the
-   layers above are the Person's memory.
+8. **Helix.** Removed (28 October). Personal memory lives only in the Person cell. The old
+   production service and volume remain retained for the one-time migration.
 9. **Procedure demonstrations.** Built after the Computer records a screen; not in the first
    cut.

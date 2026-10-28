@@ -39,16 +39,6 @@ export async function doctor(state) {
     const current = await checkout()
     return { ok: current.tree === state.tree && current.diffHash === state.diffHash, ...current }
   })
-  await check('disposable Helix', async () => {
-    const value = JSON.parse(await command(['docker', 'inspect', state.helixContainer]))[0]
-    const binding = value.NetworkSettings.Ports['8080/tcp']
-    return {
-      ok:
-        value.State.Running &&
-        value.Config.Labels['vivid.verify'] === state.run &&
-        binding.some((b) => b.HostIp === '127.0.0.1' && Number(b.HostPort) === state.ports.helix),
-    }
-  })
   await check('disposable Executor', async () => {
     const [value] = decodeText(
       ExecutorInspections,

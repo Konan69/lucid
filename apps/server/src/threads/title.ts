@@ -117,7 +117,7 @@ export const TitleOutput = Schema.Struct({ title: Schema.String })
 /** T3 apps/server/src/textGeneration/TextGenerationPrompts.ts#buildThreadTitlePrompt and preserveMessageEnd: cap initial text at 8,000,
  * preserve the end on regeneration with one truncation marker. Unlike T3's first-message-only path, Vivid names after Run settlement
  * and may open with Vivid's words, so initial input remains a labelled transcript with Person-first weighting. Rules stay in system
- * content; the transcript and prior title stay user data through MemoryModel, as in memory extraction. */
+ * content; the transcript and prior title stay user data through TitleModel. */
 export function buildThreadTitlePrompt(message: string, previousTitle: Option.Option<string>) {
   const outputSchema = TitleOutput
   if (Option.isNone(previousTitle)) {

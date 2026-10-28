@@ -22,7 +22,6 @@
     "@effect/ai-typesafe": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@helix-db/helix-db": "3.0.4",
     "@openuidev/lang-core": "1.0.0",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",

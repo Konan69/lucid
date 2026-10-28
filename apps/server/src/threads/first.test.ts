@@ -27,7 +27,6 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime, runtimeLayer } from '../runtime/client.ts'
 import { Conversation } from './conversation.ts'
@@ -161,7 +160,6 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.succeed(RunStore, controlledRuns),
     Layer.succeed(Runtime, runtime),
     silentChangesLayer,
-    silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(Notifier, Notifier.of({ notify: () => Effect.void })),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),

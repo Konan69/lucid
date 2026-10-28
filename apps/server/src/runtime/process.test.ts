@@ -39,7 +39,6 @@ import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Conversation } from '../threads/conversation.ts'
 import { conversationLayer } from '../threads/delivery.ts'
@@ -206,7 +205,6 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     Layer.succeed(Runtime, runtime),
     threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
     silentChangesLayer,
-    silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Ref.update(titles, (count) => count + 1) }),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
     Layer.succeed(Notifier, { notify: () => Effect.void }),

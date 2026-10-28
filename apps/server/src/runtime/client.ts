@@ -8,6 +8,16 @@ import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
   ConversationState,
+  Conflict,
+  MemoryAddress,
+  MemoryConflict,
+  MemoryIndex,
+  MemoryListing,
+  MemoryPage,
+  MemoryRetraction,
+  MemoryWrite,
+  SavedMemory,
+  ServiceUnavailable,
   DocumentToolCallId,
   NotFound,
   RunId,
@@ -332,6 +342,110 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
 })
 
 export const runtimeLayer = Layer.effect(Runtime, makeRuntime())
+
+type CellMemoryFailure = NotFound | Conflict | ServiceUnavailable
+
+export interface CellMemoryService {
+  readonly index: (person: PersonId) => Effect.Effect<MemoryIndex, CellMemoryFailure>
+  readonly list: (
+    person: PersonId,
+    input: MemoryListing,
+  ) => Effect.Effect<MemoryPage, CellMemoryFailure>
+  readonly read: (
+    person: PersonId,
+    input: MemoryAddress,
+  ) => Effect.Effect<SavedMemory, CellMemoryFailure>
+  readonly write: (
+    person: PersonId,
+    input: MemoryWrite,
+  ) => Effect.Effect<SavedMemory, CellMemoryFailure>
+  readonly retract: (
+    person: PersonId,
+    input: MemoryRetraction,
+  ) => Effect.Effect<void, CellMemoryFailure>
+}
+
+/** Settings addresses the acting Person's cell without a Thread ownership lookup. */
+export class CellMemory extends Context.Service<CellMemory, CellMemoryService>()(
+  'vivid/CellMemory',
+) {}
+
+const memoryUnavailable = () =>
+  ServiceUnavailable.make({ service: 'memory', message: 'Memory could not be reached' })
+const decodeMemoryIndex = HttpClientResponse.schemaBodyJson(MemoryIndex)
+const decodeMemoryPage = HttpClientResponse.schemaBodyJson(MemoryPage)
+const decodeSavedMemory = HttpClientResponse.schemaBodyJson(SavedMemory)
+const decodeMemoryConflict = HttpClientResponse.schemaBodyJson(MemoryConflict)
+
+/** Reuse the cell ingress failover, keeping revision conflicts and missing entries actionable. */
+export const cellMemoryLayer = Layer.effect(
+  CellMemory,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig
+    const http = cellNodes(yield* HttpClient.HttpClient, config.RUNTIME_URLS)
+    const token = Redacted.value(config.RUNTIME_TOKEN)
+    const request = (person: PersonId, suffix: string, method: 'GET' | 'POST') =>
+      HttpClientRequest.make(method)(
+        new URL(`/persons/${encodeURIComponent(person)}/memory${suffix}`, config.RUNTIME_URLS[0]),
+      ).pipe(HttpClientRequest.bearerToken(token))
+
+    /** The HTTP status owns absence; a conflict body carries the cell's actual revision. */
+    const receive = Effect.fn('CellMemory.request')(function* (
+      input: HttpClientRequest.HttpClientRequest,
+    ) {
+      const response = yield* http.execute(input).pipe(Effect.mapError(memoryUnavailable))
+      if (response.status === 404) return yield* NotFound.make({ message: 'Memory not found' })
+      if (response.status === 409) {
+        const conflict = yield* decodeMemoryConflict(response).pipe(
+          Effect.mapError(memoryUnavailable),
+        )
+        return yield* Conflict.make({
+          message: `Memory changed from revision ${conflict.expected} to ${conflict.actual}. Read it again before editing.`,
+        })
+      }
+      if (response.status !== 200 && response.status !== 204) return yield* memoryUnavailable()
+      return response
+    })
+
+    return CellMemory.of({
+      index: Effect.fn('CellMemory.index')(function* (person) {
+        const response = yield* receive(request(person, '', 'GET'))
+        return yield* decodeMemoryIndex(response).pipe(Effect.mapError(memoryUnavailable))
+      }, Effect.scoped),
+      list: Effect.fn('CellMemory.list')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryListing)(
+          request(person, '/list', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        const response = yield* receive(encoded)
+        return yield* decodeMemoryPage(response).pipe(Effect.mapError(memoryUnavailable))
+      }, Effect.scoped),
+      read: Effect.fn('CellMemory.read')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryAddress)(
+          request(person, '/read', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        const response = yield* receive(encoded)
+        return yield* decodeSavedMemory(response).pipe(Effect.mapError(memoryUnavailable))
+      }, Effect.scoped),
+      write: Effect.fn('CellMemory.write')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryWrite)(
+          request(person, '/write', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        const response = yield* receive(encoded)
+        return yield* decodeSavedMemory(response).pipe(Effect.mapError(memoryUnavailable))
+      }, Effect.scoped),
+      retract: Effect.fn('CellMemory.retract')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryRetraction)(
+          request(person, '/delete', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        yield* receive(encoded)
+      }, Effect.scoped),
+    })
+  }),
+)
 
 /** A document belongs to the response containing its exact tool call, including joined deliveries. */
 export const documentRun = Effect.fn('Runtime.documentRun')(function* (

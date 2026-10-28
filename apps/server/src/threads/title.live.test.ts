@@ -14,7 +14,7 @@ import { findThread } from '../threads/access.ts'
 import { ThreadTitles, threadTitlesLayer } from '../threads/generation.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
-import { memoryModelLayer } from './model.ts'
+import { titleModelLayer } from './model.ts'
 
 const enabled = process.env['VIVID_LIVE_SERVER_MODEL'] === '1' && testDatabaseConfigured
 const refusal = HttpClientResponse.schemaBodyJson(
@@ -72,7 +72,7 @@ const history = Layer.mock(Runtime, {
 const dependencies = Layer.mergeAll(
   testDatabaseLayer,
   threadStoreLayer.pipe(Layer.provide(testDatabaseLayer)),
-  memoryModelLayer.pipe(Layer.provide(observedClient)),
+  titleModelLayer.pipe(Layer.provide(observedClient)),
   history,
 )
 

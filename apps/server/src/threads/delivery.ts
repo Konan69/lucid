@@ -19,7 +19,6 @@ import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
 import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { deliveryRunId } from '../threads/key.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
@@ -88,7 +87,6 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const changes = yield* Changes
   const notifier = yield* Notifier
   const presence = yield* Presence
-  const learning = yield* Learning
   const titles = yield* ThreadTitles
   const channels = yield* ChannelReplies
   const devices = yield* DeviceRegistry
@@ -153,7 +151,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         Topic.part('activity'),
       ),
     )
-    // A reply transport failure must not prevent Thread state, notifications, or learning from settling.
+    // A reply transport failure must not prevent Thread state, or notifications from settling.
     yield* channels
       .ended({ runId: run.id, threadId: run.threadId, settlement })
       .pipe(
@@ -165,15 +163,6 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
       Settlement.guards.Completed(settlement) &&
       !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
     if (!quiet) yield* announce(thread.value, run.person.id, settlement)
-    if (Option.isSome(reply) && Option.isSome(run.said)) {
-      yield* learning.afterRun({
-        thread: thread.value,
-        person: run.person,
-        said: run.said.value,
-        replied: reply.value,
-        runId: run.id,
-      })
-    }
   })
 })
 

@@ -50,7 +50,6 @@ async function launch() {
   const scratch = evidence + '/instance'
   const ports = await freePorts([
     'database',
-    'helix',
     'server',
     'web',
     'runtime',
@@ -79,7 +78,6 @@ async function launch() {
     keySource: modelConfig.source,
     hostname: NodeOS.hostname(),
     boot,
-    helixContainer: 'vivid-verify-helix-' + run,
     executorExporter: 'vivid-verify-exporter-' + run,
     ready: false,
     cleaned: false,

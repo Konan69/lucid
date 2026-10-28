@@ -100,7 +100,7 @@ const localStack = () =>
           GOOGLE_REDIRECT_URI: environment.google.redirectUri,
           /**
            * The rest of what the server does not start without is not a resource of this graph:
-           * Boat, Helix, Executor, Photon and the push keys are outside services. `Command.Dev`
+           * Boat, Executor, Photon and the push keys are outside services. `Command.Dev`
            * merges these variables over the environment `pnpm infra:dev` was started in
            * (`alchemy/lib/Command/Dev.d.ts`, "Environment Variables"), so their settings reach the
            * server from that environment, and `infra/env.ts` has already refused to go on without

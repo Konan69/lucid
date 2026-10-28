@@ -40,8 +40,8 @@ URL. The server's migrations remain auth then product. Runtime PG migration wiri
 `scripts/migrate.mjs` is obsolete and must leave with the adapter. Native Pi SQLite opens inside
 the cell; it has no runtime PostgreSQL migration owner or `DATABASE_URL` requirement.
 
-`preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, persistent
-HelixDB, the pre-cell private runtime, and the public application server. `pnpm infra:deploy` selects
+`preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, native Person cells, and the public application server. The old Helix service and volume are
+retained only for migration. `pnpm infra:deploy` selects
 that graph; local development keeps the Command/Docker graph above. Railway PostgreSQL and
 Helix were reported healthy on 3 October 2026. That historical result does not prove the cell
 fleet or authorize its deployment. The target uses celld 0.6.2 nodes and a fleet bucket, declared
@@ -54,22 +54,21 @@ This records decisions only. It does not change configuration or deployment beha
 Recheck with `rg -n 'optionalSetting|Config\.option|Config\.withDefault' apps/server/src`.
 Test and live-proof settings are excluded from product capability requirements.
 
-| Setting                                               | Owner                                  | Decision and reason                                                                                                                                                                                                           |
-| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_URL`                                          | `config.ts`                            | Make required. Auth callbacks and update asset addresses require the real public origin. A loopback default conceals a missing deployment value.                                                                              |
-| `VIVID_WEB_DIST`                                      | `config.ts`, `http/static.ts`          | Genuinely optional for a server behind Vite, which serves the web app. Require it in the production composition that owns the web files. Absence currently installs no static routes.                                         |
-| `VIVID_MOBILE_UPDATES`                                | `config.ts`, `updates/routes.ts`       | Make required in a production composition that serves the phone. Absence currently removes update routes and silently strands installed binaries. A development server with no published export can genuinely omit it.        |
-| `EXPLABS_API_KEY` in decisions                        | `decisions/model.ts`                   | Make required when `VIVID_DECISIONS=on`. An enabled capability must not compose as `Unconfigured`. Memory already requires this key independently. Keep the explicit off state.                                               |
-| `VIVID_OTLP_URL`, `VIVID_OTLP_HEADERS`                | `config.ts`, `observability/export.ts` | Genuinely optional as one pair. Product operations run without remote telemetry. A partial pair is already a startup error.                                                                                                   |
-| `VIVID_ENVIRONMENT`                                   | `config.ts`                            | Genuinely optional. Labels telemetry without enabling a capability.                                                                                                                                                           |
-| `VIVID_BUILD_COMMIT`                                  | `config.ts`                            | Genuinely optional. Settings can honestly show an unnamed build. The Docker image supplies a commit for releases.                                                                                                             |
-| `PORT`, `HOST`                                        | `config.ts`                            | Genuinely optional overrides. The local listener still exists at the defined default address and port. Deployment must supply its reachable listener.                                                                         |
-| `VIVID_BOAT_ORG`                                      | `computers/boat/transport.ts`          | Genuinely optional. Personal Boat accounts use their own wallet. Organization billing supplies the organization explicitly.                                                                                                   |
-| `VIVID_BOAT_SIZE`                                     | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects Boat's default size and preserves Computer creation.                                                                                                                               |
-| `VIVID_BOAT_LIFETIME_SECONDS`                         | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects the defined 3600-second lifetime. Zero explicitly requests no expiry.                                                                                                              |
-| `VIVID_BOAT_MACHINE`                                  | `computers/boat/transport.ts`          | Genuinely optional adoption. Absence creates a Computer from the required template. Presence binds an existing machine for the single-owner installation.                                                                     |
-| `VIVID_EMBEDDING_DIMENSIONS`, `VIVID_EMBEDDING_MODEL` | `memory/embeddings.ts`                 | Genuinely optional overrides for a defined embedding recipe. They do not guard availability. `main.ts` currently composes `parkedEmbeddingsLayer`, so vector memory is deliberately unavailable regardless of these settings. |
-| `VIVID_MEMORY_MODEL`                                  | `memory/model.ts`                      | Genuinely optional model override. The required gateway key and default model preserve background completion.                                                                                                                 |
+| Setting                                | Owner                                  | Decision and reason                                                                                                                                                                                                    |
+| -------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                           | `config.ts`                            | Make required. Auth callbacks and update asset addresses require the real public origin. A loopback default conceals a missing deployment value.                                                                       |
+| `VIVID_WEB_DIST`                       | `config.ts`, `http/static.ts`          | Genuinely optional for a server behind Vite, which serves the web app. Require it in the production composition that owns the web files. Absence currently installs no static routes.                                  |
+| `VIVID_MOBILE_UPDATES`                 | `config.ts`, `updates/routes.ts`       | Make required in a production composition that serves the phone. Absence currently removes update routes and silently strands installed binaries. A development server with no published export can genuinely omit it. |
+| Selected provider key in decisions     | `decisions/model.ts`                   | Make required when `VIVID_DECISIONS=on`. An enabled capability must not compose as `Unconfigured`. Titles require the selected provider key independently. Keep the explicit off state.                                |
+| `VIVID_OTLP_URL`, `VIVID_OTLP_HEADERS` | `config.ts`, `observability/export.ts` | Genuinely optional as one pair. Product operations run without remote telemetry. A partial pair is already a startup error.                                                                                            |
+| `VIVID_ENVIRONMENT`                    | `config.ts`                            | Genuinely optional. Labels telemetry without enabling a capability.                                                                                                                                                    |
+| `VIVID_BUILD_COMMIT`                   | `config.ts`                            | Genuinely optional. Settings can honestly show an unnamed build. The Docker image supplies a commit for releases.                                                                                                      |
+| `PORT`, `HOST`                         | `config.ts`                            | Genuinely optional overrides. The local listener still exists at the defined default address and port. Deployment must supply its reachable listener.                                                                  |
+| `VIVID_BOAT_ORG`                       | `computers/boat/transport.ts`          | Genuinely optional. Personal Boat accounts use their own wallet. Organization billing supplies the organization explicitly.                                                                                            |
+| `VIVID_BOAT_SIZE`                      | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects Boat's default size and preserves Computer creation.                                                                                                                        |
+| `VIVID_BOAT_LIFETIME_SECONDS`          | `computers/boat/transport.ts`          | Genuinely optional tuning. Absence selects the defined 3600-second lifetime. Zero explicitly requests no expiry.                                                                                                       |
+| `VIVID_BOAT_MACHINE`                   | `computers/boat/transport.ts`          | Genuinely optional adoption. Absence creates a Computer from the required template. Presence binds an existing machine for the single-owner installation.                                                              |
+| `VIVID_THREAD_TITLE_MODEL`             | `threads/model.ts`                     | Genuinely optional model override. The required gateway key and default model preserve background completion.                                                                                                          |
 
 The other defaulted controls are `VIVID_DECISIONS`, `VIVID_DECISION_MODEL`
 and `VIVID_EXECUTOR_PUBLIC_ONLY`.
@@ -424,7 +423,8 @@ Required by the stack:
 
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
-- `EXPLABS_API_KEY` — the Experiential Labs model gateway: memory, embeddings and decisions.
+- `OPENROUTER_API_KEY` for the default server title and decision provider. ExpLabs stays selectable
+  through `VIVID_SERVER_MODEL_PROVIDER=explabs` with `EXPLABS_API_KEY`.
 - `VIVID_RUNTIME_TOKEN` — authority shared only between the application server and runtime host.
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
@@ -463,12 +463,12 @@ Model credentials and server-call authority remain runtime-only. `VIVID_MODEL` c
 to `opencode-go/glm-5.3-flash`; `packages/agent/runtime/src/providers/opencode.ts` declares it.
 Vivid adds no model retry or fallback layer. Cell configuration and launch remain unproven.
 
-The hosted stack runs HelixDB as a Railway service and gives the server its private address
-(`VIVID_HELIX_URL`), runs Executor and gives the server its private address
+Personal memory lives only in the Person cell. The hosted stack retains the old Helix service
+and volume for the one-time migration, with `RemovalPolicy.retain()` on both. It runs Executor and gives the server its private address
 (`VIVID_EXECUTOR_URL`), and gives the server the settings above. Boat and Photon are outside
 services the stack does not provision. The local process graph runs none of these services and
 has no stand-in for them: `Command.Dev` merges the stack's variables over the environment
-`pnpm infra:dev` was started in, so a local server reads `VIVID_HELIX_URL`, `VIVID_EXECUTOR_URL`
+`pnpm infra:dev` was started in, so a local server reads `VIVID_EXECUTOR_URL`
 and the rest from that environment, and does not start without them.
 
 Outputs contain only web, server, and runtime URLs. Database and application secrets are never
@@ -558,7 +558,7 @@ integration in progress. No PG-runtime deployment is a prerequisite for that wor
 - **Computer:** the server provisions through Boat's API or an explicit local Docker adapter;
   Alchemy does not declare a Computer resource.
 - **Executor:** externally configured; it is not an Alchemy resource today. Railway provisions
-  HelixDB separately from the local graph.
+  Executor separately from the local graph.
 - **Desktop:** distributed client software, not a cloud resource.
 - **Artifact object storage:** Library bytes and Markdown Artifact versions stay in PostgreSQL.
 

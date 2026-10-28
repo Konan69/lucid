@@ -66,7 +66,6 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { Message } from '../observability/messages.ts'
 import {
@@ -300,7 +299,6 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
         subscribe: () => Effect.succeed(Stream.never),
       }),
     ),
-    silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(
       Notifier,

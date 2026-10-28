@@ -38,9 +38,8 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { announce, CHANNEL, Changes, Topic } from '../live/changes.ts'
-import { ProviderMalformed } from '../memory/embeddings.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
-import { Completion, MemoryModel } from '../memory/model.ts'
+import { ProviderMalformed } from './provider.ts'
+import { Completion, TitleModel } from './model.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
 import { deliveryRunId } from '../threads/key.ts'
@@ -99,7 +98,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
   yield* database.run(database.update(threads).set({ titleSource }).where(eq(threads.id, threadId)))
   const settlement = yield* Deferred.make<Settlement>()
   const completion = yield* Deferred.make<Completion, ProviderMalformed>()
-  const requests = yield* Queue.unbounded<Parameters<MemoryModel['Service']['complete']>[0]>()
+  const requests = yield* Queue.unbounded<Parameters<TitleModel['Service']['complete']>[0]>()
   const finished = yield* Deferred.make<void>()
   const finishedRuns = yield* Queue.unbounded<void>()
   const generatedWrites = yield* Ref.make(0)
@@ -128,7 +127,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       parts: [{ type: 'text', text: 'We can explore Florence.', state: 'done' }],
     },
   ])
-  const model = MemoryModel.of({
+  const model = TitleModel.of({
     complete: (input) =>
       Queue.offer(requests, input).pipe(
         Effect.andThen(Deferred.await(completion)),
@@ -176,9 +175,8 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
     Layer.succeed(ThreadStore, observedStore),
     Layer.succeed(RunStore, yield* RunStore),
     Layer.succeed(Runtime, runtime),
-    Layer.succeed(MemoryModel, model),
+    Layer.succeed(TitleModel, model),
     Layer.succeed(Changes, changes),
-    silentLearningLayer,
     Layer.succeed(Notifier, { notify: () => Effect.void }),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )

@@ -6,8 +6,8 @@ import {
   ThreadTitleOutputInvalid,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { readConversationHistory, textOf } from '../memory/history.ts'
-import { MemoryModel } from '../memory/model.ts'
+import { readConversationHistory, textOf } from '../runtime/history.ts'
+import { TitleModel } from './model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { findThread, requireThread, type StoredThread } from './access.ts'
 import { ThreadStore } from './store.ts'
@@ -44,7 +44,7 @@ export interface ThreadTitlesService {
   ) => Effect.Effect<string, TitleFailure | DatabaseInfrastructureError | NotFound>
 }
 
-/** Thread naming owns generation policy. The store owns guarded writes and publication; the runtime and MemoryModel own I/O. */
+/** Thread naming owns generation policy. The store owns guarded writes and publication; the runtime and TitleModel own I/O. */
 export class ThreadTitles extends Context.Service<ThreadTitles, ThreadTitlesService>()(
   'vivid/ThreadTitles',
 ) {}
@@ -74,7 +74,7 @@ export const threadTitlesLayer = Layer.effect(
   Effect.gen(function* () {
     const database = yield* Database
     const runtime = yield* Runtime
-    const model = yield* MemoryModel
+    const model = yield* TitleModel
     const threads = yield* ThreadStore
     const withDatabase = Effect.provideService(Database, database)
 
@@ -89,7 +89,7 @@ export const threadTitlesLayer = Layer.effect(
       return titleMessages(history)
     })
 
-    /** Share memory's provider/schema protocol; invalid JSON or extra keys are a distinct failure. */
+    /** Use the title provider/schema protocol; invalid JSON or extra keys are a distinct failure. */
     const generate = Effect.fn('ThreadTitles.generate')(function* (
       thread: ThreadId,
       message: string,

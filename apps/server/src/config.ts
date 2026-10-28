@@ -110,7 +110,7 @@ export const settingSecret = Schema.RedactedFromValue(settingText)
  * absence or a malformed value stops launch with the variable named. The supplied value is never
  * carried: it may be a credential pasted into the wrong variable.
  *
- * Adapters that own a required setting (the Computer provider, memory) read it through this, so
+ * Adapters that own a required setting (the Computer provider, Thread titles) read it through this, so
  * "not configured" is a server that did not start and never a state a running server is in.
  */
 export const requiredSetting = <A>(
@@ -129,23 +129,23 @@ export const optionalSetting = <A>(
     Effect.mapError(() => configError(name, expected)),
   )
 
-/** One explicit provider choice governs the server's text, embedding and decision requests.
+/** One explicit provider choice governs the server's title and decision requests.
  * This is independent of the runtime's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
 export const ModelProvider = Schema.Literals(['explabs', 'openrouter'])
 const modelProviders = {
   explabs: {
     url: 'https://api.experientiallabs.ai/v1',
     keyVariable: 'EXPLABS_API_KEY',
-    memoryModel: 'glm-5.3-flash',
+    titleModel: 'glm-5.3-flash',
   },
   openrouter: {
     url: 'https://openrouter.ai/api/v1',
     keyVariable: 'OPENROUTER_API_KEY',
-    memoryModel: 'z-ai/glm-5.3-flash',
+    titleModel: 'z-ai/glm-5.3-flash',
   },
 } satisfies Record<
   typeof ModelProvider.Type,
-  { readonly url: string; readonly keyVariable: string; readonly memoryModel: string }
+  { readonly url: string; readonly keyVariable: string; readonly titleModel: string }
 >
 
 /** Resolve defaults and the selected credential once in each owning Layer; invalid settings
@@ -153,11 +153,11 @@ const modelProviders = {
 export const serverModelGateway = Effect.gen(function* () {
   const provider = Option.getOrElse(
     yield* optionalSetting('VIVID_SERVER_MODEL_PROVIDER', ModelProvider, 'explabs or openrouter'),
-    () => 'explabs' as const,
+    () => 'openrouter' as const,
   )
   const selected = modelProviders[provider]
   const key = yield* requiredSetting(selected.keyVariable, settingSecret, 'the model provider key')
-  return { provider, url: selected.url, memoryModel: selected.memoryModel, key }
+  return { provider, url: selected.url, titleModel: selected.titleModel, key }
 }).pipe(Effect.withSpan('ServerConfig.modelGateway'))
 
 const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {

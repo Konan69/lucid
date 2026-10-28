@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { optionalSetting, serverModelGateway, settingText } from '../config.ts'
-import { ProviderMalformed, providerResponse, type ProviderFailure } from './embeddings.js'
+import { ProviderMalformed, providerResponse, type ProviderFailure } from './provider.ts'
 
 const ChatResponse = Schema.Struct({
   choices: Schema.Array(
@@ -18,13 +18,13 @@ export const Completion = Schema.TaggedUnion({
 })
 export type Completion = typeof Completion.Type
 
-export class MemoryGenerationIncomplete extends Schema.TaggedError<MemoryGenerationIncomplete>()(
-  'MemoryGenerationIncomplete',
+export class TitleGenerationIncomplete extends Schema.TaggedError<TitleGenerationIncomplete>()(
+  'TitleGenerationIncomplete',
   { operation: Schema.String, reason: Schema.String, outputCharacters: Schema.Int },
-  { title: 'Incomplete memory generation' },
+  { title: 'Incomplete title generation' },
 ) {}
 /** Give the model the same closed schema used for constrained output and decoding; providers may constrain tokens without explaining the fields to the model. Incomplete output remains a typed failure. */
-const complete = Effect.fn('MemoryExtraction.complete')(function* (
+const complete = Effect.fn('TitleModel.complete')(function* (
   dependencies: {
     readonly client: HttpClient.HttpClient
     readonly gateway: Effect.Success<typeof serverModelGateway>
@@ -71,7 +71,7 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
     !['stop', 'length'].includes(first.finish_reason) ||
     first.message.content.trim().length === 0
   )
-    return yield* MemoryGenerationIncomplete.make({
+    return yield* TitleGenerationIncomplete.make({
       operation: input.name,
       reason: first.finish_reason,
       outputCharacters: first.message.content.length,
@@ -86,14 +86,14 @@ export function completionDecoder<A>(
   decode: (text: string) => Effect.Effect<A, Schema.SchemaError>,
   operation: string,
 ) {
-  return Effect.fn('MemoryExtraction.decode')(function* (completion: Completion) {
+  return Effect.fn('TitleModel.decode')(function* (completion: Completion) {
     return yield* decode(completion.text).pipe(
       Effect.mapError(() =>
         Completion.match(completion, {
-          Finished: (): ProviderMalformed | MemoryGenerationIncomplete =>
+          Finished: (): ProviderMalformed | TitleGenerationIncomplete =>
             ProviderMalformed.make({ operation }),
           BudgetReached: ({ text }) =>
-            MemoryGenerationIncomplete.make({
+            TitleGenerationIncomplete.make({
               operation,
               reason: 'length',
               outputCharacters: text.length,
@@ -104,37 +104,36 @@ export function completionDecoder<A>(
   })
 }
 
-export interface MemoryModelService {
+export interface TitleModelService {
   readonly complete: (input: {
     readonly name: string
     readonly prompt: string
     readonly content: Schema.Json
     readonly schema: Schema.Json
-  }) => Effect.Effect<Completion, ProviderFailure | MemoryGenerationIncomplete>
+  }) => Effect.Effect<Completion, ProviderFailure | TitleGenerationIncomplete>
 }
 
-/** The existing memory model is shared by background text tasks; there is one provider adapter. */
-export class MemoryModel extends Context.Service<MemoryModel, MemoryModelService>()(
-  'vivid/MemoryModel',
+/** Thread naming owns this background text provider; conversations use the cell model. */
+export class TitleModel extends Context.Service<TitleModel, TitleModelService>()(
+  'vivid/TitleModel',
 ) {}
 
 /**
  * Resolve configuration once in the owning Layer. A missing gateway key or a malformed model name
  * stops launch naming the variable: before, the failure was captured here and handed back on
- * every later completion, so the server ran for its whole life naming no Thread and learning
- * nothing. The gateway not answering is still a typed failure on the one completion that met it.
+ * every later completion, so the server ran for its whole life naming no Thread. The gateway not answering is still a typed failure on the one completion that met it.
  */
-export const memoryModelLayer = Layer.effect(
-  MemoryModel,
+export const titleModelLayer = Layer.effect(
+  TitleModel,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
     const gateway = yield* serverModelGateway
     const model = Option.getOrElse(
-      yield* optionalSetting('VIVID_MEMORY_MODEL', settingText, 'a model name'),
-      () => gateway.memoryModel,
+      yield* optionalSetting('VIVID_THREAD_TITLE_MODEL', settingText, 'a model name'),
+      () => gateway.titleModel,
     )
-    return MemoryModel.of({
-      complete: Effect.fn('MemoryModel.complete')((input) =>
+    return TitleModel.of({
+      complete: Effect.fn('TitleModel.complete')((input) =>
         complete({ client, gateway, model }, input),
       ),
     })

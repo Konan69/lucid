@@ -20,7 +20,6 @@ import { type Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
 import { deliveryRunId } from '../threads/key.ts'
@@ -170,9 +169,7 @@ const ports = Layer.effectContext(
   }),
 )
 
-const foundation = Layer.mergeAll(ports, silentLearningLayer).pipe(
-  Layer.provideMerge(testDatabaseLayer),
-)
+const foundation = ports.pipe(Layer.provideMerge(testDatabaseLayer))
 const stores = Layer.mergeAll(changesLayer, runStoreLayer, threadStoreLayer, auditLayer).pipe(
   Layer.provideMerge(foundation),
 )

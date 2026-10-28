@@ -7,7 +7,6 @@ import { ChannelProvider, ChannelRecipientMissing } from './provider.ts'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -60,7 +59,7 @@ const started = Effect.fn('Channels.test.started')(function* (
 
 /** Inbound queues and recorded admissions belong to one case, including its restart probe. */
 describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
-  layer(Layer.merge(testDatabaseLayer, silentLearningLayer))((it) => {
+  layer(testDatabaseLayer)((it) => {
     it.effect(
       'a crash after the outbound claim and before the send leaves unknown and never resends',
       () =>
@@ -362,7 +361,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
       ),
     )
   })
-  layer(Layer.merge(testDatabaseLayer, silentLearningLayer))(
+  layer(testDatabaseLayer)(
     'Clock for a hung send times out with unknown evidence and never retries',
     (it) => {
       it.effect('a hung send times out with unknown evidence and never retries', () =>

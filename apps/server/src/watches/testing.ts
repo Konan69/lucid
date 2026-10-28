@@ -28,7 +28,6 @@ import { deliveryRunId } from '../threads/key.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import {
   Executor as ConnectionExecutor,
@@ -117,7 +116,6 @@ export const conversationLayer = Layer.effectContext(
             threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
             runtime,
             silentChangesLayer,
-            silentLearningLayer,
             silentChannelRepliesLayer,
             Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
             Layer.mock(Presence, { watching: () => Effect.succeed(false) }),

@@ -53,13 +53,8 @@ import { libraryIngestionLayer } from './library/worker.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
-import { parkedEmbeddingsLayer } from './memory/embeddings.ts'
-import { memoryModelLayer } from './memory/model.ts'
+import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
-import { memoryExtractionLayer } from './memory/extract.ts'
-import { helixMemoryLayer } from './memory/helix.ts'
-import { learningLayer } from './memory/learn.ts'
-import { memoryAccessLayer, memoryStoreLayer } from './memory/store.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
@@ -72,7 +67,7 @@ import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
 import { requestLimit } from './rpc/requests.ts'
-import { runtimeLayer } from './runtime/client.ts'
+import { cellMemoryLayer, runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
 import { conversationLayer } from './threads/delivery.ts'
@@ -84,20 +79,6 @@ import { watchedAppsLayer } from './watches/apps.ts'
 import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
 import { watchStoreLayer } from './watches/store.ts'
-
-/**
- * Memory is part of every Vivid. `VIVID_HELIX_URL` and the model gateway key are required while
- * these Layers are built, so a server without them does not start; there is no server that runs
- * "without memory". Helix not answering, or an index still building, is a typed failure on the
- * memory call that met it, and the next call tries again (`memory/helix.ts`).
- */
-const memoryLayer = learningLayer.pipe(
-  Layer.provideMerge(memoryAccessLayer),
-  Layer.provide(memoryStoreLayer),
-  // Embeddings are parked (`parkedEmbeddingsLayer`); `embeddingsLayer` is the one to put back.
-  Layer.provide(Layer.mergeAll(helixMemoryLayer, parkedEmbeddingsLayer)),
-  Layer.provideMerge(memoryExtractionLayer),
-)
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
 const serverProgram = Effect.gen(function* () {
@@ -126,6 +107,7 @@ const serverProgram = Effect.gen(function* () {
     tallyLayer,
     photonLayer,
     runtimeLayer,
+    cellMemoryLayer,
     companyStoreLayer,
     settingsStoreLayer,
     projectStoreLayer,
@@ -154,12 +136,11 @@ const serverProgram = Effect.gen(function* () {
     appearanceStoreLayer,
   ).pipe(Layer.provideMerge(delivery))
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))
-  const knowledge = Layer.mergeAll(memoryLayer, memoryModelLayer).pipe(Layer.provideMerge(recorded))
   const channels = Layer.mergeAll(channelStoreLayer, channelLedgerLayer).pipe(
-    Layer.provideMerge(knowledge),
+    Layer.provideMerge(recorded),
   )
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
-  const named = threadTitlesLayer.pipe(Layer.provideMerge(replying))
+  const named = threadTitlesLayer.pipe(Layer.provide(titleModelLayer), Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
   const accounts = Layer.mergeAll(
     connectionStoreLayer,

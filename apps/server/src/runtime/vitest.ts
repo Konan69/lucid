@@ -10,7 +10,6 @@ export default defineConfig({
     include: [
       'src/{code,computers,approvals,connections}/thread.live.test.ts',
       'src/threads/first.live.test.ts',
-      'src/memory/outage.live.test.ts',
       'src/computers/held.live.test.ts',
       'src/computers/egress/address.live.test.ts',
       'src/computers/signins/guest.live.test.ts',

@@ -17,7 +17,6 @@ export async function owned(state) {
   )
     throw new Error('Verification ownership mismatch')
   for (const [field, prefix] of [
-    ['helixContainer', 'vivid-verify-helix-'],
     ['executorContainer', 'vivid-verify-executor-'],
     ['executorExporter', 'vivid-verify-exporter-'],
   ])
@@ -145,12 +144,9 @@ export async function recover(state) {
   }
   const names = (await command(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
   let container = 'absent'
-  for (const name of [
-    state.container,
-    state.helixContainer,
-    state.executorContainer,
-    state.executorExporter,
-  ].filter(Boolean)) {
+  for (const name of [state.container, state.executorContainer, state.executorExporter].filter(
+    Boolean,
+  )) {
     if (names.includes(name)) {
       const label = await command([
         'docker',
@@ -234,7 +230,6 @@ export async function recoverPrevious(cache) {
     })
     const containers = [
       state.container,
-      state.helixContainer,
       state.executorContainer,
       state.executorExporter,
       state.bucketSetup,

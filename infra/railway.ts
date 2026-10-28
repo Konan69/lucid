@@ -165,7 +165,7 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
  *
- * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
+ * The Person cell holds memory and Executor owns Integrations (`docs/24-executor-scale.md`).
  * Programs Vivid writes need nothing in this graph: they run on the Person's Computer, which the
  * server reaches through its Computer provider (`docs/19-infrastructure.md`).
  */
@@ -202,11 +202,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     return url.toString()
   })
 
-  /**
-   * Helix holds the memory graph on disk. The image and data path are the ones the local stack
-   * runs. The image runs as an unprivileged user and a fresh Railway volume is owned by root, so
-   * `RAILWAY_RUN_UID` makes the data directory writable without changing the image.
-   */
+  /** Migration reads the old memory once. Retain both resources until a follow-up removes their declarations. */
   const helix = yield* Railway.Service('Helix', {
     project,
     name: serviceNames.helix,
@@ -218,8 +214,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       HELIX_HTTP_ADDR: `[::]:${ports.helix}`,
       RAILWAY_RUN_UID: '0',
     },
-  })
-  yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' })
+  }).pipe(RemovalPolicy.retain())
+  yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' }).pipe(
+    RemovalPolicy.retain(),
+  )
 
   /**
    * Executor's hosted shape, as its self-host guide deploys it on Railway
@@ -247,7 +245,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
       /**
        * Executor fetches an address a Person gives it, from a network that also holds the
-       * database and Helix. These three keep it to public addresses: no loopback, no plain-HTTP
+       * database. These three keep it to public addresses: no loopback, no plain-HTTP
        * exceptions, no private ranges or internal names for an app's own requests. Upstream
        * enforces them at connection time, after DNS (`packages/utils/src/url-policy.ts`), so a
        * name that later resolves inward is refused too. The server may declare
@@ -328,7 +326,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
-      VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
+      ...Option.match(environment.openRouterKey, {
+        onNone: () => ({}),
+        onSome: (key) => ({ OPENROUTER_API_KEY: key }),
+      }),
+      ...whenSet('VIVID_SERVER_MODEL_PROVIDER', environment.serverModelProvider),
       ...computerAccess(environment),
       ...executorAccess(environment),
       ...textingAccess(environment),

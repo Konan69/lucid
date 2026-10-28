@@ -58,9 +58,9 @@ export async function provider() {
       : 'OPENCODE_API_KEY'
   if (!model.startsWith('rehearsal/') && !env[key])
     throw new Error('Missing provider key for selected model')
-  if (!env.EXPLABS_API_KEY)
+  if (!env.OPENROUTER_API_KEY)
     throw new Error(
-      'EXPLABS_API_KEY is required by the real server memory and title model, including rehearsal runs',
+      'OPENROUTER_API_KEY is required by the server title model, including rehearsal runs',
     )
   return { model, source: sources.join(', ') || 'process environment', env }
 }

@@ -221,60 +221,9 @@ async function serverReady(child) {
   throw new Error('Product server health deadline')
 }
 
-/** Helix has no configured Docker health event. Launch waits for a successful read-only query. */
-async function helix() {
-  state.helixCreated = true
-  await save()
-  await run(
-    [
-      'docker',
-      'run',
-      '--detach',
-      '--name',
-      state.helixContainer,
-      '--label',
-      'vivid.verify=' + state.run,
-      '-e',
-      'HELIX_DATA_DIR=/var/lib/helix',
-      '-e',
-      'HELIX_HTTP_ADDR=0.0.0.0:8080',
-      '-p',
-      `127.0.0.1:${state.ports.helix}:8080`,
-      'ghcr.io/helixdb/helixdb:v0.0.5',
-    ],
-    { heavy: true, log: state.evidence + '/helix-docker.json' },
-  )
-  const { readBatch, g } = await import(require.resolve('@helix-db/helix-db'))
-  const probe = readBatch()
-    .varAs('probe', g().nWithLabel('VerifyReadiness').limit(1))
-    .returning(['probe'])
-    .toQueryJson()
-  const deadline = Date.now() + 60_000
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${state.ports.helix}/v2/query`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: probe,
-        signal: AbortSignal.timeout(2000),
-      })
-      if (response.ok) {
-        await json(state.evidence + '/helix-health.json', {
-          status: response.status,
-          body: await response.text(),
-        })
-        return
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-  throw new Error('Disposable Helix health deadline')
-}
-
 async function launch() {
   await ownReceipt()
   await database()
-  await helix()
   state.web = `http://127.0.0.1:${state.ports.web}`
   state.server = `http://127.0.0.1:${state.ports.server}`
   const executorEnv = await executor(state, { run, own, save, cleanEnv })
@@ -296,7 +245,6 @@ async function launch() {
     VIVID_SERVER_URL: state.server,
     VIVID_RUNTIME_TOKEN: token,
     VIVID_MODEL: state.model,
-    VIVID_HELIX_URL: `http://127.0.0.1:${state.ports.helix}`,
     VIVID_BUILD_COMMIT: state.head,
     VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
     VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
@@ -445,12 +393,9 @@ async function clean() {
     }
   }
   const containers = (await run(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
-  for (const container of [
-    state.container,
-    state.helixContainer,
-    state.executorContainer,
-    state.executorExporter,
-  ].filter(Boolean)) {
+  for (const container of [state.container, state.executorContainer, state.executorExporter].filter(
+    Boolean,
+  )) {
     if (containers.includes(container)) {
       try {
         const label = await run([
@@ -572,10 +517,6 @@ try {
   await launch()
 } catch (error) {
   await json(state.evidence + '/launch-failure.json', { error: error.stack })
-  if (state.helixCreated)
-    await run(['docker', 'logs', state.helixContainer], {
-      log: state.evidence + '/helix.log.json',
-    }).catch(() => {})
   if (process.connected) process.send({ ready: false, error: error.message })
   await cleanup()
   control.close()

@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { answeredRuns } from '../inputs/answers.ts'
-import { readConversationHistory, textOf } from '../memory/history.ts'
+import { readConversationHistory, textOf } from '../runtime/history.ts'
 import type { RuntimeService } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { REQUEST_RUNS, requestRuns, type RequestRun } from '../threads/runs.ts'

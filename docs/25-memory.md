@@ -1,6 +1,8 @@
-# Memory: a filesystem per Person, and Helix as the knowledge base
+# Memory in the Person cell
 
-**Status:** historical pre-cell design. The chosen placement is [memory in the Person cell](26-memory-cells.md);
+**Status:** personal memory lives only in the celld Person cell, in Pi Durable Object SQLite.
+Helix is removed from the server. Settings reads and edits the same cell memory through RPC.
+The remaining filesystem research is historical pre-cell design. The chosen placement is [memory in the Person cell](26-memory-cells.md);
 its behavior and layers are defined by [Assistant patterns](28-assistant-patterns.md). The
 AgentFS/filesystem examples below record earlier work, not the target architecture.
 
@@ -24,8 +26,8 @@ Code memory documentation. A claim marked **unverified** was read from source an
    (`useSandbox`), so Vivid reads and edits it with ordinary file tools.
 2. **The layout is the Claude Code layout.** One index is always in front of the model. Each
    memory is one file with a small typed header, opened only when its index line looks relevant.
-3. **The knowledge base is Helix.** Durable facts and search live there. Vivid writes to it with a
-   tool. It is a separate layer from memory and is more durable.
+3. **The cell owns personal memory.** Entries, search, revision checks and retractions live in
+   the Person cell. There is no server knowledge base.
 4. **On the Computer, the same SQLite file mounts as a real folder.** Later, when Flue runs on the
    device, the files are simply local files. The end state is Vivid on the device, not the device
    reached from a server.
@@ -35,7 +37,6 @@ flowchart LR
   subgraph now["Filesystem-slot direction: the loop runs on our server"]
     Vivid["Vivid (Flue)"] -- "read, write, edit, grep" --> FS["Memory filesystem"]
     FS --> DB[("One SQLite file per Person")]
-    Vivid -- "save, search" --> KB[("Helix knowledge base")]
   end
   DB -. "mounts as a folder" .-> Computer["The Person's Computer"]
   Computer -. "later: Flue runs here, files are local" .-> Device["Vivid on the device"]
@@ -124,53 +125,19 @@ conversation only, so it is not memory.
 
 ## The knowledge base
 
-Helix stays, as the durable layer: facts that should outlive memory, found by search
-(`apps/server/src/memory/helix.ts`, `store.ts`).
-
-- Vivid writes to it with a tool, and learning after a Run still extracts candidates into it.
-- The decision model (Jev, through `apps/server/src/decisions/model.ts`) selects which candidates
-  are kept. With decisions switched off, everything extracted is kept.
-- A write is applied at most once per candidate, however often a Run is replayed. The receipt
-  design, its review and its proof are tracked in issue #16.
-
-What goes to memory and what goes to the knowledge base, and whether one feeds the other, is open.
+Helix is removed. Personal memory lives only in the Person cell. The server has no memory
+store, embeddings, recall or remember tools, or learning pass. The retained production service
+and volume are for the one-time migration; a follow-up removes their declarations.
 
 ## What exists today
 
-- Personal notes are in one AgentFS SQLite file per Person, opened by the runtime
-  (`packages/agent/runtime/src/notes.ts`). Development uses `VIVID_MEMORY_DIR=.state/notes`
-  relative to the runtime; production uses `/var/lib/vivid/memory` on its Railway volume
-  (`alchemy.run.ts`, `infra/railway.ts`). They are not on the Person's device today.
-- The runtime owns a scoped set of at most 64 leased or warm note stores. A complete operation
-  holds its lease; an unused store closes after one minute, and public Flue shutdown closes the
-  owner before its PostgreSQL pool. Failed opens are not cached. Capacity is a distinct failure,
-  rather than an empty memory result (`notes.ts`, `keeping.ts`, `storage.ts`).
-  The installed native SQLite SDK releases its file descriptors after garbage collection, so
-  this policy bounds owned stores rather than promising an immediate descriptor ceiling.
-- Before each response, `packages/agent/runtime/src/context.ts` loads the acting Person's note
-  index: file names, kinds and descriptions, newest first, within an 8,000-character budget, with
-  a flag when older notes are omitted. The index is derived from the notes and is never stored.
-  No model or application-server request is on this path.
-- Knowledge-base facts are separate `Memory` records in Helix: one sentence, a kind, and a scope
-  (Person, Company, Thread). `WatchMemory` returns the authorized facts and their brief
-  (`apps/server/src/memory/handlers.ts`), rather than the SQLite notes.
-- Facts are `Memory` records in Helix: one sentence, a kind, and a scope (Person, Company, Thread).
-- The runtime reads a memory brief through `MemoryAccess.brief` in
-  `apps/server/src/memory/store.ts`. Its cache key includes the authorized memories and Person.
-  A cache miss asks the extraction model to summarize those memories; successful summaries are
-  cached for ten minutes.
-- The model's knowledge-base tools are `recall` and `remember`. It changes and removes what it
-  knows on its notes (`read_note`, `write_note`, `delete_note`); a Person corrects and removes
-  knowledge-base facts in Settings. That surface does not show or change the personal notes.
-- Nothing seeds memory. A new Person starts with no facts; no write happens at sign-up or
-  onboarding.
-- On 4 October 2026 the production Helix held no memories. Learning is not called for a Run that
-  finishes through an Approval continuation or after recovery; that is tracked in issue #16.
+The shared memory contracts are in `packages/contracts/src/memory.ts`. Settings reads the index,
+lists entries and reads one entry through the acting Person's cell. A correction or retraction
+compares the revision the Person saw and carries their Settings authority. A stale revision
+returns a conflict; an absent entry returns not found. Successful retractions are audited.
 
-The runtime's note index and the Settings knowledge brief are different views of different stores.
-Moving notes onto the Computer, backup and sync are tracked in
-[issue #51](https://github.com/Konan69/vivid/issues/51). The production volume currently supports
-one runtime instance; bounding open handles does not provide shared storage across instances.
+The cell owns learning. Thread title generation remains a separate server task and defaults to
+OpenRouter. The server's decision switch is unchanged.
 
 ## The references, side by side
 
@@ -268,7 +235,4 @@ is out of scope for now; today's access rules stay as they are in code.
    time zone).
 2. **Backup and sync.** Notes currently sit on the runtime's volume; how they follow the Person to
    the Computer and support multiple runtime instances remains open (issue #51).
-3. **Memory and the knowledge base.** Which facts go where, and whether learning after a Run writes
-   files, Helix records, or both.
-4. **The Person's view.** Settings exposes knowledge-base facts; a surface for personal notes is
-   still unfinished.
+3. **The Person's view.** Settings reads and edits cell memory through the same shared contracts.

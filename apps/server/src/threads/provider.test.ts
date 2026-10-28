@@ -4,12 +4,10 @@ import { ConfigProvider, Effect, Layer, Predicate, Queue, Result, Schema } from 
 import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/http'
 import { Decision, DecisionModel } from 'effect/ai'
 import { decisionModelLayer } from '../decisions/model.ts'
-import { Embeddings, embeddingsLayer } from './embeddings.ts'
-import { MemoryModel, memoryModelLayer } from './model.ts'
+import { TitleModel, titleModelLayer } from './model.ts'
 
 const settings = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    VIVID_SERVER_MODEL_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: 'protocol-test-key',
     VIVID_DECISIONS: 'on',
   }),
@@ -54,7 +52,7 @@ describe('OpenRouter server adapters', () => {
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
       const acquired = yield* Layer.build(
-        memoryModelLayer.pipe(
+        titleModelLayer.pipe(
           Layer.provide(
             provider(requests, {
               choices: [
@@ -70,7 +68,7 @@ describe('OpenRouter server adapters', () => {
         'OpenRouter text adapter must start with only its selected key',
       ).toBe(true)
       const context = Result.getOrThrow(acquired)
-      const model = yield* MemoryModel.pipe(Effect.provideContext(context))
+      const model = yield* TitleModel.pipe(Effect.provideContext(context))
       const completion = yield* model.complete({
         name: 'title',
         prompt: 'Name the trip',
@@ -81,32 +79,6 @@ describe('OpenRouter server adapters', () => {
       const request = yield* Queue.take(requests)
       expect(request.url).toBe('https://openrouter.ai/api/v1/chat/completions')
       expect(requestBody(request).model).toBe('z-ai/glm-5.3-flash')
-    }).pipe(Effect.scoped),
-  )
-
-  it.effect('keeps the existing 1536-dimensional OpenAI embedding space', () =>
-    Effect.gen(function* () {
-      const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
-      const vector = Array.from({ length: 1536 }, () => 0.125)
-      const acquired = yield* Layer.build(
-        embeddingsLayer.pipe(
-          Layer.provide(provider(requests, { data: [{ index: 0, embedding: vector }] })),
-          Layer.provide(settings),
-        ),
-      ).pipe(Effect.result)
-      expect(
-        Result.isSuccess(acquired),
-        'OpenRouter embedding adapter must start with only its selected key',
-      ).toBe(true)
-      const context = Result.getOrThrow(acquired)
-      const embeddings = yield* Embeddings.pipe(Effect.provideContext(context))
-      expect(yield* embeddings.embed(['Florence holiday'])).toEqual([vector])
-      const request = yield* Queue.take(requests)
-      expect(request.url).toBe('https://openrouter.ai/api/v1/embeddings')
-      expect(requestBody(request)).toEqual({
-        model: 'openai/text-embedding-3-small',
-        dimensions: 1536,
-      })
     }).pipe(Effect.scoped),
   )
 
