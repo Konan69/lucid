@@ -8,9 +8,9 @@ Launch and Doctor on the devbox selected by `devbox-pick`, then run `verify feat
 
 Launch owns disposable PostgreSQL, Helix and Executor beta.23. Its private catalogue offers Verify Pulse, an authored Integration with one key-backed account, one declared event and one emitting mutation. Executor reads this catalogue through its supported `EXECUTOR_CATALOG_URL` setting. Vivid installs a dedicated app through ordinary Connect. Product source and curation stay unchanged.
 
-The HTTP journey signs in with Launch's synthetic Person, finds Verify Pulse and completes Connect through public RPCs. It asks Vivid in a Thread to find events, create a Watch and post each pulse to Feed. The saved conversation must contain successful `find_events` and `watch` calls. The Watch must be Active before the provider operation is called directly on the disposable Executor.
+The HTTP journey signs in with Launch's synthetic Person, finds Verify Pulse and completes Connect through public RPCs. It asks Vivid in a Thread to find events, create a Watch and post each pulse to Feed as a drawn card: the receipt in the card's display and no words beside it. The saved conversation must contain successful `find_events` and `watch` calls. The Watch must be Active before the provider operation is called directly on the disposable Executor.
 
-WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The browser journey separately connects through Settings, sends the request through the composer, checks the delivered Feed card and reloads it, then clicks Disconnect in Settings.
+WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The item's `words` must be null and its `display` must hold the receipt. The browser journey separately connects through Settings, sends the request through the composer, checks the delivered Feed card shows no words under its title and reloads it, then clicks Disconnect in Settings.
 
 ## Prove removal
 

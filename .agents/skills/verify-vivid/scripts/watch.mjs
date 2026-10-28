@@ -61,8 +61,7 @@ export async function watchRows(state, { table, field, id }, directory, name) {
 
 /** The public live Feed carries the typed delivery receipt. A deadline can fail, never pass. */
 async function posted(state, marker, directory) {
-  const hasMarker = (candidate) =>
-    candidate.post && (candidate.post.title + ' ' + candidate.post.words).includes(marker)
+  const hasMarker = (candidate) => candidate.post && candidate.post.title.includes(marker)
   const feed = await observe(state, {
     tag: 'WatchFeed',
     payload: null,
@@ -111,7 +110,7 @@ export async function integrationOf(state, connection, directory) {
 
 /** Only the model makes the Watch. Its durable tool calls must include discovery and subscription. */
 export function watchWords(marker) {
-  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker} and words containing the event's receipt and words. Do not emit any event yourself. Confirm when the Watch is active.`
+  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker}, the event's receipt and words drawn in the card itself and no sentence beside them. Do not emit any event yourself. Confirm when the Watch is active.`
 }
 
 /** An external provider invokes Executor directly, outside every Vivid tool and approval adapter. */
@@ -158,7 +157,12 @@ export async function occurrence(state, { id, integration, marker }, directory) 
     directory,
   )
   const item = await posted(state, marker, directory)
-  NodeAssert.ok(item.post.words.includes(receipt), 'Feed item did not include the provider receipt')
+  // The card is the drawing: the receipt is in its display and it carries no words beside it.
+  NodeAssert.equal(item.post.words, null, 'Feed card repeated its drawing in words')
+  NodeAssert.ok(
+    item.post.display !== null && item.post.display.includes(receipt),
+    'Feed display did not draw the receipt',
+  )
   const detail = await settled(state, item.thread, 1, 'Completed', directory)
   NodeAssert.ok(RunOrigin.guards.Watch(detail.runs[0].origin))
   NodeAssert.equal(item.thread, threadFor(watching.id, receipt))
