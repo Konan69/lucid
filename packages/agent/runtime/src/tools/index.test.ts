@@ -27,6 +27,7 @@ const fixture = Effect.fn('CatalogueTest.fixture')(function* (person: string) {
           acting: { personId: PersonId.make(person), threadId: ThreadId.make('catalogue-thread') },
 
           client: rpc.client,
+          timezone: '',
         })
       }),
       () =>

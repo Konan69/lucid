@@ -17,6 +17,7 @@ import { notifyTools } from './notify.ts'
 import { feedTools } from './feed.ts'
 import { followTools } from './follow.ts'
 import { projectTools } from './projects.ts'
+import { owedTools } from './owed.ts'
 import { watchTools } from './watches.ts'
 import {
   scopeLayer,
@@ -87,6 +88,7 @@ function catalogue(
     ...watchTools(runTool),
     ...feedTools(runTool),
     ...projectTools(runTool),
+    ...owedTools(runTool),
     ...codeTools(runTool),
     ...documentTools(runTool),
   ]

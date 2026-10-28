@@ -6,6 +6,7 @@ import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { owedTools } from './owed.ts'
+import { invoke } from './tests/harness.ts'
 import { Scope, toolRunner } from './scope.ts'
 
 /** Exercise the generated RPC client and real tool runner; responses are deliberate transport fixtures. */
@@ -18,14 +19,10 @@ const fixture = Effect.fn('OwedToolsTest.fixture')(function* () {
   const threadId = ThreadId.make('fixture-thread')
   const scope = Layer.succeed(
     Scope,
-    Scope.of({ acting: { personId, threadId }, client: rpc.client }),
+    Scope.of({ acting: { personId, threadId }, client: rpc.client, timezone: 'Africa/Lagos' }),
   )
-  const [track, , resolve] = owedTools(toolRunner(scope), 'Africa/Lagos')
-  const context = {
-    signal: yield* Effect.abortSignal,
-    toolCallId: 'owed-call',
-    log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
-  }
+  const [track, , resolve] = owedTools(toolRunner(scope))
+  const context = { signal: yield* Effect.abortSignal }
   const record = Owed.make({
     id: OwedId.make('fixture-owed'),
     personId,
@@ -69,7 +66,7 @@ describe('Owed tools', () => {
       const test = yield* fixture()
       const tracked = yield* Effect.promise(() =>
         Promise.resolve(
-          test.track.run({
+          invoke(test.track, {
             ...test.context,
             data: {
               summary: 'Track Dana’s NDA',
@@ -100,7 +97,7 @@ describe('Owed tools', () => {
       )
       const resolution = yield* Effect.promise(() =>
         Promise.resolve(
-          test.resolve.run({
+          invoke(test.resolve, {
             ...test.context,
             data: {
               summary: 'Close Dana’s NDA',
@@ -121,7 +118,7 @@ describe('Owed tools', () => {
       })
       const ambiguous = yield* Effect.promise(() =>
         Promise.resolve(
-          test.resolve.run({
+          invoke(test.resolve, {
             ...test.context,
             data: {
               summary: 'Close Dana’s NDA',

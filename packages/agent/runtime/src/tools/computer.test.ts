@@ -63,6 +63,7 @@ const fixture = Effect.fn('DesktopToolsTest.fixture')(function* () {
         threadId: ThreadId.make('fixture-thread'),
       },
       client: rpc.client,
+      timezone: '',
     }),
   )
   const runTool = toolRunner(scope)

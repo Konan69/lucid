@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import {
   Tool,
   InvalidRequest,
@@ -27,8 +27,10 @@ const localTime = v.pipe(
   v.regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/u),
 )
 
-/** Resolve wall time in the context zone, never the host zone or an invented UTC fallback. */
-const instant = Effect.fn('OwedTools.instant')(function* (local: string, timezone: string) {
+/** Resolve wall time in the response's context zone (`Scope`), never the host zone or an invented
+ * UTC fallback. */
+const instant = Effect.fn('OwedTools.instant')(function* (local: string) {
+  const { timezone } = yield* Scope
   if (timezone.length === 0)
     return yield* new InvalidRequest({
       message: 'Ask the Person for their time zone before tracking dates.',
@@ -84,8 +86,8 @@ const select = Effect.fn('OwedTools.select')(function* (input: { what: string; f
   })
 })
 
-/** Product persistence and access stay on the server. Context supplies the Person's time zone. */
-export function owedTools(runTool: RunTool, timezone: string) {
+/** Product persistence and access stay on the server. Scope supplies the Person's time zone. */
+export function owedTools(runTool: RunTool) {
   return [
     defineTool({
       name: Tool.track_owed,
@@ -104,8 +106,8 @@ export function owedTools(runTool: RunTool, timezone: string) {
         return runTool(
           Effect.gen(function* () {
             const { client, acting } = yield* Scope
-            const since = yield* instant(data.since, timezone)
-            const due = data.due === null ? null : yield* instant(data.due, timezone)
+            const since = yield* instant(data.since)
+            const due = data.due === null ? null : yield* instant(data.due)
             const record = yield* client.TrackOwed(
               TrackOwedRequest.make({
                 threadId: acting.threadId,
@@ -140,7 +142,7 @@ export function owedTools(runTool: RunTool, timezone: string) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const selected = yield* select(data)
-            const due = data.due === null ? null : yield* instant(data.due, timezone)
+            const due = data.due === null ? null : yield* instant(data.due)
             const record = yield* client.UpdateOwed(
               UpdateOwedRequest.make({
                 id: selected.id,
