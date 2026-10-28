@@ -179,7 +179,7 @@ def boot(receipt):
     assert port is not None, 'No emulator port pair available'
     receipt['serial'] = 'emulator-' + str(port)
     spawn('emulator', [str(SDK / 'emulator/emulator'), '-avd', NAME, '-port', str(port),
-                      '-no-window', '-gpu', 'guest', '-no-audio', '-no-snapshot',
+                      '-no-window', '-gpu', 'swiftshader', '-no-audio', '-no-snapshot',
                       '-no-boot-anim', '-cores', '2', '-memory', '3072'], receipt)
     ready(receipt)
 

@@ -58,4 +58,4 @@ The Thread drawer deliberately shows title, attention dot and time, without last
 
 The launcher does not forward VIVID_DECISIONS into Worker vars. Learning therefore uses its installed decisions-off mode, which considers every exchange. No Jev claim follows. There is no public learner-completion stream. The recipe checks CellRun memory after a real new-Thread recall, without sleeps or polling; failure can mean the background task was still pending at that observation. Report the exact observations rather than claiming it never learns.
 
-A working Thread's thinking orb previously crashed software renderers. Provision uses `-gpu guest`. Retain crash logcat and the last snapshot when it fails. No iOS, desktop, native notification delivery or external provider account is proved by these Android recipes.
+A working Thread's thinking orb previously crashed software renderers. Provision uses `-gpu swiftshader`. Retain crash logcat and the last snapshot when it fails. No iOS, desktop, native notification delivery or external provider account is proved by these Android recipes.
