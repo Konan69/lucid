@@ -140,17 +140,20 @@ const Row = Schema.Union([
   Schema.Struct({ ...valid, status: Schema.Literal('denied'), ...decided, ...unfinished }),
   Schema.Struct({ ...valid, status: Schema.Literal('expired'), ...undecided, ...ended }),
   Schema.Struct({ ...valid, status: Schema.Literal('withdrawn'), ...undecided, ...finished }),
+  // Closed before anyone answered, or after an Allow when the runner found it changed before sending.
   Schema.Struct({
     ...fields,
     status: Schema.Literal('invalidated'),
     invalidation: ApprovalInvalidation,
-    ...undecided,
+    decidedBy: Schema.NullOr(PersonId),
+    decidedAt: Schema.NullOr(Schema.Finite),
     ...ended,
   }),
 ]).pipe(Schema.toTaggedUnion('status'))
 const decodeRow = decodeStored(Row, 'Approval')
 const encodeAction = Schema.encodeEffect(ProposedAction)
 const encodeBinding = encodeStored(ApprovalBinding, 'Approval binding')
+const encodeInvalidation = encodeStored(ApprovalInvalidation, 'Approval invalidation')
 
 /** A missing Person is corrupt persistence, never an invented identity on an Approval. */
 const personSummary = (
@@ -396,6 +399,8 @@ const drift = Effect.fn('Approvals.drift')(function* (
  * had changed, so it is invalidated (now, or already by the write that changed it); or another
  * decision got there first.
  */
+type PendingRow = typeof Row.cases.pending.Type
+
 type ClaimEnd = Data.TaggedEnum<{
   Claimed: { readonly row: typeof approvals.$inferSelect }
   Changed: {}
@@ -406,7 +411,7 @@ const ClaimEnd = Data.taggedEnum<ClaimEnd>()
 /** The move out of pending, when the binding still holds. One conditional UPDATE: one winner. */
 const move = Effect.fn('Approvals.move')(function* (
   tx: Transaction,
-  row: typeof Row.Type,
+  row: PendingRow,
   decision: {
     readonly actor: Actor
     readonly request: DecideApprovalRequest
@@ -448,10 +453,14 @@ const move = Effect.fn('Approvals.move')(function* (
 /**
  * Thread access permits decisions; Person-browser permission additionally belongs to its owner.
  *
- * Before the move out of pending, the claim checks the binding again inside its transaction:
- * a change can commit after the Approval was drawn and before the Person pressed. If the binding
- * no longer holds, the Approval is invalidated in that same transaction and the claim answers
- * `ApprovalChanged`; the invalidation commits even though the decision is refused.
+ * Before an Allow moves it out of pending, the claim checks the binding again inside its
+ * transaction: a change can commit after the Approval was drawn and before the Person pressed. If
+ * the binding no longer holds, the Approval is invalidated in that same transaction and the claim
+ * answers `ApprovalChanged`; the invalidation commits even though the decision is refused. A Deny
+ * runs nothing, so it is recorded as the Person's Deny whatever changed.
+ *
+ * Answers the claimed row and the binding it was claimed against, which the runner checks once
+ * more just before it dispatches.
  */
 const claim = Effect.fn('Approvals.claim')(function* (
   actor: Actor,
@@ -470,14 +479,13 @@ const claim = Effect.fn('Approvals.claim')(function* (
   const now = yield* Clock.currentTimeMillis
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
     return yield* new ApprovalExpired({ id: row.id })
+  if (!Row.guards.pending(row)) return yield* new Conflict({ message: 'Approval already decided' })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      // A Deny runs nothing, so it is recorded as the Person's Deny whatever changed.
-      const changedBy =
-        Row.guards.pending(row) && !ApprovalDecision.guards.Deny(request.decision)
-          ? yield* drift(tx, row)
-          : Option.none<ApprovalInvalidation>()
+      const changedBy = ApprovalDecision.guards.Deny(request.decision)
+        ? Option.none<ApprovalInvalidation>()
+        : yield* drift(tx, row)
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
       yield* invalidatePending(tx, scope, changedBy.value)
       return ClaimEnd.Changed()
@@ -500,7 +508,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
       }),
     )
   }
-  return result
+  return { row: result, binding: row.binding }
 })
 
 /** A refusal already knows its result; permission owes the result of the once-only action. */
@@ -516,7 +524,7 @@ const deliver = Effect.fn('Approvals.deliver')(function* (id: ApprovalId) {
   )
 })
 
-type StoredOutcome = Pick<typeof approvals.$inferSelect, 'status' | 'outcome'>
+type StoredOutcome = Pick<typeof approvals.$inferSelect, 'status' | 'outcome' | 'invalidation'>
 
 /** Once executing, only the recorded outcome may settle this Approval; there is no retry path. */
 const finish = Effect.fn('Approvals.finish')(function* (
@@ -525,18 +533,25 @@ const finish = Effect.fn('Approvals.finish')(function* (
   outcome: ActionOutcome,
 ) {
   const database = yield* Database
-  const ending = ActionOutcome.match(outcome, {
-    Succeeded: ({ result }): StoredOutcome => ({ status: 'succeeded', outcome: result }),
-    Failed: ({ reason }): StoredOutcome => ({ status: 'failed', outcome: reason }),
-    Unknown: (): StoredOutcome => ({
-      status: 'unknown',
-      outcome: null,
-    }),
+  const ending = yield* ActionOutcome.match(outcome, {
+    Succeeded: ({ result }) =>
+      Effect.succeed<StoredOutcome>({ status: 'succeeded', outcome: result, invalidation: null }),
+    Failed: ({ reason }) =>
+      Effect.succeed<StoredOutcome>({ status: 'failed', outcome: reason, invalidation: null }),
+    Unknown: () =>
+      Effect.succeed<StoredOutcome>({ status: 'unknown', outcome: null, invalidation: null }),
+    Changed: ({ reason }) =>
+      Effect.map(encodeInvalidation(reason), (invalidation): StoredOutcome => ({
+        status: 'invalidated',
+        outcome: null,
+        invalidation,
+      })),
   })
   const conclusion = ActionOutcome.match<Conclusion>(outcome, {
     Succeeded: ({ result }) => Conclusion.cases.Succeeded.make({ result }),
     Failed: ({ reason }) => Conclusion.cases.Failed.make({ reason }),
     Unknown: () => Conclusion.cases.OutcomeUnknown.make({}),
+    Changed: ({ reason }) => Conclusion.cases.Invalidated.make({ reason }),
   })
   const now = yield* Clock.currentTimeMillis
   const rows = yield* database.run(
@@ -565,7 +580,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
   actor: Actor,
   request: DecideApprovalRequest,
 ) {
-  const row = yield* claim(actor, request)
+  const { row, binding } = yield* claim(actor, request)
   yield* changed(actor, Topic.thread(row.threadId))
   const audit = yield* Audit
   const event = auditAction(row.action)
@@ -583,6 +598,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
     person: actor.person,
     workspace: actor.workspace,
     action: row.action,
+    binding,
     origin:
       row.runId === null
         ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
@@ -596,6 +612,8 @@ const decide = Effect.fn('Approvals.decide')(function* (
       Succeeded: (): AuditEvent => AuditEvent.cases.ActionApproved.make(event),
       Failed: (): AuditEvent => AuditEvent.cases.ActionFailed.make(event),
       Unknown: (): AuditEvent => AuditEvent.cases.ActionOutcomeUnknown.make(event),
+      // It changed under the Allow and nothing was sent: the action did not happen.
+      Changed: (): AuditEvent => AuditEvent.cases.ActionFailed.make(event),
     }),
   )
   const approval = yield* returned(yield* view([settled]), 'Approval')

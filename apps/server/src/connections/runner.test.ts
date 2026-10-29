@@ -2,6 +2,8 @@ import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Ref } from 'effect'
 import {
   ActionTarget,
+  ApprovalInvalidation,
+  ConnectionState,
   DatabaseConstraintViolation,
   DatabaseFailure,
   DatabaseUnavailable,
@@ -13,7 +15,15 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { Executor, ExecutorCallOutcome, ExecutorTransportFailure } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connectionRunner } from './tools.ts'
-import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
+import { saveState } from './records.ts'
+import { ActionOutcome } from '../approvals/gate.ts'
+import {
+  ConnectionProbe,
+  connectionTestLayer,
+  fixture,
+  generationOf,
+  serviceId,
+} from './testing.ts'
 
 /** A deliberate infrastructure fault Layer leaves the production PostgreSQL adapter in place
  * until the selected phase. These tests prove the runner's classification, not the driver seam.
@@ -79,6 +89,8 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             const database = yield* Database
             const executor = yield* Executor
             const calls = yield* Ref.get(probe.calls)
+            // Read before the database below is made to fail.
+            const generation = yield* generationOf(step.connection.id)
             const dispatch = Executor.of({
               ...executor,
               call: Effect.fn('Executor.Test.dispatchBeforePersistenceFailure')(function* () {
@@ -93,6 +105,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
               return yield* connectionRunner({
                 person: ownerActor.person,
                 workspace: ownerActor.workspace,
+                connectionGeneration: generation,
                 target: ActionTarget.cases.Connection.make({
                   connectionId: step.connection.id,
                   account: 'Approved account',
@@ -137,6 +150,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           const input = {
             person: ownerActor.person,
             workspace: ownerActor.workspace,
+            connectionGeneration: yield* generationOf(step.connection.id),
             target: ActionTarget.cases.Connection.make({
               connectionId: step.connection.id,
               account: 'Transport loss',
@@ -178,6 +192,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
         const outcome = yield* connectionRunner({
           person: ownerActor.person,
           workspace: ownerActor.workspace,
+          connectionGeneration: yield* generationOf(step.connection.id),
           target: ActionTarget.cases.Connection.make({
             connectionId: step.connection.id,
             account: 'Private approved account',
@@ -190,6 +205,45 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           reason:
             'The integration is no longer available; check its authorization and your access.',
         })
+        expect(yield* Ref.get(probe.calls)).toBe(calls)
+      }),
+    )
+    it.effect('an Integration signed in again after the Allow sends nothing and says so', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const step = yield* store.begin(ownerActor, {
+          from: 'Web',
+          service: serviceId,
+          name: 'Signed in again',
+          shared: false,
+        })
+        // The generation the Approval was bound to; then the account is signed in again.
+        const bound = yield* generationOf(step.connection.id)
+        const row = yield* store.get(ownerActor, step.connection.id)
+        const saved = yield* saveState(row, ConnectionState.cases.Ready.make({}), row.references)
+        const calls = yield* Ref.get(probe.calls)
+        const outcome = yield* connectionRunner({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          connectionGeneration: bound,
+          target: ActionTarget.cases.Connection.make({
+            connectionId: step.connection.id,
+            account: 'Signed in again',
+            tool: 'read',
+            input: {},
+          }),
+        })
+        expect(outcome).toEqual(
+          ActionOutcome.cases.Changed.make({
+            reason: ApprovalInvalidation.cases.ConnectionChanged.make({
+              connectionId: step.connection.id,
+              generation: saved.authorizationGeneration,
+            }),
+          }),
+        )
+        expect(saved.authorizationGeneration).toBe(bound + 1)
         expect(yield* Ref.get(probe.calls)).toBe(calls)
       }),
     )

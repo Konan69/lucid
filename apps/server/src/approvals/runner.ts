@@ -25,10 +25,18 @@ export const actionRunnerLayer = Layer.effect(
       Database | ConnectionStore | Executor | ComputerStore | ToolEffects | DeviceRegistry
     >()
     return ActionRunner.of({
-      run: ({ person, workspace, action, origin }) => {
+      run: ({ person, workspace, action, binding, origin }) => {
         const target = action.target
         return ActionTarget.guards.Connection(target)
-          ? Effect.provideContext(connectionRunner({ person, workspace, target }), services)
+          ? Effect.provideContext(
+              connectionRunner({
+                person,
+                workspace,
+                target,
+                connectionGeneration: binding.connectionGeneration,
+              }),
+              services,
+            )
           : Effect.provideContext(computerRunner({ person, target, origin }), services)
       },
     })

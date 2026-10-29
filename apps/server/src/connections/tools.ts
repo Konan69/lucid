@@ -1,6 +1,7 @@
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ApprovalBinding,
+  ApprovalInvalidation,
   ActionTarget,
   AnotherAccountMessage,
   ConnectionRequestMessage,
@@ -774,6 +775,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     readonly person: Person
     readonly workspace: Workspace
     readonly target: typeof ActionTarget.cases.Connection.Type
+    /** The authorization generation the Approval was bound to. */
+    readonly connectionGeneration: number | null
   }) {
     const workspace = yield* workspaceIn(
       input.person.id,
@@ -802,6 +805,17 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     )
     if (Result.isFailure(prepared)) return approvedAdmissionOutcome(prepared.failure)
     const { row } = prepared.success
+    // The account may have been signed in again after the Allow was claimed: then the Person
+    // allowed a different sign-in than the one that would send, so nothing is sent. Executor's
+    // tools take no expected revision, so this read is the last check; a sign-in landing between
+    // it and the call below is not caught.
+    if (row.authorizationGeneration !== input.connectionGeneration)
+      return ActionOutcome.cases.Changed.make({
+        reason: ApprovalInvalidation.cases.ConnectionChanged.make({
+          connectionId: row.id,
+          generation: row.authorizationGeneration,
+        }),
+      })
     return actionOutcome(yield* runConnection(actor, row, input.target))
   },
   (effect) =>

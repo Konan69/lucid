@@ -56,6 +56,7 @@ import { googleService } from './google.ts'
 import { keyedService } from './curation.ts'
 import { toolEffectsLayer } from './effects.ts'
 import { connectionStoreLayer } from './store.ts'
+import { connections } from './tables.ts'
 
 export const serviceId = ServiceId.make('test-service')
 export const readTool = ExecutorTool.make({
@@ -312,6 +313,21 @@ const dependencies = Layer.mergeAll(
 export const connectionTestLayer = connectionStoreLayer.pipe(Layer.provideMerge(dependencies))
 
 /** Cleanup is installed before the first write and only touches unique disposable test identities. */
+/** The authorization generation a Connection has now, as an Approval raised now would bind it. */
+export const generationOf = Effect.fn('Connections.Test.generationOf')(function* (
+  id: ConnectionId,
+) {
+  const database = yield* Database
+  const [row] = yield* database.run(
+    database
+      .select({ generation: connections.authorizationGeneration })
+      .from(connections)
+      .where(eq(connections.id, id)),
+  )
+  if (row === undefined) return yield* Effect.die('The Connection is missing')
+  return row.generation
+})
+
 export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
   const database = yield* Database
   const probe = yield* ConnectionProbe

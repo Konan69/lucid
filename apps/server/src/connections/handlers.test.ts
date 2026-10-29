@@ -34,7 +34,14 @@ import {
   ExecutorServiceEntry,
   connectionSetupMessage,
 } from './executor.ts'
-import { ConnectionProbe, connectionTestLayer, fixture, serviceId, toolRequest } from './testing.ts'
+import {
+  ConnectionProbe,
+  connectionTestLayer,
+  fixture,
+  generationOf,
+  serviceId,
+  toolRequest,
+} from './testing.ts'
 
 const personAuth = AuthState.Person({
   person: Person.make({
@@ -407,6 +414,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           // The approved action store must retain the failing discovery adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* connectionRunner({
+            connectionGeneration: yield* generationOf(begun.connection.id),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -555,6 +563,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* store.remove(ownerActor, step.connection.id)
         const calls = yield* Ref.get(probe.calls)
         const outcome = yield* connectionRunner({
+          connectionGeneration: yield* generationOf(step.connection.id),
           person: ownerActor.person,
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
@@ -617,6 +626,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
             .pipe(Effect.provideService(AuthContext, auth))
           expect(repeated).toMatchObject({ message: 'The saved app no longer exists.' })
           const approved = yield* connectionRunner({
+            connectionGeneration: yield* generationOf(step.connection.id),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({

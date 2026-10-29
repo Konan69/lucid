@@ -19,6 +19,7 @@ import {
   ApprovalState,
   ArtifactId,
   ConnectionState,
+  type ConnectionId,
   ProposedAction,
   type Approval,
   type ApprovalId,
@@ -42,6 +43,8 @@ import { stopPersonRun } from '../threads/stop.ts'
 import { Signal } from './signal.ts'
 import { ApprovalStore } from './store.ts'
 import { approvals } from './tables.ts'
+import { ActionOutcome } from './gate.ts'
+import { runs } from '../threads/tables.ts'
 import { fixture, Observation, recordRuns, testRunId, trustTestServices } from './testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
@@ -148,6 +151,21 @@ const reasonOf = (approval: Approval) => {
     throw new Error(`Expected an invalidated Approval, found ${approval.state._tag}`)
   return approval.state.reason
 }
+
+/** Moves an Integration's authorization generation without closing anything, as a write the
+ * invalidators never saw would. */
+const moveGeneration = Effect.fn('StaleTest.moveGeneration')(function* (
+  connectionId: ConnectionId,
+  generation: number,
+) {
+  const database = yield* Database
+  yield* database.run(
+    database
+      .update(connections)
+      .set({ authorizationGeneration: generation })
+      .where(eq(connections.id, connectionId)),
+  )
+})
 
 const allow = (test: Effect.Success<ReturnType<typeof fixture>>, approval: Approval) =>
   Effect.flatMap(ApprovalStore, (store) =>
@@ -335,7 +353,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         ),
       )
 
-      it.effect('S6 an edit and an Allow racing on one Approval leave exactly one outcome', () =>
+      it.effect('S6 an edit and an Allow sent together end in one outcome per round', () =>
         scopedCase(
           services,
           Effect.gen(function* () {
@@ -373,6 +391,125 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               }
             }
             expect(endings.ran + endings.changed).toBe(8)
+          }),
+          'fresh',
+        ),
+      )
+
+      it.effect(
+        'S7 a sign-in that changed after the Allow settles the ask as changed, not failed',
+        () =>
+          scopedCase(
+            services,
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              const observed = yield* Observation
+              const reason = ApprovalInvalidation.cases.ConnectionChanged.make({
+                connectionId: test.connectionId,
+                generation: 1,
+              })
+              // The Integration's runner found the sign-in moved after the claim (`connectionRunner`).
+              yield* Ref.set(observed.outcome, ActionOutcome.cases.Changed.make({ reason }))
+              const approval = yield* (yield* ApprovalStore).raise(
+                test.vivid,
+                test.connectionAction,
+                test.bound,
+              )
+              const settled = yield* allow(test, approval)
+              expect(reasonOf(settled)).toEqual(reason)
+              const signal = yield* signalOf(approval.id)
+              expect(Signal.guards.Owed(signal) && signal.message.body).toContain('went stale')
+              const database = yield* Database
+              const rows = yield* database.run(
+                database
+                  .select({ decidedBy: approvals.decidedBy })
+                  .from(approvals)
+                  .where(eq(approvals.id, approval.id)),
+              )
+              // The Person's Allow is kept with it.
+              expect(rows).toEqual([{ decidedBy: test.personal.person.id }])
+            }),
+            'fresh',
+          ),
+      )
+
+      it.effect('S8 a Deny on an ask that went stale is recorded as the Deny', () =>
+        scopedCase(
+          services,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
+            yield* moveGeneration(test.connectionId, 3)
+            const denied = yield* store.decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.Deny.make({}),
+            })
+            expect(ApprovalState.guards.Denied(denied.state)).toBe(true)
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          }),
+          'fresh',
+        ),
+      )
+
+      it.effect('S9 an ask whose Integration changed while it was raised is born closed', () =>
+        scopedCase(
+          services,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const observed = yield* Observation
+            yield* moveGeneration(test.connectionId, 2)
+            const approval = yield* (yield* ApprovalStore).raise(
+              test.vivid,
+              test.connectionAction,
+              test.bound,
+            )
+            expect(reasonOf(approval)).toEqual(
+              ApprovalInvalidation.cases.ConnectionChanged.make({
+                connectionId: test.connectionId,
+                generation: 2,
+              }),
+            )
+            expect(yield* (yield* ApprovalStore).inbox(test.personal)).toEqual([])
+            expect(yield* Ref.get(observed.notices)).toEqual([])
+          }),
+          'fresh',
+        ),
+      )
+
+      it.effect('S10 the claim refuses an ask whose Run was stopped, whoever stopped it', () =>
+        scopedCase(
+          services,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const database = yield* Database
+            const person = test.personal.person.id
+            yield* recordRuns(test.personalId, [
+              {
+                id: 'asking',
+                personId: person,
+                origin: StoredRunOrigin.cases.Message.make({}),
+                working: true,
+              },
+            ])
+            const runId = testRunId(test.personalId, 'asking')
+            const approval = yield* (yield* ApprovalStore).raise(
+              test.vivid,
+              test.connectionAction,
+              test.bound,
+            )
+            // A Stop that committed while the ask was being raised, which its own close missed.
+            yield* database.run(
+              database.update(runs).set({ state: 'stopped' }).where(eq(runs.id, runId)),
+            )
+            expect(yield* Effect.flip(allow(test, approval))).toEqual(
+              new ApprovalChanged({ id: approval.id }),
+            )
+            expect(reasonOf(yield* current(approval))).toEqual(
+              ApprovalInvalidation.cases.RunStopped.make({ runId }),
+            )
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
           }),
           'fresh',
         ),

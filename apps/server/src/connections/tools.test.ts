@@ -24,7 +24,13 @@ import {
   ExecutorTool,
 } from './executor.ts'
 import { ConnectionStore, ToolDiscovery, connectionStoreLayer } from './store.ts'
-import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
+import {
+  ConnectionProbe,
+  connectionTestLayer,
+  fixture,
+  generationOf,
+  serviceId,
+} from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
 
 /** Each refusal assertion owns its recorder; the current loggers are retained when the capture is provided. */
@@ -180,6 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                   return yield* connectionRunner({
                     person: ownerActor.person,
                     workspace: ownerActor.workspace,
+                    connectionGeneration: yield* generationOf(step.connection.id),
                     target,
                   })
                 return yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' })
@@ -246,6 +253,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             yield* store.failed(ownerActor, row, 'Private failure')
           if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
           const outcome = yield* connectionRunner({
+            connectionGeneration: yield* generationOf(row.id),
             person: reason === 'IntegrationUnavailable' ? memberActor.person : ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -298,6 +306,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const probe = yield* ConnectionProbe
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            connectionGeneration: yield* generationOf(step.connection.id),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -348,6 +357,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           })
           const calls = yield* Ref.get((yield* ConnectionProbe).calls)
           const outcome = yield* connectionRunner({
+            connectionGeneration: yield* generationOf(step.connection.id),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -407,6 +417,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            connectionGeneration: yield* generationOf(step.connection.id),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -1515,6 +1526,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               effect: 'read',
             })
             const executed = yield* connectionRunner({
+              connectionGeneration: yield* generationOf(connection.connection.id),
               person: ownerActor.person,
               workspace: ownerActor.workspace,
               target: ActionTarget.cases.Connection.make({

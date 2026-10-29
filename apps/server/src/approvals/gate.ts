@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
+  ApprovalInvalidation,
   RunId,
   type ApprovalBinding,
   ThreadId,
@@ -105,11 +106,16 @@ export interface GateService {
 /** The trust loop's single decision point. Implemented in `approvals/gate.ts` by `gateLayer`. */
 export class Gate extends Context.Service<Gate, GateService>()('vivid/Gate') {}
 
-/** How an action that was allowed to run ended. `Unknown` is honest: it may or may not have happened. */
+/**
+ * How an action that was allowed to run ended. `Unknown` is honest: it may or may not have happened.
+ * `Changed` is an approved action refused just before it was sent, because what it was bound to
+ * changed after the Allow; nothing was sent.
+ */
 export const ActionOutcome = Schema.TaggedUnion({
   Succeeded: { result: Schema.String },
   Failed: { reason: Schema.String },
   Unknown: {},
+  Changed: { reason: ApprovalInvalidation },
 })
 export type ActionOutcome = typeof ActionOutcome.Type
 
@@ -124,6 +130,8 @@ export interface ActionRunnerService {
     readonly person: Person
     readonly workspace: Workspace
     readonly action: ProposedAction
+    /** What the Approval was bound to; the owning domain checks it once more before sending. */
+    readonly binding: ApprovalBinding
     readonly origin: ActionOrigin
   }) => Effect.Effect<ActionOutcome, DatabaseInfrastructureError>
 }
