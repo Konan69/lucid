@@ -68,6 +68,9 @@ export const PhoneState = Schema.Struct({
   modelKind: Schema.String,
   hostname: Schema.String,
   devbox: Schema.String,
+  container: Schema.String,
+  executorContainer: Schema.String,
+  executorExporter: Schema.String,
   web: Schema.String,
   ports: Schema.Struct({ web: Schema.Number }),
 })

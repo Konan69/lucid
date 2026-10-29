@@ -23,14 +23,17 @@ export async function send(state, id, ui) {
   await ui.capture('streaming')
   const first = await ui.completed(id, 1, 'first')
   NodeAssert.match(first.reply, /amber-orchid/iu)
+  // A reopened Thread shows its newest words, so the long reply's closing marker is on screen
+  // and its opening marker is scrolled away. Durable history proves the whole reply survived.
+  NodeAssert.match(first.reply, /orchid-complete/iu)
   await ui.create('Phone away ' + crypto.randomUUID().slice(0, 8))
   await ui.visit(id)
-  await ui.visible('amber-orchid')
+  await ui.visible('orchid-complete')
   await ui.capture('reopened')
   await ui.run(['close', 'work.vivid.mobile'])
   await ui.run(['open', 'work.vivid.mobile', '--relaunch'])
   await ui.visit(id)
-  await ui.visible('amber-orchid')
+  await ui.visible('orchid-complete')
   NodeAssert.deepEqual(
     saved(await history(state, id, ui.directory, 'relaunched')),
     saved(first.page),
@@ -113,7 +116,8 @@ export async function stop(state, id, ui) {
   )
   await ui.create('Stop away ' + crypto.randomUUID().slice(0, 8))
   await ui.visit(id)
-  await ui.visible('amber-orchid')
+  // The reopened Thread shows the newest words: the stopped reply's last line, not its opening.
+  await ui.visible(closing(textOf(page.messages.filter((message) => message.role === 'assistant'))))
   NodeAssert.deepEqual(saved(await history(state, id, ui.directory, 'reopened')), saved(page))
   await ui.capture('stopped-reopened')
   await ui.send('Reply with the word resumed only.')
@@ -122,6 +126,17 @@ export async function stop(state, id, ui) {
   NodeAssert.match(next.reply, /resumed/iu)
   await ui.visible('resumed')
   await ui.capture('resumed')
+}
+
+/** The last words of a reply's last line, without Markdown marks the phone renders as style. */
+function closing(text) {
+  const line = text.trim().split('\n').at(-1)
+  return line
+    .replaceAll(/[*_`#>]/gu, '')
+    .trim()
+    .split(/\s+/u)
+    .slice(-4)
+    .join(' ')
 }
 
 /** Keep Android on the Thread across a real native owner handoff and require the same Run. */
@@ -215,7 +230,7 @@ export async function picture(state, id, ui, adb) {
   // Android supplies these accessibility names, not the Vivid source. Retain a fresh tree and
   // fail visibly if this API-35 picker differs; do not substitute an RPC upload for a phone tap.
   await ui.run(['snapshot', '-i', '--force-full'])
-  await ui.press('Photo taken on', 'image')
+  await ui.press('Photo taken on', 'group')
   await ui.press('Add')
   await ui.send(
     'What is the dominant color of the attached picture? Reply with one color word only.',

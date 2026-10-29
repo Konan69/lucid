@@ -76,6 +76,18 @@ export async function memory(state, id, ui) {
   await remembered(state, ui.directory, marker, 'recall-index')
 }
 
+/** Android names these labelled inputs only "Text field": React Native's accessibilityLabel on a
+ * TextInput does not reach agent-device's text-field name. The editor holds exactly two, in the
+ * order What Vivid remembers, In full; fill them by that order inside the open correction sheet. */
+async function correction(ui, values) {
+  const snapshot = await ui.run(['snapshot', '-i', '--force-full'])
+  NodeAssert.ok(snapshot.includes('What Vivid remembers, In full'), snapshot)
+  const fields = snapshot.split('\n').filter((line) => line.includes('[text-field]'))
+  NodeAssert.equal(fields.length, 2, 'Expected the two correction fields\n' + snapshot)
+  for (const [index, line] of fields.entries())
+    await ui.run(['fill', line.match(/@e\d+(?:~s\d+)?/u)[0], values[index], '--settle'])
+}
+
 /** U5's real editor corrects and forgets the entry written through the phone composer. */
 export async function settingsMemory(state, id, ui) {
   const { marker, entry } = await preference(state, id, ui)
@@ -90,8 +102,7 @@ export async function settingsMemory(state, id, ui) {
   await ui.press(entry.description)
   await ui.press('Correct')
   const description = `${marker} meetings after three; mornings are for writing.`
-  await ui.fill('What Vivid remembers', description)
-  await ui.fill('In full', description)
+  await correction(ui, [description, description])
   await ui.press('Save correction')
   await ui.run(['wait', 'absent', 'label="Save correction"', '60000'])
   const corrected = await rpc(
