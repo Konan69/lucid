@@ -126,8 +126,9 @@ import {
   OfferConnectionRequest,
   RenameConnectionRequest,
   ServiceCatalog,
-  ToolOutcome,
   UseDisplayToolRequest,
+  IntegrationResult,
+  SetConnectionPermissionRequest,
   DisplayApprovalUnsupported,
   UseToolRequest,
 } from './connections.js'
@@ -787,6 +788,11 @@ const ResumeConnection = Rpc.make('ResumeConnection', {
   payload: { id: ConnectionId, from: SignInSurface },
   success: ConnectionStep,
 })
+const SetConnectionPermission = Rpc.make('SetConnectionPermission', {
+  ...call,
+  payload: SetConnectionPermissionRequest,
+  success: ConnectionResponse,
+})
 const RemoveConnection = Rpc.make('RemoveConnection', { ...call, payload: { id: ConnectionId } })
 /**
  * A Person naming one of their accounts ("Work"), so they and Vivid can tell it from their others
@@ -818,13 +824,17 @@ const ResolveTool = Rpc.make('ResolveTool', {
   success: ConnectionTool,
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
-const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+const UseTool = Rpc.make('UseTool', {
+  ...call,
+  payload: UseToolRequest,
+  success: IntegrationResult,
+})
 /** A display's Query or Mutation, run for the Person who is looking at it. */
 const UseDisplayTool = Rpc.make('UseDisplayTool', {
   ...call,
   error: Schema.Union([RpcFailure, DisplayApprovalUnsupported]),
   payload: UseDisplayToolRequest,
-  success: ToolOutcome,
+  success: IntegrationResult,
 })
 /** Vivid offering a service in the Thread, with the acting Person's real state for it. */
 const OfferConnection = Rpc.make('OfferConnection', {
@@ -1141,6 +1151,7 @@ export const VividRpc = RpcGroup.make(
   CompleteConnection,
   ResumeConnection,
   RemoveConnection,
+  SetConnectionPermission,
   RenameConnection,
   FindTools,
   ResolveTool,

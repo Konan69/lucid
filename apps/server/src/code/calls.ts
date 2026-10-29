@@ -3,8 +3,10 @@ import {
   BrowseRequest,
   CodeCallKind,
   DisplayCallPolicy,
+  ConnectionState,
   displayCallRefusal,
   FindToolsRequest,
+  NotFound,
   ReadPageOutcome,
   ReadPageRequest,
   ToolOutcome,
@@ -84,28 +86,56 @@ const connection = Effect.fn('Code.useConnection')(function* (
   policy: DisplayCallPolicy,
 ) {
   const request = yield* decodeUse(input, { onExcessProperty: 'error' })
-  const matched = yield* resolveTool(actor, request)
-  const refusal = displayCallRefusal(policy, matched.effect)
-  if (Option.isSome(refusal))
-    return yield* refused('use_tool', { ok: false, reason: refusal.value }, request.summary)
+  const { connections } = yield* (yield* ConnectionStore).list(actor)
+  const connection = connections.find(
+    (entry) => entry.account.toLowerCase() === request.account.trim().toLowerCase(),
+  )
+  if (connection === undefined) return yield* new NotFound({ message: 'Tool not found' })
+  const saved = { connectionId: connection.id, name: request.tool }
+  const matched = yield* ConnectionState.guards.Ready(connection.state)
+    ? resolveTool(actor, request).pipe(Effect.catchTag('NotFound', () => Effect.succeed(saved)))
+    : Effect.succeed(saved)
   const use = DisplayCallPolicy.match(policy, { Draw: () => useQueryTool, Press: () => useTool })
-  const outcome = yield* use(actor, {
+  const result = yield* use(actor, {
     connectionId: matched.connectionId,
     tool: matched.name,
     input: request.input,
     summary: request.summary,
     rationale: request.rationale,
   })
-  return ToolOutcome.match<CallOutcome>(outcome, {
-    Completed: ({ output }) => returned({ ok: true, output }, request.summary),
+  const evidence = { coverage: result.coverage, asOf: result.asOf, observedAt: result.observedAt }
+  return ToolOutcome.match<CallOutcome>(result.outcome, {
+    Completed: ({ output }) => returned({ ok: true, output, ...evidence }, request.summary),
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
     OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    ScopeRequired: ({ required, granted }) =>
+      returned(
+        { ok: false, reason: 'Additional access required.', required, granted, ...evidence },
+        request.summary,
+        'refused',
+      ),
+    PermissionDeclined: ({ classes }) =>
+      returned(
+        { ok: false, reason: 'Data permission declined.', classes, ...evidence },
+        request.summary,
+        'refused',
+      ),
+    Unsupported: ({ capability }) =>
+      returned(
+        { ok: false, reason: 'Unsupported capability.', capability, ...evidence },
+        request.summary,
+        'refused',
+      ),
     ConnectionNotReady: () =>
-      returned({ ok: false, reason: 'The account needs connecting.' }, request.summary, 'refused'),
+      returned(
+        { ok: false, reason: 'The account needs connecting.', ...evidence },
+        request.summary,
+        'refused',
+      ),
     Rejected: ({ message, problems }) =>
-      returned({ ok: false, reason: message, problems }, request.summary, 'refused'),
+      returned({ ok: false, reason: message, problems, ...evidence }, request.summary, 'refused'),
   })
 })
 

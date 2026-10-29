@@ -1,4 +1,13 @@
-import { bigint, index, integer, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import {
+  bigint,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 
 /**
@@ -46,6 +55,7 @@ export const connections = pgTable(
     // tell it is no longer that account. `updated_at` is a clock reading, which can repeat or step
     // back; this only rises.
     authorizationGeneration: integer('authorization_generation').notNull().default(0),
+    grantObservation: jsonb('grant_observation'),
     createdAt: epoch('created_at').notNull(),
     updatedAt: epoch('updated_at').notNull(),
   },
@@ -54,6 +64,19 @@ export const connections = pgTable(
     index('vivid_connections_person').on(table.personId),
     index('vivid_connections_company').on(table.companyId),
   ],
+)
+
+/** Class decisions belong to one account and disappear with its Connection. */
+export const connectionPermissions = pgTable(
+  'vivid_connection_permissions',
+  {
+    connectionId: text('connection_id')
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    dataClass: text('data_class').notNull(),
+    decision: text('decision').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.connectionId, table.dataClass] })],
 )
 
 /**
