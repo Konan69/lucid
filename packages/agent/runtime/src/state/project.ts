@@ -452,16 +452,42 @@ function answer(parts: Array<Part>, result: ToolResultMessage) {
   )
 }
 
-/** Walk committed reply parts and the live tail in order. Pi commits failed attempts too,
- * so an unfinished message is visible only until another message or model request replaces it. */
+/** Keep an adopted prefix and its suffix in one text part. Clients separate distinct parts
+ * with paragraphs, which would split a word or Markdown construct cut off by recovery. */
+const continuedParts = () => {
+  const parts: Part[] = []
+  let prefix: Extract<Part, { type: 'text' }> | undefined
+  return {
+    parts,
+    append(next: ReadonlyArray<Part>, continuing: boolean) {
+      for (const part of next) {
+        if (part.type !== 'text') {
+          parts.push(part)
+          if (part.type === 'dynamic-tool') prefix = undefined
+        } else if (prefix === undefined) {
+          const text = { ...part }
+          parts.push(text)
+          if (continuing) prefix = text
+        } else {
+          prefix.text += part.text
+          prefix.state = part.state
+          if (!continuing) prefix = undefined
+        }
+      }
+    },
+  }
+}
+
+/** Walk committed reply parts and the live tail in order. Recovery keeps adopted words;
+ * other unfinished attempts are visible until another message or request replaces them. */
 function replyParts(written: ReadonlyArray<EntryRecord>, tail: Tail) {
   const adopted = continued(written)
   const arriving = liveParts(tail.partial)
   const last = Arr.findLast(written, (entry) => Option.isSome(assistantOf(entry)))
-  const parts: Array<Part> = []
+  const joined = continuedParts()
   for (const entry of written) {
     const result = resultOf(entry)
-    if (Option.isSome(result)) answer(parts, result.value)
+    if (Option.isSome(result)) answer(joined.parts, result.value)
     const message = assistantOf(entry)
     if (Option.isNone(message)) continue
     const resuming =
@@ -469,9 +495,10 @@ function replyParts(written: ReadonlyArray<EntryRecord>, tail: Tail) {
       (adopted.has(entry.id) || (tail.task !== undefined && entry.byTaskId === tail.task))
     if (!resuming && unfinished(message.value) && (!Option.contains(last, entry) || tail.replacing))
       continue
-    parts.push(...saidParts(message.value))
+    joined.append(saidParts(message.value), resuming)
   }
-  return [...parts, ...arriving]
+  joined.append(arriving, false)
+  return joined.parts
 }
 
 /**

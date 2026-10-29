@@ -356,6 +356,11 @@ describe('main runtime parity on Pi', () => {
           .join('')
         expect(supplied?.startsWith(prefix)).toBe(true)
         expect(recovered.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+        expect(
+          recovered.messages
+            .filter((message) => message.role === 'assistant')
+            .flatMap((message) => message.parts.filter((part) => part.type === 'text')),
+        ).toHaveLength(1)
         expect(words(recovered).startsWith(prefix)).toBe(true)
         expect(words(recovered).endsWith(continuation)).toBe(true)
         expect(ending).toMatchObject({ _tag: 'Done', reply: words(recovered) })
