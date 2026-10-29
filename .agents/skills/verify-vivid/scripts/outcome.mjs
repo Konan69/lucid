@@ -80,7 +80,7 @@ export async function outcome(state, id, directory, browser) {
     const rows = await journal(state, id, directory)
     NodeAssert.equal(rows.length, 1, 'Exactly one outward operation is journaled')
     const [row] = rows
-    NodeAssert.ok(row.id.startsWith(`call-${id}-`), 'The operation is named by the runtime call')
+    NodeAssert.ok(row.id.startsWith(`task-${id}-`), 'The operation is named by the runtime task')
     NodeAssert.equal(row.run_id, run.id)
     NodeAssert.equal(row.approval_id, null)
     NodeAssert.equal(row.receipt._tag, 'Completed')
