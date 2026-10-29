@@ -1,23 +1,45 @@
 import * as assert from 'node:assert/strict'
-import { PersonId } from '@vivid/contracts'
+import { CapabilityAvailability, CapabilityReading, PersonId } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { chat, history, json, rpc } from './wire.mjs'
 import { command } from './process.mjs'
 import { connectedOther } from './devices.mjs'
 
-const blockedComputer = 'blocked: no proof-owned Computer (Boat trial plan at its two-machine limit; the only Vivid Computer is production’s)'
+const blockedComputer =
+  'blocked: no proof-owned Computer (Boat trial plan at its two-machine limit; the only Vivid Computer is production’s)'
 const decodePerson = Schema.decodeUnknownResult(PersonId)
+const decodeReading = Schema.decodeUnknownResult(CapabilityReading)
+const usable = CapabilityAvailability.isAnyOf(['Available', 'WakeOnUse'])
 
 /** Only this run’s synthetic Person and container receive fixture rows. The finally block is
  * registered before insertion; no provider binding or machine is created or adopted. */
 async function asleep(state, directory, action) {
   const person = Result.getOrThrow(decodePerson(state.person)).replaceAll("'", "''")
   const id = crypto.randomUUID()
-  const sql = (statement) => command(['docker', 'exec', state.container, 'psql', '-U', 'verify', '-d', 'verify', '-v', 'ON_ERROR_STOP=1', '-At', '-c', statement])
+  const sql = (statement) =>
+    command([
+      'docker',
+      'exec',
+      state.container,
+      'psql',
+      '-U',
+      'verify',
+      '-d',
+      'verify',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-At',
+      '-c',
+      statement,
+    ])
   try {
-    await sql(`INSERT INTO vivid_computers(id,person_id,machine,status,since,last_activity_at,created_at) VALUES ('${id}','${person}','verify-${id}','stopped',1,73,1);`)
+    await sql(
+      `INSERT INTO vivid_computers(id,person_id,machine,status,since,last_activity_at,created_at) VALUES ('${id}','${person}','verify-${id}','stopped',1,73,1);`,
+    )
     await action()
-    const activity = await sql(`SELECT last_activity_at FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`)
+    const activity = await sql(
+      `SELECT last_activity_at FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`,
+    )
     assert.equal(activity.trim(), '73', 'Passive observations must not extend idle time')
     await json(directory + '/passive-activity.json', { lastActivityAt: 73 })
   } finally {
@@ -30,23 +52,36 @@ async function asleep(state, directory, action) {
 async function answer(state, id, directory, name, question) {
   await chat(state, id, question, directory, name)
   const page = await history(state, id, directory, name + '-history')
-  const parts = page.messages.filter((message) => message.role === 'assistant').flatMap((message) => message.parts)
-  const calls = parts.filter((part) => part.type === 'dynamic-tool' && part.toolName === 'get_capabilities' && part.state === 'output-available')
+  const parts = page.messages
+    .filter((message) => message.role === 'assistant')
+    .flatMap((message) => message.parts)
+  const calls = parts.filter(
+    (part) =>
+      part.type === 'dynamic-tool' &&
+      part.toolName === 'get_capabilities' &&
+      part.state === 'output-available',
+  )
   assert.ok(calls.length > 0, 'The model must call get_capabilities')
   const latest = calls.at(-1)
-  const reading = latest.output
-  assert.ok(Array.isArray(reading.abilities), 'Capability receipt must include registry entries')
-  const text = parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n')
-  const unavailable = reading.abilities.filter((ability) => !['Available', 'WakeOnUse'].includes(ability.availability._tag))
-  const availableTools = new Set(reading.abilities.filter((ability) => ['Available', 'WakeOnUse'].includes(ability.availability._tag)).flatMap((ability) => ability.tools))
-  for (const name of unavailable.flatMap((ability) => ability.tools)) {
-    if (availableTools.has(name)) continue
+  const reading = Result.getOrThrow(decodeReading(latest.output))
+  const text = parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+  const unavailable = reading.abilities.filter((ability) => !usable(ability.availability))
+  const availableTools = new Set(
+    reading.abilities
+      .filter((ability) => usable(ability.availability))
+      .flatMap((ability) => ability.tools),
+  )
+  for (const toolName of unavailable.flatMap((ability) => ability.tools)) {
+    if (availableTools.has(toolName)) continue
     // Plain verbs such as connect also occur in ordinary explanations. Only a snake-case
     // identifier, code span or call expression actually names a model tool.
-    const identifier = name.includes('_')
-      ? new RegExp('\\b' + name + '\\b', 'u')
-      : new RegExp('`' + name + '`|\\b' + name + '\\s*\\(', 'u')
-    assert.doesNotMatch(text, identifier, 'Answer names unavailable tool ' + name)
+    const identifier = toolName.includes('_')
+      ? new RegExp('\\b' + toolName + '\\b', 'u')
+      : new RegExp('`' + toolName + '`|\\b' + toolName + '\\s*\\(', 'u')
+    assert.doesNotMatch(text, identifier, 'Answer names unavailable tool ' + toolName)
   }
   await json(directory + '/' + name + '-capabilities.json', { reading, text })
   return reading
@@ -58,30 +93,74 @@ export async function capabilities(state, id, directory) {
   const absent = await rpc(state, 'GetCapabilities', null, directory, 'absent')
   assert.equal(absent.computer._tag, 'Available')
   assert.equal(absent.computer.value.state._tag, 'Absent')
-  await answer(state, id, directory, 'no-computer', 'What can you do on my computer right now? Read your current capabilities before answering. Only describe what the current reading supports, and distinguish work that needs a connection. Do not perform any Computer work.')
+  await answer(
+    state,
+    id,
+    directory,
+    'no-computer',
+    'What can you do on my computer right now? Read your current capabilities before answering. Only describe what the current reading supports, and distinguish work that needs a connection. Do not perform any Computer work.',
+  )
   await asleep(state, directory, async () => {
     const sleeping = await rpc(state, 'GetCapabilities', null, directory, 'sleeping')
     assert.equal(sleeping.computer.value.state._tag, 'Stopped')
   })
   await connectedOther(state, directory, async () => {
-    const reading = await answer(state, id, directory, 'connected-desktop', 'Check your current capabilities again. What can you do on my own computer now? Distinguish browser work from native apps. Do not perform any action on it.')
-    assert.ok(reading.abilities.some((ability) => ability.tools.includes('use_person_computer') && ability.availability._tag === 'Unsupported'))
-    assert.ok(reading.abilities.some((ability) => ability.tools.includes('browse') && ability.availability._tag === 'Available'))
+    const reading = await answer(
+      state,
+      id,
+      directory,
+      'connected-desktop',
+      'Check your current capabilities again. What can you do on my own computer now? Distinguish browser work from native apps. Do not perform any action on it.',
+    )
+    assert.ok(
+      reading.abilities.some(
+        (ability) =>
+          ability.tools.includes('use_person_computer') &&
+          CapabilityAvailability.guards.Unsupported(ability.availability),
+      ),
+    )
+    assert.ok(
+      reading.abilities.some(
+        (ability) =>
+          ability.tools.includes('browse') &&
+          CapabilityAvailability.guards.Available(ability.availability),
+      ),
+    )
   })
-  await json(directory + '/limits.json', { deepHealth: blockedComputer, browserRestart: blockedComputer, semantics: 'Tool receipts and unavailable internal-name checks; no claim that a keyword check judges every capability paraphrase.' })
+  await json(directory + '/limits.json', {
+    deepHealth: blockedComputer,
+    browserRestart: blockedComputer,
+    semantics:
+      'Tool receipts and unavailable internal-name checks; no claim that a keyword check judges every capability paraphrase.',
+  })
 }
 
 /** Shallow lifecycle reads need no provider authority and must not create, wake or touch activity. */
 export async function computer(state, _id, directory) {
-  const absent = await rpc(state, 'GetComputerHealth', { depth: 'Shallow' }, directory, 'absent-health')
+  const absent = await rpc(
+    state,
+    'GetComputerHealth',
+    { depth: 'Shallow' },
+    directory,
+    'absent-health',
+  )
   assert.equal(absent._tag, 'Absent')
   await asleep(state, directory, async () => {
-    const sleeping = await rpc(state, 'GetComputerHealth', { depth: 'Shallow' }, directory, 'sleeping-health')
+    const sleeping = await rpc(
+      state,
+      'GetComputerHealth',
+      { depth: 'Shallow' },
+      directory,
+      'sleeping-health',
+    )
     assert.equal(sleeping._tag, 'Sleeping')
     const request = { id: crypto.randomUUID(), step: 'Restore' }
     const first = await rpc(state, 'RecoverComputer', request, directory, 'unsupported-restore')
     assert.equal(first._tag, 'Unsupported')
     assert.deepEqual(await rpc(state, 'RecoverComputer', request, directory, 'same-restore'), first)
   })
-  await json(directory + '/limits.json', { deepHealth: blockedComputer, browserRestart: blockedComputer })
+  await json(directory + '/limits.json', {
+    deepHealth: blockedComputer,
+    browserRestart: blockedComputer,
+  })
 }
