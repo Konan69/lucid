@@ -3,6 +3,7 @@ import { Effect } from 'effect'
 import { AppState } from 'react-native'
 import { start } from './app'
 import { isChoosing } from './documents'
+import { isSigningIn } from './signing'
 import { keepCurrent, UpdateStepFailed, type UpdateClient } from './update'
 
 /**
@@ -26,7 +27,7 @@ const client: UpdateClient = {
     try: () => Updates.reloadAsync(),
     catch: () => new UpdateStepFailed({ step: 'restart' }),
   }),
-  away: () => AppState.currentState === 'background' && !isChoosing(),
+  away: () => AppState.currentState === 'background' && !isChoosing() && !isSigningIn(),
 }
 
 /**
