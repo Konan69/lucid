@@ -13,10 +13,16 @@ import { storedNone } from './signal.ts'
  * Person whose Run continues; any Person deciding must be able to see the Thread.
  *
  * `status` moves `pending` → `executing` → `succeeded` | `failed` | `unknown`, or `pending` →
- * `denied` | `expired` | `withdrawn`. The move out of `pending` is one conditional `UPDATE`, which
- * is what makes a second click, a second tab and a retried request harmless. `decided_by` and
+ * `denied` | `expired` | `withdrawn` | `invalidated`. The move out of `pending` is one conditional
+ * `UPDATE`, which is what makes a second click, a second tab, a retried request and a change to
+ * what was approved racing a click harmless: exactly one of them wins. `decided_by` and
  * `decided_at` are set once it leaves `pending` by a Person's decision; `finished_at` and `outcome`
  * (the result, the failure reason or the withdrawal reason) once it settles.
+ *
+ * `binding` is the encoded `ApprovalBinding`: what the action depended on when it was raised. It is
+ * null only on rows raised before it existed, none of which was left pending (the migration that
+ * added it invalidated them). `invalidation` is the encoded `ApprovalInvalidation`, present exactly
+ * when `status` is `invalidated`.
  */
 export const approvals = pgTable(
   'vivid_approvals',
@@ -30,6 +36,8 @@ export const approvals = pgTable(
     companyId: companyColumn(),
     action: jsonb('action').notNull(),
     digest: text('digest').notNull(),
+    binding: jsonb('binding'),
+    invalidation: jsonb('invalidation'),
     status: text('status').notNull(),
     expiresAt: epoch('expires_at').notNull(),
     decidedBy: text('decided_by').references(() => personTable.id, { onDelete: 'set null' }),

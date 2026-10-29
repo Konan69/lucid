@@ -20,6 +20,7 @@ import {
   awaitedOf,
   awaitedWords,
   browserStep,
+  changedLine,
   CardPress,
   cardPress,
   connecting,
@@ -228,6 +229,9 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
     ),
     Expired: () => <span className={cn(SETTLED, 'text-ink-3')}>This request ran out.</span>,
     Withdrawn: () => <span className={cn(SETTLED, 'text-ink-3')}>Withdrawn.</span>,
+    Invalidated: ({ reason }) => (
+      <span className={cn(SETTLED, 'text-ink-3')}>{changedLine(reason)}</span>
+    ),
   })
 }
 

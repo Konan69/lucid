@@ -102,3 +102,117 @@ export const approve = (state, id, directory, browser) =>
 /** Denial must settle without producing the proposed provider event. */
 export const deny = (state, id, directory, browser) =>
   decide(state, id, directory, { browser, allow: false })
+
+/**
+ * A Person edits what Vivid asked to send, after it asked. The ask carries the document's text as
+ * it was (a `{"$document": title}` reference resolved by the server), so the edit makes it stale:
+ * Allow on it is refused with ApprovalChanged and nothing reaches the provider. Vivid is woken by
+ * the stale outcome and asks again from the edited text; allowing that fresh ask sends once.
+ *
+ * The edit goes through the public ReviseArtifact RPC with the Person's own session, because no
+ * client has a document editor yet (`ReviseArtifact` has no caller in apps/web or apps/mobile).
+ */
+export async function changed(state, id, directory, browser) {
+  assert.equal(state.modelKind, 'real')
+  const integration = await connectPulse(state, directory)
+  let rule
+  try {
+    rule = (
+      await rpc(
+        state,
+        'CreateRule',
+        {
+          action: 'Produce a verification pulse with Verify Pulse',
+          decision: 'Ask',
+          scope: { _tag: 'Personal' },
+        },
+        directory,
+      )
+    ).rule
+    const receipt = crypto.randomUUID()
+    const title = 'Pulse words ' + receipt.slice(0, 8)
+    const first = 'first-version-' + receipt.slice(0, 8)
+    const second = 'second-version-' + receipt.slice(0, 8)
+    const prompt = `Write a document titled ${title} whose whole text is ${first}. Then, using my Verify Pulse Integration, produce one pulse with receipt ${receipt} whose words are that document: discover its emit operation with find_tools, then call use_tool directly with input {"receipt": "${receipt}", "words": {"$document": "${title}"}}. My Ask rule makes the server show me the approval when you call it, so call use_tool now and do not ask me yourself. Do not use run_code or create a Watch.`
+    if (browser) {
+      await browser.run(['find', 'label', 'Message Vivid', 'fill', prompt])
+      await browser.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+    } else await chat(state, id, prompt, directory)
+    const asked = await settled(state, id, 1, 'Completed', directory)
+    assert.equal(asked.approvals.length, 1, 'Model must propose one real Integration action')
+    const old = asked.approvals[0]
+    assert.equal(old.state._tag, 'Pending')
+    assert.equal(old.action.target.connectionId, integration.connection.id)
+    assert.equal(old.action.target.input.words, first, 'The ask must carry the document text')
+    assert.equal(old.binding.preconditions.length, 1)
+    assert.equal(old.binding.preconditions[0].version, 1)
+    await json(directory + '/asked.json', old)
+    if (browser) {
+      await browser.run(['wait', 'section[aria-label="Vivid asks first"]'])
+      await browser.capture('asked')
+    }
+    const documents = (await rpc(state, 'ListArtifacts', { threadId: id }, directory)).artifacts
+    const letter = documents.find((document) => document.title === title)
+    assert.ok(letter, 'Vivid must have written the document it sends')
+    await rpc(state, 'ReviseArtifact', { id: letter.id, from: 1, body: second }, directory)
+    const refusal = await rpc(
+      state,
+      'DecideApproval',
+      { id: old.id, digest: old.digest, decision: { _tag: 'AllowOnce' } },
+      directory,
+      'allow-stale',
+    ).then(
+      () => assert.fail('Allow on the stale ask must be refused'),
+      (error) => error.message,
+    )
+    assert.match(refusal, /"_tag":"ApprovalChanged"/)
+    const snapshot = async (stage) => {
+      const evidence = directory + '/' + stage
+      await fs.mkdir(evidence, { recursive: true })
+      return providerSnapshot(
+        state,
+        { callback: state.web + '/unused-approval-callback', receipt },
+        evidence,
+      )
+    }
+    assert.equal((await snapshot('refused')).events.length, 0, 'The stale ask reached the provider')
+    // The stale outcome wakes Vivid (approval sweeper, every 30 s), which asks again.
+    const again = await settled(state, id, 2, 'Completed', directory)
+    const stale = again.approvals.find((candidate) => candidate.id === old.id)
+    assert.equal(stale.state._tag, 'Invalidated')
+    assert.equal(stale.state.reason._tag, 'ContentChanged')
+    assert.equal(stale.state.reason.version, 2)
+    const fresh = again.approvals.find((candidate) => candidate.state._tag === 'Pending')
+    assert.ok(fresh, 'Vivid must ask again after the edit')
+    assert.notEqual(fresh.id, old.id)
+    assert.equal(fresh.action.target.input.words, second, 'The fresh ask must carry the edit')
+    await json(directory + '/fresh.json', fresh)
+    if (browser) {
+      await browser.run(['wait', '--text', 'The document changed after this was asked.'])
+      await browser.run(['wait', 'section[aria-label="Vivid asks first"]'])
+      await browser.capture('asked-again')
+      await browser.run(['find', 'role', 'button', 'click', '--name', 'Allow', '--exact'])
+    } else
+      await rpc(state, 'DecideApproval', {
+        id: fresh.id,
+        digest: fresh.digest,
+        decision: { _tag: 'AllowOnce' },
+      })
+    const done = await settled(state, id, 3, 'Completed', directory)
+    const sent = done.approvals.find((candidate) => candidate.id === fresh.id)
+    assert.equal(sent.state._tag, 'Succeeded')
+    const external = await snapshot('after')
+    assert.equal(external.events.length, 1, 'Exactly the fresh ask reached the provider')
+    await history(state, id, directory)
+    if (browser) {
+      await browser.run(['reload'])
+      await browser.run(['wait', '[aria-label="Message Vivid"]'])
+      await browser.run(['wait', '--text', 'The document changed after this was asked.'])
+      await browser.capture('reloaded')
+    }
+    await json(directory + '/proof.json', { stale, fresh: sent, external })
+  } finally {
+    if (rule) await rpc(state, 'DeleteRule', { id: rule.id }, directory)
+    await rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory)
+  }
+}

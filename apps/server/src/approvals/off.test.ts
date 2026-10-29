@@ -1,3 +1,4 @@
+import { unbound } from './action.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import {
@@ -14,7 +15,7 @@ import { RuleStore } from '../rules/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Gate, GateDecision, gateLayer } from './gate.ts'
 import { reviewerLayer } from './review.ts'
-import { desktopAction, connectionAction, fixture, storeServices } from './testing.ts'
+import { desktopAction, fixture, storeServices } from './testing.ts'
 
 /**
  * The gate over the production Reviewer and RuleJudge with decisions switched off, which is how
@@ -50,13 +51,13 @@ layer(testDatabaseLayer)((it) => {
               action: BrowserAction.cases.Click.make({ target: 'Send' }),
             }),
           })
-          expect(yield* gate.check(test.vivid, action, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, action, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
           const destructive = ProposedAction.make({ ...action, effect: 'destructive' })
           expect(
             GateDecision.guards.ApprovalRequired(
-              yield* gate.check(test.vivid, destructive, 'Ordinary'),
+              yield* gate.check(test.vivid, destructive, 'Ordinary', unbound),
             ),
           ).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
@@ -69,13 +70,16 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const gate = yield* Gate
-          expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
-          const destructive = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
+          const destructive = ProposedAction.make({
+            ...test.connectionAction,
+            effect: 'destructive',
+          })
           expect(
             GateDecision.guards.ApprovalRequired(
-              yield* gate.check(test.vivid, destructive, 'Ordinary'),
+              yield* gate.check(test.vivid, destructive, 'Ordinary', unbound),
             ),
           ).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
@@ -94,7 +98,7 @@ layer(testDatabaseLayer)((it) => {
             decision: 'Allow',
             scope: RuleScope.cases.Personal.make({}),
           })
-          expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
           const asked = yield* rules.create(test.personal, {
@@ -102,10 +106,10 @@ layer(testDatabaseLayer)((it) => {
             decision: 'Ask',
             scope: RuleScope.cases.Personal.make({}),
           })
-          for (const action of [connectionAction, desktopAction])
+          for (const action of [test.connectionAction, desktopAction])
             expect(
               GateDecision.guards.ApprovalRequired(
-                yield* gate.check(test.vivid, action, 'Ordinary'),
+                yield* gate.check(test.vivid, action, 'Ordinary', unbound),
               ),
             ).toBe(true)
           yield* rules.remove(test.personal, asked.id)
@@ -115,10 +119,10 @@ layer(testDatabaseLayer)((it) => {
             decision: 'Never',
             scope: RuleScope.cases.Personal.make({}),
           })
-          for (const action of [connectionAction, desktopAction])
+          for (const action of [test.connectionAction, desktopAction])
             expect(
               GateDecision.guards.ApprovalRequired(
-                yield* gate.check(test.vivid, action, 'Ordinary'),
+                yield* gate.check(test.vivid, action, 'Ordinary', unbound),
               ),
             ).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))

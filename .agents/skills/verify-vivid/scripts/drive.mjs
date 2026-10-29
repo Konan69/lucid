@@ -1,4 +1,4 @@
-import { approve, deny } from './approval.mjs'
+import { approve, changed, deny } from './approval.mjs'
 import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
@@ -27,6 +27,7 @@ export const features = [
   'question',
   'approve',
   'deny',
+  'changed',
   'stop',
   'picture',
   'code',
@@ -396,6 +397,7 @@ const recipes = {
   question,
   approve,
   deny,
+  changed,
   picture,
   document,
   devices,
@@ -425,6 +427,7 @@ export async function drive(state, feature) {
           ...blocked,
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
+          changed: 'A stale ask requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',

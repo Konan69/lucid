@@ -1,4 +1,4 @@
-import { approve, deny } from './approval.mjs'
+import { approve, changed, deny } from './approval.mjs'
 import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -54,6 +54,7 @@ const missing = {
 const recipes = {
   approve: { check: 'approve' },
   deny: { check: 'deny' },
+  changed: { check: 'changed' },
   question: { check: 'question' },
   stop: { check: 'stop' },
   reading: { check: 'reading' },
@@ -96,6 +97,11 @@ const specialRecipes = {
   deny: {
     drive: deny,
     scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
+  },
+  changed: {
+    drive: changed,
+    scope:
+      'Real Verify Pulse ask over a document, Person revision, stale card, fresh ask, Allow and reload',
   },
   question: {
     drive: question,
@@ -364,7 +370,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'owed', 'todos'].includes(feature) &&
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos'].includes(feature) &&
     state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]

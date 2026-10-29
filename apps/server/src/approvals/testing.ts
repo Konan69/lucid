@@ -16,6 +16,7 @@ import * as Stream from 'effect/Stream'
 import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import {
   ActionTarget,
+  ApprovalBinding,
   ConnectionId,
   Company,
   CompanyId,
@@ -36,7 +37,17 @@ import {
   RuntimeUnavailable,
   Conflict,
   DatabaseFailure,
+  ServiceId,
 } from '@vivid/contracts'
+import { encodeReferences } from '../connections/records.ts'
+import {
+  ExecutorAppId,
+  ExecutorAppOwnership,
+  ExecutorBinding,
+  ExecutorOwnerId,
+  ExecutorReferences,
+} from '../connections/executor.ts'
+import { connections } from '../connections/tables.ts'
 import { type Actor, summaryOf } from '../auth/access.ts'
 import { Review } from './policy.ts'
 import { Reviewer } from './review.ts'
@@ -233,6 +244,39 @@ const cleanup = Effect.fn('TrustTest.cleanup')(function* (
   expect(Result.isSuccess(result)).toBe(true)
 })
 
+/** A ready personal Integration of the Person's, as Connect leaves one, at generation 0. */
+const ownIntegration = Effect.fn('TrustTest.ownIntegration')(function* (
+  database: Database['Service'],
+  personId: PersonId,
+  now: number,
+) {
+  const connectionId = ConnectionId.make(NodeCrypto.randomUUID())
+  const app = ExecutorAppId.make(`app-${connectionId}`)
+  const references = ExecutorReferences.cases.Public.make({
+    service: ServiceId.make('projects'),
+    app,
+    owner: ExecutorOwnerId.make(`p-${personId}`),
+    binding: ExecutorBinding.cases.Public.make({}),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+  })
+  yield* database.run(
+    database.insert(connections).values({
+      id: connectionId,
+      personId,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Projects',
+      name: 'Work account',
+      executorApp: app,
+      references: yield* encodeReferences(references),
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }),
+  )
+  return connectionId
+})
+
 /** Each case registers cleanup before its first write and owns unique Persons, Company and Threads. */
 export const fixture = Effect.fn('TrustTest.fixture')(function* () {
   const database = yield* Database
@@ -275,6 +319,8 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     ]),
   )
   const now = yield* Clock.currentTimeMillis
+  // Ada's Integration: removed with her by the cleanup above, through its Person cascade.
+  const connectionId = yield* ownIntegration(database, first.id, now)
   yield* database.run(
     database.insert(threads).values([
       {
@@ -339,22 +385,29 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     companyId,
     otherId,
     vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId) } satisfies Actor,
+    /** A write through Ada's own Integration, which exists for as long as this case does. */
+    connectionAction: actionThrough(connectionId),
+    /** What that action was prepared against: the Integration as it is signed in now. */
+    bound: ApprovalBinding.make({ connectionGeneration: 0, preconditions: [] }),
+    connectionId,
     companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId) } satisfies Actor,
     summary: summaryOf(first),
   }
 })
 
-export const connectionAction = ProposedAction.make({
-  summary: 'Update a project',
-  rationale: 'Keep work current',
-  effect: 'write',
-  target: ActionTarget.cases.Connection.make({
-    connectionId: ConnectionId.make('test-connection'),
-    account: 'Work account',
-    tool: 'update_project',
-    input: { project: 'private tool value' },
-  }),
-})
+/** A write through the named Integration; each fixture makes its own (`fixture().connectionAction`). */
+export const actionThrough = (connectionId: ConnectionId) =>
+  ProposedAction.make({
+    summary: 'Update a project',
+    rationale: 'Keep work current',
+    effect: 'write',
+    target: ActionTarget.cases.Connection.make({
+      connectionId,
+      account: 'Work account',
+      tool: 'update_project',
+      input: { project: 'private tool value' },
+    }),
+  })
 export const desktopAction = ProposedAction.make({
   summary: 'Type the file name',
   rationale: 'Inspect work',
