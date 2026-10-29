@@ -1,4 +1,11 @@
-import { ApprovalState, type Approval, type PersonId, type ThreadDetail } from '@vivid/contracts'
+import {
+  ApprovalState,
+  Tool,
+  type Approval,
+  type PersonId,
+  type ThreadDetail,
+} from '@vivid/contracts'
+import { helpers } from '@vivid/state'
 import { Option } from 'effect'
 import { View } from 'react-native'
 import type { Say } from '../../data/delivery'
@@ -6,6 +13,7 @@ import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { approvalOf, requestOf } from './asked'
+import { Children } from './Children'
 import { Asked } from './Question'
 import { Words } from './Words'
 
@@ -34,6 +42,17 @@ export function Cards({
   onContinue: Say
 }) {
   return tools.map((tool) => {
+    // The helpers a step started are drawn under it, from the Thread's live detail.
+    if (tool.toolName === Tool.spawn_run && tool.state === 'output-available')
+      return (
+        <Children
+          key={tool.toolCallId}
+          runs={Option.match(detail, {
+            onNone: () => [],
+            onSome: (value) => helpers.startedBy(value.children, tool.toolCallId),
+          })}
+        />
+      )
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (

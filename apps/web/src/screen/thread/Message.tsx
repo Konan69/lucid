@@ -3,7 +3,9 @@ import {
   InputRequestId,
   InputRequestState,
   textOf,
+  Tool,
   type Approval,
+  type ChildRun,
   type ConversationMessage,
   type InputRequest,
   type PersonId,
@@ -12,6 +14,7 @@ import {
 } from '@vivid/contracts'
 import {
   asking,
+  helpers,
   makeFullWhen,
   makeWhen,
   offeredReplies,
@@ -35,6 +38,7 @@ import { Markdown } from '../../ui/Markdown'
 import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
+import { Children } from './Children'
 import { Asked } from './Question'
 import { Replies } from './Replies'
 import { stepIn, type ToolPart } from './Doing'
@@ -47,6 +51,8 @@ export interface ThreadContext {
   readonly runs: ReadonlyArray<Run>
   readonly approvals: ReadonlyArray<Approval>
   readonly requests: ReadonlyArray<InputRequest>
+  /** The helpers Vivid started in this Thread, drawn under the step that started them. */
+  readonly children: ReadonlyArray<ChildRun>
 }
 
 const reader = thisReader()
@@ -473,6 +479,13 @@ function ToolCards({
 }) {
   return tools.map((tool) => {
     if (tool.state !== 'output-available') return null
+    if (tool.toolName === Tool.spawn_run)
+      return (
+        <Children
+          key={tool.toolCallId}
+          runs={helpers.startedBy(context.children, tool.toolCallId)}
+        />
+      )
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
     const wanted = card.value
