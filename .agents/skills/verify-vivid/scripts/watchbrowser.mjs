@@ -28,7 +28,6 @@ export async function watchBrowser(state, id, directory, browser) {
  */
 async function journey(state, id, directory, { run, capture }) {
   NodeAssert.equal(state.modelKind, 'real')
-  await turnOn(state, id, { run, capture })
   await run(['open', state.web + '/?settings=connections'])
   await run(['wait', '[aria-label="Search integrations"]'])
   await run(['find', 'label', 'Search integrations', 'fill', 'Verify Pulse'])
@@ -50,6 +49,9 @@ async function journey(state, id, directory, { run, capture }) {
   )
   NodeAssert.ok(connection, 'UI Connect did not create a ready Integration')
   const integration = await integrationOf(state, connection, directory)
+  // After Connect: with the worker registered first, agent-browser lost the page's CDP session in
+  // the Connect dialog on both runs of 29 October 2026.
+  await turnOn(state, id, { run, capture })
   const marker = 'Browser pulse ' + crypto.randomUUID().slice(0, 8)
   await run(['open', state.web + '/t/' + id])
   await run(['wait', '[aria-label="Message Vivid"]'])
