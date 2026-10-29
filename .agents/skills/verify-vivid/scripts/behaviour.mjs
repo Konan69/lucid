@@ -6,13 +6,15 @@ import { Schema } from 'effect'
 import { rpc, chat, history, settled, json } from './wire.mjs'
 import { connectWorld } from './watch.mjs'
 import { executorRequest, ExecutorTools } from './executor.mjs'
-import { privateJson } from './world.mjs'
+import { privateJson, readWorld } from './world.mjs'
+import { provenanceContext } from './provenance.mjs'
 import { score } from './scoring.mjs'
 import { decodeText } from './receipts.mjs'
 
 const BehaviourRun = Schema.Struct({
   run: Schema.String,
   head: Schema.String,
+  started: Schema.String,
   tree: Schema.String,
   dirty: Schema.Boolean,
   model: Schema.String,
@@ -125,7 +127,7 @@ async function effects(state, integrations, directory) {
 }
 
 /** Every attempt owns a Thread. A failed attempt still retains its history and scored record. */
-async function trial(state, scenario, number, directory) {
+async function trial(state, scenario, number, { directory, context }) {
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 })
   const id = crypto.randomUUID()
   const turns = []
@@ -167,7 +169,7 @@ async function trial(state, scenario, number, directory) {
   } catch (error) {
     failure = failure || error.message
   }
-  const metrics = score(page, turns, observed, scenario.checks)
+  const metrics = score(page, turns, observed, { checks: scenario.checks, context })
   const result = Object.assign(
     { scenario: scenario.id, trial: number, thread: id, failure },
     metrics,
@@ -219,6 +221,7 @@ export async function behaviour(state, args) {
   }
   NodeAssert.ok(Number.isInteger(trials) && trials > 0, 'Trials must be a positive integer')
   const scenarios = await privateJson(NodePath.dirname(path), NodePath.basename(path), Scenarios)
+  const context = provenanceContext(await readWorld(world), state.started)
   NodeAssert.equal(
     new Set(scenarios.map((scenario) => scenario.id)).size,
     scenarios.length,
@@ -233,12 +236,10 @@ export async function behaviour(state, args) {
   const results = []
   for (const scenario of scenarios)
     for (let number = 1; number <= trials; number++) {
-      const result = await trial(
-        state,
-        scenario,
-        number,
-        directory + '/' + scenario.id + '/' + number,
-      )
+      const result = await trial(state, scenario, number, {
+        directory: directory + '/' + scenario.id + '/' + number,
+        context,
+      })
       results.push(result)
       console.log(
         JSON.stringify({

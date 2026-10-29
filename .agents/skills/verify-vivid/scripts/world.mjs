@@ -7,6 +7,7 @@ import { decodeText } from './receipts.mjs'
 const Message = Schema.Struct({
   from: Schema.String,
   to: Schema.Array(Schema.String),
+  cc: Schema.optional(Schema.Array(Schema.String)),
   date: Schema.String,
   body: Schema.String,
   attachments: Schema.optional(Schema.Array(Schema.String)),
@@ -185,8 +186,7 @@ export default defineApp(requirements, { tools: router({ list_events, free_busy,
 /** Unset means the existing Pulse-only catalogue. Private files are never written to disk here. */
 export async function worldApps(directory) {
   if (!directory) return []
-  const mail = await privateJson(directory, 'mail.json', Mail)
-  const calendar = await privateJson(directory, 'calendar.json', Calendar)
+  const { mail, calendar } = await readWorld(directory)
   return [
     app(
       'Mail',
@@ -199,4 +199,11 @@ export async function worldApps(directory) {
       'CREATE TABLE events (id TEXT PRIMARY KEY, body TEXT NOT NULL);',
     ),
   ]
+}
+
+/** The scorer reads the same decoded private world without copying it into evidence or the checkout. */
+export async function readWorld(directory) {
+  const mail = await privateJson(directory, 'mail.json', Mail)
+  const calendar = await privateJson(directory, 'calendar.json', Calendar)
+  return { mail, calendar }
 }

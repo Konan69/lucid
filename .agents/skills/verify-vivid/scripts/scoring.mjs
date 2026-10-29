@@ -3,6 +3,7 @@ import * as NodeModule from 'node:module'
 import { Schema, Predicate } from 'effect'
 import { decodeText } from './receipts.mjs'
 import { root } from './process.mjs'
+import { provenance, displayPeople, effectProvenance } from './provenance.mjs'
 
 const require = NodeModule.createRequire(root + '/packages/agent/runtime/package.json')
 const { ToolName } = await import(require.resolve('@vivid/contracts'))
@@ -19,30 +20,6 @@ const spec = decodeText(
 )
 const parser = createParser(spec.schema, spec.root)
 const fences = /```openui-lang[^\n]*\n([\s\S]*?)(```|$)/g
-const month =
-  '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
-const patterns = {
-  email: /[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi,
-  amount:
-    /(?:NGN|USD|GBP|EUR|₦|\$|£|€)\s*\d[\d,]*(?:\.\d{1,2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?/g,
-  date: new RegExp(
-    '\\b\\d{4}-\\d{2}-\\d{2}\\b|\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+' +
-      month +
-      '(?:\\s+\\d{4})?\\b|\\b' +
-      month +
-      '\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?\\b',
-    'gi',
-  ),
-  time: /(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]\.?m\.?)?|\b\d{1,2}\s*[ap]\.?m\.?/gi,
-  name: /\b[A-Z][\p{L}'’-]+(?:[ \t]+[A-Z][\p{L}'’-]+)*/gu,
-}
-// UI words and ordinary sentence starters are not identity claims. Unknown proper nouns remain candidates.
-const ordinary = new Set(
-  'a an the i im ive id you your we our my me it its this that these those hi hello dear thanks thank best regards send sent email mail calendar reply draft subject to from cc book booking booked choose pick select selected confirm confirmed cancel back next previous not now none no yes here there please let have has will would can could should do done all any action actions needed need needs review open read unread inbox important urgent overdue payment paid unpaid invoice balance total amount status pending receipt received due date time today tomorrow yesterday monday tuesday wednesday thursday friday saturday sunday mon tue wed thu fri sat sun january february march april may june july august september october november december jan feb mar apr jun jul aug sep oct nov dec am pm wat utc gmt work personal meeting event available availability busy free slot slots option options connect connected connection integration message messages thread details summary notes ready still only both for on at in as and or but with without is are be before after already check found finding looking checking thirty minutes minute new re rsvp meet dinner morning well early'.split(
-    ' ',
-  ),
-)
-
 /** A recursive walk covers parsed ASTs, evaluated element props and nested provider results. */
 function nodes(value) {
   if (!value || !Predicate.isObjectOrArray(value)) return []
@@ -64,52 +41,6 @@ function drawnText(value) {
       .join('\n')
   return Object.values(value).map(drawnText).join('\n')
 }
-const normalize = (text) =>
-  text
-    .toLowerCase()
-    .normalize('NFKC')
-    .replace(/₦/g, 'ngn')
-    .replace(/[$]/g, 'usd')
-    .replace(/£/g, 'gbp')
-    .replace(/€/g, 'eur')
-    .replace(/(\d)\.00\b/g, '$1')
-    .replace(/[,.'’]/g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/(ngn|usd|gbp|eur)\s+(?=\d)/g, '$1')
-
-/** Expand only dates actually observed, with only timezones supplied by tools or the Person. */
-function sourceForms(text) {
-  const forms = [text]
-  const zones = new Set([
-    'UTC',
-    ...Array.from(text.matchAll(/\b[A-Z][A-Za-z_]+\/[A-Za-z_]+\b/g), (match) => match[0]),
-  ])
-  for (const match of text.matchAll(
-    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})/g,
-  )) {
-    forms.push(match[0].slice(0, 10), match[0].slice(11, 16), match[0].slice(11, 19))
-    const date = new Date(match[0])
-    if (!Number.isFinite(date.valueOf())) continue
-    for (const timeZone of zones) {
-      for (const locale of ['en-GB', 'en-US']) {
-        forms.push(new Intl.DateTimeFormat(locale, { timeZone, dateStyle: 'long' }).format(date))
-        forms.push(new Intl.DateTimeFormat(locale, { timeZone, dateStyle: 'medium' }).format(date))
-        forms.push(
-          new Intl.DateTimeFormat(locale, { timeZone, timeStyle: 'short', hour12: true }).format(
-            date,
-          ),
-        )
-        forms.push(
-          new Intl.DateTimeFormat(locale, { timeZone, timeStyle: 'short', hour12: false }).format(
-            date,
-          ),
-        )
-      }
-    }
-  }
-  return normalize(forms.join('\n'))
-}
-
 /** Mutation receipts cannot legitimize their own invented values. They are checked against prior reads. */
 function readEvidence(value) {
   if (Array.isArray(value)) return value.map(readEvidence)
@@ -119,35 +50,6 @@ function readEvidence(value) {
       .filter(([key]) => !['sent', 'created'].includes(key))
       .map(([key, item]) => [key, readEvidence(item)]),
   )
-}
-
-/** Lexical candidates are exhaustive for the documented formats, and retained for audit. */
-function provenance(text, source, location) {
-  const available = sourceForms(source)
-  const checked = []
-  const candidates = Object.entries(patterns).flatMap(([kind, pattern]) =>
-    Array.from(text.matchAll(pattern), (match) => ({
-      kind,
-      value:
-        kind === 'name'
-          ? match[0]
-              .split(/\s+/)
-              .filter((word) => !ordinary.has(word.toLowerCase().replace(/['’]/g, '')))
-              .join(' ')
-          : match[0],
-    })),
-  )
-  for (const { kind, value } of candidates) {
-    if (!value || checked.some((item) => item.kind === kind && item.value === value)) continue
-    const escaped = normalize(value.replace(/['’]s\b/g, '')).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    checked.push({
-      kind,
-      value,
-      location,
-      supported: new RegExp('(?<![a-z0-9])' + escaped + '(?![a-z0-9])').test(available),
-    })
-  }
-  return checked
 }
 
 /** Choices need one shared state cell, selected bindings, and an answer carrying that cell. */
@@ -192,7 +94,7 @@ function wiring(result) {
 }
 
 /** Evaluate initial drawing with the same store and library schema as the web renderer. */
-function display(program, location, source) {
+function display(program, location, source, context) {
   try {
     const parsed = parser.parse(program)
     const errors = [...parsed.meta.errors]
@@ -215,7 +117,10 @@ function display(program, location, source) {
       pass: errors.length === 0,
       wiring: wiring(parsed),
       visible: drawnText(drawn),
-      provenance: provenance(drawnText(drawn) + '\n' + literals, source, location),
+      provenance: [
+        ...provenance(drawnText(drawn) + '\n' + literals, source, location, context),
+        ...displayPeople(drawn, source, location, context),
+      ],
     }
   } catch (error) {
     return {
@@ -224,7 +129,7 @@ function display(program, location, source) {
       pass: false,
       wiring: { applicable: false, pass: true },
       visible: '',
-      provenance: provenance(program.replace(/\b\w+\(/g, ''), source, location),
+      provenance: provenance(program.replace(/\b\w+\(/g, ''), source, location, context),
     }
   }
 }
@@ -307,15 +212,16 @@ function observePart(message, part, observed) {
   if (part.type !== 'text') return
   for (const [index, match] of Array.from(part.text.matchAll(fences)).entries()) {
     const location = message.id + '/part-' + observed.position + '/display-' + index
-    const record = display(match[1], location, observed.source)
+    const record = display(match[1], location, observed.source, observed.context)
     observed.displays.push({ ...record, position: observed.position })
     observed.provenanceChecks.push(...record.provenance)
   }
 }
 
 /** One submission is one reply, even when the model makes multiple tool steps inside it. */
-function observeHistory(page) {
+function observeHistory(page, context) {
   const observed = {
+    context,
     source: '',
     position: 0,
     displays: [],
@@ -344,27 +250,21 @@ function observeHistory(page) {
   return observed
 }
 
-/** Score only the Thread's ordered Person words and prior tool results, never hidden world files. */
-export function score(page, turns, effects, checks) {
-  const { displays, provenanceChecks, replies, writeSources, connectAt } = observeHistory(page)
+/** Shaped values use preceding Thread evidence. Closed recipient fields also use known world people. */
+export function score(page, turns, effects, { checks, context }) {
+  const { displays, provenanceChecks, replies, writeSources, connectAt } = observeHistory(
+    page,
+    context,
+  )
   // Read-back is independent of the model's success receipt. The write's own return was stripped above.
   for (const [kind, records] of Object.entries({
     mail: effects.mail,
     calendar: effects.calendar,
   })) {
     for (const record of records) {
-      const content =
-        kind === 'mail'
-          ? { to: record.to, cc: record.cc, subject: record.subject, body: record.body }
-          : {
-              title: record.title,
-              start: record.start,
-              end: record.end,
-              attendees: record.attendees,
-            }
       const prior = writeSources.get(record.id)
       provenanceChecks.push(
-        ...provenance(textOf(content), prior === undefined ? '' : prior, kind + '/' + record.id),
+        ...effectProvenance(kind, record, prior === undefined ? '' : prior, context),
       )
     }
   }
