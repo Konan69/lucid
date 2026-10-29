@@ -6,7 +6,7 @@ import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/http/HttpClient'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { PersonId, ThreadId } from '@vivid/contracts'
+import type { PersonId, RunId, ThreadId } from '@vivid/contracts'
 import { runtimeHeaders } from '@vivid/contracts/auth'
 import { RuntimeSettings } from './settings.ts'
 
@@ -40,6 +40,11 @@ export interface ProductService {
    * whoever builds it decides how long the client lives.
    */
   readonly as: (acting: Acting) => Layer.Layer<VividRpcClient>
+  /**
+   * The product client for a helper Run (`children.ts`): the same Person and Thread, plus the
+   * helper header, so the server attributes and gates each call as that helper.
+   */
+  readonly asHelper: (acting: Acting, helper: RunId) => Layer.Layer<VividRpcClient>
   /** The bare runtime credential, permitted only for the restart scope lookup. */
   readonly bare: Layer.Layer<VividRpcClient>
 }
@@ -63,16 +68,22 @@ export const productLayer = Layer.effect(
     const http = Layer.succeed(HttpClient.HttpClient, yield* HttpClient.HttpClient)
     const url = new URL('/api/rpc', settings.serverUrl).href
     const authorization = `Bearer ${Redacted.value(settings.token)}`
+    const attributed = (headers: Readonly<Record<string, string>>) =>
+      VividRpcClient.layer({ url, headers: { authorization, ...headers } }).pipe(
+        Layer.provide(http),
+      )
     return Product.of({
       as: (acting) =>
-        VividRpcClient.layer({
-          url,
-          headers: {
-            authorization,
-            [runtimeHeaders.thread]: acting.threadId,
-            [runtimeHeaders.actor]: acting.personId,
-          },
-        }).pipe(Layer.provide(http)),
+        attributed({
+          [runtimeHeaders.thread]: acting.threadId,
+          [runtimeHeaders.actor]: acting.personId,
+        }),
+      asHelper: (acting, helper) =>
+        attributed({
+          [runtimeHeaders.thread]: acting.threadId,
+          [runtimeHeaders.actor]: acting.personId,
+          [runtimeHeaders.helper]: helper,
+        }),
       bare: VividRpcClient.layer({ url, headers: { authorization } }).pipe(Layer.provide(http)),
     })
   }),

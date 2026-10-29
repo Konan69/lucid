@@ -49,6 +49,28 @@ export const DeliveryRecord = defineDocFamily<{ kept: string }, string>({
 export const requestOf = (idempotencyKey: string) => `delivery:${idempotencyKey}`
 
 /**
+ * The server's idempotency key of the delivery being answered: the newest input the run placed,
+ * read back from its request id. It names the server's Run of that delivery, and comes from the
+ * conversation's committed inputs, never from anything the model said (`children.ts`).
+ */
+export const answeringKey: (
+  harness: Harness,
+  conversationId: ConversationId,
+) => Effect.Effect<Option.Option<string>, PiRejected> = Effect.fn('Deliveries.answeringKey')(
+  function* (harness: Harness, conversationId: ConversationId) {
+    const inputs = yield* runInputs(harness, conversationId)
+    const newest = inputs.at(-1)
+    if (newest === undefined) return Option.none()
+    const submission = yield* pi(() => harness.submission(newest, BACKGROUND_CONTEXT))
+    if (submission === undefined) return Option.none()
+    const { requestId } = yield* pi(() => submission.status(BACKGROUND_CONTEXT))
+    const prefix = requestOf('')
+    if (requestId === undefined || !requestId.startsWith(prefix)) return Option.none()
+    return Option.some(requestId.slice(prefix.length))
+  },
+)
+
+/**
  * Keep a delivery's record in the caller's commit. The first record kept under a key is the
  * delivery's: `tx.doc` on a family returns the member that is already there and uses the seed
  * only to create one, so a second attempt with the same key (sent at the same moment, or after a
