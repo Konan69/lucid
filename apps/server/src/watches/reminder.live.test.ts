@@ -125,9 +125,7 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           const [card] = arrived.value.items.filter((item) => item.thread.startsWith('watch-'))
           if (card === undefined || card.post === null)
             return yield* Effect.sync(() => expect.fail('The reminder must reach the Feed'))
-          expect([card.post.title, card.post.words, card.post.display].join(' ')).toMatch(
-            /stretch/i,
-          )
+          expect(JSON.stringify(card.post)).toMatch(/stretch/i)
           // It reached the Feed at its time, not before (a little clock slack between services).
           expect(movedAt(card)).toBeGreaterThanOrEqual(due - 2_000)
         }).pipe(Effect.scoped),

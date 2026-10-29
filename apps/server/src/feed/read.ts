@@ -233,13 +233,16 @@ const atOf = (item: FeedItem) =>
     Settled: ({ at }) => at,
   })
 
-/** The card's words as the contract carries them, or none when Vivid has not posted. */
-const postOf = (card: Row['card']) =>
-  decodePost(
-    card === null
-      ? null
-      : { title: card.title, words: card.words, display: card.display, actions: card.actions },
-  )
+/**
+ * The card as the contract carries it, or none when Vivid has not posted. A card with a drawing is
+ * `Drawn`; one without is `Said` and must have words, or the row is broken and decoding says so.
+ */
+const postOf = (card: Row['card']) => {
+  if (card === null) return decodePost(null)
+  if (card.display === null)
+    return decodePost({ _tag: 'Said', title: card.title, words: card.words, actions: card.actions })
+  return decodePost({ _tag: 'Drawn', title: card.title, display: card.display })
+}
 
 /** The whole Feed, shared by List and Watch: every item in its stage, newest first. */
 export const readFeed = Effect.fn('Feed.read')(function* (db: Db, person: PersonId) {

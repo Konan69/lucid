@@ -7,7 +7,7 @@ import {
   MarkFeedCardRequest,
   Person,
   PersonId,
-  PostRequest,
+  FeedPost,
   RunId,
   ThreadId,
   Workspace,
@@ -54,16 +54,14 @@ const now = 1_800_000_000_000
 const hour = 60 * 60 * 1000
 const day = 24 * hour
 
-const firstPost = PostRequest.make({
+const firstPost = FeedPost.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'An invoice for ₦84,000 arrived. Pay it?',
-  display: null,
   actions: ['Pay it'],
 })
-const followUp = PostRequest.make({
+const followUp = FeedPost.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'Paid. The receipt is in your mail.',
-  display: null,
   actions: [],
 })
 
@@ -188,7 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
               thread,
               from: 'Mail',
               at,
-              post: { title: post.title, words: post.words, display: null, actions: post.actions },
+              post,
               seen: false,
               asking: [],
             })
@@ -201,18 +199,16 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('a card that is the drawing alone carries no words, and reads back with none', () =>
+    it.effect('a drawn card is the drawing alone, and reads back as drawn', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
         const store = yield* FeedStore
         const thread = yield* background(test.ada, now - hour)
         yield* TestClock.setTime(now)
-        const drawn = PostRequest.make({
+        const drawn = FeedPost.cases.Drawn.make({
           title: 'Reply to Dana',
-          words: null,
           display:
-            'root = Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft")',
-          actions: ['Send it'],
+            'root = Col([Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft"), Button("Send it", @ToAssistant("Send the reply to Dana"))])',
         })
 
         yield* store.post({ person: test.ada, thread, request: drawn })
@@ -256,12 +252,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             thread,
             from: 'Mail',
             at: now,
-            post: {
-              title: firstPost.title,
-              words: firstPost.words,
-              display: null,
-              actions: ['Pay it'],
-            },
+            post: firstPost,
           })
           expect(yield* items(test.ada)).toEqual([settled])
 

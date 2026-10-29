@@ -4,6 +4,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import {
+  FeedPost,
   NotFound,
   PostOutcome,
   type MarkFeedCardRequest,
@@ -54,6 +55,7 @@ const makeStore = (database: Database['Service']) => {
   }) {
     const now = yield* Clock.currentTimeMillis
     const id = cardIdOf(input.thread)
+    const columns = columnsOf(input.request)
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const rows = yield* tx
@@ -62,10 +64,7 @@ const makeStore = (database: Database['Service']) => {
             id,
             personId: input.person,
             threadId: input.thread,
-            title: input.request.title,
-            words: input.request.words,
-            display: input.request.display,
-            actions: input.request.actions,
+            ...columns,
             state: 'new',
             postedAt: now,
             updatedAt: now,
@@ -73,10 +72,7 @@ const makeStore = (database: Database['Service']) => {
           .onConflictDoUpdate({
             target: feedCards.threadId,
             set: {
-              title: input.request.title,
-              words: input.request.words,
-              display: input.request.display,
-              actions: input.request.actions,
+              ...columns,
               state: 'new',
               updatedAt: now,
             },
@@ -133,3 +129,20 @@ export const feedStoreLayer = Layer.effect(
     return FeedStore.of(makeStore(yield* Database))
   }),
 )
+
+/**
+ * A card's columns: a drawn card keeps no words or buttons, a said one no drawing. The read side
+ * (`postOf` in `read.ts`) tells them apart by the drawing, so each column holds only its own case.
+ */
+const columnsOf = (
+  post: typeof PostRequest.Type,
+): {
+  readonly title: string
+  readonly words: string | null
+  readonly display: string | null
+  readonly actions: ReadonlyArray<string>
+} => {
+  if (FeedPost.guards.Drawn(post))
+    return { title: post.title, words: null, display: post.display, actions: [] }
+  return { title: post.title, words: post.words, display: null, actions: post.actions }
+}
