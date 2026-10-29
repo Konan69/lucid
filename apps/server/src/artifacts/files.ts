@@ -133,9 +133,9 @@ export const keepInspection = Effect.fn('Artifacts.keepInspection')(function* (
           runId: authority.runId,
           inspectCall: authority.toolCallId,
           capture,
-          output: captured.output,
-          source: captured.source,
-          preview: captured.preview,
+          output: Buffer.from(captured.output),
+          source: captured.source === null ? null : Buffer.from(captured.source),
+          preview: captured.preview === null ? null : Buffer.from(captured.preview),
         })
         .returning()
       if (row === undefined)
@@ -181,9 +181,9 @@ export const inspectArtifactFile = Effect.fn('Artifacts.inspect')(function* (
 const versionFiles = Effect.fn('Artifacts.versionFiles')(function* (
   tx: Transaction,
   reference: { readonly id: ArtifactId; readonly version: number },
-  row: Preparation,
+  row: CapturedArtifact,
 ) {
-  const capture = yield* decodeCapture(row.capture)
+  const capture = row.capture
   const stored: {
     role: 'output' | 'source' | 'preview'
     metadata: ArtifactFile
@@ -217,7 +217,7 @@ const versionFiles = Effect.fn('Artifacts.versionFiles')(function* (
       number: reference.version,
       role: file.role,
       metadata: yield* encodeFile(file.metadata).pipe(Effect.mapError(encodingFailure)),
-      bytes: file.bytes,
+      bytes: Buffer.from(file.bytes),
     })
   }
 })
@@ -315,7 +315,7 @@ const publish = Effect.fn('Artifacts.publish')(function* (
     at: current.updatedAt,
   })
   const artifact = { id, version: number }
-  yield* versionFiles(tx, artifact, prepared)
+  yield* versionFiles(tx, artifact, { ...prepared, capture })
   const outcome = WriteDocumentOutcome.make({
     artifact,
     title: current.title,
