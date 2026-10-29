@@ -7,6 +7,8 @@ import {
   type FindToolsResponse,
   type Service,
   type InputRequest,
+  type HandoffKind,
+  PrepareHandoffOutcome,
   type LibrarySearchResult,
   type Skill,
   type SkillSummary,
@@ -121,6 +123,41 @@ export function inputRequest(item: InputRequest) {
     questions: Arr.map(item.questions, (question) => modelText(question.question)),
     message:
       'Asked. Their answer will arrive as a new message; keep working on what does not depend on it.',
+  }
+}
+
+/**
+ * What Vivid reads back when it hands a step over. A prepared one is a card reference, like a
+ * question; every refusal says what to do next. Nothing here names a value: none exists yet.
+ */
+export function handoff(outcome: PrepareHandoffOutcome): Schema.Json {
+  return PrepareHandoffOutcome.match<Schema.Json>(outcome, {
+    Prepared: ({ handoff }) => ({
+      kind: 'handoff',
+      handoffId: handoff.id,
+      message:
+        'Handed to the person. Your computer is theirs until they finish; you will be told when they do.',
+    }),
+    FieldsRefused: ({ fields }) => ({
+      ok: false,
+      fields: fields.map((field) => ({ label: modelText(field.label), reason: field.reason })),
+      message:
+        'These fields are not on the page as one field each that can be typed into. Read the page again, or hand the step over on the screen with no fields.',
+    }),
+    RunRequired: () => ({ ok: false, message: 'A step is handed over only while you are working.' }),
+    Busy: () => ({
+      ok: false,
+      message: 'Another step is already waiting on the person on your computer. Wait for it.',
+    }),
+    Unavailable: ({ reason }) => ({ ok: false, message: modelText(reason) }),
+  })
+}
+
+/** A form for a step that has nothing to type into, refused before the server is asked. */
+export function handoffWithoutFields(kind: HandoffKind) {
+  return {
+    ok: false,
+    message: `A ${kind} step is done on the screen: hand it over again with no fields.`,
   }
 }
 
