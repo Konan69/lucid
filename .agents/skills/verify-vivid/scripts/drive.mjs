@@ -11,6 +11,7 @@ import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
+import { learningFact } from './phonememory.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
@@ -42,6 +43,7 @@ export const features = [
   'reading',
   'settings',
   'memory',
+  'learning',
   'discord',
   'github',
 ]
@@ -390,6 +392,34 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
+/** The same learning assertion as Android, driven through public HTTP on a devbox without a phone. */
+async function learning(state, id, directory) {
+  NodeAssert.equal(state.modelKind, 'real', 'Learning needs a real model')
+  const marker = 'Teacup-' + crypto.randomUUID().slice(0, 8)
+  await chat(
+    state,
+    id,
+    `For project ${marker}, I always choose green tea at the planning sessions. Just acknowledge briefly.`,
+    directory,
+  )
+  const detail = await settled(state, id, 1, 'Completed', directory)
+  const page = await history(state, id, directory, 'exchange')
+  await learningFact(state, directory, marker, { detail, page })
+  const next = await thread(state, directory, 'Learning recall ' + marker)
+  await chat(
+    state,
+    next,
+    `What drink do I always choose at the planning sessions for project ${marker}?`,
+    directory,
+  )
+  await settled(state, next, 1, 'Completed', directory)
+  const recalled = await history(state, next, directory, 'recalled')
+  NodeAssert.match(
+    words({ messages: recalled.messages.filter((message) => message.role === 'assistant') }),
+    /green tea/iu,
+  )
+}
+
 const recipes = {
   first,
   reload,
@@ -405,6 +435,7 @@ const recipes = {
   devices,
   feed,
   memory,
+  learning,
   owed,
   todos,
   watch,

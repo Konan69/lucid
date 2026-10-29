@@ -1,7 +1,8 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
 import { memorySteps, memoryReceipt, memoryIndexed, confirmMemory } from './memory.mjs'
-import { settled, history, json } from './wire.mjs'
+import { settled, history, json, rpc } from './wire.mjs'
+import { learningFact } from './phonememory.mjs'
 
 /** CopyWords marks each finished text reply; its sequence must reach this Run, even when words repeat. */
 async function latestReply(browser, page, currentRun, { directory, stage }) {
@@ -45,6 +46,54 @@ async function latestReply(browser, page, currentRun, { directory, stage }) {
   })
   assert.equal(visible.count, replies.length, 'Visible reply sequence differs from history')
   assert.equal(visible.matches, true, 'Latest visible reply differs from current Run message')
+}
+
+/** Learning is driven by ordinary composer messages, then checked after the native task ends. */
+export async function learningBrowser(state, id, directory, browser) {
+  assert.equal(state.modelKind, 'real', 'Learning needs a real model')
+  const { run, capture } = browser
+  const marker = 'Teacup-' + crypto.randomUUID().slice(0, 8)
+  const turns = [
+    {
+      id,
+      prompt: `For project ${marker}, I always choose green tea at the planning sessions. Just acknowledge briefly.`,
+    },
+    {
+      id: crypto.randomUUID(),
+      prompt: `What drink do I always choose at the planning sessions for project ${marker}?`,
+    },
+  ]
+  for (const [index, turn] of turns.entries()) {
+    if (index === 1) {
+      await rpc(
+        state,
+        'CreateThread',
+        { id: turn.id, title: 'Learning recall ' + marker, projectId: null },
+        directory,
+        'recall-thread',
+      )
+      await run(['open', state.web + '/t/' + turn.id])
+      await run(['wait', '[aria-label="Message Vivid"]'])
+    }
+    await run(['find', 'label', 'Message Vivid', 'fill', turn.prompt])
+    await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+    const detail = await settled(state, turn.id, 1, 'Completed', directory)
+    const page = await history(state, turn.id, directory, 'turn-' + index)
+    const text = page.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join(' ')
+    if (index === 0) await learningFact(state, directory, marker, { detail, page })
+    else assert.match(text, /green tea/iu)
+    await browser.exactReply(text, 'turn-' + index)
+    await capture('turn-' + index)
+    await run(['reload'])
+    await run(['wait', '[aria-label="Message Vivid"]'])
+    await browser.exactReply(text, 'reloaded-' + index)
+    await capture('reloaded-' + index)
+  }
 }
 
 /** The composer drives every mutation; public receipts corroborate visible replies before and after reload. */

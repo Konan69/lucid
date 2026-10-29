@@ -72,6 +72,7 @@ const recipes = {
   'settings-memory': settingsMemory,
   learning,
   feed: flows.feed,
+  owed: flows.owed,
   move: flows.move,
 }
 
