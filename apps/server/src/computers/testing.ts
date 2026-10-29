@@ -57,5 +57,14 @@ export const absentMachineLayer = Layer.succeed(
     desktop: Effect.fn('Machine.absent.desktop')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
+    findFields: Effect.fn('Machine.absent.findFields')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    fillFields: Effect.fn('Machine.absent.fillFields')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    clearFields: Effect.fn('Machine.absent.clearFields')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
   }),
 )

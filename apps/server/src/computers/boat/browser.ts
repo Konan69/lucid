@@ -146,14 +146,14 @@ const prepare = Effect.fn('Machine.boat.browser.prepare')(function* (
   return undefined
 })
 
-const binding = Effect.fn('Machine.boat.browser.bind')((native: Driver, window: Window) =>
+export const binding = Effect.fn('Machine.boat.browser.bind')((native: Driver, window: Window) =>
   native.call('get_browser_state', window, BrowserBinding),
 )
 
 /** Tabs are restricted to the exactly-bound native window (Cua engine.rs). Its sole tab is
  * necessarily current even while navigation changes the title before X11 catches up. Multiple
  * tabs still require one explicit selection proof; ambiguous native titles stay refused. */
-const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: BrowserBinding) {
+export const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: BrowserBinding) {
   const sole = bound.tabs[0]
   if (bound.tabs.length === 1 && sole !== undefined && sole.active !== false) return sole
   const showing = bound.tabs.filter((tab) => tab.active === true)
@@ -161,7 +161,7 @@ const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: Br
   if (showing.length !== 1 || current === undefined) return yield* new BrowserStepFailed()
   return current
 })
-const snapshot = Effect.fn('Machine.boat.browser.snapshot')(function* (
+export const snapshot = Effect.fn('Machine.boat.browser.snapshot')(function* (
   native: Driver,
   bound: BrowserBinding,
 ) {

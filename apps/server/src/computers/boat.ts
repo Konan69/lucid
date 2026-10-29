@@ -19,6 +19,7 @@ import type { Driver } from './boat/driver.ts'
 import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse, signInTarget } from './boat/browser.ts'
+import { clearFields, fillFields, findFields } from './boat/fields.ts'
 import { injectSignInCookies } from './signins/inject.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { machineLinks } from './boat/shell.ts'
@@ -225,6 +226,25 @@ export const boatMachineLayer = Layer.effect(
           )
           tabs.set(input.key, result.tabs)
           return result
+        },
+        (effect, input) => permits.withPermit(input.key, effect),
+      ),
+      // A handoff's fields share the browser and its permit with every other browser step.
+      findFields: Effect.fn('Machine.boat.findFields')(
+        function* (input) {
+          return yield* findFields(yield* nativeDriver(input.key), input.labels)
+        },
+        (effect, input) => permits.withPermit(input.key, effect),
+      ),
+      fillFields: Effect.fn('Machine.boat.fillFields')(
+        function* (input) {
+          return yield* fillFields(yield* nativeDriver(input.key), input.page, input.entries)
+        },
+        (effect, input) => permits.withPermit(input.key, effect),
+      ),
+      clearFields: Effect.fn('Machine.boat.clearFields')(
+        function* (input) {
+          return yield* clearFields(yield* nativeDriver(input.key), input.page, input.labels)
         },
         (effect, input) => permits.withPermit(input.key, effect),
       ),

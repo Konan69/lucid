@@ -95,6 +95,9 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
     write: unused('write through the provider'),
     browse: unused('browse'),
     desktop: unused('use the desktop'),
+    findFields: unused('find fields'),
+    fillFields: unused('fill fields'),
+    clearFields: unused('clear fields'),
     tunnel: (input) =>
       link
         .tunnel(input.port)

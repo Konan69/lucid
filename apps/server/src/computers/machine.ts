@@ -5,9 +5,11 @@ import {
   type CommandResult,
   type DesktopAction,
   type DesktopView,
+  type HandoffFieldResult,
+  type HandoffRefusalReason,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, type Effect, type Redacted, Schema, type Scope, type Stream } from 'effect'
+import { Context, type Effect, type Option, type Redacted, Schema, type Scope, type Stream } from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'
@@ -302,6 +304,25 @@ export interface MachineConversation {
   >
 }
 
+/**
+ * The page a handoff's fields were found on, as the browser names it: its window, its tab and the
+ * SHA-256 of its full address. It stays on the server and is never part of a public response or a
+ * model's view; a fill is typed only while the browser still shows this exact tab at an address
+ * with this digest. The address itself is not kept: its query can hold a session or reset token.
+ */
+export const HandoffPageBinding = Schema.Struct({
+  target: Schema.String,
+  tab: Schema.String,
+  digest: Schema.String,
+})
+export interface HandoffPageBinding extends Schema.Schema.Type<typeof HandoffPageBinding> {}
+
+/** One field's value on its way to the page, named by the label it was found by. */
+export interface HandoffEntry {
+  readonly label: string
+  readonly value: Redacted.Redacted<string>
+}
+
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
   /** Import into the same Chrome profile as browser work. Values stay on the private channel. */
@@ -396,6 +417,41 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly action: DesktopAction
   }) => Effect.Effect<DesktopView, MachineFailure>
+  /**
+   * Finds the fields a handoff will fill on the page the browser shows now, without starting the
+   * browser: each label answers none when exactly one editable field has it, or why not.
+   */
+  readonly findFields: (input: {
+    readonly key: MachineKey
+    readonly labels: ReadonlyArray<string>
+  }) => Effect.Effect<
+    {
+      readonly page: HandoffPageBinding
+      /** The address the browser shows now, for the server to say where; it is not kept. */
+      readonly address: string
+      readonly fields: ReadonlyArray<Option.Option<HandoffRefusalReason>>
+    },
+    MachineFailure
+  >
+  /**
+   * Types the Person's values privately into the bound page, one result per entry in order. The
+   * page is checked again before each field; another tab or address refuses it as changed. Values
+   * travel only in the driver's private input file and are never read back.
+   */
+  readonly fillFields: (input: {
+    readonly key: MachineKey
+    readonly page: HandoffPageBinding
+    readonly entries: ReadonlyArray<HandoffEntry>
+  }) => Effect.Effect<ReadonlyArray<HandoffFieldResult>, MachineFailure>
+  /**
+   * Empties the fields still on the bound page, so nothing the Person typed is left for Vivid to
+   * read once it has the Computer back. A page that has moved on holds none of them.
+   */
+  readonly clearFields: (input: {
+    readonly key: MachineKey
+    readonly page: HandoffPageBinding
+    readonly labels: ReadonlyArray<string>
+  }) => Effect.Effect<void, MachineFailure>
 }
 
 /** Authority over the machine provider, distinct from application ownership and approvals. */
