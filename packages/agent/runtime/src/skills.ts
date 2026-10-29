@@ -17,11 +17,17 @@ export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
   ].join('\n')
 }
 
-/** Activation returns a known skill procedure or lists the available names. */
+/**
+ * Activation returns a known skill procedure or lists the available names. A name that is not a
+ * built-in may be a saved procedure, which only `read_skill` reads: on 29 October 2026 a model
+ * activated a procedure a Person had taught it, was told only that it was not available, and wrote
+ * the task without its rules. So the refusal says where saved procedures are read, as `read_skill`
+ * says where built-ins are activated (`tools/skills.ts`).
+ */
 export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
   const skill = skills.find((entry) => entry.name === name)
   if (skill === undefined)
-    return `Skill "${name}" is not available. Available skills: ${skills.map((entry) => entry.name).join(', ')}.`
+    return `Skill "${name}" is not a built-in skill. If it is a saved procedure from your response context, read it with read_skill and follow it. Built-in skills: ${skills.map((entry) => entry.name).join(', ')}.`
   return [
     `Run the skill named "${name}".`,
     '',
