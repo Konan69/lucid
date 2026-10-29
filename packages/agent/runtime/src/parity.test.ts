@@ -227,11 +227,14 @@ describe('main runtime parity on Pi', () => {
     scenario((given, runtime) =>
       Effect.gen(function* () {
         given.faux.setResponses([
+          // Suggestions end the run, so the first reply is written with them.
           fauxAssistantMessage(
-            fauxToolCall('suggest_replies', { replies: ['UNIQUE_OLD_TOOL_PAYLOAD'] }),
+            [
+              fauxText('first reply'),
+              fauxToolCall('suggest_replies', { replies: ['UNIQUE_OLD_TOOL_PAYLOAD'] }),
+            ],
             { stopReason: 'toolUse' },
           ),
-          fauxAssistantMessage('first reply'),
           fauxAssistantMessage('second reply'),
         ])
         const first = yield* admit(runtime, ada, delivery(THREAD, 'first'))
