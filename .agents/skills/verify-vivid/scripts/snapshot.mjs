@@ -67,23 +67,6 @@ async function restart(state) {
   }
 }
 
-/**
- * `executor-host export` boots its own workerd and dials `export.sock` inside the exporter. Under
- * load on the PC it sometimes dials before workerd listens ("export.sock: connect: connection
- * refused", runs pi-20261029002406601-672b083c and pi-20261029003737757-49dcebce), an upstream race
- * in the pinned image. The export only reads the stopped volume into a fresh file, so that one
- * failure is retried once; its output stays in evidence and every other failure still fails.
- */
-async function exported(argv, directory) {
-  try {
-    await command(argv)
-  } catch (error) {
-    if (!String(error.message).includes('export.sock: connect: connection refused')) throw error
-    await json(directory + '/export-attempt1.json', { error: String(error.message) })
-    await command(argv)
-  }
-}
-
 /** Executor beta.23 ships `executor-host export`. It takes the volume lock, so stop only our
  * container before exporting, then restart it in finally. The private dump never enters evidence.
  * Executor's pinned PGlite 0.5.8 `loadDataDir` opens an in-memory copy, not the running provider store. */
@@ -100,34 +83,31 @@ export async function providerSnapshot(state, { callback, receipt }, directory) 
   if (label !== state.run) throw new Error('Executor snapshot ownership mismatch')
   await command(['docker', 'stop', state.executorContainer])
   try {
-    await exported(
-      [
-        'docker',
-        'run',
-        '--rm',
-        '--name',
-        state.executorExporter,
-        '--label',
-        'vivid.verify=' + state.run,
-        '--network',
-        'none',
-        '--volumes-from',
-        state.executorContainer,
-        '--env',
-        'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:9/v1/traces',
-        '--env',
-        'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:9/v1/logs',
-        '--env',
-        'DO_NOT_TRACK=1',
-        '--env',
-        'EXECUTOR_DISABLE_ANALYTICS=1',
-        image,
-        'executor-host',
-        'export',
-        '/app/data/' + filename,
-      ],
-      directory,
-    )
+    await command([
+      'docker',
+      'run',
+      '--rm',
+      '--name',
+      state.executorExporter,
+      '--label',
+      'vivid.verify=' + state.run,
+      '--network',
+      'none',
+      '--volumes-from',
+      state.executorContainer,
+      '--env',
+      'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:9/v1/traces',
+      '--env',
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:9/v1/logs',
+      '--env',
+      'DO_NOT_TRACK=1',
+      '--env',
+      'EXECUTOR_DISABLE_ANALYTICS=1',
+      image,
+      'executor-host',
+      'export',
+      '/app/data/' + filename,
+    ])
     await command(['docker', 'cp', state.executorContainer + ':/app/data/' + filename, backup])
     const require = NodeModule.createRequire(state.scratch + '/inspector/package.json')
     const path = require.resolve('@electric-sql/pglite')

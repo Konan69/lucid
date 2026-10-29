@@ -80,12 +80,15 @@ export async function memory(state, id, ui) {
  * TextInput does not reach agent-device's text-field name. The editor holds exactly two, in the
  * order What Vivid remembers, In full; fill them by that order inside the open correction sheet. */
 async function correction(ui, values) {
-  const snapshot = await ui.run(['snapshot', '-i', '--force-full'])
-  NodeAssert.ok(snapshot.includes('What Vivid remembers, In full'), snapshot)
-  const fields = snapshot.split('\n').filter((line) => line.includes('[text-field]'))
-  NodeAssert.equal(fields.length, 2, 'Expected the two correction fields\n' + snapshot)
-  for (const [index, line] of fields.entries())
-    await ui.run(['fill', line.match(/@e\d+(?:~s\d+)?/u)[0], values[index], '--settle'])
+  // `fill --settle` emits a new frame and agent-device then refuses refs from the one before
+  // (29 October 2026: "Ref @e7 needs a complete snapshot"), so read the fields again per fill.
+  for (const [index, value] of values.entries()) {
+    const snapshot = await ui.run(['snapshot', '-i', '--force-full'])
+    NodeAssert.ok(snapshot.includes('What Vivid remembers, In full'), snapshot)
+    const fields = snapshot.split('\n').filter((line) => line.includes('[text-field]'))
+    NodeAssert.equal(fields.length, 2, 'Expected the two correction fields\n' + snapshot)
+    await ui.run(['fill', fields[index].match(/@e\d+(?:~s\d+)?/u)[0], value, '--settle'])
+  }
 }
 
 /** U5's real editor corrects and forgets the entry written through the phone composer. */

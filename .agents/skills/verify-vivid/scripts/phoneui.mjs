@@ -46,9 +46,18 @@ export function phoneUI(state, run, directory) {
     if (!snapshot.includes('"Close menu"')) await press('Open menu')
   }
   const visit = async (id) => {
-    const detail = await rpc(state, 'GetThread', { id }, directory, 'visit-' + id)
+    const title = async (name) =>
+      (await rpc(state, 'GetThread', { id }, directory, name)).thread.title
+    const seen = await title('visit-' + id)
     await menu()
-    await press(detail.thread.title)
+    // A CreateThread title is a Seed, which the title model replaces once after the first exchange
+    // (`canReplaceThreadTitle`, apps/server/src/threads/title.ts). On 29 October 2026 that rename
+    // landed between this read and the press. A press that misses follows only an observed rename.
+    await press(seen).catch(async (error) => {
+      const renamed = await title('visit-renamed-' + id)
+      if (renamed === seen) throw error
+      await press(renamed)
+    })
     await visible('Message Vivid')
     const opened = await run(['snapshot', '-i', '--force-full'])
     NodeAssert.ok(!opened.includes('"Close menu"'), 'Thread selection left the drawer open')
