@@ -1,4 +1,5 @@
 import { approve, deny } from './approval.mjs'
+import { outcome } from './outcome.mjs'
 import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -53,6 +54,7 @@ const missing = {
 const recipes = {
   approve: { check: 'approve' },
   deny: { check: 'deny' },
+  outcome: { check: 'outcome' },
   question: { check: 'question' },
   stop: { check: 'stop' },
   reading: { check: 'reading' },
@@ -94,6 +96,11 @@ const specialRecipes = {
   deny: {
     drive: deny,
     scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
+  },
+  outcome: {
+    drive: outcome,
+    scope:
+      'Real Verify Pulse write allowed by rule, journaled Completed receipt, read-only reconciliation, and Delivered after the open Thread screen drew the reply',
   },
   question: {
     drive: question,
@@ -357,7 +364,8 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'owed'].includes(feature) && state.modelKind !== 'real'
+    ['memory', 'question', 'approve', 'deny', 'outcome', 'owed'].includes(feature) &&
+    state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
