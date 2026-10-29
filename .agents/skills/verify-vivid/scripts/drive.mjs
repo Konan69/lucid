@@ -16,6 +16,7 @@ import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
+import { library } from './library.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
@@ -409,11 +410,10 @@ const recipes = {
   reading,
   settings: settingsProof,
   discord: discordProof,
+  library,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  library:
-    'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
@@ -432,6 +432,7 @@ export async function drive(state, feature) {
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
+          library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
         }
   let failed = false
   for (const name of chosen) {

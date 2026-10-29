@@ -17,6 +17,7 @@ import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
+import { libraryBrowser } from './librarybrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -48,7 +49,6 @@ function normaliseReply(text) {
 
 const missing = {
   code: 'No disposable Person Computer authority',
-  library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
 }
 const recipes = {
@@ -66,6 +66,7 @@ const recipes = {
   owed: { check: 'owed' },
   todos: { check: 'todos' },
   replies: { check: 'replies' },
+  library: { check: 'library' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -90,6 +91,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  library: {
+    drive: libraryBrowser,
+    scope:
+      'File-picker upload, worker readiness, original-file tab, search, real model citation and reload',
+  },
   approve: {
     drive: approve,
     scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
