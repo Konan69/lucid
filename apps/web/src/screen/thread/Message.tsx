@@ -660,9 +660,16 @@ const segmentsOf = (message: ConversationMessage): ReadonlyArray<Segment> => {
   return segments
 }
 
-/** Whether a piece of work left the Person anything to see: a card among its tool results. */
+/**
+ * Whether a piece of work left the Person anything to see: a card among its tool results, or
+ * helpers it started (`Children.tsx`).
+ */
 const showsCard = (tools: ReadonlyArray<ToolPart>) =>
-  tools.some((tool) => tool.state === 'output-available' && Option.isSome(cardFor(tool.output)))
+  tools.some(
+    (tool) =>
+      tool.state === 'output-available' &&
+      (tool.toolName === Tool.spawn_run || Option.isSome(cardFor(tool.output))),
+  )
 
 /**
  * Whether a segment draws anything. Words always do; work does only where it left a card, since
