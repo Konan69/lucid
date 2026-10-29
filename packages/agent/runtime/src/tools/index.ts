@@ -10,6 +10,7 @@ import { askTools } from './ask.ts'
 import { codeTools } from './code.ts'
 import { computerTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
+import { artifactTools } from './artifacts.ts'
 import { documentTools } from './documents.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -91,5 +92,6 @@ function catalogue(
     ...owedTools(runTool),
     ...codeTools(runTool),
     ...documentTools(runTool),
+    ...artifactTools(runTool),
   ]
 }
