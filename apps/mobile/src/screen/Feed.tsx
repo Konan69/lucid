@@ -5,7 +5,7 @@ import {
   type FeedCardId,
   type ThreadId,
 } from '@vivid/contracts'
-import { feed, makeWhen, owed, thisReader, type DeviceWaiting } from '@vivid/state'
+import { feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
 import { useState } from 'react'
@@ -13,6 +13,7 @@ import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { closeOwed, useStandings } from '../data/owed'
+import { closeTodo, useTodoStandings } from '../data/todos'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
 import { Display } from '../parts/display'
@@ -26,6 +27,7 @@ import { useStart } from './Home'
 
 const when = makeWhen(thisReader())
 const owedWords = owed.makeOwedWords(thisReader())
+const todoWords = todos.makeTodoWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
 const today = new Intl.DateTimeFormat(thisReader().locale, {
@@ -59,12 +61,13 @@ const remembered = new Map<string, { readonly post: string; readonly chosen: fee
 const ANSWER = { height: 40, radius: 12 } as const
 
 /**
- * The Feed's rows: what the Person is waiting on under its caption, then the cards that need them
- * under theirs, Vivid's work, and the one block of what is handled.
+ * The Feed's rows: what the Person is waiting on under its caption, their own to-dos under theirs,
+ * then the cards that need them under theirs, Vivid's work, and the one block of what is handled.
  */
 type Row = Data.TaggedEnum<{
   Caption: { readonly words: string }
   Owed: { readonly record: owed.Waiting }
+  Todo: { readonly todo: todos.Open }
   Computer: { readonly waiting: DeviceWaiting }
   Waiting: { readonly item: feed.Waiting }
   Working: { readonly item: feed.Working }
@@ -98,6 +101,11 @@ export function Feed() {
     onNone: () => [],
     onSome: (list) => owed.waitingOf(list.owed),
   })
+  const todoStandings = useTodoStandings()
+  const toDo = Option.match(useLiveValue(data.live.todos), {
+    onNone: () => [],
+    onSome: (list) => todos.openOf(list.todos),
+  })
   // The moment the page was opened, which every time on it is said against; read once.
   const [now] = useState(() => Date.now())
   const date = today.format(now)
@@ -110,7 +118,7 @@ export function Feed() {
   const standing = feed.standingOf(Option.toArray(view.computer).length + shown.length)
   // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
   const open = records.filter((record) => standings.get(record.id) !== 'folded')
-  const rows = rowsOf(view, records)
+  const rows = rowsOf(view, records, toDo)
 
   // One function for the list's life: FlatList refuses a viewability callback that changes. The
   // session's data does not change while this screen is up, so the first one serves.
@@ -143,6 +151,7 @@ export function Feed() {
         keyExtractor={Row.$match({
           Caption: ({ words }) => `caption:${words}`,
           Owed: ({ record }) => `owed:${record.id}`,
+          Todo: ({ todo }) => `todo:${todo.id}`,
           Computer: ({ waiting: asking }) => `computer:${asking.device.id}`,
           // A new post is a new row: the display's own choices start again with it.
           Waiting: ({ item }) => `${item.card}:${feed.revisionOf(item)}`,
@@ -169,6 +178,18 @@ export function Feed() {
                 now={now}
                 onClose={(closing) => closeOwed(data, record.id, closing)}
                 onOpen={() => openThread(record.threadId)}
+              />
+            ),
+            Todo: ({ todo }) => (
+              <TodoRow
+                todo={todo}
+                standing={Option.getOrElse(
+                  Option.fromUndefinedOr(todoStandings.get(todo.id)),
+                  (): todos.Standing => 'shown',
+                )}
+                now={now}
+                onClose={(closing) => closeTodo(data, todo.id, closing)}
+                onOpen={() => openThread(todo.threadId)}
               />
             ),
             Computer: ({ waiting: asking }) => <Computer waiting={asking} now={now} />,
@@ -208,15 +229,21 @@ export function Feed() {
 }
 
 /**
- * The Feed's rows in order: what the Person is waiting on under its caption, then what needs them
- * under theirs, Vivid's work, and what is handled. Every waiting card stays in the list, a folded
+ * The Feed's rows in order: what the Person is waiting on under its caption, their own to-dos under
+ * theirs, then what needs them under theirs, Vivid's work, and what is handled. Every waiting card stays in the list, a folded
  * one drawn as nothing (`Waiting`), so what the Person chose in its display is still there if the
  * send fails and the card comes back; a closed record's row stays the same way until the list
  * drops it.
  */
-const rowsOf = (view: feed.FeedView, records: ReadonlyArray<owed.Waiting>): ReadonlyArray<Row> => [
+const rowsOf = (
+  view: feed.FeedView,
+  records: ReadonlyArray<owed.Waiting>,
+  toDo: ReadonlyArray<todos.Open>,
+): ReadonlyArray<Row> => [
   ...(records.length > 0 ? [Row.Caption({ words: 'Waiting on' })] : []),
   ...records.map((record) => Row.Owed({ record })),
+  ...(toDo.length > 0 ? [Row.Caption({ words: 'To do' })] : []),
+  ...toDo.map((todo) => Row.Todo({ todo })),
   ...(Option.isSome(view.computer) || view.waiting.length > 0
     ? [Row.Caption({ words: 'Needs you' })]
     : []),
@@ -407,6 +434,89 @@ function OwedRow({
             <Label size="label" tone="ink-3" numberOfLines={2}>
               {owedWords.detail(record, now)}
             </Label>
+          </View>
+        )}
+      </HoldMenu>
+    </Animated.View>
+  )
+}
+
+/**
+ * One to-do, built as a waiting-on row is (`OwedRow`) without its track: what to do, and when it
+ * is due beside it when there is a date. A tap opens the Thread it was added in; a hold offers
+ * the system menu (done, remove, open). A press folds the row out of the list while the server is
+ * asked, and a press that did not get through brings it back saying so.
+ */
+function TodoRow({
+  todo,
+  standing,
+  now,
+  onClose,
+  onOpen,
+}: {
+  todo: todos.Open
+  standing: todos.Standing
+  now: number
+  onClose: (closing: todos.Closing) => void
+  onOpen: () => void
+}) {
+  const { colors: c } = useTheme()
+  const folded = standing === 'folded'
+  const due = todoWords.due(todo, now)
+  return (
+    <Animated.View
+      pointerEvents={folded ? 'none' : 'auto'}
+      accessibilityElementsHidden={folded}
+      importantForAccessibility={folded ? 'no-hide-descendants' : 'auto'}
+      layout={LinearTransition.duration(240).reduceMotion(ReduceMotion.System)}
+      style={folded ? { height: 0, overflow: 'hidden', opacity: 0 } : undefined}
+    >
+      {standing === 'failed' && (
+        <Label size="label" tone="status-danger" style={{ paddingBottom: 6, paddingHorizontal: 4 }}>
+          That did not reach Vivid. Press it again.
+        </Label>
+      )}
+      <HoldMenu
+        title={todo.what}
+        actions={[
+          { id: 'done', title: 'Done' },
+          { id: 'drop', title: 'Remove from list' },
+          { id: 'open', title: 'Open the thread' },
+        ]}
+        onChoose={(id) => {
+          if (id === 'done') onClose(todos.Closing.cases.Complete.make({}))
+          if (id === 'drop') onClose(todos.Closing.cases.Drop.make({}))
+          if (id === 'open') onOpen()
+        }}
+        onPress={onOpen}
+      >
+        {({ pressed }) => (
+          <View
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 4,
+              borderRadius: 12,
+              borderCurve: 'continuous',
+              backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 12 }}>
+              <Label size="body" numberOfLines={2} style={{ flex: 1 }}>
+                {todo.what}
+              </Label>
+              {Option.match(due, {
+                onNone: () => null,
+                onSome: (said) => (
+                  <Label
+                    size="label"
+                    tone={said.late ? 'status-danger' : 'ink-2'}
+                    style={{ fontVariant: ['tabular-nums'] }}
+                  >
+                    {said.words}
+                  </Label>
+                ),
+              })}
+            </View>
           </View>
         )}
       </HoldMenu>
