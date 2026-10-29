@@ -74,6 +74,12 @@
     "web": {
       "bundler": "metro"
     },
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "extra": {
+      "eas": {
+        "projectId": "ffe4ecc2-76eb-43ec-be2d-d26bf33337bd"
+      }
+    },
+    "owner": "konan69"
   }
 }
