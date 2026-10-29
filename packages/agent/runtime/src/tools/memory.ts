@@ -20,7 +20,7 @@ import { TOOL_LIST_LIMIT, TOOL_TEXT_LIMIT } from './result.ts'
 import { summary, text } from './inputs.ts'
 import type { RunMemory } from './scope.ts'
 
-const addressMessage = `Standing pages use their layer name as the file name: ${StandingLayer.literals.map((layer) => `${layer}/${layer}.md`).join(', ')}. Ordinary facts use layer memory and a descriptive Markdown basename without a layer prefix.`
+const addressMessage = `Standing pages use their layer name as the file name, with that layer: ${StandingLayer.literals.map((layer) => `${layer}.md in layer ${layer}`).join(', ')}. Ordinary facts use layer memory and a descriptive Markdown basename without a layer prefix.`
 const file = v.pipe(
   v.string(),
   v.regex(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u),
