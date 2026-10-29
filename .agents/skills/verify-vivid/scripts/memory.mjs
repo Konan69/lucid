@@ -142,15 +142,19 @@ export async function memoryReceipt(page, run, step, directory, known) {
   if (step.change === 'write') created(writes, deletes, step, known)
   if (step.change === 'replace') corrected(writes, deletes, step, known)
   if (step.change === 'delete') {
+    // Forgetting is the closure, not a local retraction: the confirmed Run carries out the plan
+    // and its receipt says completed only when nothing that can bring it back remains.
+    const forgets = calls.filter(
+      (part) => part.toolName === Tool.forget_memory && part.state === 'output-available',
+    )
     assert.equal(writes.length, 0, 'Unexpected write in delete')
-    assert.equal(deletes.length, 1, 'Expected one entry deleted')
-    assert.equal(deletes[0].state, 'output-available')
-    assert.deepEqual(deletes[0].output, {
-      ok: true,
-      retracted: known.file,
-      layer: known.layer,
-      forget_complete: false,
-    })
+    assert.equal(deletes.length, 0, 'Forgetting used a local retraction instead of the closure')
+    assert.equal(forgets.length, 1, 'Expected the confirmed plan carried out once')
+    assert.equal(forgets[0].output.state, 'completed', 'The forget did not complete')
+    assert.ok(
+      forgets[0].output.done.retracted + forgets[0].output.done.rewritten >= 1,
+      'The forget removed nothing from memory',
+    )
   }
   await json(directory + '/receipt.json', {
     step: step.name,
@@ -169,7 +173,8 @@ export async function memoryReceipt(page, run, step, directory, known) {
  * project, and it must be the one the receipts name. This is the "no second entry" outcome, read
  * from the Person's memory rather than counted from tool calls.
  */
-export async function memoryIndexed(state, step, directory, known) {
+export async function memoryIndexed(state, step, directory, known, page, id) {
+  if (step.change === 'write') await memoryCited(state, directory, known, page, id)
   if (step.change !== 'write' && step.change !== 'replace') return
   const marker = step.prompt.match(/Cedar-[a-f0-9]{8}/u)
   assert.ok(marker, 'The memory fixture has no unique project marker')
@@ -187,6 +192,38 @@ export async function memoryIndexed(state, step, directory, known) {
   )
 }
 
+/**
+ * A new entry says where it came from: a citation of the Person's own message in this Thread,
+ * read through the public `ReadMemory` the Settings source link uses, whose message is in the
+ * Thread's history and says the preference. The model never named it; the host did.
+ */
+async function memoryCited(state, directory, known, page, id) {
+  const saved = await rpc(
+    state,
+    'ReadMemory',
+    { layer: known.layer, file: known.file },
+    directory,
+    'cited',
+  )
+  const messages = saved.citations.filter(
+    (citation) => citation._tag === 'ThreadMessage' && citation.threadId === id,
+  )
+  assert.ok(messages.length > 0, 'The new entry cites no message of this Thread')
+  const said = page.messages.filter(
+    (message) =>
+      message.purpose === 'user' && messages.some((citation) => citation.messageId === message.id),
+  )
+  assert.ok(said.length > 0, 'The cited message is not in the Thread history')
+  assert.ok(
+    said.some((message) =>
+      message.parts.some(
+        (part) => part.type === 'text' && /before (?:12:00 )?noon/iu.test(part.text),
+      ),
+    ),
+    'The cited message is not the one that said the preference',
+  )
+}
+
 /** The shipped forget-something skill plans first. Confirm only this fixture's single entry,
  * through the real question card on web or AnswerInput on HTTP, then observe its Decision Run. */
 export async function confirmMemory(state, { id, detail, directory, step, known }, answer) {
@@ -198,6 +235,12 @@ export async function confirmMemory(state, { id, detail, directory, step, known 
       request.questions.some((question) => question.question.includes(marker[0])),
   )
   assert.equal(waiting.length, 1, 'Expected one confirmation for this fixture project')
+  // The plan was made before the question, by meaning, with nothing changed yet.
+  const planned = callsOf(
+    await history(state, id, directory, 'planned-history'),
+    detail.runs[detail.runs.length - 1].submissionId,
+  ).calls.filter((part) => part.toolName === Tool.plan_forget && part.state === 'output-available')
+  assert.ok(planned.length > 0, 'Vivid asked to forget without a plan')
   const request = waiting[0]
   assert.equal(request.questions.length, 1)
   assert.equal(request.questions[0].selection, 'One')
@@ -252,11 +295,11 @@ export async function memory(state, id, directory) {
     count = detail.runs.length
     const page = await history(state, id, evidence)
     await memoryReceipt(page, detail.runs[count - 1].submissionId, step, evidence, known)
-    await memoryIndexed(state, step, evidence, known)
+    await memoryIndexed(state, step, evidence, known, page, id)
   }
   await json(directory + '/scope.json', {
     proved:
-      'Real model write, read, same-entry replacement (or its rename, one entry left in the index), read replacement, delete and missing read through public Thread transport.',
+      'Real model write with a citation of the Person’s message, read, same-entry replacement (or its rename, one entry left in the index), read replacement, a planned and confirmed forget whose closure answers completed, and a missing read, through public Thread transport.',
     unsupported: [
       'owner cancellation and idle capacity',
       'server process restart',
