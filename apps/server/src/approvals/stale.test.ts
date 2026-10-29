@@ -31,7 +31,6 @@ import {
   bindDocuments,
   DocumentNotFound,
 } from '../artifacts/store.ts'
-import { contentDigest } from './action.ts'
 import { artifacts, artifactVersions } from '../artifacts/tables.ts'
 import { decodeRow, saveState } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
@@ -175,7 +174,6 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                   ApprovalPrecondition.cases.ArtifactVersion.make({
                     artifactId: letter,
                     version: 1,
-                    contentDigest: contentDigest('Dear Dami, v1'),
                   }),
                 ],
               }),

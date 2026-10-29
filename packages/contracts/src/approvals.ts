@@ -78,11 +78,11 @@ export type ApprovalInvalidation = typeof ApprovalInvalidation.Type
 
 /**
  * One fact outside the action that the action depends on, as it was when the server prepared it.
- * `ArtifactVersion` is a Thread document whose text the action carries: the text was copied into
- * the action at that version, and `contentDigest` is the SHA-256 of that text.
+ * `ArtifactVersion` is a Thread document whose text the action carries, copied into the action at
+ * that version. Versions are never rewritten, so the version alone names the text.
  */
 export const ApprovalPrecondition = Schema.TaggedUnion({
-  ArtifactVersion: { artifactId: ArtifactId, version: Version, contentDigest: Schema.String },
+  ArtifactVersion: { artifactId: ArtifactId, version: Version },
 })
 export type ApprovalPrecondition = typeof ApprovalPrecondition.Type
 

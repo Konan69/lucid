@@ -45,7 +45,6 @@ import { requireThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
 import { fillDocuments, namedDocuments } from './placeholder.ts'
-import { contentDigest } from '../approvals/action.ts'
 import { invalidatePending, sendingDocument } from '../approvals/stale.ts'
 
 const Row = createSelectSchema(artifacts, {
@@ -390,7 +389,6 @@ export const bindDocuments = Effect.fn('Artifacts.bindDocuments')(function* (
         ApprovalPrecondition.cases.ArtifactVersion.make({
           artifactId: entry.artifact.id,
           version: entry.artifact.version,
-          contentDigest: contentDigest(entry.body),
         }),
       ),
       (left, right) => left.artifactId === right.artifactId,

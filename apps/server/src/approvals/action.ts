@@ -43,10 +43,6 @@ export const actionDigest = (proposal: {
 /** An action on a Computer: it uses no Integration and carries no document, so nothing binds it. */
 export const unbound = ApprovalBinding.make({ connectionGeneration: null, preconditions: [] })
 
-/** SHA-256 of a text an action carries, so a binding can name it without repeating it. */
-export const contentDigest = (text: string) =>
-  NodeCrypto.createHash('sha256').update(text).digest('hex')
-
 /** Audit metadata names the capability, never the summary or private target input. */
 export const auditAction = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
