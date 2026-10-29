@@ -107,11 +107,13 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const opened = Deferred.await(ready)
 
   const memory = yield* Memory
-  const all = tools(
+  const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
     memory,
+    skills.tools === undefined ? [] : skills.tools,
   )
+  const all = registered.tools
   const registry = createRegistry()
   const learn = yield* learning(
     personId,
@@ -165,7 +167,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
     personId,
     harness,
     agent: { model: models.selected, thinkingLevel: THINKING, tools: offered(all, skills) },
-    sources: { product, memory },
+    sources: { product, memory, capabilities: registered.reading },
     quiet,
   } satisfies PersonConversations
 })

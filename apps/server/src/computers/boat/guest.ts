@@ -11,8 +11,7 @@ import type { Transport } from './transport.ts'
  * Standard existing-profile authorization stays fixed. /run holds the owned unit/socket and
  * generation; inotify proves readiness, and the lock makes concurrent servers share one unit.
  * This prerequisite is removable once Boat guarantees a compatible driver and desktop bus. */
-export const guestCommand = String.raw`python3 - <<'VIVID_DRIVER'
-import ctypes as c, fcntl, hashlib, io, json, os, pathlib, re, select, subprocess, tarfile, time, urllib.request
+export const desktopSession = String.raw`import ctypes as c, fcntl, hashlib, io, json, os, pathlib, re, select, subprocess, tarfile, time, urllib.request
 # X11 attests the panel's owning PID; only its desktop environment is copied.
 windows=subprocess.check_output(['xprop','-root','_NET_CLIENT_LIST'],text=True)
 pids=set()
@@ -31,6 +30,11 @@ if not all(environment.get(name) for name in required): raise RuntimeError('desk
 env=os.environ.copy(); env.update({name:environment[name] for name in required})
 runtime=pathlib.Path(env['XDG_RUNTIME_DIR'])
 endpoint=runtime/'vivid-driver.sock'
+`
+
+/** Setup and passive inspection attest the same X11 session; only setup may install/start. */
+export const guestCommand = String.raw`python3 - <<'VIVID_DRIVER'
+${desktopSession}
 installation=pathlib.Path.home()/'.local/share/vivid/computer'
 installation.mkdir(mode=0o700,parents=True,exist_ok=True)
 binary=installation/'driver'
@@ -69,14 +73,15 @@ with (runtime/'vivid-driver.lock').open('a') as lock:
  if not re.fullmatch('[0-9a-f]{32}',generation): raise RuntimeError('driver generation absent')
 print(json.dumps({'socket':str(endpoint),'binary':str(binary),'generation':generation}))
 VIVID_DRIVER`
-const Endpoint = Schema.Struct({
+/** Only the pinned owned executable, user socket and attested generation can enter the driver. */
+export const DriverEndpoint = Schema.Struct({
   binary: Schema.String.check(
     Schema.isPattern(/^\/home\/[a-z_][a-z0-9_-]*\/\.local\/share\/vivid\/computer\/driver$/u),
   ),
   generation: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)),
   socket: Schema.String.check(Schema.isPattern(/^\/run\/user\/[0-9]+\/vivid-driver\.sock$/u)),
 })
-const decodeEndpoint = Schema.decodeUnknownEffect(Schema.fromJsonString(Endpoint))
+const decodeEndpoint = Schema.decodeUnknownEffect(Schema.fromJsonString(DriverEndpoint))
 
 /** Guest setup has a bounded receipt and exposes only the private socket path to this adapter. */
 export const guestDriver = Effect.fn('Machine.boat.guest.driver')(function* (

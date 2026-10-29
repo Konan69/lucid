@@ -6,6 +6,7 @@ import { admit, chat, conversation, history, rpc, settled, json } from './wire.m
 import { command } from './process.mjs'
 import { createRequire } from 'node:module'
 import { assertTable } from './table.mjs'
+import { capabilities, computer } from './capabilities.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
@@ -24,6 +25,8 @@ const web = createRequire(new URL('../../../../apps/web/package.json', import.me
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
 export const features = [
+  'capabilities',
+  'computer',
   'first',
   'reload',
   'tool',
@@ -424,6 +427,8 @@ async function learning(state, id, directory) {
 }
 
 const recipes = {
+  capabilities,
+  computer,
   first,
   reload,
   stop,

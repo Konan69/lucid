@@ -70,7 +70,8 @@ describe('core tool catalogue', () => {
           },
           () => Effect.die('Unexpected memory authority'),
           unusedMemory,
-        )
+          [],
+        ).tools
         expect(calls).toHaveLength(0)
         expect(definitions.slice(0, 9).map((tool) => tool.name)).toEqual([
           'read',

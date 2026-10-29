@@ -2,6 +2,13 @@ import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
+import { CapabilityFacts } from './capabilities.js'
+import {
+  ComputerHealth,
+  ComputerRecoveryOutcome,
+  GetComputerHealthRequest,
+  RecoverComputerRequest,
+} from './computers.js'
 import { ConversationFrame } from './conversation.js'
 import {
   ApprovalChanged,
@@ -878,6 +885,17 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 })
 
 // ── The Computer ───────────────────────────────────────────────────────────
+const GetCapabilities = Rpc.make('GetCapabilities', { ...call, success: CapabilityFacts })
+const GetComputerHealth = Rpc.make('GetComputerHealth', {
+  ...call,
+  payload: GetComputerHealthRequest,
+  success: ComputerHealth,
+})
+const RecoverComputer = Rpc.make('RecoverComputer', {
+  ...call,
+  payload: RecoverComputerRequest,
+  success: ComputerRecoveryOutcome,
+})
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
@@ -1159,6 +1177,9 @@ export const VividRpc = RpcGroup.make(
   SaveSkill,
   PatchSkill,
   DeleteSkill,
+  GetCapabilities,
+  GetComputerHealth,
+  RecoverComputer,
   GetComputer,
   GetEgress,
   WatchEgress,

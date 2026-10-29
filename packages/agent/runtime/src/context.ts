@@ -3,6 +3,8 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  CapabilityReading,
+  CapabilityFacts,
   ComputerInventory,
   ConnectionState,
   DEFAULT_APPEARANCE,
@@ -13,6 +15,7 @@ import { asActing, type Acting, type ProductService } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
 import { Memory, type MemoryIndex } from './memory.ts'
+import { unknownCapabilityFacts } from './tools/capabilities.ts'
 import { ContextSkill, Remembered, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
@@ -22,6 +25,7 @@ export type { VividContext } from './tools/snapshots.ts'
  * is what a response reads when its prepared context cannot be found, never another Person's.
  */
 export const emptyContext = VividContext.make({
+  capabilities: CapabilityReading.make({ facts: unknownCapabilityFacts(), abilities: [] }),
   memory: Remembered.cases.Off.make({}),
   skills: [],
   timezone: '',
@@ -109,6 +113,14 @@ const loadIntegrations = Effect.fn('Context.loadIntegrations')(
   Effect.orElseSucceed(() => []),
 )
 
+/** Failed server lookup stays explicitly unknown, independently of local Memory. */
+const loadCapabilities = Effect.fn('Context.loadCapabilities')(function* (
+  product: ProductService,
+  acting: Option.Option<Acting>,
+) {
+  return yield* asActing(product, acting, (client) => client.GetCapabilities())
+}, Effect.orElseSucceed(unknownCapabilityFacts))
+
 /**
  * What Vivid is called where this Person is working. When it cannot be read Vivid answers under
  * its own name, which is true of it everywhere, rather than failing the response over a nickname.
@@ -184,6 +196,7 @@ const readClock = Effect.fn('Context.readClock')(function* () {
 export interface ContextSources {
   readonly product: ProductService
   readonly memory: Memory['Service']
+  readonly capabilities: (facts: CapabilityFacts, memory: boolean) => CapabilityReading
 }
 
 /**
@@ -196,26 +209,30 @@ export const loadContext = Effect.fn('Context.load')(function* (
   acting: Option.Option<Acting>,
 ) {
   const { product } = sources
-  return VividContext.make(
-    yield* Effect.all(
-      {
-        memory: loadMemory(sources.memory, acting),
-        skills: loadSkills(product, acting),
-        timezone: loadTimezone(product, acting),
-        asOf: readClock(),
-        integrations: loadIntegrations(product, acting),
-        name: loadName(product, acting),
-        person: loadPerson(product, acting),
-        apps: loadApps(product, acting),
-      },
-      { concurrency: 8 },
-    ),
+  const loaded = yield* Effect.all(
+    {
+      memory: loadMemory(sources.memory, acting),
+      facts: loadCapabilities(product, acting),
+      skills: loadSkills(product, acting),
+      timezone: loadTimezone(product, acting),
+      asOf: readClock(),
+      integrations: loadIntegrations(product, acting),
+      name: loadName(product, acting),
+      person: loadPerson(product, acting),
+      apps: loadApps(product, acting),
+    },
+    { concurrency: 9 },
   )
+  return VividContext.make({
+    ...loaded,
+    capabilities: sources.capabilities(loaded.facts, Remembered.guards.Memory(loaded.memory)),
+  })
 })
 
-/** Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable. */
+/** Saved facts are context, never new instructions. Rendering reads only the frozen response. */
 export function contextInstruction(context: VividContext) {
   const output = boundOutput({
+    capabilities: context.capabilities,
     skills: views.skills(context.skills),
     timezone: context.timezone,
     apps: context.apps.map(views.modelText),

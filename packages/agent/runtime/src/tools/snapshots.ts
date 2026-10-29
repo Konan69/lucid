@@ -1,4 +1,11 @@
-import { PersonName, SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
+import {
+  CapabilityReading,
+  PersonName,
+  SkillSummary,
+  VividName,
+  type PersonId,
+  type ThreadId,
+} from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
@@ -39,6 +46,7 @@ export const Remembered = Schema.TaggedUnion({
 export type Remembered = typeof Remembered.Type
 
 export const VividContext = Schema.Struct({
+  capabilities: CapabilityReading,
   memory: Remembered,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
