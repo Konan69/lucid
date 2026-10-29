@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
-import type { Wake } from '@earendil-works/pi-durable'
+import type { TaskInspection, Wake } from '@earendil-works/pi-durable'
 import { isAuthorized, openCell } from '@vivid/agent-runtime/cell'
 import {
   Memory,
@@ -27,6 +27,36 @@ import memoryMigration from './memory/migrations/20261028123228_memory/migration
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
 import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
+
+type CellPerson = Awaited<ReturnType<typeof openCell>>['person']
+
+/** A task that commits now, not when the clock or another task lets it. */
+const moving: ReadonlySet<TaskInspection['state']['kind']> = new Set(['running', 'ready'])
+
+/**
+ * Keep the native event that admitted or woke work alive until that work stops committing.
+ * celld admits a transaction only inside a live event (`op_gate_acquire`); a commit after the
+ * event ended fails with "the cell event ended before it could acquire an input gate", and Pi
+ * fails the whole Session on any commit error. Pi's `waitForIdle` deliberately stops at
+ * background tasks, and learning is one: it is started after the reply settles, by the
+ * settlement follower, so the reply's idle let its event end while the learner still streamed
+ * `pi.live` partials. So this waits for idle, then the follower, then every task that can
+ * still commit now, and repeats until none is left. Sleeping and waiting tasks are left to the
+ * alarm, which arms from `wake()` and holds its own event the same way.
+ */
+const settled = Effect.fn('Cell.settled')(function* (person: CellPerson) {
+  const { harness } = person
+  for (;;) {
+    yield* Effect.tryPromise(() => harness.waitForIdle(BACKGROUND_CONTEXT))
+    yield* person.quiet
+    const { tasks } = yield* Effect.tryPromise(() => harness.inspect(BACKGROUND_CONTEXT))
+    const live = tasks.filter((task) => moving.has(task.state.kind))
+    if (live.length === 0) return
+    yield* Effect.tryPromise(() =>
+      Promise.all(live.map((task) => harness.waitForTask(task.record.id, BACKGROUND_CONTEXT))),
+    )
+  }
+})
 
 /** Only the native celld capabilities this host uses, matching celld 0.6.2 DurableObjectState. */
 interface CellState {
@@ -191,9 +221,7 @@ export class Person extends DurableObject<CellState, Environment> {
     if (request.method === 'POST')
       await this.#arm({ ...runtime.person.harness.wake(), active: true })
     const response = await runtime.fetch(request)
-    // Pi keeps committing after admission. Keep that event live until its work is idle so
-    // a later Stop can settle cancellation through celld's event-bound input gate.
-    this.#state.waitUntil(runtime.person.harness.waitForIdle(BACKGROUND_CONTEXT))
+    this.#state.waitUntil(Effect.runPromise(settled(runtime.person)))
     await this.#arm(runtime.person.harness.wake())
     return response
   }
@@ -204,6 +232,7 @@ export class Person extends DurableObject<CellState, Environment> {
     const { runtime } = await this.#ready
     await this.#arm({ ...runtime.person.harness.wake(), active: true })
     runtime.person.harness.resume()
+    this.#state.waitUntil(Effect.runPromise(settled(runtime.person)))
     await this.#arm(runtime.person.harness.wake())
   }
 

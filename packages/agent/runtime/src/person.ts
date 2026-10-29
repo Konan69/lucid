@@ -5,6 +5,7 @@ import {
   type AgentChange,
   type Storage,
   type HarnessOptions,
+  type ReportInfo,
 } from '@earendil-works/pi-durable'
 import type { PersonId } from '@vivid/contracts'
 import { Context, Deferred, Effect, type Scope } from 'effect'
@@ -43,14 +44,22 @@ export class Person extends Context.Service<Person, PersonConversations>()(
   'vivid/Runtime/Person',
 ) {}
 
+/** celld's refusal of a commit made after the event that admitted it ended (`RETIRED_INPUT_GATE`). */
+const RETIRED_EVENT = 'the cell event ended before it could acquire an input gate'
+
 /**
  * Pi reports what did not fail the caller (a throwing hook or section) and, once, what failed
- * the Session. Only the error's class is logged: a provider error's message can quote a request.
+ * the Session. The log keeps what Pi says happened and to which task kind, the error's class,
+ * and one fixed category for the native refusal we know. Never the message itself: a provider
+ * error's message can quote a request.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Pi's `onReport` hands over whatever was thrown.
-const reported = (error: unknown) =>
+const reported = (error: unknown, info: ReportInfo) =>
   Effect.logWarning('Conversation library reported a failure', {
+    report: info.type,
+    task: 'task' in info && info.task !== undefined ? info.task.kind : 'none',
     error: error instanceof Error ? error.name : 'not an Error',
+    retiredEvent: error instanceof Error && error.message === RETIRED_EVENT,
   })
 
 /** Keep Vivid's thinking level explicit. Pi otherwise defaults a conversation to `off`. */
@@ -134,8 +143,8 @@ export const openPerson = Effect.fn('Person.open')(function* (
               afterFailedRun: 'continue',
             },
             onWake,
-            onReport: (error) => {
-              void run(reported(error))
+            onReport: (error, info) => {
+              void run(reported(error, info))
             },
           },
           BACKGROUND_CONTEXT,
