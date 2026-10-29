@@ -10,6 +10,7 @@ import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
+import { integrations } from './integrations.mjs'
 import { memory } from './memory.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
@@ -33,6 +34,7 @@ export const features = [
   'code',
   'document',
   'watch',
+  'integrations',
   'library',
   'feed',
   'owed',
@@ -406,6 +408,7 @@ const recipes = {
   owed,
   todos,
   watch,
+  integrations,
   reading,
   settings: settingsProof,
   discord: discordProof,

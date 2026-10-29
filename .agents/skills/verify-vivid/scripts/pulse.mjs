@@ -12,14 +12,15 @@ export const files = [
   },
   {
     path: 'index.ts',
-    content: `import { defineApp, defineProvider, event, mutation, object, router, secrets, string } from "apps";
+    content: `import { defineApp, defineProvider, event, mutation, object, query, router, secrets, string } from "apps";
 const pulse = defineProvider({ name: "Verify Pulse", auth: { key: secrets({ label: "Verification code", fields: object({ code: string() }) }) } });
 const requirements = { user: { accounts: { pulse } }, events: { "pulse.received": event({ description: "A verification pulse arrived.", payload: object({ receipt: string(), words: string() }) }) } };
 const emit = mutation({ description: "Produce a verification pulse.", input: object({ receipt: string(), words: string() }) }, async (ctx, input) => {
   ctx.events.emit("pulse.received", input, { id: input.receipt });
   return { receipt: input.receipt };
 });
-export default defineApp(requirements, { tools: router({ emit }) });`,
+const read = query({ description: "Read forty disposable sample records for coverage verification.", input: object({}) }, async () => ({ records: Array.from({ length: 40 }, (_, index) => ({ index, text: "sample" })) }));
+export default defineApp(requirements, { tools: router({ emit, read }) });`,
   },
 ]
 

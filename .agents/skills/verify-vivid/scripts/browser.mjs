@@ -47,6 +47,8 @@ function normaliseReply(text) {
 }
 
 const missing = {
+  integrations:
+    'Grant and result evidence presentation awaits the Claude UI unit; see features/integrations.md',
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
