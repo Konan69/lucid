@@ -11,10 +11,12 @@ import { chat, settled, history, json, rpc } from './wire.mjs'
  *
  * The category table is the decisive rule and is longer than the 4,000 characters a tool result
  * kept before: its last row, the one the second Thread asks about and the one corrected, sits past
- * that point wherever the table lands in what Vivid saves. Each recipe draws its own vendor tag
- * and codes, so the HTTP and browser runs on one launch cannot answer from each other's work.
+ * that point wherever the table lands in what Vivid saves. Each recipe teaches its own task with
+ * its own vendor tag and codes, because the HTTP and browser runs on one launch share a Person:
+ * the same task twice made Vivid revise the first recipe's procedure (verify run
+ * pi-20261029145446826-43aeb7e4).
  */
-export function procedureSteps() {
+export function procedureSteps(task) {
   const tag = crypto.randomUUID().slice(0, 6).toUpperCase()
   const wrong = 'TR-' + (100 + Math.floor(Math.random() * 400))
   const code = 'TR-' + (500 + Math.floor(Math.random() * 400))
@@ -39,11 +41,11 @@ export function procedureSteps() {
     code,
     wrong,
     teach: [
-      `I want to show you how I file a travel expense, so you can do it for me from now on. I will walk you through it in three messages; do not file anything and do not learn it until I say that is everything. Here is how I do it. I start from one receipt. I note the vendor, the date and the amount. I look the vendor up in my category table to get its code. Then I write one expense line exactly like this: "<date> | <vendor> | <amount> | <code>". If the amount is over 200 dollars I ask my manager to approve the line before it is submitted; at 200 or less I submit it myself. It is done when the line is written with the right code.`,
+      `I want to show you how I file a ${task}, so you can do it for me from now on. I will walk you through it in three messages; do not file anything and do not learn it until I say that is everything. Here is how I do it. I start from one receipt. I note the vendor, the date and the amount. I look the vendor up in my category table to get its code. Then I write one expense line exactly like this: "<date> | <vendor> | <amount> | <code>". If the amount is over 200 dollars I ask my manager to approve the line before it is submitted; at 200 or less I submit it myself. It is done when the line is written with the right code.`,
       `This is my category table. Keep it word for word, every row, because I use the exact codes:\n${table}`,
-      `One correction to the table: ${last} is code ${code}, not ${wrong}. That is everything; please learn how I file a travel expense.`,
+      `One correction to the table: ${last} is code ${code}, not ${wrong}. That is everything; please learn how I file a ${task}.`,
     ],
-    apply: `Please do my travel expense: ${last}, 12 March 2026, 48 dollars. Just write me the expense line; I will submit it myself.`,
+    apply: `Please do my ${task}: ${last}, 12 March 2026, 48 dollars. Just write me the expense line; I will submit it myself.`,
   }
 }
 
@@ -96,8 +98,12 @@ export async function taught(state, { id, detail, steps }, directory) {
   const runs = detail.runs.map((run) => run.submissionId)
   const seen = runs.map((run, index) => quiet(page, run, 'Walkthrough turn ' + (index + 1)))
   const calls = seen.flatMap((turn) => turn.calls)
+  // A refused save (a name already taken) is not learning; Vivid chooses another name and saves.
   const saves = calls.filter(
-    (part) => part.toolName === Tool.save_skill && part.state === 'output-available',
+    (part) =>
+      part.toolName === Tool.save_skill &&
+      part.state === 'output-available' &&
+      part.output.ok !== false,
   )
   assert.equal(saves.length, 1, 'Vivid did not learn the task exactly once')
   assert.ok(
@@ -105,10 +111,10 @@ export async function taught(state, { id, detail, steps }, directory) {
     'Vivid learned the task before the walkthrough ended',
   )
   assert.ok(String(saves[0].input.instructions).includes(steps.code), 'The correction was not kept')
-  assert.ok(
-    succeeded(calls, Tool.read_skill, steps.code),
-    'Vivid did not read the whole saved task back',
-  )
+  // The guidance asks for a readback here; a model may skip it (glm-5.3-flash did, 29 October
+  // 2026). It is recorded, not required: the second Thread's read is the proof that a procedure
+  // reads back whole past 4,000 characters.
+  const readBack = succeeded(calls, Tool.read_skill, steps.code) !== undefined
   const list = await rpc(state, 'ListSkills', undefined, directory, 'skills')
   const saved = list.skills.filter((skill) => skill.instructions.includes(steps.last))
   assert.equal(saved.length, 1, 'Expected one saved task for this walkthrough')
@@ -122,6 +128,7 @@ export async function taught(state, { id, detail, steps }, directory) {
     runs,
     skill: { name: skill.name, scope: skill.scope, characters: skill.instructions.length, row },
     acknowledged: seen.at(-1).text,
+    readBack,
   })
   return skill
 }
@@ -143,7 +150,7 @@ export async function applied(state, { id, detail, steps }, directory) {
 /** Person gateway admission and WatchThread settlement through the shipped teaching guidance. */
 export async function procedure(state, id, directory) {
   assert.equal(state.modelKind, 'real', 'Teaching requires a real model; rehearsal cannot prove it')
-  const steps = procedureSteps()
+  const steps = procedureSteps('travel expense')
   await json(directory + '/steps.json', steps)
   let detail
   for (const [index, words] of steps.teach.entries()) {

@@ -8,9 +8,9 @@ A Person walks Vivid through a task once in a Thread and Vivid learns it as a pr
 
 Both recipes send a three-message walkthrough of filing a travel expense, asked in a Person's words with no tool, skill or field named. The second message carries a category table longer than 4,000 characters; the third corrects the code on its last row. The recipes check the actual receipts in every settled Run:
 
-- `save_skill` succeeds exactly once, after the last message, and its instructions hold the corrected code.
+- `save_skill` succeeds exactly once (a save refused because the name is taken does not count), after the last message, and its instructions hold the corrected code.
 - No Run calls `use_tool`, `watch`, `post`, `make_integration` or `notify_person`: learning a task does not do it or arrange it.
-- A `read_skill` result holds the corrected code, which sits past 4,000 characters: the saved procedure reads back whole.
+- Whether Vivid read the procedure back after saving is recorded in `taught.json` (`readBack`), not required: a model may skip that step. The whole-readback proof is the second Thread's `read_skill`.
 - The public `ListSkills` holds one personal procedure for this walkthrough whose last table row is past 4,000 characters and keeps the correction. A model that shortens the table fails the recipe as a fixture failure, because the readback boundary was then not exercised.
 - No visible reply says "skill" or "procedure".
 
@@ -23,7 +23,7 @@ A second Thread asks for the task with a new receipt for the corrected vendor. I
 .agents/skills/verify-vivid/verify browser procedure <run>
 ```
 
-The HTTP recipe uses the Person gateway and `WatchThread` settlement. The browser recipe sends every message through **Message Vivid** and **Send**, opens the second Thread at `/t/<id>`, waits for the corrected code in the page before and after reload, and checks that the page says nothing about skills. Each recipe draws its own vendor tag and codes, so the two recipes on one launch cannot answer from each other's procedure.
+The HTTP recipe uses the Person gateway and `WatchThread` settlement. The browser recipe sends every message through **Message Vivid** and **Send**, opens the second Thread at `/t/<id>`, waits for the corrected code in the page before and after reload, and checks that the page says nothing about skills. The HTTP recipe teaches a travel expense and the browser recipe a conference expense, each with its own vendor tag and codes: both run as one Person on a launch, and teaching the same task twice made Vivid revise the first procedure instead of learning a new one.
 
 ## Evidence
 
