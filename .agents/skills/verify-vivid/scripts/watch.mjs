@@ -157,12 +157,9 @@ export async function occurrence(state, { id, integration, marker }, directory) 
     directory,
   )
   const item = await posted(state, marker, directory)
-  // The card is the drawing: the receipt is in its display and it carries no words beside it.
-  NodeAssert.equal(item.post.words, null, 'Feed card repeated its drawing in words')
-  NodeAssert.ok(
-    item.post.display !== null && item.post.display.includes(receipt),
-    'Feed display did not draw the receipt',
-  )
+  // The card is the drawing: a drawn post, whose display holds the receipt, with no words or bar.
+  NodeAssert.equal(item.post._tag, 'Drawn', 'Feed card was said in words, not drawn')
+  NodeAssert.ok(item.post.display.includes(receipt), 'Feed display did not draw the receipt')
   const detail = await settled(state, item.thread, 1, 'Completed', directory)
   NodeAssert.ok(RunOrigin.guards.Watch(detail.runs[0].origin))
   NodeAssert.equal(item.thread, threadFor(watching.id, receipt))

@@ -37,20 +37,19 @@ export async function watchBrowser(state, id, directory, { run, capture }) {
   const proof = await occurrence(state, { id, integration, marker }, directory)
   await capture('watch-active')
   await run(['open', state.web + '/feed'])
-  await run(['wait', '--text', marker])
+  // A drawn card is named by its title but does not write it: the card is found by its name and
+  // holds the receipt in its drawing, with no title heading and no sentence of ours around it.
+  const card = `document.querySelector('article[aria-label=${JSON.stringify(JSON.stringify(marker)).slice(1, -1)}]')`
+  await run(['wait', '--fn', `${card} !== null`])
   await run(['wait', '--text', proof.receipt])
-  // The card's own words sit straight under its title; a drawn card has none.
-  const sentences = decodeText(
+  const ours = decodeText(
     Schema.Number,
-    await run([
-      'eval',
-      `Array.from(document.querySelectorAll('article')).find(card => card.textContent.includes(${JSON.stringify(marker)}))?.querySelectorAll(':scope > p').length ?? -1`,
-    ]),
+    await run(['eval', `${card}.querySelectorAll(':scope > h2, :scope > p, :scope > footer').length`]),
   )
-  NodeAssert.equal(sentences, 0, 'The Feed card shows words beside its drawing')
+  NodeAssert.equal(ours, 0, 'The Feed card frames its drawing with a title, words or a bar')
   await capture('feed')
   await run(['reload'])
-  await run(['wait', '--text', marker])
+  await run(['wait', '--fn', `${card} !== null`])
   await run(['wait', '--text', proof.receipt])
   await capture('feed-reloaded')
   await json(directory + '/visible-feed.json', { marker, item: proof.item })
