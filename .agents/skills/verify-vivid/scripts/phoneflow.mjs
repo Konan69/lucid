@@ -261,7 +261,20 @@ export async function tool(state, id, ui) {
   const done = await ui.completed(id, 1, 'table')
   await assertTable(done.page)
   await ui.visible('Hours')
-  const drawn = await ui.capture('table')
+  await ui.capture('table')
+  // The interactive snapshot folds the table into its scroll area's label and leaves the number
+  // cells out (29 October 2026), so read agent-device's raw nodes: each cell must be its own
+  // labelled node in Vivid's app.
+  const raw = await ui.run(['snapshot', '--raw', '--force-full'])
+  await json(ui.directory + '/table-raw.json', { raw })
+  const labels = new Set(
+    raw
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line))
+      .filter((node) => node.bundleId === 'work.vivid.mobile' && node.visibleToUser)
+      .map((node) => node.label),
+  )
   for (const cell of [
     'Project',
     'Hours',
@@ -276,7 +289,7 @@ export async function tool(state, id, ui) {
     '2',
     'Cai',
   ])
-    NodeAssert.ok(drawn.includes(JSON.stringify(cell)), 'Native table omitted a cell: ' + cell)
+    NodeAssert.ok(labels.has(cell), 'Native table omitted a cell: ' + cell)
   await ui.create('Table away ' + crypto.randomUUID().slice(0, 8))
   await ui.visit(id)
   await ui.visible('Hours')
