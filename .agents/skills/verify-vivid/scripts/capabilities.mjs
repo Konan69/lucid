@@ -1,4 +1,4 @@
-import * as assert from 'node:assert/strict'
+import * as NodeAssert from 'node:assert/strict'
 import { CapabilityAvailability, CapabilityReading, PersonId } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { chat, history, json, rpc } from './wire.mjs'
@@ -40,7 +40,7 @@ async function asleep(state, directory, action) {
     const activity = await sql(
       `SELECT last_activity_at FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`,
     )
-    assert.equal(activity.trim(), '73', 'Passive observations must not extend idle time')
+    NodeAssert.equal(activity.trim(), '73', 'Passive observations must not extend idle time')
     await json(directory + '/passive-activity.json', { lastActivityAt: 73 })
   } finally {
     await sql(`DELETE FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`)
@@ -49,7 +49,7 @@ async function asleep(state, directory, action) {
 
 /** The answer must have a real capability receipt. Checking internal names against unavailable
  * entries supplements the structured facts; it does not claim semantic proof of every sentence. */
-async function answer(state, id, directory, name, question) {
+async function answer(state, id, directory, { name, question }) {
   await chat(state, id, question, directory, name)
   const page = await history(state, id, directory, name + '-history')
   const parts = page.messages
@@ -61,7 +61,7 @@ async function answer(state, id, directory, name, question) {
       part.toolName === 'get_capabilities' &&
       part.state === 'output-available',
   )
-  assert.ok(calls.length > 0, 'The model must call get_capabilities')
+  NodeAssert.ok(calls.length > 0, 'The model must call get_capabilities')
   const latest = calls.at(-1)
   const reading = Result.getOrThrow(decodeReading(latest.output))
   const text = parts
@@ -81,7 +81,7 @@ async function answer(state, id, directory, name, question) {
     const identifier = toolName.includes('_')
       ? new RegExp('\\b' + toolName + '\\b', 'u')
       : new RegExp('`' + toolName + '`|\\b' + toolName + '\\s*\\(', 'u')
-    assert.doesNotMatch(text, identifier, 'Answer names unavailable tool ' + toolName)
+    NodeAssert.doesNotMatch(text, identifier, 'Answer names unavailable tool ' + toolName)
   }
   await json(directory + '/' + name + '-capabilities.json', { reading, text })
   return reading
@@ -89,37 +89,33 @@ async function answer(state, id, directory, name, question) {
 
 /** Real model, public RPC and a real connected device stream exercise the runtime registry. */
 export async function capabilities(state, id, directory) {
-  assert.notEqual(state.modelKind, 'rehearsal', 'Capability answers require a real model')
+  NodeAssert.notEqual(state.modelKind, 'rehearsal', 'Capability answers require a real model')
   const absent = await rpc(state, 'GetCapabilities', null, directory, 'absent')
-  assert.equal(absent.computer._tag, 'Available')
-  assert.equal(absent.computer.value.state._tag, 'Absent')
-  await answer(
-    state,
-    id,
-    directory,
-    'no-computer',
-    'What can you do on my computer right now? Read your current capabilities before answering. Only describe what the current reading supports, and distinguish work that needs a connection. Do not perform any Computer work.',
-  )
+  NodeAssert.equal(absent.computer._tag, 'Available')
+  NodeAssert.equal(absent.computer.value.state._tag, 'Absent')
+  await answer(state, id, directory, {
+    name: 'no-computer',
+    question:
+      'What can you do on my computer right now? Read your current capabilities before answering. Only describe what the current reading supports, and distinguish work that needs a connection. Do not perform any Computer work.',
+  })
   await asleep(state, directory, async () => {
     const sleeping = await rpc(state, 'GetCapabilities', null, directory, 'sleeping')
-    assert.equal(sleeping.computer.value.state._tag, 'Stopped')
+    NodeAssert.equal(sleeping.computer.value.state._tag, 'Stopped')
   })
   await connectedOther(state, directory, async () => {
-    const reading = await answer(
-      state,
-      id,
-      directory,
-      'connected-desktop',
-      'Check your current capabilities again. What can you do on my own computer now? Distinguish browser work from native apps. Do not perform any action on it.',
-    )
-    assert.ok(
+    const reading = await answer(state, id, directory, {
+      name: 'connected-desktop',
+      question:
+        'Check your current capabilities again. What can you do on my own computer now? Distinguish browser work from native apps. Do not perform any action on it.',
+    })
+    NodeAssert.ok(
       reading.abilities.some(
         (ability) =>
           ability.tools.includes('use_person_computer') &&
           CapabilityAvailability.guards.Unsupported(ability.availability),
       ),
     )
-    assert.ok(
+    NodeAssert.ok(
       reading.abilities.some(
         (ability) =>
           ability.tools.includes('browse') &&
@@ -144,7 +140,7 @@ export async function computer(state, _id, directory) {
     directory,
     'absent-health',
   )
-  assert.equal(absent._tag, 'Absent')
+  NodeAssert.equal(absent._tag, 'Absent')
   await asleep(state, directory, async () => {
     const sleeping = await rpc(
       state,
@@ -153,11 +149,14 @@ export async function computer(state, _id, directory) {
       directory,
       'sleeping-health',
     )
-    assert.equal(sleeping._tag, 'Sleeping')
+    NodeAssert.equal(sleeping._tag, 'Sleeping')
     const request = { id: crypto.randomUUID(), step: 'Restore' }
     const first = await rpc(state, 'RecoverComputer', request, directory, 'unsupported-restore')
-    assert.equal(first._tag, 'Unsupported')
-    assert.deepEqual(await rpc(state, 'RecoverComputer', request, directory, 'same-restore'), first)
+    NodeAssert.equal(first._tag, 'Unsupported')
+    NodeAssert.deepEqual(
+      await rpc(state, 'RecoverComputer', request, directory, 'same-restore'),
+      first,
+    )
   })
   await json(directory + '/limits.json', {
     deepHealth: blockedComputer,
