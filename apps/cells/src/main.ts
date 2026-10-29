@@ -25,7 +25,7 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
-import { Config, ConfigProvider, Deferred, Effect, Option, Schema } from 'effect'
+import { Config, ConfigProvider, Deferred, Effect, Exit, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
 type CellPerson = Awaited<ReturnType<typeof openCell>>['person']
@@ -60,8 +60,16 @@ const settled = Effect.fn('Cell.settled')(function* (person: CellPerson) {
   }
 })
 
-/** Host work the carrier runs inside its own event. It never rejects; the caller's promise does. */
+/** Host work the carrier runs inside its own event. It never rejects; it answers its caller. */
 type Job = () => Promise<void>
+
+/** A carrier job threw before answering: the router or the alarm's wake. celld answers 500. */
+class CarrierFailed extends Schema.TaggedError<CarrierFailed>()(
+  'CarrierFailed',
+  { cause: Schema.Defect() },
+  { title: 'Person cell could not answer' },
+) {}
+const failed = (cause: unknown) => Exit.fail(CarrierFailed.make({ cause }))
 
 /** The event that runs this Person's Pi work, and the work queued for it. */
 interface Carrier {
@@ -118,7 +126,7 @@ const personOption = Schema.decodeUnknownOption(PersonId)
 /** One celld cell owns all Threads created by one Person, their Harness, and their memory. */
 export class Person extends DurableObject<CellState, Environment> {
   readonly #state: CellState
-  #carrier: Carrier | undefined
+  #carrier: Option.Option<Carrier> = Option.none()
   readonly #ready: Promise<{
     readonly runtime: Awaited<ReturnType<typeof openCell>>
     readonly memory: Effect.Success<ReturnType<typeof openMemory>>
@@ -205,7 +213,7 @@ export class Person extends DurableObject<CellState, Environment> {
   }
 
   /**
-   * Run `work` inside the carrier event, making this event the carrier when none is live.
+   * Queue `job` on the carrier event, making this event the carrier when none is live.
    *
    * celld admits a transaction only from a continuation whose event is still live
    * (`op_gate_acquire`, `js.rs`); a later commit fails with "the cell event ended before it could
@@ -218,39 +226,34 @@ export class Person extends DurableObject<CellState, Environment> {
    * runs here instead, from one event that ends only when nothing can commit now: celld holds
    * one event for the Person's work, plus the requests it is answering.
    */
-  #carry<A>(work: () => Promise<A>): Promise<A> {
-    return new Promise<A>((resolve, reject) => {
-      const carrier = this.#carrier ?? this.#launch()
-      carrier.jobs.push(() => work().then(resolve, reject))
-      carrier.wake()
-    })
+  #carry(job: Job) {
+    const carrier = Option.getOrElse(this.#carrier, () => this.#launch())
+    carrier.jobs.push(job)
+    carrier.wake()
   }
 
-  /** The carrier's life is this event's `waitUntil`; `#drive` ends it once the Person is quiet. */
+  /** The carrier's life is this event's `waitUntil`; the loop ends it once the Person is quiet. */
   #launch(): Carrier {
     const carrier: Carrier = { jobs: [], wake: () => {} }
-    this.#carrier = carrier
-    this.#state.waitUntil(this.#drive(carrier))
+    this.#carrier = Option.some(carrier)
+    this.#state.waitUntil(
+      this.#carryUntilQuiet(carrier).finally(() => {
+        // A failed Harness ends the carrier early; queued jobs still answer their callers.
+        if (Option.isSome(this.#carrier) && this.#carrier.value === carrier)
+          this.#carrier = Option.none()
+        for (const job of carrier.jobs.splice(0)) void job()
+      }),
+    )
     return carrier
   }
 
   /**
    * Start each queued job from this loop, so its continuations belong to the carrier event, and
-   * end when no job runs and `settled` resolves with nothing queued. The carrier is released in
-   * the same turn as that check, so a job queued after it starts the next carrier instead of
-   * joining one that is ending.
+   * end when no job runs and `settled` resolves with nothing queued. The loop's own awaits are
+   * registered here, so it resumes in the carrier whichever event wakes it; an Effect fiber would
+   * resume on the waker's event instead. The carrier is released in the same turn as the final
+   * check, so a job queued after it starts the next carrier instead of joining one that is ending.
    */
-  // @effect-diagnostics-next-line asyncFunction:off -- celld holds the carrier event through this Promise.
-  async #drive(carrier: Carrier) {
-    try {
-      await this.#carryUntilQuiet(carrier)
-    } finally {
-      // A failed Harness ends the carrier early; queued callers still get their own answer.
-      if (this.#carrier === carrier) this.#carrier = undefined
-      for (const job of carrier.jobs.splice(0)) void job()
-    }
-  }
-
   // @effect-diagnostics-next-line asyncFunction:off -- celld holds the carrier event through this Promise.
   async #carryUntilQuiet(carrier: Carrier) {
     const { runtime } = await this.#ready
@@ -259,9 +262,10 @@ export class Person extends DurableObject<CellState, Environment> {
     person.harness.resume()
     let running = 0
     for (;;) {
-      const woken = new Promise<false>((resolve) => {
-        carrier.wake = () => resolve(false)
-      })
+      const woken = Deferred.makeUnsafe<boolean>()
+      carrier.wake = () => {
+        Deferred.doneUnsafe(woken, Effect.succeed(false))
+      }
       for (let job = carrier.jobs.shift(); job !== undefined; job = carrier.jobs.shift()) {
         running++
         void job().then(() => {
@@ -269,25 +273,14 @@ export class Person extends DurableObject<CellState, Environment> {
           carrier.wake()
         })
       }
-      if (running > 0) {
-        await woken
-        continue
-      }
-      // A new job interrupts the wait; the loop starts it and waits again once it ends.
-      const interrupt = new AbortController()
-      const quiet = await Promise.race([
-        Effect.runPromise(settled(person), { signal: interrupt.signal }).then(
-          () => true,
-          (cause: unknown) => {
-            if (interrupt.signal.aborted) return false
-            throw cause
-          },
-        ),
-        woken,
-      ])
-      interrupt.abort()
+      // A new job interrupts the wait for quiet; the loop starts it and waits again once it ends.
+      const quiet = await Effect.runPromise(
+        running > 0
+          ? Deferred.await(woken)
+          : Effect.raceFirst(settled(person).pipe(Effect.as(true)), Deferred.await(woken)),
+      )
       if (quiet && carrier.jobs.length === 0) {
-        this.#carrier = undefined
+        this.#carrier = Option.none()
         return
       }
     }
@@ -320,39 +313,72 @@ export class Person extends DurableObject<CellState, Environment> {
 
   /**
    * Answer through the carrier. The request body is read here, because it is this event's I/O,
-   * and the router runs in the carrier. A body is pumped by the carrier too: pulling a stream
-   * runs its producer, and a settlement or state stream calls into Pi when it is pulled. Arm
-   * before the router can submit or abort work, as Pi's first-party DO example requires.
+   * and the router runs in the carrier.
    */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async fetch(request: Request) {
     const body = request.method === 'GET' ? null : await request.arrayBuffer()
-    const copy = new Request(request.url, { method: request.method, headers: request.headers, body })
-    return new Promise<Response>((answer, refuse) => {
-      this.#carry(async () => {
-        const { runtime } = await this.#ready
-        if (copy.method === 'POST')
-          await this.#arm({ ...runtime.person.harness.wake(), active: true })
-        const response = await runtime.fetch(copy)
-        await this.#arm(runtime.person.harness.wake())
-        if (response.body === null) return answer(response)
-        const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
-        answer(new Response(readable, response))
-        // A client that goes away cancels the pipe. That ends this answer; it is not a failure.
-        await response.body.pipeTo(writable).catch(() => undefined)
-      }).catch(refuse)
+    const copy = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body,
     })
+    const head = Deferred.makeUnsafe<Response, CarrierFailed>()
+    this.#carry(() => this.#answer(copy, head))
+    return Effect.runPromise(Deferred.await(head))
+  }
+
+  /**
+   * Route in the carrier and pump the body there too: pulling a stream runs its producer, and a
+   * settlement or state stream calls into Pi when it is pulled. A client that goes away cancels
+   * the pipe, which ends this answer; it is not a failure.
+   */
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #answer(request: Request, head: Deferred.Deferred<Response, CarrierFailed>) {
+    const routed = await this.#route(request).then(Exit.succeed, failed)
+    if (Exit.isFailure(routed) || routed.value.body === null) {
+      Deferred.doneUnsafe(head, routed)
+      return
+    }
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+    Deferred.doneUnsafe(head, Effect.succeed(new Response(readable, routed.value)))
+    await routed.value.body.pipeTo(writable).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  /** Arm before the router can submit or abort work, as Pi's first-party DO example requires. */
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #route(request: Request) {
+    const { runtime } = await this.#ready
+    if (request.method === 'POST')
+      await this.#arm({ ...runtime.person.harness.wake(), active: true })
+    const response = await runtime.fetch(request)
+    await this.#arm(runtime.person.harness.wake())
+    return response
   }
 
   /** An alarm resumes due native tasks and work interrupted by a lost owner, in the carrier. */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async alarm() {
-    await this.#carry(async () => {
-      const { runtime } = await this.#ready
-      await this.#arm({ ...runtime.person.harness.wake(), active: true })
-      runtime.person.harness.resume()
-      await this.#arm(runtime.person.harness.wake())
-    })
+    const done = Deferred.makeUnsafe<void, CarrierFailed>()
+    this.#carry(() =>
+      this.#wake()
+        .then(Exit.succeed, failed)
+        .then((exit) => {
+          Deferred.doneUnsafe(done, exit)
+        }),
+    )
+    await Effect.runPromise(Deferred.await(done))
+  }
+
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #wake() {
+    const { runtime } = await this.#ready
+    await this.#arm({ ...runtime.person.harness.wake(), active: true })
+    runtime.person.harness.resume()
+    await this.#arm(runtime.person.harness.wake())
   }
 
   /** Cross-cell memory calls expose only the memory of this already named cell. */
