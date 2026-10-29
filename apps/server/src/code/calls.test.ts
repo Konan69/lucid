@@ -65,6 +65,7 @@ import { Runtime } from '../runtime/client.ts'
 import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
+import { silentPushLayer } from '../push/testing.ts'
 import { RunOrigin } from '@vivid/contracts'
 import { CodeComputer } from './computer.ts'
 import { RuleStore } from '../rules/store.ts'
@@ -93,6 +94,8 @@ const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
 const testLayer = codeCallsLayer.pipe(
   Layer.provideMerge(dependencies),
   Layer.provideMerge(feedStoreLayer),
+  // A post now tells the Person; this suite's claim is the post, not its delivery.
+  Layer.provideMerge(silentPushLayer),
   Layer.provideMerge(codeSourceLayer),
   Layer.provideMerge(Layer.mock(Runtime, history([]))),
 )

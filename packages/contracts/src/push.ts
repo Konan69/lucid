@@ -1,5 +1,6 @@
 import * as Schema from 'effect/Schema'
-import { NotificationId, ThreadId } from './identity.js'
+import { NotificationId } from './identity.js'
+import { NotificationOpens } from './notifications.js'
 
 /** Random product identity; ownership and session authority never enter provider payloads. */
 export const PushTargetId = Schema.NonEmptyString.pipe(Schema.brand('PushTargetId'))
@@ -56,6 +57,6 @@ export const PushPayload = Schema.Struct({
   notificationId: NotificationId,
   title: Schema.String,
   body: Schema.String,
-  threadId: Schema.NullOr(ThreadId),
+  opens: NotificationOpens,
 })
 export interface PushPayload extends Schema.Schema.Type<typeof PushPayload> {}

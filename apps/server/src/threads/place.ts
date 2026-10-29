@@ -1,4 +1,5 @@
 import * as Schema from 'effect/Schema'
+import { NotificationOpens, type ThreadId } from '@vivid/contracts'
 
 /**
  * Where a Thread lives for its Person.
@@ -16,10 +17,24 @@ export const ThreadPlace = Schema.Literals(['Conversation', 'Background'])
 export type ThreadPlace = typeof ThreadPlace.Type
 
 /**
- * Whether a notification may quote a Thread in this place. A Background Thread reaches its Person
- * only through what Vivid posts to the Feed (`feed/`), so nothing that happens there (a Run
- * settling, failing or ending unknown, a follow-up the Person sent from the Feed, an approval or
- * a question raised there) is announced as a notification; the Feed shows what needs the Person.
- * Every place that decides to notify about a Thread asks this, and nowhere else spells the rule.
+ * Whether the work in a Thread in this place is announced as a notification. A Background Thread
+ * reaches its Person through the Feed (`feed/`), so a Run settling, failing or ending unknown
+ * there, a follow-up the Person sent from the Feed, or a `notify_person` call is not announced.
+ * What Vivid puts in front of the Person from there is: a post, a question, an Approval. Each of
+ * those notifies whatever the place, and opens where it is shown (`opensAt`).
  */
 export const notifiesFrom = (place: ThreadPlace) => place === 'Conversation'
+
+/**
+ * Where a notice about this Thread opens when pressed. A Background Thread is never listed; its
+ * posts, questions and Approvals are drawn on the Feed, so its notices open the Feed. Every other
+ * Thread opens itself. A notice about no Thread is a Company invitation and opens Notifications;
+ * its callers say that, since they hold no Thread.
+ */
+export const opensAt = (thread: {
+  readonly id: ThreadId
+  readonly place: ThreadPlace
+}): NotificationOpens =>
+  thread.place === 'Background'
+    ? NotificationOpens.cases.Feed.make({})
+    : NotificationOpens.cases.Thread.make({ threadId: thread.id })

@@ -1,9 +1,9 @@
-import { PushPayload } from '@vivid/contracts'
+import { NotificationOpens, PushPayload } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 
 /**
  * The web app's service worker: it shows what the server pushes while no Vivid tab is in front,
- * and opens the Thread a notification is about when the Person presses it.
+ * and opens what a notification is about when the Person presses it.
  *
  * The server sends one `PushPayload` per notification, as JSON (`apps/server/src/push/adapter.ts`
  * `sendBrowser`). It is registered by `data/notifying.ts` from wherever the bundler puts it
@@ -56,9 +56,16 @@ const decodePushed = Schema.decodeUnknownOption(Schema.fromJsonString(PushPayloa
 const decodeShown = Schema.decodeUnknownOption(PushPayload)
 const encodePayload = Schema.encodeEffect(PushPayload)
 
-/** Where pressing a notification takes the Person: its Thread, or the Feed when it has none. */
+/**
+ * Where pressing a notification takes the Person (`NotificationOpens`). Web has no Notifications
+ * page: the bell is in the app's own sidebar, so an invitation opens the app.
+ */
 const placeOf = (payload: PushPayload) =>
-  payload.threadId === null ? '/feed' : `/t/${encodeURIComponent(payload.threadId)}`
+  NotificationOpens.match(payload.opens, {
+    Thread: ({ threadId }) => `/t/${encodeURIComponent(threadId)}`,
+    Feed: () => '/feed',
+    Notifications: () => '/',
+  })
 
 /**
  * Every window of this origin. A window in front already says the notification itself

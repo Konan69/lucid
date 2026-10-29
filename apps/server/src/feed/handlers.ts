@@ -2,6 +2,7 @@ import * as Effect from 'effect/Effect'
 import { Forbidden, type MarkFeedCardRequest, type PostRequest } from '@vivid/contracts'
 import { requireActor, requireVivid } from '../auth/access.ts'
 import { live } from '../live/query.ts'
+import { notifyPosted } from '../notifications/attention.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
 import { FeedStore } from './store.ts'
@@ -27,7 +28,7 @@ export const feedHandlers = {
    */
   Post: Effect.fn('Rpc.Post')(function* (request: typeof PostRequest.Type) {
     const auth = yield* requireVivid()
-    yield* actingRun(auth.threadId, auth.person.id).pipe(
+    const run = yield* actingRun(auth.threadId, auth.person.id).pipe(
       Effect.catchTag('NoActingRun', () =>
         Effect.fail(new Forbidden({ message: 'Posting to the Feed needs an acting Run.' })),
       ),
@@ -38,10 +39,13 @@ export const feedHandlers = {
       return yield* new Forbidden({
         message: 'The Person is in this conversation: answer here instead of posting to the Feed.',
       })
-    return yield* (yield* FeedStore).post({
+    const outcome = yield* (yield* FeedStore).post({
       person: auth.person.id,
       thread: auth.threadId,
       request,
     })
+    // Once the card is committed, the Person is told, wherever they are (`notifyPosted`).
+    yield* notifyPosted({ personId: auth.person.id, thread, run, post: request })
+    return outcome
   }),
 }

@@ -9,7 +9,7 @@ import {
   type NoticeFace,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
+import { Bell, Check, Hand, Newspaper, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
 import { router } from '../router'
@@ -48,13 +48,14 @@ function ago(at: number, now: number): string {
 /**
  * The mark each kind of notice leads with, so the panel can be read by colour before a word of
  * it is: green for done, amber-orange for "this needs you", blue for something shared, violet
- * for an invitation. A new kind of notice fails to compile here.
+ * for an invitation, cyan for something on the Feed. A new kind of notice fails to compile here.
  */
 const KIND = {
   finished: { hue: 'green', icon: <Check /> },
   'needs-you': { hue: 'orange', icon: <Hand /> },
   shared: { hue: 'blue', icon: <Share2 /> },
   invited: { hue: 'violet', icon: <UserPlus /> },
+  posted: { hue: 'cyan', icon: <Newspaper /> },
 } as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode }>
 
 /**

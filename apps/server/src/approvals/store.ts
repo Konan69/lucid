@@ -48,7 +48,6 @@ import { announceFeed } from '../feed/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
-import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation } from '../threads/conversation.ts'
 import { artifacts } from '../artifacts/tables.ts'
@@ -642,8 +641,8 @@ const raise = Effect.fn('Approvals.raise')(function* (
   const approval = yield* returned(yield* view([result.row]), 'Approval')
   if (!result.inserted) return approval
   yield* changed(actor, Topic.thread(threadId))
-  // An approval raised in a Background Thread is shown by the Feed, never as a notification.
-  if (!notifiesFrom(thread.place)) return approval
+  // An Approval waits on the Person wherever it was raised. One raised in a Background Thread is
+  // shown on the Feed, and its notice opens the Feed (`opensAt`, `threads/place.ts`).
   yield* (yield* Notifier).notify({
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),

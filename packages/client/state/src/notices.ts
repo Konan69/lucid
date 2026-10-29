@@ -126,6 +126,7 @@ const readAt = (notice: Notification, at: number): Notification => ({
   title: notice.title,
   body: notice.body,
   threadId: notice.threadId,
+  opens: notice.opens,
   createdAt: notice.createdAt,
   readAt: at,
 })
@@ -169,6 +170,7 @@ export const NOTICE_NAME = {
   'needs-you': 'Vivid needs you',
   shared: 'A Thread was shared with you',
   invited: 'You were invited',
+  posted: 'Vivid posted to your Feed',
 } as const satisfies Record<Notification['kind'], string>
 
 /**

@@ -5,6 +5,7 @@ import {
   CompanyId,
   Notification,
   NotificationId,
+  NotificationOpens,
   Person,
   PersonId,
   ShareThreadRequest,
@@ -146,6 +147,10 @@ const seedNotice = Effect.fn('NotificationPrivacy.seedNotice')(function* (
     title: `Notice ${id}`,
     body: `Private work excerpt ${id}`,
     threadId,
+    opens:
+      threadId === null
+        ? NotificationOpens.cases.Notifications.make({})
+        : NotificationOpens.cases.Thread.make({ threadId }),
     createdAt,
     readAt: null,
   })
