@@ -72,6 +72,18 @@ async function bucket(state, services) {
   )
 }
 
+/**
+ * celld samples memory from `/sys/fs/cgroup/memory.current` (`crates/celld/memory.rs` `sample`). WSL
+ * has no cgroup namespace, so on the PC that file is the root cgroup: every process and the page
+ * cache of the whole machine, which T3's own agents keep near 14 GB. celld then reports no memory
+ * headroom and its ready gate never opens (run pi-20261029001557668-468ec446, `MemoryHeadroom`).
+ * On the PC the ceiling is disabled with `CELLD_MAX_RSS_MB=0` (`PressureConfig::from_limits`). A
+ * devbox is a whole Boat VM given to the stack, so it keeps celld's default ceiling.
+ */
+function pressure(state) {
+  return state.hostKind === 'pc' ? { CELLD_MAX_RSS_MB: '0' } : {}
+}
+
 /** celld reports its serving listeners before public health can establish fleet readiness. */
 async function startNode(state, services, node) {
   const env = await fleetEnvironment(state, services.cleanEnv)
@@ -91,6 +103,7 @@ async function startNode(state, services, node) {
     {
       env: {
         ...env,
+        ...pressure(state),
         CELLD_WATCH: state.scratch + '/' + node.role,
         CELLD_NODE: state.run + '-' + node.role,
       },

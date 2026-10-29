@@ -3,6 +3,10 @@
 Run these checks only on the selected devbox at the combined head. The source integration has
 not passed these journeys yet. A control receipt records an operation, not product recovery.
 
+On the PC (WSL) celld reads the root cgroup, which charges the whole machine to the node, so
+Launch starts celld there with `CELLD_MAX_RSS_MB=0` and no memory ceiling. Memory-pressure
+shedding is therefore unproved on the PC; prove it on a devbox.
+
 ## Package the Worker
 
 `pnpm --filter @vivid/cells build` calls celld 0.6.2's native `deploy --dry-run --json` against
