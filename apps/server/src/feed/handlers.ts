@@ -25,9 +25,10 @@ export const feedHandlers = {
    * the Run's own authority, never from the model, so a card can only ever speak for the Thread
    * whose work it reports. A Run must be acting there, as for a notification (`attention.ts`).
    */
-  Post: Effect.fn('Rpc.Post')(function* (request: typeof PostRequest.Type) {
+  Post: Effect.fn('Rpc.Post')(function* (request: PostRequest) {
     const auth = yield* requireVivid()
-    yield* actingRun(auth.threadId, auth.person.id).pipe(
+    // The acting Run is the one posting this content; the store finds what started the work.
+    const postedBy = yield* actingRun(auth.threadId, auth.person.id).pipe(
       Effect.catchTag('NoActingRun', () =>
         Effect.fail(new Forbidden({ message: 'Posting to the Feed needs an acting Run.' })),
       ),
@@ -41,6 +42,7 @@ export const feedHandlers = {
     return yield* (yield* FeedStore).post({
       person: auth.person.id,
       thread: auth.threadId,
+      postedBy,
       request,
     })
   }),

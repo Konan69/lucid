@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { RuntimeSubmissionId } from '@vivid/contracts'
+import { RuntimeSubmissionId, WatchId } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
@@ -261,7 +261,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               id,
               threadId: owner.threadId,
               personId: owner.person.id,
-              origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
+              origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'Calendar clashes', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
@@ -309,7 +309,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             id,
             threadId: owner.threadId,
             personId: owner.person.id,
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+            origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'New mail', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')

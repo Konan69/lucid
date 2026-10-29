@@ -8,8 +8,13 @@ import {
   MarkFeedCardRequest,
   Person,
   PersonId,
+  FeedCause,
+  FeedEvidence,
   FeedPost,
+  FeedProvenance,
+  PostRequest,
   RunId,
+  WatchId,
   ThreadId,
   Workspace,
   type FeedAsk,
@@ -55,16 +60,51 @@ const now = 1_800_000_000_000
 const hour = 60 * 60 * 1000
 const day = 24 * hour
 
-const firstPost = FeedPost.cases.Said.make({
+const firstPost = PostRequest.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'An invoice for ₦84,000 arrived. Pay it?',
   actions: ['Pay it'],
+  sources: [],
 })
-const followUp = FeedPost.cases.Said.make({
+const followUp = PostRequest.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'Paid. The receipt is in your mail.',
   actions: [],
+  sources: [],
 })
+
+/** The Watch the fixture's background work comes from. Its row never exists here, as after removal. */
+const mailWatch = WatchId.make('watch-mail')
+/** A Run's origin as the receiver stores one for an event of `mailWatch`. */
+const watchOrigin = StoredRunOrigin.cases.Watch.make({
+  watchId: mailWatch,
+  watchName: 'Mail',
+  eventId: 'event-1',
+  event: 'message.received',
+  occurredAt: '2026-10-29T09:00:00Z',
+})
+
+/** A card as the Feed reads it back: the posted content with the provenance the server recorded. */
+const shown = (request: PostRequest, provenance: FeedProvenance): FeedPost =>
+  PostRequest.match(request, {
+    Drawn: ({ title, display }): FeedPost =>
+      FeedPost.cases.Drawn.make({ title, display, provenance }),
+    Said: ({ title, words, actions }): FeedPost =>
+      FeedPost.cases.Said.make({ title, words, actions, provenance }),
+  })
+
+/** What a post records when `postedBy` posts in a Thread the Watch Run `cause` started. */
+const recorded = (thread: ThreadId, cause: RunId, postedBy = cause) =>
+  FeedProvenance.cases.Recorded.make({
+    postedBy,
+    cause: FeedCause.cases.Watch.make({
+      run: cause,
+      watch: mailWatch,
+      watchName: 'Mail',
+      eventId: 'event-1',
+    }),
+    evidence: [FeedEvidence.cases.ThreadRun.make({ thread, run: cause })],
+  })
 
 /** A failed cleanup fails the test rather than leaving the fixture's rows behind. */
 const cleanupFailed = () => Effect.sync(() => expect.fail('Feed fixture cleanup failed'))
@@ -157,12 +197,37 @@ const working = Effect.fn('FeedTest.working')(function* (
       threadId: thread,
       personId: person,
       turn: 1,
-      // The Feed never reads a Run's origin, only its state and times.
-      origin: {},
+      origin: watchOrigin,
       state: 'working',
       startedAt,
     }),
   )
+})
+
+/**
+ * The Run a Watch event started in this Thread, finished at `at`: the first Run, which every post
+ * there names as its cause. It is finished so the Thread's stage is the card's alone.
+ */
+const watched = Effect.fn('FeedTest.watched')(function* (
+  person: PersonId,
+  thread: ThreadId,
+  at: number,
+) {
+  const database = yield* Database
+  const id = RunId.make(`run-${crypto.randomUUID()}`)
+  yield* database.run(
+    database.insert(runs).values({
+      id,
+      threadId: thread,
+      personId: person,
+      turn: 1,
+      origin: watchOrigin,
+      state: 'completed',
+      startedAt: at,
+      finishedAt: at,
+    }),
+  )
+  return id
 })
 
 const list = (person: PersonId) => Effect.flatMap(FeedStore, (store) => store.list(person))
@@ -177,11 +242,17 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           const test = yield* fixture()
           const store = yield* FeedStore
           const thread = yield* background(test.ada, now - hour)
+          const run = yield* watched(test.ada, thread, now - hour)
           yield* TestClock.setTime(now)
 
-          const posted = yield* store.post({ person: test.ada, thread, request: firstPost })
+          const posted = yield* store.post({
+            person: test.ada,
+            thread,
+            postedBy: run,
+            request: firstPost,
+          })
           expect(posted._tag).toBe('Posted')
-          const waiting = (post: typeof firstPost, at: number) =>
+          const waiting = (post: FeedPost, at: number) =>
             FeedItem.cases.Waiting.make({
               card: cardIdOf(thread),
               thread,
@@ -191,13 +262,107 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
               seen: false,
               asking: [],
             })
-          expect(yield* items(test.ada)).toEqual([waiting(firstPost, now)])
+          expect(yield* items(test.ada)).toEqual([
+            waiting(shown(firstPost, recorded(thread, run)), now),
+          ])
 
           yield* TestClock.setTime(now + 5 * 60 * 1000)
-          const again = yield* store.post({ person: test.ada, thread, request: followUp })
+          const again = yield* store.post({
+            person: test.ada,
+            thread,
+            postedBy: run,
+            request: followUp,
+          })
           expect(again._tag).toBe('Updated')
-          expect(yield* items(test.ada)).toEqual([waiting(followUp, now + 5 * 60 * 1000)])
+          expect(yield* items(test.ada)).toEqual([
+            waiting(shown(followUp, recorded(thread, run)), now + 5 * 60 * 1000),
+          ])
         }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'a post records the Run that posted it and the Watch event that caused it, and a follow-up keeps the cause',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const database = yield* Database
+          const store = yield* FeedStore
+          const thread = yield* background(test.ada, now - hour)
+          const cause = yield* watched(test.ada, thread, now - hour)
+          yield* TestClock.setTime(now)
+          const page = { label: 'Invoice email', url: 'https://mail.example.com/m/42' }
+          yield* store.post({
+            person: test.ada,
+            thread,
+            postedBy: cause,
+            request: PostRequest.cases.Said.make({ ...firstPost, sources: [page] }),
+          })
+          const first = (yield* items(test.ada))[0]
+          expect(first?.post?.provenance).toEqual(
+            FeedProvenance.cases.Recorded.make({
+              postedBy: cause,
+              cause: FeedCause.cases.Watch.make({
+                run: cause,
+                watch: mailWatch,
+                watchName: 'Mail',
+                eventId: 'event-1',
+              }),
+              evidence: [
+                FeedEvidence.cases.ThreadRun.make({ thread, run: cause }),
+                FeedEvidence.cases.Web.make(page),
+              ],
+            }),
+          )
+
+          // The Person answers on the card; a later Run in the Thread posts the follow-up. It is
+          // the poster now, and the Watch event is still what started the work. No Watch row
+          // exists for `mailWatch`, as after the Watch is removed: the cause needs none.
+          const followed = RunId.make(`run-${crypto.randomUUID()}`)
+          yield* database.run(
+            database.insert(runs).values({
+              id: followed,
+              threadId: thread,
+              personId: test.ada,
+              turn: 2,
+              origin: StoredRunOrigin.cases.Decision.make({}),
+              state: 'completed',
+              startedAt: now,
+              finishedAt: now,
+            }),
+          )
+          yield* TestClock.setTime(now + hour)
+          yield* store.post({ person: test.ada, thread, postedBy: followed, request: followUp })
+          expect((yield* items(test.ada))[0]?.post).toEqual(
+            shown(followUp, recorded(thread, cause, followed)),
+          )
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('a card posted before provenance was recorded reads as Legacy', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const thread = yield* background(test.ada, now - hour)
+        yield* TestClock.setTime(now)
+        // Written as the earlier server did, without the column: its default is what old rows hold.
+        yield* database.run(
+          database.insert(feedCards).values({
+            id: cardIdOf(thread),
+            personId: test.ada,
+            threadId: thread,
+            title: firstPost.title,
+            words: firstPost.words,
+            display: null,
+            actions: firstPost.actions,
+            state: 'new',
+            postedAt: now,
+            updatedAt: now,
+          }),
+        )
+        expect((yield* items(test.ada))[0]?.post).toEqual(
+          shown(firstPost, FeedProvenance.cases.Legacy.make({})),
+        )
+      }).pipe(Effect.scoped),
     )
 
     it.effect('a drawn card is the drawing alone, and reads back as drawn', () =>
@@ -205,21 +370,23 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         const test = yield* fixture()
         const store = yield* FeedStore
         const thread = yield* background(test.ada, now - hour)
+        const run = yield* watched(test.ada, thread, now - hour)
         yield* TestClock.setTime(now)
-        const drawn = FeedPost.cases.Drawn.make({
+        const drawn = PostRequest.cases.Drawn.make({
           title: 'Reply to Dana',
           display:
             'root = Col([Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft"), Button("Send it", @ToAssistant("Send the reply to Dana"))])',
+          sources: [],
         })
 
-        yield* store.post({ person: test.ada, thread, request: drawn })
+        yield* store.post({ person: test.ada, thread, postedBy: run, request: drawn })
         expect(yield* items(test.ada)).toEqual([
           FeedItem.cases.Waiting.make({
             card: cardIdOf(thread),
             thread,
             from: 'Mail',
             at: now,
-            post: drawn,
+            post: shown(drawn, recorded(thread, run)),
             seen: false,
             asking: [],
           }),
@@ -232,13 +399,17 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         const test = yield* fixture()
         const store = yield* FeedStore
         const thread = yield* background(test.ada, now - hour)
+        const run = yield* watched(test.ada, thread, now - hour)
         yield* TestClock.setTime(now)
-        const bare = FeedPost.cases.Drawn.make({
+        const bare = PostRequest.cases.Drawn.make({
           title: 'Reply to Dana',
           display: 'Card([Caption("To Dana"), Text("Friday works.", "sm")], "soft")',
+          sources: [],
         })
 
-        const refused = yield* Effect.flip(store.post({ person: test.ada, thread, request: bare }))
+        const refused = yield* Effect.flip(
+          store.post({ person: test.ada, thread, postedBy: run, request: bare }),
+        )
         expect(refused).toEqual(new FeedDisplayInvalid({ reason: 'NoRoot' }))
         expect(
           (yield* items(test.ada)).some((item) => item.thread === thread && item.post !== null),
@@ -254,8 +425,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           const store = yield* FeedStore
           const posted = now - 2 * day
           const thread = yield* background(test.ada, posted)
+          const run = yield* watched(test.ada, thread, posted)
           yield* TestClock.setTime(posted)
-          yield* store.post({ person: test.ada, thread, request: firstPost })
+          yield* store.post({ person: test.ada, thread, postedBy: run, request: firstPost })
 
           // Two days later the card is still open, so the Thread's age does not drop it.
           yield* TestClock.setTime(now)
@@ -272,7 +444,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             thread,
             from: 'Mail',
             at: now,
-            post: firstPost,
+            post: shown(firstPost, recorded(thread, run)),
           })
           expect(yield* items(test.ada)).toEqual([settled])
 
@@ -293,8 +465,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           const store = yield* FeedStore
           const posted = now - 3 * day
           const thread = yield* background(test.ada, posted)
+          const run = yield* watched(test.ada, thread, posted)
           yield* TestClock.setTime(posted)
-          yield* store.post({ person: test.ada, thread, request: firstPost })
+          yield* store.post({ person: test.ada, thread, postedBy: run, request: firstPost })
           yield* store.mark(
             test.ada,
             MarkFeedCardRequest.make({ card: cardIdOf(thread), state: 'done' }),
@@ -307,7 +480,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
               threadId: thread,
               personId: test.ada,
               turn: 2,
-              origin: {},
+              origin: StoredRunOrigin.cases.Decision.make({}),
               state: 'completed',
               startedAt: now - 2 * hour,
               finishedAt: now - hour,
@@ -346,7 +519,12 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           { person: test.ben, place: 'Background', company: test.company, updatedAt: now },
           'Ben’s mail',
         )
-        yield* store.post({ person: test.ben, thread: bens, request: firstPost })
+        yield* store.post({
+          person: test.ben,
+          thread: bens,
+          postedBy: yield* watched(test.ben, bens, now),
+          request: firstPost,
+        })
         // A Conversation has no posted card, but its working Run still belongs in Ada's Feed.
         const conversation = yield* insertThread(
           { person: test.ada, place: 'Conversation', company: null, updatedAt: now },
@@ -569,7 +747,12 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             { person: test.ada, place: 'Background', company: test.company, updatedAt: now },
             'Company mail',
           )
-          yield* store.post({ person: test.ada, thread: adas, request: firstPost })
+          yield* store.post({
+            person: test.ada,
+            thread: adas,
+            postedBy: yield* watched(test.ada, adas, now),
+            request: firstPost,
+          })
           expect((yield* items(test.ada)).map((item) => item.thread)).toEqual([adas])
 
           yield* database.run(
@@ -705,7 +888,12 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           { person: test.ben, place: 'Background', company: test.company, updatedAt: now },
           'Ben’s mail',
         )
-        yield* store.post({ person: test.ben, thread: bens, request: firstPost })
+        yield* store.post({
+          person: test.ben,
+          thread: bens,
+          postedBy: yield* watched(test.ben, bens, now),
+          request: firstPost,
+        })
         const before = yield* items(test.ben)
 
         yield* TestClock.setTime(now + hour)
