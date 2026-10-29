@@ -206,8 +206,9 @@ export const captureFault = (thrown: Error): void => {
  * on the first screen as a state, not as a thrown error, so nothing else reports them. The loss's
  * name is the report's type, which `scrub` keeps; no message, link or code goes with it.
  */
-export const captureSignInLoss = (loss: string): void => {
-  const lost = new Error(loss)
-  lost.name = loss
+export const captureSignInLoss = (loss: string, shape?: string): void => {
+  const name = shape === undefined ? loss : `${loss} ${shape}`
+  const lost = new Error(name)
+  lost.name = name
   captureException(lost)
 }
