@@ -1,6 +1,8 @@
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  type GetComputerHealthRequest,
+  type RecoverComputerRequest,
   DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
@@ -33,6 +35,7 @@ import {
   computerFileRead,
   computerFileWrite,
 } from './store.ts'
+import { getCapabilities } from './capabilities.ts'
 import { computerInventory } from './inventory.ts'
 export { computerRunner } from './store.ts'
 
@@ -96,6 +99,20 @@ const egressStatus = Effect.fn('Computers.egressStatus')(function* (actor: Pick<
 })
 
 export const computerHandlers = {
+  GetCapabilities: Effect.fn('Rpc.GetCapabilities')(function* () {
+    return yield* getCapabilities(yield* requireActor())
+  }),
+  GetComputerHealth: Effect.fn('Rpc.GetComputerHealth')(function* (
+    request: GetComputerHealthRequest,
+  ) {
+    const actor = yield* requireActor()
+    return yield* (yield* ComputerStore).health(actor.person.id, request.depth)
+  }),
+  /** Runtime identity alone is insufficient for recovery; its Run must still be active. */
+  RecoverComputer: Effect.fn('Rpc.RecoverComputer')(function* (request: RecoverComputerRequest) {
+    const actor = yield* requireActor()
+    return yield* (yield* ComputerStore).recover(actor, request)
+  }),
   /** Public receipt contains only the outcome and count; cookies never cross the runtime RPC. */
   CopySignIn: Effect.fn('Rpc.CopySignIn')(function* (request: CopySignInRequest) {
     yield* requireVivid()

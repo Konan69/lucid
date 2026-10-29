@@ -384,3 +384,10 @@ export const signInTarget = Effect.fn('Machine.boat.browser.signInTarget')(funct
   yield* prepare(native, window)
   return window
 })
+
+/** Health reads the existing binding and semantic outline without preparation, launch or
+ * navigation. Permission refusals remain distinct from an unresponsive browser. */
+export const browserHealth = Effect.fn('Machine.boat.browser.health')(function* (native: Driver) {
+  const window = yield* chrome(native, false, Effect.succeedNone)
+  return yield* snapshot(native, yield* binding(native, window))
+})

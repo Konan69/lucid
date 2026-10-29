@@ -1,6 +1,9 @@
 import { sql } from 'drizzle-orm'
 import { boolean, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type {
+  ComputerRecoveryId,
+  ComputerRecoveryStep,
+  ComputerRecoveryOutcome,
   BrowserAction,
   WindowAction,
   DeviceWork,
@@ -120,4 +123,14 @@ export const deviceRequests = pgTable('vivid_device_requests', {
     .generatedAlwaysAs(sql`("receipt"->>'_tag')`),
   dispatchedAt: epoch('dispatched_at').notNull(),
   expiresAt: epoch('expires_at').notNull(),
+})
+
+/** Claimed precedes dispatch. A crash retains uncertainty; a duplicate never dispatches again.
+ * The key belongs to a Person and step, not to whichever server process receives the retry. */
+export const computerRecoveries = pgTable('vivid_computer_recoveries', {
+  id: text('id').$type<ComputerRecoveryId>().primaryKey(),
+  personId: personColumn().notNull(),
+  step: text('step').$type<ComputerRecoveryStep>().notNull(),
+  createdAt: epoch('created_at').notNull(),
+  outcome: jsonb('outcome').$type<typeof ComputerRecoveryOutcome.Encoded>(),
 })

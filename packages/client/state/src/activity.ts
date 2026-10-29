@@ -181,6 +181,15 @@ const STEPS = {
     },
     detail: nothing,
   },
+  // A reference file of a built-in way of working reads, to a Person, the same as the way itself.
+  read_skill_file: {
+    said: {
+      running: 'Reading how it does this',
+      done: 'Read how it does this',
+      failed: 'Could not read how it does this',
+    },
+    detail: nothing,
+  },
   save_skill: {
     said: {
       running: 'Saving how to do this',
@@ -252,6 +261,30 @@ const STEPS = {
       failed: 'The computer did not do it',
     },
     detail: (asked) => [said(asked.summary)],
+  },
+  get_capabilities: {
+    said: {
+      running: 'Checking what it can do',
+      done: 'Checked what it can do',
+      failed: 'Could not check what it can do',
+    },
+    detail: nothing,
+  },
+  computer_health: {
+    said: {
+      running: 'Checking its computer',
+      done: 'Checked its computer',
+      failed: 'Could not check its computer',
+    },
+    detail: nothing,
+  },
+  recover_computer: {
+    said: {
+      running: 'Fixing its computer',
+      done: 'Fixed its computer',
+      failed: 'Could not fix its computer',
+    },
+    detail: nothing,
   },
   // The Person's own computer, not Vivid's: "your", so the line never reads as the machine
   // Vivid keeps for itself (`use_desktop` above).

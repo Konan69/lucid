@@ -485,7 +485,8 @@ it.effect('keeps another Computer’s same-path mutation independent after cance
       () => (++calls === 1 ? ada.layer : dami.layer),
       () => Effect.die('Unexpected memory authority'),
       unusedMemory,
-    )
+      [],
+    ).tools
     const write = definitions.find((tool) => tool.name === 'write')
     if (write === undefined) expect.fail('Missing write tool.')
     // @effect-diagnostics-next-line abortControllerInEffect:off -- This test cancels only Pi’s first submission while its own Effect and second submission remain live.
@@ -533,7 +534,8 @@ it.effect('probes each Computer before choosing rg or grep', () =>
       () => (++calls === 1 ? ada.layer : dami.layer),
       () => Effect.die('Unexpected memory authority'),
       unusedMemory,
-    )
+      [],
+    ).tools
     const grep = definitions.find((tool) => tool.name === 'grep')
     if (grep === undefined) expect.fail('Missing grep tool.')
     const signal = yield* Effect.abortSignal

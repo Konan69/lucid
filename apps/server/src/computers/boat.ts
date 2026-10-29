@@ -12,6 +12,7 @@ import {
   type MachineKey,
   type MachineOperations,
 } from './machine.ts'
+import { machineHealth } from './boat/health.ts'
 import { bindings } from './boat/bindings.ts'
 import type { CommandFrame, ProviderId } from './boat/protocol.ts'
 import { transport, type Transport } from './boat/transport.ts'
@@ -142,6 +143,7 @@ export const boatMachineLayer = Layer.effect(
     })
     const shell = connections.operations(accepted)
     return Machine.of({
+      ...machineHealth({ api, accepted, shell, connections, drivers, forget }),
       copySignIn: makeCookieCopy({
         native: nativeDriver,
         operations: connections.operations(accepted),

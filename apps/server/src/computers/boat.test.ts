@@ -7,6 +7,14 @@ import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  CapabilityComputerFact,
+  CapabilityDeviceFact,
+  ComputerLifecycle,
+  ComputerRecoveryRefusal,
+  ComputerRecoveryId,
+  ComputerRecoveryOutcome,
+  InstallationId,
+  ThreadId,
   BrowserAction,
   ComputerState,
   DesktopAction,
@@ -40,11 +48,13 @@ import {
 } from 'effect/http'
 import { Gate, GateDecision } from '../approvals/gate.ts'
 import { personTable } from '../auth/tables.ts'
+import { connectionTestLayer } from '../connections/testing.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { boatMachineLayer } from './boat.ts'
-import { deviceLayer } from './device.ts'
+import { DeviceRegistry, deviceLayer } from './device.ts'
+import { computerRecoveries, computers } from './tables.ts'
 import { computerHandlers } from './handlers.ts'
 import {
   isOutage,
@@ -901,6 +911,7 @@ const accountsLayer = computerStoreLayer.pipe(
       ),
     ),
   ),
+  Layer.provideMerge(connectionTestLayer),
 )
 
 /** Two real accounts; their rows, Computers and bindings are removed whatever the test did. */
@@ -1069,6 +1080,145 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'reads scoped capability facts passively and retains recovery receipts across retries',
+      () =>
+        Effect.gen(function* () {
+          const { first, second } = yield* accounts()
+          const database = yield* Database
+          const store = yield* ComputerStore
+          const actor = (person: Person) => ({
+            person,
+            workspace: Workspace.cases.Personal.make({}),
+            by: 'person' as const,
+            threadId: Option.none(),
+          })
+          const absent = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(absent.computer).toEqual(
+            CapabilityComputerFact.cases.Available.make({
+              value: { state: ComputerLifecycle.cases.Absent.make({}), heldByPerson: false },
+            }),
+          )
+          expect(
+            (yield* computerHandlers.GetComputerHealth({ depth: 'Shallow' }).pipe(asAccount(first)))
+              ._tag,
+          ).toBe('Absent')
+          const now = Date.now()
+          yield* database.run(
+            database.insert(computers).values({
+              id: NodeCrypto.randomUUID(),
+              personId: first.id,
+              machine: computerMachineKey(first.id),
+              status: 'stopped',
+              since: now,
+              createdAt: now,
+              lastActivityAt: 73,
+            }),
+          )
+          const sleeping = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(
+            CapabilityComputerFact.guards.Available(sleeping.computer) &&
+              sleeping.computer.value.state._tag,
+          ).toBe('Stopped')
+          expect(
+            (yield* computerHandlers.GetComputerHealth({ depth: 'Shallow' }).pipe(asAccount(first)))
+              ._tag,
+          ).toBe('Sleeping')
+          expect((yield* store.health(first.id, 'Deep'))._tag).toBe('Sleeping')
+          const registry = yield* DeviceRegistry
+          const device = yield* registry.enrol(first.id, {
+            installation: InstallationId.make(NodeCrypto.randomUUID()),
+            name: 'Proof desktop',
+          })
+          yield* registry.allow(first.id, device.id)
+          const personal = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(
+            CapabilityDeviceFact.guards.Available(personal.devices) &&
+              personal.devices.value.map((current) => [
+                current.id,
+                current.access._tag,
+                current.presence._tag,
+              ]),
+          ).toEqual([[device.id, 'Allowed', 'Offline']])
+          expect(
+            (yield* computerHandlers.GetCapabilities().pipe(asAccount(second))).devices,
+          ).toEqual(CapabilityDeviceFact.cases.Available.make({ value: [] }))
+          const unsupported = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Restore' as const,
+          }
+          const refusal = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'RestartBrowser' as const,
+          }
+          expect((yield* store.recover(actor(first), unsupported))._tag).toBe('Unsupported')
+          expect(yield* store.recover(actor(first), refusal)).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.WrongStep.make({}),
+            }),
+          )
+          const saved = yield* store.recover(actor(first), unsupported)
+          expect(yield* store.recover(actor(first), unsupported)).toEqual(saved)
+          const restarted = Context.get(
+            yield* Layer.build(Layer.fresh(computerStoreLayer)),
+            ComputerStore,
+          )
+          expect(yield* restarted.recover(actor(first), unsupported)).toEqual(saved)
+          const runtimeReceipt = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Reconnect' as const,
+          }
+          expect(
+            yield* computerHandlers
+              .RecoverComputer(runtimeReceipt)
+              .pipe(
+                Effect.provideService(
+                  AuthContext,
+                  AuthState.Vivid({
+                    person: first,
+                    workspace: Workspace.cases.Personal.make({}),
+                    threadId: ThreadId.make(NodeCrypto.randomUUID()),
+                  }),
+                ),
+              ),
+          ).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.RunRequired.make({}),
+            }),
+          )
+
+          expect(yield* store.recover(actor(first), { ...unsupported, step: 'Reboot' })).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.KeyReused.make({}),
+            }),
+          )
+          expect(yield* store.recover(actor(second), unsupported)).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.KeyReused.make({}),
+            }),
+          )
+          const interrupted = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Reboot' as const,
+          }
+          yield* database.run(
+            database
+              .insert(computerRecoveries)
+              .values({ ...interrupted, personId: first.id, createdAt: now }),
+          )
+          expect(yield* store.recover(actor(first), interrupted)).toEqual(
+            ComputerRecoveryOutcome.cases.OutcomeUnknown.make({ receipt: interrupted.id }),
+          )
+          const [row] = yield* database.run(
+            database.select().from(computers).where(eq(computers.personId, first.id)),
+          )
+          if (row === undefined) return expect.fail('Expected the stopped fixture row')
+          expect(row.lastActivityAt).toBe(73)
+          expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+          expect(yield* Ref.get((yield* Evidence).viewers)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+    )
+
     it.effect('adopts for one Person without writing an intent for a refused Person', () =>
       Effect.gen(function* () {
         const first = yield* fixture()

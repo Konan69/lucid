@@ -47,6 +47,8 @@ function normaliseReply(text) {
 }
 
 const missing = {
+  capabilities: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
+  computer: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',

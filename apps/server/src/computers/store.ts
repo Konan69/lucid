@@ -16,6 +16,11 @@ import {
   Scope,
 } from 'effect'
 import {
+  ComputerLifecycle,
+  ComputerHealth,
+  ComputerRecoveryOutcome,
+  type ComputerHealthDepth,
+  type RecoverComputerRequest,
   ActionTarget,
   BrowserAction,
   DesktopAction,
@@ -65,6 +70,8 @@ import {
 } from './machine.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
+import { healthOperations } from './health.ts'
+import { computerRecovery } from './recovery.ts'
 import { computers } from './tables.ts'
 import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 
@@ -456,8 +463,25 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
       isStanding(started.failure),
   }
 })
+/** The existing lifecycle authority shared by passive diagnosis and targeted recovery. */
+export type ComputerAuthority = Effect.Success<ReturnType<typeof lifecycle>>
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
+  readonly inspect: (
+    person: PersonId,
+  ) => Effect.Effect<
+    { readonly state: ComputerLifecycle; readonly heldByPerson: boolean },
+    StoreError | MachineFailure
+  >
+  readonly health: (
+    person: PersonId,
+    depth: ComputerHealthDepth,
+  ) => Effect.Effect<ComputerHealth, StoreError>
+  readonly recover: (
+    actor: Actor,
+    request: RecoverComputerRequest,
+  ) => Effect.Effect<ComputerRecoveryOutcome, StoreError>
+
   /** The takeover and idle-stop permit is held until the private cookie import ends. */
   readonly copySignIn: (
     person: PersonId,
@@ -1072,6 +1096,18 @@ const ownMachine = (
   ),
 })
 
+/** Health and receipt-backed recovery form the diagnostic part of the Computer authority. */
+function diagnostics(state: ComputerAuthority, database: Database['Service']) {
+  const { inspect, health } = healthOperations({ state, database })
+  const recover = computerRecovery({
+    state,
+    database,
+    health,
+    wake: (person) => prepare(state, person),
+  })
+  return { inspect, health, recover }
+}
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
@@ -1195,6 +1231,7 @@ export const computerStoreLayer = Layer.effect(
       return yield* state.stop(person)
     })
     return ComputerStore.of({
+      ...diagnostics(state, database),
       // A sign-in can start Chrome too; it must choose the same way out as a browse action.
       copySignIn: Effect.fn('ComputerStore.copySignIn')(function* (person, cookies) {
         const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
