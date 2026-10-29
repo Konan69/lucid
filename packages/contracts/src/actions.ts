@@ -34,7 +34,11 @@ export type ActionDeliveryReceipt = typeof ActionDeliveryReceipt.Type
  */
 export const ActionReceipt = Schema.TaggedUnion({
   Accepted: { operationId: ActionOperationId, acceptedAt: Schema.Finite },
-  Completed: { operationId: ActionOperationId, completedAt: Schema.Finite, resultDigest: Schema.String },
+  Completed: {
+    operationId: ActionOperationId,
+    completedAt: Schema.Finite,
+    resultDigest: Schema.String,
+  },
   Delivered: {
     operationId: ActionOperationId,
     completedAt: Schema.Finite,
@@ -49,7 +53,7 @@ export const ActionApplied = Schema.Union([
   ActionReceipt.cases.Accepted,
   ActionReceipt.cases.Completed,
   ActionReceipt.cases.Delivered,
-])
+]).pipe(Schema.toTaggedUnion('_tag'))
 export type ActionApplied = typeof ActionApplied.Type
 
 /**

@@ -415,6 +415,12 @@ export const ToolOutcome = Schema.TaggedUnion({
    * on a display.
    */
   Completed: { output: Schema.Json, receipt: Schema.NullOr(ActionApplied) },
+  /**
+   * This exact operation was already done: the runtime retried a call that had been answered, or
+   * the same act was reconciled as applied. Its receipt is what is known; it was not sent again,
+   * and the provider's answer is not kept.
+   */
+  Repeated: { receipt: ActionApplied },
   /** A Person must decide. The turn ends; the decision returns to the Thread. */
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   /** A rule forbids it. */
