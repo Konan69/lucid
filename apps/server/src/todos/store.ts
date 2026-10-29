@@ -48,30 +48,56 @@ const makeStore = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, decodeTodo)
   })
 
-  /** Thread access and workspace agree before the to-do joins the calling Person's list. */
+  /**
+   * Thread access and workspace agree before the to-do joins the calling Person's list. The same
+   * words already open on the list (case and outer spaces aside) answer with that to-do instead of
+   * a second one: two identical open to-dos cannot be told apart by words, so "I renewed it" could
+   * tick off neither (verify-vivid, 29 October 2026). Adds for one owner serialize on an advisory
+   * lock, as Skill names do (`skills/store.ts` `lockScope`), so two at once cannot both insert.
+   */
   const add = Effect.fn('TodoStore.add')(function* (actor: Actor, request: AddTodoRequest) {
     const thread = yield* requireThread(request.threadId, actor.person.id)
     const companyId = companyColumnOf(actor.workspace)
     if (thread.companyId !== companyId) return yield* new NotFound({ message: 'Thread not found' })
     const state = yield* encodeState(TodoState.cases.Open.make({}))
-    const rows = yield* database.run(
-      database
-        .insert(todos)
-        .values({
-          id: TodoId.make(crypto.randomUUID()),
-          personId: actor.person.id,
-          companyId,
-          threadId: request.threadId,
-          what: request.what,
-          due: request.due,
-          state,
-          updatedAt: yield* Clock.currentTimeMillis,
-        })
-        .returning(),
+    const outcome = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const key =
+          companyId === null
+            ? `todos:person:${actor.person.id}`
+            : `todos:company:${companyId}:${actor.person.id}`
+        yield* tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
+        const same = yield* tx
+          .select()
+          .from(todos)
+          .where(
+            and(
+              ownedHere(todos, actor),
+              sql`${todos.state}->>'_tag' = 'Open'`,
+              sql`lower(btrim(${todos.what})) = lower(btrim(${request.what}))`,
+            ),
+          )
+          .limit(1)
+        const existing = same[0]
+        if (existing !== undefined) return { todo: yield* decodeTodo(existing), added: false }
+        const rows = yield* tx
+          .insert(todos)
+          .values({
+            id: TodoId.make(crypto.randomUUID()),
+            personId: actor.person.id,
+            companyId,
+            threadId: request.threadId,
+            what: request.what,
+            due: request.due,
+            state,
+            updatedAt: yield* Clock.currentTimeMillis,
+          })
+          .returning()
+        return { todo: yield* decodeTodo(yield* returned(rows, 'to-do')), added: true }
+      }),
     )
-    const todo = yield* decodeTodo(yield* returned(rows, 'to-do'))
-    yield* changed(actor)
-    return todo
+    if (outcome.added) yield* changed(actor)
+    return outcome.todo
   })
 
   /**

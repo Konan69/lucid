@@ -80,6 +80,17 @@ describe.skipIf(!testDatabaseConfigured)('To-dos', () => {
           })
           expect((yield* nextValue({ values, receipt, fiber })).todos).toEqual([added])
 
+          // The same words again, twice at once and written differently: still one open to-do.
+          const again = yield* Effect.all(
+            [
+              store.add(test.personal, { ...request, what: ' Renew my PASSPORT ' }),
+              store.add(test.personal, { ...request, what: 'renew my passport' }),
+            ],
+            { concurrency: 2 },
+          )
+          expect(again).toEqual([added, added])
+          expect(yield* store.list(test.personal)).toEqual([added])
+
           // Another Person's list is unreachable: not listed, not closable, and their Thread is not
           // a place to add to it.
           expect(yield* store.list(test.other)).toEqual([])
@@ -106,6 +117,11 @@ describe.skipIf(!testDatabaseConfigured)('To-dos', () => {
           expect(
             yield* Effect.flip(store.drop(test.personal, { id: added.id, why: 'Changed my mind' })),
           ).toBeInstanceOf(Conflict)
+
+          // Once it is done, the same words are a new to-do.
+          const renewal = yield* store.add(test.personal, request)
+          expect(renewal.id).not.toEqual(added.id)
+          yield* store.drop(test.personal, { id: renewal.id, why: 'Added again by mistake' })
 
           const second = yield* store.add(
             test.personal,
@@ -153,13 +169,14 @@ describe.skipIf(!testDatabaseConfigured)('To-dos', () => {
             undated.id,
             expect.anything(),
             expect.anything(),
+            expect.anything(),
           ])
           expect(
             listed
               .slice(2)
               .map((todo) => todo.state._tag)
               .toSorted(),
-          ).toEqual(['Done', 'Dropped'])
+          ).toEqual(['Done', 'Dropped', 'Dropped'])
         }).pipe(Effect.scoped),
     )
   })
