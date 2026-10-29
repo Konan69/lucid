@@ -42,6 +42,9 @@ const pleasing = Atom.keepAlive(Atom.fn(() => Effect.sleep('3500 millis')))
 export const usePleased = <Value>(select: (state: Pleased) => Value): Value =>
   select({ pleased: useAtomValue(pleasing).waiting })
 
+/** Vivid is pleased for a moment: after a card is settled, or a record of what is owed closed. */
+export const please = (data: LiveData): void => data.registry.set(pleasing, undefined)
+
 /**
  * Supply only the phone's existing transports. The shared machine owns duplicate presses,
  * retry keys and late receipts; a refused transport becomes its Unsent state.
@@ -50,7 +53,7 @@ const sending = (data: LiveData) =>
   Layer.succeed(feed.Sending, {
     send: Effect.fn('Feed.send')(function* ({ card, thread, pressed }: feed.Delivery) {
       confirm()
-      data.registry.set(pleasing, undefined)
+      please(data)
       const sent = yield* feed.Settling.$match(pressed.how, {
         // `say` is an Effect that answers with how the delivery went, never failing itself.
         Said: ({ words, key }) =>

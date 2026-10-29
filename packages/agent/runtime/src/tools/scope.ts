@@ -10,6 +10,10 @@ import { ComputerSaid } from './sandbox.ts'
 export interface ScopeService {
   readonly acting: Acting
   readonly client: VividRpcClient['Service']
+  /** The Person's time zone frozen in the response's context (`context.ts`), `''` when their
+   * settings name none. A tool that turns the model's local date words into instants reads the
+   * same zone the model was shown, never the host zone. */
+  readonly timezone: string
 }
 
 /** Authority is server-bound per call; neither actor nor folder can be chosen by model input. */

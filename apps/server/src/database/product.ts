@@ -17,6 +17,7 @@ export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tabl
 export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'
 export { notifications } from '../notifications/tables.ts'
+export { owed } from '../owed/tables.ts'
 export { pushTargets, pushDeliveries } from '../push/tables.ts'
 export {
   firstThreads,

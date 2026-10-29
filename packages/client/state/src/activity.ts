@@ -32,6 +32,8 @@ const Asked = Schema.Struct({
   title: text,
   question: text,
   site: text,
+  /** What is owed, on the steps that keep the Person's waiting-on list. */
+  what: text,
 })
 type Asked = typeof Asked.Type
 
@@ -399,6 +401,38 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  track_owed: {
+    said: {
+      running: 'Keeping track of it',
+      done: 'Keeping track of it',
+      failed: 'Could not keep track of it',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  update_owed: {
+    said: {
+      running: 'Updating what you are waiting on',
+      done: 'Updated what you are waiting on',
+      failed: 'Could not update what you are waiting on',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  resolve_owed: {
+    said: {
+      running: 'Marking it received',
+      done: 'Marked it received',
+      failed: 'Could not mark it received',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  drop_owed: {
+    said: {
+      running: 'Letting it go',
+      done: 'Stopped waiting on it',
+      failed: 'Could not stop waiting on it',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
@@ -419,6 +453,7 @@ const NOTHING_ASKED: Asked = {
   title: Option.none(),
   question: Option.none(),
   site: Option.none(),
+  what: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {

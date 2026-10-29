@@ -2,8 +2,8 @@ import type { FeedResponse, MeResponse, ThreadId } from '@vivid/contracts'
 import {
   draftPlace,
   feed,
-  greetingAt,
   makeWhen,
+  owed,
   thisReader,
   workspaceKey,
   type DeviceList,
@@ -12,15 +12,18 @@ import { Check } from 'lucide-react'
 import { Option } from 'effect'
 import { useState } from 'react'
 import { answer, close, pressOn, seenWhenShown, usePleased, usePresses } from '../data/feed'
+import { useStandings } from '../data/owed'
 import { live, LiveState, useLive, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
 import { Card, Answers } from './feed/Card'
+import { Owed } from './feed/Owed'
 import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
 
 const when = makeWhen(thisReader())
+const said = owed.makeOwedWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
 const today = new Intl.DateTimeFormat(thisReader().locale, {
@@ -31,54 +34,70 @@ const today = new Intl.DateTimeFormat(thisReader().locale, {
 
 /**
  * The Feed: how Vivid brings things to the Person. Vivid works on its own in background Threads
- * and reaches the Person only through cards it posts there (`FeedItem`, `@vivid/contracts`).
+ * and reaches the Person through cards it posts there (`FeedItem`, `@vivid/contracts`), and it
+ * keeps the list of who owes the Person what (`Owed`), which it chases.
  *
- * The page is the accepted design of 13 October 2026 (v8, then v9 for the buttons), in the app's
- * own pieces. The head is the date, the greeting, and the standing line ("2 things need you. The
- * rest is handled."). Under it, what waits on the Person, one card each. Beside it on a wide
- * screen (under it on a narrow one) is Vivid's own column: its living face, what it is working on,
- * and what is handled. The composer stays at the foot, as on the first screen, because a Feed with
- * no way to start a Thread was rejected ("I can't start a thread from here").
+ * The page is the "tide table" direction of 27 October 2026. The head is the date beside Vivid's
+ * living face and one sentence about what the Person is waiting on ("5 people owe you. Adaeze is
+ * a day late."), or, with nothing owed, the Feed's standing line. Then the waiting-on list, the
+ * page's hero (`feed/Owed.tsx`). Beside it on a wide screen (under it on a narrow one) is what
+ * needs the Person, one card each, Vivid's work in hand, and what is handled. The composer stays at
+ * the foot, because a Feed with no way to start a Thread was rejected ("I can't start a thread
+ * from here").
  *
- * Settling a card folds it away where it stood (`motion-fold`) and Vivid's face is pleased for a
- * moment (`usePleased`), so the press is answered on the frame it happened in.
+ * Settling a card or closing a record folds it away where it stood (`motion-fold`) and Vivid's
+ * face is pleased for a moment (`usePleased`), so the press is answered on the frame it happened in.
  */
 export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId) => void }) {
   const state = useLive(live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
   const devices = useLiveValue(live.devices)
-  return <FeedView me={me} items={items} devices={devices} onOpen={onOpen} />
+  const owedList = useLiveValue(live.owed)
+  return (
+    <FeedView
+      me={me}
+      items={items}
+      waiting={Option.match(owedList, {
+        onNone: () => [],
+        onSome: (list) => owed.waitingOf(list.owed),
+      })}
+      devices={devices}
+      onOpen={onOpen}
+    />
+  )
 }
 
-/** The Feed drawn from its items: everything above, with no query of its own. */
+/** The Feed drawn from its items and the waiting-on list: everything above, with no query of its own. */
 export function FeedView({
   me,
   items,
+  waiting,
   devices,
   onOpen,
 }: {
   me: MeResponse
   items: (typeof FeedResponse.Type)['items']
+  waiting: ReadonlyArray<owed.Waiting>
   devices: Option.Option<DeviceList>
   onOpen: (thread: ThreadId) => void
 }) {
   const view = feed.feedView(items, devices)
-  const pleased = usePleased((now) => now.pleased)
+  const pleased = usePleased((face) => face.pleased)
   const { name } = useAppearance()
-  // Read once: a greeting that changed while someone was looking at it would be a glitch.
-  const [hello] = useState(() => greetingAt(new Date().getHours()))
   // The moment the page was opened, which every time on it is said against; read once.
   const [now] = useState(() => Date.now())
   const date = today.format(now)
-  const first = me.person.name.trim().split(/\s+/u)[0]
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
-  const presses = usePresses((now) => now.presses)
-  const standing = feed.standingOf(
+  const presses = usePresses((held) => held.presses)
+  // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
+  const standings = useStandings()
+  const open = waiting.filter((record) => standings.get(record.id) !== 'folded')
+  const needs =
     Option.toArray(view.computer).length +
-      view.waiting.filter(
-        (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
-      ).length,
-  )
+    view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
+      .length
+  const standing = feed.standingOf(needs)
+  const head = owed.headOf(open, said.timing, now)
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -89,11 +108,13 @@ export function FeedView({
         <header className="flex motion-enter items-end justify-between gap-4 lg:col-span-3">
           <div className="min-w-0">
             <p className="text-label text-ink-3">{date}</p>
+            {/* The one line the page opens with: what the Person is waiting on, or, with nothing
+                owed, what needs them. Never a greeting. */}
             <h1 className="mt-2.5 font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
-              {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
+              {Option.match(head, { onNone: () => standing.lead, onSome: ({ lead }) => lead })}
             </h1>
             <p className="mt-3 text-dialog text-pretty text-ink-2">
-              <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
+              <Standing head={head} standing={standing} />
             </p>
           </div>
           {/* On a narrow screen Vivid's face heads the page; on a wide one it heads its own column. */}
@@ -107,24 +128,32 @@ export function FeedView({
           </p>
         </div>
 
-        <div className="mt-6 flex min-w-0 flex-col lg:col-span-3">
-          {Option.toArray(view.computer).map((waiting) => (
-            <div key={waiting.device.id} className="pb-3">
-              <Computer waiting={waiting} now={now} />
-            </div>
-          ))}
-          {view.waiting.map((item) => (
-            <Waiting
-              // A new post is a new card: the display's own choices start again with it.
-              key={`${item.card}:${feed.revisionOf(item)}`}
-              item={item}
-              now={now}
-              onOpen={() => onOpen(item.thread)}
-            />
-          ))}
+        <div className="mt-8 flex min-w-0 flex-col gap-8 lg:col-span-3">
+          {waiting.length > 0 && <Owed waiting={waiting} now={now} onOpen={onOpen} />}
+          {(Option.isSome(view.computer) || view.waiting.length > 0) && (
+            <section aria-labelledby="needs-heading" className="flex flex-col">
+              <h2 id="needs-heading" className="px-1 pb-2 text-label font-title text-ink-3">
+                Needs you
+              </h2>
+              {Option.toArray(view.computer).map((asking) => (
+                <div key={asking.device.id} className="pb-3">
+                  <Computer waiting={asking} now={now} />
+                </div>
+              ))}
+              {view.waiting.map((item) => (
+                <Waiting
+                  // A new post is a new card: the display's own choices start again with it.
+                  key={`${item.card}:${feed.revisionOf(item)}`}
+                  item={item}
+                  now={now}
+                  onOpen={() => onOpen(item.thread)}
+                />
+              ))}
+            </section>
+          )}
         </div>
 
-        <aside className="mt-6 flex min-w-0 flex-col gap-3 lg:sticky lg:top-6 lg:col-span-2 lg:col-start-4 lg:row-start-2 lg:self-start">
+        <aside className="mt-8 flex min-w-0 flex-col gap-3 pb-6 lg:sticky lg:top-6 lg:col-span-2 lg:col-start-4 lg:row-start-2 lg:self-start">
           {view.working.map((item) => (
             <Card
               key={item.card}
@@ -157,6 +186,36 @@ export function FeedView({
     </section>
   )
 }
+
+/**
+ * The line under the head's sentence. With something owed: the record that matters now, bold, then
+ * what needs the Person; or, with none of them urgent, the Feed's standing line. With nothing
+ * owed the head already said the standing, so this says how something comes to be owed.
+ */
+function Standing({
+  head,
+  standing,
+}: {
+  head: Option.Option<owed.Head>
+  standing: ReturnType<typeof feed.standingOf>
+}) {
+  if (Option.isNone(head)) return EMPTY
+  return Option.match(head.value.rest, {
+    onSome: (rest) => (
+      <>
+        <b className="font-title text-ink">{rest}</b> {standing.lead}
+      </>
+    ),
+    onNone: () => (
+      <>
+        <b className="font-title text-ink">{standing.lead}</b> {standing.rest}
+      </>
+    ),
+  })
+}
+
+/** What the head says under the standing line when nobody owes the Person anything. */
+const EMPTY = 'When someone promises you something, tell Vivid. It keeps track and chases it.'
 
 /**
  * A card that waits on the Person, in its slot. The slot folds away while a press on it is on

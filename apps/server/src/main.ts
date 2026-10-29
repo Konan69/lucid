@@ -59,6 +59,7 @@ import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
+import { owedStoreLayer } from './owed/store.ts'
 import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
@@ -111,6 +112,7 @@ const serverProgram = Effect.gen(function* () {
     companyStoreLayer,
     settingsStoreLayer,
     projectStoreLayer,
+    owedStoreLayer,
     threadStoreLayer,
     runStoreLayer,
     notificationStoreLayer,

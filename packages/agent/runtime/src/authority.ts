@@ -26,18 +26,27 @@ export const scopeResolver =
         return Layer.effect(
           Scope,
           Effect.gen(function* () {
-            return Scope.of({ acting: authority.acting, client: yield* VividRpcClient })
+            return Scope.of({
+              acting: authority.acting,
+              client: yield* VividRpcClient,
+              timezone: authority.timezone,
+            })
           }),
         ).pipe(Layer.provide(product.as(authority.acting)))
       }),
     )
+
+/** The delivery's authority plus the time zone frozen with the response being answered. */
+interface CallAuthority extends DeliveryAuthority {
+  readonly timezone: string
+}
 
 /** Resolve delivery authority without acquiring the product client, so local memory survives a server outage. */
 export const resolveCall: (
   harness: Effect.Effect<Harness>,
   product: ProductService,
   call: Parameters<ResolveScope>[0],
-) => Effect.Effect<DeliveryAuthority, ToolFailure> = Effect.fn('Authority.resolveCall')(
+) => Effect.Effect<CallAuthority, ToolFailure> = Effect.fn('Authority.resolveCall')(
   function* (
     harness: Effect.Effect<Harness>,
     product: ProductService,
@@ -61,7 +70,7 @@ export const resolveCall: (
           }),
         ),
     )
-    return authority
+    return { acting: authority.acting, timezone: delivery.value.context.timezone }
   },
   (effect) =>
     effect.pipe(

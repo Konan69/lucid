@@ -35,6 +35,7 @@ const fixture = Effect.fn('MachineTest.fixture')(function* (person: string) {
       },
 
       client: rpc.client,
+      timezone: '',
     }),
   )
   /** Protocol exits are a test server adapter; VividRpc owns each request/response schema. */
