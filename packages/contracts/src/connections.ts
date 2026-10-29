@@ -1,4 +1,5 @@
 import { Effect, Match, Option, Schema } from 'effect'
+import { ActionApplied, ActionReceipt, ToolCallId } from './actions.js'
 import { ActionEffect } from './approvals.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
@@ -333,6 +334,8 @@ export interface FindToolsResponse extends Schema.Schema.Type<typeof FindToolsRe
 
 /** Vivid asking to do one thing. The server, not the runtime, decides whether it happens. */
 export const UseToolRequest = Schema.Struct({
+  /** The runtime's identity for this call. A write is journaled under it, so a retry is answered once. */
+  toolCallId: ToolCallId,
   connectionId: ConnectionId,
   tool: Schema.String,
   input: Schema.Json,
@@ -406,7 +409,12 @@ export class DisplayApprovalUnsupported extends Schema.TaggedError<DisplayApprov
  * output, wait for a decision, offer the Connection, or tell the Person it may not.
  */
 export const ToolOutcome = Schema.TaggedUnion({
-  Completed: { output: Schema.Json },
+  /**
+   * `receipt` is what the journal recorded for an outward write Vivid sent. It is null where no
+   * operation was journaled: a read, which changes nothing outside Vivid, and a Person's own press
+   * on a display.
+   */
+  Completed: { output: Schema.Json, receipt: Schema.NullOr(ActionApplied) },
   /** A Person must decide. The turn ends; the decision returns to the Thread. */
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   /** A rule forbids it. */
@@ -419,8 +427,11 @@ export const ToolOutcome = Schema.TaggedUnion({
     /** Empty means no validation detail was supplied; provider identities never enter this list. */
     problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
-  /** The request was sent and no answer came back. It may or may not have happened. */
-  OutcomeUnknown: {},
+  /**
+   * The request was sent and no answer came back. It may or may not have happened. `receipt` names
+   * the journaled operation to reconcile; null on the same calls `Completed` leaves unjournaled.
+   */
+  OutcomeUnknown: { receipt: Schema.NullOr(ActionReceipt.cases.Unknown) },
 })
 export type ToolOutcome = typeof ToolOutcome.Type
 

@@ -3,6 +3,11 @@ import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { ConversationFrame } from './conversation.js'
+import {
+  ActionReconciliationRequired,
+  ReconcileActionRequest,
+  ReconcileActionResponse,
+} from './actions.js'
 import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
 import {
   ArtifactChanged,
@@ -226,6 +231,7 @@ import {
   ThreadTitleOutputInvalid,
   DeliveryScope,
   DeliveryScopeRequest,
+  AcknowledgeRunDeliveryRequest,
 } from './threads.js'
 
 /**
@@ -439,6 +445,14 @@ const ShareThread = Rpc.make('ShareThread', {
 const DeleteThread = Rpc.make('DeleteThread', { ...call, payload: { id: ThreadId } })
 /** Records that the Person has seen the Thread as it stands, which clears `Unread`. */
 const MarkThreadRead = Rpc.make('MarkThreadRead', { ...call, payload: { id: ThreadId } })
+/**
+ * The Person a Run acted for saying their app drew its final response. Idempotent: the first
+ * acknowledgement is the receipt and later ones change nothing. Read marks are not this.
+ */
+const AcknowledgeRunDelivery = Rpc.make('AcknowledgeRunDelivery', {
+  ...call,
+  payload: AcknowledgeRunDeliveryRequest,
+})
 /** Stops the Run in progress. Work already done is not undone. */
 const StopThread = Rpc.make('StopThread', { ...call, payload: { id: ThreadId } })
 /**
@@ -502,6 +516,12 @@ const DecideApproval = Rpc.make('DecideApproval', {
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
+/** A read-only check of whether an uncertain outward operation took effect. It never sends anything. */
+const ReconcileAction = Rpc.make('ReconcileAction', {
+  ...call,
+  payload: ReconcileActionRequest,
+  success: ReconcileActionResponse,
+})
 /** Vivid asking a question it cannot safely answer alone. The turn ends until it is answered. */
 const AskInput = Rpc.make('AskInput', {
   ...call,
@@ -779,7 +799,12 @@ const ResolveTool = Rpc.make('ResolveTool', {
   success: ConnectionTool,
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
-const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+/** Refuses the exact action again while an earlier send of it in this Thread has an unknown result. */
+const UseTool = Rpc.make('UseTool', {
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
+  payload: UseToolRequest,
+  success: ToolOutcome,
+})
 /** A display's Query or Mutation, run for the Person who is looking at it. */
 const UseDisplayTool = Rpc.make('UseDisplayTool', {
   ...call,
@@ -1025,6 +1050,7 @@ export const VividRpc = RpcGroup.make(
   ShareThread,
   DeleteThread,
   MarkThreadRead,
+  AcknowledgeRunDelivery,
   StopThread,
   BePresent,
   GetDeliveryScope,
@@ -1039,6 +1065,7 @@ export const VividRpc = RpcGroup.make(
   WatchInbox,
   DecideApproval,
   WithdrawApproval,
+  ReconcileAction,
   AskInput,
   AnswerInput,
   ListRules,

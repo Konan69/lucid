@@ -1,6 +1,13 @@
 import { Schema } from 'effect'
 import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
-import { ApprovalId, ConnectionId, PersonSummary, RunId, ThreadId } from './identity.js'
+import {
+  ActionOperationId,
+  ApprovalId,
+  ConnectionId,
+  PersonSummary,
+  RunId,
+  ThreadId,
+} from './identity.js'
 
 /**
  * How much an action can change. `read` changes nothing outside Vivid; `write` creates or edits
@@ -53,7 +60,12 @@ export const ApprovalState = Schema.TaggedUnion({
   Executing: { decidedBy: PersonSummary, decidedAt: Schema.Finite },
   Succeeded: { decidedBy: PersonSummary, finishedAt: Schema.Finite, result: Schema.String },
   Failed: { decidedBy: PersonSummary, finishedAt: Schema.Finite, reason: Schema.String },
-  OutcomeUnknown: { decidedBy: PersonSummary, finishedAt: Schema.Finite },
+  /** `operationId` names the sent operation, so it can be reconciled before anything is sent again. */
+  OutcomeUnknown: {
+    decidedBy: PersonSummary,
+    finishedAt: Schema.Finite,
+    operationId: ActionOperationId,
+  },
   Denied: { decidedBy: PersonSummary, decidedAt: Schema.Finite },
   Expired: { expiredAt: Schema.Finite },
   /** The Run that asked was stopped, or the Connection it named changed, before a decision. */

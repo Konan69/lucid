@@ -51,6 +51,13 @@ export type InputRequestId = typeof InputRequestId.Type
 /** Approval identifier: authorization for one consequential action. */
 export const ApprovalId = Schema.String.pipe(Schema.brand('ApprovalId'))
 export type ApprovalId = typeof ApprovalId.Type
+/**
+ * One outward operation Vivid sent, or is about to send, to a service or a Computer. The server
+ * makes it from the runtime's own call identity or the Approval it carries out, never from model
+ * text, so a retried call names the same operation.
+ */
+export const ActionOperationId = Schema.String.pipe(Schema.brand('ActionOperationId'))
+export type ActionOperationId = typeof ActionOperationId.Type
 /** Rule identifier: one standing instruction about what Vivid may do without asking. */
 export const RuleId = Schema.String.pipe(Schema.brand('RuleId'))
 export type RuleId = typeof RuleId.Type
