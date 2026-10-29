@@ -13,6 +13,7 @@ import {
   ArtifactDetail,
   ArtifactId,
   ArtifactNote,
+  ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
   Forbidden,
@@ -267,18 +268,22 @@ export class DocumentNotFound extends Schema.TaggedError<DocumentNotFound>()('Do
   titles: Schema.Array(ArtifactTitle),
 }) {}
 
-/** The newest text of the one document of this Thread that `title` names, read under the Thread lock. */
+/** The newest text of the one document of this Thread that `title` names, read under the Thread lock.
+ * A file Artifact has bytes, not text to copy into a call, so only documents are named or listed. */
 const bindOne = Effect.fn('Artifacts.bindOne')(function* (
   tx: Transaction,
   threadId: ThreadId,
   title: string,
 ) {
-  const [row] = yield* tx.select().from(artifacts).where(named(threadId, title))
+  const [row] = yield* tx
+    .select()
+    .from(artifacts)
+    .where(and(named(threadId, title), eq(artifacts.kind, 'document')))
   if (row === undefined) {
     const documents = yield* tx
       .select({ title: artifacts.title })
       .from(artifacts)
-      .where(eq(artifacts.threadId, threadId))
+      .where(and(eq(artifacts.threadId, threadId), eq(artifacts.kind, 'document')))
     const decoded = yield* Effect.forEach(documents, decodeArtifactTitle)
     return yield* new DocumentNotFound({
       title,
@@ -298,6 +303,8 @@ const bindOne = Effect.fn('Artifacts.bindOne')(function* (
   if (latest === undefined)
     return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
   const version = yield* decodeVersion(latest)
+  if (version.body === null)
+    return yield* new DatabaseFailure({ message: 'Document version has no body' })
   return { title, artifact, body: version.body }
 })
 
