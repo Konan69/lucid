@@ -353,6 +353,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  read_project: {
+    said: {
+      running: 'Looking at the project',
+      done: 'Looked at the project',
+      failed: 'Could not look at the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  update_project: {
+    said: {
+      running: 'Updating the project',
+      done: 'Updated the project',
+      failed: 'Could not update the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
   notify_person: {
     said: {
       running: 'Sending you a notification',

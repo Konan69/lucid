@@ -1,4 +1,4 @@
-import { ThreadId, type Thread } from '@vivid/contracts'
+import { ProjectWork, ThreadId, type Thread } from '@vivid/contracts'
 import { Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
@@ -136,9 +136,10 @@ export function Projects() {
  * One Project's page: which one it is (its colour and name), what is known about it, then its
  * Threads with their live state, the Projects inside it and, in a Company, the people in its
  * Threads. All of it is read live, so a Thread someone else files here appears without a
- * refresh. It says nothing the server does not: a Project has no purpose line, no "where it
- * stands", no next step and no files of its own yet, so none is drawn. A Project the Person can
- * no longer see says so instead of drawing an empty page under a stale name.
+ * refresh. Where its work stands (what done means, the latest dated progress and the next step,
+ * or that it is done and what shows it) is drawn only once Vivid has recorded it; a Project that
+ * only groups Threads draws no goal. A Project the Person can no longer see says so instead of
+ * drawing an empty page under a stale name.
  */
 export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const data = useLiveData()
@@ -239,6 +240,43 @@ function Filed({
   )
 }
 
+/**
+ * Where the Project's work stands, as Vivid recorded it from the conversation; there is no form
+ * for it. The proof of a finished Project is a message in a Thread, so its row opens that Thread.
+ */
+function Work({ project, now }: { project: ProjectRecord; now: number }) {
+  const openThread = useOpenThread()
+  return ProjectWork.match(project.work, {
+    Unspecified: () => null,
+    Active: (work) => {
+      const latest = work.progress.at(-1)
+      return (
+        <Section title="Where it stands">
+          <Row wrap title={work.objective} detail="Goal" />
+          {latest !== undefined && (
+            <Row wrap title={latest.text} detail={`Latest · ${relativeTime(latest.at, now)}`} />
+          )}
+          <Row wrap title={work.nextStep} detail="Next" />
+        </Section>
+      )
+    },
+    Completed: (work) => {
+      const [source] = work.proof.sources
+      return (
+        <Section title="Where it stands">
+          <Row wrap title={work.objective} detail="Goal" />
+          <Row
+            wrap
+            title={work.proof.summary}
+            detail={`Done · ${relativeTime(work.completedAt, now)} · see the message`}
+            onPress={() => openThread(source.threadId)}
+          />
+        </Section>
+      )
+    },
+  })
+}
+
 /** Everything on a Project's page under the bar. */
 function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
   const data = useLiveData()
@@ -303,6 +341,7 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
         <Button kind="primary" icon={SquarePen} label="New thread" onPress={() => void begin()} />
         <Button icon={Plus} label="Project inside" onPress={() => setCreating(true)} />
       </View>
+      <Work project={project} now={now} />
       <Filed threads={filed} hidden={hidden} now={now} />
       {inside.length > 0 && (
         <Section title="Inside this project">
