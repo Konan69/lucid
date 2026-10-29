@@ -4,7 +4,7 @@ import { decodeText } from './receipts.mjs'
 import { ConnectionState, NotificationOpens } from '@vivid/contracts'
 import { rpc, json } from './wire.mjs'
 import { integrationOf, watchWords, occurrence, disconnected } from './watch.mjs'
-import { grant, turnOn, shown, decodeShown, decodeTabs } from './push.mjs'
+import { grant, turnOn, shown, waitShown, decodeShown, decodeTabs } from './push.mjs'
 
 /**
  * Real Settings controls own Connect, notifications and Disconnect; the browser composer owns the
@@ -66,7 +66,7 @@ async function journey(state, id, directory, { run, capture }) {
   await run(['tab', app.tabId])
   await capture('watch-active')
   const title = JSON.stringify(proof.item.post.title)
-  await run(['wait', '--fn', `(async () => (await ${shown}).some(n => n.title === ${title}))()`])
+  await waitShown(run, `n => n.title === ${title}`)
   const notifications = Result.getOrThrow(decodeShown(await run(['eval', shown])))
   await json(directory + '/notifications.json', notifications)
   const mine = notifications.find((n) => n.title === proof.item.post.title)
