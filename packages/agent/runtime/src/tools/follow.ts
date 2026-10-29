@@ -35,9 +35,14 @@ export function followTools() {
           v.description('One to three replies, the most likely first.'),
         ),
       }),
-      /** The input is the whole effect: Pi stores it in the conversation as this call's part. */
+      /**
+       * The input is the whole effect: Pi stores it in the conversation as this call's part. The
+       * call is the last thing in a reply, so it ends the run (Pi's `control.terminate`, kept when
+       * every result of the round asks for it): without it the model was asked once more and wrote
+       * its reply a second time under the suggestions, as every verify trial on 29 Oct 2026 showed.
+       */
       run() {
-        return { output: { ok: true } }
+        return { output: { ok: true }, terminate: true }
       },
     }),
   ] as const
