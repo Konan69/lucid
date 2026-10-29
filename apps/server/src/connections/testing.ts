@@ -23,7 +23,7 @@ import {
   ServiceId,
   ThreadId,
   Workspace,
-  ToolCallId,
+  ToolTaskId,
 } from '@vivid/contracts'
 import { type Actor, summaryOf } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
@@ -400,9 +400,13 @@ export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
   return { ownerActor, memberActor, personalActor, threadId }
 })
 
+/** A runtime task number for a test call; each is new, as Pi mints each task once. */
+let taskNumber = 0
+export const nextTask = () => ++taskNumber
+
 /** Requests carry no effect claim: the provider's classification is the only source. */
 export const toolRequest = (connectionId: ConnectionId, tool: string) => ({
-  toolCallId: ToolCallId.make(crypto.randomUUID()),
+  toolTaskId: ToolTaskId.make(nextTask()),
   connectionId,
   tool,
   input: {},

@@ -467,6 +467,8 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
         // here; it is still answered as a call that did not run rather than left to the caller.
         ActionReconciliationRequired: () =>
           Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+        ActionOperationMismatch: () =>
+          Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
       }),
     ),
 )

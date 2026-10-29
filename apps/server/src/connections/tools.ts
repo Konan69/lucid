@@ -653,7 +653,7 @@ const bindInput = Effect.fn('Connections.bindInput')(function* (actor: Actor, in
 })
 
 /** One Integration call as Vivid asks for it, before the server names its operation. */
-type ToolRequest = Omit<UseToolRequest, 'toolCallId'>
+type ToolRequest = Omit<UseToolRequest, 'toolTaskId'>
 
 /** What the journal already knows answers the call in place of sending it again. */
 const answeredOutcome = (receipt: ActionReceipt) =>
@@ -797,10 +797,10 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
   )
 })
 
-/** Vivid's regular calls retain their existing Gate policy, journaled under the runtime's call. */
+/** Vivid's regular calls retain their existing Gate policy, journaled under the runtime's task. */
 export const useTool = (actor: Actor, request: UseToolRequest) =>
   useToolAs(actor, request, DisplayCallPolicy.cases.Press.make({}), (threadId) =>
-    operationOf.call(threadId, request.toolCallId),
+    operationOf.task(threadId, request.toolTaskId),
   )
 
 /**

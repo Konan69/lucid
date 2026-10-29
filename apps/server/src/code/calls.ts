@@ -104,10 +104,14 @@ const connection = Effect.fn('Code.useConnection')(function* (
     rationale: request.rationale,
   }).pipe(
     Effect.asSome,
-    Effect.catchTag('ActionReconciliationRequired', () => Effect.succeedNone),
+    Effect.catchTag(
+      ['ActionReconciliationRequired', 'ActionOperationMismatch'],
+      () => Effect.succeedNone,
+    ),
   )
   // The same act sent earlier in this Thread has an unknown result: the program is told, and it
-  // is not sent again. The program goes on with its other work.
+  // is not sent again. The program goes on with its other work. A program's operations are fresh
+  // (`operationOf.program`), so the journal's mismatch refusal cannot reach it.
   if (Option.isNone(outcome))
     return yield* refused('use_tool', { ok: false, reason: RECONCILE_FIRST }, request.summary)
   return ToolOutcome.match<CallOutcome>(outcome.value, {

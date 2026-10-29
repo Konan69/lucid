@@ -7,7 +7,7 @@ import {
   ConnectionState,
   SessionId,
   ToolOutcome,
-  ToolCallId,
+  ToolTaskId,
 } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Logger, Redacted, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
@@ -15,7 +15,7 @@ import { executorLayer } from './executor.ts'
 import { connectionAddressLayer } from './address.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connectionHandlers } from './handlers.ts'
-import { connectionTestLayer, fixture } from './testing.ts'
+import { connectionTestLayer, fixture, nextTask } from './testing.ts'
 import { auditLayer } from '../audit/record.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { connections } from './tables.ts'
@@ -144,7 +144,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
               if (accountTool === undefined) expect.fail('Expected an authenticated account read')
               const read = yield* connectionHandlers
                 .UseTool({
-                  toolCallId: ToolCallId.make(crypto.randomUUID()),
+                  toolTaskId: ToolTaskId.make(nextTask()),
                   connectionId: result.step.connection.id,
                   tool: accountTool.name,
                   input: {},
@@ -166,7 +166,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
               expect(yield* store.records(memberActor)).toHaveLength(0)
               const refused = yield* connectionHandlers
                 .UseTool({
-                  toolCallId: ToolCallId.make(crypto.randomUUID()),
+                  toolTaskId: ToolTaskId.make(nextTask()),
                   connectionId: result.step.connection.id,
                   tool: 'get_me',
                   input: {},

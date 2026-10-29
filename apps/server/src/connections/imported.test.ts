@@ -5,7 +5,7 @@ import {
   ToolOutcome,
   TestIntegrationOutcome,
   type ConnectionId,
-  ToolCallId,
+  ToolTaskId,
 } from '@vivid/contracts'
 import { Effect, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -21,6 +21,7 @@ import {
   hostedExecutorFixture,
   hostedPrefix,
   hostedService,
+  nextTask,
 } from './testing.ts'
 
 /** The address Grain published for its MCP server; nothing is fetched from it here. */
@@ -146,7 +147,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
 
             const before = (yield* Ref.get(remote.requests)).length
             const outcome = yield* useTool(personalActor, {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: added.step.connection.id,
               tool: 'read',
               input: {},
@@ -162,7 +163,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             ])
 
             const otherOutcome = yield* useTool(personalActor, {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: other.connection.id,
               tool: 'read',
               input: {},

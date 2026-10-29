@@ -10,6 +10,7 @@ import {
   DecideApprovalRequest,
 } from './approvals.js'
 import {
+  ActionOperationMismatch,
   ActionReconciliationRequired,
   ReconcileActionRequest,
   ReconcileActionResponse,
@@ -824,7 +825,7 @@ const ResolveTool = Rpc.make('ResolveTool', {
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
 /** Refuses the exact action again while an earlier send of it in this Thread has an unknown result. */
 const UseTool = Rpc.make('UseTool', {
-  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired, ActionOperationMismatch]),
   payload: UseToolRequest,
   success: ToolOutcome,
 })

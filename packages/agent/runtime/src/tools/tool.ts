@@ -160,6 +160,8 @@ export function defineTool<
     readonly data: v.InferOutput<S>
     readonly signal: AbortSignal
     readonly toolCallId: string
+    /** Pi Durable's task for this call: minted once, kept by a recovery of the same call. */
+    readonly toolTaskId: number
   }) =>
     | ToolResult
     | ContentResult
@@ -185,7 +187,12 @@ export function defineTool<
       return executionResult(
         executeCall(
           (signal) => {
-            const result = definition.run({ data: parsed.output, signal, toolCallId: api.callId })
+            const result = definition.run({
+              data: parsed.output,
+              signal,
+              toolCallId: api.callId,
+              toolTaskId: api.taskId,
+            })
             if (!Effect.isEffect(result))
               return Promise.resolve(result).then((value) => toolResult(definition.name, value))
             // The Pi execute callback is the Promise entry point for the owned Computer programs.

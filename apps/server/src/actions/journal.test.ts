@@ -1,22 +1,31 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref } from 'effect'
+import { Duration, Effect, Option, Ref } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import {
+  ActionOperationMismatch,
   ActionReceipt,
   ActionReconciliation,
   ActionReconciliationRequired,
-  ToolCallId,
+  ActionTarget,
+  ConnectionId,
+  ToolTaskId,
   ToolOutcome,
-  type ConnectionId,
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { ExecutorCallOutcome } from '../connections/executor.ts'
+import { EXECUTOR_EXCHANGE_LIMIT, ExecutorCallOutcome } from '../connections/executor.ts'
 import { ConnectionStore } from '../connections/store.ts'
-import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from '../connections/testing.ts'
+import {
+  ConnectionProbe,
+  connectionTestLayer,
+  fixture,
+  serviceId,
+  nextTask,
+} from '../connections/testing.ts'
 import { useTool } from '../connections/tools.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { ActionLookup, Lookup, reconcile } from './journal.ts'
+import { ActionLookup, Lookup, claim, operationOf, reconcile } from './journal.ts'
 import { actions } from './tables.ts'
 
 /** A Vivid write in the fixture's Thread through one private Integration the owner made. */
@@ -30,7 +39,7 @@ const writer = Effect.fn('Actions.test.writer')(function* () {
   })
   const actor: Actor = { ...ownerActor, by: 'vivid', threadId: Option.some(threadId) }
   const write = (input: { readonly record: number }) => ({
-    toolCallId: ToolCallId.make(crypto.randomUUID()),
+    toolTaskId: ToolTaskId.make(nextTask()),
     connectionId: step.connection.id satisfies ConnectionId,
     tool: 'write',
     input,
@@ -58,6 +67,63 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
         const again = yield* useTool(actor, request)
         expect(again).toEqual(ToolOutcome.cases.Repeated.make({ receipt: first.receipt }))
         expect(yield* Ref.get(probe.calls)).toBe(sent + 1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'refuses a call whose operation was recorded for a different act, sending nothing',
+      () =>
+        Effect.gen(function* () {
+          const { actor, write } = yield* writer()
+          const probe = yield* ConnectionProbe
+          const database = yield* Database
+          const first = write({ record: 2 })
+          const done = yield* useTool(actor, first)
+          if (!ToolOutcome.guards.Completed(done) || done.receipt === null)
+            return expect.fail('The first write completes with a receipt')
+          const sent = yield* Ref.get(probe.calls)
+          // The same runtime task naming a different act is never answered from the first record.
+          const other = { ...write({ record: 3 }), toolTaskId: first.toolTaskId }
+          const refused = yield* useTool(actor, other).pipe(Effect.flip)
+          expect(refused).toEqual(
+            new ActionOperationMismatch({ operationId: done.receipt.operationId }),
+          )
+          expect(yield* Ref.get(probe.calls)).toBe(sent)
+          const rows = yield* database.run(
+            database
+              .select({ receipt: actions.receipt })
+              .from(actions)
+              .where(eq(actions.id, done.receipt.operationId)),
+          )
+          expect(rows).toEqual([{ receipt: done.receipt }])
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('never lets a lookup call a send still within its bound not applied', () =>
+      Effect.gen(function* () {
+        const { actor, owner } = yield* writer()
+        if (Option.isNone(actor.threadId)) return expect.fail('The writer acts in a Thread')
+        const threadId = actor.threadId.value
+        const id = operationOf.task(threadId, ToolTaskId.make(nextTask()))
+        // A claim with no receipt yet: the send is under way.
+        yield* claim({
+          id,
+          threadId,
+          runId: null,
+          approvalId: null,
+          target: ActionTarget.cases.Connection.make({
+            connectionId: ConnectionId.make('in-flight'),
+            account: 'Records',
+            tool: 'write',
+            input: { record: 4 },
+          }),
+        })
+        const absent = lookingUp(Lookup.cases.Absent.make({}))
+        const early = yield* reconcile(owner, id).pipe(Effect.provideService(ActionLookup, absent))
+        expect(ActionReconciliation.guards.Inconclusive(early.reconciliation)).toBe(true)
+        yield* TestClock.adjust(Duration.sum(EXECUTOR_EXCHANGE_LIMIT, Duration.seconds(1)))
+        const late = yield* reconcile(owner, id).pipe(Effect.provideService(ActionLookup, absent))
+        expect(ActionReconciliation.guards.NotApplied(late.reconciliation)).toBe(true)
       }).pipe(Effect.scoped),
     )
 

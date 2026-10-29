@@ -1,5 +1,6 @@
 import {
   type ActionReceipt,
+  type ActionOperationMismatch,
   type ActionReconciliationRequired,
   ComputerScreen,
   ComputerSession,
@@ -40,6 +41,7 @@ export interface ToolResult {
 
 export type ToolFailure =
   | ActionReconciliationRequired
+  | ActionOperationMismatch
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -200,6 +202,9 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure(
           'The same action was sent before in this Thread and its result is not known yet, so it was not sent again. Do not retry it; tell the Person its result is not known yet.',
         ),
+      // The server would not answer this call from another action's record; nothing was sent.
+      ActionOperationMismatch: () =>
+        failure('Vivid could not record this action, so it was not sent. Say so to the Person.'),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>

@@ -14,6 +14,7 @@ import * as Clock from 'effect/Clock'
 import * as Cause from 'effect/Cause'
 import * as Exit from 'effect/Exit'
 import * as Context from 'effect/Context'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Ref from 'effect/Ref'
@@ -947,6 +948,14 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
   })
 }
 
+/**
+ * Bounds one Executor exchange, a tool call included, because Executor can hold the socket open
+ * and nothing else cancels the call. On expiry the call is `ExecutorTransportFailure`, which a
+ * tool call reports as OutcomeUnknown; the action journal reads a send older than this as over.
+ * Source: unmeasured, kept as it was inline.
+ */
+export const EXECUTOR_EXCHANGE_LIMIT = Duration.seconds(90)
+
 /** Each decoder is compiled once per response shape at layer acquisition. No automatic retry is
  * installed: an accepted write or resume may have committed before the response was lost.
  */
@@ -1019,7 +1028,7 @@ function responseReader<E>(
         effect.pipe(
           Effect.scoped,
           Effect.timeoutOrElse({
-            duration: '90 seconds',
+            duration: EXECUTOR_EXCHANGE_LIMIT,
             orElse: () =>
               Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool })),
           }),

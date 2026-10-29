@@ -572,7 +572,12 @@ const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
     target: row.action.target,
   }).pipe(
     Effect.asSome,
-    Effect.catchTag('ActionReconciliationRequired', () => Effect.succeedNone),
+    // An Approval's operation is named by the Approval itself, which carries one act, so a
+    // mismatch cannot arise; it would still be refused here rather than sent.
+    Effect.catchTag(
+      ['ActionReconciliationRequired', 'ActionOperationMismatch'],
+      () => Effect.succeedNone,
+    ),
   )
   if (Option.isNone(claimed))
     return ActionOutcome.cases.Failed.make({

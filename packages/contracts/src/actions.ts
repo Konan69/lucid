@@ -3,13 +3,15 @@ import { ActionTarget } from './approvals.js'
 import { ActionOperationId, ApprovalId, RunId, ThreadId } from './identity.js'
 
 /**
- * The runtime's own name for one tool call, taken from the call and never from its arguments. A
- * retried call keeps it, which is what lets the server answer the retry with the first answer.
+ * The runtime's durable task for one tool call (Pi Durable's `api.taskId`, a number its store
+ * mints once per task), never anything from the call's arguments. A recovery of that call keeps
+ * it, so a retried call names the same operation. The provider's own call id is not used: some
+ * providers number calls per turn, so it can repeat for a different call later in a Thread.
  */
-export const ToolCallId = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)).pipe(
-  Schema.brand('ToolCallId'),
+export const ToolTaskId = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+  Schema.brand('ToolTaskId'),
 )
-export type ToolCallId = typeof ToolCallId.Type
+export type ToolTaskId = typeof ToolTaskId.Type
 
 /**
  * What a provider confirmed about where the effect arrived, beyond completing the call. No
@@ -114,6 +116,16 @@ export const ReconcileActionResponse = Schema.Struct({
 export interface ReconcileActionResponse extends Schema.Schema.Type<
   typeof ReconcileActionResponse
 > {}
+
+/**
+ * A call named an operation already journaled for a different act. The earlier act's receipt is
+ * not this call's answer, so nothing is sent and nothing is answered from it.
+ */
+export class ActionOperationMismatch extends Schema.TaggedError<ActionOperationMismatch>()(
+  'ActionOperationMismatch',
+  { operationId: ActionOperationId },
+  { title: 'The call named an operation recorded for a different action' },
+) {}
 
 /**
  * The exact same action in this Thread was sent before and its result is not known. It is not sent

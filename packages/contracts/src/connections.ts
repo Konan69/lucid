@@ -1,5 +1,5 @@
 import { Effect, Match, Option, Schema } from 'effect'
-import { ActionApplied, ActionReceipt, ToolCallId } from './actions.js'
+import { ActionApplied, ActionReceipt, ToolTaskId } from './actions.js'
 import { ActionEffect } from './approvals.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
@@ -334,8 +334,8 @@ export interface FindToolsResponse extends Schema.Schema.Type<typeof FindToolsRe
 
 /** Vivid asking to do one thing. The server, not the runtime, decides whether it happens. */
 export const UseToolRequest = Schema.Struct({
-  /** The runtime's identity for this call. A write is journaled under it, so a retry is answered once. */
-  toolCallId: ToolCallId,
+  /** The runtime's durable task for this call. A write is journaled under it, so a retry is answered once. */
+  toolTaskId: ToolTaskId,
   connectionId: ConnectionId,
   tool: Schema.String,
   input: Schema.Json,

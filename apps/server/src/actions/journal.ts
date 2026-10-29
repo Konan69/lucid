@@ -2,12 +2,14 @@ import * as NodeCrypto from 'node:crypto'
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
+import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   ActionAbsence,
+  ActionOperationMismatch,
   ActionApplied,
   ActionOperation,
   ActionOperationId,
@@ -22,9 +24,10 @@ import {
   type ReconcileActionResponse,
   type RunId,
   type ThreadId,
-  type ToolCallId,
+  type ToolTaskId,
 } from '@vivid/contracts'
 import { canonical } from '../approvals/action.ts'
+import { EXECUTOR_EXCHANGE_LIMIT } from '../connections/executor.ts'
 import { Database, decodeStored, encodeStored } from '../database/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { actions } from './tables.ts'
@@ -41,14 +44,14 @@ const decodeReconciliation = decodeStored(ActionReconciliation, 'Action reconcil
 const isApplied = Schema.is(ActionApplied)
 
 /**
- * The trusted keys an operation is named by. A direct call is named by the runtime's own call
- * identity inside its Thread, so the runtime retrying the call finds the same row. An Approval's
+ * The trusted keys an operation is named by. A direct call is named by the runtime's durable tool
+ * task inside its Thread (`ToolTaskId`), so the runtime retrying the call finds the same row. An Approval's
  * action is named by the Approval, which runs once. A call from a program has no identity that
  * survives a retry (programs are never replayed), so it gets a fresh one.
  */
 export const operationOf = {
-  call: (threadId: ThreadId, call: ToolCallId) =>
-    ActionOperationId.make(`call-${threadId}-${call}`),
+  task: (threadId: ThreadId, task: ToolTaskId) =>
+    ActionOperationId.make(`task-${threadId}-${task}`),
   approval: (id: ApprovalId) => ActionOperationId.make(`approval-${id}`),
   program: () => ActionOperationId.make(`program-${NodeCrypto.randomUUID()}`),
 }
@@ -106,6 +109,8 @@ const unresolved = and(
  * What a send of `target` under `id` must answer instead of sending, if anything.
  *
  * - The same operation again (a retried call): its own receipt, or `Unknown` while it has none.
+ *   The same key for a different act is refused: another act's receipt is never this call's
+ *   answer, and sending under that key would overwrite its record.
  * - An unresolved operation of the same fingerprint in this Thread: refused until reconciled.
  * - The newest same-fingerprint operation reconciled `Applied`: its receipt; it already happened.
  *
@@ -122,6 +127,8 @@ const answerFor = Effect.fn('Actions.answerFor')(function* (
   const now = yield* Clock.currentTimeMillis
   const [same] = yield* tx.select().from(actions).where(eq(actions.id, input.id))
   if (same !== undefined) {
+    if (same.fingerprint !== input.fingerprint)
+      return yield* new ActionOperationMismatch({ operationId: same.id })
     const phase = yield* phaseOf(same)
     const receipt = ActionPhase.match(phase, {
       Dispatching: () =>
@@ -304,6 +311,16 @@ export const actionLookupLayer = Layer.succeed(
   ActionLookup.of({ look: () => Effect.succeed(Lookup.cases.Unsupported.make({})) }),
 )
 
+/**
+ * Whether the operation may still be on its way. An Integration send ends within the Executor's
+ * exchange bound (`EXECUTOR_EXCHANGE_LIMIT`), after which it has an answer or became Unknown. A
+ * Computer action has no such bound here, so while it is `Dispatching` it may still be sending.
+ */
+const sending = (row: Row, action: ActionOperation, now: number) =>
+  ActionPhase.guards.Dispatching(action.phase) &&
+  (!ActionTarget.guards.Connection(action.target) ||
+    now - row.claimedAt < Duration.toMillis(EXECUTOR_EXCHANGE_LIMIT))
+
 /** Settled with a receipt that says it happened: no provider needs asking. */
 const appliedReceipt = (phase: ActionPhase) =>
   ActionPhase.match(phase, {
@@ -337,6 +354,10 @@ export const reconcile = Effect.fn('Actions.reconcile')(function* (
   if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))
     return { action, reconciliation: recorded }
   const checkedAt = yield* Clock.currentTimeMillis
+  // A send still inside its own bound may land after any lookup, so no lookup can say it did not
+  // happen; that would let a NotApplied be written for an operation still in flight.
+  if (sending(row, action, checkedAt))
+    return { action, reconciliation: ActionReconciliation.cases.Inconclusive.make({ checkedAt }) }
   const found = yield* (yield* ActionLookup).look(action)
   const reconciliation = Lookup.match<ActionReconciliation>(found, {
     Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),

@@ -7,7 +7,7 @@ import {
   MakeIntegrationRequest,
   InvalidRequest,
   TestIntegrationOutcome,
-  ToolCallId,
+  ToolTaskId,
   ToolOutcome,
 } from '@vivid/contracts'
 import { Effect, Result, Schema } from 'effect'
@@ -34,7 +34,7 @@ const ToolInput = Schema.Union([
   Schema.Json,
 ])
 export const decodeToolInput = Schema.decodeUnknownEffect(ToolInput)
-const decodeToolCallId = Schema.decodeUnknownEffect(ToolCallId)
+const decodeToolTaskId = Schema.decodeUnknownEffect(ToolTaskId)
 const decodeMadeRequest = Schema.decodeEffect(MakeIntegrationRequest)
 
 /** Discovery and execution recheck access through the same attributed RPC client. */
@@ -201,20 +201,20 @@ function useTool(runTool: RunTool) {
       ),
     }),
     /** Unknown JSON is decoded at ingress; only a server-resolved pair determines the Connection.
-     * Pi's call identity, never model input, names the call, so a retried call is answered once. */
-    run({ data, signal, toolCallId }) {
+     * Pi's durable task, never model input, names the call, so a retried call is answered once. */
+    run({ data, signal, toolTaskId }) {
       return runTool(
         Effect.gen(function* () {
           const { client } = yield* Scope
           const input = yield* decodeToolInput(data.input).pipe(
             Effect.mapError(() => new InvalidRequest({ message: 'Tool input must be JSON.' })),
           )
-          const call = yield* decodeToolCallId(toolCallId).pipe(
+          const task = yield* decodeToolTaskId(toolTaskId).pipe(
             Effect.mapError(() => new InvalidRequest({ message: 'Tool call is invalid.' })),
           )
           const match = yield* client.ResolveTool({ account: data.account, tool: data.tool })
           const outcome = yield* client.UseTool({
-            toolCallId: call,
+            toolTaskId: task,
             connectionId: match.connectionId,
             tool: match.name,
             input,

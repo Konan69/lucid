@@ -12,7 +12,7 @@ import {
   InvalidRequest,
   ServiceUnavailable,
   ToolOutcome,
-  ToolCallId,
+  ToolTaskId,
 } from '@vivid/contracts'
 import { Message } from '../observability/messages.ts'
 import { ActionOutcome } from '../approvals/gate.ts'
@@ -25,7 +25,7 @@ import {
   ExecutorTool,
 } from './executor.ts'
 import { ConnectionStore, ToolDiscovery, connectionStoreLayer } from './store.ts'
-import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
+import { ConnectionProbe, connectionTestLayer, fixture, serviceId, nextTask } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
 
 /** Each refusal assertion owns its recorder; the current loggers are retained when the capture is provided. */
@@ -81,7 +81,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ? memberActor
               : ownerActor,
             {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: row.id,
               tool: reason === 'ToolUnknown' ? 'private_missing_tool' : 'write',
               input: { private: 'Private tool input' },
@@ -120,7 +120,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           })
           const executor = yield* Executor
           const outcome = yield* useTool(ownerActor, {
-            toolCallId: ToolCallId.make(crypto.randomUUID()),
+            toolTaskId: ToolTaskId.make(nextTask()),
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -186,7 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                     target,
                   })
                 return yield* useTool(ownerActor, {
-                  toolCallId: ToolCallId.make(crypto.randomUUID()),
+                  toolTaskId: ToolTaskId.make(nextTask()),
                   ...target,
                   summary: 'Read',
                   rationale: '',
@@ -454,7 +454,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             tools: () => Effect.fail(new InvalidRequest({ message: 'Private catalog failure' })),
           })
           const outcome = yield* useTool(ownerActor, {
-            toolCallId: ToolCallId.make(crypto.randomUUID()),
+            toolTaskId: ToolTaskId.make(nextTask()),
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -500,7 +500,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             if (source === 'stored') yield* store.notReady(ownerActor, row)
             else yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
             const outcome = yield* useTool(ownerActor, {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: row.id,
               tool: 'read',
               input: {},
@@ -1185,7 +1185,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ).toBe('read')
             const calls = yield* Ref.get(probe.calls)
             const used = yield* useTool(ownerActor, {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: connection.connection.id,
               tool: 'ask_question',
               input: {},
@@ -1511,7 +1511,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           return yield* Effect.gen(function* () {
             const used = yield* useTool(ownerActor, {
-              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              toolTaskId: ToolTaskId.make(nextTask()),
               connectionId: connection.connection.id,
               tool: 'lookup_0',
               input: {},
