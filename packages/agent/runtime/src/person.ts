@@ -22,8 +22,10 @@ import { correctionHooks } from './correction.ts'
 import { continuityHooks } from './continuity.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
+import { helpers } from './children.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
+import { childTools } from './tools/children.ts'
 import { tools } from './tools/index.ts'
 
 /** One Person's conversations on the native storage supplied by its host. */
@@ -123,9 +125,18 @@ export const openPerson = Effect.fn('Person.open')(function* (
   )
   registry.install(learn.extension)
   registry.install(learn.learner)
+  // Helpers get fixed subsets of Vivid's own tools; only Vivid's own conversation can start one.
+  const helping = helpers({
+    harness: opened,
+    product,
+    run: (program, signal) => run(program, { signal }),
+    tools: all,
+  })
+  for (const extension of helping.extensions) registry.install(extension)
+  const offeredTools = [...all, ...childTools({ harness: opened, product, helpers: helping })]
   registry.install(
     definition({
-      tools: all,
+      tools: offeredTools,
       // The run's own record goes first: Pi stops calling `onYield` hooks after the first that continues.
       hooks: [joinHooks(run, opened), continuityHooks(run, opened), correctionHooks(run, opened)],
       frozen: (conversationId) =>
@@ -166,7 +177,11 @@ export const openPerson = Effect.fn('Person.open')(function* (
   return {
     personId,
     harness,
-    agent: { model: models.selected, thinkingLevel: THINKING, tools: offered(all, skills) },
+    agent: {
+      model: models.selected,
+      thinkingLevel: THINKING,
+      tools: offered(offeredTools, skills),
+    },
     sources: { product, memory, capabilities: registered.reading },
     quiet,
   } satisfies PersonConversations
