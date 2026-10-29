@@ -1,7 +1,8 @@
 import { useAtomValue } from '@effect/atom-react'
 import { PushDestination, PushPayload, type ThreadId } from '@vivid/contracts'
 import { notifying, type makeLive } from '@vivid/state'
-import { Effect, Layer, Option, Result, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
+import { PermissionStatus } from 'expo'
 import { randomUUID } from 'expo-crypto'
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
@@ -30,7 +31,9 @@ const CHANNEL = 'default'
 
 const unavailable = () => new notifying.DeviceRefused({ reason: 'Unavailable' })
 
-const decodeDestination = Schema.decodeUnknownEffect(PushDestination)
+const decodeToken = Schema.decodeUnknownEffect(
+  PushDestination.cases.Phone.mapFields(Struct.pick(['token'])),
+)
 
 /** This phone's token, as the address the server takes. Expo's answer is its ingress. */
 const token = Effect.tryPromise({
@@ -38,7 +41,10 @@ const token = Effect.tryPromise({
   catch: unavailable,
 }).pipe(
   Effect.flatMap(({ data }) =>
-    decodeDestination({ _tag: 'Phone', token: data }).pipe(Effect.mapError(unavailable)),
+    decodeToken({ token: data }).pipe(
+      Effect.map((fields) => PushDestination.cases.Phone.make(fields)),
+      Effect.mapError(unavailable),
+    ),
   ),
 )
 
@@ -61,10 +67,15 @@ const phone = notifying.Device.of({
     // The browser preview has no push service of its own.
     if (Platform.OS === 'web') return notifying.Holding.cases.Unsupported.make({})
     const { status } = yield* permissions
-    if (status === 'denied') return notifying.Holding.cases.Blocked.make({})
-    if (status === 'undetermined') return notifying.Holding.cases.Unasked.make({})
-    if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
-    return notifying.Holding.cases.Held.make({ destination: yield* token })
+    switch (status) {
+      case PermissionStatus.DENIED:
+        return notifying.Holding.cases.Blocked.make({})
+      case PermissionStatus.UNDETERMINED:
+        return notifying.Holding.cases.Unasked.make({})
+      case PermissionStatus.GRANTED:
+        if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
+        return notifying.Holding.cases.Held.make({ destination: yield* token })
+    }
   }),
   open: Effect.gen(function* () {
     if (Platform.OS === 'web') return yield* unavailable()
@@ -82,13 +93,17 @@ const phone = notifying.Device.of({
       try: () => Notifications.requestPermissionsAsync(),
       catch: unavailable,
     })
-    if (status === 'denied') return yield* new notifying.DeviceRefused({ reason: 'Blocked' })
-    if (status === 'undetermined') {
-      return yield* new notifying.DeviceRefused({ reason: 'Dismissed' })
+    switch (status) {
+      case PermissionStatus.DENIED:
+        return yield* new notifying.DeviceRefused({ reason: 'Blocked' })
+      case PermissionStatus.UNDETERMINED:
+        return yield* new notifying.DeviceRefused({ reason: 'Dismissed' })
+      case PermissionStatus.GRANTED: {
+        const destination = yield* token
+        yield* choose('on')
+        return destination
+      }
     }
-    const destination = yield* token
-    yield* choose('on')
-    return destination
   }),
   close: () => choose('off'),
 })

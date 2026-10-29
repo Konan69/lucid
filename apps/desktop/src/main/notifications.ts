@@ -15,7 +15,7 @@ import { focusMainWindow } from './menu.ts'
  * Each notification is held until it is pressed or closed, so nothing collects it, and its click
  * handler with it, while it is still on screen.
  */
-export function makeNotifications(window: () => Option.Option<BrowserWindow>) {
+export function createNotifications(window: () => Option.Option<BrowserWindow>) {
   const showing = new Set<Notification>()
   return (notification: DesktopNotification): void => {
     if (!Notification.isSupported()) return
