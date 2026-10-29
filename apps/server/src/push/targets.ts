@@ -26,11 +26,18 @@ const TargetRow = createSelectSchema(pushTargets, {
 const decodeTarget = decodeStored(TargetRow, 'push target')
 const encodeDestination = encodeStored(PushDestination, 'push destination')
 
-/** Restrict Web Push to public provider hosts, so arbitrary subscriptions cannot become SSRF. */
+/**
+ * Restrict Web Push to public provider hosts, so arbitrary subscriptions cannot become SSRF.
+ * Chrome 151 subscribes at `https://jmt17.google.com/fcm/send/…` (seen on a devbox on 29 October
+ * 2026), Google's own push service beside `fcm.googleapis.com`.
+ */
 const providerHost = (hostname: string) =>
-  ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com'].includes(
-    hostname,
-  ) ||
+  [
+    'fcm.googleapis.com',
+    'jmt17.google.com',
+    'updates.push.services.mozilla.com',
+    'web.push.apple.com',
+  ].includes(hostname) ||
   (hostname.endsWith('.notify.windows.com') && hostname !== '.notify.windows.com')
 
 /** The endpoint is authority to send only to a supported public push provider, without redirects. */
