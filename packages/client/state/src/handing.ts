@@ -140,6 +140,8 @@ export const refusedWords = (failure: ProductFailure): string =>
       HandoffNotAddressee: (refused) => refused.message,
       Conflict: (refused) => refused.message,
       HandoffComputerUnavailable: (refused) => refused.reason,
+      HandoffNotCleared: ({ labels }) =>
+        `The Computer still shows what you typed in ${labels.join(', ')}. Leave that page on the screen, then try again.`,
     }),
     Match.orElse(() => 'That did not reach Vivid. Try again.'),
   )

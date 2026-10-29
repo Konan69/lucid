@@ -453,13 +453,14 @@ export interface MachineOperations {
   }) => Effect.Effect<ReadonlyArray<HandoffFieldResult>, MachineFailure>
   /**
    * Empties the fields still on the bound page, so nothing the Person typed is left for Vivid to
-   * read once it has the Computer back. A page that has moved on holds none of them.
+   * read once it has the Computer back, and answers the labels it could not prove empty. A page
+   * that has moved on holds none of them; a field that cannot be found or read back is not proven.
    */
   readonly clearFields: (input: {
     readonly key: MachineKey
     readonly page: HandoffPageBinding
     readonly labels: ReadonlyArray<string>
-  }) => Effect.Effect<void, MachineFailure>
+  }) => Effect.Effect<ReadonlyArray<string>, MachineFailure>
 }
 
 /** Authority over the machine provider, distinct from application ownership and approvals. */

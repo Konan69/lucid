@@ -37,6 +37,7 @@ import {
   HandoffClosed,
   HandoffComputerUnavailable,
   HandoffNotAddressee,
+  HandoffNotCleared,
 } from '@vivid/contracts/rpc'
 import { companyColumnOf, inWorkspace, loadSummaries, type Actor } from '../auth/access.ts'
 import { ActionOrigin, actionOrigin } from '../approvals/gate.ts'
@@ -582,23 +583,27 @@ const merged = (
   ).pipe(Effect.filterOrFail(Arr.isReadonlyArrayNonEmpty, corrupt))
 
 /**
- * Empties the form's fields that are still on the page, before Vivid can read it again. A
- * Computer that is not running has no page holding them. Any other failure leaves the handoff open
- * and the Computer held, so nothing typed is exposed; the Person may try again.
+ * Empties the form's fields that are still on the page, before Vivid can read it again, and
+ * succeeds only when the Computer shows every one of them empty or gone. A Computer that is not
+ * running has no page holding them. A field it could not show empty is refused by its label, and
+ * any other failure fails too: either way the handoff stays open and the Computer held, so
+ * nothing typed is exposed, and the Person may try again.
  */
 const clearOf = Effect.fn('Handoffs.clear')(function* (row: Row) {
   if (!Definition.guards.Form(row.request)) return
   const labels = row.request.fields.map((field) => field.label)
   const computer = yield* ComputerStore
-  yield* throughComputer(
+  const remaining = yield* throughComputer(
     row.id,
     computer.clearFields(row.personId, row.binding, labels).pipe(
       Effect.catchTags({
-        ComputerNotReady: () => Effect.void,
-        MachineNotRunning: () => Effect.void,
+        ComputerNotReady: () => Effect.succeed([]),
+        MachineNotRunning: () => Effect.succeed([]),
       }),
     ),
   )
+  if (Arr.isReadonlyArrayNonEmpty(remaining))
+    return yield* new HandoffNotCleared({ id: row.id, labels: remaining })
 })
 
 /**

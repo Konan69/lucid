@@ -633,11 +633,23 @@ export class HandoffComputerUnavailable extends Schema.TaggedError<HandoffComput
   { title: 'Computer unavailable' },
 ) {}
 
+/**
+ * Finishing or withdrawing was refused because these fields could not be shown empty on the
+ * Computer, so it stays held for the step and Vivid cannot read what was typed. The labels are the
+ * form's own; the Person leaves the page on the screen, or tries again.
+ */
+export class HandoffNotCleared extends Schema.TaggedError<HandoffNotCleared>()(
+  'HandoffNotCleared',
+  { id: HandoffId, labels: Schema.NonEmptyArray(Schema.String) },
+  { title: 'Fields not cleared' },
+) {}
+
 /** The closed refusals of a Person's handoff calls. */
 export const HandoffFailure = Schema.Union([
   HandoffClosed,
   HandoffNotAddressee,
   HandoffComputerUnavailable,
+  HandoffNotCleared,
 ])
 export type HandoffFailure = typeof HandoffFailure.Type
 

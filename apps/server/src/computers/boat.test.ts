@@ -1749,6 +1749,55 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
+    /** A handoff gives the Computer back only once nothing typed is left on a page Vivid reads. */
+    it.effect(
+      'reports a doubted fill as unknown and clears a field only on a read-back proof',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          const signIn = BrowserAction.cases.Open.make({ address: 'https://example.com/signin' })
+          yield* machine.browse({ key, egress: false, action: signIn })
+          const { page } = yield* machine.findFields({ key, labels: ['Message'] })
+          const entries = [{ label: 'Message', value: Redacted.make('private-fixture-input') }]
+          const clear = machine.clearFields({ key, page, labels: ['Message'] })
+          // The driver typed but doubts how much of it reached the field.
+          yield* Ref.set(evidence.typeEffect, 'partial')
+          expect(yield* machine.fillFields({ key, page, entries })).toEqual([
+            HandoffFieldResult.cases.OutcomeUnknown.make({}),
+          ])
+          // A clearing the driver doubts is not proof either.
+          expect(yield* clear).toEqual(['Message'])
+          yield* Ref.set(evidence.typeEffect, 'unverifiable')
+          // A clearing that does not reach the field leaves it full, and says so.
+          yield* Ref.set(evidence.text, 'private-fixture-input')
+          yield* Ref.set(evidence.noType, true)
+          expect(yield* clear).toEqual(['Message'])
+          expect(yield* Ref.get(evidence.text)).toBe('private-fixture-input')
+          yield* Ref.set(evidence.noType, false)
+          expect(yield* clear).toEqual([])
+          expect(yield* Ref.get(evidence.text)).toBe('')
+          // A driver that no longer knows the prepared ids (a new session after a restart) is
+          // bound again, and the tab still at the prepared address is emptied there.
+          yield* Ref.set(evidence.text, 'private-fixture-input')
+          yield* Ref.set(evidence.minted, [])
+          expect(yield* clear).toEqual([])
+          expect(yield* Ref.get(evidence.text)).toBe('')
+          // A tab that moved to another address holds nothing of the old page.
+          yield* machine.browse({
+            key,
+            egress: false,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com/other' }),
+          })
+          const typed = (yield* Ref.get(evidence.calls)).length
+          expect(yield* machine.clearFields({ key, page, labels: ['Message'] })).toEqual([])
+          expect((yield* Ref.get(evidence.calls)).slice(typed)).not.toContain('browser_type')
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
     it.effect(
       'preserves exit-zero refusal codes and cleans private inputs, even for JSON success decoders',
       () =>

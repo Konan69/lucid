@@ -183,6 +183,7 @@ const FINAL = {
   HandoffClosed: true,
   HandoffNotAddressee: true,
   HandoffComputerUnavailable: true,
+  HandoffNotCleared: true,
 } as const satisfies Partial<Record<ProductFailure['_tag'], true>>
 
 /**

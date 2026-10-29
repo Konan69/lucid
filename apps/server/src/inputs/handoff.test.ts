@@ -18,7 +18,7 @@ import {
   PrepareHandoffOutcome,
   PrepareHandoffRequest,
 } from '@vivid/contracts'
-import { HandoffNotAddressee } from '@vivid/contracts/rpc'
+import { HandoffNotAddressee, HandoffNotCleared } from '@vivid/contracts/rpc'
 import { fixture, Observation, recordRuns, trustTestServices } from '../approvals/testing.ts'
 import { ComputerStore } from '../computers/store.ts'
 import type { HandoffEntry, HandoffPageBinding } from '../computers/machine.ts'
@@ -59,6 +59,8 @@ const signIn = PrepareHandoffRequest.cases.Form.make({
 const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
   const typed = yield* Ref.make<ReadonlyArray<HandoffEntry>>([])
   const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
+  /** The labels the next clearing cannot show empty; none by default. */
+  const remaining = yield* Ref.make<ReadonlyArray<string>>([])
   const handedBack = yield* Ref.make(0)
   const record = Computer.make({
     id: ComputerId.make(NodeCrypto.randomUUID()),
@@ -72,10 +74,11 @@ const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
       Ref.update(typed, (before) => [...before, ...entries]).pipe(
         Effect.as(entries.map(() => HandoffFieldResult.cases.Filled.make({}))),
       ),
-    clearFields: (_person, _page, labels) => Ref.update(cleared, (before) => [...before, labels]),
+    clearFields: (_person, _page, labels) =>
+      Ref.update(cleared, (before) => [...before, labels]).pipe(Effect.andThen(Ref.get(remaining))),
     hold: () => Ref.update(handedBack, (count) => count + 1).pipe(Effect.as(record)),
   })
-  return { layer: computer, typed, cleared, handedBack }
+  return { layer: computer, typed, cleared, remaining, handedBack }
 })
 
 /** Every log line written while a case runs, as JSON with its annotations and spans. */
@@ -88,6 +91,30 @@ const capturedLogs = () => {
 }
 
 const working = StoredRunOrigin.cases.Message.make({})
+
+/** A sign-in Vivid prepared in the personal Thread and the Person asked has filled. */
+const filledSignIn = Effect.fn('HandoffTest.filledSignIn')(function* (
+  test: Effect.Success<ReturnType<typeof fixture>>,
+) {
+  yield* recordRuns(test.personalId, [
+    { id: 'acting', personId: test.personal.person.id, origin: working, working: true },
+  ])
+  const vivid = { ...test.personal, by: 'vivid' as const, threadId: Option.some(test.personalId) }
+  const prepared = yield* prepareHandoff(vivid, signIn)
+  if (!PrepareHandoffOutcome.guards.Prepared(prepared)) return expect.unreachable(prepared._tag)
+  const handoff = prepared.handoff
+  if (!HandoffRequest.guards.Form(handoff)) return expect.unreachable('a form')
+  const [email, password] = handoff.fields
+  if (password === undefined) return expect.unreachable('two fields')
+  yield* fillHandoff(test.personal, {
+    id: handoff.id,
+    values: [
+      { fieldId: email.id, value: Redacted.make(EMAIL) },
+      { fieldId: password.id, value: Redacted.make(PASSWORD) },
+    ],
+  })
+  return handoff
+})
 
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Handoffs', () => {
@@ -186,6 +213,34 @@ layer(testDatabaseLayer)((it) => {
             expect(stored).not.toContain('private-token')
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
+    )
+
+    it.effect('H3 finishing waits until the Computer shows every field empty', () =>
+      Effect.gen(function* () {
+        const recorder = yield* recordingComputer()
+        const context = yield* Layer.build(Layer.merge(trustTestServices, recorder.layer))
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const handoff = yield* filledSignIn(test)
+          // The Computer could not show Password empty: the step stays open and the Computer held.
+          yield* Ref.set(recorder.remaining, ['Password'])
+          const refused = yield* Effect.result(completeHandoff(test.personal, handoff.id))
+          if (Result.isSuccess(refused)) return expect.unreachable('a refusal')
+          expect(refused.failure instanceof HandoffNotCleared).toBe(true)
+          expect(refused.failure).toMatchObject({ id: handoff.id, labels: ['Password'] })
+          expect((yield* handoffsWaiting(test.personal)).map((item) => item.id)).toEqual([
+            handoff.id,
+          ])
+          expect(yield* Ref.get(recorder.handedBack)).toBe(0)
+          expect(yield* Ref.get((yield* Observation).deliveries)).toEqual([])
+          // Shown empty on the next try, the step finishes and Vivid carries on once.
+          yield* Ref.set(recorder.remaining, [])
+          const completed = yield* completeHandoff(test.personal, handoff.id)
+          expect(completed.state._tag).toBe('Completed')
+          expect(yield* Ref.get(recorder.handedBack)).toBe(1)
+          expect(yield* Ref.get((yield* Observation).deliveries)).toHaveLength(1)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
     )
 
     it.effect('H2 only the Person asked may fill a step in a Thread others can read', () =>

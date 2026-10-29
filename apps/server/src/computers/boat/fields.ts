@@ -28,15 +28,27 @@ const named = (page: Snapshot, label: string): ReadonlyArray<Ref> =>
  * into is `UnsupportedField`; none, or two that could be typed into, is `TargetUnavailable`,
  * because typing a secret into a guess is worse than asking on the live screen.
  */
-const fieldOf = (page: Snapshot, label: string): Result.Result<string, HandoffRefusalReason> => {
+const fieldOf = (page: Snapshot, label: string): Result.Result<Ref, HandoffRefusalReason> => {
   const matches = named(page, label)
   const editable = matches.filter((ref) => ref.actions.includes('type'))
   const field = editable[0]
-  if (editable.length === 1 && field !== undefined) return Result.succeed(field.ref)
+  if (editable.length === 1 && field !== undefined) return Result.succeed(field)
   return Result.fail(
     editable.length === 0 && matches.length > 0 ? 'UnsupportedField' : 'TargetUnavailable',
   )
 }
+
+/**
+ * Whether a typing receipt says the driver is unsure what reached the field. `partial` and
+ * `suspected_noop` are Cua's own doubt about the effect (`action_record.rs` public_result); a
+ * receipt otherwise reports delivery only (`receipt.ts`).
+ */
+const uncertain = (receipt: typeof ActionReceipt.Type) =>
+  receipt.effect === 'partial' || receipt.effect === 'suspected_noop'
+
+/** A refusal the driver states: it did nothing, as opposed to an answer that was lost. */
+const isRefusal = (failure: MachineFailure) =>
+  failure instanceof ComputerToolRefused || failure instanceof ComputerActionRefused
 
 /** A fresh snapshot of one tab the driver already knows, by the ids it minted for it. */
 const snapshotOf = (native: Driver, target: string, tab: string) =>
@@ -88,8 +100,8 @@ export const findFields = Effect.fn('Machine.boat.fields.find')(function* (
 /**
  * Types one value. The page is read again just before, so a navigation between two fields
  * refuses the rest rather than typing a password into whatever page came next. A refusal the
- * driver states is definite (nothing typed); a lost answer may have typed, so it is unknown.
- * The value is unwrapped only into the driver's private input file (`driver.ts` `input`).
+ * driver states is definite (nothing typed); a lost answer, or a receipt in which the driver
+ * doubts its own effect, may have typed part of it, so it is unknown. The value is unwrapped only into the driver's private input file (`driver.ts` `input`).
  */
 const fillOne = Effect.fn('Machine.boat.fields.fillOne')(function* (
   native: Driver,
@@ -114,17 +126,22 @@ const fillOne = Effect.fn('Machine.boat.fields.fillOne')(function* (
       {
         target_id: page.target,
         tab_id: page.tab,
-        ref: field.success,
+        ref: field.success.ref,
         text: Redacted.value(entry.value),
         replace: true,
       },
       ActionReceipt,
     )
     .pipe(
-      Effect.as<HandoffFieldResult>(HandoffFieldResult.cases.Filled.make({})),
+      Effect.map(
+        (receipt): HandoffFieldResult =>
+          uncertain(receipt)
+            ? HandoffFieldResult.cases.OutcomeUnknown.make({})
+            : HandoffFieldResult.cases.Filled.make({}),
+      ),
       Effect.catch((failure) =>
         Effect.succeed(
-          failure instanceof ComputerToolRefused || failure instanceof ComputerActionRefused
+          isRefusal(failure)
             ? HandoffFieldResult.cases.Refused.make({ reason: 'UnsupportedField' })
             : HandoffFieldResult.cases.OutcomeUnknown.make({}),
         ),
@@ -141,24 +158,92 @@ export const fillFields = Effect.fn('Machine.boat.fields.fill')(function* (
   return yield* Effect.forEach(entries, (entry) => fillOne(native, page, entry))
 })
 
+/** One tab the driver knows by ids it minted, where typed values may still be. */
+interface Tab {
+  readonly target: string
+  readonly tab: string
+}
+
 /**
- * Empties each field still on the bound page. A page that moved on (the Person signed in, or left)
- * holds none of the typed values any more, so there is nothing to clear.
+ * The tabs that may still show what was typed. While the driver still knows the prepared ids,
+ * that is the prepared tab if it still shows the prepared address, and none once it moved on: a
+ * new document does not hold the old one's values. When the driver refuses those ids (a new
+ * driver session after a server restart, or the tab was closed), the browser is bound again and
+ * every tab at the prepared address is one to empty. Emptying is not typing a secret, so a fresh
+ * bind's ids are fine here; anything that cannot be read fails, and nothing is proven.
+ */
+const holding = Effect.fn('Machine.boat.fields.holding')(function* (
+  native: Driver,
+  page: HandoffPageBinding,
+) {
+  const prepared = yield* snapshotOf(native, page.target, page.tab).pipe(
+    Effect.asSome,
+    Effect.catchIf(
+      (failure) => failure instanceof ComputerToolRefused,
+      () => Effect.succeedNone,
+    ),
+  )
+  if (Option.isSome(prepared))
+    return addressDigest(prepared.value.page.url) === page.digest
+      ? [{ target: page.target, tab: page.tab }]
+      : []
+  const bound = yield* binding(native, yield* chrome(native, false, noProxy))
+  return bound.tabs
+    .filter((tab) => addressDigest(tab.url) === page.digest)
+    .map((tab): Tab => ({ target: bound.target_id, tab: tab.tab_id }))
+})
+
+/** Whether a field reads back empty: the AX value of an emptied input is absent or blank. */
+const isEmpty = (page: Snapshot, label: string) => {
+  const field = fieldOf(page, label)
+  return Result.isSuccess(field) && (field.success.value === null || field.success.value === '')
+}
+
+/**
+ * Whether one label's field on one tab is proven to hold nothing: the tab moved to another
+ * address, or the field was emptied and reads back empty with a receipt the driver does not
+ * doubt. It is always typed over, never judged by its value first, because a password field's
+ * accessible value is not something to trust as the whole truth. A label that does not name
+ * exactly one field is not proven: the control may be hidden with its value still in it.
+ */
+const emptied = Effect.fn('Machine.boat.fields.emptied')(function* (
+  native: Driver,
+  at: Tab,
+  digest: string,
+  label: string,
+) {
+  const before = yield* snapshotOf(native, at.target, at.tab)
+  if (addressDigest(before.page.url) !== digest) return true
+  const field = fieldOf(before, label)
+  if (Result.isFailure(field)) return false
+  const receipt = yield* native.call(
+    'browser_type',
+    { target_id: at.target, tab_id: at.tab, ref: field.success.ref, text: '', replace: true },
+    ActionReceipt,
+  )
+  if (uncertain(receipt)) return false
+  const after = yield* snapshotOf(native, at.target, at.tab)
+  return addressDigest(after.page.url) !== digest || isEmpty(after, label)
+})
+
+/**
+ * Empties the handoff's fields wherever they may still be, and answers the labels it could not
+ * prove empty. Only an empty answer lets the handoff release the Computer (`inputs/handoff.ts`);
+ * a refusal the driver states for one field leaves that label among them, while a failure that
+ * says nothing (a lost answer) fails the whole clearing.
  */
 export const clearFields = Effect.fn('Machine.boat.fields.clear')(function* (
   native: Driver,
   page: HandoffPageBinding,
   labels: ReadonlyArray<string>,
-): Effect.fn.Return<void, MachineFailure> {
-  for (const label of labels) {
-    const now = yield* boundPage(native, page)
-    if (Option.isNone(now)) return
-    const field = fieldOf(now.value, label)
-    if (Result.isFailure(field)) continue
-    yield* native.call(
-      'browser_type',
-      { target_id: page.target, tab_id: page.tab, ref: field.success, text: '', replace: true },
-      ActionReceipt,
-    )
-  }
+): Effect.fn.Return<ReadonlyArray<string>, MachineFailure> {
+  const tabs = yield* holding(native, page)
+  const left = yield* Effect.forEach(labels, (label) =>
+    Effect.forEach(tabs, (at) =>
+      emptied(native, at, page.digest, label).pipe(
+        Effect.catchIf(isRefusal, () => Effect.succeed(false)),
+      ),
+    ).pipe(Effect.map((done) => (done.every(Boolean) ? [] : [label]))),
+  )
+  return left.flat()
 })

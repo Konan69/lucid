@@ -531,7 +531,7 @@ export interface ComputerStoreService {
     person: PersonId,
     page: HandoffPageBinding,
     labels: ReadonlyArray<string>,
-  ) => Effect.Effect<void, StoreError | MachineFailure | ComputerNotReady>
+  ) => Effect.Effect<ReadonlyArray<string>, StoreError | MachineFailure | ComputerNotReady>
   /**
    * The Computer's own shell and files, used as a person uses their machine: woken if asleep,
    * refused while the Person holds it, and counted as activity. No Approval is asked and no rule
