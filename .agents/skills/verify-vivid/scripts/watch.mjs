@@ -2,7 +2,15 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
-import { ConnectionState, ConnectionStep, WatchState, RunOrigin } from '@vivid/contracts'
+import {
+  ConnectionState,
+  ConnectionStep,
+  FeedCause,
+  FeedEvidence,
+  FeedProvenance,
+  WatchState,
+  RunOrigin,
+} from '@vivid/contracts'
 import { observe } from './observation.mjs'
 import { decodeText } from './receipts.mjs'
 import { rpc, chat, history, settled, json } from './wire.mjs'
@@ -139,13 +147,23 @@ export async function integrationOf(state, connection, directory) {
   return { connection, app: record.id }
 }
 
-/** Only the model makes the Watch. Its durable tool calls must include discovery and subscription. */
+/** Only the model makes the Watch. Its durable tool calls must include discovery and subscription.
+ * The last word of a pulse's words is a code past its first 4,000 characters, so the card can only
+ * show it when the whole event reached the model. */
 export function watchWords(marker) {
-  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker}, the event's receipt and words drawn in the card itself and no sentence beside them. Do not emit any event yourself. Confirm when the Watch is active.`
+  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker}, the event's receipt and the last word of its words drawn in the card itself and no sentence beside them. Do not emit any event yourself. Confirm when the Watch is active.`
+}
+
+/** A pulse's words longer than the 4,000 characters a tool result keeps, ending with `end`. */
+const longWords = (marker, end) => {
+  const lines = Array.from({ length: 90 }, (_, index) => `Line ${index + 1} of the ${marker} pulse.`)
+  const words = `${lines.join(' ')} ${end}`
+  NodeAssert.ok(words.indexOf(end) > 4000, 'The end code must sit past 4,000 characters')
+  return words
 }
 
 /** An external provider invokes Executor directly, outside every Vivid tool and approval adapter. */
-async function emit(state, { app, marker, name }, directory) {
+async function emit(state, { app, words, name }, directory) {
   const tools = await executorRequest(state, '/apps/' + encodeURIComponent(app) + '/tools', {
     schema: ExecutorTools,
   })
@@ -158,7 +176,7 @@ async function emit(state, { app, marker, name }, directory) {
       version: tools.version,
       kind: 'mutation',
       tool: tool.name,
-      input: { receipt, words: marker },
+      input: { receipt, words },
     },
   })
   await json(directory + '/' + name + '.json', { receipt, app, result })
@@ -182,17 +200,23 @@ export async function occurrence(state, { id, integration, marker }, directory) 
   const watching = watches.watches.find((candidate) => candidate.name === marker)
   NodeAssert.ok(watching, 'Model did not create the named Watch')
   NodeAssert.ok(WatchState.guards.Active(watching.state))
+  const end = 'END' + crypto.randomUUID().slice(0, 8).toUpperCase()
   const receipt = await emit(
     state,
-    { app: integration.app, marker, name: 'provider-receipt' },
+    { app: integration.app, words: longWords(marker, end), name: 'provider-receipt' },
     directory,
   )
   const item = await posted(state, marker, directory)
   // The card is the drawing: a drawn post, whose display holds the receipt, with no words or bar.
   NodeAssert.equal(item.post._tag, 'Drawn', 'Feed card was said in words, not drawn')
   NodeAssert.ok(item.post.display.includes(receipt), 'Feed display did not draw the receipt')
+  NodeAssert.ok(item.post.display.includes(end), 'The end of the long event did not reach the model')
   const detail = await settled(state, item.thread, 1, 'Completed', directory)
-  NodeAssert.ok(RunOrigin.guards.Watch(detail.runs[0].origin))
+  const run = detail.runs[0]
+  // The Run records which Watch and which event started it.
+  NodeAssert.ok(RunOrigin.guards.Watch(run.origin))
+  NodeAssert.equal(run.origin.watchId, watching.id)
+  NodeAssert.equal(run.origin.eventId, receipt)
   NodeAssert.equal(item.thread, threadFor(watching.id, receipt))
   const runs = await watchRows(
     state,
@@ -201,20 +225,111 @@ export async function occurrence(state, { id, integration, marker }, directory) 
     'background-runs',
   )
   NodeAssert.equal(runs.length, 1)
-  NodeAssert.equal(runs[0].id, detail.runs[0].id)
-  await history(state, item.thread, directory, 'background-history')
+  NodeAssert.equal(runs[0].id, run.id)
+  // The card says what posted it and what caused it, from the record.
+  NodeAssert.ok(FeedProvenance.guards.Recorded(item.post.provenance), 'Feed card has no provenance')
+  const provenance = FeedProvenance.cases.Recorded.make({
+    postedBy: run.id,
+    cause: FeedCause.cases.Watch.make({
+      run: run.id,
+      watch: watching.id,
+      watchName: marker,
+      eventId: receipt,
+    }),
+    evidence: [
+      FeedEvidence.cases.ThreadRun.make({ thread: item.thread, run: run.id }),
+      ...item.post.provenance.evidence.slice(1),
+    ],
+  })
+  NodeAssert.deepEqual(item.post.provenance, provenance, 'Feed card provenance was not recorded')
+  // The Thread shows the event whole, as what Vivid saw.
+  const background = await history(state, item.thread, directory, 'background-history')
+  const saw = background.messages.find(
+    (message) => message.signal !== undefined && message.signal.tagName === 'event',
+  )
+  NodeAssert.ok(saw, 'The background Thread has no event')
+  NodeAssert.equal(saw.signal.attributes.event, 'pulse.received')
+  NodeAssert.ok(
+    saw.parts.some((part) => part.type === 'text' && part.text.includes(end)),
+    'The Thread does not hold the whole event',
+  )
   const evidence = {
     receipt,
+    end,
     watch: watching.id,
-    run: detail.runs[0].id,
+    run: run.id,
     feed: item.card,
     item,
     background: item.thread,
     connection: integration.connection.id,
     app: integration.app,
   }
+  await redelivered(state, evidence, directory)
   await json(directory + '/proof.json', evidence)
   return evidence
+}
+
+/** The callback a Watch's events are signed for, from its run-owned row. */
+async function callbackOf(state, watch, directory, name) {
+  const rows = await watchRows(state, { table: 'vivid_watches', field: 'id', id: watch }, directory, name)
+  NodeAssert.equal(rows.length, 1)
+  return rows[0].callback_url
+}
+
+/** Sign one delivery as Executor does for this Watch and post it to its callback. */
+async function signedDelivery(proof, { callback, receipt, words }) {
+  const signed = {
+    id: crypto.randomUUID(),
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    body: JSON.stringify({
+      eventId: receipt,
+      name: 'pulse.received',
+      timestamp: new Date().toISOString(),
+      data: { receipt, words },
+    }),
+  }
+  const secret = NodeCrypto.createHmac('sha256', authSecret)
+    .update('vivid/watch/' + proof.watch)
+    .digest()
+  const signature = NodeCrypto.createHmac('sha256', secret)
+    .update(`${signed.id}.${signed.timestamp}.${signed.body}`)
+    .digest('base64')
+  const response = await fetch(callback, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'webhook-id': signed.id,
+      'webhook-timestamp': signed.timestamp,
+      'webhook-signature': 'v1,' + signature,
+    },
+    body: signed.body,
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (response.body !== null) await response.body.cancel()
+  return response.status
+}
+
+/** Executor delivers at least once. The same event again joins the same Run, and the card keeps
+ * the cause it recorded: no second Run, the same provenance. */
+async function redelivered(state, proof, directory) {
+  const callback = await callbackOf(state, proof.watch, directory, 'redelivery-watch')
+  const status = await signedDelivery(proof, {
+    callback,
+    receipt: proof.receipt,
+    words: 'Delivered again',
+  })
+  const runs = await watchRows(
+    state,
+    { table: 'vivid_runs', field: 'thread_id', id: proof.background },
+    directory,
+    'redelivery-runs',
+  )
+  const feed = await rpc(state, 'ListFeed', undefined, directory)
+  const card = feed.items.find((candidate) => candidate.card === proof.feed)
+  await json(directory + '/redelivery.json', { status, runs: runs.length, card })
+  NodeAssert.equal(status, 200, 'A redelivered event was refused')
+  NodeAssert.equal(runs.length, 1, 'A redelivered event started another Run')
+  NodeAssert.deepEqual(card.post.provenance, proof.item.post.provenance, 'Redelivery moved the cause')
 }
 
 /** An unrelated provider-side account preserves the app under Vivid's actual reclamation policy.
@@ -249,54 +364,15 @@ async function retainEmitter(state, proof, directory) {
 /** A fresh signed delivery must receive Executor's terminal status even after the cascade
  * deletes the Watch. Repeat the second event id so the baseline observes one unwanted Run. */
 async function removedDelivery(proof, { callback, receipt }, directory) {
-  const signed = {
-    id: crypto.randomUUID(),
-    timestamp: String(Math.floor(Date.now() / 1000)),
-    body: JSON.stringify({
-      eventId: receipt,
-      name: 'pulse.received',
-      timestamp: new Date().toISOString(),
-      data: { receipt, words: 'After removal' },
-    }),
-  }
-  const secret = NodeCrypto.createHmac('sha256', authSecret)
-    .update('vivid/watch/' + proof.watch)
-    .digest()
-  const signature = NodeCrypto.createHmac('sha256', secret)
-    .update(`${signed.id}.${signed.timestamp}.${signed.body}`)
-    .digest('base64')
-  const response = await fetch(callback, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'webhook-id': signed.id,
-      'webhook-timestamp': signed.timestamp,
-      'webhook-signature': 'v1,' + signature,
-    },
-    body: signed.body,
-    signal: AbortSignal.timeout(30_000),
-  })
-  await json(directory + '/removed-delivery.json', {
-    watch: proof.watch,
-    receipt,
-    callback,
-    status: response.status,
-  })
-  if (response.body !== null) await response.body.cancel()
-  return response.status
+  const status = await signedDelivery(proof, { callback, receipt, words: 'After removal' })
+  await json(directory + '/removed-delivery.json', { watch: proof.watch, receipt, callback, status })
+  return status
 }
 
 /** Keep every assertion on the baseline. The provider's exported committed state proves
  * no live subscription and no queued delivery, so absence of a Run needs no quiet-time sleep. */
 export async function disconnected(state, proof, directory, remove) {
-  const active = await watchRows(
-    state,
-    { table: 'vivid_watches', field: 'id', id: proof.watch },
-    directory,
-    'active-watch',
-  )
-  NodeAssert.equal(active.length, 1)
-  const callback = active[0].callback_url
+  const callback = await callbackOf(state, proof.watch, directory, 'active-watch')
   await retainEmitter(state, proof, directory)
   await remove()
   const rows = await watchRows(
@@ -307,7 +383,7 @@ export async function disconnected(state, proof, directory, remove) {
   )
   const receipt = await emit(
     state,
-    { app: proof.app, marker: 'After removal', name: 'after-remove' },
+    { app: proof.app, words: 'After removal', name: 'after-remove' },
     directory,
   )
   if (rows.some((row) => row.state === 'Active')) {
@@ -346,6 +422,12 @@ export async function disconnected(state, proof, directory, remove) {
     'Provider queued the event for the removed Watch',
   )
   NodeAssert.equal(assertions.noNewRun, true, 'Removal admitted another background Run')
+  // The card's cause is copied into it, so it still says what started the work.
+  const feed = await rpc(state, 'ListFeed', undefined, directory)
+  const card = feed.items.find((candidate) => candidate.card === proof.feed)
+  await json(directory + '/after-remove-card.json', card)
+  NodeAssert.ok(card, 'The card left the Feed with its Watch')
+  NodeAssert.deepEqual(card.post.provenance, proof.item.post.provenance, 'Removal changed the cause')
 }
 
 /** HTTP journey uses the real prompt and tools, then the same public Remove as the browser. */
