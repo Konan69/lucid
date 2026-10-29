@@ -19,6 +19,7 @@ import {
 import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { runInputs } from './deliveries.ts'
+import { corrected } from './correction.ts'
 import { isDeliveryEntry } from './delivery.ts'
 import { classify } from './failure.ts'
 import { PiRejected, pi } from './threads.ts'
@@ -168,8 +169,11 @@ const measure = Effect.fn('Response.measure')(function* (
   to: Option.Option<EntryId>,
   own: Option.Option<ReadonlySet<number>>,
 ) {
-  const entries = ownEntries(yield* entriesBetween(conversation, from, to), own)
+  const { kept, superseded } = corrected(yield* entriesBetween(conversation, from, to))
+  const entries = ownEntries(kept, own)
   const messages = entries.flatMap((entry) => Option.toArray(assistantOf(entry)))
+  // An answer a correction replaced is not part of the reply, but it was asked and paid for.
+  const paid = [...superseded, ...entries].flatMap((entry) => Option.toArray(assistantOf(entry)))
   const [first] = entries
   const opened = first === undefined || first.model === undefined ? undefined : first.model[0]
   // A provider attempt that failed, or that a stop cut short, was asked and paid for but is not a
@@ -199,7 +203,7 @@ const measure = Effect.fn('Response.measure')(function* (
           count + message.content.filter((part) => part.type === 'toolCall').length,
         0,
       ),
-    usage: messages.reduce((total, message) => add(total, message.usage), {
+    usage: paid.reduce((total, message) => add(total, message.usage), {
       input: 0,
       output: 0,
       cacheRead: 0,
