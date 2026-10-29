@@ -65,11 +65,11 @@ describe.skipIf(!testDatabaseConfigured)('To-dos', () => {
             everyPart,
           )
 
-          const request = AddTodoRequest.make({
+          const request = {
             threadId: test.personalId,
             what: 'renew my passport',
             due: 500,
-          })
+          } satisfies AddTodoRequest
           const added = yield* store.add(test.personal, request)
           expect(added).toMatchObject({
             personId: test.personal.person.id,
@@ -158,7 +158,7 @@ describe.skipIf(!testDatabaseConfigured)('To-dos', () => {
             listed
               .slice(2)
               .map((todo) => todo.state._tag)
-              .sort(),
+              .toSorted(),
           ).toEqual(['Done', 'Dropped'])
         }).pipe(Effect.scoped),
     )
