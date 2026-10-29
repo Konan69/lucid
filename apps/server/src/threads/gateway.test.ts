@@ -313,7 +313,10 @@ layer(foundation)((it) => {
  * Posts one body through the real route, authentication and access check, as a client's send.
  * The runtime is not reached: `admit` keeps what the gateway would have delivered.
  */
-const send = Effect.fn('GatewayTest.send')(function* (test: Fixture, body: unknown) {
+const send = Effect.fn('GatewayTest.send')(function* (
+  test: Fixture,
+  body: Readonly<Record<string, string>>,
+) {
   const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
   const admitted = yield* Queue.unbounded<Delivery>()
   const context = yield* Layer.build(
