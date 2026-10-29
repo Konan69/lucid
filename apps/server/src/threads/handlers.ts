@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
 import {
+  type AcknowledgeRunDeliveryRequest,
   Forbidden,
   InvalidRequest,
   type DeliveryScopeRequest,
@@ -17,10 +18,10 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
 import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
-import { Topic } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { requireThread } from './access.ts'
+import { audienceTopics, requireThread } from './access.ts'
 import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
 import { LiveLink } from '../rpc/link.ts'
@@ -147,6 +148,23 @@ export const threadHandlers = {
   DeleteThread: Effect.fn('Rpc.DeleteThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* (yield* ThreadStore).remove(auth.person.id, id)
+  }),
+  /**
+   * The Person a completed Run acted for, in a Thread they can still see, says their app drew its
+   * final response. The first acknowledgement moves the Thread's activity, as settlement does.
+   */
+  AcknowledgeRunDelivery: Effect.fn('Rpc.AcknowledgeRunDelivery')(function* (
+    request: AcknowledgeRunDeliveryRequest,
+  ) {
+    const auth = yield* requirePerson()
+    const runs = yield* RunStore
+    const acknowledged = yield* runs.acknowledge({ ...request, personId: auth.person.id })
+    if (Option.isNone(acknowledged)) return
+    const thread = yield* requireThread(acknowledged.value, auth.person.id)
+    const participants = yield* (yield* ThreadStore).participants(thread.id)
+    yield* (yield* Changes).publish(
+      audienceTopics(thread, participants).map(Topic.part('activity')),
+    )
   }),
   /** The store announces the Person alongside their read receipt under its key-share lock. */
   MarkThreadRead: Effect.fn('Rpc.MarkThreadRead')(function* ({ id }: { readonly id: ThreadId }) {
