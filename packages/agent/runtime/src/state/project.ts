@@ -6,7 +6,13 @@ import { Array as Arr, Option, Order, Predicate, Schema } from 'effect'
 import type * as Types from 'effect/Types'
 import { withoutCorrections } from '../correction.ts'
 import { CONTINUATION_ENTRY, continued } from '../continuity.ts'
-import { isDeliveryEntry, MessageData, PlacedSignal, SIGNAL_ENTRY, signalShown } from '../delivery.ts'
+import {
+  isDeliveryEntry,
+  MessageData,
+  PlacedSignal,
+  SIGNAL_ENTRY,
+  signalShown,
+} from '../delivery.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY, RunData } from '../response.ts'
 
 /**

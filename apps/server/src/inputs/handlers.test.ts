@@ -250,12 +250,20 @@ layer(testDatabaseLayer)((it) => {
             yield* store.replay
             const deliveries = yield* Ref.get((yield* Observation).deliveries)
             expect(deliveries.map((delivery) => delivery.message)).toMatchObject([
-              { body: 'Question: Which day works?\nAnswer: Monday' },
+              { cue: { body: 'Question: Which day works?\nAnswer: Monday' } },
               {
-                body: 'Question: Which day works?\nAnswer: Monday\n\nQuestion: Which topics should we review?\nAnswer: Research, Writing\n\nQuestion: What should we focus on?\nAnswer: Focus on sources.',
+                cue: {
+                  body: 'Question: Which day works?\nAnswer: Monday\n\nQuestion: Which topics should we review?\nAnswer: Research, Writing\n\nQuestion: What should we focus on?\nAnswer: Focus on sources.',
+                },
               },
-              { body: 'Question: What should we focus on?\nAnswer:   Keep these words.  ' },
-              { body: 'Question: Which topics should we review?\nAnswer: Writing, Research' },
+              {
+                cue: { body: 'Question: What should we focus on?\nAnswer:   Keep these words.  ' },
+              },
+              {
+                cue: {
+                  body: 'Question: Which topics should we review?\nAnswer: Writing, Research',
+                },
+              },
             ])
             expect(yield* Ref.get((yield* Observation).notices)).toContainEqual(
               expect.objectContaining({ body: 'Which day works? Two more questions.' }),

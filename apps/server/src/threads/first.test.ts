@@ -306,9 +306,13 @@ layer(stores)((it) => {
         const sent = yield* Ref.get(test.deliveries)
         expect(sent).toHaveLength(1)
         expect(sent[0]).toMatchObject({
-          type: 'first-conversation',
-          attributes: { from: 'Vivid', turn: '1' },
-          attachments: [],
+          delivery: {
+            envelope: {
+              from: 'Vivid',
+              turn: 1,
+              cue: { body: expect.stringContaining("This is the Person's first Thread.") },
+            },
+          },
           scope: { acting: test.actor.person.id },
         })
         const [delivery] = sent
