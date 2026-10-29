@@ -42,7 +42,6 @@ import {
   keyedServices,
   keyedAddress,
   personalKeyAuthorization,
-  refusedService,
 } from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
@@ -3192,12 +3191,10 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
         }),
       }),
       ...remote.filter(
-        // Upstream still lists refused services; their wire entries carry no address, so by id.
         (entry) =>
           Option.isNone(googleService(entry.id)) &&
           keyedService(entry.id) === undefined &&
-          entry.id !== discordServiceId &&
-          !refusedService(entry.id),
+          entry.id !== discordServiceId,
       ),
     ]
   })
