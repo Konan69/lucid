@@ -19,6 +19,8 @@ import {
   type ProjectChanged,
   type ProjectEvidenceMissing,
   type ProjectNotActive,
+  type WatchRunRequired,
+  type WatchEndConditionRequired,
 } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
@@ -62,6 +64,8 @@ export type ToolFailure =
   | ArtifactRenderUnsupported
   | ArtifactRenderFailed
   | ArtifactInspectionStale
+  | WatchRunRequired
+  | WatchEndConditionRequired
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -295,6 +299,8 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure(
           'That inspection is absent, belongs to another response or was already published. Inspect the file again.',
         ),
+      WatchRunRequired: ({ message }) => failure(message),
+      WatchEndConditionRequired: ({ message }) => failure(message),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>

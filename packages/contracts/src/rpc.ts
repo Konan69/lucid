@@ -64,6 +64,9 @@ import {
 import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
+  CompleteWatchRequest,
+  WatchRunRequired,
+  WatchEndConditionRequired,
   FindAppEventsRequest,
   FindAppEventsResponse,
   StopWatchRequest,
@@ -791,6 +794,13 @@ const CreateWatch = Rpc.make('CreateWatch', {
   success: WatchResponse,
 })
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
+const WatchWatches = Rpc.make('WatchWatches', { ...live, success: WatchListResponse })
+const CompleteWatch = Rpc.make('CompleteWatch', {
+  ...call,
+  error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
+  payload: CompleteWatchRequest,
+  success: WatchResponse,
+})
 const StopWatch = Rpc.make('StopWatch', {
   ...call,
   payload: StopWatchRequest,
@@ -1302,6 +1312,8 @@ export const VividRpc = RpcGroup.make(
   FindAppEvents,
   CreateWatch,
   ListWatches,
+  WatchWatches,
+  CompleteWatch,
   StopWatch,
   ListProjects,
   WatchProjects,

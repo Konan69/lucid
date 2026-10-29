@@ -480,7 +480,33 @@ export async function watch(state, id, directory) {
     { id, integration, marker, away: async () => undefined },
     directory,
   )
+  await completion(state, { id, integration }, directory)
   await disconnected(state, proof, directory, () =>
     rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
   )
+}
+
+/** An Until Watch ends only after a live provider read and its own admitted completion tool. */
+async function completion(state, { id, integration }, directory) {
+  const marker = 'Until ' + crypto.randomUUID().slice(0, 8)
+  const path = directory + '/completion'
+  await chat(state, id, `Start a Watch named ${marker} on Verify Pulse pulse.received. Its explicit end condition is that, after the next pulse, a fresh find_events read still lists pulse.received. When it fires, find_events must read Verify Pulse, then finish_watching with that evidence. Do not emit the pulse yourself.`, path)
+  await settled(state, id, 2, 'Completed', path)
+  const { watches } = await rpc(state, 'ListWatches', undefined, path)
+  const watching = watches.find((watch) => watch.name === marker)
+  NodeAssert.ok(watching && WatchState.guards.Active(watching.state))
+  const [row] = await watchRows(state, { table: 'vivid_watches', field: 'id', id: watching.id }, path, 'before')
+  const receipt = await emit(state, { app: integration.app, marker, name: 'pulse' }, path)
+  await observe(state, { tag: 'WatchWatches', payload: null, accept: (list) => !list.watches.some((watch) => watch.id === watching.id) })
+  const thread = threadFor(watching.id, receipt)
+  const detail = await settled(state, thread, 1, 'Completed', path)
+  const page = await history(state, thread, path)
+  const calls = page.messages.flatMap((message) => message.parts).filter((part) => part.type === 'dynamic-tool' && part.state === 'output-available')
+  NodeAssert.ok(calls.findIndex((call) => call.toolName === 'find_events') >= 0)
+  NodeAssert.ok(calls.findIndex((call) => call.toolName === 'finish_watching') > calls.findIndex((call) => call.toolName === 'find_events'))
+  const [completed] = await watchRows(state, { table: 'vivid_watches', field: 'id', id: watching.id }, path, 'after')
+  NodeAssert.equal(completed.state, 'Completed')
+  const status = await removedDelivery({ watch: watching.id }, { callback: row.callback_url, receipt: crypto.randomUUID() }, path)
+  NodeAssert.equal(status, 410)
+  await json(path + '/proof.json', { watch: watching.id, run: detail.runs[0].id, receipt, status })
 }

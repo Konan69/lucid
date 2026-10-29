@@ -1,4 +1,5 @@
 import { Schema } from 'effect'
+import { ConnectionId, RunId } from './identity.js'
 
 /**
  * Watches: something that happens in an Integration wakes Vivid.
@@ -45,6 +46,13 @@ export const WatchInstruction = Schema.String.check(
 export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed'])
 export type WatchStopReason = typeof WatchStopReason.Type
 
+/** Continuous work ends only on cancellation; Until needs a real read proving this condition. */
+export const WatchCondition = Schema.TaggedUnion({
+  Continuous: {},
+  Until: { condition: Schema.NonEmptyString },
+})
+export type WatchCondition = typeof WatchCondition.Type
+
 /**
  * Where a Watch is in its life. `Pending`: subscribed but not yet confirmed (Executor is verifying
  * the callback, or its answer was lost); the renewal pass finishes it with the same subscription. `Active` holds the time its subscription must be renewed before,
@@ -53,6 +61,8 @@ export type WatchStopReason = typeof WatchStopReason.Type
 export const WatchState = Schema.TaggedUnion({
   Pending: {},
   Active: { refreshBefore: Schema.Finite },
+  Paused: { at: Schema.Finite, connectionId: ConnectionId },
+  Completed: { at: Schema.Finite, runId: RunId, evidence: Schema.NonEmptyString },
   Stopped: { reason: WatchStopReason },
 })
 export type WatchState = typeof WatchState.Type
@@ -67,6 +77,7 @@ export const Watch = Schema.Struct({
   event: Schema.String,
   arguments: WatchArguments,
   instruction: WatchInstruction,
+  condition: WatchCondition,
   state: WatchState,
   createdAt: Schema.Finite,
 }).annotate({ identifier: 'Watch', title: 'Watch' })
@@ -97,6 +108,7 @@ export const CreateWatchRequest = Schema.Struct({
   event: Schema.String,
   arguments: WatchArguments,
   instruction: WatchInstruction,
+  condition: WatchCondition,
 })
 export interface CreateWatchRequest extends Schema.Schema.Type<typeof CreateWatchRequest> {}
 
@@ -104,9 +116,38 @@ export interface CreateWatchRequest extends Schema.Schema.Type<typeof CreateWatc
 export const StopWatchRequest = Schema.Struct({ name: WatchName })
 export interface StopWatchRequest extends Schema.Schema.Type<typeof StopWatchRequest> {}
 
+/** The admitted Watch Run supplies completion authority; model input supplies evidence only. */
+export const CompleteWatchRequest = Schema.Struct({
+  name: WatchName,
+  evidence: Schema.NonEmptyString,
+})
+export interface CompleteWatchRequest extends Schema.Schema.Type<typeof CompleteWatchRequest> {}
+
+/** Only server admission establishes which Watch the current Run may finish. */
+export class WatchRunRequired extends Schema.TaggedError<WatchRunRequired>()(
+  'WatchRunRequired',
+  {
+    watchId: WatchId,
+    message: Schema.Literal('Only the run this watch started can finish it.'),
+  },
+  { title: 'Watch Run required' },
+) {}
+
+/** A continuous Watch has no condition whose evidence could complete it. */
+export class WatchEndConditionRequired extends Schema.TaggedError<WatchEndConditionRequired>()(
+  'WatchEndConditionRequired',
+  {
+    watchId: WatchId,
+    message: Schema.Literal(
+      'This watch has no end condition, so it keeps watching until it is stopped.',
+    ),
+  },
+  { title: 'Watch end condition required' },
+) {}
+
 export const WatchResponse = Schema.Struct({ watch: Watch })
 export interface WatchResponse extends Schema.Schema.Type<typeof WatchResponse> {}
 
-/** A Person's live Watches: Pending and Active. Stopped Watches are history and are not listed. */
+/** Pending, Active and Paused Watches; Stopped and Completed records remain terminal history. */
 export const WatchListResponse = Schema.Struct({ watches: Schema.Array(Watch) })
 export interface WatchListResponse extends Schema.Schema.Type<typeof WatchListResponse> {}

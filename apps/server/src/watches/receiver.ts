@@ -20,6 +20,8 @@ import {
 import { ThreadStore } from '../threads/store.ts'
 import { secretFor, verify } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
+import { Watches } from './lifecycle.ts'
+import { WatchedApps } from './apps.ts'
 
 /**
  * Where Executor delivers a Watch's events: `POST /api/watches/:id`.
@@ -182,10 +184,17 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   const found = yield* (yield* WatchStore).find(id)
   if (Option.isNone(found)) return yield* new WatchGone({})
   const record = found.value
-  if (WatchState.guards.Stopped(record.watch.state)) return yield* new WatchGone({})
+  if (WatchState.isAnyOf(['Stopped', 'Completed'])(record.watch.state))
+    return yield* new WatchGone({})
   const decoded = yield* decodeBody(body).pipe(Effect.mapError(() => new WatchBodyInvalid({})))
   if (isVerification(decoded))
     return HttpServerResponse.jsonUnsafe({ challenge: decoded.challenge }, { status: 200 })
+  if (WatchState.guards.Paused(record.watch.state))
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  if (yield* (yield* WatchedApps).needsAuthorization(record.connectionId)) {
+    yield* (yield* Watches).connectionChanged(record.connectionId)
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  }
   yield* wake(record, decoded)
   return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
 })

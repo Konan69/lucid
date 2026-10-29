@@ -1,5 +1,13 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, RunState, SignalCue, WatchId } from '@vivid/contracts'
+import {
+  CreateWatchRequest,
+  WatchCondition,
+  WatchState,
+  ConnectionState,
+  RunState,
+  SignalCue,
+  WatchId,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -11,11 +19,13 @@ import { DeliveryMessage, StoredRunOrigin, type Conversation } from '../threads/
 import { ThreadStore } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { Watches } from './lifecycle.ts'
+import { WatchedApps } from './apps.ts'
 import { threadOf, watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
-import type { WatchStore } from './store.ts'
+import { WatchStore } from './store.ts'
 import { RunStore, RunEnding } from '../threads/runs.ts'
 import { Delivered, Executor, person, testLayer } from './testing.ts'
+import { getRecord, saveState, recordChanged } from '../connections/records.ts'
 
 const request = CreateWatchRequest.make({
   name: 'New mail in Work Mail',
@@ -23,6 +33,7 @@ const request = CreateWatchRequest.make({
   event: 'message.received',
   arguments: {},
   instruction: 'Tell me when a client writes.',
+  condition: WatchCondition.cases.Continuous.make({}),
 })
 const event = (eventId: string) =>
   JSON.stringify({
@@ -40,14 +51,16 @@ const deliveriesOf = Effect.fn('WatchTest.deliveriesOf')(function* (watch: Watch
 })
 
 /** An Active Watch, its callback and its secret, as Executor holds them. */
-const activeWatch = Effect.fn('WatchTest.activeWatch')(function* () {
+const activeWatch = Effect.fn('WatchTest.activeWatch')(function* (
+  condition: WatchCondition = WatchCondition.cases.Continuous.make({}),
+) {
   const actor = yield* person()
   const executor = yield* Executor
   yield* Queue.offer(executor.answers, {
     id: `evs_${'3'.repeat(32)}`,
     refreshBefore: new Date(7 * 24 * 60 * 60_000),
   })
-  const watch = yield* (yield* Watches).create(actor, request)
+  const watch = yield* (yield* Watches).create(actor, { ...request, condition })
   const asked = yield* Queue.take(executor.subscribed)
   const secret = secretFor((yield* ServerConfig).AUTH_SECRET, watch.id)
   // The secret Executor was given is the one the receiver derives: the handshake depends on it.
@@ -58,7 +71,7 @@ const activeWatch = Effect.fn('WatchTest.activeWatch')(function* () {
 /** The receiver route, served in process with the test's own services and clock. */
 const receiver = Effect.fn('WatchTest.receiver')(function* () {
   const context = yield* Effect.context<
-    WatchStore | ThreadStore | Conversation | ServerConfig | Changes
+    WatchStore | ThreadStore | Conversation | ServerConfig | Changes | Watches | WatchedApps
   >()
   const web = yield* Effect.acquireRelease(
     Effect.sync(() =>
@@ -101,6 +114,87 @@ const receiver = Effect.fn('WatchTest.receiver')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
   layer(testLayer)((it) => {
+    it.effect(
+      'only its admitted Run can complete an Until Watch and later callbacks answer 410',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const { actor, watch, url, secret } = yield* activeWatch(
+            WatchCondition.cases.Until.make({ condition: 'The invoice arrived.' }),
+          )
+          const watching = yield* Watches
+          expect(
+            (yield* Effect.flip(watching.complete(actor, watch.name, 'The invoice arrived.')))._tag,
+          ).toBe('WatchRunRequired')
+          expect((yield* post(url, event('invoice'), secret, Option.none())).status).toBe(200)
+          const threadId = threadOf(watch.id, 'invoice')
+          const [run] = yield* (yield* RunStore).list(threadId)
+          if (run === undefined) return expect.fail('Expected the admitted Watch Run')
+          const completed = yield* watching.complete(
+            { ...actor, threadId: Option.some(threadId) },
+            watch.name,
+            'Read the invoice from the client.',
+          )
+          expect(completed.state).toEqual(
+            WatchState.cases.Completed.make({
+              at: 0,
+              runId: run.id,
+              evidence: 'Read the invoice from the client.',
+            }),
+          )
+          expect(yield* watching.list(actor)).toEqual([])
+          expect((yield* post(url, event('after-completion'), secret, Option.none())).status).toBe(
+            410,
+          )
+          expect(yield* deliveriesOf(watch.id)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'acknowledges paused events without a Run and resubscribes after the same Connection is Ready',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const { actor, watch, url, secret } = yield* activeWatch()
+          const watching = yield* Watches
+          const store = yield* WatchStore
+          const found = yield* store.find(watch.id)
+          if (Option.isNone(found)) return expect.fail('Expected the Watch')
+          const connection = yield* getRecord(actor, found.value.connectionId, false)
+          const paused = yield* saveState(
+            connection,
+            ConnectionState.cases.NeedsAuthorization.make({}),
+            connection.references,
+          )
+          yield* recordChanged(actor, paused)
+          const [listed] = yield* watching.list(actor)
+          expect(Option.map(Option.fromUndefinedOr(listed), (watch) => watch.state)).toEqual(
+            Option.some(WatchState.cases.Paused.make({ at: 0, connectionId: connection.id })),
+          )
+          expect((yield* post(url, event('while-paused'), secret, Option.none())).status).toBe(200)
+          expect(yield* deliveriesOf(watch.id)).toEqual([])
+          const executor = yield* Executor
+          yield* Queue.offer(executor.answers, {
+            id: 'reconnected',
+            refreshBefore: new Date(604800000),
+          })
+          const ready = yield* saveState(
+            paused,
+            ConnectionState.cases.Ready.make({}),
+            paused.references,
+          )
+          yield* recordChanged(actor, ready)
+          expect((yield* Queue.take(executor.subscribed)).url).toBe(url)
+          const [resumed] = yield* watching.list(actor)
+          expect(Option.map(Option.fromUndefinedOr(resumed), (watch) => watch.state)).toEqual(
+            Option.some(WatchState.cases.Active.make({ refreshBefore: 604800000 })),
+          )
+          expect((yield* post(url, event('after-reconnect'), secret, Option.none())).status).toBe(
+            200,
+          )
+          expect(yield* deliveriesOf(watch.id)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
     it.effect('echoes Executor’s signed challenge, and refuses a forged one', () =>
       Effect.gen(function* () {
         const post = yield* receiver()

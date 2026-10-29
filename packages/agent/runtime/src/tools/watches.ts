@@ -1,5 +1,5 @@
 import { defineTool } from './tool.ts'
-import { Tool, Watch, WatchState } from '@vivid/contracts'
+import { Tool, Watch, WatchState, WatchCondition } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -25,6 +25,8 @@ const view = (watch: Watch) => ({
   state: WatchState.match(watch.state, {
     Pending: () => 'starting',
     Active: () => 'watching',
+    Paused: () => 'paused until the Integration is signed in again; resumes automatically',
+    Completed: ({ evidence }) => `completed: ${modelText(evidence)}`,
     Stopped: () => 'stopped',
   }),
 })
@@ -77,6 +79,12 @@ export function watchTools(runTool: RunTool) {
           v.description('Values for the event’s filters, by filter name; {} to watch every event.'),
         ),
         instruction: text('What to do each time the event happens, in the Person’s words.', 4000),
+        until: v.nullable(
+          text(
+            'The explicit condition that ends this Watch. Null for ongoing work. Read the real source before calling finish_watching when it is met.',
+            4000,
+          ),
+        ),
       }),
       run({ data, signal }) {
         return runTool(
@@ -88,6 +96,10 @@ export function watchTools(runTool: RunTool) {
               event: data.event,
               arguments: data.filters,
               instruction: data.instruction.trim(),
+              condition:
+                data.until === null
+                  ? WatchCondition.cases.Continuous.make({})
+                  : WatchCondition.cases.Until.make({ condition: data.until }),
             })
             return { output: view(response.watch) }
           }),
@@ -107,6 +119,39 @@ export function watchTools(runTool: RunTool) {
             return { output: { watches: response.watches.map(view) } }
           }),
           { signal, tool: 'list_watches' },
+        )
+      },
+    }),
+    ...endingTools(runTool),
+  ] as const
+}
+
+/** Terminal commands share the same name-based server boundary. */
+function endingTools(runTool: RunTool) {
+  return [
+    defineTool({
+      name: Tool.finish_watching,
+      description:
+        'Complete the Watch that woke this Run only when its explicit ending condition is met. Read the real source first and give the evidence. Use stop_watching for cancellation.',
+      input: v.object({
+        summary,
+        name: watchName,
+        evidence: text(
+          'What the real read showed that proves this Watch’s condition is met.',
+          4000,
+        ),
+      }),
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            return {
+              output: view(
+                (yield* client.CompleteWatch({ name: data.name, evidence: data.evidence })).watch,
+              ),
+            }
+          }),
+          { signal, tool: 'finish_watching' },
         )
       },
     }),

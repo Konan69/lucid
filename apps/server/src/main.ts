@@ -123,6 +123,7 @@ const serverProgram = Effect.gen(function* () {
     skillStoreLayer,
     libraryStoreLayer,
     executorLayer,
+    executorEventsLayer,
     boatMachineLayer,
     publicPageLayer,
     codeAuthorityLayer,
@@ -161,7 +162,6 @@ const serverProgram = Effect.gen(function* () {
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     watchStoreLayer,
-    executorEventsLayer,
     watchedAppsLayer,
     codeCallsLayer,
     codeSourceLayer,
