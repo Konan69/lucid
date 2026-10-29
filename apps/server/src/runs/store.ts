@@ -171,39 +171,48 @@ const wakeAfter = (current: Row['wake'], ended: ChildRunState, parentWaiting: bo
   return 'due' as const
 }
 
-/** What a result delivery says. Its words are the helper's own; the rest names helper and ending. */
-const resultBody = (run: ChildRun, answer: RuntimeChildAnswer) =>
+/** Nothing ran, so nothing was spent: what a helper stopped before its first step used. */
+const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 }
+
+/** A stop or a failure the server recorded is the ending when Pi has no other word for it. */
+const recorded = (state: ChildRunState, usage: ChildRunResult['usage']) =>
+  ChildRunState.guards.Stopped(state)
+    ? Option.some<ChildRunResult>(ChildRunResult.cases.Stopped.make({ by: state.by, usage }))
+    : ChildRunState.guards.Failed(state)
+      ? Option.some<ChildRunResult>(
+          ChildRunResult.cases.Failed.make({ failure: state.reason, usage }),
+        )
+      : Option.none<ChildRunResult>()
+
+/** How a terminal helper's result reads, joining Pi's answer to the stored ending. */
+const resultOf = (state: ChildRunState, answer: RuntimeChildAnswer) =>
   RuntimeChildAnswer.match(answer, {
-    Running: () => Option.none<string>(),
-    Completed: ({ text }) =>
-      Option.some(
-        `Helper ${run.number} finished: ${run.brief}\n\n${text.length > RESULT_LIMIT ? `${text.slice(0, RESULT_LIMIT)}\n[The rest of this answer was cut.]` : text}`,
-      ),
-    Failed: ({ failure }) =>
-      Option.some(`Helper ${run.number} could not finish (${failure._tag}): ${run.brief}`),
-    Aborted: () =>
-      Option.some(
-        `Helper ${run.number} was stopped by a person before it finished: ${run.brief}. Anything it already did stays done.`,
+    Absent: () => recorded(state, NO_USAGE),
+    Running: () => Option.none<ChildRunResult>(),
+    Completed: ({ text, usage }) =>
+      Option.some<ChildRunResult>(ChildRunResult.cases.Completed.make({ text, usage })),
+    Failed: ({ failure, usage }) =>
+      Option.some<ChildRunResult>(ChildRunResult.cases.Failed.make({ failure, usage })),
+    Aborted: ({ usage }) =>
+      Option.orElse(recorded(state, usage), () =>
+        Option.some<ChildRunResult>(
+          ChildRunResult.cases.Failed.make({
+            failure: ChildFailure.cases.RuntimeFault.make({}),
+            usage,
+          }),
+        ),
       ),
   })
 
-/** How a terminal helper's result reads to a client, joining Pi's answer to the stored ending. */
-const resultOf = (state: ChildRunState, answer: RuntimeChildAnswer) =>
-  RuntimeChildAnswer.match(answer, {
-    Running: () => Option.none<ChildRunResult>(),
-    Completed: ({ text, usage }) =>
-      Option.some(ChildRunResult.cases.Completed.make({ text, usage })),
-    Failed: ({ failure, usage }) =>
-      Option.some(ChildRunResult.cases.Failed.make({ failure, usage })),
-    Aborted: ({ usage }) =>
-      Option.some(
-        ChildRunState.guards.Stopped(state)
-          ? ChildRunResult.cases.Stopped.make({ by: state.by, usage })
-          : ChildRunResult.cases.Failed.make({
-              failure: ChildFailure.cases.RuntimeFault.make({}),
-              usage,
-            }),
-      ),
+/** What a result delivery says. Its words are the helper's own; the rest names helper and ending. */
+const resultBody = (run: ChildRun, result: ChildRunResult) =>
+  ChildRunResult.match(result, {
+    Completed: ({ text }) =>
+      `Helper ${run.number} finished: ${run.brief}\n\n${text.length > RESULT_LIMIT ? `${text.slice(0, RESULT_LIMIT)}\n[The rest of this answer was cut.]` : text}`,
+    Failed: ({ failure }) =>
+      `Helper ${run.number} could not finish (${failure._tag}): ${run.brief}`,
+    Stopped: () =>
+      `Helper ${run.number} was stopped by a person before it finished: ${run.brief}. Anything it already did stays done.`,
   })
 
 /** Retries a result delivery the Thread could not take yet: busy with another Person, or unreachable. */
@@ -256,15 +265,15 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
     const run = yield* toChildRun(row.value)
     const person = yield* actingFor(id)
     if (Option.isNone(person)) return
-    const body = resultBody(run, yield* runtime.child(run.threadId, id))
-    if (Option.isNone(body)) return
+    const result = resultOf(run.state, yield* runtime.child(run.threadId, id))
+    if (Option.isNone(result)) return
     yield* conversation.deliver({
       threadId: run.threadId,
       personId: person.value,
       speaker: DeliverySpeaker.cases.Vivid.make({}),
       message: DeliveryMessage.cases.Signal.make({
         type: 'child-result',
-        body: body.value,
+        body: resultBody(run, result.value),
         attributes: { helper: String(run.number) },
       }),
       origin: StoredRunOrigin.cases.ChildResult.make({ childRunId: id }),
