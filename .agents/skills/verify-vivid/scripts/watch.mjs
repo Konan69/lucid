@@ -156,7 +156,7 @@ export function watchWords(marker) {
 
 /** A pulse's words longer than the 4,000 characters a tool result keeps, ending with `end`. */
 const longWords = (marker, end) => {
-  const lines = Array.from({ length: 90 }, (_, index) => `Line ${index + 1} of the ${marker} pulse.`)
+  const lines = Array.from({ length: 150 }, (_, index) => `Line ${index + 1} of the ${marker} pulse.`)
   const words = `${lines.join(' ')} ${end}`
   NodeAssert.ok(words.indexOf(end) > 4000, 'The end code must sit past 4,000 characters')
   return words
