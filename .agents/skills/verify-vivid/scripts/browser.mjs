@@ -131,7 +131,8 @@ const specialRecipes = {
   },
   watch: {
     drive: watchBrowser,
-    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+    scope:
+      'browser Connect, model Watch, real Executor delivery, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload and Disconnect',
   },
   replies: {
     drive: offerBrowser,

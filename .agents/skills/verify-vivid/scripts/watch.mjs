@@ -2,7 +2,13 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
-import { ConnectionState, ConnectionStep, WatchState, RunOrigin } from '@vivid/contracts'
+import {
+  ConnectionState,
+  ConnectionStep,
+  NotificationOpens,
+  WatchState,
+  RunOrigin,
+} from '@vivid/contracts'
 import { observe } from './observation.mjs'
 import { decodeText } from './receipts.mjs'
 import { rpc, chat, history, settled, json } from './wire.mjs'
@@ -165,8 +171,44 @@ async function emit(state, { app, marker, name }, directory) {
   return receipt
 }
 
-/** One real occurrence must publish a completed background Run and a model-authored Feed item. */
-export async function occurrence(state, { id, integration, marker }, directory) {
+/**
+ * The Feed post tells the Person: one `posted` notice about the background Thread, titled as the
+ * card and opening the Feed. The notice is committed after the card, so it is waited for on the
+ * public live list rather than read once.
+ */
+async function postedNotice(state, item, directory) {
+  const notice = await observe(state, {
+    tag: 'WatchNotifications',
+    payload: null,
+    accept: (publication) =>
+      publication.notifications.some(
+        (candidate) => candidate.kind === 'posted' && candidate.threadId === item.thread,
+      ),
+  })
+  await json(directory + '/posted-notifications.json', notice)
+  const notices = notice.notifications.filter(
+    (candidate) => candidate.kind === 'posted' && candidate.threadId === item.thread,
+  )
+  // A later post with other content is new news and a notice of its own; the same post sent
+  // again is not (`apps/server/src/push/delivery.test.ts`). Each one says what its card says.
+  const mine = notices.find((candidate) => candidate.title === item.post.title)
+  NodeAssert.ok(mine, 'The notice is titled as the card')
+  NodeAssert.equal(mine.body, '', 'A drawn card has no words to quote')
+  for (const candidate of notices)
+    NodeAssert.deepEqual(
+      candidate.opens,
+      NotificationOpens.cases.Feed.make({}),
+      'A posted notice opens the Feed',
+    )
+  return mine
+}
+
+/**
+ * One real occurrence must publish a completed background Run, a model-authored Feed item and
+ * the notice it makes. `away` runs just before the provider emits, so a browser can step away
+ * from the app and be told by push rather than by its open page.
+ */
+export async function occurrence(state, { id, integration, marker, away }, directory) {
   await settled(state, id, 1, 'Completed', directory)
   const page = await history(state, id, directory)
   const tools = page.messages
@@ -182,6 +224,7 @@ export async function occurrence(state, { id, integration, marker }, directory) 
   const watching = watches.watches.find((candidate) => candidate.name === marker)
   NodeAssert.ok(watching, 'Model did not create the named Watch')
   NodeAssert.ok(WatchState.guards.Active(watching.state))
+  await away()
   const receipt = await emit(
     state,
     { app: integration.app, marker, name: 'provider-receipt' },
@@ -203,6 +246,7 @@ export async function occurrence(state, { id, integration, marker }, directory) 
   NodeAssert.equal(runs.length, 1)
   NodeAssert.equal(runs[0].id, detail.runs[0].id)
   await history(state, item.thread, directory, 'background-history')
+  const notice = await postedNotice(state, item, directory)
   const evidence = {
     receipt,
     watch: watching.id,
@@ -212,6 +256,7 @@ export async function occurrence(state, { id, integration, marker }, directory) 
     background: item.thread,
     connection: integration.connection.id,
     app: integration.app,
+    notice: notice.id,
   }
   await json(directory + '/proof.json', evidence)
   return evidence
@@ -353,7 +398,11 @@ export async function watch(state, id, directory) {
   const integration = await connectPulse(state, directory)
   const marker = 'Pulse ' + crypto.randomUUID().slice(0, 8)
   await chat(state, id, watchWords(marker), directory)
-  const proof = await occurrence(state, { id, integration, marker }, directory)
+  const proof = await occurrence(
+    state,
+    { id, integration, marker, away: async () => undefined },
+    directory,
+  )
   await disconnected(state, proof, directory, () =>
     rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
   )
