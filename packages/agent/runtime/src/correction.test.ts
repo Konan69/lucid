@@ -65,7 +65,13 @@ describe('a display that does not draw', () => {
           delivery('week', 'week', { body: 'show me my week' }),
         )
         const settlement = yield* settled(runtime, ada, 'week', receipt.submissionId)
-        expect(RuntimeSettlement.guards.Done(settlement)).toBe(true)
+        expect(settlement).toEqual(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: FIXED,
+            toolCalls: 0,
+          }),
+        )
         expect(given.faux.state.callCount).toBe(2)
         expect(seen[0]).toEqual(['show me my week'])
         const [person, correction, ...more] = seen[1] ?? []
@@ -80,8 +86,10 @@ describe('a display that does not draw', () => {
           [{ type: 'text', text: 'show me my week', state: 'done' }],
         ])
         const replies = state.messages.filter((message) => message.role === 'assistant')
-        expect(replies).toHaveLength(1)
-        expect(JSON.stringify(replies)).toContain('\\"soft\\")')
+        expect(replies.map((message) => message.parts)).toEqual([
+          [{ type: 'text', text: FIXED, state: 'done' }],
+        ])
+        expect(JSON.stringify(state)).not.toContain('flat')
         expect(JSON.stringify(state)).not.toContain('does not draw')
       }),
     ),

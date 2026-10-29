@@ -125,20 +125,37 @@ export const correctionHooks = (
   })
 
 /**
- * The transcript without the continuations Vivid's corrections appended. Such an entry is Vivid
- * talking to itself, not a delivery: read as one, it would be drawn as the Person's words, end
- * the measure of the response it is part of, and begin a run of its own. The record is written
- * before the answer it corrects, so it comes before its continuation in any read from the run's
- * start on.
+ * The transcript as Vivid's reply reads once a correction is made: without the continuation Pi
+ * appended, which is Vivid talking to itself and, read as a delivery, would be drawn as the
+ * Person's words, end the measure of its response and begin a run of its own; and without the
+ * answer it superseded, whose words and broken display the corrected answer replaces. That answer
+ * is the model message the continuing task wrote (with any failed attempt of the same task); it is
+ * left out only when the continuation is there, because Pi drops a continuation when the boundary
+ * places a Person's new message, and then that answer is the run's last. It was still paid for,
+ * so it is returned as `superseded` for the response's usage. The record is written before the
+ * answer it corrects, so a read from the run's start meets it first.
  */
-export const withoutCorrections = (entries: ReadonlyArray<EntryRecord>) => {
+export const corrected = (entries: ReadonlyArray<EntryRecord>) => {
   const asked = new Map<number, string>()
-  return entries.filter((entry) => {
+  const continued = new Set<number>()
+  const continuations = new Set<number>()
+  for (const entry of entries) {
     const kept = entry.kind === CORRECTION_ENTRY ? decodeCorrection(entry.data) : Option.none()
     if (Option.isSome(kept)) asked.set(kept.value.task, kept.value.text)
-    if (entry.kind !== 'pi.user' || entry.byTaskId === undefined) return true
+    if (entry.kind !== 'pi.user' || entry.byTaskId === undefined) continue
     const text = asked.get(entry.byTaskId)
     const [message] = entry.model === undefined ? [] : entry.model
-    return text === undefined || message === undefined || message.content !== text
-  })
+    if (text === undefined || message === undefined || message.content !== text) continue
+    continued.add(entry.byTaskId)
+    continuations.add(entry.id)
+  }
+  const superseded = (entry: EntryRecord) =>
+    entry.kind === 'pi.assistant' && entry.byTaskId !== undefined && continued.has(entry.byTaskId)
+  return {
+    kept: entries.filter((entry) => !continuations.has(entry.id) && !superseded(entry)),
+    superseded: entries.filter(superseded),
+  }
 }
+
+/** The transcript as screens and learning read it: `corrected` without what was superseded. */
+export const withoutCorrections = (entries: ReadonlyArray<EntryRecord>) => corrected(entries).kept
