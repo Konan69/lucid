@@ -7,7 +7,7 @@ import {
 import type { ConversationId, ToolRegistration } from '@earendil-works/pi-durable'
 import * as Option from 'effect/Option'
 import { Tool } from '@vivid/contracts'
-import { contextInstruction, emptyContext, namedAs } from '../context.ts'
+import { contextInstruction, emptyContext, namedAs, workingFor } from '../context.ts'
 import type { Kept } from '../deliveries.ts'
 import { ACTIVATE_SKILL, READ_SKILL_FILE } from '../skills.ts'
 import { connectionTools } from '../tools/connections.ts'
@@ -133,6 +133,8 @@ export function instructions(response: Pick<Kept, 'acting' | 'context'>) {
     ...VOICE,
     // The name this Person or their Company gave Vivid, as text; nothing while it is still Vivid.
     ...namedAs(context.name),
+    // The acting Person's own name, as text; nothing when there is none to say.
+    ...workingFor(context.person),
     response.acting
       ? `Today is ${today(timezone, at)} in the ${timezone} time zone.`
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',

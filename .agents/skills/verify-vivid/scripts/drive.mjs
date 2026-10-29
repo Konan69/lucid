@@ -9,6 +9,7 @@ import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
+import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
 import { feed } from './feed.mjs'
@@ -40,6 +41,7 @@ export const features = [
   'devices',
   'reading',
   'settings',
+  'name',
   'memory',
   'discord',
 ]
@@ -408,6 +410,7 @@ const recipes = {
   watch,
   reading,
   settings: settingsProof,
+  name: nameProof,
   discord: discordProof,
 }
 const blocked = {
@@ -425,6 +428,7 @@ export async function drive(state, feature) {
       ? blocked
       : {
           ...blocked,
+          name: 'Name requires a real model; rehearsal cannot answer what the Person is called.',
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
           changed: 'A stale ask requires a real model.',
