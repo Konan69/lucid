@@ -35,9 +35,14 @@ export function followTools() {
           v.description('One to three replies, the most likely first.'),
         ),
       }),
-      /** The input is the whole effect: Pi stores it in the conversation as this call's part. */
+      /**
+       * The input is the whole effect: Pi stores it in the conversation as this call's part. It is
+       * the last thing in a reply, so it ends the turn; without `terminate` Pi asked the model once
+       * more and the reply grew a second paragraph or repeated itself (behaviour audit, 29 Oct 2026:
+       * 6 of 10 replies on DeepSeek, 8 of 10 on GLM, two GLM Runs looping).
+       */
       run() {
-        return { output: { ok: true } }
+        return { output: { ok: true }, terminate: true }
       },
     }),
   ] as const
