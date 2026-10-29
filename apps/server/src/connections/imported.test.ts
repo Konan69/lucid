@@ -5,6 +5,7 @@ import {
   ToolOutcome,
   TestIntegrationOutcome,
   type ConnectionId,
+  ToolCallId,
 } from '@vivid/contracts'
 import { Effect, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -145,6 +146,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
 
             const before = (yield* Ref.get(remote.requests)).length
             const outcome = yield* useTool(personalActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: added.step.connection.id,
               tool: 'read',
               input: {},
@@ -160,6 +162,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             ])
 
             const otherOutcome = yield* useTool(personalActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: other.connection.id,
               tool: 'read',
               input: {},

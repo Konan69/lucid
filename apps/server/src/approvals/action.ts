@@ -16,7 +16,7 @@ const isArray = Schema.is(Schema.Array(Schema.Json))
 const entryOrder = Order.mapInput(Order.String, (entry: readonly [string, Schema.Json]) => entry[0])
 
 /** Recursive key ordering preserves array order and binds the entire encoded invocation. */
-const canonical = (value: Schema.Json): string => {
+export const canonical = (value: Schema.Json): string => {
   if (isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (isObject(value))
     return `{${Array.sort(Object.entries(value), entryOrder)

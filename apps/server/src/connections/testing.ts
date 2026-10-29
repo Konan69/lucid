@@ -23,6 +23,7 @@ import {
   ServiceId,
   ThreadId,
   Workspace,
+  ToolCallId,
 } from '@vivid/contracts'
 import { type Actor, summaryOf } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
@@ -401,6 +402,7 @@ export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
 
 /** Requests carry no effect claim: the provider's classification is the only source. */
 export const toolRequest = (connectionId: ConnectionId, tool: string) => ({
+  toolCallId: ToolCallId.make(crypto.randomUUID()),
   connectionId,
   tool,
   input: {},

@@ -5,6 +5,7 @@ import {
   CodeLogs,
   type RunCodeRequest,
   type ThreadId,
+  ActionReceipt,
   ApprovalId,
   type DisplayToolKind,
 } from '@vivid/contracts'
@@ -41,10 +42,13 @@ export const CallOutcome = Schema.TaggedUnion({
     value: Schema.Json,
     end: Schema.Literals(['completed', 'refused']),
     summary: Schema.String,
+    /** The journal's receipt when the call sent an outward write; null otherwise. */
+    receipt: Schema.NullOr(ActionReceipt),
   },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String, summary: Schema.String },
-  Unknown: { summary: Schema.String },
+  /** `receipt` names the journaled operation to reconcile; null when nothing was journaled. */
+  Unknown: { summary: Schema.String, receipt: Schema.NullOr(ActionReceipt) },
 })
 export type CallOutcome = typeof CallOutcome.Type
 export type Dispatch = (call: typeof WorkerMessage.cases.Call.Type) => Effect.Effect<CallOutcome>
@@ -236,6 +240,7 @@ export class Execution {
         kind: call.kind,
         summary: 'Checking the request',
         end: call.kind === 'find_tools' || call.kind === 'read_page' ? 'refused' : 'unknown',
+        receipt: null,
       }),
     )
     this.flying++
@@ -270,8 +275,8 @@ export class Execution {
     // Bound encoded bytes, not code units; metadata cannot consume the returned value's budget.
     const summary = encodedPrefix(result.summary, 200)
     return CallOutcome.match<CallStep>(result, {
-      Returned: ({ value, end }) => {
-        this.calls[index] = CodeCall.make({ kind: call.kind, summary, end })
+      Returned: ({ value, end, receipt }) => {
+        this.calls[index] = CodeCall.make({ kind: call.kind, summary, end, receipt })
         const size = bytes(JSON.stringify(value))
         this.data += size
         if (size > budgets.frame || this.data > budgets.data)
@@ -289,19 +294,19 @@ export class Execution {
               calls: this.calls.slice(),
             }),
           index,
-          CodeCall.make({ kind: call.kind, summary, end: 'needs approval' }),
+          CodeCall.make({ kind: call.kind, summary, end: 'needs approval', receipt: null }),
         ),
       Blocked: ({ rule }) =>
         this.latch(
           () => CodeOutcome.cases.Blocked.make({ rule, calls: this.calls.slice() }),
           index,
-          CodeCall.make({ kind: call.kind, summary, end: 'refused' }),
+          CodeCall.make({ kind: call.kind, summary, end: 'refused', receipt: null }),
         ),
-      Unknown: () =>
+      Unknown: ({ receipt }) =>
         this.latch(
           () => CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() }),
           index,
-          CodeCall.make({ kind: call.kind, summary, end: 'unknown' }),
+          CodeCall.make({ kind: call.kind, summary, end: 'unknown', receipt }),
         ),
     })
   }

@@ -188,6 +188,7 @@ const ports = Layer.effectContext(
             person: PersonSummary.make({ id: delivery.personId, name: 'Test Person', image: null }),
           }),
           state: RunState.cases.Working.make({}),
+          outcome: null,
           startedAt: yield* Clock.currentTimeMillis,
         })
       }),

@@ -12,6 +12,7 @@ import {
   InvalidRequest,
   ServiceUnavailable,
   ToolOutcome,
+  ToolCallId,
 } from '@vivid/contracts'
 import { Message } from '../observability/messages.ts'
 import { ActionOutcome } from '../approvals/gate.ts'
@@ -80,6 +81,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ? memberActor
               : ownerActor,
             {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: row.id,
               tool: reason === 'ToolUnknown' ? 'private_missing_tool' : 'write',
               input: { private: 'Private tool input' },
@@ -118,6 +120,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           })
           const executor = yield* Executor
           const outcome = yield* useTool(ownerActor, {
+            toolCallId: ToolCallId.make(crypto.randomUUID()),
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -182,7 +185,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                     workspace: ownerActor.workspace,
                     target,
                   })
-                return yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' })
+                return yield* useTool(ownerActor, {
+                  toolCallId: ToolCallId.make(crypto.randomUUID()),
+                  ...target,
+                  summary: 'Read',
+                  rationale: '',
+                })
               }).pipe(Effect.provide(context))
             }).pipe(
               Effect.scoped,
@@ -446,6 +454,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             tools: () => Effect.fail(new InvalidRequest({ message: 'Private catalog failure' })),
           })
           const outcome = yield* useTool(ownerActor, {
+            toolCallId: ToolCallId.make(crypto.randomUUID()),
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -491,6 +500,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             if (source === 'stored') yield* store.notReady(ownerActor, row)
             else yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
             const outcome = yield* useTool(ownerActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: row.id,
               tool: 'read',
               input: {},
@@ -1175,13 +1185,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ).toBe('read')
             const calls = yield* Ref.get(probe.calls)
             const used = yield* useTool(ownerActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: connection.connection.id,
               tool: 'ask_question',
               input: {},
               summary: 'Read documentation',
               rationale: 'Explain the repository',
             })
-            expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))
+            expect(used).toEqual(
+              ToolOutcome.cases.Completed.make({ output: { ok: true }, receipt: null }),
+            )
             expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
             expect((yield* Ref.get(probe.checked)).map(({ action }) => action.effect)).toEqual([
               'read',
@@ -1498,13 +1511,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           return yield* Effect.gen(function* () {
             const used = yield* useTool(ownerActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: connection.connection.id,
               tool: 'lookup_0',
               input: {},
               summary: 'Read',
               rationale: 'Read a record',
             })
-            expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))
+            expect(used).toEqual(
+              ToolOutcome.cases.Completed.make({ output: { ok: true }, receipt: null }),
+            )
             const resolved = yield* resolveTool(ownerActor, {
               account: 'Records (Work)',
               tool: 'lookup_1',
