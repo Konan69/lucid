@@ -1,5 +1,6 @@
 import { integer, index, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import { ProjectWork } from '@vivid/contracts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable } from '../companies/tables.ts'
 
@@ -19,7 +20,7 @@ export const projectTable = pgTable(
      * The encoded `ProjectWork`. Every Project made before work existed only grouped Threads, so
      * it is `Unspecified`: no objective is invented for it.
      */
-    work: jsonb().notNull().default({ _tag: 'Unspecified' }),
+    work: jsonb().notNull().default(ProjectWork.cases.Unspecified.make({})),
     /** `ProjectRevision`: how many changes the work has had. */
     revision: integer().notNull().default(0),
     /** When the work last changed; absent until it first does. */

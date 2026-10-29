@@ -74,13 +74,19 @@ const authorOf = (actor: Actor): ProjectAuthor =>
  * move an Active Project only, because a line of progress or a proof with no objective to measure
  * it against says nothing.
  */
-const advance = (
-  id: ProjectId,
-  work: ProjectWork,
-  change: WorkChange,
-  at: number,
-  by: ProjectAuthor,
-) =>
+const advance = ({
+  id,
+  work,
+  change,
+  at,
+  by,
+}: {
+  readonly id: ProjectId
+  readonly work: ProjectWork
+  readonly change: WorkChange
+  readonly at: number
+  readonly by: ProjectAuthor
+}) =>
   WorkChange.match<Effect.Effect<ProjectWork, ProjectNotActive>>(change, {
     Define: ({ objective, nextStep }) =>
       Effect.succeed(
@@ -258,38 +264,48 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
    * Lock the row, compare the revision, apply the change and announce, in one commit: two writers
    * that read the same revision cannot both land, and the loser is told the revision there is.
    */
+  /** One update inside the caller's transaction: lock, compare, apply, write and announce. */
+  const writeWork = Effect.fn('ProjectStore.writeWork')(function* (
+    tx: Transaction,
+    actor: Actor,
+    request: {
+      readonly id: ProjectId
+      readonly expected: ProjectRevision
+      readonly change: WorkChange
+    },
+  ) {
+    const { id, expected, change } = request
+    const condition = and(eq(projectTable.id, id), inWorkspace(actor))
+    const rows = yield* tx.select().from(projectTable).where(condition).for('update')
+    const row = rows[0]
+    if (row === undefined) return yield* new NotFound({ message: 'Project not found' })
+    const before = yield* decodeWorkRow(row)
+    if (before.revision !== expected)
+      return yield* new ProjectChanged({ id, expected, actual: before.revision })
+    const at = yield* Clock.currentTimeMillis
+    const work = yield* advance({ id, work: before.work, change, at, by: authorOf(actor) })
+    const updated = yield* tx
+      .update(projectTable)
+      .set({ work: yield* encodeWork(work), revision: before.revision + 1, workedAt: new Date(at) })
+      .where(condition)
+      .returning()
+    const projects = yield* toProjects([yield* returned(updated, 'Project')])
+    const project = yield* returned(projects, 'Project')
+    yield* announce(tx, projectTopics(project))
+    return project
+  })
+
+  /**
+   * Lock the row, compare the revision, apply the change and announce, in one commit: two writers
+   * that read the same revision cannot both land, and the loser is told the revision there is.
+   */
   const update = Effect.fn('ProjectStore.update')(function* (
     actor: Actor,
     id: ProjectId,
     expected: ProjectRevision,
     change: WorkChange,
   ) {
-    return yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        const condition = and(eq(projectTable.id, id), inWorkspace(actor))
-        const rows = yield* tx.select().from(projectTable).where(condition).for('update')
-        const row = rows[0]
-        if (row === undefined) return yield* new NotFound({ message: 'Project not found' })
-        const before = yield* decodeWorkRow(row)
-        if (before.revision !== expected)
-          return yield* new ProjectChanged({ id, expected, actual: before.revision })
-        const at = yield* Clock.currentTimeMillis
-        const work = yield* advance(id, before.work, change, at, authorOf(actor))
-        const updated = yield* tx
-          .update(projectTable)
-          .set({
-            work: yield* encodeWork(work),
-            revision: before.revision + 1,
-            workedAt: new Date(at),
-          })
-          .where(condition)
-          .returning()
-        const projects = yield* toProjects([yield* returned(updated, 'Project')])
-        const project = yield* returned(projects, 'Project')
-        yield* announce(tx, projectTopics(project))
-        return project
-      }),
-    )
+    return yield* database.transaction((tx) => writeWork(tx, actor, { id, expected, change }))
   })
 
   return ProjectStore.of({ list, create, update })
