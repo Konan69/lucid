@@ -32,7 +32,7 @@ const Asked = Schema.Struct({
   title: text,
   question: text,
   site: text,
-  /** What is owed, on the steps that keep the Person's waiting-on list. */
+  /** What is owed, or what to do, on the steps that keep the Person's waiting-on and to-do lists. */
   what: text,
 })
 type Asked = typeof Asked.Type
@@ -430,6 +430,38 @@ const STEPS = {
       running: 'Letting it go',
       done: 'Stopped waiting on it',
       failed: 'Could not stop waiting on it',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  list_todos: {
+    said: {
+      running: 'Checking your list',
+      done: 'Checked your list',
+      failed: 'Could not read your list',
+    },
+    detail: nothing,
+  },
+  add_todo: {
+    said: {
+      running: 'Adding it to your list',
+      done: 'Added it to your list',
+      failed: 'Could not add it to your list',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  complete_todo: {
+    said: {
+      running: 'Ticking it off',
+      done: 'Ticked it off',
+      failed: 'Could not tick it off',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  drop_todo: {
+    said: {
+      running: 'Taking it off your list',
+      done: 'Took it off your list',
+      failed: 'Could not take it off your list',
     },
     detail: (asked) => [said(asked.what)],
   },
