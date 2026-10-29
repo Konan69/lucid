@@ -63,6 +63,7 @@ const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>
     Decision: () => Option.contains(tag, 'answer') && answered.has(run.id),
     FirstConversation: () => false,
     Watch: () => false,
+    WatchUnrecorded: () => false,
   })
 }
 

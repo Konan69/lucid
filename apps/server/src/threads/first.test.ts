@@ -318,12 +318,8 @@ layer(stores)((it) => {
         )
         expect(yield* (yield* RunStore).list(result.thread)).toHaveLength(1)
         expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-        expect(
-          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-        ).not.toContain(test.actor.person.id)
-        expect(
-          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-        ).not.toContain(result.thread)
+        expect(JSON.stringify(delivery.delivery)).not.toContain(test.actor.person.id)
+        expect(JSON.stringify(delivery.delivery)).not.toContain(result.thread)
       }).pipe(Effect.scoped),
     )
 

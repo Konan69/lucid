@@ -25,6 +25,7 @@ import {
   PersonId,
   ProposedAction,
   RunId,
+  SignalCue,
   ThreadId,
   type DecideApprovalRequest,
   type PersonSummary,
@@ -381,12 +382,10 @@ const owed = (
     idempotencyKey: approvalKey(id),
     deciderId,
     message: DeliveryMessage.cases.Signal.make({
-      type: 'approval',
-      body,
-      attributes: {
-        approval: id,
+      cue: SignalCue.cases.Approval.make({
+        body,
         outcome: Conclusion.guards.Expired(conclusion) ? 'expired' : conclusion._tag,
-      },
+      }),
     }),
   })
 }

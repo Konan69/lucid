@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
+import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
 export const PictureMediaType = Schema.Literals([
@@ -187,8 +188,20 @@ export const RunOrigin = Schema.TaggedUnion({
   FirstConversation: { person: PersonSummary },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
-  /** An Integration event a Watch subscribed to, named by the Watch. */
-  Watch: { person: PersonSummary, watchName: Schema.String },
+  /**
+   * An Integration event a Watch subscribed to: which Watch, and which of its events. The Watch's
+   * id and name are kept here because the Watch itself may be removed later.
+   */
+  Watch: {
+    person: PersonSummary,
+    watchId: WatchId,
+    watchName: Schema.String,
+    eventId: Schema.NonEmptyString,
+    event: Schema.String,
+    occurredAt: Schema.String,
+  },
+  /** A Watch Run started before 29 October 2026, which recorded only the Watch's name. */
+  WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -298,6 +311,75 @@ export const SignalType = Schema.Literals([
 ] as const)
 export type SignalType = typeof SignalType.Type
 
+/** An Approval's outcome as the conversation names it (`approvals/store.ts`, `owed`). */
+export const ApprovalOutcome = Schema.Literals([
+  'expired',
+  'Denied',
+  'Succeeded',
+  'Failed',
+  'OutcomeUnknown',
+] as const)
+export type ApprovalOutcome = typeof ApprovalOutcome.Type
+
+/**
+ * What a server delivery says, one case per thing that puts Vivid to work, each with exactly the
+ * fields that thing has. The runtime renders each case to its fixed tag and full text
+ * (`packages/agent/runtime/src/delivery.ts`, `signalText`), so a case cannot arrive without the
+ * name or outcome its tag needs.
+ *
+ * - `Message`: a Person's words in a shared Thread.
+ * - `FirstConversation`: the opening instruction of a Person's first Thread.
+ * - `Approval`: an Approval's outcome, with the summary and result in `body`.
+ * - `Answer`: a Person's answer to an Input request, with its questions in `body`.
+ * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
+ *   `occurredAt` is the Integration's own timestamp text, kept as sent.
+ */
+export const SignalCue = Schema.TaggedUnion({
+  Message: { body: Schema.String },
+  FirstConversation: { body: Schema.String },
+  Approval: { body: Schema.String, outcome: ApprovalOutcome },
+  Answer: { body: Schema.String },
+  Watch: {
+    name: WatchName,
+    event: Schema.String,
+    occurredAt: Schema.String,
+    instruction: WatchInstruction,
+    data: Schema.Json,
+  },
+})
+export type SignalCue = typeof SignalCue.Type
+
+/** The tag each cue is rendered and drawn under, from the one signal vocabulary. */
+export const signalTypes = {
+  Message: 'message',
+  FirstConversation: 'first-conversation',
+  Approval: 'approval',
+  Answer: 'answer',
+  Watch: 'event',
+} as const satisfies Record<SignalCue['_tag'], SignalType>
+
+/**
+ * One attributed server delivery: who it is from and its turn, as the conversation names them
+ * ("turn 7, from Ada"), and what it says. The turn is the Run's place in its Thread, the same as
+ * the admission's `turn`.
+ */
+export const SignalEnvelope = Schema.Struct({
+  from: Schema.String,
+  turn: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  cue: SignalCue,
+}).annotate({ identifier: 'SignalEnvelope', title: 'Signal envelope' })
+export type SignalEnvelope = typeof SignalEnvelope.Type
+
+/**
+ * What one admission puts in front of Vivid: a Person's own words in a private Thread, a plain user
+ * turn with any pictures, or an attributed server delivery.
+ */
+export const RuntimeDelivery = Schema.TaggedUnion({
+  Words: { body: Schema.String, attachments: Schema.Array(MessageAttachment) },
+  Signal: { envelope: SignalEnvelope },
+})
+export type RuntimeDelivery = typeof RuntimeDelivery.Type
+
 /** The Person Vivid acts for. Scope travels from server to runtime beside model-visible
  * text and reaches tools through a Layer. The model cannot read or alter this authority. */
 export const DeliveryScope = Schema.Struct({
@@ -312,15 +394,12 @@ export const DeliveryScopeRequest = Schema.Struct({
 })
 export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
 
-/** A server-owned runtime admission request. Body and attributes contain model-visible
- * words; scope carries the authority the model never sees. Product state stays on the server. */
+/** A server-owned runtime admission request. The delivery holds model-visible words; scope
+ * carries the authority the model never sees. Product state stays on the server. */
 export const RuntimeRunRequest = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.String,
-  type: SignalType,
-  body: Schema.String,
-  attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
-  attributes: Schema.Record(Schema.String, Schema.String),
+  delivery: RuntimeDelivery,
   turn: Schema.Finite,
   scope: DeliveryScope,
   /**
