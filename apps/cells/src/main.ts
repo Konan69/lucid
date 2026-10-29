@@ -25,7 +25,7 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
-import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
+import { Config, ConfigProvider, Deferred, Effect, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
 type CellPerson = Awaited<ReturnType<typeof openCell>>['person']
@@ -40,21 +40,29 @@ const moving: ReadonlySet<TaskInspection['state']['kind']> = new Set(['running',
  * fails the whole Session on any commit error. Pi's `waitForIdle` deliberately stops at
  * background tasks, and learning is one: it is started after the reply settles, by the
  * settlement follower, so the reply's idle let its event end while the learner still streamed
- * `pi.live` partials. So this waits for idle, then the follower, then every task that can
- * still commit now, and repeats until none is left. Sleeping and waiting tasks are left to the
- * alarm, which arms from `wake()` and holds its own event the same way.
+ * `pi.live` partials. So this waits for idle, then the follower, then until no task can commit
+ * now (running or ready). It waits for the next commit and looks again, never for a task to
+ * finish: a running task that goes to sleep or waits on another one stops committing without
+ * ending, and waiting for its end held every request's event open until celld refused the cell
+ * (`cell_overload_refused in_flight=64`). Sleeping and waiting tasks are left to the alarm,
+ * which arms from `wake()` and holds its own event the same way.
  */
 const settled = Effect.fn('Cell.settled')(function* (person: CellPerson) {
   const { harness } = person
   for (;;) {
     yield* Effect.tryPromise(() => harness.waitForIdle(BACKGROUND_CONTEXT))
     yield* person.quiet
-    const { tasks } = yield* Effect.tryPromise(() => harness.inspect(BACKGROUND_CONTEXT))
-    const live = tasks.filter((task) => moving.has(task.state.kind))
-    if (live.length === 0) return
-    yield* Effect.tryPromise(() =>
-      Promise.all(live.map((task) => harness.waitForTask(task.record.id, BACKGROUND_CONTEXT))),
+    // Listen before looking, so a commit between the look and the wait is not missed.
+    const committed = yield* Deferred.make<void>()
+    const stop = harness.subscribeCommits(() => {
+      Deferred.doneUnsafe(committed, Effect.void)
+    })
+    const live = yield* Effect.tryPromise(() => harness.inspect(BACKGROUND_CONTEXT)).pipe(
+      Effect.map(({ tasks }) => tasks.some((task) => moving.has(task.state.kind))),
+      Effect.tap((busy) => (busy ? Deferred.await(committed) : Effect.void)),
+      Effect.ensuring(Effect.sync(stop)),
     )
+    if (!live) return
   }
 })
 
