@@ -26,7 +26,7 @@ import {
   testIntegration,
 } from './integrations.ts'
 import { requireDiscordAccess, withoutDiscord } from './discord.ts'
-import { findTools, offerConnection, resolveTool, useDisplayTool, useTool } from './tools.ts'
+import { findTools, offerConnection, resolveTool, useDisplayTool, useVividTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
 /** Both inventory calls share the persisted Connection loader. */
@@ -126,7 +126,7 @@ export const connectionHandlers = {
   /** Only a Run proposes tool actions to the gate. */
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
     yield* requireVivid()
-    return yield* useTool(yield* requireActor(), request)
+    return yield* useVividTool(yield* requireActor(), request)
   }),
   /** A display's Query or Mutation, for the Person looking at it; never Vivid's own call. */
   UseDisplayTool: Effect.fn('Rpc.UseDisplayTool')(function* (request: UseDisplayToolRequest) {

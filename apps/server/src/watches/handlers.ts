@@ -26,7 +26,11 @@ import {
 import { ExecutorEventsFailure } from './events.ts'
 import { Watches, type WatchEventUnknown } from './lifecycle.ts'
 import { live } from '../live/query.ts'
-import type { CompleteWatchRequest } from '@vivid/contracts'
+import {
+  OpenWorkResponse,
+  type UpdateCheckinRequest,
+  type CompleteWatchRequest,
+} from '@vivid/contracts'
 import type { WatchNameTaken } from './store.ts'
 
 /**
@@ -74,6 +78,7 @@ const resolved = <A, R>(
     | WatchAccountNotReady
     | WatchAccountShared
     | DatabaseInfrastructureError
+    | NotFound
     | WatchEventUnknown
     | WatchNameTaken
     | WatchConnectionRemoved,
@@ -147,6 +152,16 @@ export const watchHandlers = {
   }),
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
     return yield* listed(yield* requireActor())
+  }),
+  ListOpenWork: Effect.fn('Rpc.ListOpenWork')(function* () {
+    return OpenWorkResponse.make({
+      work: yield* (yield* Watches).listOpenWork(yield* requireActor()),
+    })
+  }),
+  UpdateCheckin: Effect.fn('Rpc.UpdateCheckin')(function* (request: UpdateCheckinRequest) {
+    return WatchResponse.make({
+      watch: yield* (yield* Watches).updateCheckin(yield* requireActor(), request),
+    })
   }),
   WatchWatches: () => live('WatchWatches', [], listed),
   CompleteWatch: Effect.fn('Rpc.CompleteWatch')(function* (request: CompleteWatchRequest) {

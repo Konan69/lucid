@@ -1,11 +1,19 @@
+import { OwedStore } from '../owed/store.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   CreateWatchRequest,
   WatchCondition,
+  WatchIntent,
+  CheckinFocus,
+  CheckinTiming,
+  WatchPurpose,
+  CheckinArming,
+  ThreadId,
   WatchState,
   ConnectionState,
   RunState,
   SignalCue,
+  RunOrigin,
   WatchId,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
@@ -34,6 +42,7 @@ const request = CreateWatchRequest.make({
   arguments: {},
   instruction: 'Tell me when a client writes.',
   condition: WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent.cases.Event.make({}),
 })
 const event = (eventId: string) =>
   JSON.stringify({
@@ -53,6 +62,7 @@ const deliveriesOf = Effect.fn('WatchTest.deliveriesOf')(function* (watch: Watch
 /** An Active Watch, its callback and its secret, as Executor holds them. */
 const activeWatch = Effect.fn('WatchTest.activeWatch')(function* (
   condition: WatchCondition = WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent = WatchIntent.cases.Event.make({}),
 ) {
   const actor = yield* person()
   const executor = yield* Executor
@@ -60,7 +70,7 @@ const activeWatch = Effect.fn('WatchTest.activeWatch')(function* (
     id: `evs_${'3'.repeat(32)}`,
     refreshBefore: new Date(7 * 24 * 60 * 60_000),
   })
-  const watch = yield* (yield* Watches).create(actor, { ...request, condition })
+  const watch = yield* (yield* Watches).create(actor, { ...request, condition, purpose })
   const asked = yield* Queue.take(executor.subscribed)
   const secret = secretFor((yield* ServerConfig).AUTH_SECRET, watch.id)
   // The secret Executor was given is the one the receiver derives: the handshake depends on it.
@@ -112,8 +122,182 @@ const receiver = Effect.fn('WatchTest.receiver')(function* () {
   })
 })
 
+/** The real timer's payload carries the persisted operation key, independent of event delivery id. */
+const timerEvent = (eventId: string, operationKey: string) =>
+  JSON.stringify({
+    eventId,
+    name: 'mail.message.received',
+    timestamp: '2026-10-29T09:00:00Z',
+    data: { operationKey },
+  })
+
 describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
   layer(testLayer)((it) => {
+    it.effect(
+      'keeps arming Awaiting until the actual matching receipt and ignores superseded timer events',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const purpose = WatchIntent.cases.Checkin.make({
+            focus: CheckinFocus.cases.OpenWork.make({}),
+            timing: CheckinTiming.cases.Requested.make({
+              request: 'Every morning',
+              timezone: 'Africa/Lagos',
+            }),
+          })
+          const { actor, watch, url, secret } = yield* activeWatch(
+            WatchCondition.cases.Continuous.make({}),
+            purpose,
+          )
+          if (!WatchPurpose.guards.Checkin(watch.purpose)) return expect.fail('Expected a check-in')
+          expect(CheckinArming.guards.Awaiting(watch.purpose.arming)).toBe(true)
+          const key = watch.purpose.arming.operationKey
+          const found = yield* (yield* WatchStore).find(watch.id)
+          if (Option.isNone(found)) return expect.fail('Expected the persisted Watch')
+          const watching = yield* Watches
+          expect(
+            (yield* post(url, timerEvent('before-receipt', key), secret, Option.none())).status,
+          ).toBe(503)
+          const invalid = yield* Effect.flip(
+            watching.confirmTimer(
+              actor,
+              found.value.connectionId,
+              { operationKey: key },
+              { nextAt: 1000 },
+            ),
+          )
+          expect(invalid._tag).toBe('CheckinNotScheduled')
+          const [awaiting] = yield* watching.list(actor)
+          if (awaiting === undefined || !WatchPurpose.guards.Checkin(awaiting.purpose))
+            return expect.fail('Expected an Awaiting check-in')
+          expect(CheckinArming.guards.Awaiting(awaiting.purpose.arming)).toBe(true)
+          yield* watching.confirmTimer(
+            actor,
+            found.value.connectionId,
+            { operationKey: key },
+            { operationKey: key, nextAt: 1000 },
+          )
+          expect(
+            (yield* post(url, timerEvent('confirmed', key), secret, Option.none())).status,
+          ).toBe(200)
+          const delivered = yield* deliveriesOf(watch.id)
+          expect(delivered).toHaveLength(1)
+          expect(
+            Option.map(Option.fromUndefinedOr(delivered[0]), (delivery) => delivery.origin),
+          ).toEqual(
+            Option.some(
+              StoredRunOrigin.cases.Checkin.make({
+                watchName: watch.name,
+                watchId: watch.id,
+                eventId: 'confirmed',
+              }),
+            ),
+          )
+          const updated = yield* watching.updateCheckin(actor, {
+            name: watch.name,
+            focus: purpose.focus,
+            timing: purpose.timing,
+          })
+          if (!WatchPurpose.guards.Checkin(updated.purpose))
+            return expect.fail('Expected an updated check-in')
+          expect(updated.purpose.arming.operationKey).not.toBe(key)
+          expect(CheckinArming.guards.Awaiting(updated.purpose.arming)).toBe(true)
+          yield* watching.confirmTimer(
+            actor,
+            found.value.connectionId,
+            { operationKey: key },
+            { operationKey: key, nextAt: 1000 },
+          )
+          expect(
+            (yield* post(url, timerEvent('superseded', key), secret, Option.none())).status,
+          ).toBe(200)
+          expect(yield* deliveriesOf(watch.id)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'reads a resolved owed source at firing and completes its check-in with the admitted Run',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const actor = yield* person()
+          const source = yield* (yield* ThreadStore).create(actor, {
+            id: ThreadId.make(crypto.randomUUID()),
+            title: 'Invoice',
+            projectId: null,
+          })
+          const owed = yield* OwedStore
+          const record = yield* owed.track(actor, {
+            threadId: source.id,
+            what: 'Invoice',
+            from: 'Client',
+            since: 0,
+            due: null,
+            nextStep: 'Check for the invoice',
+          })
+          const executor = yield* Executor
+          yield* Queue.offer(executor.answers, {
+            id: 'owed-check',
+            refreshBefore: new Date(604800000),
+          })
+          const watching = yield* Watches
+          const watch = yield* watching.create(actor, {
+            ...request,
+            purpose: WatchIntent.cases.Checkin.make({
+              focus: CheckinFocus.cases.Owed.make({ owedId: record.id }),
+              timing: CheckinTiming.cases.Chosen.make({
+                nextAt: 1000,
+                why: 'Follow up on the invoice',
+              }),
+            }),
+          })
+          const subscribed = yield* Queue.take(executor.subscribed)
+          if (!WatchPurpose.guards.Checkin(watch.purpose)) return expect.fail('Expected a check-in')
+          const found = yield* (yield* WatchStore).find(watch.id)
+          if (Option.isNone(found)) return expect.fail('Expected the persisted check-in')
+          const operationKey = watch.purpose.arming.operationKey
+          yield* watching.confirmTimer(
+            actor,
+            found.value.connectionId,
+            { operationKey },
+            { operationKey, nextAt: 1000 },
+          )
+          yield* owed.resolve(actor, {
+            id: record.id,
+            how: 'The invoice arrived in the original Thread.',
+          })
+          expect(
+            (yield* post(
+              subscribed.url,
+              timerEvent('source-closed', operationKey),
+              subscribed.secret,
+              Option.none(),
+            )).status,
+          ).toBe(200)
+          const completed = yield* (yield* WatchStore).find(watch.id)
+          if (Option.isNone(completed)) return expect.fail('Expected completed history')
+          if (!WatchState.guards.Completed(completed.value.watch.state))
+            return expect.fail('Expected terminal completion')
+          expect(completed.value.watch.state.evidence).toBe(
+            'The invoice arrived in the original Thread.',
+          )
+          const [run] = yield* (yield* RunStore).list(threadOf(watch.id, 'source-closed'))
+          if (run === undefined || !RunOrigin.guards.Checkin(run.origin))
+            return expect.fail('Expected the admitted check-in Run')
+          expect(completed.value.watch.state.runId).toBe(run.id)
+          expect(run.origin.watchId).toBe(watch.id)
+          expect(yield* watching.listOpenWork(actor)).toEqual([])
+          expect(
+            (yield* post(
+              subscribed.url,
+              timerEvent('after-closure', operationKey),
+              subscribed.secret,
+              Option.none(),
+            )).status,
+          ).toBe(410)
+        }).pipe(Effect.scoped),
+    )
+
     it.effect(
       'only its admitted Run can complete an Until Watch and later callbacks answer 410',
       () =>

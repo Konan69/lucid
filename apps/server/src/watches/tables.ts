@@ -1,4 +1,4 @@
-import { WatchCondition } from '@vivid/contracts'
+import { WatchCondition, WatchPurpose } from '@vivid/contracts'
 import { sql } from 'drizzle-orm'
 import { check, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { ConnectionId, WatchId, WatchStopReason } from '@vivid/contracts'
@@ -34,6 +34,7 @@ export const watches = pgTable(
     arguments: jsonb('arguments').notNull(),
     instruction: text('instruction').notNull(),
     condition: jsonb('condition').notNull().default(WatchCondition.cases.Continuous.make({})),
+    purpose: jsonb('purpose').notNull().default(WatchPurpose.cases.Event.make({})),
     callbackUrl: text('callback_url').notNull(),
     state: text('state')
       .$type<'Pending' | 'Active' | 'Paused' | 'Completed' | 'Stopped'>()

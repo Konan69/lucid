@@ -1107,5 +1107,5 @@ export class ConnectionStore extends Context.Service<
 >()('vivid/ConnectionStore') {}
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
-  Layer.provide(watchesLayer.pipe(Layer.provide([watchStoreLayer, watchedAppsLayer]))),
+  Layer.provideMerge(watchesLayer.pipe(Layer.provide([watchStoreLayer, watchedAppsLayer]))),
 )

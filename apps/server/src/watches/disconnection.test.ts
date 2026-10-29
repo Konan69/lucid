@@ -1,5 +1,11 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { ConnectionId, CreateWatchRequest, WatchCondition, ServiceId } from '@vivid/contracts'
+import {
+  ConnectionId,
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  ServiceId,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -86,6 +92,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
               arguments: {},
               instruction: 'Tell me when a client writes.',
               condition: WatchCondition.cases.Continuous.make({}),
+              purpose: WatchIntent.cases.Event.make({}),
             }),
           )
           yield* Queue.take(executor.subscribed)
@@ -200,6 +207,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
               arguments: {},
               instruction: 'Tell me when a client writes.',
               condition: WatchCondition.cases.Continuous.make({}),
+              purpose: WatchIntent.cases.Event.make({}),
             }),
           )
           yield* Queue.take(executor.subscribed)
@@ -246,6 +254,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
                 arguments: {},
                 instruction: 'Tell me when a client writes.',
                 condition: WatchCondition.cases.Continuous.make({}),
+                purpose: WatchIntent.cases.Event.make({}),
               }),
             ),
           )

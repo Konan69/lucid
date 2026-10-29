@@ -25,9 +25,11 @@ import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
 import { secretFor } from './signature.ts'
-import { WatchStore, type WatchRecord } from './store.ts'
+import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
 import { watchProgress, WatchMissing } from './progress.ts'
 export { WatchMissing } from './progress.ts'
+import { watchCheckins } from './checkins.ts'
+import { owedStoreLayer } from '../owed/store.ts'
 
 /**
  * Starting, stopping and keeping Watches alive at Executor.
@@ -152,19 +154,16 @@ const make = Effect.fn('Watches.make')(function* () {
   const publish = (record: WatchRecord) => changes.publish([Topic.person(record.personId)])
 
   /** The exact key Executor knows this Watch's subscription by, and the secret it signs with. */
-  const keyOf = (record: WatchRecord) => ({
-    name: record.subscribedName,
-    arguments: record.watch.arguments,
-    url: record.callbackUrl,
-  })
+
   const subscribe = (record: WatchRecord) =>
     events.subscribe({
-      ...keyOf(record),
+      ...subscriptionOf(record),
       secret: secretFor(config.AUTH_SECRET, record.watch.id),
       ttlMs: TTL_MS,
     })
 
   const progress = yield* watchProgress(subscribe)
+  const checks = yield* watchCheckins()
 
   /** A concurrent stop stays authoritative; a cascaded row means its Integration was removed. */
   const activate = Effect.fn('Watches.activate')(function* (
@@ -194,6 +193,7 @@ const make = Effect.fn('Watches.make')(function* () {
     const declared = eventsOfApp(yield* events.list, app.appSlug)
     if (!declared.some((event) => event.event === request.event))
       return yield* new WatchEventUnknown({ known: declared.map((event) => event.event) })
+    const purpose = yield* checks.planCheckin(actor, request.purpose)
     const id = WatchId.make(NodeCrypto.randomUUID())
     const pending = yield* store.insertPending({
       id,
@@ -207,6 +207,7 @@ const make = Effect.fn('Watches.make')(function* () {
       arguments: request.arguments,
       instruction: request.instruction,
       condition: request.condition,
+      purpose,
       callbackUrl: `${base}/api/watches/${id}`,
     })
     const granted = yield* Effect.result(subscribe(pending))
@@ -239,7 +240,7 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Option.isNone(found)) return yield* new WatchMissing({})
     const stopped = yield* store.stop(found.value.watch.id, 'removed')
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
-    yield* events.unsubscribe(keyOf(found.value)).pipe(
+    yield* events.unsubscribe(subscriptionOf(found.value)).pipe(
       Effect.tapError((failure) =>
         Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
       ),
@@ -289,6 +290,7 @@ const make = Effect.fn('Watches.make')(function* () {
 
   return {
     create,
+    ...checks,
     find,
     stop,
     complete: progress.complete,
@@ -304,7 +306,7 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
   'vivid/Watches',
 ) {}
 
-export const watchesLayer = Layer.effect(Watches, make())
+export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owedStoreLayer))
 
 /**
  * The renewal worker: one pass every ten minutes, scoped to the server, with no detached timer.

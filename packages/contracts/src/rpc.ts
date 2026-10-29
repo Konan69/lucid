@@ -65,6 +65,10 @@ import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
   CompleteWatchRequest,
+  UpdateCheckinRequest,
+  CheckinNotFound,
+  CheckinNotScheduled,
+  OpenWorkResponse,
   WatchRunRequired,
   WatchEndConditionRequired,
   FindAppEventsRequest,
@@ -794,6 +798,13 @@ const CreateWatch = Rpc.make('CreateWatch', {
   success: WatchResponse,
 })
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
+const ListOpenWork = Rpc.make('ListOpenWork', { ...call, success: OpenWorkResponse })
+const UpdateCheckin = Rpc.make('UpdateCheckin', {
+  ...call,
+  payload: UpdateCheckinRequest,
+  success: WatchResponse,
+  error: Schema.Union([RpcFailure, CheckinNotFound]),
+})
 const WatchWatches = Rpc.make('WatchWatches', { ...live, success: WatchListResponse })
 const CompleteWatch = Rpc.make('CompleteWatch', {
   ...call,
@@ -986,7 +997,7 @@ const ResolveTool = Rpc.make('ResolveTool', {
  * refuses the exact action again while an earlier send of it in this Thread has an unknown result.
  */
 const UseTool = Rpc.make('UseTool', {
-  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired, CheckinNotScheduled]),
   payload: UseToolRequest,
   success: IntegrationResult,
 })
@@ -1312,6 +1323,8 @@ export const VividRpc = RpcGroup.make(
   FindAppEvents,
   CreateWatch,
   ListWatches,
+  ListOpenWork,
+  UpdateCheckin,
   WatchWatches,
   CompleteWatch,
   StopWatch,

@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { ConnectionId, RunId } from './identity.js'
+import { ConnectionId, RunId, OwedId, ThreadId, ProjectId, PersonId } from './identity.js'
 
 /**
  * Watches: something that happens in an Integration wakes Vivid.
@@ -53,6 +53,114 @@ export const WatchCondition = Schema.TaggedUnion({
 })
 export type WatchCondition = typeof WatchCondition.Type
 
+/** One timer operation is persisted before dispatch and reused after an uncertain call. */
+export const TimerOperationKey = Schema.NonEmptyString.pipe(Schema.brand('TimerOperationKey'))
+export type TimerOperationKey = typeof TimerOperationKey.Type
+
+/** Project is a typed extension point, awaiting its owning unit's actual state model. */
+export const CheckinFocus = Schema.TaggedUnion({
+  OpenWork: {},
+  Owed: { owedId: OwedId },
+  Thread: { threadId: ThreadId },
+  Project: { projectId: ProjectId },
+})
+export type CheckinFocus = typeof CheckinFocus.Type
+/** No public command can schedule a Project check-in before its state is available. */
+export const AvailableCheckinFocus = Schema.Union([
+  CheckinFocus.cases.OpenWork,
+  CheckinFocus.cases.Owed,
+  CheckinFocus.cases.Thread,
+]).pipe(Schema.toTaggedUnion('_tag'))
+
+/** The timer Integration owns execution and recurrence; this records who chose the check. */
+export const CheckinTiming = Schema.TaggedUnion({
+  Chosen: { nextAt: Schema.Finite, why: Schema.NonEmptyString },
+  Requested: { request: Schema.NonEmptyString, timezone: Schema.NonEmptyString },
+})
+export type CheckinTiming = typeof CheckinTiming.Type
+
+/** Only the actual timer call's decoded receipt may confirm its persisted operation key. */
+export const CheckinArming = Schema.TaggedUnion({
+  Awaiting: { operationKey: TimerOperationKey },
+  Confirmed: { operationKey: TimerOperationKey, nextAt: Schema.Finite },
+})
+export type CheckinArming = typeof CheckinArming.Type
+/** This is decoded from the timer Integration’s actual tool response, not supplied through a confirmation RPC. */
+export const TimerReceipt = Schema.Struct({
+  operationKey: TimerOperationKey,
+  nextAt: Schema.Finite,
+})
+export interface TimerReceipt extends Schema.Schema.Type<typeof TimerReceipt> {}
+
+const checkin = { focus: AvailableCheckinFocus, timing: CheckinTiming }
+/** Callers choose intent; the server creates arming authority. */
+export const WatchIntent = Schema.TaggedUnion({ Event: {}, Checkin: checkin })
+export type WatchIntent = typeof WatchIntent.Type
+/**
+ * What the server read of a check-in's open work when its timer fired: the open records, in names
+ * and product facts only, or the persisted evidence that the work has ended.
+ */
+export const CheckinRead = Schema.TaggedUnion({
+  Open: { context: Schema.NonEmptyString },
+  Closed: { evidence: Schema.NonEmptyString },
+})
+export type CheckinRead = typeof CheckinRead.Type
+
+/** A timer subscription and a confirmed timer are distinct persisted facts. */
+export const WatchPurpose = Schema.TaggedUnion({
+  Event: {},
+  Checkin: { ...checkin, arming: CheckinArming },
+})
+export type WatchPurpose = typeof WatchPurpose.Type
+
+/** Candidates come from explicit owned records, never inferred transcript obligations. */
+export const OpenWork = Schema.TaggedUnion({
+  Owed: {
+    owedId: OwedId,
+    threadId: ThreadId,
+    what: Schema.NonEmptyString,
+    from: Schema.NonEmptyString,
+    nextStep: Schema.NonEmptyString,
+    due: Schema.NullOr(Schema.Finite),
+    checkins: Schema.Array(WatchName),
+  },
+  Project: {
+    projectId: ProjectId,
+    threadId: ThreadId,
+    nextStep: Schema.NonEmptyString,
+    checkins: Schema.Array(WatchName),
+  },
+})
+export type OpenWork = typeof OpenWork.Type
+/** One owner-scoped inventory for every surface and the runtime tool adapter. */
+export const OpenWorkResponse = Schema.Struct({ work: Schema.Array(OpenWork) })
+export interface OpenWorkResponse extends Schema.Schema.Type<typeof OpenWorkResponse> {}
+
+/** Updating intent invalidates the old arm until a fresh receipt confirms the new operation. */
+export const UpdateCheckinRequest = Schema.Struct({ name: WatchName, ...checkin })
+export interface UpdateCheckinRequest extends Schema.Schema.Type<typeof UpdateCheckinRequest> {}
+
+/** An Event Watch with the same name is not a live check-in. */
+export class CheckinNotFound extends Schema.TaggedError<CheckinNotFound>()(
+  'CheckinNotFound',
+  {
+    personId: PersonId,
+    name: WatchName,
+    message: Schema.Literal('There is no check-in by that name.'),
+  },
+  { title: 'Check-in not found' },
+) {}
+/** The product retains Awaiting when dispatch supplied no matching scheduling receipt. */
+export class CheckinNotScheduled extends Schema.TaggedError<CheckinNotScheduled>()(
+  'CheckinNotScheduled',
+  {
+    watchId: WatchId,
+    operationKey: TimerOperationKey,
+    message: Schema.Literal('The check-in was not scheduled; nothing will wake Vivid for it yet.'),
+  },
+  { title: 'Check-in not scheduled' },
+) {}
+
 /**
  * Where a Watch is in its life. `Pending`: subscribed but not yet confirmed (Executor is verifying
  * the callback, or its answer was lost); the renewal pass finishes it with the same subscription. `Active` holds the time its subscription must be renewed before,
@@ -78,6 +186,7 @@ export const Watch = Schema.Struct({
   arguments: WatchArguments,
   instruction: WatchInstruction,
   condition: WatchCondition,
+  purpose: WatchPurpose,
   state: WatchState,
   createdAt: Schema.Finite,
 }).annotate({ identifier: 'Watch', title: 'Watch' })
@@ -109,6 +218,7 @@ export const CreateWatchRequest = Schema.Struct({
   arguments: WatchArguments,
   instruction: WatchInstruction,
   condition: WatchCondition,
+  purpose: WatchIntent,
 })
 export interface CreateWatchRequest extends Schema.Schema.Type<typeof CreateWatchRequest> {}
 

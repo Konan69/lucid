@@ -72,6 +72,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   WatchUnrecorded: { watchName: Schema.String },
   /** A Settings Forget press woke Vivid in a background Thread to plan and carry it out. */
   Forget: {},
+  /** A check-in's timer fired and woke Vivid in a background Thread to return to open work. */
+  Checkin: { watchId: WatchId, watchName: Schema.String, eventId: Schema.NonEmptyString },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

@@ -18,6 +18,7 @@ import { settingsProof } from './settingsproof.mjs'
 import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { integrations } from './integrations.mjs'
+import { checkin } from './checkin.mjs'
 import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
 import { procedure } from './procedure.mjs'
@@ -54,6 +55,7 @@ export const features = [
   'document',
   'watch',
   'integrations',
+  'checkin',
   'library',
   'feed',
   'owed',
@@ -595,6 +597,7 @@ const recipes = {
   projects,
   watch,
   integrations,
+  checkin,
   reading,
   settings: settingsProof,
   name: nameProof,

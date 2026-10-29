@@ -240,6 +240,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     WatchUnrecorded: () => false,
     // The Settings screen shows the forget's receipt; nothing else is said.
     Forget: () => false,
+    // A check-in is work nobody is watching too: the Person hears about it only through the Feed.
+    Checkin: () => false,
   })
 })
 const decodeState = decodeStored(
@@ -267,6 +269,8 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
     WatchUnrecorded: ({ watchName }): RunOrigin =>
       RunOrigin.cases.WatchUnrecorded.make({ person, watchName }),
     Forget: (): RunOrigin => RunOrigin.cases.Forget.make({ person }),
+    Checkin: ({ watchId, watchName, eventId }): RunOrigin =>
+      RunOrigin.cases.Checkin.make({ person, watchId, watchName, eventId }),
   })
 
 const ENDED = {

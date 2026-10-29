@@ -1,5 +1,6 @@
+import { checkinTools, intent, purpose } from './checkins.ts'
 import { defineTool } from './tool.ts'
-import { Tool, Watch, WatchState, WatchCondition } from '@vivid/contracts'
+import { Tool, Watch, WatchState, WatchCondition, WatchPurpose } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -14,7 +15,7 @@ import { modelText } from './views.ts'
 
 /** Model-visible in every Watch tool's description, without an agent edit. */
 export const instructions =
-  'When a Person wants to know or act when something happens in an Integration, find its events, then watch one with the instruction of what to do; say what you are watching. When woken by an event, act on the instruction; if nothing needs the Person, finish without a reply.'
+  'When a Person wants to know or act when something happens in an Integration, find its events, then watch one with the instruction of what to do; say what you are watching. For a check-in, create with Checkin purpose, subscribe first, then arm the timer with its returned operationKey. It is scheduled only after the actual timer receipt confirms it. Do not put operationKey into subscription filters; the server matches timer payloads to their persisted keys. When woken by an event, act on the instruction; if nothing needs the Person, finish without a reply.'
 
 /** A Watch as the model reads it: names and words, never its id or subscription. */
 const view = (watch: Watch) => ({
@@ -22,6 +23,10 @@ const view = (watch: Watch) => ({
   watching: `${modelText(watch.event)} in ${modelText(watch.account)}`,
   filters: watch.arguments,
   instruction: modelText(watch.instruction),
+  purpose: WatchPurpose.match(watch.purpose, {
+    Event: () => ({ kind: 'event' }),
+    Checkin: ({ timing, arming }) => ({ kind: 'check-in', timing, arming }),
+  }),
   state: WatchState.match(watch.state, {
     Pending: () => 'starting',
     Active: () => 'watching',
@@ -71,6 +76,7 @@ export function watchTools(runTool: RunTool) {
       description: `Watch an Integration event and act on it each time it happens. ${instructions}`,
       input: v.object({
         summary,
+        purpose,
         name: watchName,
         account,
         event: text('The event name exactly as find_events returned it.', 200),
@@ -96,6 +102,7 @@ export function watchTools(runTool: RunTool) {
               event: data.event,
               arguments: data.filters,
               instruction: data.instruction.trim(),
+              purpose: yield* intent(data.purpose),
               condition:
                 data.until === null
                   ? WatchCondition.cases.Continuous.make({})
@@ -123,6 +130,7 @@ export function watchTools(runTool: RunTool) {
       },
     }),
     ...endingTools(runTool),
+    ...checkinTools(runTool, view),
   ] as const
 }
 
