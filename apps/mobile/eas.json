@@ -1,12 +1,13 @@
 {
   "cli": {
     "version": ">= 27.1.0",
-    "appVersionSource": "local"
+    "appVersionSource": "remote"
   },
   "build": {
-    "internal": {
-      "distribution": "internal",
+    "testflight": {
+      "distribution": "store",
       "environment": "production",
+      "autoIncrement": true,
       "node": "24.14.1",
       "pnpm": "12.4.2",
       "env": {
@@ -14,6 +15,13 @@
       },
       "ios": {
         "image": "latest"
+      }
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": {
+        "appleTeamId": "4Q5T56FN73"
       }
     }
   }
