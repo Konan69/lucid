@@ -6,6 +6,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   ArtifactAuthor,
   ArtifactContent,
+  type ArtifactId,
   ArtifactSource,
   ArtifactPreview,
   SessionId,
@@ -214,6 +215,42 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
   return { database, person, member, admin, outsider, threadId, runId, companyId }
 })
 
+/** A real session row, so a download passes the same bearer authentication a client's does. */
+const session = Effect.fn('Artifacts.test.session')(function* (id: PersonId) {
+  const database = yield* Database
+  const token = NodeCrypto.randomUUID()
+  yield* database.run(
+    database.insert(sessionTable).values({
+      id: SessionId.make(NodeCrypto.randomUUID()),
+      token,
+      userId: id,
+      expiresAt: new Date(Date.now() + 60_000),
+    }),
+  )
+  return token
+})
+
+/** One request through the mounted byte route, read as the web response a client receives. */
+const download = Effect.fn('Artifacts.test.download')(function* (
+  id: ArtifactId,
+  role: string,
+  token: string,
+) {
+  const handle = yield* HttpRouter.toHttpEffect(artifactBytesRoutes)
+  const response = yield* handle.pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(
+        new Request(`http://vivid.test/api/artifacts/${id}/versions/1/files/${role}`, {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+      ),
+    ),
+    Effect.scoped,
+  )
+  return HttpServerResponse.toWeb(response)
+})
+
 /** Real SQL proves history, uniqueness, rollback, optimistic editing and access across workspaces. */
 describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
   layer(testLayer)((it) => {
@@ -306,60 +343,82 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               .where(eq(runs.id, runId)),
           )
           expect(yield* publishArtifactFile(person.id, threadId, request)).toEqual(first)
-          const session = Effect.fn('Artifacts.test.session')(function* (id: PersonId) {
-            const token = NodeCrypto.randomUUID()
-            yield* database.run(
-              database.insert(sessionTable).values({
-                id: SessionId.make(NodeCrypto.randomUUID()),
-                token,
-                userId: id,
-                expiresAt: new Date(Date.now() + 60_000),
-              }),
-            )
-            return token
-          })
           const ownerToken = yield* session(person.id)
           const outsiderToken = yield* session(outsider.id)
-          const handle = yield* HttpRouter.toHttpEffect(artifactBytesRoutes)
-          const download = Effect.fn('Artifacts.test.download')(function* (
-            role: string,
-            token: string,
-          ) {
-            const response = yield* handle.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                HttpServerRequest.fromWeb(
-                  new Request(
-                    `http://vivid.test/api/artifacts/${first.artifact.id}/versions/1/files/${role}`,
-                    { headers: { authorization: `Bearer ${token}` } },
-                  ),
-                ),
-              ),
-              Effect.scoped,
-            )
-            return HttpServerResponse.toWeb(response)
-          })
           for (const [role, expected] of [
             ['output', original],
             ['source', source],
           ] as const) {
-            const response = yield* download(role, ownerToken)
+            const response = yield* download(first.artifact.id, role, ownerToken)
             expect(response.status).toBe(200)
             const bytes = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))
             expect(bytes).toEqual(expected)
             expect(NodeCrypto.createHash('sha256').update(bytes).digest('hex')).toBe(
               NodeCrypto.createHash('sha256').update(expected).digest('hex'),
             )
-            const refused = yield* download(role, outsiderToken)
+            const refused = yield* download(first.artifact.id, role, outsiderToken)
             expect(refused.status).toBe(404)
             expect((yield* Effect.promise(() => refused.arrayBuffer())).byteLength).toBe(0)
           }
-          const fileResponse = yield* download('source', ownerToken)
+          const fileResponse = yield* download(first.artifact.id, 'source', ownerToken)
           expect(fileResponse.headers.get('content-type')).toContain(
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           )
           expect(fileResponse.headers.get('content-disposition')).toContain('attachment;')
         }),
+    )
+
+    it.effect('names a downloaded file with characters RFC 5987 does not allow bare', () =>
+      Effect.gen(function* () {
+        const { person, threadId, runId } = yield* fixture()
+        const output = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+        const source = Uint8Array.from([80, 75, 3, 4, 1])
+        const inspectionCall = DocumentToolCallId.make('inspect-named-file')
+        const publicationCall = DocumentToolCallId.make('publish-named-file')
+        yield* Ref.update(yield* Responses, (entries) => [
+          ...entries,
+          {
+            threadId,
+            runId,
+            toolCallId: inspectionCall,
+            settled: false,
+            toolName: 'inspect_file' as const,
+          },
+          {
+            threadId,
+            runId,
+            toolCallId: publicationCall,
+            settled: false,
+            toolName: 'publish_file' as const,
+          },
+        ])
+        const inspected = yield* keepInspection(
+          { personId: person.id, threadId, runId, toolCallId: inspectionCall },
+          {
+            capture: FileCapture.make({
+              output: capturedFile('preview.png', output),
+              source: ArtifactSource.cases.Separate.make({
+                file: capturedFile("Report (final) it's *.docx", source),
+              }),
+              preview: ArtifactPreview.cases.Output.make({}),
+            }),
+            output,
+            source,
+            preview: null,
+          },
+        )
+        const published = yield* publishArtifactFile(person.id, threadId, {
+          inspection: inspected.inspection,
+          toolCallId: publicationCall,
+          title: 'Final report',
+          review: 'Fixture checks the download header only.',
+        })
+        const response = yield* download(published.artifact.id, 'source', yield* session(person.id))
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-disposition')).toBe(
+          "attachment; filename*=UTF-8''Report%20%28final%29%20it%27s%20%2A.docx",
+        )
+      }),
     )
 
     it.effect(

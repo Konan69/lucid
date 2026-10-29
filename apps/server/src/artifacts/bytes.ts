@@ -9,6 +9,14 @@ import { downloadArtifactFile } from './files.ts'
 
 const decodeRequest = Schema.decodeUnknownEffect(ArtifactFileRequest)
 
+/** RFC 5987 `attr-char` allows only letters, digits and `!#$&+-.^_`|~` bare. `encodeURIComponent`
+ * also leaves `'()*`, and a name such as `Report (final).docx` then makes an invalid header. */
+const filenameStar = (name: string) =>
+  encodeURIComponent(name).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+
 /** Byte routes accept the same cookie/bearer Person identity as other authenticated downloads. */
 const content = Effect.fn('Http.Artifact.content')(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
@@ -27,7 +35,7 @@ const content = Effect.fn('Http.Artifact.content')(function* () {
   return HttpServerResponse.uint8Array(bytes, {
     contentType: file.mimeType,
     headers: {
-      'content-disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      'content-disposition': `${disposition}; filename*=UTF-8''${filenameStar(file.name)}`,
       'x-content-type-options': 'nosniff',
       'cache-control': 'private, no-store',
     },
