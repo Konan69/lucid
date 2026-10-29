@@ -27,12 +27,13 @@ export function followTools() {
     defineTool({
       name: Tool.suggest_replies,
       description:
-        'Offer the person one to three short replies they can tap instead of typing, shown under your reply: what they would most likely say next, such as the answer to your question, the next step on your draft ("send it"), or the follow-up they would want after an answer. Write each in their own voice, as they would type it, a few words long, the most likely first. Call it at most once, as the last thing in your reply. It is not a question card (that is ask_person) and never repeats what you just said.',
-      input: v.object({
+        'Finish your written answer, then offer one to three replies the person could tap, in their own voice, most likely first. Use {"replies":["send it","make it shorter"]}, each at most 40 characters. Call once in its own tool round, after all other tools. This ends the reply. It is not a question card (ask_person).',
+      input: v.strictObject({
         replies: v.pipe(
-          v.tupleWithRest([reply], reply),
+          v.array(reply),
+          v.minLength(1),
           v.maxLength(SUGGESTED_REPLIES_MOST),
-          v.description('One to three replies, the most likely first.'),
+          v.description('One to three strings of at most 40 characters, the most likely first.'),
         ),
       }),
       /**
