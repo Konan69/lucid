@@ -47,55 +47,70 @@ const overlapping = (state, id, directory) =>
     'overlap',
   )
 
+/** One WatchThread request: its publications, until `until` holds or the server ends it. */
+async function follow(state, thread, until, signal, seen) {
+  const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
+  const response = await fetch(state.web + '/api/rpc', {
+    method: 'POST',
+    headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
+    body:
+      JSON.stringify({
+        _tag: 'Request',
+        id: '1',
+        tag: 'WatchThread',
+        payload: { id: thread },
+        headers: [],
+      }) + '\n',
+    signal,
+  })
+  let buffer = ''
+  for await (const bytes of response.body) {
+    buffer += Buffer.from(bytes).toString('utf8')
+    let newline
+    while ((newline = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (!line) continue
+      const packet = JSON.parse(line)
+      if (packet._tag === 'Exit') throw new Error('WatchThread ended: ' + line)
+      if (packet._tag !== 'Chunk') continue
+      for (const value of packet.values) {
+        const detail = decode(RpcSerialization.ndjson.codecFor(ThreadDetail), value)
+        seen.push({
+          runs: detail.runs,
+          children: detail.children,
+          attention: detail.thread.attention,
+        })
+        if (until(detail)) return detail
+      }
+    }
+  }
+  return undefined
+}
+
 /**
  * Follow the public WatchThread publication until `until` holds. Each published ThreadDetail is
  * retained, so the evidence shows the helpers working side by side, not only how they ended.
+ * The server ends any HTTP request after 300 seconds; a watch that outlives one is taken up
+ * again, and a new WatchThread starts with the whole current detail, so nothing is missed.
  */
 export async function watchUntil(state, thread, until, directory, name) {
-  const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
   const abort = new AbortController()
-  const deadline = setTimeout(() => abort.abort(new Error(name + ' deadline')), 600_000)
+  const deadline = setTimeout(() => abort.abort(new Error(name + ' deadline')), 900_000)
   const seen = []
   try {
-    const response = await fetch(state.web + '/api/rpc', {
-      method: 'POST',
-      headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
-      body:
-        JSON.stringify({
-          _tag: 'Request',
-          id: '1',
-          tag: 'WatchThread',
-          payload: { id: thread },
-          headers: [],
-        }) + '\n',
-      signal: abort.signal,
-    })
-    let buffer = ''
-    for await (const bytes of response.body) {
-      buffer += Buffer.from(bytes).toString('utf8')
-      let newline
-      while ((newline = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newline)
-        buffer = buffer.slice(newline + 1)
-        if (!line) continue
-        const packet = JSON.parse(line)
-        if (packet._tag === 'Exit') throw new Error(name + ' ended: ' + line)
-        if (packet._tag !== 'Chunk') continue
-        for (const value of packet.values) {
-          const detail = decode(RpcSerialization.ndjson.codecFor(ThreadDetail), value)
-          seen.push({
-            runs: detail.runs,
-            children: detail.children,
-            attention: detail.thread.attention,
-          })
-          if (until(detail)) {
-            await json(directory + '/' + name + '.json', seen)
-            return detail
-          }
-        }
+    for (;;) {
+      const detail = await follow(state, thread, until, abort.signal, seen).catch((error) => {
+        if (abort.signal.aborted) throw error
+        // The request was ended under it (`terminated`): note it in the evidence and go on.
+        seen.push({ reconnected: String(error.message) })
+        return undefined
+      })
+      if (detail !== undefined) {
+        await json(directory + '/' + name + '.json', seen)
+        return detail
       }
     }
-    throw new Error(name + ' stream closed')
   } finally {
     clearTimeout(deadline)
     abort.abort()
