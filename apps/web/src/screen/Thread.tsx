@@ -557,11 +557,7 @@ function Conversation({
           requests={context.requests}
           handoffs={context.handoffs}
           panelOpen={panelOpen}
-          onOpenScreen={() => {
-            // The step is finished on Vivid's computer, not on a page left in front.
-            pages.toComputer()
-            if (!panelOpen) onTogglePanel()
-          }}
+          onTogglePanel={onTogglePanel}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
           // another path that cannot carry one yet.
@@ -624,7 +620,7 @@ function Column({
   requests,
   handoffs,
   panelOpen,
-  onOpenScreen,
+  onTogglePanel,
   working,
   pictures,
   onSay,
@@ -643,7 +639,7 @@ function Column({
   handoffs: ThreadContext['handoffs']
   /** The Computer panel is showing; a step is finished on its screen. */
   panelOpen: boolean
-  onOpenScreen: () => void
+  onTogglePanel: () => void
   working: boolean
   /** Whether a picture can be sent from the composer. */
   pictures: boolean
@@ -675,7 +671,11 @@ function Column({
             key={handoff.id}
             handoff={handoff}
             panelOpen={panelOpen}
-            onOpenScreen={onOpenScreen}
+            onOpenScreen={() => {
+              // The step is finished on Vivid's computer, not on a page left in front.
+              pages.toComputer()
+              if (!panelOpen) onTogglePanel()
+            }}
           />
         ),
       })}

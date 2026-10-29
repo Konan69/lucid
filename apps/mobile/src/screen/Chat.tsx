@@ -703,21 +703,17 @@ function Raised({
 function Over({
   id,
   detail,
-  me,
-  asking,
-  allowing,
+  waiting: { asking, allowing },
   dock,
   covered,
 }: {
   id: ThreadId
   detail: Option.Option<ThreadDetail>
-  me: PersonId
-  asking: ReturnType<typeof useAsking>
-  allowing: ReturnType<typeof useAllowing>
+  waiting: ReturnType<typeof useWaiting>
   dock: Option.Option<number>
   covered: SharedValue<number>
 }) {
-  const handoff = handing.handoffUp(handoffsOf(detail), me)
+  const handoff = handing.handoffUp(handoffsOf(detail), useMe().person.id)
   const openScreen = useOpenScreen(id)
   if (Option.isNone(handoff) || Option.isNone(dock))
     return <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
@@ -866,7 +862,8 @@ function Conversation({
   const sending = useSend(id, place, { detail, reading })
   const { shared, working, ready } = sending
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
-  const { allowing, asking } = useWaiting(detail, me.person.id)
+  const waiting = useWaiting(detail, me.person.id)
+  const { allowing, asking } = waiting
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -953,15 +950,7 @@ function Conversation({
             onContinue={speak}
           />
         </View>
-        <Over
-          id={id}
-          detail={detail}
-          me={me.person.id}
-          asking={asking}
-          allowing={allowing}
-          dock={dock}
-          covered={covered}
-        />
+        <Over id={id} detail={detail} waiting={waiting} dock={dock} covered={covered} />
         <Foot
           typed={typed}
           writing={writing}

@@ -55,6 +55,31 @@ const makeCookieCopy = (input: {
     (effect, request) => input.permits.withPermit(request.key, effect),
   )
 
+/** A handoff's fields share the browser and its permit with every other browser step. */
+const handoffFields = (
+  native: (key: MachineKey) => Effect.Effect<Driver, MachineFailure>,
+  permits: KeyedPermits<MachineKey>,
+): Pick<MachineOperations, 'findFields' | 'fillFields' | 'clearFields'> => ({
+  findFields: Effect.fn('Machine.boat.findFields')(
+    function* (input) {
+      return yield* findFields(yield* native(input.key), input.labels)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+  fillFields: Effect.fn('Machine.boat.fillFields')(
+    function* (input) {
+      return yield* fillFields(yield* native(input.key), input.page, input.entries)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+  clearFields: Effect.fn('Machine.boat.clearFields')(
+    function* (input) {
+      return yield* clearFields(yield* native(input.key), input.page, input.labels)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+})
+
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
 const told = (
@@ -229,25 +254,7 @@ export const boatMachineLayer = Layer.effect(
         },
         (effect, input) => permits.withPermit(input.key, effect),
       ),
-      // A handoff's fields share the browser and its permit with every other browser step.
-      findFields: Effect.fn('Machine.boat.findFields')(
-        function* (input) {
-          return yield* findFields(yield* nativeDriver(input.key), input.labels)
-        },
-        (effect, input) => permits.withPermit(input.key, effect),
-      ),
-      fillFields: Effect.fn('Machine.boat.fillFields')(
-        function* (input) {
-          return yield* fillFields(yield* nativeDriver(input.key), input.page, input.entries)
-        },
-        (effect, input) => permits.withPermit(input.key, effect),
-      ),
-      clearFields: Effect.fn('Machine.boat.clearFields')(
-        function* (input) {
-          return yield* clearFields(yield* nativeDriver(input.key), input.page, input.labels)
-        },
-        (effect, input) => permits.withPermit(input.key, effect),
-      ),
+      ...handoffFields(nativeDriver, permits),
     })
   }),
 )
