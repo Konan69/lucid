@@ -97,7 +97,7 @@ const definitions: ReadonlyArray<{
   },
   {
     description:
-      'Browse pages on the Person’s allowed, connected desktop. An active Run and the action gate still apply.',
+      'Browse pages on the Person’s allowed, connected desktop. An active Run is required. The server checks each action and reports when approval is needed.',
     requirement: 'PersonalPages',
     mount: ({ computer }) => computer.filter((tool) => tool.name === Tool.browse),
   },
@@ -338,6 +338,7 @@ export function capabilityRegistry(input: RegistryInput) {
 export function capabilityInstructions(reading: CapabilityReading) {
   return [
     'Your supported abilities and current prerequisites come from the mounted registry below. Saved facts may be stale. Always call get_capabilities before describing what you can do now. Do not claim unavailable abilities as usable now. You cannot make or take calls or control a phone.',
+    'Describe abilities and blocked states to the Person in everyday words. Tool identifiers, record references and status tags are for calls and internal reasoning; never print them in an ability answer, even to explain something unavailable.',
     ...reading.abilities.map(
       (ability) => `${ability.description} Current reading: ${ability.availability._tag}.`,
     ),
