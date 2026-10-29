@@ -1,4 +1,6 @@
-import * as WebPush from 'web-push'
+// web-push is CommonJS whose exports Node's loader cannot name, so under `tsx` (how the server
+// runs) a namespace import has no `generateRequestDetails`; the default import is its exports.
+import WebPush from 'web-push'
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
