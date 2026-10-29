@@ -86,7 +86,7 @@ function Row({
   onOpen: () => void
 }) {
   const folded = standing === 'folded'
-  const due = words.due(todo, now)
+  const due = Option.getOrUndefined(words.due(todo, now))
   return (
     <li data-folded={folded ? '' : undefined} inert={folded} className="motion-fold">
       <div>
@@ -115,20 +115,17 @@ function Row({
                   the same place, so nothing in the row moves. Where there is no hover, both. With
                   no date the actions keep their own room, so they never cover the words. */}
               <div className="relative flex shrink-0 items-center justify-end gap-1 pt-px">
-                <Actions todo={todo} over={Option.isSome(due)} onOpen={onOpen} />
-                {Option.match(due, {
-                  onNone: () => null,
-                  onSome: (said) => (
-                    <span
-                      className={cn(
-                        'text-label whitespace-nowrap tabular-nums group-hover/todo:invisible group-has-focus-visible/todo:invisible group-has-aria-expanded/todo:invisible pointer-coarse:visible',
-                        said.late ? 'text-danger' : 'text-ink-2',
-                      )}
-                    >
-                      {said.words}
-                    </span>
-                  ),
-                })}
+                <Actions todo={todo} over={due !== undefined} onOpen={onOpen} />
+                {due !== undefined && (
+                  <span
+                    className={cn(
+                      'text-label whitespace-nowrap tabular-nums group-hover/todo:invisible group-has-focus-visible/todo:invisible group-has-aria-expanded/todo:invisible pointer-coarse:visible',
+                      due.late ? 'text-danger' : 'text-ink-2',
+                    )}
+                  >
+                    {due.words}
+                  </span>
+                )}
               </div>
             </div>
           </ContextMenuTrigger>
