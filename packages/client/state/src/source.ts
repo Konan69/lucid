@@ -18,6 +18,9 @@ export type Sourced = Pick<ConversationMessage, 'role' | 'display' | 'signal' | 
  * - `Said`: a Person speaking in a shared Thread. The server delivers it as a `message` signal;
  *   `turn` names the Run that says who they are and `from` their name, when the server gave them.
  * - `Wake`: a follow-up falling due, with its name when given.
+ * - `Saw`: the Integration event a Watch woke Vivid with, drawn as what Vivid saw: its words are the
+ *   event itself, whole. `name` is the Watch's. An event delivered before 29 October 2026 carries
+ *   no `event` attribute; its words were the model's framing, so it stays plumbing.
  * - `Failed`: the runtime's word that a reply was not finished.
  * - `Plumbing`: everything else, which is never drawn. A reply the Person stopped, and the
  *   deliveries whose outcome a card already tells (an Approval's decision, an answer) or that
@@ -28,6 +31,7 @@ export type Source = Data.TaggedEnum<{
   Vivid: {}
   Said: { readonly turn: Option.Option<string>; readonly from: Option.Option<string> }
   Wake: { readonly reason: 'follow-up'; readonly name: Option.Option<string> }
+  Saw: { readonly name: Option.Option<string> }
   Failed: {}
   Plumbing: {}
 }>
@@ -61,6 +65,8 @@ function signalSource(message: Sourced): Source {
       from: Option.fromUndefinedOr(attributes.from),
     })
   }
+  if (tagName === 'event' && attributes.event !== undefined)
+    return Source.Saw({ name: Option.fromUndefinedOr(attributes.name) })
   const reason = WAKES.get(tagName)
   return reason === undefined
     ? Source.Plumbing()

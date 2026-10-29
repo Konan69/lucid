@@ -10,7 +10,7 @@ import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { AlarmClock } from 'lucide-react-native'
+import { AlarmClock, Eye } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
 import {
@@ -26,7 +26,7 @@ import {
 import { when } from '../../data/when'
 import { useTheme } from '../../theme'
 import { ANSWERED, SAID } from '../../ui/motion/morph'
-import { EDGE, Face, Label, radius } from '../../ui/ui'
+import { EDGE, Face, Label, MONO, radius } from '../../ui/ui'
 import { Cards } from './Cards'
 import { Replies } from './Replies'
 import { Said, Voice } from './Said'
@@ -105,6 +105,7 @@ export function Message({
       </Arriving>
     ),
     Wake: ({ reason, name }) => <Wake reason={reason} name={name} />,
+    Saw: ({ name }) => <Saw name={name} text={textOf(message)} />,
     Notice: ({ failed }) => <Aside text={textOf(message)} failed={failed} />,
     Silent: () => null,
   })
@@ -140,6 +141,42 @@ function Wake({ reason, name }: { reason: keyof typeof WAKE; name: Option.Option
       <Label size="caption" tone="ink-2" style={{ flexShrink: 1 }}>
         {Option.match(name, { onNone: () => label, onSome: (named) => `${label} · ${named}` })}
       </Label>
+    </View>
+  )
+}
+
+/**
+ * The event a Watch woke Vivid with, as Vivid saw it: a quiet line with the Watch's name, then the
+ * event whole, in the fixed-width face because it is the Integration's own data, selectable so it
+ * can be copied. The Feed card's Thread opens here, so this is where a Person reads what caused it.
+ */
+function Saw({ name, text }: { name: Option.Option<string>; text: string }) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Eye size={14} strokeWidth={1.7} color={c['foreground-secondary']} />
+        <Label size="caption" tone="ink-2" style={{ flexShrink: 1 }}>
+          {Option.match(name, {
+            onNone: () => 'What Vivid saw',
+            onSome: (named) => `What Vivid saw · ${named}`,
+          })}
+        </Label>
+      </View>
+      <View
+        style={{
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: radius.control,
+          borderWidth: EDGE,
+          borderColor: c.border,
+          backgroundColor: c.subtle,
+        }}
+      >
+        <Label size="label" tone="ink-2" selectable style={{ fontFamily: MONO }}>
+          {text}
+        </Label>
+      </View>
     </View>
   )
 }
