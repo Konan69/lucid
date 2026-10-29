@@ -12,6 +12,7 @@ import type {
   FindToolsRequest,
   OfferConnectionRequest,
   RenameConnectionRequest,
+  SetConnectionPermissionRequest,
   UseDisplayToolRequest,
   UseToolRequest,
 } from '@vivid/contracts'
@@ -102,6 +103,15 @@ export const connectionHandlers = {
   RenameConnection: Effect.fn('Rpc.RenameConnection')(function* (request: RenameConnectionRequest) {
     yield* requirePerson()
     return { connection: yield* (yield* ConnectionStore).rename(yield* requireActor(), request) }
+  }),
+  /** Permission choices are Person-only and retain Connection management ownership checks. */
+  SetConnectionPermission: Effect.fn('Rpc.SetConnectionPermission')(function* (
+    request: SetConnectionPermissionRequest,
+  ) {
+    yield* requirePerson()
+    return {
+      connection: yield* (yield* ConnectionStore).permission(yield* requireActor(), request),
+    }
   }),
   FindTools: Effect.fn('Rpc.FindTools')(function* (request: FindToolsRequest) {
     return yield* findTools(yield* requireActor(), request)

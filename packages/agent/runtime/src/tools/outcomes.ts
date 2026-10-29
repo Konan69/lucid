@@ -2,6 +2,7 @@ import {
   BrowseOutcome,
   DesktopOutcome,
   ToolOutcome,
+  type IntegrationResult,
   WindowOutcome,
   WindowResult,
   type WindowView,
@@ -58,17 +59,41 @@ function outcomeUnknown(): ToolResult {
 
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
-export function toolOutcome(outcome: ToolOutcome): ToolResult {
-  return ToolOutcome.match(outcome, {
+export function toolOutcome(result: IntegrationResult): ToolResult {
+  const projected = ToolOutcome.match<ToolResult>(result.outcome, {
     Completed: ({ output }) => ({
       output: { ok: true, output, message: 'The action completed.' },
     }),
     ApprovalRequired: approval,
     Blocked: blocked,
-    ConnectionNotReady: ({ serviceName }) => ({
+    ScopeRequired: ({ required, granted }) => ({
+      output: {
+        ok: false,
+        required,
+        granted,
+        message: 'This operation requires additional access. Do not substitute another account.',
+      },
+    }),
+    PermissionDeclined: ({ classes }) => ({
+      output: {
+        ok: false,
+        classes,
+        message:
+          'The person has not allowed access to these data classes. Do not try another tool to bypass this decision.',
+      },
+    }),
+    Unsupported: ({ capability }) => ({
+      output: {
+        ok: false,
+        capability,
+        message: 'This Integration does not support this capability.',
+      },
+    }),
+    ConnectionNotReady: ({ serviceName, grant }) => ({
       output: {
         ok: false,
         serviceName: views.modelText(serviceName),
+        grant,
         message: views.modelText(
           `${serviceName} needs connecting; offer it to the person with connect.`,
         ),
@@ -83,6 +108,7 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
     }),
     OutcomeUnknown: outcomeUnknown,
   })
+  return { ...projected, integration: result }
 }
 
 /** Browser results keep the page outline and authorization decisions supplied by the server. */

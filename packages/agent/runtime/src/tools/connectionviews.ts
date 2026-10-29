@@ -24,11 +24,12 @@ export function integrations(response: FindIntegrationsResponse) {
         // `signedInAs` is who the service says the account is. It is said beside the account's
         // name because a Person may have named the account ("Gmail (Work)"), and may then ask for
         // it by either: the name, or the address behind it.
-        Account: ({ name, account, identity, connected, shared, state }) => ({
+        Account: ({ name, account, identity, connected, shared, state, grant }) => ({
           name: modelText(name),
           account: modelText(account),
           signedInAs: identity === null ? null : modelText(identity),
           connected,
+          grant,
           shared,
           state: ConnectionState.match(state, {
             Ready: () => 'ready',

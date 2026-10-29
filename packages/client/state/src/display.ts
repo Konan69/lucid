@@ -178,6 +178,13 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
       failed('The Integration rejected this request. Check the information and try again.'),
     Blocked: () => failed('A rule prevents this action.'),
     ApprovalRequired: () => failed('This needs your approval in the Thread.'),
+    ScopeRequired: () =>
+      failed(
+        'This Integration needs more access. Reconnect it in Settings and allow what Vivid asks for.',
+      ),
+    PermissionDeclined: () =>
+      failed('You have not allowed Vivid to use this kind of information from this Integration.'),
+    Unsupported: () => failed('This Integration cannot do that yet.'),
     ConnectionNotReady: () => failed('This Integration needs to be connected again.'),
     OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
   })
@@ -311,7 +318,7 @@ export const callDisplayTool = Effect.fn('Display.callTool')(function* (
     return displayCodeResult(outcome)
   }
   const input = yield* decodeJson(Option.getOrElse(given, () => ({})))
-  return displayToolResult(yield* client.UseDisplayTool({ name, input, kind }))
+  return displayToolResult((yield* client.UseDisplayTool({ name, input, kind })).outcome)
 })
 
 /** A closed failure vocabulary preserves server refusals instead of replacing them with transport copy. */

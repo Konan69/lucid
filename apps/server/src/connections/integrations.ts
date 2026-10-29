@@ -22,7 +22,7 @@ import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
 import { useTool } from './tools.ts'
 import { namedAccounts } from './names.ts'
-import { stateOf, type ConnectionRecord } from './records.ts'
+import { stateOf, grantOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
 import { madeService } from './made.ts'
 
@@ -153,6 +153,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
         connected: ConnectionState.guards.Ready(state),
         shared: row.companyId !== null,
         state,
+        grant: grantOf(row),
       })
     }),
   )
@@ -429,12 +430,33 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       summary: `Test the ${account} integration`,
       rationale: 'Confirm the integration works with one read-only call.',
     })
-    return ToolOutcome.match<TestIntegrationOutcome>(outcome, {
+    return ToolOutcome.match<TestIntegrationOutcome>(outcome.outcome, {
       Completed: () =>
         TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
       ApprovalRequired: ({ approvalId, summary }) =>
         TestIntegrationOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
       Blocked: ({ rule }) => TestIntegrationOutcome.cases.Blocked.make({ rule }),
+      ScopeRequired: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'additional access required',
+        }),
+      PermissionDeclined: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'data permission declined',
+        }),
+      Unsupported: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'capability unsupported',
+        }),
       ConnectionNotReady: () =>
         TestIntegrationOutcome.cases.NotTested.make({
           account,

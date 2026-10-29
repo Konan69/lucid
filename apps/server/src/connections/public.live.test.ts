@@ -149,7 +149,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                   tool: source.tool,
                 })
                 expect(resolved.effect).toBe('read')
-                const used = yield* connectionHandlers.UseTool({
+                const { outcome: used } = yield* connectionHandlers.UseTool({
                   connectionId: resolved.connectionId,
                   tool: resolved.name,
                   input: source.input,

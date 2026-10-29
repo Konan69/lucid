@@ -434,7 +434,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         })
         const calls = yield* Ref.get(probe.calls)
         const checks = yield* Ref.get(probe.checked)
-        const outcome = yield* connectionHandlers
+        const { outcome } = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'read'))
           .pipe(
             Effect.provideService(
@@ -468,13 +468,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           workspace: memberActor.workspace,
           threadId,
         })
-        const read = yield* connectionHandlers
+        const { outcome: read } = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'read'))
           .pipe(Effect.provideService(AuthContext, auth))
         expect(read._tag).toBe('Completed')
         const before = yield* Ref.get(probe.checked)
         const calls = yield* Ref.get(probe.calls)
-        const write = yield* connectionHandlers
+        const { outcome: write } = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'write'))
           .pipe(Effect.provideService(AuthContext, auth))
         expect(write._tag).toBe('Rejected')
@@ -509,13 +509,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         expect(
           (yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'read'))
-            .pipe(Effect.provideService(AuthContext, auth)))._tag,
+            .pipe(Effect.provideService(AuthContext, auth))).outcome._tag,
         ).toBe('Blocked')
         yield* Ref.set(probe.decision, 'ApprovalRequired')
         expect(
           (yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'write'))
-            .pipe(Effect.provideService(AuthContext, auth)))._tag,
+            .pipe(Effect.provideService(AuthContext, auth))).outcome._tag,
         ).toBe('ApprovalRequired')
         expect(yield* Ref.get(probe.calls)).toBe(calls)
         const checks = yield* Ref.get(probe.checked)
@@ -547,7 +547,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         expect(
           (yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'read'))
-            .pipe(Effect.provideService(AuthContext, auth)))._tag,
+            .pipe(Effect.provideService(AuthContext, auth))).outcome._tag,
         ).toBe('ConnectionNotReady')
         expect((yield* store.get(ownerActor, step.connection.id)).status).toBe(
           'needs-authorization',
@@ -604,7 +604,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
               ),
             ),
           })
-          const outcome = yield* connectionHandlers
+          const { outcome } = yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'read'))
             .pipe(
               Effect.provideService(AuthContext, auth),
@@ -612,7 +612,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
             )
           expect(outcome._tag).toBe('Rejected')
           expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
-          const repeated = yield* connectionHandlers
+          const { outcome: repeated } = yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'read'))
             .pipe(Effect.provideService(AuthContext, auth))
           expect(repeated).toMatchObject({ message: 'The saved app no longer exists.' })
@@ -710,12 +710,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         expect(displayFailure).toHaveProperty('_tag', 'DisplayApprovalUnsupported')
         yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
         const before = yield* Ref.get(probe.calls)
-        const uncertain = yield* connectionHandlers
+        const { outcome: uncertain } = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'write'))
           .pipe(Effect.provideService(AuthContext, auth))
         expect(uncertain._tag).toBe('OutcomeUnknown')
         expect(yield* Ref.get(probe.calls)).toBe(before + 1)
-        const absent = yield* connectionHandlers
+        const { outcome: absent } = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'absent-tool'))
           .pipe(Effect.provideService(AuthContext, auth))
         expect(absent._tag).toBe('Rejected')

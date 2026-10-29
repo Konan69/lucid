@@ -75,7 +75,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               probe.outcome,
               ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
             )
-          const outcome = yield* useTool(
+          const { outcome } = yield* useTool(
             reason === 'IntegrationUnavailable' || reason === 'SharedReadOnly'
               ? memberActor
               : ownerActor,
@@ -117,7 +117,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             shared: false,
           })
           const executor = yield* Executor
-          const outcome = yield* useTool(ownerActor, {
+          const { outcome } = yield* useTool(ownerActor, {
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -182,7 +182,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                     workspace: ownerActor.workspace,
                     target,
                   })
-                return yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' })
+                return (yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' }))
+                  .outcome
               }).pipe(Effect.provide(context))
             }).pipe(
               Effect.scoped,
@@ -445,7 +446,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ...store,
             tools: () => Effect.fail(new InvalidRequest({ message: 'Private catalog failure' })),
           })
-          const outcome = yield* useTool(ownerActor, {
+          const { outcome } = yield* useTool(ownerActor, {
             connectionId: step.connection.id,
             tool: 'read',
             input: {},
@@ -490,7 +491,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             const row = yield* store.get(ownerActor, step.connection.id)
             if (source === 'stored') yield* store.notReady(ownerActor, row)
             else yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
-            const outcome = yield* useTool(ownerActor, {
+            const { outcome } = yield* useTool(ownerActor, {
               connectionId: row.id,
               tool: 'read',
               input: {},
@@ -1174,7 +1175,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                 .effect,
             ).toBe('read')
             const calls = yield* Ref.get(probe.calls)
-            const used = yield* useTool(ownerActor, {
+            const { outcome: used } = yield* useTool(ownerActor, {
               connectionId: connection.connection.id,
               tool: 'ask_question',
               input: {},
@@ -1497,7 +1498,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
           )
           return yield* Effect.gen(function* () {
-            const used = yield* useTool(ownerActor, {
+            const { outcome: used } = yield* useTool(ownerActor, {
               connectionId: connection.connection.id,
               tool: 'lookup_0',
               input: {},

@@ -9,6 +9,11 @@ import {
   ConnectionId,
   ConnectionOwnership,
   ConnectionState,
+  ConnectionGrant,
+  GrantObservation,
+  ObservationTime,
+  ScopeEvidence,
+  ConnectionPermission,
   Conflict,
   DatabaseFailure,
   NotFound,
@@ -31,7 +36,7 @@ import {
 import { connectionLogo, connectionSite, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
 import { MADE } from './made.ts'
-import { connections } from './tables.ts'
+import { connections, connectionPermissions } from './tables.ts'
 import { invalidatePending, usingConnection } from '../approvals/stale.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
@@ -46,6 +51,7 @@ export const storedRowSchema = createSelectSchema(connections, {
   executorApp: Schema.NullOr(ExecutorAppId),
   references: Schema.Union([ExecutorReferences, LegacyExecutorReferences]),
   returnsTo: SignInSurface,
+  grantObservation: Schema.NullOr(GrantObservation),
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 }).mapFields(({ label: _retired, ...fields }) => fields)
 const rowSchema = storedRowSchema.mapFields((fields) => ({
@@ -89,6 +95,40 @@ export const decodeRow = Effect.fn('Connections.decodeRow')(function* (
   return { ...row, references }
 })
 export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')
+
+export const encodeGrantObservation = encodeStored(GrantObservation, 'Integration grant')
+
+/** Legacy rows carry no observation; status alone cannot establish a historical grant. */
+export const grantOf = (row: ConnectionRecord): ConnectionGrant =>
+  row.grantObservation === null
+    ? ConnectionGrant.cases.Unverified.make({})
+    : row.grantObservation.grant
+
+/** Executor beta.23 proves account readiness but does not expose granted OAuth scopes. */
+export const readyGrant = (references: ExecutorReferences): ConnectionGrant =>
+  ExecutorReferences.guards.Public(references)
+    ? ConnectionGrant.cases.NotRequired.make({})
+    : ConnectionGrant.cases.Granted.make({ scopes: ScopeEvidence.cases.Unreported.make({}) })
+
+const decodePermissions = decodeStored(
+  Schema.Array(ConnectionPermission),
+  'Integration permissions',
+)
+/** An absent row means no class restriction was chosen, never a denial inferred from prose Rules. */
+export const permissionsOf = Effect.fn('Connections.permissions')(function* (id: ConnectionId) {
+  const database = yield* Database
+  return yield* decodePermissions(
+    yield* database.run(
+      database
+        .select({
+          dataClass: connectionPermissions.dataClass,
+          decision: connectionPermissions.decision,
+        })
+        .from(connectionPermissions)
+        .where(eq(connectionPermissions.connectionId, id)),
+    ),
+  )
+})
 
 /** Personal accounts follow their Person across workspaces; Company accounts stay in their Company. */
 const usable = (actor: Actor) => {
@@ -189,6 +229,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
   actor: Actor,
   row: ConnectionRecord,
   account: string,
+  permissions: readonly ConnectionPermission[],
 ) {
   return Connection.make({
     id: row.id,
@@ -205,6 +246,8 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
         ? ConnectionOwnership.cases.Personal.make({ owner: summaryOf(actor.person) })
         : ConnectionOwnership.cases.Shared.make({}),
     state: yield* stateOf(row),
+    grant: grantOf(row),
+    permissions,
     createdAt: row.createdAt,
   })
 })
@@ -227,7 +270,7 @@ export const publicConnection = Effect.fn('Connections.public')(function* (
 ) {
   const named = namedAccounts(yield* listRecords(actor)).find((entry) => entry.row.id === row.id)
   if (named === undefined) return yield* new NotFound({ message: 'Integration not found' })
-  return yield* connectionOf(actor, row, named.account)
+  return yield* connectionOf(actor, row, named.account, yield* permissionsOf(row.id))
 })
 
 /** Publish to the persisted Company too, including callbacks after a workspace switch. */
@@ -252,6 +295,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
   row: ConnectionRecord,
   state: ConnectionState,
   references: ExecutorReferences,
+  grant: ConnectionGrant,
 ) {
   const database = yield* Database
   const status = ConnectionState.match(state, {
@@ -266,6 +310,9 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
   })
   const encoded = yield* encodeReferences(references)
   const now = yield* Clock.currentTimeMillis
+  const observation = yield* encodeGrantObservation(
+    GrantObservation.make({ grant, checkedAt: ObservationTime.make(now) }),
+  )
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       const rows = yield* tx
@@ -277,6 +324,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
           reason,
           authorizationGeneration: sql`${connections.authorizationGeneration} + 1`,
           updatedAt: now,
+          grantObservation: observation,
         })
         .where(
           and(

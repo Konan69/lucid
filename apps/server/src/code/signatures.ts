@@ -70,7 +70,7 @@ function toolSignature(
     tool.account === 'then' || tool.name === 'then'
       ? `args: {account: ${literal(tool.account)}; tool: ${literal(tool.name)}; input: ${input}; summary: string; rationale: string}`
       : `input: ${input}, about: {summary: string; rationale: string}`
-  return `(${parameters}) => Promise<{ok: true; output: ${output}} | {ok: false; reason: string}>`
+  return `(${parameters}) => Promise<{ok: true; output: ${output}; coverage: Json; asOf: Json; observedAt: number} | {ok: false; reason: string; coverage: Json; asOf: Json; observedAt: number}>`
 }
 
 /** Discovery must not advertise names the production use_tool ingress cannot accept. */
