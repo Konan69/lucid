@@ -24,6 +24,6 @@ Neither recipe has been run for the recovery commit yet. A recipe implementation
 
 ## Gotchas
 
-Background delivery remains blocked without a real Watch occurrence through disposable Executor authority and a public callback. Posted-card actions, Done, retry, successful seen marks, and display Query/Mutation execution remain unproved. The ordinary-Thread recipe does not activate Watches or establish those paths. The device permission recipe is separate and unchanged.
+These recipes never post a card: `Post` answers only a Background Thread with an acting Run. A posted card, drawn with no words, is proved by the [Watch recipe](watch.md). Posted-card actions, Done, retry, successful seen marks, and display Query/Mutation execution remain unproved. The ordinary-Thread recipe does not activate Watches or establish those paths. The device permission recipe is separate and unchanged.
 
 Phone and desktop native controls require device runs. The HTTP desktop Stop report proves the server boundary, not the native Stop control. Database-backed Feed tests separately cover owner isolation, empty first Threads, old-history dating, and idempotent Stop announcements.

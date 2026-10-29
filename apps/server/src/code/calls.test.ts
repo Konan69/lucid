@@ -18,6 +18,7 @@ import {
   DisplayProgramRefused,
   NotFound,
   FeedCardId,
+  FeedPost,
   type RunDisplayCodeRequest,
   type DisplayCodeOutcome,
   type PersonId,
@@ -738,7 +739,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const code = 'return "A stored Feed program";'
               const display = `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
               yield* feedHandlers
-                .Post({ title: 'Records', words: 'Read the result', display, actions: [] })
+                .Post(FeedPost.cases.Drawn.make({ title: 'Records', display }))
                 .pipe(
                   Effect.provideService(
                     AuthContext,
@@ -777,7 +778,7 @@ describe.skipIf(!testDatabaseConfigured)(
               yield* (yield* FeedStore).post({
                 person: test.personal.person.id,
                 thread: test.personalId,
-                request: { title: 'New', words: 'Changed', display: null, actions: [] },
+                request: FeedPost.cases.Said.make({ title: 'New', words: 'Changed', actions: [] }),
               })
               expect(yield* storedDisplay(test.personal, request).pipe(Effect.flip)).toHaveProperty(
                 '_tag',

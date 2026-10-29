@@ -122,8 +122,8 @@ export const please = () => {
 
 /**
  * Says a card's button in its Thread, as the Person: the same send the Thread screen and a new
- * Thread's first words make (`SendToThread`, `data/sending.ts`). The words are the
- * button's with what the Person chose laid in (`feed.fill`).
+ * Thread's first words make (`SendToThread`, `data/sending.ts`). The words are a said card's
+ * button, or what a drawn card's own Button says (`@ToAssistant`).
  *
  * A press while one is on its way for the same post is not taken. The same words pressed again
  * after a failed send keep that send's key (`feed.pressKey`), so a send whose answer was only lost

@@ -15,29 +15,33 @@ export const FeedCardState = Schema.Literals(['new', 'seen', 'done'] as const)
 export type FeedCardState = typeof FeedCardState.Type
 
 const Title = Schema.NonEmptyString.check(Schema.isMaxLength(120))
-/** What Vivid says about it, a sentence or two, as plain words. */
+/** What Vivid says about it, a sentence or two, as plain words, on a card with nothing to draw. */
 const Words = Schema.NonEmptyString.check(Schema.isMaxLength(600))
 /**
  * The thing itself, drawn: one OpenUI Lang program, the same language a reply's display uses, so
- * every surface draws it with the renderer it already has. Absent when words say it all.
+ * every surface draws it with the renderer it already has.
  */
 const Display = Schema.NonEmptyString.check(Schema.isMaxLength(20_000))
-/**
- * A button under the card, primary last. Pressing it says these words in the card's Thread as the
- * Person. A `$name` in it is replaced by what the Person chose inside the display under that name
- * ("Book $flight" reads "Book Arik Air at 7:10").
- */
+/** A button under a card with nothing drawn, primary last. Pressing it says these words in the card's Thread as the Person. */
 export const FeedAction = Schema.NonEmptyString.check(Schema.isMaxLength(60))
+export type FeedAction = typeof FeedAction.Type
 const Actions = Schema.Array(FeedAction).check(Schema.isMaxLength(2))
 
-/** What Vivid put on a card: its words, the thing itself drawn, and what the Person can press. */
-export const FeedPost = Schema.Struct({
-  title: Title,
-  words: Words,
-  display: Schema.NullOr(Display),
-  actions: Actions,
+/**
+ * What Vivid put on a card. The owner, 29 October 2026, of a card that framed the drawing with a
+ * title, a sentence and a bar of its own: "why does it look like we're containing the model?". So
+ * a card is one of two things, never both:
+ *
+ * - `Drawn`: the drawing is the card. Vivid's display fills it and its own buttons answer in the
+ *   Thread, as in a reply. The title names the card where it is listed (Handled) and read aloud;
+ *   it is not drawn above the display.
+ * - `Said`: there is nothing to draw, so the title, a sentence or two, and up to two buttons.
+ */
+export const FeedPost = Schema.TaggedUnion({
+  Drawn: { title: Title, display: Display },
+  Said: { title: Title, words: Words, actions: Actions },
 })
-export interface FeedPost extends Schema.Schema.Type<typeof FeedPost> {}
+export type FeedPost = typeof FeedPost.Type
 
 /** What the work stopped on, waiting for the Person: the same Approval and question a Thread shows. */
 export const FeedAsk = Schema.Literals(['approval', 'question'] as const)
@@ -77,13 +81,24 @@ export type FeedItem = typeof FeedItem.Type
 /** Every item, newest first; the surfaces group them by their stage. */
 export const FeedResponse = Schema.Struct({ items: Schema.Array(FeedItem) })
 
-/** Model input is words only: the Thread and the Person come from the Run's own authority. */
+/** Model input is the card only: the Thread and the Person come from the Run's own authority. */
 export const PostRequest = FeedPost
 export const PostOutcome = Schema.TaggedUnion({
   Posted: {},
   Updated: {},
 })
 export type PostOutcome = typeof PostOutcome.Type
+
+/**
+ * A post whose display would draw nothing. `NoRoot`: the program has no `root =` statement, so
+ * OpenUI finds no program in it and the card shows an empty band. A model wrote `Card([...])`
+ * bare in two of four verify runs on 29 October 2026; the post is refused so it is drawn again.
+ */
+export class FeedDisplayInvalid extends Schema.TaggedError<FeedDisplayInvalid>()(
+  'FeedDisplayInvalid',
+  { reason: Schema.Literal('NoRoot') },
+  { title: 'The card’s display draws nothing' },
+) {}
 
 /** What a Person does to a card from the Feed. */
 export const MarkFeedCardRequest = Schema.Struct({

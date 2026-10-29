@@ -17,7 +17,7 @@ import { live, LiveState, useLive, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
-import { Card, Answers } from './feed/Card'
+import { Card } from './feed/Card'
 import { Owed } from './feed/Owed'
 import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
@@ -162,7 +162,7 @@ export function FeedView({
               at={item.since}
               post={Option.fromNullOr(item.post)}
               ask={{ title: item.from, words: 'Vivid is working on this now.' }}
-              bar={Option.none()}
+              reply={Option.none()}
               now={now}
               onOpen={() => onOpen(item.thread)}
             />
@@ -240,15 +240,11 @@ function Waiting({ item, now, onOpen }: { item: feed.Waiting; now: number; onOpe
           post={post}
           ask={{ title: item.from, words: feed.askedWords(item) }}
           seen={item.seen ? undefined : seenWhenShown(item.card)}
-          bar={Option.map(post, (made) => (chosen: feed.Chosen) => (
-            <Answers
-              actions={made.actions}
-              chosen={chosen}
-              held={folded}
-              onSay={(words) => answer(item, words)}
-              onDone={() => close(item, title)}
-            />
-          ))}
+          reply={Option.some({
+            held: folded,
+            onSay: (words: string) => answer(item, words),
+            onDone: () => close(item, title),
+          })}
           now={now}
           onOpen={onOpen}
         />

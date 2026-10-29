@@ -160,7 +160,8 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
           const [item] = items
           if (item === undefined || item.post === null)
             return yield* Effect.sync(() => expect.fail('Vivid must post the ping to the Feed'))
-          expect(item.post.words).toMatch(/5\s?pm/i)
+          // The card may say it in words or draw it; either way the Person reads the time.
+          expect(JSON.stringify(item.post)).toMatch(/5\s?pm/i)
 
           // Background work never enters the Person's Thread list.
           const listed = (yield* fixture.rpc.ListThreads()).threads.map((thread) => thread.id)

@@ -3,11 +3,12 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   Company,
   CompanyId,
+  FeedDisplayInvalid,
   FeedItem,
   MarkFeedCardRequest,
   Person,
   PersonId,
-  PostRequest,
+  FeedPost,
   RunId,
   ThreadId,
   Workspace,
@@ -54,16 +55,14 @@ const now = 1_800_000_000_000
 const hour = 60 * 60 * 1000
 const day = 24 * hour
 
-const firstPost = PostRequest.make({
+const firstPost = FeedPost.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'An invoice for ₦84,000 arrived. Pay it?',
-  display: null,
   actions: ['Pay it'],
 })
-const followUp = PostRequest.make({
+const followUp = FeedPost.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'Paid. The receipt is in your mail.',
-  display: null,
   actions: [],
 })
 
@@ -188,7 +187,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
               thread,
               from: 'Mail',
               at,
-              post: { title: post.title, words: post.words, display: null, actions: post.actions },
+              post,
               seen: false,
               asking: [],
             })
@@ -199,6 +198,52 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           expect(again._tag).toBe('Updated')
           expect(yield* items(test.ada)).toEqual([waiting(followUp, now + 5 * 60 * 1000)])
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('a drawn card is the drawing alone, and reads back as drawn', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* FeedStore
+        const thread = yield* background(test.ada, now - hour)
+        yield* TestClock.setTime(now)
+        const drawn = FeedPost.cases.Drawn.make({
+          title: 'Reply to Dana',
+          display:
+            'root = Col([Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft"), Button("Send it", @ToAssistant("Send the reply to Dana"))])',
+        })
+
+        yield* store.post({ person: test.ada, thread, request: drawn })
+        expect(yield* items(test.ada)).toEqual([
+          FeedItem.cases.Waiting.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Mail',
+            at: now,
+            post: drawn,
+            seen: false,
+            asking: [],
+          }),
+        ])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a display with no root statement is refused and no card is made', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* FeedStore
+        const thread = yield* background(test.ada, now - hour)
+        yield* TestClock.setTime(now)
+        const bare = FeedPost.cases.Drawn.make({
+          title: 'Reply to Dana',
+          display: 'Card([Caption("To Dana"), Text("Friday works.", "sm")], "soft")',
+        })
+
+        const refused = yield* Effect.flip(store.post({ person: test.ada, thread, request: bare }))
+        expect(refused).toEqual(new FeedDisplayInvalid({ reason: 'NoRoot' }))
+        expect(
+          (yield* items(test.ada)).some((item) => item.thread === thread && item.post !== null),
+        ).toBe(false)
+      }).pipe(Effect.scoped),
     )
 
     it.effect(
@@ -227,12 +272,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             thread,
             from: 'Mail',
             at: now,
-            post: {
-              title: firstPost.title,
-              words: firstPost.words,
-              display: null,
-              actions: ['Pay it'],
-            },
+            post: firstPost,
           })
           expect(yield* items(test.ada)).toEqual([settled])
 
