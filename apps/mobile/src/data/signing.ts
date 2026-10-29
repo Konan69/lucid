@@ -10,6 +10,7 @@ import { makeGoogle, PhoneUnable, Standing, TradeUnanswered, type Phone } from '
 import { adopt, leave } from './held'
 import type { ServerAddress } from './server'
 import { Session, type SignedIn } from './session'
+import { captureSignInLoss } from './telemetry'
 import { request } from './transport'
 
 /**
@@ -85,6 +86,7 @@ export const isSigningIn = (): boolean =>
   Standing.$is('Away')(door.get(standing)) || Standing.$is('Trading')(door.get(standing))
 
 const google = makeGoogle(phone, {
+  report: captureSignInLoss,
   standing: () => door.get(standing),
   show: (next) => door.set(standing, next),
   adopt: (server, token) => adopt(Session.SignedIn({ server, token })),

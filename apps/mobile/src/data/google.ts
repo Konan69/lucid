@@ -124,8 +124,30 @@ export type Standing = Data.TaggedEnum<{
 }>
 export const Standing = Data.taggedEnum<Standing>()
 
+/**
+ * A way a sign-in ended without a session, as it is reported (`Desk.report`):
+ * - `SignInSheetClosed`: the sheet closed with no link (the Person closed it, or the system did).
+ * - `SignInReturnUnread`: the sheet's link is not this attempt's return.
+ * - `SignInReturnLate`: the sheet's own return came back after the attempt had left `Away`
+ *   (the front door's listener stopped, or another press). It is still finished.
+ * - `SignInGoogleRefused`: the server said the sign-in did not finish.
+ * - `SignInTradeRefused`, `SignInTradeUnanswered`, `SignInUnkept`: the trade, or keeping its token.
+ * - `SignInPhoneUnable`: the phone could not run its part.
+ */
+export type SignInLoss =
+  | 'SignInSheetClosed'
+  | 'SignInReturnUnread'
+  | 'SignInReturnLate'
+  | 'SignInGoogleRefused'
+  | 'SignInTradeRefused'
+  | 'SignInTradeUnanswered'
+  | 'SignInUnkept'
+  | 'SignInPhoneUnable'
+
 /** What a sign-in needs from whoever runs it: where it stands, kept and shown, and the way in. */
 export interface Desk<Refusal> {
+  /** Reports a sign-in that ended without a session, so it is seen beyond the first screen. */
+  readonly report: (loss: SignInLoss) => void
   /** Where the sign-in stands now. */
   readonly standing: () => Standing
   /** Puts where it stands on the screen, and keeps it. */
@@ -281,10 +303,43 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
       const back = yield* phone.open(
         phoneSignInStartAddress(server, { challenge, state: attempt.state }),
       )
-      if (Option.isSome(back)) yield* returned(back.value)
+      if (Option.isNone(back)) return desk.report('SignInSheetClosed')
+      yield* settled(attempt, back.value)
     },
-    Effect.catchTag('PhoneUnable', () => Effect.sync(() => desk.show(Standing.Failed()))),
+    Effect.catchTag('PhoneUnable', () =>
+      Effect.sync(() => {
+        desk.report('SignInPhoneUnable')
+        desk.show(Standing.Failed())
+      }),
+    ),
   )
+
+  /**
+   * The sheet's own return, finished with the attempt this press made. The press holds that
+   * attempt, so its return does not depend on the shared standing still saying `Away`: on
+   * 29 October 2026 a return the sheet handed back was dropped that way, silently, and the Person
+   * was left on the first screen. Only a trade already under way (the link also arriving as a
+   * `url` event, `returned`) or a newer press wins over it.
+   */
+  const settled = Effect.fn('Google.settled')(function* (attempt: Attempt, link: string) {
+    const now = desk.standing()
+    if (Standing.$is('Trading')(now)) return
+    if (Standing.$is('Away')(now) && now.attempt.state !== attempt.state) return
+    if (!Standing.$is('Away')(now)) desk.report('SignInReturnLate')
+    const back = returnFor(attempt, link)
+    if (Option.isNone(back)) {
+      desk.report('SignInReturnUnread')
+      return desk.show(Standing.Failed())
+    }
+    yield* SignInReturn.match(back.value, {
+      Granted: ({ code }) => finishing(attempt, code),
+      Failed: () =>
+        Effect.sync(() => {
+          desk.report('SignInGoogleRefused')
+          desk.show(Standing.Failed())
+        }),
+    })
+  })
 
   /** Trades a code that came back, and takes up the session it is good for. */
   const finishing = Effect.fn('Google.finishing')(function* (
@@ -297,12 +352,23 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
       Granted: ({ token }) =>
         desk.adopt(attempt.server, token).pipe(
           Effect.match({
-            onFailure: () => desk.show(Standing.Unkept()),
+            onFailure: () => {
+              desk.report('SignInUnkept')
+              desk.show(Standing.Unkept())
+            },
             onSuccess: () => desk.show(Standing.Idle()),
           }),
         ),
-      Refused: () => Effect.sync(() => desk.show(Standing.Failed())),
-      Unanswered: () => Effect.sync(() => desk.show(Standing.Unreachable())),
+      Refused: () =>
+        Effect.sync(() => {
+          desk.report('SignInTradeRefused')
+          desk.show(Standing.Failed())
+        }),
+      Unanswered: () =>
+        Effect.sync(() => {
+          desk.report('SignInTradeUnanswered')
+          desk.show(Standing.Unreachable())
+        }),
     })
   })
 
