@@ -53,6 +53,7 @@ import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Asks, useAsks } from './thread/Allow'
 import { Handing } from './thread/Handoff'
+import { pages } from '../data/pages'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
@@ -556,7 +557,11 @@ function Conversation({
           requests={context.requests}
           handoffs={context.handoffs}
           panelOpen={panelOpen}
-          onOpenScreen={onTogglePanel}
+          onOpenScreen={() => {
+            // The step is finished on Vivid's computer, not on a page left in front.
+            pages.toComputer()
+            if (!panelOpen) onTogglePanel()
+          }}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
           // another path that cannot carry one yet.
