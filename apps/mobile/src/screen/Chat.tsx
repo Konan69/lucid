@@ -20,6 +20,7 @@ import {
   attaching,
   conversationIn,
   draftPlace,
+  handing,
   isTooLong,
   lasting,
   QUIET_MS,
@@ -108,6 +109,7 @@ import {
   type Scrolled,
 } from './chat/away'
 import { Choices } from './chat/Choices'
+import { Handing, useOpenScreen } from './chat/Handoff'
 import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
@@ -747,6 +749,13 @@ const NO_APPROVALS: ReadonlyArray<Approval> = []
 const approvalsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<Approval> =>
   Option.match(detail, { onNone: () => NO_APPROVALS, onSome: (value) => value.approvals })
 
+/** No handoffs: a Thread whose detail has not arrived. One value, not a new list each render. */
+const NO_HANDOFFS: ThreadDetail['handoffs'] = []
+
+/** The Thread's handoffs, oldest first, once its live detail carries them. */
+const handoffsOf = (detail: Option.Option<ThreadDetail>): ThreadDetail['handoffs'] =>
+  Option.match(detail, { onNone: () => NO_HANDOFFS, onSome: (value) => value.handoffs })
+
 /** The Thread's Input requests, oldest first, once its live detail carries them. */
 const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputRequest> =>
   Option.match(detail, { onNone: () => NO_REQUESTS, onSome: (value) => value.requests })
@@ -821,6 +830,10 @@ function Conversation({
   const { shared, working, ready } = sending
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
   const { allowing, asking } = useWaiting(detail, me.person.id)
+  // A step on the Computer holds it, so its banner comes before a question's or an Approval's;
+  // those keep waiting and rise once the step is over.
+  const handoff = handing.handoffUp(handoffsOf(detail), me.person.id)
+  const openScreen = useOpenScreen(id)
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -907,7 +920,17 @@ function Conversation({
             onContinue={speak}
           />
         </View>
-        <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
+        {Option.isSome(handoff) && Option.isSome(dock) ? (
+          <Handing
+            key={handoff.value.id}
+            handoff={handoff.value}
+            dock={dock.value}
+            covered={covered}
+            onOpenScreen={openScreen}
+          />
+        ) : (
+          <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
+        )}
         <Foot
           typed={typed}
           writing={writing}

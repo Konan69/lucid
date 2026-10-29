@@ -6,7 +6,8 @@ import type { Say } from '../../data/delivery'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
-import { approvalOf, requestOf } from './asked'
+import { approvalOf, handoffOf, requestOf } from './asked'
+import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Words } from './Words'
 
@@ -89,6 +90,11 @@ function Drawn({
       Option.match(requestOf(detail, id), {
         onNone: () => null,
         onSome: (request) => <Asked request={request} me={me} />,
+      }),
+    Handoff: ({ id }) =>
+      Option.match(handoffOf(detail, id), {
+        onNone: () => null,
+        onSome: (handoff) => <Handed handoff={handoff} me={me} />,
       }),
     Connection: ({ request, authorization, awaited }) => (
       <IntegrationCard
