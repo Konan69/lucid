@@ -1,5 +1,11 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, WatchCondition, WatchId, WatchState } from '@vivid/contracts'
+import {
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  WatchId,
+  WatchState,
+} from '@vivid/contracts'
 import { Clock, Effect, Fiber, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -27,6 +33,7 @@ const request = CreateWatchRequest.make({
   arguments: { folder: 'inbox' },
   instruction: 'Tell me when a client writes.',
   condition: WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent.cases.Event.make({}),
 })
 
 /** The Watch id is the last segment of the callback Executor was asked to deliver to. */

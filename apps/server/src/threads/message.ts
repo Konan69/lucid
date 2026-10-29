@@ -5,7 +5,10 @@ import { DeliveryMessage } from './conversation.ts'
 export const signalAttributes = (message: DeliveryMessage, speaker: string, turn: number) => {
   if (DeliveryMessage.guards.Signal(message)) {
     // A Watch is named to the model by the name their owner gave them.
-    if (message.type === 'event' && message.attributes.name !== undefined)
+    if (
+      (message.type === 'event' || message.type === 'check-in') &&
+      message.attributes.name !== undefined
+    )
       return DeliveryMessage.cases.Signal.fields.attributes.make({
         from: speaker,
         turn: String(turn),

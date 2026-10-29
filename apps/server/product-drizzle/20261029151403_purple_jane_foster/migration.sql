@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_watches" ADD COLUMN "purpose" jsonb DEFAULT '{"_tag":"Event"}' NOT NULL;

@@ -1,3 +1,4 @@
+import { WatchId } from './watches.js'
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
@@ -188,7 +189,18 @@ export const RunOrigin = Schema.TaggedUnion({
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
   /** An Integration event a Watch subscribed to, named by the Watch. */
-  Watch: { person: PersonSummary, watchName: Schema.String },
+  Watch: {
+    person: PersonSummary,
+    watchName: Schema.String,
+    watchId: Schema.optionalKey(WatchId),
+    eventId: Schema.optionalKey(Schema.String),
+  },
+  Checkin: {
+    person: PersonSummary,
+    watchId: WatchId,
+    watchName: Schema.String,
+    eventId: Schema.String,
+  },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -295,6 +307,7 @@ export const SignalType = Schema.Literals([
   'first-conversation',
   // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
   'event',
+  'check-in',
 ] as const)
 export type SignalType = typeof SignalType.Type
 

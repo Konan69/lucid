@@ -38,6 +38,10 @@ import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
   CompleteWatchRequest,
+  UpdateCheckinRequest,
+  CheckinNotFound,
+  CheckinNotScheduled,
+  OpenWorkResponse,
   WatchRunRequired,
   WatchEndConditionRequired,
   FindAppEventsRequest,
@@ -630,6 +634,13 @@ const CreateWatch = Rpc.make('CreateWatch', {
   success: WatchResponse,
 })
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
+const ListOpenWork = Rpc.make('ListOpenWork', { ...call, success: OpenWorkResponse })
+const UpdateCheckin = Rpc.make('UpdateCheckin', {
+  ...call,
+  payload: UpdateCheckinRequest,
+  success: WatchResponse,
+  error: Schema.Union([RpcFailure, CheckinNotFound]),
+})
 const WatchWatches = Rpc.make('WatchWatches', { ...live, success: WatchListResponse })
 const CompleteWatch = Rpc.make('CompleteWatch', {
   ...call,
@@ -807,7 +818,12 @@ const ResolveTool = Rpc.make('ResolveTool', {
   success: ConnectionTool,
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
-const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+const UseTool = Rpc.make('UseTool', {
+  ...call,
+  payload: UseToolRequest,
+  success: ToolOutcome,
+  error: Schema.Union([RpcFailure, CheckinNotScheduled]),
+})
 /** A display's Query or Mutation, run for the Person who is looking at it. */
 const UseDisplayTool = Rpc.make('UseDisplayTool', {
   ...call,
@@ -1091,6 +1107,8 @@ export const VividRpc = RpcGroup.make(
   FindAppEvents,
   CreateWatch,
   ListWatches,
+  ListOpenWork,
+  UpdateCheckin,
   WatchWatches,
   CompleteWatch,
   StopWatch,

@@ -14,7 +14,7 @@ import { actingRun, requestRuns } from '../threads/runs.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { WatchedApps } from './apps.ts'
 import { ExecutorEvents } from './events.ts'
-import { WatchStore, type WatchRecord } from './store.ts'
+import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
 
 /** The Actor has no live Watch by this name. */
 export class WatchMissing extends Schema.TaggedError<WatchMissing>()(
@@ -33,11 +33,7 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
   const database = yield* Database
   const changes = yield* Changes
   const publish = (record: WatchRecord) => changes.publish([Topic.person(record.personId)])
-  const keyOf = (record: WatchRecord) => ({
-    name: record.subscribedName,
-    arguments: record.watch.arguments,
-    url: record.callbackUrl,
-  })
+
   /** The server binds completion and auth pauses to the admitted Run, never a model argument. */
   const current = Effect.fn('Watches.current')(
     function* (actor: Actor) {
@@ -52,7 +48,7 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
       )
       if (
         run === undefined ||
-        !StoredRunOrigin.guards.Watch(run.origin) ||
+        !StoredRunOrigin.isAnyOf(['Watch', 'Checkin'])(run.origin) ||
         run.origin.watchId === undefined
       )
         return Option.none()
@@ -83,7 +79,7 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
     const completed = yield* store.complete(found.value.watch.id, run.value.runId, evidence)
     if (Option.isNone(completed)) return yield* new WatchMissing({})
     yield* publish(completed.value)
-    yield* events.unsubscribe(keyOf(completed.value)).pipe(Effect.ignore)
+    yield* events.unsubscribe(subscriptionOf(completed.value)).pipe(Effect.ignore)
     return Watch.make({ ...completed.value.watch, account: found.value.watch.account })
   })
 

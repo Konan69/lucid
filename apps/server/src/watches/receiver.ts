@@ -7,7 +7,16 @@ import * as Stream from 'effect/Stream'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { ThreadId, WatchId, WatchState, WatchCondition } from '@vivid/contracts'
+import {
+  ThreadId,
+  WatchId,
+  WatchState,
+  WatchCondition,
+  WatchPurpose,
+  CheckinArming,
+  CheckinTiming,
+  TimerOperationKey,
+} from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { observeFailures } from '../observability/failure.ts'
@@ -22,6 +31,7 @@ import { secretFor, verify } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
 import { Watches } from './lifecycle.ts'
 import { WatchedApps } from './apps.ts'
+import { CheckinRead } from './checkins.ts'
 
 /**
  * Where Executor delivers a Watch's events: `POST /api/watches/:id`.
@@ -66,6 +76,11 @@ class WatchUnsigned extends Schema.TaggedError<WatchUnsigned>()(
 ) {}
 /** A verified request for a stopped or deleted Watch ends that delivery at Executor for good. */
 class WatchGone extends Schema.TaggedError<WatchGone>()('WatchGone', {}, { title: 'Watch gone' }) {}
+class WatchNotArmed extends Schema.TaggedError<WatchNotArmed>()(
+  'WatchNotArmed',
+  {},
+  { title: 'Watch not armed' },
+) {}
 class WatchBodyInvalid extends Schema.TaggedError<WatchBodyInvalid>()(
   'WatchBodyInvalid',
   {},
@@ -85,6 +100,9 @@ const WatchEvent = Schema.Struct({
 })
 type WatchEvent = typeof WatchEvent.Type
 const Body = Schema.Union([Verification, WatchEvent])
+const decodeTimerKey = Schema.decodeUnknownOption(
+  Schema.Struct({ operationKey: TimerOperationKey }),
+)
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Body))
 const isVerification = Schema.is(Verification)
 const decodeId = Schema.decodeUnknownEffect(WatchId.check(Schema.isNonEmpty()))
@@ -123,12 +141,40 @@ export const threadOf = (watch: WatchId, eventId: string) =>
     `watch-${NodeCrypto.createHash('sha256').update(`${watch}\n${eventId}`).digest('hex').slice(0, 32)}`,
   )
 
-/** What Vivid reads when woken: the background rule, the Person's instruction, then the event. */
-export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
+/** The selected timing policy stays distinct from the source facts the server just read. */
+const checkinInstruction = (purpose: WatchPurpose) =>
+  WatchPurpose.match(purpose, {
+    Event: () => [],
+    Checkin: ({ timing, arming }) => [
+      `Timer operationKey: ${arming.operationKey}.`,
+      CheckinTiming.match(timing, {
+        Chosen: () =>
+          'Read the selected source and list_open_work. If it is still open, choose the next check, call update_checkin, and arm its returned operationKey. It is set only after the actual timer receipt confirms it.',
+        Requested: ({ request, timezone }) =>
+          `Follow the Person's exact timing request: ${request}, in ${timezone}. A requested recurrence keeps its existing timer; after the check, read its scheduling receipt with this operationKey to refresh the next scheduled time. A single requested check ends when its explicit Until condition is met; do not add a recurrence. Read the selected source before finishing.`,
+      }),
+    ],
+  })
+
+/** The event is data. The source context comes from the server's owned-record read. */
+export const bodyOf = (
+  record: WatchRecord,
+  event: WatchEvent,
+  reading: Option.Option<CheckinRead>,
+) =>
   [
     BACKGROUND_INSTRUCTION,
     `Watch: ${record.watch.name} (${record.watch.event})`,
     `What to do: ${record.watch.instruction}`,
+    ...checkinInstruction(record.watch.purpose),
+    ...Option.toArray(
+      Option.map(reading, (read) =>
+        CheckinRead.match(read, {
+          Open: ({ context }) => `Selected source, as read from product records: ${context}`,
+          Closed: ({ evidence }) => `Source closure evidence: ${evidence}`,
+        }),
+      ),
+    ),
     WatchCondition.match(record.watch.condition, {
       Until: ({ condition }) =>
         `Finish watching only after a real read proves this condition: ${condition}. Call finish_watching with that evidence.`,
@@ -142,6 +188,13 @@ export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
  * durable admission receipt, both while a Run is working and after it has finished.
  */
 const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event: WatchEvent) {
+  const reading = yield* (yield* Watches).readCheckin(record)
+  const closed = Option.flatMap(reading, (read) =>
+    CheckinRead.match(read, {
+      Open: () => Option.none<string>(),
+      Closed: ({ evidence }) => Option.some(evidence),
+    }),
+  )
   const watch = record.watch
   const thread = yield* (yield* ThreadStore).ensureBackground({
     id: threadOf(watch.id, event.eventId),
@@ -151,24 +204,51 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
     personId: record.personId,
     companyId: record.companyId,
   })
-  yield* (yield* Conversation).deliver({
+  const run = yield* (yield* Conversation).deliver({
     // A Watch is the Person's own standing request, delivered as theirs.
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: record.personId,
     message: DeliveryMessage.cases.Signal.make({
-      type: 'event',
-      body: bodyOf(record, event),
+      type: WatchPurpose.guards.Checkin(watch.purpose) ? 'check-in' : 'event',
+      body: Option.match(closed, {
+        onNone: () => bodyOf(record, event, reading),
+        onSome: (evidence) =>
+          `${BACKGROUND_INSTRUCTION}\n\nThis check-in's source has ended. Do not chase it, post, or schedule another check. End silently. Source read evidence: ${evidence}`,
+      }),
       attributes: DeliveryMessage.cases.Signal.fields.attributes.make({ name: watch.name }),
     }),
-    origin: StoredRunOrigin.cases.Watch.make({
-      watchName: watch.name,
-      watchId: watch.id,
-      eventId: event.eventId,
-    }),
+    origin: WatchPurpose.guards.Checkin(watch.purpose)
+      ? StoredRunOrigin.cases.Checkin.make({
+          watchId: watch.id,
+          watchName: watch.name,
+          eventId: event.eventId,
+        })
+      : StoredRunOrigin.cases.Watch.make({
+          watchName: watch.name,
+          watchId: watch.id,
+          eventId: event.eventId,
+        }),
     idempotencyKey: `watch:${watch.id}:${event.eventId}`,
   })
+  if (Option.isSome(closed) && WatchPurpose.guards.Checkin(watch.purpose)) {
+    yield* (yield* Watches).finishCheckin(record, run.id, closed.value)
+  }
   yield* (yield* Changes).publish([Topic.person(record.personId)])
+})
+
+/** Ignore old timer operations and retry a matching event until its actual receipt arrives. */
+const acceptsTimer = Effect.fn('Http.Watch.acceptsTimer')(function* (
+  record: WatchRecord,
+  decoded: WatchEvent,
+) {
+  if (!WatchPurpose.guards.Checkin(record.watch.purpose)) return true
+  const key = decodeTimerKey(decoded.data)
+  if (Option.isNone(key) || key.value.operationKey !== record.watch.purpose.arming.operationKey)
+    return false
+  if (CheckinArming.guards.Awaiting(record.watch.purpose.arming))
+    return yield* new WatchNotArmed({})
+  return true
 })
 
 /** Verify, then answer the challenge or wake Vivid. */
@@ -209,6 +289,8 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
     yield* (yield* Watches).connectionChanged(record.connectionId)
     return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
   }
+  if (!(yield* acceptsTimer(record, decoded)))
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
   yield* wake(record, decoded)
   return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
 })
@@ -227,6 +309,7 @@ export const watchRoutes = HttpRouter.add(
   accept().pipe(
     observeFailures('http'),
     Effect.catchTags({
+      WatchNotArmed: () => status(503),
       WatchUnknown: () => status(404),
       WatchUnsigned: () => status(401),
       WatchGone: () => status(410),

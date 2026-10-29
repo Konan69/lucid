@@ -52,6 +52,7 @@ export const StoredRunOrigin = Schema.TaggedUnion({
     watchId: Schema.optionalKey(WatchId),
     eventId: Schema.optionalKey(Schema.String),
   },
+  Checkin: { watchId: WatchId, watchName: Schema.String, eventId: Schema.String },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

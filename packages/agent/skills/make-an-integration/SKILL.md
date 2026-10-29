@@ -13,7 +13,7 @@ Agree the outcome first: what, and for background work when and in which time zo
 
 ## The source
 
-Send only TypeScript files; Vivid adds `package.json` and pins the framework. `index.ts` has a default `defineApp(requirements, { tools, workflows?, schedules? })` export from `"apps"`. Tools are query (reads) and mutation (changes); both take `{ input: object({...}) }` and a handler `async (ctx, input) => result`. Return small JSON.
+Send TypeScript source and any app-owned SQL migrations the reference requires; Vivid adds `package.json` and pins the framework. `index.ts` has a default `defineApp(requirements, { tools, workflows?, schedules? })` export from `"apps"`. Tools are query (reads) and mutation (changes); both take `{ input: object({...}) }` and a handler `async (ctx, input) => result`. Return small JSON.
 
 An event is declared in `requirements.events` and emitted from a mutation:
 
@@ -38,7 +38,7 @@ For a reminder at a time, read [references/reminders.md](references/reminders.md
 
 1. `make_integration` with the name and files. A failed build returns the compiler's message: fix that exact place and call again with the same name.
 2. For background work, `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
-3. For a reminder, call remindIn or remindAt through `find_tools` and `use_tool`, and read back the time it answers.
+3. For a timer-backed check-in, follow the reminder reference. Subscribe with Checkin purpose first, then arm with the persisted operationKey. Read the actual scheduling receipt before saying it is set. A lost answer stays Awaiting; read the receipt or retry the same key.
 4. For a display app, call one query tool with `use_tool` and read back its answer before drawing the display.
 5. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
 

@@ -16,6 +16,8 @@ import {
   WatchState,
   WatchStopReason,
   WatchCondition,
+  WatchPurpose,
+  type TimerOperationKey,
   type RunId,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
@@ -41,6 +43,7 @@ const common = {
   arguments: WatchArguments,
   instruction: Watch.fields.instruction,
   condition: WatchCondition,
+  purpose: WatchPurpose,
   callbackUrl: Schema.String,
   createdAt: Schema.Finite,
   updatedAt: Schema.Finite,
@@ -100,6 +103,13 @@ export interface WatchRecord {
   readonly callbackUrl: string
 }
 
+/** Subscription identity is reused unchanged by subscribe, renewal and terminal cleanup. */
+export const subscriptionOf = (record: WatchRecord) => ({
+  name: record.subscribedName,
+  arguments: record.watch.arguments,
+  url: record.callbackUrl,
+})
+
 /** Decode once, then project the stored state into its wire variant. */
 const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$inferSelect) {
   const stored: StoredWatch = yield* decodeWatch(row)
@@ -118,6 +128,7 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
       arguments: stored.arguments,
       instruction: stored.instruction,
       condition: stored.condition,
+      purpose: stored.purpose,
       state,
       createdAt: stored.createdAt,
     },
@@ -141,6 +152,7 @@ export interface NewWatch {
   readonly arguments: WatchArguments
   readonly instruction: string
   readonly condition: WatchCondition
+  readonly purpose: WatchPurpose
   readonly callbackUrl: string
 }
 
@@ -149,6 +161,7 @@ const first = <A>(all: ReadonlyArray<A>) => Option.fromUndefinedOr(all[0])
 
 /** Pending, Active and Paused reserve their names; both terminal states are history. */
 const live = notInArray(watches.state, ['Stopped', 'Completed'])
+const encodePurpose = encodeStored(WatchPurpose, 'Watch purpose')
 const encodeCondition = encodeStored(WatchCondition, 'Watch condition')
 const encodeState = encodeStored(WatchState, 'Watch state')
 
@@ -173,6 +186,7 @@ const makeWrites = (database: Database['Service']) => {
           .values({
             ...input,
             condition: yield* encodeCondition(input.condition),
+            purpose: yield* encodePurpose(input.purpose),
             state: 'Pending',
             createdAt: now,
             updatedAt: now,
@@ -222,7 +236,66 @@ const makeWrites = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
-  return { insertPending, activate, discard, stop, ...makeProgressWrites(database) }
+  return {
+    insertPending,
+    activate,
+    discard,
+    stop,
+    ...makeProgressWrites(database),
+    ...makePurposeWrites(database),
+  }
+}
+
+/** A late receipt cannot confirm an operation that an update has replaced. */
+const makePurposeWrites = (database: Database['Service']) => {
+  const purpose = Effect.fn('WatchStore.purpose')(function* (
+    id: WatchId,
+    value: WatchPurpose,
+    expected: Option.Option<TimerOperationKey>,
+  ) {
+    const predicate = Option.match(expected, {
+      onNone: () => live,
+      onSome: (key) => and(live, sql`${watches.purpose}->'arming'->>'operationKey' = ${key}`),
+    })
+    const rows = yield* database.run(
+      database
+        .update(watches)
+        .set({ purpose: yield* encodePurpose(value), updatedAt: yield* Clock.currentTimeMillis })
+        .where(and(eq(watches.id, id), predicate))
+        .returning(),
+    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+  })
+  /** Source closure is conditional on the timer key, so an old firing cannot finish a changed intent. */
+  const completeCheckin = Effect.fn('WatchStore.completeCheckin')(function* (input: {
+    readonly id: WatchId
+    readonly operationKey: TimerOperationKey
+    readonly runId: RunId
+    readonly evidence: string
+  }) {
+    const at = yield* Clock.currentTimeMillis
+    const rows = yield* database.run(
+      database
+        .update(watches)
+        .set({
+          state: 'Completed',
+          stateData: yield* encodeState(
+            WatchState.cases.Completed.make({ at, runId: input.runId, evidence: input.evidence }),
+          ),
+          updatedAt: at,
+        })
+        .where(
+          and(
+            eq(watches.id, input.id),
+            live,
+            sql`${watches.purpose}->'arming'->>'operationKey' = ${input.operationKey}`,
+          ),
+        )
+        .returning(),
+    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+  })
+  return { purpose, completeCheckin }
 }
 
 /** Terminal and authorization transitions share guarded writes over the persisted lifecycle. */

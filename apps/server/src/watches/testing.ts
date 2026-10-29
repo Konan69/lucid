@@ -40,6 +40,7 @@ import {
 import { connections } from '../connections/tables.ts'
 import { encodeReferences } from '../connections/records.ts'
 import { watchesLayer } from './lifecycle.ts'
+import { owedStoreLayer } from '../owed/store.ts'
 import { watchStoreLayer } from './store.ts'
 
 /**
@@ -272,6 +273,7 @@ export const testLayer = watchesLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       watchStoreLayer,
+      owedStoreLayer,
       threadStoreLayer,
       appsLayer,
       executorLayer,
