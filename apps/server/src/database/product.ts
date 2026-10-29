@@ -18,6 +18,7 @@ export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'
 export { notifications } from '../notifications/tables.ts'
 export { owed } from '../owed/tables.ts'
+export { todos } from '../todos/tables.ts'
 export { pushTargets, pushDeliveries } from '../push/tables.ts'
 export {
   firstThreads,
