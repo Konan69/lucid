@@ -353,5 +353,11 @@ const recovery = (input: HealthAuthority) =>
       const renewed = yield* guestDriver(input.api, identity.id, request.key)
       input.drivers.set(request.key, renewed)
     }
+    if (request.step === 'RestartBrowser' && MachineRecovery.guards.Applied(outcome)) {
+      // A spawned process is not a browser receipt. Require the same profile's semantic read
+      // before reporting completion; an unopened browser must not become a false Ready result.
+      yield* browserHealth(current.native)
+      input.drivers.set(request.key, current)
+    }
     return outcome
   })
