@@ -1,3 +1,4 @@
+import { unbound } from '../approvals/action.ts'
 import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
@@ -34,6 +35,7 @@ import {
   Company,
   CompanyId,
   Approval,
+  ApprovalBinding,
   ApprovalId,
   ApprovalState,
   BrowserAction,
@@ -481,6 +483,7 @@ const pendingApproval = (person: Person) => {
     runId: null,
     action,
     digest: 'stored-action',
+    binding: ApprovalBinding.make({ connectionGeneration: null, preconditions: [] }),
     askedOf: {
       id: person.id,
       name: person.name,
@@ -876,6 +879,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               action: BrowserAction.cases.Click.make({ target: 'Send' }),
             }),
           }),
+          unbound,
         )
         yield* browser.database.run(
           browser.database
@@ -971,7 +975,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const browser = yield* personalBrowser()
         yield* browser.connect()
         const store = yield* ApprovalStore
-        const approval = yield* store.raise(browser.test.vivid, approvedClick)
+        const approval = yield* store.raise(browser.test.vivid, approvedClick, unbound)
         yield* browser.database.run(
           browser.database
             .update(runs)
@@ -1004,7 +1008,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const browser = yield* personalBrowser()
         yield* browser.connect()
         const store = yield* ApprovalStore
-        const approval = yield* store.raise(browser.test.vivid, approvedClick)
+        const approval = yield* store.raise(browser.test.vivid, approvedClick, unbound)
         yield* browser.database.run(
           browser.database
             .update(runs)
@@ -1098,6 +1102,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
                 target: BrowseTarget.cases.Person.make({}),
               }),
             }),
+            unbound,
           )
           yield* database.run(
             database

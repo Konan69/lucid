@@ -1,3 +1,4 @@
+import { unbound } from './action.ts'
 import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Schema from 'effect/Schema'
@@ -40,13 +41,7 @@ import { threads } from '../threads/tables.ts'
 import { ActionOutcome } from './gate.ts'
 import { ApprovalStore } from './store.ts'
 import { approvals } from './tables.ts'
-import {
-  desktopAction,
-  connectionAction,
-  fixture,
-  Observation,
-  trustTestServices,
-} from './testing.ts'
+import { desktopAction, fixture, Observation, trustTestServices } from './testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
 /** A click on the Person's own signed-in page. */
@@ -84,7 +79,8 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             const store = yield* ApprovalStore
             const approval = yield* store.raise(
               { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
-              connectionAction,
+              test.connectionAction,
+              test.bound,
             )
             expect(yield* store.inbox(test.owner)).toEqual([approval])
             expect(yield* store.inbox(test.other)).toEqual([])
@@ -139,7 +135,8 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const store = yield* ApprovalStore
           const approval = yield* store.raise(
             { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
-            connectionAction,
+            test.connectionAction,
+            test.bound,
           )
           expect(yield* store.inbox(test.owner)).toEqual([approval])
           const before = yield* database.run(
@@ -176,7 +173,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               action: DesktopAction.cases.Type.make({ text: 'Private content' }),
             }),
           })
-          const approval = yield* store.raise(test.vivid, action)
+          const approval = yield* store.raise(test.vivid, action, unbound)
           yield* store.decide(test.personal, {
             id: approval.id,
             digest: approval.digest,
@@ -198,7 +195,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
-          const approval = yield* store.raise(test.vivid, connectionAction)
+          const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           const request = { id: approval.id, digest: approval.digest, decision: once }
           const results = yield* Effect.all(
             [
@@ -211,7 +208,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const failures = results.filter(Result.isFailure)
           expect(failures.map((result) => result.failure)).toEqual([expect.any(Conflict)])
           const observed = yield* Observation
-          expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+          expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
           const deliveries = yield* Ref.get(observed.deliveries)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
@@ -240,7 +237,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
-          const approval = yield* store.raise(test.vivid, connectionAction)
+          const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           const result = yield* Effect.result(
             store.decide(test.personal, { id: approval.id, digest: 'wrong', decision: once }),
           )
@@ -260,7 +257,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ApprovalStore
-            const approval = yield* store.raise(test.vivid, connectionAction)
+            const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
             const database = yield* Database
             yield* database.run(
               database
@@ -312,7 +309,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
-          const approval = yield* store.raise(test.companyVivid, connectionAction)
+          const approval = yield* store.raise(test.companyVivid, test.connectionAction, test.bound)
           const result = yield* Effect.result(
             store.decide(test.owner, { id: approval.id, digest: approval.digest, decision: once }),
           )
@@ -333,13 +330,13 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const store = yield* ApprovalStore
           const observed = yield* Observation
           yield* Ref.set(observed.outcome, ActionOutcome.cases.Unknown.make({}))
-          const approval = yield* store.raise(test.vivid, connectionAction)
+          const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           const request = { id: approval.id, digest: approval.digest, decision: once }
           const settled = yield* store.decide(test.personal, request)
           expect(ApprovalState.guards.OutcomeUnknown(settled.state)).toBe(true)
           const again = yield* Effect.result(store.decide(test.personal, request))
           expect(Result.isFailure(again)).toBe(true)
-          expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+          expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
           const audit = yield* loadAudit(test.personal)
           expect(audit.entries).toEqual([
             expect.objectContaining({
@@ -368,18 +365,22 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               observed.deliveryFailure,
               Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
             )
-            const approval = yield* store.raise(test.companyVivid, connectionAction)
+            const approval = yield* store.raise(
+              test.companyVivid,
+              test.connectionAction,
+              test.bound,
+            )
             const settled = yield* store.decide(test.member, {
               id: approval.id,
               digest: approval.digest,
               decision: ApprovalDecision.cases.AlwaysAllow.make({}),
             })
             expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
-            expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+            expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
             const rules = yield* (yield* RuleStore).list(test.personal)
             expect(rules).toHaveLength(1)
             expect(rules[0]).toMatchObject({
-              action: connectionAction.summary,
+              action: test.connectionAction.summary,
               decision: 'Allow',
               scope: RuleScope.cases.Personal.make({}),
             })
@@ -395,7 +396,10 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const results = yield* Effect.all(
-            [store.raise(test.vivid, connectionAction), store.raise(test.vivid, connectionAction)],
+            [
+              store.raise(test.vivid, test.connectionAction, test.bound),
+              store.raise(test.vivid, test.connectionAction, test.bound),
+            ],
             { concurrency: 2 },
           )
           expect(results[0]).toEqual(results[1])
@@ -412,7 +416,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
-          const denied = yield* store.raise(test.vivid, connectionAction)
+          const denied = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           const lines: string[] = []
           const logger = Logger.make((entry) => lines.push(Logger.formatSimple.log(entry)))
           const loggers = new Set([...(yield* Logger.CurrentLoggers), logger])
@@ -448,7 +452,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               }),
             }),
           ])
-          const withdrawn = yield* store.raise(test.vivid, connectionAction)
+          const withdrawn = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           yield* store.withdraw(test.personal, withdrawn.id)
           const records = yield* store.inThread(test.personalId)
           expect(records.map((row) => row.state._tag)).toEqual(
@@ -466,7 +470,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ApprovalStore
-          const approval = yield* store.raise(test.vivid, connectionAction)
+          const approval = yield* store.raise(test.vivid, test.connectionAction, test.bound)
           const database = yield* Database
           yield* database.run(
             database
@@ -494,7 +498,11 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             const test = yield* fixture()
             const store = yield* ApprovalStore
             const observed = yield* Observation
-            const approval = yield* store.raise(test.companyVivid, connectionAction)
+            const approval = yield* store.raise(
+              test.companyVivid,
+              test.connectionAction,
+              test.bound,
+            )
             const request = { id: approval.id, digest: approval.digest, decision: once }
             yield* Ref.set(observed.runnerDefect, true)
             expect(Exit.isFailure(yield* Effect.exit(store.decide(test.member, request)))).toBe(
@@ -511,7 +519,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             yield* Effect.all([store.expire, store.expire], { concurrency: 2 })
             const records = yield* store.inThread(test.companyId)
             expect(records.map((row) => row.state._tag)).toEqual(['OutcomeUnknown'])
-            expect(yield* Ref.get(observed.actions)).toEqual([connectionAction])
+            expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
             expect(yield* Ref.get(observed.deliveries)).toEqual([
               expect.objectContaining({
                 threadId: approval.threadId,
@@ -560,7 +568,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             observed.outcome,
             ActionOutcome.cases.Failed.make({ reason: 'Computer refused the command' }),
           )
-          const approval = yield* store.raise(test.vivid, desktopAction)
+          const approval = yield* store.raise(test.vivid, desktopAction, unbound)
           const settled = yield* store.decide(test.personal, {
             id: approval.id,
             digest: approval.digest,
@@ -593,7 +601,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const test = yield* fixture()
           const store = yield* ApprovalStore
           const action = ProposedAction.make({ ...desktopAction, effect: 'destructive' })
-          const approval = yield* store.raise(test.vivid, action)
+          const approval = yield* store.raise(test.vivid, action, unbound)
           const result = yield* Effect.result(
             store.decide(test.personal, {
               id: approval.id,
@@ -638,8 +646,8 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 .where(eq(threads.id, test.companyId)),
             )
             const store = yield* ApprovalStore
-            const action = ProposedAction.make({ ...connectionAction, effect: 'read' })
-            const approval = yield* store.raise(test.companyVivid, action)
+            const action = ProposedAction.make({ ...test.connectionAction, effect: 'read' })
+            const approval = yield* store.raise(test.companyVivid, action, unbound)
             const result = yield* Effect.result(
               store.decide(test.member, {
                 id: approval.id,
@@ -673,7 +681,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ApprovalStore
-            const approval = yield* store.raise(test.vivid, browserWrite)
+            const approval = yield* store.raise(test.vivid, browserWrite, unbound)
             const settled = yield* store.decide(test.personal, {
               id: approval.id,
               digest: approval.digest,
@@ -704,7 +712,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 .where(eq(threads.id, test.companyId)),
             )
             const store = yield* ApprovalStore
-            const approval = yield* store.raise(test.companyVivid, browserWrite)
+            const approval = yield* store.raise(test.companyVivid, browserWrite, unbound)
             const result = yield* Effect.result(
               store.decide(test.member, {
                 id: approval.id,
@@ -753,7 +761,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               admittedAt: 0,
             }),
           )
-          const initial = yield* store.raise(test.vivid, desktopAction)
+          const initial = yield* store.raise(test.vivid, desktopAction, unbound)
           yield* database.run(
             database
               .update(runs)
@@ -772,7 +780,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               admittedAt: 1,
             }),
           )
-          const repeated = yield* store.raise(test.vivid, desktopAction)
+          const repeated = yield* store.raise(test.vivid, desktopAction, unbound)
           expect(repeated.id).toBe(initial.id)
           expect(repeated.runId).toBe(first)
           expect(yield* store.inThread(test.personalId)).toHaveLength(1)
