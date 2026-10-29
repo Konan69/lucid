@@ -16,6 +16,7 @@ import { memoryBrowser } from './memorybrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
+import { projectsBrowser } from './projectsbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -64,6 +65,7 @@ const recipes = {
   feed: { check: 'feed' },
   owed: { check: 'owed' },
   todos: { check: 'todos' },
+  projects: { check: 'projects' },
   replies: { check: 'replies' },
   first: {
     phrase:
@@ -129,6 +131,11 @@ const specialRecipes = {
     drive: owedBrowser,
     scope:
       'Waiting-on row tracked from the composer, shown on the web Feed, resolved by its check and absent after reload; see scope.json.',
+  },
+  projects: {
+    drive: projectsBrowser,
+    scope:
+      'Project objective and dated progress recorded from the composer, shown on the web Project page under Where it stands and unchanged after reload; see scope.json.',
   },
   feed: {
     drive: feedBrowser,
@@ -364,7 +371,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'owed', 'todos'].includes(feature) &&
+    ['memory', 'question', 'approve', 'deny', 'owed', 'todos', 'projects'].includes(feature) &&
     state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
