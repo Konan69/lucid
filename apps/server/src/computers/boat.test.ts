@@ -10,6 +10,7 @@ import {
   CapabilityComputerFact,
   CapabilityDeviceFact,
   ComputerLifecycle,
+  ComputerHealth,
   ComputerRecoveryRefusal,
   ComputerRecoveryId,
   ComputerRecoveryOutcome,
@@ -1214,6 +1215,13 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(row.lastActivityAt).toBe(73)
           expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
           expect(yield* Ref.get((yield* Evidence).viewers)).toBe(0)
+          yield* (yield* Machine).ensure(computerMachineKey(first.id))
+          yield* Ref.set((yield* Evidence).wrongIdentity, true)
+          const invalid = yield* store.health(first.id, 'Shallow')
+          expect(invalid._tag).toBe('Unavailable')
+          if (!ComputerHealth.guards.Unavailable(invalid))
+            return expect.fail('Expected the typed provider observation failure')
+          expect(invalid.cause._tag).toBe('InvalidObservation')
         }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
     )
 
