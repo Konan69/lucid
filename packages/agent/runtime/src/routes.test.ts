@@ -13,6 +13,7 @@ import {
   PersonId,
   RuntimeSettlement,
   ThreadId,
+  SignalCue,
 } from '@vivid/contracts'
 import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
 import { held, start, world } from '../tests/process.ts'
@@ -362,7 +363,7 @@ describe('the runtime over HTTP', () => {
             envelope: {
               from: 'Grace "G"',
               turn: 4,
-              cue: { _tag: 'Message', body: 'is <this> due?' },
+              cue: SignalCue.cases.Message.make({ body: 'is <this> due?' }),
             },
           },
         })

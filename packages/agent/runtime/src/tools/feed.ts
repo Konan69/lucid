@@ -65,7 +65,8 @@ const checkSource = Schema.decodeUnknownOption(FeedSource)
 const postOf = (input: v.InferOutput<typeof card>, cited: v.InferOutput<typeof sources>) =>
   Match.value(input).pipe(
     Match.discriminatorsExhaustive('kind')({
-      Drawn: ({ title, display }) => PostRequest.cases.Drawn.make({ title, display, sources: cited }),
+      Drawn: ({ title, display }) =>
+        PostRequest.cases.Drawn.make({ title, display, sources: cited }),
       Said: ({ title, words, actions }) =>
         PostRequest.cases.Said.make({ title, words, actions, sources: cited }),
     }),

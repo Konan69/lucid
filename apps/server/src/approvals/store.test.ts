@@ -217,7 +217,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(deliveries[0]).toMatchObject({
             idempotencyKey: `approval-${approval.id}`,
             personId: test.personal.person.id,
-            message: { type: 'approval', attributes: { outcome: 'Succeeded' } },
+            message: { cue: { outcome: 'Succeeded' } },
           })
           expect((yield* loadAudit(test.personal)).entries).toEqual([
             expect.objectContaining({
@@ -294,8 +294,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 personId: test.personal.person.id,
                 idempotencyKey: `approval-${approval.id}`,
                 message: expect.objectContaining({
-                  type: 'approval',
-                  attributes: { approval: approval.id, outcome: 'expired' },
+                  cue: expect.objectContaining({ outcome: 'expired' }),
                 }),
               }),
             ])
@@ -518,8 +517,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 personId: test.member.person.id,
                 idempotencyKey: `approval-${approval.id}`,
                 message: expect.objectContaining({
-                  type: 'approval',
-                  attributes: { approval: approval.id, outcome: 'OutcomeUnknown' },
+                  cue: expect.objectContaining({ outcome: 'OutcomeUnknown' }),
                 }),
               }),
             ])
@@ -577,7 +575,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(yield* Ref.get(observed.deliveries)).toEqual([
             expect.objectContaining({
               message: expect.objectContaining({
-                attributes: { approval: approval.id, outcome: 'Failed' },
+                cue: expect.objectContaining({ outcome: 'Failed' }),
               }),
             }),
           ])

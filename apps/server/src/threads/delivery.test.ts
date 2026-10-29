@@ -488,7 +488,13 @@ const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
 const signals = [
   {
     type: 'event',
-    origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'Review', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
+    origin: StoredRunOrigin.cases.Watch.make({
+      watchId: WatchId.make('watch-test'),
+      watchName: 'Review',
+      eventId: 'event-1',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+    }),
     cue: SignalCue.cases.Watch.make({
       name: 'Review',
       event: 'message.received',
@@ -570,11 +576,16 @@ layer(
           const delivered = deliveries[0]
           if (delivered === undefined) expect.fail('Missing admitted message')
           // The Person's words reach the runtime as written: nothing is put in their mouth.
-          if (!RuntimeDelivery.guards.Words(delivered.message)) expect.fail('Expected plain words')
-          expect(delivered.message.body).not.toContain('unanswered')
-          expect(delivered.message.body).toBe(body.body)
-          expect(delivered.message.body).not.toContain(first.id)
-          expect(delivered.message.body).not.toContain(test.ben)
+          // A shared Thread delivers them as Ben's message; a private one as plain words.
+          const said = RuntimeDelivery.match(delivered.message, {
+            Words: ({ body }) => body,
+            Signal: ({ envelope }) =>
+              SignalCue.guards.Message(envelope.cue) ? envelope.cue.body : '',
+          })
+          expect(said).not.toContain('unanswered')
+          expect(said).toBe(body.body)
+          expect(said).not.toContain(first.id)
+          expect(said).not.toContain(test.ben)
           // A later question must survive a replay, even after rebuilding the admission service.
           const later = yield* askFor(test, test.ben, test.threadId)
           const before = yield* test.inputs.inThread(test.threadId)
@@ -617,10 +628,12 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'signal',
-                type: 'answer',
-                body: 'Question: Which day works?\nAnswer: Monday',
-                attributes: { from: 'Ben' },
+                envelope: {
+                  from: 'Ben',
+                  cue: SignalCue.cases.Answer.make({
+                    body: 'Question: Which day works?\nAnswer: Monday',
+                  }),
+                },
               },
             },
           ])
@@ -653,7 +666,7 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'user',
+                body: 'Use this instead.',
                 attachments: [png],
               },
             },
@@ -708,7 +721,13 @@ layer(
           },
           {
             ...said(test.threadId, test.ben),
-            origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'Review', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-test'),
+              watchName: 'Review',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
               cue: SignalCue.cases.Watch.make({
@@ -1034,7 +1053,13 @@ layer(
         const wake = said(test.threadId, test.ada)
         const second = yield* test.conversation.admit({
           ...wake,
-          origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'Review', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
+          origin: StoredRunOrigin.cases.Watch.make({
+            watchId: WatchId.make('watch-test'),
+            watchName: 'Review',
+            eventId: 'event-1',
+            event: 'message.received',
+            occurredAt: '2026-10-29T09:00:00Z',
+          }),
           message: DeliveryMessage.cases.Signal.make({
             cue: SignalCue.cases.Watch.make({
               name: 'Review',
@@ -1093,8 +1118,7 @@ layer(
           {
             scope: { acting: test.ada },
             message: {
-              _tag: 'Signal',
-              envelope: { from: 'Ben', cue: { _tag: 'Answer', body: 'Monday' } },
+              envelope: { from: 'Ben', cue: SignalCue.cases.Answer.make({ body: 'Monday' }) },
             },
           },
         ])
@@ -1275,7 +1299,7 @@ layer(
           )
           expect(response.status).toBe(202)
           expect(yield* Ref.get(sent)).toMatchObject([
-            { body: 'Look', attributes: {}, attachments: [png] },
+            { delivery: { body: 'Look', attachments: [png] } },
           ])
         }).pipe(Effect.scoped),
     )
@@ -1292,7 +1316,7 @@ layer(
         expect(response.status).toBe(202)
         expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
           clientKey: 'picture-key',
-          message: { kind: 'user', body: '', attachments: [png] },
+          message: { body: '', attachments: [png] },
         })
       }).pipe(Effect.scoped),
     )
@@ -1312,7 +1336,7 @@ layer(
         const messages = yield* Ref.get(test.admitted)
         expect(messages[0]).toMatchObject({
           message: {
-            kind: 'user',
+            body: 'Look',
             attachments: [largest, png, gif, png],
           },
         })
@@ -1358,7 +1382,7 @@ layer(
           const deliveries = yield* Ref.get(test.admitted)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
-            message: { kind: 'user', body: body.body, attachments: [png] },
+            message: { body: body.body, attachments: [png] },
             scope: { acting: test.ben },
           })
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)

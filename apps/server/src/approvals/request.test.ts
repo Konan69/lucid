@@ -1,7 +1,13 @@
 import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Option } from 'effect'
-import { InputAnswer, RuntimeUnavailable, type PersonId, type ThreadId, WatchId } from '@vivid/contracts'
+import {
+  InputAnswer,
+  RuntimeUnavailable,
+  type PersonId,
+  type ThreadId,
+  WatchId,
+} from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
@@ -111,7 +117,13 @@ layer(testDatabaseLayer)((it) => {
               {
                 id: 'due',
                 personId: me,
-                origin: StoredRunOrigin.cases.Watch.make({ watchId: WatchId.make('watch-test'), watchName: 'Digest', eventId: 'event-1', event: 'message.received', occurredAt: '2026-10-29T09:00:00Z' }),
+                origin: StoredRunOrigin.cases.Watch.make({
+                  watchId: WatchId.make('watch-test'),
+                  watchName: 'Digest',
+                  eventId: 'event-1',
+                  event: 'message.received',
+                  occurredAt: '2026-10-29T09:00:00Z',
+                }),
                 working: true,
               },
               {
