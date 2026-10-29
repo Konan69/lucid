@@ -5,7 +5,7 @@ import {
 import type { Message } from '@earendil-works/pi-ai'
 import { describe, expect, it } from '@effect/vitest'
 import { ConversationState, RuntimeSettlement } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect, Predicate, Schema } from 'effect'
 import {
   ada,
   admit,
@@ -34,7 +34,7 @@ const FAULT = 'field "/variant" expects one of ["outline", "soft"] but got "flat
 
 const userWords = (messages: ReadonlyArray<Message>) =>
   messages.flatMap((message) =>
-    message.role === 'user' && typeof message.content === 'string' ? [message.content] : [],
+    message.role === 'user' && Predicate.isString(message.content) ? [message.content] : [],
   )
 
 /** Answer with `answer` and keep what the model was asked with. */
