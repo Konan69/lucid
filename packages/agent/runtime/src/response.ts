@@ -20,6 +20,7 @@ import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { runInputs } from './deliveries.ts'
 import { corrected } from './correction.ts'
+import { continued } from './continuity.ts'
 import { isDeliveryEntry } from './delivery.ts'
 import { classify } from './failure.ts'
 import { PiRejected, pi } from './threads.ts'
@@ -171,26 +172,34 @@ const measure = Effect.fn('Response.measure')(function* (
 ) {
   const { kept, superseded } = corrected(yield* entriesBetween(conversation, from, to))
   const entries = ownEntries(kept, own)
+  const adopted = continued(entries)
   const messages = entries.flatMap((entry) => Option.toArray(assistantOf(entry)))
   // An answer a correction replaced is not part of the reply, but it was asked and paid for.
   const paid = [...superseded, ...entries].flatMap((entry) => Option.toArray(assistantOf(entry)))
   const [first] = entries
   const opened = first === undefined || first.model === undefined ? undefined : first.model[0]
-  // A provider attempt that failed, or that a stop cut short, was asked and paid for but is not a
-  // step of the response: Pi commits it and then tries again (`generation.ts` `classify`), and
-  // main left such an attempt out of the reply. Pi runs tool calls only from a message that
-  // stopped to use tools, so only those calls happened.
-  const steps = messages.filter(
-    (message) => message.stopReason !== 'error' && message.stopReason !== 'aborted',
+  // Recovery adopts only the words a retry continues. Other failed or stopped attempts count
+  // towards spend but not the settled reply. Only a toolUse message ran its tool calls.
+  const steps = entries.flatMap((entry) => {
+    const message = assistantOf(entry)
+    if (Option.isNone(message) || message.value.stopReason === 'error') return []
+    if (message.value.stopReason === 'aborted' && !adopted.has(entry.id)) return []
+    return [message.value]
+  })
+  const text = steps.flatMap((message) =>
+    message.content.flatMap((part) =>
+      part.type === 'text' && part.text.length > 0
+        ? [{ text: part.text, continued: message.stopReason === 'aborted' }]
+        : [],
+    ),
   )
   return {
-    reply: steps
-      .flatMap((message) =>
-        message.content.flatMap((part) =>
-          part.type === 'text' && part.text.length > 0 ? [part.text] : [],
-        ),
+    reply: text
+      .map(
+        (part, index) =>
+          (index > 0 && text[index - 1]?.continued !== true ? '\n\n' : '') + part.text,
       )
-      .join('\n\n'),
+      .join(''),
     startedAt: opened === undefined ? Option.none<number>() : Option.some(opened.timestamp),
     model: Option.map(
       Option.fromUndefinedOr(messages.at(-1)),
