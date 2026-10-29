@@ -10,7 +10,7 @@ import {
   type HandoffField,
   type PersonId,
 } from '@vivid/contracts'
-import { Array as Arr, Context, Effect, type Layer, Option, Schema } from 'effect'
+import { Array as Arr, Context, Effect, type Layer, Match, Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import type { ProductFailure } from './live.js'
@@ -133,18 +133,16 @@ export const make = (services: Layer.Layer<Calling>) => {
  * What to say when a call about a step did not go through. The server's own refusals are said as
  * they are; a Computer it could not reach says why; anything else is the connection.
  */
-export const refusedWords = (failure: ProductFailure): string => {
-  switch (failure._tag) {
-    case 'HandoffClosed':
-    case 'HandoffNotAddressee':
-    case 'Conflict':
-      return failure.message
-    case 'HandoffComputerUnavailable':
-      return failure.reason
-    default:
-      return 'That did not reach Vivid. Try again.'
-  }
-}
+export const refusedWords = (failure: ProductFailure): string =>
+  Match.value(failure).pipe(
+    Match.tags({
+      HandoffClosed: (refused) => refused.message,
+      HandoffNotAddressee: (refused) => refused.message,
+      Conflict: (refused) => refused.message,
+      HandoffComputerUnavailable: (refused) => refused.reason,
+    }),
+    Match.orElse(() => 'That did not reach Vivid. Try again.'),
+  )
 
 /** Every handoff control waits while any call is out; the machine refuses the press as well. */
 export const isWaiting = Reading.isAnyOf(['Starting', 'Sending'])

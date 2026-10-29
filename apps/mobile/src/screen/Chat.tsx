@@ -695,6 +695,43 @@ function Raised({
   )
 }
 
+/**
+ * What stands over the composer. A step on the Computer holds it, so its banner (`Handing`)
+ * comes before a question's or an Approval's (`Raised`); those keep waiting and rise once the
+ * step is over.
+ */
+function Over({
+  id,
+  detail,
+  me,
+  asking,
+  allowing,
+  dock,
+  covered,
+}: {
+  id: ThreadId
+  detail: Option.Option<ThreadDetail>
+  me: PersonId
+  asking: ReturnType<typeof useAsking>
+  allowing: ReturnType<typeof useAllowing>
+  dock: Option.Option<number>
+  covered: SharedValue<number>
+}) {
+  const handoff = handing.handoffUp(handoffsOf(detail), me)
+  const openScreen = useOpenScreen(id)
+  if (Option.isNone(handoff) || Option.isNone(dock))
+    return <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
+  return (
+    <Handing
+      key={handoff.value.id}
+      handoff={handoff.value}
+      dock={dock.value}
+      covered={covered}
+      onOpenScreen={openScreen}
+    />
+  )
+}
+
 /** The Approval's banner, for what it holds: the one that is up, or the one sliding away. */
 function RaisedApproval({
   allowing,
@@ -830,10 +867,6 @@ function Conversation({
   const { shared, working, ready } = sending
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
   const { allowing, asking } = useWaiting(detail, me.person.id)
-  // A step on the Computer holds it, so its banner comes before a question's or an Approval's;
-  // those keep waiting and rise once the step is over.
-  const handoff = handing.handoffUp(handoffsOf(detail), me.person.id)
-  const openScreen = useOpenScreen(id)
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -920,17 +953,15 @@ function Conversation({
             onContinue={speak}
           />
         </View>
-        {Option.isSome(handoff) && Option.isSome(dock) ? (
-          <Handing
-            key={handoff.value.id}
-            handoff={handoff.value}
-            dock={dock.value}
-            covered={covered}
-            onOpenScreen={openScreen}
-          />
-        ) : (
-          <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
-        )}
+        <Over
+          id={id}
+          detail={detail}
+          me={me.person.id}
+          asking={asking}
+          allowing={allowing}
+          dock={dock}
+          covered={covered}
+        />
         <Foot
           typed={typed}
           writing={writing}

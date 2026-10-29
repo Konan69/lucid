@@ -132,9 +132,9 @@ export function inputRequest(item: InputRequest) {
  */
 export function handoff(outcome: PrepareHandoffOutcome): Schema.Json {
   return PrepareHandoffOutcome.match<Schema.Json>(outcome, {
-    Prepared: ({ handoff }) => ({
+    Prepared: (prepared) => ({
       kind: 'handoff',
-      handoffId: handoff.id,
+      handoffId: prepared.handoff.id,
       message:
         'Handed to the person. Your computer is theirs until they finish; you will be told when they do.',
     }),
@@ -144,7 +144,10 @@ export function handoff(outcome: PrepareHandoffOutcome): Schema.Json {
       message:
         'These fields are not on the page as one field each that can be typed into. Read the page again, or hand the step over on the screen with no fields.',
     }),
-    RunRequired: () => ({ ok: false, message: 'A step is handed over only while you are working.' }),
+    RunRequired: () => ({
+      ok: false,
+      message: 'A step is handed over only while you are working.',
+    }),
     Busy: () => ({
       ok: false,
       message: 'Another step is already waiting on the person on your computer. Wait for it.',

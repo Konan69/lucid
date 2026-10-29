@@ -60,12 +60,12 @@ const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
   const typed = yield* Ref.make<ReadonlyArray<HandoffEntry>>([])
   const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
   const handedBack = yield* Ref.make(0)
-  const computer = Computer.make({
+  const record = Computer.make({
     id: ComputerId.make(NodeCrypto.randomUUID()),
     heldByPerson: false,
     state: ComputerState.cases.Absent.make({}),
   })
-  const layer = Layer.mock(ComputerStore, {
+  const computer = Layer.mock(ComputerStore, {
     findFields: (_person, labels) =>
       Effect.succeed({ page, address, fields: labels.map(() => Option.none()) }),
     fillFields: (_person, _page, entries) =>
@@ -73,9 +73,9 @@ const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
         Effect.as(entries.map(() => HandoffFieldResult.cases.Filled.make({}))),
       ),
     clearFields: (_person, _page, labels) => Ref.update(cleared, (before) => [...before, labels]),
-    hold: () => Ref.update(handedBack, (count) => count + 1).pipe(Effect.as(computer)),
+    hold: () => Ref.update(handedBack, (count) => count + 1).pipe(Effect.as(record)),
   })
-  return { layer, typed, cleared, handedBack }
+  return { layer: computer, typed, cleared, handedBack }
 })
 
 /** Every log line written while a case runs, as JSON with its annotations and spans. */
@@ -162,9 +162,10 @@ layer(testDatabaseLayer)((it) => {
               `handoff-${handoff.id}`,
             ])
             const [delivery] = deliveries
-            expect(delivery?.threadId).toBe(test.personalId)
-            expect(delivery?.origin).toEqual(StoredRunOrigin.cases.Decision.make({}))
-            const told = JSON.stringify(delivery?.message)
+            if (delivery === undefined) return expect.unreachable('one delivery')
+            expect(delivery.threadId).toBe(test.personalId)
+            expect(delivery.origin).toEqual(StoredRunOrigin.cases.Decision.make({}))
+            const told = JSON.stringify(delivery.message)
             expect(told).toContain('Email: filled.')
             expect(told).toContain('Password: filled.')
             // Nothing that was typed is kept, told or logged, in any column, view or line.
@@ -203,7 +204,11 @@ layer(testDatabaseLayer)((it) => {
           yield* recordRuns(test.companyId, [
             { id: 'acting', personId: test.member.person.id, origin: working, working: true },
           ])
-          const vivid = { ...test.member, by: 'vivid' as const, threadId: Option.some(test.companyId) }
+          const vivid = {
+            ...test.member,
+            by: 'vivid' as const,
+            threadId: Option.some(test.companyId),
+          }
           const prepared = yield* prepareHandoff(vivid, signIn)
           if (!PrepareHandoffOutcome.guards.Prepared(prepared))
             return expect.unreachable(prepared._tag)

@@ -9,7 +9,15 @@ import {
   type HandoffRefusalReason,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, type Effect, type Option, type Redacted, Schema, type Scope, type Stream } from 'effect'
+import {
+  Context,
+  type Effect,
+  type Option,
+  type Redacted,
+  Schema,
+  type Scope,
+  type Stream,
+} from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'

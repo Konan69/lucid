@@ -167,8 +167,7 @@ export function askTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const request = handoffRequest(data)
-            if (Option.isNone(request))
-              return { output: views.handoffWithoutFields(data.kind) }
+            if (Option.isNone(request)) return { output: views.handoffWithoutFields(data.kind) }
             const { client } = yield* Scope
             return { output: views.handoff(yield* client.PrepareHandoff(request.value)) }
           }),

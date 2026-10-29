@@ -1,6 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { HandoffFieldResult, type HandoffRefusalReason } from '@vivid/contracts'
-import { Effect, Option, Redacted } from 'effect'
+import { Effect, Option, Redacted, Result } from 'effect'
 import type { HandoffEntry, HandoffPageBinding, MachineFailure } from '../machine.ts'
 import { binding, chrome, currentTab, snapshot, type Page } from './browser.ts'
 import type { Driver } from './driver.ts'
@@ -28,14 +28,14 @@ const named = (page: Snapshot, label: string): ReadonlyArray<Ref> =>
  * into is `UnsupportedField`; none, or two that could be typed into, is `TargetUnavailable`,
  * because typing a secret into a guess is worse than asking on the live screen.
  */
-const fieldOf = (page: Snapshot, label: string) => {
+const fieldOf = (page: Snapshot, label: string): Result.Result<string, HandoffRefusalReason> => {
   const matches = named(page, label)
   const editable = matches.filter((ref) => ref.actions.includes('type'))
   const field = editable[0]
-  if (editable.length === 1 && field !== undefined) return { _tag: 'Found', ref: field.ref } as const
-  const reason: HandoffRefusalReason =
-    editable.length === 0 && matches.length > 0 ? 'UnsupportedField' : 'TargetUnavailable'
-  return { _tag: 'Refused', reason } as const
+  if (editable.length === 1 && field !== undefined) return Result.succeed(field.ref)
+  return Result.fail(
+    editable.length === 0 && matches.length > 0 ? 'UnsupportedField' : 'TargetUnavailable',
+  )
 }
 
 /**
@@ -66,10 +66,7 @@ export const findFields = Effect.fn('Machine.boat.fields.find')(function* (
   return {
     page: { target: bound.target_id, tab: tab.tab_id, digest: addressDigest(page.page.url) },
     address: page.page.url,
-    fields: labels.map((label) => {
-      const field = fieldOf(page, label)
-      return field._tag === 'Found' ? Option.none() : Option.some(field.reason)
-    }),
+    fields: labels.map((label) => Result.getFailure(fieldOf(page, label))),
   }
 })
 
@@ -94,14 +91,15 @@ const fillOne = Effect.fn('Machine.boat.fields.fillOne')(function* (
   if (Option.isNone(now.value))
     return HandoffFieldResult.cases.Refused.make({ reason: 'TargetChanged' })
   const field = fieldOf(now.value.value, entry.label)
-  if (field._tag === 'Refused') return HandoffFieldResult.cases.Refused.make({ reason: field.reason })
+  if (Result.isFailure(field))
+    return HandoffFieldResult.cases.Refused.make({ reason: field.failure })
   return yield* native
     .call(
       'browser_type',
       {
         target_id: page.target,
         tab_id: page.tab,
-        ref: field.ref,
+        ref: field.success,
         text: Redacted.value(entry.value),
         replace: true,
       },
@@ -141,10 +139,10 @@ export const clearFields = Effect.fn('Machine.boat.fields.clear')(function* (
     const now = yield* boundPage(native, page)
     if (Option.isNone(now)) return
     const field = fieldOf(now.value, label)
-    if (field._tag === 'Refused') continue
+    if (Result.isFailure(field)) continue
     yield* native.call(
       'browser_type',
-      { target_id: page.target, tab_id: page.tab, ref: field.ref, text: '', replace: true },
+      { target_id: page.target, tab_id: page.tab, ref: field.success, text: '', replace: true },
       ActionReceipt,
     )
   }

@@ -88,27 +88,29 @@ import { handoffs } from './tables.ts'
  */
 
 /** What a handoff is, as its row keeps it: the form's fields or the live-screen kind. */
-const Definition = Schema.TaggedUnion({
+export const Definition = Schema.TaggedUnion({
   Form: { kind: HandoffFormKind, fields: Schema.NonEmptyArray(HandoffField) },
   Screen: { kind: HandoffKind },
 })
 type Definition = typeof Definition.Type
 const Receipts = Schema.NonEmptyArray(HandoffFieldReceipt)
 
-const columns = Schema.Struct(createSelectSchema(handoffs, {
-  id: HandoffId,
-  threadId: ThreadId,
-  runId: RunId,
-  personId: PersonId,
-  request: Definition,
-  page: HandoffPage,
-  binding: HandoffPageBinding,
-  status: Schema.Literals(['waiting', 'applying', 'ready', 'completed', 'withdrawn']),
-  receipts: Schema.NullOr(Receipts),
-  completedBy: Schema.NullOr(PersonId),
-  settledAt: Schema.NullOr(Schema.Finite),
-  signal: Signal,
-}).fields)
+const columns = Schema.Struct(
+  createSelectSchema(handoffs, {
+    id: HandoffId,
+    threadId: ThreadId,
+    runId: RunId,
+    personId: PersonId,
+    request: Definition,
+    page: HandoffPage,
+    binding: HandoffPageBinding,
+    status: Schema.Literals(['waiting', 'applying', 'ready', 'completed', 'withdrawn']),
+    receipts: Schema.NullOr(Receipts),
+    completedBy: Schema.NullOr(PersonId),
+    settledAt: Schema.NullOr(Schema.Finite),
+    signal: Signal,
+  }).fields,
+)
 const decodeRow = decodeStored(columns, 'Handoff')
 type Row = typeof columns.Type
 const encodeDefinition = encodeStored(Definition, 'Handoff request')
@@ -284,7 +286,10 @@ export const handoffsWaiting = Effect.fn('Handoffs.waiting')(function* (actor: A
  */
 const publicPage = (address: string) => {
   const url = URL.canParse(address) ? Option.some(new NodeURL.URL(address)) : Option.none()
-  return Option.filter(url, (value) => value.protocol === 'https:' || value.protocol === 'http:').pipe(
+  return Option.filter(
+    url,
+    (value) => value.protocol === 'https:' || value.protocol === 'http:',
+  ).pipe(
     Option.map((value) =>
       HandoffPage.make({ origin: value.origin, address: `${value.origin}${value.pathname}` }),
     ),
@@ -294,11 +299,10 @@ const publicPage = (address: string) => {
 /** The Run that is handing the step over; a step is never handed over from outside one. */
 const actingRun = (actor: Actor) =>
   actionOrigin(actor).pipe(
-    Effect.map(
-      (origin): Option.Option<{ readonly threadId: ThreadId; readonly runId: RunId }> =>
-        ActionOrigin.guards.Run(origin)
-          ? Option.some({ threadId: origin.threadId, runId: origin.runId })
-          : Option.none(),
+    Effect.map((origin): Option.Option<{ readonly threadId: ThreadId; readonly runId: RunId }> =>
+      ActionOrigin.guards.Run(origin)
+        ? Option.some({ threadId: origin.threadId, runId: origin.runId })
+        : Option.none(),
     ),
     Effect.catchTag('NotFound', () => Effect.succeedNone),
   )
@@ -460,7 +464,11 @@ const addressed = Effect.fn('Handoffs.addressed')(function* (actor: Actor, id: H
   if (value === undefined) return yield* new NotFound({ message: 'Handoff not found' })
   const row = yield* decodeRow(value.handoff)
   yield* requireThread(row.threadId, actor.person.id)
-  if (row.personId !== actor.person.id) return yield* new HandoffNotAddressee({ id, message: 'Only the person asked can do this step.' })
+  if (row.personId !== actor.person.id)
+    return yield* new HandoffNotAddressee({
+      id,
+      message: 'Only the person asked can do this step.',
+    })
   return row
 })
 
@@ -495,8 +503,7 @@ const throughComputer = <A>(
     ),
   )
 
-const closed = (id: HandoffId) =>
-  new HandoffClosed({ id, message: 'This step is already over.' })
+const closed = (id: HandoffId) => new HandoffClosed({ id, message: 'This step is already over.' })
 
 /** The public record of one row, after a write that returned it. */
 const one = Effect.fn('Handoffs.one')(function* (
@@ -508,7 +515,9 @@ const one = Effect.fn('Handoffs.one')(function* (
 /** The current record, read again: what a call that changed nothing answers. */
 const current = Effect.fn('Handoffs.current')(function* (id: HandoffId) {
   const database = yield* Database
-  return yield* one(yield* database.run(database.select().from(handoffs).where(eq(handoffs.id, id))))
+  return yield* one(
+    yield* database.run(database.select().from(handoffs).where(eq(handoffs.id, id))),
+  )
 })
 
 /**
@@ -548,9 +557,11 @@ const entriesOf = (
   if (!known || !once || (first && ids.length !== fields.length)) return Option.none()
   return Option.some(
     request.values.flatMap((value) =>
-      fields
-        .filter((field) => field.id === value.fieldId)
-        .map((field) => ({ field, entry: { label: field.label, value: value.value } })),
+      fields.flatMap((field) =>
+        field.id === value.fieldId
+          ? [{ field, entry: { label: field.label, value: value.value } }]
+          : [],
+      ),
     ),
   )
 }
@@ -716,14 +727,21 @@ export const completeHandoff = Effect.fn('Handoffs.complete')(function* (
   id: HandoffId,
 ) {
   const row = yield* addressed(actor, id)
-  if (row.status === 'completed') return yield* current(id)
-  if (row.status === 'withdrawn') return yield* closed(id)
-  if (row.status !== 'ready')
-    return yield* new Conflict({
-      message: Definition.guards.Form(row.request)
-        ? 'Fill the fields first.'
-        : 'Take the screen first.',
-    })
+  switch (row.status) {
+    case 'completed':
+      return yield* current(id)
+    case 'withdrawn':
+      return yield* closed(id)
+    case 'waiting':
+    case 'applying':
+      return yield* new Conflict({
+        message: Definition.guards.Form(row.request)
+          ? 'Fill the fields first.'
+          : 'Take the screen first.',
+      })
+    case 'ready':
+      break
+  }
   yield* clearOf(row)
   const now = yield* Clock.currentTimeMillis
   const signal = Signal.cases.Owed.make({

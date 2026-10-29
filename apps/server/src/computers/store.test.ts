@@ -94,6 +94,7 @@ import { approvals } from '../approvals/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { handoffs } from '../inputs/tables.ts'
+import { Definition } from '../inputs/handoff.ts'
 import * as Schema from 'effect/Schema'
 import { deviceRequests, computers } from './tables.ts'
 
@@ -1659,7 +1660,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               runId: RunId.make(NodeCrypto.randomUUID()),
               personId: first.id,
               summary: 'Sign in',
-              request: { _tag: 'Screen', kind: 'Captcha' },
+              request: Definition.cases.Screen.make({ kind: 'Captcha' }),
               page: { origin: 'https://example.test', address: 'https://example.test/' },
               binding: { target: 'window', tab: 'tab', digest: 'digest' },
               status: 'waiting',

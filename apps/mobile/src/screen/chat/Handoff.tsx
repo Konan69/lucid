@@ -61,7 +61,11 @@ export function useOpenScreen(thread: ThreadId) {
 const keyboardOf = (purpose: HandoffFieldPurpose) => {
   switch (purpose) {
     case 'Code':
-      return { textContentType: 'oneTimeCode', autoComplete: 'one-time-code', numeric: true } as const
+      return {
+        textContentType: 'oneTimeCode',
+        autoComplete: 'one-time-code',
+        numeric: true,
+      } as const
     case 'CardNumber':
     case 'CardCode':
       return { textContentType: 'none', autoComplete: 'off', numeric: true } as const
@@ -164,25 +168,28 @@ function Form({
   const complete = ready ? typed.length > 0 : typed.length === toFill.length
   const fill = () => {
     if (!Arr.isReadonlyArrayNonEmpty(typed) || !complete) return
-    pressHandoff(data, handing.Command.cases.Fill.make({ request: { id: handoff.id, values: typed } }))
+    pressHandoff(
+      data,
+      handing.Command.cases.Fill.make({ request: { id: handoff.id, values: typed } }),
+    )
     // Sent: what was typed is not kept here a moment longer.
     setValues(new Map())
   }
   return (
     <View style={{ gap: 12 }}>
       {handoff.fields.map((field) =>
-          Option.match(
-            Arr.findFirst(receipts, (receipt) => receipt.fieldId === field.id),
-            {
-              onNone: () => null,
-              onSome: (receipt) => (
-                <Label key={field.id} size="label" tone="ink-2">
-                  {field.label}: {handing.resultWords(receipt.result)}
-                </Label>
-              ),
-            },
-          ),
-        )}
+        Option.match(
+          Arr.findFirst(receipts, (receipt) => receipt.fieldId === field.id),
+          {
+            onNone: () => null,
+            onSome: (receipt) => (
+              <Label key={field.id} size="label" tone="ink-2">
+                {field.label}: {handing.resultWords(receipt.result)}
+              </Label>
+            ),
+          },
+        ),
+      )}
       {toFill.length > 0 && (
         <Label size="label" tone="ink-3">
           Typed into the page on Vivid’s computer. Vivid never sees what you type.

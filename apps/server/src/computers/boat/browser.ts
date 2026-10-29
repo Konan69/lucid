@@ -153,7 +153,9 @@ export const binding = Effect.fn('Machine.boat.browser.bind')((native: Driver, w
 /** Tabs are restricted to the exactly-bound native window (Cua engine.rs). Its sole tab is
  * necessarily current even while navigation changes the title before X11 catches up. Multiple
  * tabs still require one explicit selection proof; ambiguous native titles stay refused. */
-export const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: BrowserBinding) {
+export const currentTab = Effect.fn('Machine.boat.browser.active')(function* (
+  bound: BrowserBinding,
+) {
   const sole = bound.tabs[0]
   if (bound.tabs.length === 1 && sole !== undefined && sole.active !== false) return sole
   const showing = bound.tabs.filter((tab) => tab.active === true)

@@ -143,7 +143,10 @@ function Finish({
           Open the screen
         </Button>
       )}
-      <Button disabled={held} onClick={() => pressHandoff(handing.Command.cases.Complete.make({ id: handoff.id }))}>
+      <Button
+        disabled={held}
+        onClick={() => pressHandoff(handing.Command.cases.Complete.make({ id: handoff.id }))}
+      >
         Continue
       </Button>
       <NotNow handoff={handoff} held={held} />
@@ -161,6 +164,78 @@ function NotNow({ handoff, held }: { handoff: HandoffRequest; held: boolean }) {
     >
       Not now
     </Button>
+  )
+}
+
+/** Each field's latest result, once a fill was typed. */
+function Results({
+  fields,
+  receipts,
+}: {
+  fields: ReadonlyArray<HandoffField>
+  receipts: ReadonlyArray<HandoffFieldReceipt>
+}) {
+  if (receipts.length === 0) return null
+  return (
+    <ul className="flex flex-col gap-1 text-label">
+      {fields.map((field) =>
+        Option.match(
+          Arr.findFirst(receipts, (receipt) => receipt.fieldId === field.id),
+          {
+            onNone: () => null,
+            onSome: (receipt) => <Result key={field.id} field={field} receipt={receipt} />,
+          },
+        ),
+      )}
+    </ul>
+  )
+}
+
+/**
+ * What a form offers under its fields: Fill and Not now before anything was typed; after, Fill
+ * again for fields not filled, and finishing on the screen.
+ */
+function FormActions({
+  handoff,
+  held,
+  complete,
+  again,
+  panelOpen,
+  onOpenScreen,
+}: {
+  handoff: typeof HandoffRequest.cases.Form.Type
+  held: boolean
+  /** Every field the fill needs has something typed in it. */
+  complete: boolean
+  /** Some fields were not filled and may be filled again. */
+  again: boolean
+  panelOpen: boolean
+  onOpenScreen: () => void
+}) {
+  const filling = HandoffFormState.guards.Applying(handoff.state)
+  if (!HandoffFormState.guards.Ready(handoff.state))
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" disabled={held || filling || !complete}>
+          {filling ? 'Filling…' : 'Fill'}
+        </Button>
+        <NotNow handoff={handoff} held={held} />
+      </div>
+    )
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-label text-ink-2">
+        Now finish on the screen: check the page and press its button there. Then continue.
+      </p>
+      {again && (
+        <div>
+          <Button type="submit" variant="outline" disabled={held || !complete}>
+            Fill again
+          </Button>
+        </div>
+      )}
+      <Finish handoff={handoff} held={held} panelOpen={panelOpen} onOpenScreen={onOpenScreen} />
+    </div>
   )
 }
 
@@ -191,9 +266,7 @@ function Form({
     : typed.length > 0
   const fill = () => {
     if (!Arr.isReadonlyArrayNonEmpty(typed) || !complete) return
-    pressHandoff(
-      handing.Command.cases.Fill.make({ request: { id: handoff.id, values: typed } }),
-    )
+    pressHandoff(handing.Command.cases.Fill.make({ request: { id: handoff.id, values: typed } }))
     // Sent: what was typed is not kept here a moment longer.
     setValues(new Map())
   }
@@ -206,19 +279,7 @@ function Form({
         fill()
       }}
     >
-      {receipts.length > 0 && (
-        <ul className="flex flex-col gap-1 text-label">
-          {handoff.fields.map((field) =>
-            Option.match(
-              Arr.findFirst(receipts, (receipt) => receipt.fieldId === field.id),
-              {
-                onNone: () => null,
-                onSome: (receipt) => <Result key={field.id} field={field} receipt={receipt} />,
-              },
-            ),
-          )}
-        </ul>
-      )}
+      <Results fields={handoff.fields} receipts={receipts} />
       {toFill.length > 0 && (
         <>
           <p className="text-meta text-ink-3">
@@ -232,30 +293,14 @@ function Form({
           />
         </>
       )}
-      {HandoffFormState.guards.Ready(handoff.state) && (
-        <p className="text-label text-ink-2">
-          Now finish on the screen: check the page and press its button there. Then continue.
-        </p>
-      )}
-      {HandoffFormState.guards.Ready(handoff.state) ? (
-        <div className="flex flex-col gap-2">
-          {toFill.length > 0 && (
-            <div>
-              <Button type="submit" variant="outline" disabled={held || !complete}>
-                Fill again
-              </Button>
-            </div>
-          )}
-          <Finish handoff={handoff} held={held} panelOpen={panelOpen} onOpenScreen={onOpenScreen} />
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit" disabled={held || filling || !complete}>
-            {filling ? 'Filling…' : 'Fill'}
-          </Button>
-          <NotNow handoff={handoff} held={held} />
-        </div>
-      )}
+      <FormActions
+        handoff={handoff}
+        held={held}
+        complete={complete}
+        again={toFill.length > 0}
+        panelOpen={panelOpen}
+        onOpenScreen={onOpenScreen}
+      />
     </form>
   )
 }

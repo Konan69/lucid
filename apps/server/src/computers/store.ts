@@ -523,7 +523,10 @@ export interface ComputerStoreService {
     person: PersonId,
     page: HandoffPageBinding,
     entries: ReadonlyArray<HandoffEntry>,
-  ) => Effect.Effect<ReadonlyArray<HandoffFieldResult>, StoreError | MachineFailure | ComputerNotReady>
+  ) => Effect.Effect<
+    ReadonlyArray<HandoffFieldResult>,
+    StoreError | MachineFailure | ComputerNotReady
+  >
   readonly clearFields: (
     person: PersonId,
     page: HandoffPageBinding,
@@ -1117,6 +1120,42 @@ const ownMachine = (
   ),
 })
 
+/**
+ * A handoff's fields (`inputs/handoff.ts`). Vivid's preflight runs as any of its browser steps
+ * does (`execute`). The Person's typing and clearing run while the Computer is held for the
+ * handoff, which is what refuses Vivid: they take the same action permit, so a step of Vivid's
+ * under way ends first, need a running Computer, and never wake one.
+ */
+const handoffFields = (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  execute: <A>(
+    person: PersonId,
+    action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+  ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+) => {
+  const personal = Effect.fn('ComputerStore.personal')(
+    function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
+      const row = yield* state.rows.load(person)
+      if (Option.isNone(row) || !Stored.guards.running(row.value))
+        return yield* new ComputerNotReady({ reason: 'The Computer is not running.' })
+      yield* state.rows.inactivity.activity(person)
+      return yield* action(row.value.machine)
+    },
+    (effect, person) => state.lock.withPermit(person, effect),
+  )
+  return {
+    findFields: (person: PersonId, labels: ReadonlyArray<string>) =>
+      execute(person, (key) => state.machine.findFields({ key, labels })),
+    fillFields: (
+      person: PersonId,
+      page: HandoffPageBinding,
+      entries: ReadonlyArray<HandoffEntry>,
+    ) => personal(person, (key) => state.machine.fillFields({ key, page, entries })),
+    clearFields: (person: PersonId, page: HandoffPageBinding, labels: ReadonlyArray<string>) =>
+      personal(person, (key) => state.machine.clearFields({ key, page, labels })),
+  }
+}
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
@@ -1215,17 +1254,6 @@ export const computerStoreLayer = Layer.effect(
     const desktop = Effect.fn('ComputerStore.desktop')((person: PersonId, action: DesktopAction) =>
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
-    /** The Person's handoff work: only a running Computer, under the same action permit. */
-    const personal = Effect.fn('ComputerStore.personal')(
-      function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
-        const row = yield* state.rows.load(person)
-        if (Option.isNone(row) || !Stored.guards.running(row.value))
-          return yield* new ComputerNotReady({ reason: 'The Computer is not running.' })
-        yield* inactivity.activity(person)
-        return yield* action(row.value.machine)
-      },
-      (effect, person) => state.lock.withPermit(person, effect),
-    )
     const attach = (person: PersonId) => attached(state, person)
     /** Manual lifecycle activity updates the same durable deadline as Vivid's actions. */
     const start = Effect.fn('ComputerStore.startActive')(function* (person: PersonId) {
@@ -1267,12 +1295,7 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
-      findFields: (person, labels) =>
-        execute(person, (key) => state.machine.findFields({ key, labels })),
-      fillFields: (person, page, entries) =>
-        personal(person, (key) => state.machine.fillFields({ key, page, entries })),
-      clearFields: (person, page, labels) =>
-        personal(person, (key) => state.machine.clearFields({ key, page, labels })),
+      ...handoffFields(state, execute),
       ...ownMachine(state.machine, execute),
     })
   }),
