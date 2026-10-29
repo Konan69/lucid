@@ -48,6 +48,7 @@ function normaliseReply(text) {
 
 const missing = {
   code: 'No disposable Person Computer authority',
+  handoff: 'No proof-owned Computer',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
 }

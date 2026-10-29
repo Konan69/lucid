@@ -25,6 +25,7 @@ export const features = [
   'tool',
   'replies',
   'question',
+  'handoff',
   'approve',
   'deny',
   'changed',
@@ -412,6 +413,7 @@ const recipes = {
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
+  handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
