@@ -259,10 +259,12 @@ layer(testLayer)((it) => {
           yield* reserve({ id, personId, threadId, origin: StoredRunOrigin.cases.Message.make({}) })
           yield* store.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(3) })
           const responseId = RunId.make(`response_${personId}_3`)
-          const outcome = Effect.map(store.list(threadId), (listed) => listed[0]?.outcome)
-          expect(yield* outcome).toEqual(
-            RunOutcome.cases.Accepted.make({ acceptedAt: 0, submissionId: '3' }),
+          const outcome = Effect.map(store.list(threadId), (listed) =>
+            listed.map((run) => run.outcome),
           )
+          expect(yield* outcome).toEqual([
+            RunOutcome.cases.Accepted.make({ acceptedAt: 0, submissionId: '3' }),
+          ])
           // A working Run has no final response yet.
           const early = yield* store
             .acknowledge({ runId: id, responseId, personId })
@@ -270,7 +272,7 @@ layer(testLayer)((it) => {
           expect(early._tag).toBe('NotFound')
           yield* store.end(id, RunEnding.cases.Completed.make({ responseId }))
           const completed = RunOutcome.cases.Completed.make({ completedAt: 0, responseId })
-          expect(yield* outcome).toEqual(completed)
+          expect(yield* outcome).toEqual([completed])
           const outsider = yield* store
             .acknowledge({ runId: id, responseId, personId: stranger.personId })
             .pipe(Effect.flip)
@@ -279,7 +281,7 @@ layer(testLayer)((it) => {
             .acknowledge({ runId: id, responseId: RunId.make('response_other'), personId })
             .pipe(Effect.flip)
           expect(otherResponse._tag).toBe('NotFound')
-          expect(yield* outcome).toEqual(completed)
+          expect(yield* outcome).toEqual([completed])
           expect(yield* store.acknowledge({ runId: id, responseId, personId })).toEqual(
             Option.some(threadId),
           )
@@ -292,11 +294,11 @@ layer(testLayer)((it) => {
               responseId,
             }),
           })
-          expect(yield* outcome).toEqual(delivered)
+          expect(yield* outcome).toEqual([delivered])
           expect(yield* store.acknowledge({ runId: id, responseId, personId })).toEqual(
             Option.none(),
           )
-          expect(yield* outcome).toEqual(delivered)
+          expect(yield* outcome).toEqual([delivered])
         }).pipe(Effect.scoped),
     )
   })

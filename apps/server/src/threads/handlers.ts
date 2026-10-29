@@ -158,7 +158,11 @@ export const threadHandlers = {
   ) {
     const auth = yield* requirePerson()
     const runs = yield* RunStore
-    const acknowledged = yield* runs.acknowledge({ ...request, personId: auth.person.id })
+    const acknowledged = yield* runs.acknowledge({
+      runId: request.runId,
+      responseId: request.responseId,
+      personId: auth.person.id,
+    })
     if (Option.isNone(acknowledged)) return
     const thread = yield* requireThread(acknowledged.value, auth.person.id)
     const participants = yield* (yield* ThreadStore).participants(thread.id)

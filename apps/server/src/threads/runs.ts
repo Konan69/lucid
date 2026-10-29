@@ -301,36 +301,47 @@ const outcomeOf = ({
     acceptedAt: row.admittedAt,
     submissionId: submissionId.value,
   })
-  if (RunState.guards.Working(state)) return Option.some(accepted)
-  if (RunState.guards.Unknown(state))
-    return Option.some(
-      RunOutcome.cases.Unknown.make({
-        observedAt: state.finishedAt,
-        uncertainty: RunUncertainty.cases.Execution.make({}),
-      }),
-    )
-  if (Option.isSome(unresolved))
-    return Option.some(
-      RunOutcome.cases.Unknown.make({
-        observedAt: unresolved.value.observedAt,
-        uncertainty: RunUncertainty.cases.Action.make({
-          operationId: unresolved.value.operationId,
-        }),
-      }),
-    )
-  if (!RunState.guards.Completed(state) || row.responseId === null) return Option.some(accepted)
-  const completed = { completedAt: state.finishedAt, responseId: row.responseId }
-  if (row.deliveredAt === null) return Option.some(RunOutcome.cases.Completed.make(completed))
-  return Option.some(
-    RunOutcome.cases.Delivered.make({
-      ...completed,
-      receipt: RunDeliveryReceipt.cases.Thread.make({
-        person,
-        acknowledgedAt: row.deliveredAt,
-        responseId: row.responseId,
-      }),
+  const actionUnknown = Option.map(unresolved, ({ operationId, observedAt }) =>
+    RunOutcome.cases.Unknown.make({
+      observedAt,
+      uncertainty: RunUncertainty.cases.Action.make({ operationId }),
     }),
   )
+  return Option.some(
+    RunState.match(state, {
+      Working: (): RunOutcome => accepted,
+      Unknown: ({ finishedAt }): RunOutcome =>
+        RunOutcome.cases.Unknown.make({
+          observedAt: finishedAt,
+          uncertainty: RunUncertainty.cases.Execution.make({}),
+        }),
+      Failed: (): RunOutcome => Option.getOrElse(actionUnknown, () => accepted),
+      Stopped: (): RunOutcome => Option.getOrElse(actionUnknown, () => accepted),
+      Completed: ({ finishedAt }): RunOutcome =>
+        Option.getOrElse(actionUnknown, () => answered(row, accepted, finishedAt, person)),
+    }),
+  )
+}
+
+/** A completed Run's answer: delivered once its Person acknowledged it, else only completed. */
+const answered = (
+  row: typeof runs.$inferSelect,
+  accepted: RunOutcome,
+  completedAt: number,
+  person: PersonSummary,
+): RunOutcome => {
+  // Runs completed before the answering response was kept cannot name it, so stay accepted.
+  if (row.responseId === null) return accepted
+  const completed = { completedAt, responseId: row.responseId }
+  if (row.deliveredAt === null) return RunOutcome.cases.Completed.make(completed)
+  return RunOutcome.cases.Delivered.make({
+    ...completed,
+    receipt: RunDeliveryReceipt.cases.Thread.make({
+      person,
+      acknowledgedAt: row.deliveredAt,
+      responseId: row.responseId,
+    }),
+  })
 }
 
 const toRun = Effect.fn('RunStore.toRun')(function* (

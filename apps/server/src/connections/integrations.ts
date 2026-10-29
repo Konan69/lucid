@@ -461,13 +461,12 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
   },
   (effect) =>
     effect.pipe(
-      Effect.catchTag('ServiceUnavailable', () =>
-        Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
-      ),
-      // The test call is a read and reads are never journaled, so this refusal cannot be met here;
-      // it is still answered as a call that did not run rather than left to the caller.
-      Effect.catchTag('ActionReconciliationRequired', () =>
-        Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
-      ),
+      Effect.catchTags({
+        ServiceUnavailable: () => Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+        // The test call is a read and reads are never journaled, so this refusal cannot be met
+        // here; it is still answered as a call that did not run rather than left to the caller.
+        ActionReconciliationRequired: () =>
+          Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+      }),
     ),
 )
