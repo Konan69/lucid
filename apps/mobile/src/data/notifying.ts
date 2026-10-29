@@ -3,6 +3,7 @@ import { PushDestination, PushPayload, type NotificationOpens } from '@vivid/con
 import { notifying, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
 import { PermissionStatus } from 'expo'
+import Constants from 'expo-constants'
 import { randomUUID } from 'expo-crypto'
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
@@ -18,9 +19,10 @@ import { keep, recall } from './storage'
  * turning notifications off, so the phone keeps the Person's choice itself (`CHOICE`): a launch
  * registers the token again only when they have not turned notifications off here.
  *
- * The token comes from Expo's push service and needs the app's Expo project and, on Android, the
- * Firebase credentials it was built with; a build without them cannot be given one, and the
- * machine says `Unavailable`.
+ * The token comes from Expo's push service for the app's Expo project (`PROJECT`) and, on
+ * Android, the Firebase credentials it was built with. A build that names no project cannot be
+ * given one, and the machine reads `Unsupported`; one whose credentials are missing says
+ * `Unavailable` when the token is asked for.
  */
 
 /** Where the Person's choice for this phone is kept: `off` once they turned notifications off. */
@@ -31,22 +33,41 @@ const CHANNEL = 'default'
 
 const unavailable = () => new notifying.DeviceRefused({ reason: 'Unavailable' })
 
+/**
+ * The Expo project this build was made for, as Expo itself reads it when asked for a token
+ * without one (`extra.eas.projectId`, `expo-notifications` `getExpoPushTokenAsync.ts`). Expo
+ * refuses a token without a project, so none means this build cannot be notified while closed:
+ * a build made before the project existed, or the browser preview, which has no push service.
+ * The id is never made up here; a build is given it in its config (`app.config.ts`).
+ */
+const Project = Schema.Struct({
+  extra: Schema.Struct({ eas: Schema.Struct({ projectId: Schema.NonEmptyString }) }),
+})
+const PROJECT =
+  Platform.OS === 'web'
+    ? Option.none<string>()
+    : Option.map(
+        Schema.decodeUnknownOption(Project)(Constants.expoConfig),
+        (config) => config.extra.eas.projectId,
+      )
+
 const decodeToken = Schema.decodeUnknownEffect(
   PushDestination.cases.Phone.mapFields(Struct.pick(['token'])),
 )
 
 /** This phone's token, as the address the server takes. Expo's answer is its ingress. */
-const token = Effect.tryPromise({
-  try: () => Notifications.getExpoPushTokenAsync(),
-  catch: unavailable,
-}).pipe(
-  Effect.flatMap(({ data }) =>
-    decodeToken({ token: data }).pipe(
-      Effect.map((fields) => PushDestination.cases.Phone.make(fields)),
-      Effect.mapError(unavailable),
+const tokenFor = (projectId: string) =>
+  Effect.tryPromise({
+    try: () => Notifications.getExpoPushTokenAsync({ projectId }),
+    catch: unavailable,
+  }).pipe(
+    Effect.flatMap(({ data }) =>
+      decodeToken({ token: data }).pipe(
+        Effect.map((fields) => PushDestination.cases.Phone.make(fields)),
+        Effect.mapError(unavailable),
+      ),
     ),
-  ),
-)
+  )
 
 const permissions = Effect.tryPromise({
   try: () => Notifications.getPermissionsAsync(),
@@ -64,8 +85,8 @@ const choose = (choice: 'on' | 'off') => keep(CHOICE, choice).pipe(Effect.mapErr
 
 const phone = notifying.Device.of({
   read: Effect.gen(function* () {
-    // The browser preview has no push service of its own.
-    if (Platform.OS === 'web') return notifying.Holding.cases.Unsupported.make({})
+    if (Option.isNone(PROJECT)) return notifying.Holding.cases.Unsupported.make({})
+    const projectId = PROJECT.value
     const { status } = yield* permissions
     switch (status) {
       case PermissionStatus.DENIED:
@@ -74,11 +95,12 @@ const phone = notifying.Device.of({
         return notifying.Holding.cases.Unasked.make({})
       case PermissionStatus.GRANTED:
         if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
-        return notifying.Holding.cases.Held.make({ destination: yield* token })
+        return notifying.Holding.cases.Held.make({ destination: yield* tokenFor(projectId) })
     }
   }),
   open: Effect.gen(function* () {
-    if (Platform.OS === 'web') return yield* unavailable()
+    if (Option.isNone(PROJECT)) return yield* unavailable()
+    const projectId = PROJECT.value
     if (Platform.OS === 'android') {
       yield* Effect.tryPromise({
         try: () =>
@@ -99,7 +121,7 @@ const phone = notifying.Device.of({
       case PermissionStatus.UNDETERMINED:
         return yield* new notifying.DeviceRefused({ reason: 'Dismissed' })
       case PermissionStatus.GRANTED: {
-        const destination = yield* token
+        const destination = yield* tokenFor(projectId)
         yield* choose('on')
         return destination
       }

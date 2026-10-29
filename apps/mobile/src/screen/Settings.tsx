@@ -462,7 +462,7 @@ const HERE = 'On this phone, even when Vivid is closed.'
 const awayDetail = (reading: notifying.Reading): string =>
   notifying.Reading.match(reading, {
     Starting: () => HERE,
-    Unsupported: () => 'This phone cannot be notified while Vivid is closed.',
+    Unsupported: () => 'Notifications while Vivid is closed are not available on this build.',
     Blocked: () => 'Notifications are off for Vivid in this phone’s settings. Open them to allow.',
     Off: () => HERE,
     TurningOn: () => HERE,
