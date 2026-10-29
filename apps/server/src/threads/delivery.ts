@@ -60,10 +60,10 @@ const previewOf = (message: DeliveryMessage) =>
 /** The runtime's classified failure stays attached through the single conditional settlement write. */
 const endingOf = (settlement: Settlement): RunEnding =>
   Settlement.match(settlement, {
-    Completed: (): RunEnding => RunEnding.cases.Completed.make({}),
-    Failed: ({ reason }) => RunEnding.cases.Failed.make({ reason }),
-    Stopped: () => RunEnding.cases.Stopped.make({}),
-    Unknown: () => RunEnding.cases.Unknown.make({}),
+    Completed: ({ responseId }): RunEnding => RunEnding.cases.Completed.make({ responseId }),
+    Failed: ({ reason }): RunEnding => RunEnding.cases.Failed.make({ reason }),
+    Stopped: (): RunEnding => RunEnding.cases.Stopped.make({}),
+    Unknown: (): RunEnding => RunEnding.cases.Unknown.make({}),
   })
 
 /** A Run being watched to its end, and the Person it acts for. */

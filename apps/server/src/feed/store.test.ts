@@ -497,7 +497,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           Exit.succeed(undefined),
         )
         yield* TestClock.setTime(now)
-        expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(true)
+        expect(yield* store.end(id, RunEnding.cases.Completed.make({ responseId: id }))).toBe(true)
         expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
           Exit.succeed(undefined),
         )
@@ -511,7 +511,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           }),
         ])
         expect(yield* items(test.ben)).toEqual([])
-        expect(yield* store.end(id, RunEnding.cases.Completed.make({}))).toBe(false)
+        expect(yield* store.end(id, RunEnding.cases.Completed.make({ responseId: id }))).toBe(false)
         yield* silent(notifications)
       }).pipe(Effect.scoped),
     )
