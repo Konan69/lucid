@@ -44,16 +44,29 @@ function drawn(program) {
   return tables(evaluateRoot(result, { ctx, library: { components: {} }, store }))
 }
 
-/** Cells must be strings or numbers after evaluation; a component cell is not one of these rows. */
+/**
+ * The words a Person reads in one evaluated cell. The shipped Table schema says "a cell may be a
+ * component", and the model draws an owner as `Badge("Ada", "info")` (29 October 2026), so an
+ * element cell reads as its `text` prop (Text, Caption, Label, Badge, Link, Title in `parts.json`)
+ * or the words of its `children` (Row, Box). Styling props such as `color` are not words. A cell
+ * that draws no words, such as an Icon alone, reads as empty and fails the exact row match.
+ */
+function words(cell) {
+  if (cell === String(cell) || Number.isFinite(cell)) return String(cell)
+  if (Array.isArray(cell)) return cell.map(words).join('')
+  NodeAssert.ok(
+    cell instanceof Object && cell.type === 'element',
+    'Table cell must be text, a number or a component',
+  )
+  return ['text', 'children']
+    .map((key) => (key in cell.props ? words(cell.props[key]) : ''))
+    .join('')
+}
+
+/** Every row must be an array; each cell is compared by the words it draws. */
 function cells(row) {
   NodeAssert.ok(Array.isArray(row), 'Table columns and rows must be arrays')
-  return row.map((cell) => {
-    NodeAssert.ok(
-      cell === String(cell) || Number.isFinite(cell),
-      'Table cell must be text or a number',
-    )
-    return String(cell)
-  })
+  return row.map(words)
 }
 
 /** Only assistant fences supply candidate programs; the Person's requested data cannot pass. */
