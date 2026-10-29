@@ -174,6 +174,15 @@ import {
   ReadNotificationsRequest,
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import {
+  Owed,
+  OwedListResponse,
+  TrackOwedRequest,
+  UpdateOwedRequest,
+  NudgedOwedRequest,
+  ResolveOwedRequest,
+  DropOwedRequest,
+} from './owed.js'
 import { ComputerInventory } from './applications.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
@@ -615,6 +624,15 @@ const CreateProject = Rpc.make('CreateProject', {
   success: Project,
 })
 
+// ── Waiting on ────────────────────────────────────────────────────────────
+const ListOwed = Rpc.make('ListOwed', { ...call, success: OwedListResponse })
+const WatchOwed = Rpc.make('WatchOwed', { ...live, success: OwedListResponse })
+const TrackOwed = Rpc.make('TrackOwed', { ...call, payload: TrackOwedRequest, success: Owed })
+const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest, success: Owed })
+const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
+const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
+const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
+
 // ── Library (metadata; bytes travel over plain HTTP) ───────────────────────
 const ListLibrary = Rpc.make('ListLibrary', {
   ...call,
@@ -1038,6 +1056,13 @@ export const VividRpc = RpcGroup.make(
   ListProjects,
   WatchProjects,
   CreateProject,
+  ListOwed,
+  WatchOwed,
+  TrackOwed,
+  UpdateOwed,
+  NudgedOwed,
+  ResolveOwed,
+  DropOwed,
   ListLibrary,
   WatchLibrary,
   GetLibraryItem,

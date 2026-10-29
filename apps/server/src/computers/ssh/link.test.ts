@@ -160,7 +160,11 @@ it.live.skipIf(!peerAvailable)('ends a command and its children at the deadline'
       .run({
         command: heldCommand,
         directory: server.home,
-        timeoutSeconds: 3,
+        // The deadline is what this test proves and it runs on the machine, so it is real wall
+        // time inside the runner's 5 s default. 1 s is the contract's minimum (`computers.ts`):
+        // the child is up in well under that (the interrupt test below takes about 0.6 s in
+        // all), and the rest of the 5 s goes to starting sshd and the handshake under load.
+        timeoutSeconds: 1,
       })
       .pipe(Effect.forkScoped)
     // The child exists and the lifetime pipe is open before waiting for its deadline.

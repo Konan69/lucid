@@ -109,7 +109,7 @@ const PLEASED_FOR_MS = 3500
 export const usePleased = create(() => ({ pleased: false }))
 let pleasedUntil: Option.Option<ReturnType<typeof setTimeout>> = Option.none()
 
-const please = () => {
+export const please = () => {
   Option.map(pleasedUntil, clearTimeout)
   pleasedUntil = Option.some(
     setTimeout(() => {

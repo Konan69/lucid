@@ -120,8 +120,8 @@ describe('the runtime over HTTP', () => {
         expect(model.prompt).toContain(' in the UTC time zone.')
         expect(model.prompt).toContain('- **deep-research** — ')
         expect(model.prompt).not.toContain(ada)
-        // Main's order: the Computer's tools, the skill tool, then the product tools.
-        expect(model.tools.slice(0, 12)).toEqual([
+        // Main's order: the Computer's tools, the skill tools, then the product tools.
+        expect(model.tools.slice(0, 13)).toEqual([
           'read',
           'write',
           'edit',
@@ -133,6 +133,7 @@ describe('the runtime over HTTP', () => {
           'use_person_computer',
           'copy_signin',
           'activate_skill',
+          'read_skill_file',
           'search_library',
         ])
         // The response's metadata is one entry of our own after the answer.

@@ -14,6 +14,7 @@ import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { actingRun } from '../threads/runs.ts'
+import { requireThread } from '../threads/access.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -80,12 +81,13 @@ export interface GateService {
    * The working model never decides this. A `read` passes. A `write` or `destructive` action is
    * weighed against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a
    * Company's rules are binding on every Member, and a Person's own rules can only make things
-   * stricter. With no rule, the default is to run, and that includes a write on the Person's
+   * stricter. For watched work with no rule, the default is to run, including a write on the Person's
    * own browser (owner decision, 4 October 2026; see the ask group below): only an action that uses something of the
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
    * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
+   * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
    */
   readonly check: (
     actor: Actor,
@@ -135,7 +137,7 @@ import { RuleStore } from '../rules/store.ts'
 import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
-import { reviewOutcome } from './policy.ts'
+import { reviewOutcome, unwatchedOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
 
 /** Whether the action is on the Person's own computer: only that Person may decide an Approval for it. */
@@ -195,12 +197,28 @@ export const gateLayer = Layer.effect(
     const audit = yield* Audit
     const reviewer = yield* Reviewer
     const database = yield* Database
+    /** Background Threads need containment even after expiry or without an admitted Run. */
+    const checkUnwatched = Effect.fn('Gate.checkUnwatched')(function* (
+      actor: Actor,
+      action: ProposedAction,
+      origin: ActionOrigin,
+    ) {
+      if (action.effect === 'read') return Option.none()
+      const thread = yield* requireThread(origin.threadId, actor.person.id).pipe(
+        Effect.provideService(Database, database),
+      )
+      if (thread.place !== 'Background') return Option.none()
+      const review = yield* reviewer.review(actor, action)
+      if (unwatchedOutcome(action.effect, review) === 'Ask')
+        return Option.some<GateDecision>(yield* ask(approvals, actor, action))
+      return Option.some<GateDecision>(yield* allow(audit, actor, action))
+    })
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
         // All callers previously resolved origin before Gate.check. Keep that authority check
         // here when removing the duplicated proposal field, including actions allowed immediately.
-        yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
+        const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
         if (action.effect === 'read' && exposure === 'Ordinary')
           return yield* allow(audit, actor, action)
         const binding = yield* rules.list(actor)
@@ -238,6 +256,9 @@ export const gateLayer = Layer.effect(
           exposure === 'PersonalInShared'
         )
           return yield* ask(approvals, actor, action)
+        // A standing Allow and a high "asked" score never authorize outward background work.
+        const background = yield* checkUnwatched(actor, action, origin)
+        if (Option.isSome(background)) return background.value
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
         // to let "Allow updating projects" authorize deleting one, so that goes to the review.

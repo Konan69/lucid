@@ -12,6 +12,7 @@ import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
 import { feed } from './feed.mjs'
+import { owed } from './owed.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -32,6 +33,7 @@ export const features = [
   'watch',
   'library',
   'feed',
+  'owed',
   'devices',
   'reading',
   'settings',
@@ -397,6 +399,7 @@ const recipes = {
   devices,
   feed,
   memory,
+  owed,
   watch,
   reading,
   settings: settingsProof,
@@ -421,6 +424,7 @@ export async function drive(state, feature) {
           deny: 'Denial requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          owed: 'Tracking requires a real model; rehearsal cannot prove it.',
         }
   let failed = false
   for (const name of chosen) {

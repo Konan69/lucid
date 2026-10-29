@@ -96,7 +96,7 @@ it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC ca
           Layer.effect(
             Scope,
             Effect.gen(function* () {
-              return Scope.of({ acting, client: yield* VividRpcClient })
+              return Scope.of({ acting, client: yield* VividRpcClient, timezone: '' })
             }),
           ).pipe(Layer.provide(product.as(acting))),
         () => Effect.die('Unexpected memory authority'),
