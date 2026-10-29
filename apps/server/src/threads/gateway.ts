@@ -169,6 +169,12 @@ const declaresTooMuch = (headers: Headers.Headers) =>
     (length) => /^\d+$/u.test(length) && BigInt(length) > MESSAGE_LIMIT,
   )
 
+/** What one accepted send delivers, and the fingerprint its Run reservation keeps. */
+interface Delivery {
+  readonly message: DeliveryMessage
+  readonly fingerprint: string
+}
+
 /**
  * What one accepted send delivers: the Person's words and pictures, or a card's carry-on as a
  * signal. None for words and pictures that are both empty, which must reserve no Run.
@@ -178,13 +184,17 @@ const deliveryOf = Effect.fn('Gateway.delivery')(function* (
   thread: StoredThread,
 ) {
   if (sent.kind === 'signal')
-    return Option.some({
-      message: DeliveryMessage.cases.Signal.make({ type: sent.type, body: sent.body, attributes: {} }),
+    return Option.some<Delivery>({
+      message: DeliveryMessage.cases.Signal.make({
+        type: sent.type,
+        body: sent.body,
+        attributes: {},
+      }),
       fingerprint: messageFingerprint(sent.body, []),
     })
   const attachments = yield* messagePictures(sent, thread)
-  if (sent.body.length === 0 && attachments.length === 0) return Option.none()
-  return Option.some({
+  if (sent.body.length === 0 && attachments.length === 0) return Option.none<Delivery>()
+  return Option.some<Delivery>({
     message: DeliveryMessage.cases.Said.make({ body: sent.body, attachments }),
     fingerprint: messageFingerprint(sent.body, attachments),
   })

@@ -707,11 +707,7 @@ function FromVivid({
               />
             ) : (
               <div key={`work-${segment.from}`} className={making ? ARRIVING : 'contents'}>
-                <ToolCards
-                  tools={segment.tools}
-                  context={context}
-                  live={latest && !working}
-                />
+                <ToolCards tools={segment.tools} context={context} live={latest && !working} />
               </div>
             ),
           )}
