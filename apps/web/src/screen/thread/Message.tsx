@@ -24,7 +24,7 @@ import {
   thisReader,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
-import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
+import { AlarmClock, Check, Copy as CopyIcon, Eye } from 'lucide-react'
 import { memo, useState } from 'react'
 import { carryOn } from '../../data/threads'
 import { Display } from '../../parts/Display'
@@ -341,7 +341,9 @@ const SIGNAL_LINE = {
 /**
  * Something the server or the runtime put in front of Vivid, drawn by where it came from
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
- * Thread is drawn as their bubble. A follow-up is a quiet line. An answer that was
+ * Thread is drawn as their bubble. A follow-up is a quiet line. The event a Watch woke Vivid with
+ * is a quiet line and the event itself, whole, so a Person who opens a Feed card's Thread reads
+ * what Vivid saw; it scrolls inside its panel when long. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
  * Approval's outcome is told under its own words (`AskedFirst`) and an answer by its own row
  * (`Replied`), and what the runtime says to itself and the model (its instructions were
@@ -378,6 +380,20 @@ function Signal({ message, context }: { message: ConversationMessage; context: T
         </div>
       )
     },
+    Saw: ({ name }) => (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
+          <Eye className="size-3.5" />
+          <span>
+            What Vivid saw
+            {Option.isSome(name) && ` · ${name.value}`}
+          </span>
+        </div>
+        <pre className="max-h-80 overflow-auto rounded-panel bg-surface-2 px-4 py-3 font-mono text-label wrap-break-word whitespace-pre-wrap text-ink-2">
+          {textOf(message)}
+        </pre>
+      </div>
+    ),
     // `Message` sends only `system` messages here, which are never a turn or a reply.
     Person: () => null,
     Vivid: () => null,
