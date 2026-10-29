@@ -176,10 +176,16 @@ export const loadContext = Effect.fn('Context.load')(function* (
   )
 })
 
-/** Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable. */
+/**
+ * Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable.
+ * Saved procedures are listed under the name the system prompt reads them by ("Saved procedures
+ * appear by runtime name in response context: read those with read_skill", `agents/vivid.ts`).
+ * Listed as `skills`, a model took a procedure a Person had taught it for a built-in skill and
+ * called activate_skill instead (verify runs, 29 October 2026).
+ */
 export function contextInstruction(context: VividContext) {
   const output = boundOutput({
-    skills: views.skills(context.skills),
+    savedProcedures: views.skills(context.skills),
     timezone: context.timezone,
     apps: context.apps.map(views.modelText),
     integrations: context.integrations.map(views.modelText),
