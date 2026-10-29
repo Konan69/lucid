@@ -1,10 +1,21 @@
 import { and, count, desc, eq, inArray, isNull, max } from 'drizzle-orm'
+import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import {
   NotFound,
   Project,
+  ProjectAuthor,
+  ProjectChange,
+  ProjectChanged,
+  ProjectNotActive,
+  ProjectProof,
+  ProjectRevision,
+  type ProjectProgress,
+  ProjectWork,
   Workspace,
   type CreateProjectRequest,
   type ProjectId,
@@ -13,6 +24,7 @@ import { companyColumnOf, type Actor } from '../auth/access.ts'
 import {
   Database,
   decodeStored,
+  encodeStored,
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
@@ -25,6 +37,77 @@ type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>
 type ProjectStoreError = DatabaseInfrastructureError | NotFound
 
 const decodeProject = decodeStored(Project, 'Project')
+const decodeWorkRow = decodeStored(
+  Schema.Struct({ work: ProjectWork, revision: ProjectRevision }),
+  'Project work',
+)
+const encodeWork = encodeStored(ProjectWork, 'Project work')
+
+/**
+ * A `ProjectChange` as the store applies it: completion carries the proof the handler resolved
+ * from the Run's messages (`handlers.ts`), so the store never reads a conversation.
+ */
+export const WorkChange = Schema.TaggedUnion({
+  Define: ProjectChange.cases.Define.fields,
+  Progress: ProjectChange.cases.Progress.fields,
+  Complete: { proof: ProjectProof },
+})
+export type WorkChange = typeof WorkChange.Type
+
+/** Every change keeps the dated log; only Define may start from a Project that has no objective. */
+const progressOf = (work: ProjectWork): ReadonlyArray<ProjectProgress> =>
+  ProjectWork.match(work, {
+    Unspecified: () => [],
+    Active: ({ progress }) => progress,
+    Completed: ({ progress }) => progress,
+  })
+
+/** The author is who is calling: the Person, or Vivid in the Thread its Run belongs to. */
+const authorOf = (actor: Actor): ProjectAuthor =>
+  Option.match(actor.threadId, {
+    onNone: () => ProjectAuthor.cases.Person.make({ personId: actor.person.id }),
+    onSome: (threadId) => ProjectAuthor.cases.Vivid.make({ personId: actor.person.id, threadId }),
+  })
+
+/**
+ * The next work for one change at `at`. Define (re)starts the objective; Progress and Complete
+ * move an Active Project only, because a line of progress or a proof with no objective to measure
+ * it against says nothing.
+ */
+const advance = (
+  id: ProjectId,
+  work: ProjectWork,
+  change: WorkChange,
+  at: number,
+  by: ProjectAuthor,
+) =>
+  WorkChange.match<Effect.Effect<ProjectWork, ProjectNotActive>>(change, {
+    Define: ({ objective, nextStep }) =>
+      Effect.succeed(
+        ProjectWork.cases.Active.make({ objective, nextStep, progress: progressOf(work) }),
+      ),
+    Progress: ({ text, nextStep }) =>
+      ProjectWork.guards.Active(work)
+        ? Effect.succeed(
+            ProjectWork.cases.Active.make({
+              objective: work.objective,
+              progress: [...work.progress, { at, text, by }],
+              nextStep,
+            }),
+          )
+        : Effect.fail(new ProjectNotActive({ id })),
+    Complete: ({ proof }) =>
+      ProjectWork.guards.Active(work)
+        ? Effect.succeed(
+            ProjectWork.cases.Completed.make({
+              objective: work.objective,
+              progress: work.progress,
+              completedAt: at,
+              proof,
+            }),
+          )
+        : Effect.fail(new ProjectNotActive({ id })),
+  })
 
 export interface ProjectStoreService {
   /** Every Project in the Actor's workspace, newest first, with how much is filed in each. */
@@ -35,6 +118,13 @@ export interface ProjectStoreService {
     actor: Actor,
     request: CreateProjectRequest,
   ) => Effect.Effect<Project, ProjectStoreError>
+  /** One change to a visible Project's work, refused when it moved past `expected`. */
+  readonly update: (
+    actor: Actor,
+    id: ProjectId,
+    expected: ProjectRevision,
+    change: WorkChange,
+  ) => Effect.Effect<Project, ProjectStoreError | ProjectChanged | ProjectNotActive>
 }
 
 export class ProjectStore extends Context.Service<ProjectStore, ProjectStoreService>()(
@@ -88,7 +178,8 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
     )
     return yield* Effect.forEach(rows, (row) => {
       const inside = filed.get(row.id)
-      const created = row.createdAt.getTime()
+      const worked = row.workedAt === null ? row.createdAt.getTime() : row.workedAt.getTime()
+      const moved = inside === undefined || inside.movedAt === null ? worked : inside.movedAt
       return decodeProject({
         id: row.id,
         companyId: row.companyId,
@@ -96,7 +187,9 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
         parentProjectId: row.parentProjectId,
         createdBy: row.createdBy,
         threadCount: inside === undefined ? 0 : inside.threads,
-        updatedAt: inside === undefined || inside.movedAt === null ? created : inside.movedAt,
+        updatedAt: Math.max(worked, moved),
+        work: row.work,
+        revision: row.revision,
       })
     })
   })
@@ -161,7 +254,45 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
     return yield* database.transaction((tx) => writeProject(tx, actor, request))
   })
 
-  return ProjectStore.of({ list, create })
+  /**
+   * Lock the row, compare the revision, apply the change and announce, in one commit: two writers
+   * that read the same revision cannot both land, and the loser is told the revision there is.
+   */
+  const update = Effect.fn('ProjectStore.update')(function* (
+    actor: Actor,
+    id: ProjectId,
+    expected: ProjectRevision,
+    change: WorkChange,
+  ) {
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const condition = and(eq(projectTable.id, id), inWorkspace(actor))
+        const rows = yield* tx.select().from(projectTable).where(condition).for('update')
+        const row = rows[0]
+        if (row === undefined) return yield* new NotFound({ message: 'Project not found' })
+        const before = yield* decodeWorkRow(row)
+        if (before.revision !== expected)
+          return yield* new ProjectChanged({ id, expected, actual: before.revision })
+        const at = yield* Clock.currentTimeMillis
+        const work = yield* advance(id, before.work, change, at, authorOf(actor))
+        const updated = yield* tx
+          .update(projectTable)
+          .set({
+            work: yield* encodeWork(work),
+            revision: before.revision + 1,
+            workedAt: new Date(at),
+          })
+          .where(condition)
+          .returning()
+        const projects = yield* toProjects([yield* returned(updated, 'Project')])
+        const project = yield* returned(projects, 'Project')
+        yield* announce(tx, projectTopics(project))
+        return project
+      }),
+    )
+  })
+
+  return ProjectStore.of({ list, create, update })
 })
 
 export const projectStoreLayer = Layer.effect(ProjectStore, makeProjectStore())
