@@ -15,7 +15,6 @@ import {
   Exit,
   Fiber,
   Layer,
-  Option,
   Predicate,
   PubSub,
   Queue,
@@ -320,11 +319,13 @@ layer(foundation)((it) => {
   })
 })
 
+const decodeCarryOn = Schema.decodeEffect(CarryOnRequest)
+
 /** The real authenticated relay preserves a card's signal while admission captures its delivery. */
 const send = Effect.fn('GatewayTest.send')(function* (test: Fixture, body: string) {
   const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
   const admitted = yield* Queue.unbounded<Delivery>()
-  const request = yield* Schema.decodeEffect(CarryOnRequest)({
+  const request = yield* decodeCarryOn({
     threadId: test.threadId,
     body,
     key: NodeCrypto.randomUUID(),

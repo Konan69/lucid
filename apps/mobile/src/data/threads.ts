@@ -7,7 +7,7 @@ import { draft } from './drafts'
 import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
-import { start } from './app'
+import * as App from './app'
 
 /**
  * Starting, speaking in and changing Threads.
