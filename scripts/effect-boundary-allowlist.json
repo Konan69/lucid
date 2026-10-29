@@ -112,7 +112,8 @@
       "#open",
       "#remote",
       "#arm",
-      "alarm"
+      "alarm",
+      "settled"
     ]
   },
   {
