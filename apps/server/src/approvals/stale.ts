@@ -103,7 +103,7 @@ export const usingConnection = (id: ConnectionId) =>
 
 /** Approvals whose action carries the text of this Thread document. */
 export const sendingDocument = (id: ArtifactId) =>
-  sql`${approvals.binding}->'preconditions' @> ${JSON.stringify([{ _tag: 'ArtifactVersion', artifactId: id }])}::jsonb`
+  sql`${approvals.binding}->'preconditions' @> jsonb_build_array(jsonb_build_object('_tag', 'ArtifactVersion', 'artifactId', ${id}::text))`
 
 /** Approvals raised by this Run. */
 export const askedBy = (id: RunId) => eq(approvals.runId, id)

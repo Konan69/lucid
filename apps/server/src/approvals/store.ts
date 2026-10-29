@@ -5,6 +5,7 @@ import { and, asc, eq, gt, lt, lte, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -348,12 +349,10 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       .from(connections)
       .where(eq(connections.id, connectionId))
       .for('share')
-    if (current?.generation !== row.binding.connectionGeneration)
+    const generation = current === undefined ? null : current.generation
+    if (generation !== row.binding.connectionGeneration)
       return Option.some(
-        ApprovalInvalidation.cases.ConnectionChanged.make({
-          connectionId,
-          generation: current === undefined ? null : current.generation,
-        }),
+        ApprovalInvalidation.cases.ConnectionChanged.make({ connectionId, generation }),
       )
   }
   for (const precondition of row.binding.preconditions) {
@@ -362,11 +361,12 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       .from(artifacts)
       .where(eq(artifacts.id, precondition.artifactId))
       .for('share')
-    if (current?.version !== precondition.version)
+    const version = current === undefined ? null : current.version
+    if (version !== precondition.version)
       return Option.some(
         ApprovalInvalidation.cases.ContentChanged.make({
           artifactId: precondition.artifactId,
-          version: current === undefined ? null : current.version,
+          version,
         }),
       )
   }
@@ -378,10 +378,12 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
  * had changed, so it is invalidated (now, or already by the write that changed it); or another
  * decision got there first.
  */
-type ClaimEnd =
-  | { readonly _tag: 'Claimed'; readonly row: typeof approvals.$inferSelect }
-  | { readonly _tag: 'Changed' }
-  | { readonly _tag: 'Taken' }
+type ClaimEnd = Data.TaggedEnum<{
+  Claimed: { readonly row: typeof approvals.$inferSelect }
+  Changed: {}
+  Taken: {}
+}>
+const ClaimEnd = Data.taggedEnum<ClaimEnd>()
 
 /** The move out of pending, when the binding still holds. One conditional UPDATE: one winner. */
 const move = Effect.fn('Approvals.move')(function* (
@@ -416,13 +418,13 @@ const move = Effect.fn('Approvals.move')(function* (
   const claimed = written[0]
   if (claimed !== undefined) {
     yield* announceFeed(tx, [row.threadId])
-    return { _tag: 'Claimed', row: claimed } satisfies ClaimEnd
+    return ClaimEnd.Claimed({ row: claimed })
   }
   // A change that closed it since it was read is a changed Approval, not a decision that won.
   const [current] = yield* tx.select({ status: approvals.status }).from(approvals).where(scope)
-  return (
-    current?.status === 'invalidated' ? { _tag: 'Changed' } : { _tag: 'Taken' }
-  ) satisfies ClaimEnd
+  return current !== undefined && current.status === 'invalidated'
+    ? ClaimEnd.Changed()
+    : ClaimEnd.Taken()
 })
 
 /**
@@ -456,15 +458,16 @@ const claim = Effect.fn('Approvals.claim')(function* (
       const changedBy = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
       yield* invalidatePending(tx, scope, changedBy.value)
-      return { _tag: 'Changed' } satisfies ClaimEnd
+      return ClaimEnd.Changed()
     }),
   )
-  if (end._tag === 'Changed') {
+  if (ClaimEnd.$is('Changed')(end)) {
     yield* changed(actor, Topic.thread(row.threadId))
     yield* deliver(row.id)
     return yield* new ApprovalChanged({ id: row.id })
   }
-  if (end._tag === 'Taken') return yield* new Conflict({ message: 'Approval already decided' })
+  if (ClaimEnd.$is('Taken')(end))
+    return yield* new Conflict({ message: 'Approval already decided' })
   const result = yield* decodeRow(end.row)
   if (Row.guards.denied(result)) {
     // Only the winning SQL claim decides Denied; reads, delivery and repeat decisions do not.

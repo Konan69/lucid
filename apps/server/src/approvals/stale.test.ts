@@ -11,6 +11,8 @@ import * as Stream from 'effect/Stream'
 import {
   ActionTarget,
   ApprovalBinding,
+  ApprovalPrecondition,
+  ArtifactAuthor,
   ApprovalChanged,
   ApprovalDecision,
   ApprovalInvalidation,
@@ -23,7 +25,13 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { scopedCase } from '../../tests/case.ts'
-import { artifactStoreLayer, ArtifactStore, bindDocuments } from '../artifacts/store.ts'
+import {
+  artifactStoreLayer,
+  ArtifactStore,
+  bindDocuments,
+  DocumentNotFound,
+} from '../artifacts/store.ts'
+import { contentDigest } from './action.ts'
 import { artifacts, artifactVersions } from '../artifacts/tables.ts'
 import { decodeRow, saveState } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
@@ -39,6 +47,7 @@ import { fixture, Observation, recordRuns, testRunId, trustTestServices } from '
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
 const decodeSignal = Schema.decodeUnknownEffect(Signal)
+const encodeAuthor = Schema.encodeSync(ArtifactAuthor)
 
 /** Stopping a Run reaches the runtime; nothing here has one, so the stop is acknowledged. */
 const runtime = Layer.succeed(
@@ -81,7 +90,9 @@ const document = Effect.fn('StaleTest.document')(function* (
       number: 1,
       body,
       note: null,
-      madeBy: { _tag: 'Vivid', runId: testRunId(threadId, 'writer') },
+      madeBy: encodeAuthor(
+        ArtifactAuthor.cases.Vivid.make({ runId: testRunId(threadId, 'writer') }),
+      ),
       at: now,
     }),
   )
@@ -128,8 +139,16 @@ const signalOf = Effect.fn('StaleTest.signalOf')(function* (id: ApprovalId) {
   const [row] = yield* database.run(
     database.select({ signal: approvals.signal }).from(approvals).where(eq(approvals.id, id)),
   )
-  return yield* decodeSignal(row?.signal)
+  if (row === undefined) return yield* Effect.die('The Approval row is missing')
+  return yield* decodeSignal(row.signal)
 })
+
+/** Why the Approval is invalidated; any other state fails the case. */
+const reasonOf = (approval: Approval) => {
+  if (!ApprovalState.guards.Invalidated(approval.state))
+    throw new Error(`Expected an invalidated Approval, found ${approval.state._tag}`)
+  return approval.state.reason
+}
 
 const allow = (test: Effect.Success<ReturnType<typeof fixture>>, approval: Approval) =>
   Effect.flatMap(ApprovalStore, (store) =>
@@ -149,9 +168,18 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             // Titles resolve the way the Thread's unique index compares them: case-blind.
             const approval = yield* askToSend(test, 'letter to dami')
             expect(approval.action.target).toMatchObject({ input: { body: 'Dear Dami, v1' } })
-            expect(approval.binding?.preconditions).toEqual([
-              expect.objectContaining({ artifactId: letter, version: 1 }),
-            ])
+            expect(approval.binding).toEqual(
+              ApprovalBinding.make({
+                connectionGeneration: 0,
+                preconditions: [
+                  ApprovalPrecondition.cases.ArtifactVersion.make({
+                    artifactId: letter,
+                    version: 1,
+                    contentDigest: contentDigest('Dear Dami, v1'),
+                  }),
+                ],
+              }),
+            )
             yield* (yield* ArtifactStore).revise(test.personal.person, {
               id: letter,
               from: 1,
@@ -159,12 +187,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             })
             const after = yield* current(approval)
             expect(ApprovalState.guards.Invalidated(after.state)).toBe(true)
-            expect(after.state).toMatchObject({
-              reason: ApprovalInvalidation.cases.ContentChanged.make({
-                artifactId: letter,
-                version: 2,
-              }),
-            })
+            expect(reasonOf(after)).toEqual(
+              ApprovalInvalidation.cases.ContentChanged.make({ artifactId: letter, version: 2 }),
+            )
             const refused = yield* Effect.flip(allow(test, approval))
             expect(refused).toEqual(new ApprovalChanged({ id: approval.id }))
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
@@ -192,11 +217,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 body: { $document: 'Memo' },
               }),
             )
-            expect(refused).toMatchObject({
-              _tag: 'DocumentNotFound',
-              title: 'Memo',
-              titles: ['Letter to Dami'],
-            })
+            expect(refused).toEqual(
+              new DocumentNotFound({ title: 'Memo', titles: ['Letter to Dami'] }),
+            )
             // Only the exact one-key shape is a reference; anything beside it is ordinary input.
             const untouched = { body: { $document: 'Memo', note: 'kept' } }
             expect(
@@ -230,10 +253,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(approval.runId).toEqual(runId)
             yield* stopPersonRun(person, runId)
             const after = yield* current(approval)
-            expect(after.state).toMatchObject({
-              _tag: 'Invalidated',
-              reason: ApprovalInvalidation.cases.RunStopped.make({ runId }),
-            })
+            expect(reasonOf(after)).toEqual(ApprovalInvalidation.cases.RunStopped.make({ runId }))
             expect(Signal.guards.None(yield* signalOf(approval.id))).toBe(true)
             expect(yield* Effect.flip(allow(test, approval))).toEqual(
               new ApprovalChanged({ id: approval.id }),
@@ -266,13 +286,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             )
             expect(saved.authorizationGeneration).toBe(1)
             const after = yield* current(approval)
-            expect(after.state).toMatchObject({
-              _tag: 'Invalidated',
-              reason: ApprovalInvalidation.cases.ConnectionChanged.make({
+            expect(reasonOf(after)).toEqual(
+              ApprovalInvalidation.cases.ConnectionChanged.make({
                 connectionId: test.connectionId,
                 generation: 1,
               }),
-            })
+            )
             expect(yield* Effect.flip(allow(test, approval))).toEqual(
               new ApprovalChanged({ id: approval.id }),
             )
@@ -306,10 +325,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(yield* Effect.flip(allow(test, approval))).toEqual(
               new ApprovalChanged({ id: approval.id }),
             )
-            expect((yield* current(approval)).state).toMatchObject({
-              _tag: 'Invalidated',
-              reason: { _tag: 'ConnectionChanged', generation: 7 },
-            })
+            expect(reasonOf(yield* current(approval))).toEqual(
+              ApprovalInvalidation.cases.ConnectionChanged.make({
+                connectionId: test.connectionId,
+                generation: 7,
+              }),
+            )
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
           }),
           'fresh',

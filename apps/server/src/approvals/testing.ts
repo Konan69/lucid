@@ -244,6 +244,39 @@ const cleanup = Effect.fn('TrustTest.cleanup')(function* (
   expect(Result.isSuccess(result)).toBe(true)
 })
 
+/** A ready personal Integration of the Person's, as Connect leaves one, at generation 0. */
+const ownIntegration = Effect.fn('TrustTest.ownIntegration')(function* (
+  database: Database['Service'],
+  personId: PersonId,
+  now: number,
+) {
+  const connectionId = ConnectionId.make(NodeCrypto.randomUUID())
+  const app = ExecutorAppId.make(`app-${connectionId}`)
+  const references = ExecutorReferences.cases.Public.make({
+    service: ServiceId.make('projects'),
+    app,
+    owner: ExecutorOwnerId.make(`p-${personId}`),
+    binding: ExecutorBinding.cases.Public.make({}),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+  })
+  yield* database.run(
+    database.insert(connections).values({
+      id: connectionId,
+      personId,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Projects',
+      name: 'Work account',
+      executorApp: app,
+      references: yield* encodeReferences(references),
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }),
+  )
+  return connectionId
+})
+
 /** Each case registers cleanup before its first write and owns unique Persons, Company and Threads. */
 export const fixture = Effect.fn('TrustTest.fixture')(function* () {
   const database = yield* Database
@@ -287,30 +320,7 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
   )
   const now = yield* Clock.currentTimeMillis
   // Ada's Integration: removed with her by the cleanup above, through its Person cascade.
-  const connectionId = ConnectionId.make(NodeCrypto.randomUUID())
-  const app = ExecutorAppId.make(`app-${connectionId}`)
-  const references = ExecutorReferences.cases.Public.make({
-    service: ServiceId.make('projects'),
-    app,
-    owner: ExecutorOwnerId.make(`p-${first.id}`),
-    binding: ExecutorBinding.cases.Public.make({}),
-    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
-  })
-  yield* database.run(
-    database.insert(connections).values({
-      id: connectionId,
-      personId: first.id,
-      companyId: null,
-      service: references.service,
-      serviceName: 'Projects',
-      name: 'Work account',
-      executorApp: app,
-      references: yield* encodeReferences(references),
-      status: 'ready',
-      createdAt: now,
-      updatedAt: now,
-    }),
-  )
+  const connectionId = yield* ownIntegration(database, first.id, now)
   yield* database.run(
     database.insert(threads).values([
       {

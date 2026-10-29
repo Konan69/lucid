@@ -317,6 +317,53 @@ export class DocumentNotFound extends Schema.TaggedError<DocumentNotFound>()('Do
   titles: Schema.Array(ArtifactTitle),
 }) {}
 
+/** The newest text of the one document of this Thread that `title` names, read under the Thread lock. */
+const bindOne = Effect.fn('Artifacts.bindOne')(function* (
+  tx: Transaction,
+  threadId: ThreadId,
+  title: string,
+) {
+  const [row] = yield* tx.select().from(artifacts).where(named(threadId, title))
+  if (row === undefined) {
+    const documents = yield* tx
+      .select({ title: artifacts.title })
+      .from(artifacts)
+      .where(eq(artifacts.threadId, threadId))
+    const decoded = yield* Effect.forEach(documents, decodeArtifactTitle)
+    return yield* new DocumentNotFound({
+      title,
+      titles: decoded.map((document) => document.title),
+    })
+  }
+  const artifact = yield* decodeArtifact(row)
+  const [latest] = yield* tx
+    .select()
+    .from(artifactVersions)
+    .where(
+      and(
+        eq(artifactVersions.artifactId, artifact.id),
+        eq(artifactVersions.number, artifact.version),
+      ),
+    )
+  if (latest === undefined)
+    return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
+  const version = yield* decodeVersion(latest)
+  return { title, artifact, body: version.body }
+})
+
+/** Every named document, under one Thread lock so all the texts are from the same moment. */
+const bindAll = Effect.fn('Artifacts.bindAll')(function* (
+  tx: Transaction,
+  scope: {
+    readonly personId: PersonId
+    readonly threadId: ThreadId
+    readonly titles: ReadonlyArray<string>
+  },
+) {
+  yield* lock(tx, scope.threadId, scope.personId)
+  return yield* Effect.forEach(scope.titles, (title) => bindOne(tx, scope.threadId, title))
+})
+
 /**
  * Copies the newest text of every Thread document an Integration call names (`placeholder.ts`)
  * into the call, and says which version of each it copied.
@@ -335,43 +382,7 @@ export const bindDocuments = Effect.fn('Artifacts.bindDocuments')(function* (
   const titles = namedDocuments(input)
   if (titles.length === 0) return { input, preconditions: [] }
   const database = yield* Database
-  const found = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      yield* lock(tx, threadId, personId)
-      return yield* Effect.forEach(
-        titles,
-        Effect.fn('Artifacts.bindOne')(function* (title) {
-          const [row] = yield* tx.select().from(artifacts).where(named(threadId, title))
-          if (row === undefined) {
-            const documents = yield* tx
-              .select({ title: artifacts.title })
-              .from(artifacts)
-              .where(eq(artifacts.threadId, threadId))
-            return yield* new DocumentNotFound({
-              title,
-              titles: (yield* Effect.forEach(documents, decodeArtifactTitle)).map(
-                (document) => document.title,
-              ),
-            })
-          }
-          const artifact = yield* decodeArtifact(row)
-          const [latest] = yield* tx
-            .select()
-            .from(artifactVersions)
-            .where(
-              and(
-                eq(artifactVersions.artifactId, artifact.id),
-                eq(artifactVersions.number, artifact.version),
-              ),
-            )
-          if (latest === undefined)
-            return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
-          const version = yield* decodeVersion(latest)
-          return { title, artifact, body: version.body }
-        }),
-      )
-    }),
-  )
+  const found = yield* database.transaction((tx) => bindAll(tx, { personId, threadId, titles }))
   return {
     input: fillDocuments(input, new Map(found.map((entry) => [entry.title, entry.body]))),
     preconditions: Array.dedupeWith(

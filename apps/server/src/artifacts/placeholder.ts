@@ -14,11 +14,11 @@ import * as Schema from 'effect/Schema'
  * input and passes through untouched, so no provider field can be mistaken for a reference.
  */
 const Reference = Schema.Struct({ $document: Schema.String })
-const isReference = (value: Schema.Json): value is typeof Reference.Type =>
-  isObject(value) && Object.keys(value).length === 1 && Schema.is(Reference)(value)
-
 const isObject = Schema.is(Schema.JsonObject)
 const isArray = Schema.is(Schema.Array(Schema.Json))
+const hasReferenceKey = Schema.is(Reference)
+const isReference = (value: Schema.Json): value is typeof Reference.Type =>
+  isObject(value) && Object.keys(value).length === 1 && hasReferenceKey(value)
 
 /** Every document title the input names, in the order they appear, each once. */
 export const namedDocuments = (input: Schema.Json): ReadonlyArray<string> => {
