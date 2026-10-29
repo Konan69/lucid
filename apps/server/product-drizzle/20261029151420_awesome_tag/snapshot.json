@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "af6b3740-97e8-43c9-9c52-07340682517b",
+  "id": "3eb62061-569f-4149-92de-0435f9a6c651",
   "prevIds": [
-    "eaad6ad0-d466-4e08-9225-d470a91e2348"
+    "08c17db1-5dcf-4d6f-94d2-d53672798a35"
   ],
   "ddl": [
     {
@@ -206,6 +206,12 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_conversations",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "vivid_todos",
       "entityType": "tables",
       "schema": "public"
     },
@@ -3537,6 +3543,110 @@
       "name": "id",
       "entityType": "columns",
       "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "person_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "company_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "what",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "due",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
       "table": "vivid_watches"
     },
     {
@@ -4803,6 +4913,34 @@
           "opclass": null
         },
         {
+          "value": "company_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "vivid_todos_owner",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "person_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
           "value": "name",
           "isExpression": false,
           "asc": true,
@@ -5816,6 +5954,57 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
+      "name": "vivid_todos_person_id_user_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "company_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "company",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_todos_company_id_company_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "thread_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "vivid_conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_todos_thread_id_vivid_conversations_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_todos"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "person_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "user",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
       "name": "vivid_watches_person_id_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
@@ -6169,6 +6358,16 @@
       "name": "vivid_conversations_pkey",
       "schema": "public",
       "table": "vivid_conversations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_todos_pkey",
+      "schema": "public",
+      "table": "vivid_todos",
       "entityType": "pks"
     },
     {
