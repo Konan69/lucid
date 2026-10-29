@@ -11,6 +11,7 @@ import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
+import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
@@ -40,6 +41,7 @@ export const features = [
   'reading',
   'settings',
   'memory',
+  'procedure',
   'discord',
 ]
 export const png =
@@ -401,6 +403,7 @@ const recipes = {
   devices,
   feed,
   memory,
+  procedure,
   owed,
   todos,
   watch,
@@ -427,6 +430,7 @@ export async function drive(state, feature) {
           deny: 'Denial requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          procedure: 'Teaching requires a real model; rehearsal cannot prove it.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
         }

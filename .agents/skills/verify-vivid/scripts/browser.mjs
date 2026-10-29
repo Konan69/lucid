@@ -9,6 +9,7 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat, conversation } from './wire.mjs'
 import { features, stop, png } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
+import { procedureBrowser } from './procedurebrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
@@ -59,6 +60,7 @@ const recipes = {
   reading: { check: 'reading' },
   settings: { check: 'settings' },
   memory: { check: 'memory' },
+  procedure: { check: 'procedure' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -106,9 +108,15 @@ const specialRecipes = {
     scope:
       'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
   },
+  procedure: {
+    drive: procedureBrowser,
+    scope:
+      'A walkthrough with a correction taught through the composer, learned once without being done, and applied in a second Thread after reload; see scope.json.',
+  },
   watch: {
     drive: watchBrowser,
-    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+    scope:
+      'browser Connect, model Watch, real Executor delivery of an event past 4,000 characters, Feed reload, the event shown whole in its Thread after reload, and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -364,7 +372,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'owed', 'todos'].includes(feature) &&
+    ['memory', 'procedure', 'question', 'approve', 'deny', 'owed', 'todos'].includes(feature) &&
     state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
