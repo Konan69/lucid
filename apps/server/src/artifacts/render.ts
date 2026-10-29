@@ -52,14 +52,14 @@ export function capturedFile(path: string, bytes: Uint8Array): ArtifactFile {
   })
 }
 
-/** SSH already bounds reads; checking again covers a file growing after stat or another transport. */
+/** The Computer's read refuses a file past the Artifact bound, even one that grows while it is read. */
 const capture = Effect.fn('Artifacts.capture')(function* (
   personId: PersonId,
   path: string,
   role: ArtifactFileRole,
 ) {
   const computer = yield* ComputerStore
-  const bytes = yield* computer.read(personId, path).pipe(
+  const bytes = yield* computer.read(personId, { path, limit: ARTIFACT_FILE_BYTES }).pipe(
     Effect.mapError((failure) => {
       if (Predicate.isTagged(failure, 'MachineFileRefused')) {
         if (failure.reason === 'large')
@@ -76,8 +76,6 @@ const capture = Effect.fn('Artifacts.capture')(function* (
     }),
   )
   if (bytes.byteLength === 0) return yield* new ArtifactFileRefused({ role, reason: 'empty' })
-  if (bytes.byteLength > ARTIFACT_FILE_BYTES)
-    return yield* new ArtifactFileTooLarge({ role, limit: ARTIFACT_FILE_BYTES })
   return bytes
 })
 

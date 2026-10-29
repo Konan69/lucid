@@ -203,7 +203,7 @@ export const machineLinks = (api: Transport) => {
         )
       }),
       read: Effect.fn('Machine.boat.read')((input) =>
-        overLink(input.key, (link) => link.read(input.path)),
+        overLink(input.key, (link) => link.read(input.path, input.limit)),
       ),
       put: Effect.fn('Machine.boat.put')((input) =>
         overLink(input.key, (link) => link.put(input.path, input.content)),

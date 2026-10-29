@@ -5,6 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   ArtifactAuthor,
+  ARTIFACT_FILE_BYTES,
   ArtifactContent,
   type ArtifactId,
   ArtifactSource,
@@ -30,7 +31,7 @@ import { Changes, Topic } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threadParticipants, threads } from '../threads/tables.ts'
-import { ArtifactStore, artifactStoreLayer } from './store.ts'
+import { ArtifactStore, artifactStoreLayer, bindDocuments } from './store.ts'
 import { artifactVersions, artifacts } from './tables.ts'
 import { keepInspection, publishArtifactFile } from './files.ts'
 import { capturedFile, FileCapture } from './render.ts'
@@ -267,8 +268,8 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const source = Uint8Array.from([80, 75, 3, 4, 0, 128, 255, 10])
           yield* link.put(outputPath, original)
           yield* link.put(sourcePath, source)
-          const outputBytes = yield* link.read(outputPath)
-          const sourceBytes = yield* link.read(sourcePath)
+          const outputBytes = yield* link.read(outputPath, ARTIFACT_FILE_BYTES)
+          const sourceBytes = yield* link.read(sourcePath, ARTIFACT_FILE_BYTES)
           const inspectionCall = DocumentToolCallId.make('inspect-captured-file')
           const publicationCall = DocumentToolCallId.make('publish-captured-file')
           yield* Ref.update(yield* Responses, (entries) => [
@@ -418,6 +419,11 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         expect(response.headers.get('content-disposition')).toBe(
           "attachment; filename*=UTF-8''Report%20%28final%29%20it%27s%20%2A.docx",
         )
+        // A file Artifact has bytes, not text: an Integration call cannot name it as a document.
+        const refused = yield* Effect.flip(
+          bindDocuments(person.id, threadId, { body: { $document: 'final REPORT' } }),
+        )
+        expect(refused).toMatchObject({ _tag: 'DocumentNotFound', titles: [] })
       }),
     )
 

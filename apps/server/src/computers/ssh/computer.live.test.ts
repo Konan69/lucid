@@ -9,7 +9,7 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../../database/testdb
 import { loadRunner } from '../../code/computer.ts'
 import { decodeWorker, encodeParent, ParentMessage, WorkerMessage } from '../../code/protocol.ts'
 import { MachineKey } from '../machine.ts'
-import { KEY_TAG } from './link.ts'
+import { FILE_BYTES, KEY_TAG } from './link.ts'
 
 /**
  * Real provider SSH authorization, host keys, files, cancellation and runner frames, on a
@@ -180,7 +180,7 @@ layer(dependencies, { excludeTestServices: true, timeout: 180_000 })((it) => {
         )
         const back = yield* measured(
           'read it back',
-          operations.read({ key, path: `${proof}/notes/today.txt` }),
+          operations.read({ key, path: `${proof}/notes/today.txt`, limit: FILE_BYTES }),
         )
         expect(new TextDecoder().decode(back)).toBe(text)
         const seen = yield* shell(`wc -c < ${proof}/notes/today.txt`)
@@ -192,7 +192,7 @@ layer(dependencies, { excludeTestServices: true, timeout: 180_000 })((it) => {
         )
         const bigBack = yield* measured(
           'read 256 KB',
-          operations.read({ key, path: `${proof}/big.bin` }),
+          operations.read({ key, path: `${proof}/big.bin`, limit: FILE_BYTES }),
         )
         expect(Buffer.from(bigBack).equals(big)).toBe(true)
 

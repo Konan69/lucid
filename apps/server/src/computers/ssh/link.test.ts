@@ -81,7 +81,7 @@ it.live.skipIf(!peerAvailable)(
       const path = NodePath.join(server.home, 'notes/today/list.txt')
       yield* link.put(path, bytes('milk\nbread\n'))
       expect(NodeFS.readFileSync(path, 'utf8')).toBe('milk\nbread\n')
-      expect(text(yield* link.read(path))).toBe('milk\nbread\n')
+      expect(text(yield* link.read(path, FILE_BYTES))).toBe('milk\nbread\n')
       const run = yield* link.run({
         command: 'wc -l < notes/today/list.txt; echo problem >&2; exit 3',
         directory: server.home,
@@ -100,7 +100,7 @@ it.live.skipIf(!peerAvailable)('carries bytes that are not text unchanged in bot
     const path = NodePath.join(server.home, 'picture.bin')
     yield* link.put(path, picture)
     expect(NodeFS.readFileSync(path).equals(Buffer.from(picture))).toBe(true)
-    expect(Buffer.from(yield* link.read(path)).equals(Buffer.from(picture))).toBe(true)
+    expect(Buffer.from(yield* link.read(path, FILE_BYTES)).equals(Buffer.from(picture))).toBe(true)
   }).pipe(Effect.scoped),
 )
 
@@ -109,14 +109,32 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const { server, link } = yield* connected()
-      const missing = yield* Effect.flip(link.read(NodePath.join(server.home, 'absent.txt')))
+      const missing = yield* Effect.flip(
+        link.read(NodePath.join(server.home, 'absent.txt'), FILE_BYTES),
+      )
       expect(missing).toBeInstanceOf(LinkFileRefused)
       expect(missing).toMatchObject({ reason: 'missing' })
-      const directory = yield* Effect.flip(link.read(server.home))
+      const directory = yield* Effect.flip(link.read(server.home, FILE_BYTES))
       expect(directory).toMatchObject({ reason: 'directory' })
       const large = NodePath.join(server.home, 'large.bin')
       NodeFS.writeFileSync(large, Buffer.alloc(FILE_BYTES + 1))
-      expect(yield* Effect.flip(link.read(large))).toMatchObject({ reason: 'large' })
+      expect(yield* Effect.flip(link.read(large, FILE_BYTES))).toMatchObject({ reason: 'large' })
+    }).pipe(Effect.scoped),
+)
+
+it.live.skipIf(!peerAvailable)(
+  "reads a file at its caller's limit whole, and refuses one past it whatever its size says",
+  () =>
+    Effect.gen(function* () {
+      const { server, link } = yield* connected()
+      const limit = 65_536
+      const full = NodePath.join(server.home, 'full.bin')
+      const content = Buffer.alloc(limit, 7)
+      NodeFS.writeFileSync(full, content)
+      expect(Buffer.from(yield* link.read(full, limit)).equals(content)).toBe(true)
+      expect(yield* Effect.flip(link.read(full, limit - 1))).toMatchObject({ reason: 'large' })
+      // A device answers size 0 and never ends: what a file growing after `stat` looks like.
+      expect(yield* Effect.flip(link.read('/dev/zero', limit))).toMatchObject({ reason: 'large' })
     }).pipe(Effect.scoped),
 )
 
@@ -240,7 +258,7 @@ it.live.skipIf(!peerAvailable)(
       expect(yield* Fiber.join(running)).toBeInstanceOf(LinkRunLost)
       expect(link.alive()).toBe(false)
       // A call on the dead connection is told at once; it does not wait and does not throw.
-      expect(yield* Effect.flip(link.read(`${server.home}/started`))).toBeInstanceOf(
+      expect(yield* Effect.flip(link.read(`${server.home}/started`, FILE_BYTES))).toBeInstanceOf(
         LinkUnreachable,
       )
       expect(yield* Effect.flip(openLink(server))).toBeInstanceOf(LinkUnreachable)

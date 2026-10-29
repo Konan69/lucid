@@ -111,7 +111,7 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
         Effect.mapError(linkFailure),
       ),
     converse: unused('speak with a command'),
-    read: ({ path }) => link.read(path).pipe(Effect.mapError(linkFailure)),
+    read: ({ path, limit }) => link.read(path, limit).pipe(Effect.mapError(linkFailure)),
     put: ({ path, content }) => link.put(path, content).pipe(Effect.mapError(linkFailure)),
   })
   return { server, wakes, machine }

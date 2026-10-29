@@ -25,7 +25,7 @@ import ssh2, { type Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
  * machine boundary decides why.
  *
  * Library: `ssh2` 1.17.0 (MIT), read at `lib/client.js` (`connect`, `exec`, `sftp`, `hostVerifier`)
- * and `lib/protocol/SFTP.js` (`readFile`, `writeFile`, `mkdir`, `stat`). It is a callback API, so
+ * and `lib/protocol/SFTP.js` (`open`, `read`, `close`, `readFile`, `writeFile`, `mkdir`, `stat`). It is a callback API, so
  * every call below is one `Effect.callback` around exactly one library call.
  */
 
@@ -138,7 +138,12 @@ export interface Link {
   ) => Effect.Effect<NodeStream.Duplex, LinkUnreachable | LinkPortClosed, Scope.Scope>
   /** False once the connection has closed; whoever holds the link opens another. */
   readonly alive: () => boolean
-  readonly read: (path: string) => Effect.Effect<Uint8Array, LinkUnreachable | LinkFileRefused>
+  /** The whole file, refused as `large` once it holds more than `limit` bytes. Each caller names
+   * the bound of what it reads, at most `FILE_BYTES`. */
+  readonly read: (
+    path: string,
+    limit: number,
+  ) => Effect.Effect<Uint8Array, LinkUnreachable | LinkFileRefused>
   /** Creates the missing directories above `path` (an absolute path), then replaces the file. */
   readonly put: (
     path: string,
@@ -348,17 +353,50 @@ const files = (sftp: SFTPWrapper, calls: Waiting) => {
         return settle(Effect.succeed({ size: stats.size, directory: stats.isDirectory() }))
       })
     })
-  const read = Effect.fn('Link.read')(function* (path: string) {
-    // Asked first: a read answers the whole file, and one that is too large must not be fetched.
-    const found = yield* stat(path)
-    if (found.directory) return yield* new LinkFileRefused({ reason: 'directory' })
-    if (found.size > FILE_BYTES) return yield* new LinkFileRefused({ reason: 'large' })
-    return yield* calls.call<Uint8Array, Refused>(gone, (settle) => {
-      sftp.readFile(path, (error, data) => {
+  const open = (path: string) =>
+    calls.call<NodeBuffer.Buffer, Refused>(gone, (settle) => {
+      sftp.open(path, 'r', (error, handle) => {
         if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
-        return settle(Effect.succeed(new Uint8Array(data)))
+        return settle(Effect.succeed(handle))
       })
     })
+  /** One SFTP read at `filled`, into the rest of `buffer`. Zero bytes is the end of the file. */
+  const chunk = (handle: NodeBuffer.Buffer, buffer: NodeBuffer.Buffer, filled: number) =>
+    calls.call<number, Refused>(gone, (settle) => {
+      sftp.read(handle, buffer, filled, buffer.length - filled, filled, (error, bytes) => {
+        if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
+        return settle(Effect.succeed(bytes))
+      })
+    })
+  const close = (handle: NodeBuffer.Buffer) =>
+    calls.call<void, Refused>(gone, (settle) => {
+      sftp.close(handle, () => settle(Effect.void))
+    })
+  /**
+   * `stat` refuses a directory or a file already too large without opening it. The size it reports
+   * is not a bound: a file can grow after it, and a device or `/proc` file reports 0. ssh2's
+   * `readFile` reads up to whatever its own `fstat` says, or without end when that is 0, so the
+   * read here fills one buffer of one byte past `limit` and refuses the file when that byte
+   * arrives. The untouched part of the buffer is never paged in.
+   */
+  const read = Effect.fn('Link.read')(function* (path: string, limit: number) {
+    const found = yield* stat(path)
+    if (found.directory) return yield* new LinkFileRefused({ reason: 'directory' })
+    if (found.size > limit) return yield* new LinkFileRefused({ reason: 'large' })
+    return yield* Effect.acquireUseRelease(
+      open(path),
+      Effect.fnUntraced(function* (handle) {
+        const buffer = NodeBuffer.Buffer.allocUnsafe(limit + 1)
+        let filled = 0
+        while (filled < buffer.length) {
+          const bytes = yield* chunk(handle, buffer, filled)
+          if (bytes === 0) return new Uint8Array(buffer.subarray(0, filled))
+          filled += bytes
+        }
+        return yield* new LinkFileRefused({ reason: 'large' })
+      }),
+      (handle) => close(handle),
+    )
   })
   /**
    * One level. SFTP has no code for "it is already there" (OpenSSH answers the general failure,

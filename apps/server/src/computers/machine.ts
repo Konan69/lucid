@@ -371,9 +371,11 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly port: number
   }) => Effect.Effect<NodeStream.Duplex, MachineFailure | MachinePortClosed, Scope.Scope>
+  /** The whole file; one holding more than `limit` bytes is refused, however it grows. */
   readonly read: (input: {
     readonly key: MachineKey
     readonly path: string
+    readonly limit: number
   }) => Effect.Effect<Uint8Array, MachineFailure>
   /** Replaces the file and creates the directories above it. */
   readonly put: (input: {

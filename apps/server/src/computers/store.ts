@@ -65,6 +65,7 @@ import {
 } from './machine.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
+import { FILE_BYTES } from './ssh/link.ts'
 import { computers } from './tables.ts'
 import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 
@@ -499,7 +500,7 @@ export interface ComputerStoreService {
   ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
   readonly read: (
     person: PersonId,
-    path: string,
+    input: { readonly path: string; readonly limit: number },
   ) => Effect.Effect<Uint8Array, StoreError | MachineFailure | ReadinessFailure>
   readonly put: (
     person: PersonId,
@@ -1063,8 +1064,9 @@ const ownMachine = (
       },
     ) => execute(person, (key) => machine.run({ key, ...input })),
   ),
-  read: Effect.fn('ComputerStore.read')((person: PersonId, path: string) =>
-    execute(person, (key) => machine.read({ key, path })),
+  read: Effect.fn('ComputerStore.read')(
+    (person: PersonId, input: { readonly path: string; readonly limit: number }) =>
+      execute(person, (key) => machine.read({ key, ...input })),
   ),
   put: Effect.fn('ComputerStore.put')(
     (person: PersonId, input: { readonly path: string; readonly content: Uint8Array }) =>
@@ -1364,7 +1366,7 @@ export const computerFileRead = Effect.fn('Computer.fileRead')(function* (
 ) {
   const store = yield* ComputerStore
   return yield* fileOutcome<Uint8Array, ComputerFileReadOutcome>(
-    store.read(actor.person.id, request.path),
+    store.read(actor.person.id, { path: request.path, limit: FILE_BYTES }),
     {
       done: (content) => ComputerFileReadOutcome.cases.Read.make({ content }),
       refused: (reason) => ComputerFileReadOutcome.cases.Refused.make({ reason }),
