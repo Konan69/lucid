@@ -251,7 +251,9 @@ const slow = (detail) =>
  */
 export async function helperstop(state, id, directory, stopper = stopByRpc) {
   NodeAssert.equal(state.modelKind, 'real', 'Helpers require a real model')
-  await chat(state, id, STOPPING, directory)
+  // Vivid may wait on both helpers before it answers, so its reply settles only after the stop:
+  // the message is sent and the slow helper stopped while that reply is still open.
+  const replied = chat(state, id, STOPPING, directory)
   const working = await watchUntil(
     state,
     id,
@@ -262,6 +264,7 @@ export async function helperstop(state, id, directory, stopper = stopByRpc) {
   const target = slow(working)
   await stopper(state, id, directory, target)
   const { detail, page } = await heardAll(state, id, directory, 2)
+  await replied
   const stopped = detail.children.find((child) => child.id === target.id)
   NodeAssert.equal(stopped.state._tag, 'Stopped')
   NodeAssert.equal(stopped.state.by, 'Person')
@@ -329,8 +332,18 @@ export async function helpersBrowser(state, id, directory, { run, capture }) {
   const [first] = detail.children
   const opened = await rpc(state, 'GetChildRun', { id: first.id }, directory, 'opened')
   await run(['click', `li[data-helper="${first.id}"] button[aria-expanded]`])
-  const words = opened.result.text.trim().split(/\s+/).slice(0, 4).join(' ')
-  await run(['wait', '--text', words])
+  // The answer is drawn as Markdown, so its raw text never appears; a word of it does. The
+  // longest plain word of the answer that the brief does not contain is looked for in the row.
+  const word = opened.result.text
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((candidate) => candidate.length >= 5 && !first.brief.includes(candidate))
+    .sort((a, b) => b.length - a.length)[0]
+  NodeAssert.ok(word, 'The answer has no word to look for')
+  await run([
+    'wait',
+    '--fn',
+    `Boolean(document.querySelector('li[data-helper="${first.id}"]')?.innerText.includes(${JSON.stringify(word)}))`,
+  ])
   await capture('opened')
   const after = await rpc(state, 'GetThread', { id }, directory, 'reloaded-thread')
   NodeAssert.deepEqual(after.children, detail.children, 'Reload changed the helpers')
