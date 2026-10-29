@@ -94,6 +94,6 @@ export async function provider() {
     throw new Error(
       'EXPLABS_API_KEY or OPENROUTER_API_KEY is required by the server memory and title model, including rehearsal runs',
     )
-  if (!env.EXPLABS_API_KEY) env.VIVID_SERVER_MODEL_PROVIDER = 'openrouter'
+  env.VIVID_SERVER_MODEL_PROVIDER = env.EXPLABS_API_KEY ? 'explabs' : 'openrouter'
   return { model, source: sources.join(', ') || 'process environment', env }
 }
