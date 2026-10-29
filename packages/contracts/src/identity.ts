@@ -26,6 +26,10 @@ export type ProjectId = typeof ProjectId.Type
 /** One thing a Person is owed and Vivid chases (`owed.ts`). */
 export const OwedId = Schema.String.pipe(Schema.brand('OwedId'))
 export type OwedId = typeof OwedId.Type
+
+/** One thing on a Person's own to-do list (`todos.ts`). */
+export const TodoId = Schema.String.pipe(Schema.brand('TodoId'))
+export type TodoId = typeof TodoId.Type
 /** Durable Thread identifier used by collaboration and conversation routes. */
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 /** Decoded Thread identifier. */

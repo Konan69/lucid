@@ -189,6 +189,13 @@ import {
   ResolveOwedRequest,
   DropOwedRequest,
 } from './owed.js'
+import {
+  Todo,
+  TodoListResponse,
+  AddTodoRequest,
+  CompleteTodoRequest,
+  DropTodoRequest,
+} from './todos.js'
 import { ComputerInventory } from './applications.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
@@ -644,6 +651,17 @@ const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest,
 const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
 const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
 
+// ── The Person's to-do list ───────────────────────────────────────────────
+const ListTodos = Rpc.make('ListTodos', { ...call, success: TodoListResponse })
+const WatchTodos = Rpc.make('WatchTodos', { ...live, success: TodoListResponse })
+const AddTodo = Rpc.make('AddTodo', { ...call, payload: AddTodoRequest, success: Todo })
+const CompleteTodo = Rpc.make('CompleteTodo', {
+  ...call,
+  payload: CompleteTodoRequest,
+  success: Todo,
+})
+const DropTodo = Rpc.make('DropTodo', { ...call, payload: DropTodoRequest, success: Todo })
+
 // ── Library (metadata; bytes travel over plain HTTP) ───────────────────────
 const ListLibrary = Rpc.make('ListLibrary', {
   ...call,
@@ -1074,6 +1092,11 @@ export const VividRpc = RpcGroup.make(
   NudgedOwed,
   ResolveOwed,
   DropOwed,
+  ListTodos,
+  WatchTodos,
+  AddTodo,
+  CompleteTodo,
+  DropTodo,
   ListLibrary,
   WatchLibrary,
   GetLibraryItem,
