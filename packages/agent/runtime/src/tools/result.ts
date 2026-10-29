@@ -3,6 +3,8 @@ import {
   ComputerSession,
   computerScreenAddress,
   type NoDeviceConnected,
+  type WatchRunRequired,
+  type WatchEndConditionRequired,
 } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
@@ -31,6 +33,8 @@ export interface ToolResult {
 }
 
 export type ToolFailure =
+  | WatchRunRequired
+  | WatchEndConditionRequired
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -185,6 +189,8 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
+      WatchRunRequired: ({ message }) => failure(message),
+      WatchEndConditionRequired: ({ message }) => failure(message),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>

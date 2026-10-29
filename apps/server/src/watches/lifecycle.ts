@@ -26,6 +26,8 @@ import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
 import { secretFor } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
+import { watchProgress, WatchMissing } from './progress.ts'
+export { WatchMissing } from './progress.ts'
 
 /**
  * Starting, stopping and keeping Watches alive at Executor.
@@ -43,12 +45,6 @@ export const TTL_MS = 7 * 24 * 60 * 60_000
  * before provider expiry. This margin schedules renewal and never caps active Watch work. */
 export const RENEW_WITHIN_MS = 6 * 60 * 60_000
 
-/** The Actor has no live Watch by this name. */
-export class WatchMissing extends Schema.TaggedError<WatchMissing>()(
-  'WatchMissing',
-  {},
-  { title: 'Watch missing' },
-) {}
 /** The account's app declares no event by this name. */
 export class WatchEventUnknown extends Schema.TaggedError<WatchEventUnknown>()(
   'WatchEventUnknown',
@@ -168,6 +164,8 @@ const make = Effect.fn('Watches.make')(function* () {
       ttlMs: TTL_MS,
     })
 
+  const progress = yield* watchProgress(subscribe)
+
   /** A concurrent stop stays authoritative; a cascaded row means its Integration was removed. */
   const activate = Effect.fn('Watches.activate')(function* (
     record: WatchRecord,
@@ -208,6 +206,7 @@ const make = Effect.fn('Watches.make')(function* () {
       subscribedName: `${app.appSlug}.${request.event}`,
       arguments: request.arguments,
       instruction: request.instruction,
+      condition: request.condition,
       callbackUrl: `${base}/api/watches/${id}`,
     })
     const granted = yield* Effect.result(subscribe(pending))
@@ -259,6 +258,10 @@ const make = Effect.fn('Watches.make')(function* () {
   const renewOne = Effect.fn('Watches.renewOne')(function* (record: WatchRecord) {
     const renewed = yield* Effect.result(subscribe(record))
     if (Result.isSuccess(renewed)) {
+      if (WatchState.guards.Paused(record.watch.state)) {
+        yield* store.renewPaused(record.watch.id, renewed.success.refreshBefore.getTime())
+        return
+      }
       const active = yield* activate(record, renewed.success)
       if (WatchState.guards.Pending(record.watch.state)) yield* publish(active)
       return
@@ -274,6 +277,7 @@ const make = Effect.fn('Watches.make')(function* () {
    * One Watch's failure does not hold up the others.
    */
   const renew = Effect.fn('Watches.renew')(function* () {
+    yield* progress.reconcile()
     const now = yield* Clock.currentTimeMillis
     const due = yield* store.due({
       activeBefore: now + RENEW_WITHIN_MS,
@@ -287,6 +291,9 @@ const make = Effect.fn('Watches.make')(function* () {
     create,
     find,
     stop,
+    complete: progress.complete,
+    connectionChanged: progress.connectionChanged,
+    pauseCurrent: progress.pauseCurrent,
     list: (actor: Actor) =>
       store.list(actor).pipe(Effect.map((all) => all.map((one) => one.watch))),
     renew,

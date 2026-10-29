@@ -1,3 +1,4 @@
+import { WatchCondition } from '@vivid/contracts'
 import { sql } from 'drizzle-orm'
 import { check, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { ConnectionId, WatchId, WatchStopReason } from '@vivid/contracts'
@@ -32,8 +33,12 @@ export const watches = pgTable(
     subscribedName: text('subscribed_name').notNull(),
     arguments: jsonb('arguments').notNull(),
     instruction: text('instruction').notNull(),
+    condition: jsonb('condition').notNull().default(WatchCondition.cases.Continuous.make({})),
     callbackUrl: text('callback_url').notNull(),
-    state: text('state').$type<'Pending' | 'Active' | 'Stopped'>().notNull(),
+    state: text('state')
+      .$type<'Pending' | 'Active' | 'Paused' | 'Completed' | 'Stopped'>()
+      .notNull(),
+    stateData: jsonb('state_data'),
     refreshBefore: epoch('refresh_before'),
     stopReason: text('stop_reason').$type<WatchStopReason>(),
     createdAt: epoch('created_at').notNull(),
@@ -42,14 +47,15 @@ export const watches = pgTable(
   (table) => [
     uniqueIndex('vivid_watches_live_name')
       .on(table.personId, table.name)
-      .where(sql`${table.state} <> 'Stopped'`),
+      .where(sql`${table.state} not in ('Stopped', 'Completed')`),
     index('vivid_watches_renewal').on(table.state, table.refreshBefore),
     index('vivid_watches_connection').on(table.connectionId),
     check(
       'vivid_watches_state',
-      sql`(${table.state} = 'Pending' and ${table.refreshBefore} is null and ${table.stopReason} is null)
-        or (${table.state} = 'Active' and ${table.refreshBefore} is not null and ${table.stopReason} is null)
-        or (${table.state} = 'Stopped' and ${table.stopReason} is not null)`,
+      sql`(${table.state} = 'Pending' and ${table.refreshBefore} is null and ${table.stopReason} is null and ${table.stateData} is null)
+        or (${table.state} = 'Active' and ${table.refreshBefore} is not null and ${table.stopReason} is null and ${table.stateData} is null)
+        or (${table.state} in ('Paused', 'Completed') and ${table.stateData} is not null and ${table.stateData}->>'_tag' = ${table.state} and ${table.stopReason} is null)
+        or (${table.state} = 'Stopped' and ${table.stopReason} is not null and ${table.stateData} is null)`,
     ),
   ],
 )

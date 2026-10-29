@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
+import { and, asc, eq, lt, notInArray, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -15,9 +15,11 @@ import {
   WatchId,
   WatchState,
   WatchStopReason,
+  WatchCondition,
+  type RunId,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { accountNames, holdConnection, WatchConnectionRemoved } from './apps.ts'
 import { watches } from './tables.ts'
 
@@ -38,6 +40,7 @@ const common = {
   subscribedName: Schema.String,
   arguments: WatchArguments,
   instruction: Watch.fields.instruction,
+  condition: WatchCondition,
   callbackUrl: Schema.String,
   createdAt: Schema.Finite,
   updatedAt: Schema.Finite,
@@ -47,18 +50,35 @@ const StoredWatch = Schema.Union([
   Schema.Struct({
     ...common,
     state: Schema.Literal('Pending'),
+    stateData: Schema.Null,
     refreshBefore: Schema.Null,
     stopReason: Schema.Null,
   }),
   Schema.Struct({
     ...common,
     state: Schema.Literal('Active'),
+    stateData: Schema.Null,
     refreshBefore: Schema.Finite,
     stopReason: Schema.Null,
   }),
   Schema.Struct({
     ...common,
+    state: Schema.Literal('Paused'),
+    stateData: WatchState.cases.Paused,
+    refreshBefore: Schema.NullOr(Schema.Finite),
+    stopReason: Schema.Null,
+  }),
+  Schema.Struct({
+    ...common,
+    state: Schema.Literal('Completed'),
+    stateData: WatchState.cases.Completed,
+    refreshBefore: Schema.NullOr(Schema.Finite),
+    stopReason: Schema.Null,
+  }),
+  Schema.Struct({
+    ...common,
     state: Schema.Literal('Stopped'),
+    stateData: Schema.Null,
     refreshBefore: Schema.NullOr(Schema.Finite),
     stopReason: WatchStopReason,
   }),
@@ -86,6 +106,8 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
   const state = StoredWatch.match(stored, {
     Pending: () => WatchState.cases.Pending.make({}),
     Active: ({ refreshBefore }) => WatchState.cases.Active.make({ refreshBefore }),
+    Paused: ({ stateData }) => stateData,
+    Completed: ({ stateData }) => stateData,
     Stopped: ({ stopReason }) => WatchState.cases.Stopped.make({ reason: stopReason }),
   })
   return {
@@ -95,6 +117,7 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
       event: stored.event,
       arguments: stored.arguments,
       instruction: stored.instruction,
+      condition: stored.condition,
       state,
       createdAt: stored.createdAt,
     },
@@ -117,14 +140,17 @@ export interface NewWatch {
   readonly subscribedName: string
   readonly arguments: WatchArguments
   readonly instruction: string
+  readonly condition: WatchCondition
   readonly callbackUrl: string
 }
 
 /** The one row a keyed read or write found, if any. */
 const first = <A>(all: ReadonlyArray<A>) => Option.fromUndefinedOr(all[0])
 
-/** Live means not stopped: Pending and Active. */
-const live = ne(watches.state, 'Stopped')
+/** Pending, Active and Paused reserve their names; both terminal states are history. */
+const live = notInArray(watches.state, ['Stopped', 'Completed'])
+const encodeCondition = encodeStored(WatchCondition, 'Watch condition')
+const encodeState = encodeStored(WatchState, 'Watch state')
 
 /** Writes that move a Watch through its states. */
 const makeWrites = (database: Database['Service']) => {
@@ -144,7 +170,13 @@ const makeWrites = (database: Database['Service']) => {
         yield* holdConnection(tx, input.connectionId)
         return yield* tx
           .insert(watches)
-          .values({ ...input, state: 'Pending', createdAt: now, updatedAt: now })
+          .values({
+            ...input,
+            condition: yield* encodeCondition(input.condition),
+            state: 'Pending',
+            createdAt: now,
+            updatedAt: now,
+          })
           .returning()
       }),
     )
@@ -162,7 +194,9 @@ const makeWrites = (database: Database['Service']) => {
           refreshBefore,
           updatedAt: now,
         })
-        .where(and(eq(watches.id, id), live))
+        .where(
+          and(eq(watches.id, id), notInArray(watches.state, ['Stopped', 'Completed', 'Paused'])),
+        )
         .returning(),
     )
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
@@ -181,14 +215,102 @@ const makeWrites = (database: Database['Service']) => {
     const rows = yield* database.run(
       database
         .update(watches)
-        .set({ state: 'Stopped', stopReason: reason, updatedAt: now })
+        .set({ state: 'Stopped', stateData: null, stopReason: reason, updatedAt: now })
         .where(and(eq(watches.id, id), live))
         .returning(),
     )
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
-  return { insertPending, activate, discard, stop }
+  return { insertPending, activate, discard, stop, ...makeProgressWrites(database) }
+}
+
+/** Terminal and authorization transitions share guarded writes over the persisted lifecycle. */
+const makeProgressWrites = (database: Database['Service']) => {
+  /** Completion is terminal even if unsubscribe never reaches Executor. */
+  const complete = Effect.fn('WatchStore.complete')(function* (
+    id: WatchId,
+    runId: RunId,
+    evidence: string,
+  ) {
+    const at = yield* Clock.currentTimeMillis
+    const state = WatchState.cases.Completed.make({ at, runId, evidence })
+    const rows = yield* database.run(
+      database
+        .update(watches)
+        .set({ state: 'Completed', stateData: yield* encodeState(state), updatedAt: at })
+        .where(and(eq(watches.id, id), live))
+        .returning(),
+    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+  })
+
+  /** Keep the subscription's expiry while authorization is missing; renewal cannot unpause it. */
+  const pause = Effect.fn('WatchStore.pause')(
+    function* (id: WatchId, connectionId: ConnectionId) {
+      const at = yield* Clock.currentTimeMillis
+      const state = WatchState.cases.Paused.make({ at, connectionId })
+      return yield* database.transaction((tx) =>
+        Effect.gen(function* () {
+          if ((yield* holdConnection(tx, connectionId)) !== 'needs-authorization')
+            return Option.none<WatchRecord>()
+          const rows = yield* tx
+            .update(watches)
+            .set({ state: 'Paused', stateData: yield* encodeState(state), updatedAt: at })
+            .where(
+              and(
+                eq(watches.id, id),
+                notInArray(watches.state, ['Stopped', 'Completed', 'Paused']),
+              ),
+            )
+            .returning()
+          return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+        }),
+      )
+    },
+    (effect) => effect.pipe(Effect.catchTag('WatchConnectionRemoved', () => Effect.succeedNone)),
+  )
+
+  /** Renewal keeps Paused and only extends its subscription lease. */
+  const renewPaused = Effect.fn('WatchStore.renewPaused')(function* (
+    id: WatchId,
+    refreshBefore: number,
+  ) {
+    yield* database.run(
+      database
+        .update(watches)
+        .set({ refreshBefore })
+        .where(and(eq(watches.id, id), eq(watches.state, 'Paused'))),
+    )
+  })
+
+  /** Lock the same authorization row as sign-in writes; a late grant cannot undo a new auth loss. */
+  const resume = Effect.fn('WatchStore.resume')(
+    function* (id: WatchId, refreshBefore: number, connectionId: ConnectionId) {
+      const now = yield* Clock.currentTimeMillis
+      return yield* database.transaction((tx) =>
+        Effect.gen(function* () {
+          if ((yield* holdConnection(tx, connectionId)) !== 'ready')
+            return Option.none<WatchRecord>()
+          const rows = yield* tx
+            .update(watches)
+            .set({ state: 'Active', stateData: null, refreshBefore, updatedAt: now })
+            .where(
+              and(
+                eq(watches.id, id),
+                eq(watches.state, 'Paused'),
+                sql`${watches.stateData}->>'connectionId' = ${connectionId}`,
+              ),
+            )
+            .returning()
+          return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+        }),
+      )
+    },
+    (effect) => effect.pipe(Effect.catchTag('WatchConnectionRemoved', () => Effect.succeedNone)),
+  )
+
+  return { complete, pause, renewPaused, resume }
 }
 
 /** Snapshot reads retain the Connection's name alongside every Watch that references it. */
@@ -261,6 +383,14 @@ const makeReads = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
+  /** Authorization reconciliation includes Watches paused on a different service than their timer. */
+  const allLive = Effect.fn('WatchStore.allLive')(function* () {
+    return yield* Effect.forEach(
+      yield* database.run(database.select().from(watches).where(live)),
+      record,
+    )
+  })
+
   /**
    * The Watches the renewal pass owes a subscribe call, oldest first: Active ones whose
    * subscription expires before `activeBefore`, expired ones included, and Pending ones not
@@ -276,7 +406,13 @@ const makeReads = (database: Database['Service']) => {
         .from(watches)
         .where(
           or(
-            and(eq(watches.state, 'Active'), lt(watches.refreshBefore, input.activeBefore)),
+            and(
+              or(eq(watches.state, 'Active'), eq(watches.state, 'Paused')),
+              or(
+                lt(watches.refreshBefore, input.activeBefore),
+                sql`${watches.refreshBefore} is null`,
+              ),
+            ),
             and(eq(watches.state, 'Pending'), lt(watches.updatedAt, input.pendingBefore)),
           ),
         )
@@ -294,7 +430,7 @@ const makeReads = (database: Database['Service']) => {
     return { ...record, watch: Watch.make({ ...record.watch, account }) }
   })
 
-  return { list, named, find, due, present }
+  return { list, named, find, due, present, allLive }
 }
 
 /** The service owns Watch rows; Executor and delivery stay with the caller. */

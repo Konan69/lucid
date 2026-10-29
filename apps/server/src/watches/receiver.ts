@@ -7,7 +7,7 @@ import * as Stream from 'effect/Stream'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { ThreadId, WatchId, WatchState } from '@vivid/contracts'
+import { ThreadId, WatchId, WatchState, WatchCondition } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { observeFailures } from '../observability/failure.ts'
@@ -20,6 +20,8 @@ import {
 import { ThreadStore } from '../threads/store.ts'
 import { secretFor, verify } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
+import { Watches } from './lifecycle.ts'
+import { WatchedApps } from './apps.ts'
 
 /**
  * Where Executor delivers a Watch's events: `POST /api/watches/:id`.
@@ -127,6 +129,11 @@ export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
     BACKGROUND_INSTRUCTION,
     `Watch: ${record.watch.name} (${record.watch.event})`,
     `What to do: ${record.watch.instruction}`,
+    WatchCondition.match(record.watch.condition, {
+      Until: ({ condition }) =>
+        `Finish watching only after a real read proves this condition: ${condition}. Call finish_watching with that evidence.`,
+      Continuous: () => 'Keep watching until the Person stops it.',
+    }),
     `The event, as JSON:\n${JSON.stringify(event.data)}`,
   ].join('\n\n')
 
@@ -154,7 +161,11 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
       body: bodyOf(record, event),
       attributes: DeliveryMessage.cases.Signal.fields.attributes.make({ name: watch.name }),
     }),
-    origin: StoredRunOrigin.cases.Watch.make({ watchName: watch.name }),
+    origin: StoredRunOrigin.cases.Watch.make({
+      watchName: watch.name,
+      watchId: watch.id,
+      eventId: event.eventId,
+    }),
     idempotencyKey: `watch:${watch.id}:${event.eventId}`,
   })
   yield* (yield* Changes).publish([Topic.person(record.personId)])
@@ -187,10 +198,17 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   const found = yield* (yield* WatchStore).find(id)
   if (Option.isNone(found)) return yield* new WatchGone({})
   const record = found.value
-  if (WatchState.guards.Stopped(record.watch.state)) return yield* new WatchGone({})
+  if (WatchState.isAnyOf(['Stopped', 'Completed'])(record.watch.state))
+    return yield* new WatchGone({})
   const decoded = yield* decodeBody(body).pipe(Effect.mapError(() => new WatchBodyInvalid({})))
   if (isVerification(decoded))
     return HttpServerResponse.jsonUnsafe({ challenge: decoded.challenge }, { status: 200 })
+  if (WatchState.guards.Paused(record.watch.state))
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  if (yield* (yield* WatchedApps).needsAuthorization(record.connectionId)) {
+    yield* (yield* Watches).connectionChanged(record.connectionId)
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  }
   yield* wake(record, decoded)
   return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
 })

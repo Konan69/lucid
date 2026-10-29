@@ -84,6 +84,9 @@ import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
+import { Watches, watchesLayer } from '../watches/lifecycle.ts'
+import { watchStoreLayer } from '../watches/store.ts'
+import { watchedAppsLayer } from '../watches/apps.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isPublicAddressRequired = Schema.is(ExecutorPublicAddressRequired)
@@ -559,7 +562,7 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
-type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes
+type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes | Watches
 type ProvideAuthority = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
@@ -576,7 +579,8 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     Audit,
     ServerConfig,
     Changes,
-  )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
+    Watches,
+  )(yield* Effect.context<ConnectionAuthority>())
   const provide: ProvideAuthority = (effect) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
@@ -619,7 +623,16 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
-  const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
+  /** Reading an already-expired dependency also pauses the current background Watch. */
+  const get = Effect.fn('Connections.get')(
+    function* (actor: Actor, id: ConnectionId) {
+      const record = yield* provide(getRecord(actor, id, false))
+      if (record.status === 'needs-authorization')
+        yield* provide((yield* Watches).pauseCurrent(actor, id))
+      return record
+    },
+    (effect) => provide(effect),
+  )
   const management = makeManagement({ executor, database, provide, get })
 
   return {
@@ -1002,4 +1015,5 @@ export class ConnectionStore extends Context.Service<
 >()('vivid/ConnectionStore') {}
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
+  Layer.provide(watchesLayer.pipe(Layer.provide([watchStoreLayer, watchedAppsLayer]))),
 )

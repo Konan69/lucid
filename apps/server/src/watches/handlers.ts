@@ -25,6 +25,8 @@ import {
 } from './apps.ts'
 import { ExecutorEventsFailure } from './events.ts'
 import { Watches, type WatchEventUnknown } from './lifecycle.ts'
+import { live } from '../live/query.ts'
+import type { CompleteWatchRequest } from '@vivid/contracts'
 import type { WatchNameTaken } from './store.ts'
 
 /**
@@ -125,6 +127,11 @@ const resolved = <A, R>(
     ),
   )
 
+/** List and live subscriptions share the owner-scoped projection. */
+const listed = Effect.fn('Rpc.Watches.listed')(function* (actor: Actor) {
+  return WatchListResponse.make({ watches: yield* (yield* Watches).list(actor) })
+})
+
 export const watchHandlers = {
   /** Events are resolved under the same acting Person and account names as creation. */
   FindAppEvents: Effect.fn('Rpc.FindAppEvents')(function* (request: FindAppEventsRequest) {
@@ -139,7 +146,18 @@ export const watchHandlers = {
     return WatchResponse.make({ watch })
   }),
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
-    return WatchListResponse.make({ watches: yield* (yield* Watches).list(yield* requireActor()) })
+    return yield* listed(yield* requireActor())
+  }),
+  WatchWatches: () => live('WatchWatches', [], listed),
+  CompleteWatch: Effect.fn('Rpc.CompleteWatch')(function* (request: CompleteWatchRequest) {
+    const watch = yield* (yield* Watches)
+      .complete(yield* requireActor(), request.name, request.evidence)
+      .pipe(
+        Effect.catchTag('WatchMissing', () =>
+          Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
+        ),
+      )
+    return WatchResponse.make({ watch })
   }),
   /** Stopping by name: the model knows Watches only by the names they were given. */
   StopWatch: Effect.fn('Rpc.StopWatch')(function* (request: StopWatchRequest) {

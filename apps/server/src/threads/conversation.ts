@@ -10,6 +10,7 @@ import {
   type Run,
   RunId,
   RuntimeSubmissionId,
+  WatchId,
   type RuntimeUnavailable,
   type ThreadId,
 } from '@vivid/contracts'
@@ -46,7 +47,11 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   FirstConversation: {},
   Decision: {},
   /** An Integration event a Watch subscribed to woke Vivid in a background Thread. */
-  Watch: { watchName: Schema.String },
+  Watch: {
+    watchName: Schema.String,
+    watchId: Schema.optionalKey(WatchId),
+    eventId: Schema.optionalKey(Schema.String),
+  },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 
