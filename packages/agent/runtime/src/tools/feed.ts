@@ -35,7 +35,7 @@ export function feedTools(runTool: RunTool) {
         ),
         display: v.nullable(
           text(
-            'The thing itself as one openui-lang program (no fence), or null when words say it all.',
+            'The thing itself as one whole openui-lang program (no fence) that starts with its root statement (root = Card([...])), or null when words say it all.',
             20_000,
           ),
         ),
