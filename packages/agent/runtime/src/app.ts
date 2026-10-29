@@ -5,6 +5,8 @@ import {
   ConversationFrame,
   ConversationState,
   MemoryAddress,
+  MemoryClosed,
+  MemoryClosure,
   MemoryConflict,
   MemoryIndex,
   MemoryListing,
@@ -32,7 +34,8 @@ import type * as HttpServerError from 'effect/http/HttpServerError'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { loadHistory } from './history.ts'
-import type { MemoryUnavailable } from './memory.ts'
+import { closeMemory } from './forget.ts'
+import { Memory, type MemoryUnavailable } from './memory.ts'
 import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
@@ -378,6 +381,21 @@ const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {
   )
 })
 
+/**
+ * A forget's cell half, for the server's `ForgetMemory`: stop this Person's queued learning,
+ * change the planned entries, read them back and name admitted work that still holds them.
+ * Storage that cannot answer is Unavailable; every per-entry outcome is in the answer itself.
+ */
+const memoryForget = Effect.fn('Runtime.memoryForget')(function* () {
+  const person = yield* owner()
+  const closure = yield* HttpServerRequest.schemaBodyJson(MemoryClosure)
+  return yield* closeMemory(person.harness, person.personId, closure).pipe(
+    Effect.provideService(Memory, person.sources.memory),
+    Effect.flatMap(HttpServerResponse.schemaJson(MemoryClosed)),
+    Effect.catchTag('PiRejected', () => unavailable('PiRejected')),
+  )
+})
+
 const MEMORY = '/persons/:personId/memory'
 
 const THREAD = '/persons/:personId/threads/:threadId'
@@ -391,6 +409,7 @@ export const routes = Layer.mergeAll(
   HttpRouter.add('POST', `${MEMORY}/read`, answered(memoryRead())),
   HttpRouter.add('POST', `${MEMORY}/write`, answered(memoryWrite())),
   HttpRouter.add('POST', `${MEMORY}/delete`, answered(memoryDelete())),
+  HttpRouter.add('POST', `${MEMORY}/forget`, answered(memoryForget())),
   HttpRouter.add('POST', THREAD, answered(admission())),
   HttpRouter.add('POST', `${THREAD}/abort`, answered(stop())),
   HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),

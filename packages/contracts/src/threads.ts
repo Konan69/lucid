@@ -197,6 +197,8 @@ export const RunOrigin = Schema.TaggedUnion({
   Decision: { person: PersonSummary },
   /** An Integration event a Watch subscribed to, named by the Watch. */
   Watch: { person: PersonSummary, watchName: Schema.String },
+  /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
+  Forget: { person: PersonSummary },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -305,6 +307,8 @@ export const SignalType = Schema.Literals([
   'event',
   // A card telling Vivid to go on (`CarryOnRequest`); no client draws it.
   'carry-on',
+  // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
+  'forget',
 ] as const)
 export type SignalType = typeof SignalType.Type
 

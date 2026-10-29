@@ -1,7 +1,6 @@
 import * as NodeAsyncHooks from 'node:async_hooks'
 import { Effect, type Layer } from 'effect'
-import type { MemoryAuthority } from '@vivid/contracts'
-import type { Memory } from '../memory.ts'
+import type { Memory, MemoryWriter } from '../memory.ts'
 import type { ToolFailure } from './result.ts'
 import { defineTool as durableTool, type ToolRegistration } from '@earendil-works/pi-durable'
 import { NobodyToActFor } from '../client.ts'
@@ -16,7 +15,9 @@ import { memoryTools } from './memory.ts'
 import { notifyTools } from './notify.ts'
 import { feedTools } from './feed.ts'
 import { followTools } from './follow.ts'
-import { projectTools } from './projects.ts'
+import { projectNamed, projectTools } from './projects.ts'
+import { forgetTools } from './forget.ts'
+import type { ProjectOf } from './memory.ts'
 import { owedTools } from './owed.ts'
 import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
@@ -35,7 +36,7 @@ import { skillTools } from './skills.ts'
  * The core supplies its configured entry directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
-  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryAuthority, ToolFailure>,
+  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
   memory: Memory['Service'],
 ): ToolRegistration[] {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
@@ -59,7 +60,11 @@ export function tools(
       )
     return resolvePerson(call)
   }, memory)
-  return catalogue(runTool, run, runMemory).map((definition) =>
+  /** A Project-scoped memory names its Project; the name resolves through the call's own scope. */
+  const project: ProjectOf = (name) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
+    projectNamed(name).pipe(Effect.provide(current()))
+  return catalogue(runTool, run, runMemory, project).map((definition) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -76,6 +81,7 @@ function catalogue(
   runTool: ReturnType<typeof toolRunner>,
   run: ReturnType<typeof scopedRunner>,
   runMemory: ReturnType<typeof memoryRunner>,
+  project: ProjectOf,
 ): ToolRegistration[] {
   return [
     ...computerTools(runTool, run),
@@ -83,7 +89,8 @@ function catalogue(
     ...connectionTools(runTool),
     ...askTools(runTool),
     ...followTools(),
-    ...memoryTools(runMemory),
+    ...memoryTools(runMemory, project),
+    ...forgetTools(runTool),
     ...notifyTools(runTool),
     ...skillTools(runTool),
     ...watchTools(runTool),

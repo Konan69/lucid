@@ -12,6 +12,8 @@ import {
 import {
   MemoryAuthority,
   MemoryRevision,
+  MemoryCitation,
+  MemoryScope,
   MemorySource,
   MemoryAddress,
   MemoryWrite,
@@ -303,15 +305,14 @@ const loadMemory = Effect.fn('History.memory')(function* (
         return yield* new InvalidHistory()
       continue
     }
+    const source = MemorySource.cases.HistoryLoad.make({ updatedAt: entry.updatedAt })
     yield* memory.write(
       person.personId,
       MemoryWrite.make({
-        entry,
+        entry: { ...entry, scope: MemoryScope.cases.Personal.make({}) },
         expected: MemoryRevision.make(0),
-        authority: MemoryAuthority.make({
-          actor: person.personId,
-          source: MemorySource.cases.HistoryLoad.make({ updatedAt: entry.updatedAt }),
-        }),
+        authority: MemoryAuthority.make({ actor: person.personId, source }),
+        citations: [MemoryCitation.cases.Run.make({ source })],
       }),
     )
   }

@@ -1,16 +1,21 @@
 import {
   AuditEvent,
+  ForgetMemoryRequest,
+  MemoryAddress,
+  MemoryCitation,
   MemorySource,
-  MemoryRetraction,
   MemoryWrite,
   type CorrectMemoryRequest,
-  type ForgetMemoryRequest,
-  type MemoryAddress,
+  type MemoryForgetId,
+  type PlanMemoryForgetRequest,
   type MemoryListing,
 } from '@vivid/contracts'
 import { Clock, Effect } from 'effect'
 import { requireActor } from '../auth/access.ts'
 import { Audit } from '../audit/record.ts'
+import { carryOut, forgetFromSettings, planForget } from '../forget/close.ts'
+import { ForgetStore } from '../forget/store.ts'
+import { live } from '../live/query.ts'
 import { CellMemory } from './client.ts'
 
 export const memoryHandlers = {
@@ -29,33 +34,49 @@ export const memoryHandlers = {
     const actor = yield* requireActor()
     return yield* (yield* CellMemory).read(actor.person.id, input)
   }),
-  /** Settings writes carry the Person's authority and compare the revision they saw. */
+  /**
+   * Settings writes carry the Person's authority and compare the revision they saw. A correction
+   * keeps what the entry rested on and adds the Person's own say-so from Settings.
+   */
   CorrectMemory: Effect.fn('Rpc.CorrectMemory')(function* (input: CorrectMemoryRequest) {
     const actor = yield* requireActor()
     const at = yield* Clock.currentTimeMillis
-    const saved = yield* (yield* CellMemory).write(
+    const cell = yield* CellMemory
+    const before = yield* cell.read(actor.person.id, MemoryAddress.make(input.entry))
+    const source = MemorySource.cases.Settings.make({ at })
+    const saved = yield* cell.write(
       actor.person.id,
       MemoryWrite.make({
         entry: input.entry,
         expected: input.expected,
-        authority: { actor: actor.person.id, source: MemorySource.cases.Settings.make({ at }) },
+        authority: { actor: actor.person.id, source },
+        citations: [...before.citations, MemoryCitation.cases.Run.make({ source })],
       }),
     )
     yield* (yield* Audit).record(actor, AuditEvent.cases.MemorySaved.make({ scope: 'Person' }))
     return saved
   }),
-  /** Audit a successful retraction only; a stale or missing entry changes nothing. */
+  /** Vivid's plan for a forget, checked against the acting Person's memory and records. */
+  PlanMemoryForget: Effect.fn('Rpc.PlanMemoryForget')(function* (input: PlanMemoryForgetRequest) {
+    return yield* planForget(yield* requireActor(), input)
+  }),
+  /** A confirmed plan carried out, or a Settings press handed to Vivid; both answer a receipt. */
   ForgetMemory: Effect.fn('Rpc.ForgetMemory')(function* (input: ForgetMemoryRequest) {
     const actor = yield* requireActor()
-    const at = yield* Clock.currentTimeMillis
-    yield* (yield* CellMemory).retract(
-      actor.person.id,
-      MemoryRetraction.make({
-        address: input.address,
-        expected: input.expected,
-        authority: { actor: actor.person.id, source: MemorySource.cases.Settings.make({ at }) },
-      }),
-    )
-    yield* (yield* Audit).record(actor, AuditEvent.cases.MemoryForgotten.make({ scope: 'Person' }))
+    return yield* ForgetMemoryRequest.match<
+      ReturnType<typeof carryOut> | ReturnType<typeof forgetFromSettings>
+    >(input, {
+      Planned: () => carryOut(actor),
+      Entry: ({ address, expected }) => forgetFromSettings(actor, address, expected),
+    })
   }),
+  /** One forget's receipt for the Person who asked, live until it settles. */
+  WatchMemoryForget: ({ id }: { readonly id: MemoryForgetId }) =>
+    live(
+      'WatchMemoryForget',
+      ['activity'],
+      Effect.fn('Rpc.WatchMemoryForget.read')(function* (actor) {
+        return yield* (yield* ForgetStore).receipt(actor.person.id, id)
+      }),
+    ),
 }

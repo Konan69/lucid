@@ -2,8 +2,12 @@ import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   AuditEvent,
+  MemoryCitation,
   MemoryConflict,
+  MemoryScope,
   MemorySource,
+  MessageId,
+  ThreadId,
   MemoryAddress,
   MemoryEntry,
   MemoryFile,
@@ -91,7 +95,7 @@ const fixture = Effect.fn('CellMemory.test.fixture')(function* () {
 describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
   layer(Layer.mergeAll(productLayer, testConfigLayer))((it) => {
     it.effect(
-      'addresses the acting Person, preserves conflicts and audits only a successful forget',
+      'addresses the acting Person, keeps citations on a correction and preserves conflicts',
       () =>
         Effect.gen(function* () {
           const test = yield* fixture()
@@ -102,6 +106,7 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
             description: 'Coffee preference',
             body: 'I prefer coffee.',
             basis: 'said',
+            scope: MemoryScope.cases.Personal.make({}),
           })
           const expected = MemoryRevision.make(1)
           const address = MemoryAddress.make({ layer: entry.layer, file: entry.file })
@@ -113,6 +118,12 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               actor: test.personId,
               source: MemorySource.cases.Settings.make({ at: 0 }),
             },
+            citations: [
+              MemoryCitation.cases.ThreadMessage.make({
+                threadId: ThreadId.make('coffee-thread'),
+                messageId: MessageId.make('entry-4'),
+              }),
+            ],
           })
           const base = `/persons/${test.personId}/memory`
           yield* Effect.gen(function* () {
@@ -147,7 +158,9 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               body: address,
             })
             expect(yield* memoryHandlers.CorrectMemory({ entry, expected })).toEqual(saved)
+            expect(yield* Queue.take(test.requests)).toMatchObject({ url: base + '/read' })
             const correction = yield* Queue.take(test.requests)
+            // A correction keeps what the entry rested on and adds the Person's say-so.
             expect(correction).toMatchObject({
               url: base + '/write',
               body: {
@@ -157,6 +170,12 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
                   actor: test.personId,
                   source: MemorySource.cases.Settings.make({ at: 0 }),
                 },
+                citations: [
+                  ...saved.citations,
+                  MemoryCitation.cases.Run.make({
+                    source: MemorySource.cases.Settings.make({ at: 0 }),
+                  }),
+                ],
               },
             })
             yield* Ref.set(
@@ -167,7 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               ),
             )
             const conflict = yield* memoryHandlers
-              .ForgetMemory({ address, expected })
+              .CorrectMemory({ entry, expected })
               .pipe(Effect.flip)
             expect(conflict._tag).toBe('Conflict')
             yield* Queue.take(test.requests)
@@ -195,36 +214,6 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
                   .where(eq(auditEntries.personId, test.personId)),
               ),
             ).toMatchObject([{ event: AuditEvent.cases.MemorySaved.make({ scope: 'Person' }) }])
-            yield* Ref.set(test.response, HttpServerResponse.empty({ status: 204 }))
-            yield* memoryHandlers.ForgetMemory({ address, expected })
-            expect(yield* Queue.take(test.requests)).toMatchObject({
-              url: base + '/delete',
-              body: {
-                address,
-                expected,
-                authority: {
-                  actor: test.personId,
-                  source: MemorySource.cases.Settings.make({ at: 0 }),
-                },
-              },
-            })
-            const audits = yield* test.database.run(
-              test.database
-                .select()
-                .from(auditEntries)
-                .where(eq(auditEntries.personId, test.personId)),
-            )
-            expect(audits).toHaveLength(2)
-            expect(audits).toEqual(
-              expect.arrayContaining([
-                expect.objectContaining({
-                  event: AuditEvent.cases.MemorySaved.make({ scope: 'Person' }),
-                }),
-                expect.objectContaining({
-                  event: AuditEvent.cases.MemoryForgotten.make({ scope: 'Person' }),
-                }),
-              ]),
-            )
           }).pipe(Effect.provideContext(test.context))
         }).pipe(Effect.scoped),
     )
