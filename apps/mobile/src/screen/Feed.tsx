@@ -1,8 +1,14 @@
-import { DisplaySource, type FeedCardId, type FeedPost, type ThreadId } from '@vivid/contracts'
+import {
+  DisplaySource,
+  FeedPost,
+  type FeedAction,
+  type FeedCardId,
+  type ThreadId,
+} from '@vivid/contracts'
 import { feed, makeWhen, owed, thisReader, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
@@ -176,7 +182,7 @@ export function Feed() {
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
                 ask={{ title: item.from, words: 'Vivid is working on this now.' }}
-                bar={Option.none()}
+                reply={Option.none()}
                 now={now}
                 remember={Option.none()}
                 onOpen={() => openThread(item.thread)}
@@ -561,20 +567,16 @@ function Waiting({
         at={item.at}
         post={post}
         ask={{ title: item.from, words: feed.askedWords(item) }}
-        bar={Option.map(post, (made) => (chosen: feed.Chosen) => (
-          <Answers
-            actions={made.actions}
-            chosen={chosen}
-            // Only a send for this very post holds its buttons: an older post's send still on its
-            // way does not stop the Person answering the one now shown.
-            held={Option.exists(
-              press,
-              (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
-            )}
-            onSay={onAnswer}
-            onDone={onDone}
-          />
-        ))}
+        reply={Option.some({
+          // Only a send for this very post holds its buttons: an older post's send still on its
+          // way does not stop the Person answering the one now shown.
+          held: Option.exists(
+            press,
+            (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
+          ),
+          onSay: onAnswer,
+          onDone,
+        })}
         now={now}
         remember={Option.some({ post: feed.revisionOf(item) })}
         onOpen={onOpen}
@@ -583,11 +585,24 @@ function Waiting({
   )
 }
 
+/** How the Person answers a waiting card. A card Vivid is still working on takes no answer. */
+interface Reply {
+  /** A press is on its way: nothing more can be pressed. */
+  readonly held: boolean
+  /** Says these words in the card's Thread, as the Person. */
+  readonly onSay: (words: string) => void
+  /** Puts the card away without an answer. */
+  readonly onDone: () => void
+}
+
 /**
- * One card: where it is from and when, its title (which opens the background Thread), what Vivid
- * says only when the drawing does not say it, the thing itself in a band of the accent's soft tint running to the card's edges, and the
- * card's own buttons. Buttons inside the display are inert here; what the Person picks inside it
- * still works and the buttons' words follow it (`feed.fill`).
+ * One card: a quiet row of where it is from (which opens the Thread) and when, then one of the
+ * post's two cases (`FeedPost`), as on the web (`apps/web/src/screen/feed/Card.tsx`):
+ *
+ * - `Drawn`: Vivid's display is the whole card and its own Buttons answer in the Thread, as a
+ *   reply's do. Nothing of ours is written above or under it (29 October 2026: "why does it look
+ *   like we're containing the model?"); the row's "Done" puts it away.
+ * - `Said`: nothing to draw, so the title, a sentence or two, and the card's buttons.
  */
 function Card({
   card,
@@ -595,7 +610,7 @@ function Card({
   at,
   post,
   ask,
-  bar,
+  reply,
   now,
   remember,
   onOpen,
@@ -606,7 +621,7 @@ function Card({
   at: number
   post: Option.Option<FeedPost>
   ask: { readonly title: string; readonly words: string }
-  bar: Option.Option<(chosen: feed.Chosen) => ReactNode>
+  reply: Option.Option<Reply>
   now: number
   /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
   remember: Option.Option<{ readonly post: string }>
@@ -626,19 +641,16 @@ function Card({
       () => ({}),
     ),
   )
-  const [chosen, setChosen] = useState<feed.Chosen>(start)
   const choose = (next: feed.Chosen) => {
     Option.map(remember, ({ post }) => remembered.set(card, { post, chosen: next }))
-    setChosen(next)
   }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
-  const words = Option.match(post, {
-    onNone: () => Option.some(ask.words),
-    onSome: (made) => Option.fromNullOr(made.words),
-  })
-  const display = Option.flatMap(post, (made) => Option.fromNullOr(made.display))
+  const said = (words: string, actions: Option.Option<ReadonlyArray<FeedAction>>) => (
+    <Said title={title} words={words} actions={actions} reply={reply} onOpen={onOpen} />
+  )
   return (
     <View
+      accessibilityLabel={title}
       style={{
         borderRadius: 24,
         borderCurve: 'continuous',
@@ -650,13 +662,82 @@ function Card({
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 }}>
-        <Label size="label" tone="ink-2" numberOfLines={1} style={{ flex: 1 }}>
-          {from}
-        </Label>
+        <Pressable
+          accessibilityRole="link"
+          accessibilityHint="Opens the conversation"
+          onPress={onOpen}
+          hitSlop={8}
+          style={({ pressed }) => ({ flex: 1, opacity: pressed ? 0.6 : 1 })}
+        >
+          <Label size="label" tone="ink-2" numberOfLines={1}>
+            {from}
+          </Label>
+        </Pressable>
         <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
           {when(at, now)}
         </Label>
+        {Option.exists(post, FeedPost.guards.Drawn) && Option.isSome(reply) && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: reply.value.held }}
+            disabled={reply.value.held}
+            onPress={reply.value.onDone}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              marginLeft: 4,
+              opacity: pressed || reply.value.held ? 0.5 : 1,
+            })}
+          >
+            <Label size="label" tone="ink-2" style={{ fontWeight: '600' }}>
+              Done
+            </Label>
+          </Pressable>
+        )}
       </View>
+      {Option.match(post, {
+        onNone: () => said(ask.words, Option.none()),
+        onSome: FeedPost.match({
+          Drawn: ({ display }) => (
+            <View style={{ marginTop: 12 }}>
+              <Display
+                source={DisplaySource.cases.FeedPost.make({ post: card })}
+                text={display}
+                arriving={false}
+                live={Option.exists(reply, ({ held }) => !held)}
+                onSay={(words) => Option.map(reply, ({ onSay }) => onSay(words))}
+                onState={choose}
+                initial={start}
+              />
+            </View>
+          ),
+          Said: ({ words, actions }) => said(words, Option.some(actions)),
+        }),
+      })}
+    </View>
+  )
+}
+
+/**
+ * A card with nothing drawn: its title, which opens the Thread, what Vivid says, and on a waiting
+ * post its buttons (`Answers`). The work's own state in words, with no post, has no buttons.
+ */
+function Said({
+  title,
+  words,
+  actions,
+  reply,
+  onOpen,
+}: {
+  title: string
+  words: string
+  /** The post's buttons; none when Vivid posted nothing. */
+  actions: Option.Option<ReadonlyArray<FeedAction>>
+  reply: Option.Option<Reply>
+  onOpen: () => void
+}) {
+  const bar = Option.zipWith(actions, reply, (labels, answering) => ({ labels, answering }))
+  return (
+    <>
       <Pressable
         accessibilityRole="link"
         accessibilityHint="Opens the conversation"
@@ -667,33 +748,9 @@ function Card({
           {title}
         </Label>
       </Pressable>
-      {Option.isSome(words) && (
-        <Label size="footnote" tone="ink-2" style={{ marginTop: 4, fontWeight: '400' }}>
-          {words.value}
-        </Label>
-      )}
-      {Option.isSome(display) && (
-        <View
-          style={{
-            marginHorizontal: -16,
-            marginTop: 14,
-            marginBottom: Option.isNone(bar) ? -16 : 0,
-            paddingHorizontal: 16,
-            paddingBottom: 16,
-            backgroundColor: c['accent-soft'],
-          }}
-        >
-          <Display
-            source={DisplaySource.cases.FeedPost.make({ post: card })}
-            text={display.value}
-            arriving={false}
-            live={false}
-            onSay={() => undefined}
-            onState={choose}
-            initial={start}
-          />
-        </View>
-      )}
+      <Label size="footnote" tone="ink-2" style={{ marginTop: 4, fontWeight: '400' }}>
+        {words}
+      </Label>
       {Option.isSome(bar) && (
         <View
           style={{
@@ -704,37 +761,24 @@ function Card({
             marginBottom: -4,
           }}
         >
-          {bar.value(chosen)}
+          <Answers actions={bar.value.labels} {...bar.value.answering} />
         </View>
       )}
-    </View>
+    </>
   )
 }
 
 /**
- * A waiting card's buttons, as Vivid wrote them with the Person's pick laid in: the way out keeps
- * to its words, the answer takes the rest of the width (v9). A card with none gets "Done".
+ * A said card's buttons, as Vivid wrote them: the way out keeps to its words, the answer takes the
+ * rest of the width (v9). A card with none gets "Done".
  */
-function Answers({
-  actions,
-  chosen,
-  held,
-  onSay,
-  onDone,
-}: {
-  actions: FeedPost['actions']
-  chosen: feed.Chosen
-  held: boolean
-  onSay: (words: string) => void
-  onDone: () => void
-}) {
+function Answers({ actions, held, onSay, onDone }: { actions: ReadonlyArray<FeedAction> } & Reply) {
   if (actions.length === 0)
     return <Choice words="Done" primary={false} held={held} onPress={onDone} />
-  const said = actions.map((action) => feed.fill(action, chosen))
-  const last = said.length - 1
+  const last = actions.length - 1
   return (
     <>
-      {said.map((words, place) => (
+      {actions.map((words, place) => (
         <Choice
           // Each button is its place: the way out, then the answer.
           // oxlint-disable-next-line react/no-array-index-key
