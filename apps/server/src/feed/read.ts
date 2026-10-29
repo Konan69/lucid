@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  type DatabaseFailure,
   FeedCardId,
   FeedItem,
   FeedPost,
@@ -26,7 +27,23 @@ import { feedCards } from './tables.ts'
  * Thread, its card, its Runs and anything it is waiting on, the same for every source.
  */
 
-const decodePost = decodeStored(Schema.NullOr(FeedPost), 'Feed post')
+/**
+ * A card's columns as stored: each case's own fields, without the tag, because the row says which
+ * case it is by whether it has a drawing (`columnsOf` in `store.ts`).
+ */
+const { Drawn, Said } = FeedPost.cases
+const decodeDrawn = decodeStored(
+  Schema.Struct({ title: Drawn.fields.title, display: Drawn.fields.display }),
+  'drawn Feed post',
+)
+const decodeSaid = decodeStored(
+  Schema.Struct({
+    title: Said.fields.title,
+    words: Said.fields.words,
+    actions: Said.fields.actions,
+  }),
+  'said Feed post',
+)
 
 /** How far back settled work stays on the Feed: the last day, so morning still shows the night. */
 const SETTLED_WINDOW = 24 * 60 * 60 * 1000
@@ -237,11 +254,16 @@ const atOf = (item: FeedItem) =>
  * The card as the contract carries it, or none when Vivid has not posted. A card with a drawing is
  * `Drawn`; one without is `Said` and must have words, or the row is broken and decoding says so.
  */
-const postOf = (card: Row['card']) => {
-  if (card === null) return decodePost(null)
+const postOf = (card: Row['card']): Effect.Effect<FeedPost | null, DatabaseFailure> => {
+  if (card === null) return Effect.succeed(null)
   if (card.display === null)
-    return decodePost({ _tag: 'Said', title: card.title, words: card.words, actions: card.actions })
-  return decodePost({ _tag: 'Drawn', title: card.title, display: card.display })
+    return Effect.map(
+      decodeSaid({ title: card.title, words: card.words, actions: card.actions }),
+      (said) => Said.make(said),
+    )
+  return Effect.map(decodeDrawn({ title: card.title, display: card.display }), (drawn) =>
+    Drawn.make(drawn),
+  )
 }
 
 /** The whole Feed, shared by List and Watch: every item in its stage, newest first. */
