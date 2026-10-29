@@ -77,9 +77,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           const sent = yield* Ref.get(probe.calls)
           // The runtime retrying the same call learns it is still unknown; nothing is sent.
           const retried = yield* useTool(actor, lost)
-          expect(ToolOutcome.guards.OutcomeUnknown(retried) && retried.receipt?.operationId).toBe(
-            operationId,
-          )
+          expect(retried).toEqual(ToolOutcome.cases.OutcomeUnknown.make({ receipt: first.receipt }))
           // A new call of the exact same act is refused, before any Gate decision or send.
           const checked = (yield* Ref.get(probe.checked)).length
           const refused = yield* useTool(actor, write({ record: 7 })).pipe(Effect.flip)
@@ -111,10 +109,13 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
             return expect.fail('The fresh send completes with its own receipt')
           expect(fresh.receipt.operationId).not.toBe(operationId)
           expect(yield* Ref.get(probe.calls)).toBe(sent + 2)
-          const [row] = yield* database.run(
-            database.select().from(actions).where(eq(actions.id, fresh.receipt.operationId)),
+          const rows = yield* database.run(
+            database
+              .select({ retryOf: actions.retryOf })
+              .from(actions)
+              .where(eq(actions.id, fresh.receipt.operationId)),
           )
-          expect(row?.retryOf).toBe(operationId)
+          expect(rows).toEqual([{ retryOf: operationId }])
           // A later lookup cannot overturn the definite answer already recorded.
           const settled = yield* reconcile(owner, operationId).pipe(
             Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Unsupported.make({}))),

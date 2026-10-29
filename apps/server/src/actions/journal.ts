@@ -290,10 +290,13 @@ export const Lookup = Schema.TaggedUnion({
 export type Lookup = typeof Lookup.Type
 
 /** The read-only provider check behind reconciliation. It must never send the operation. */
-export class ActionLookup extends Context.Service<
-  ActionLookup,
-  { readonly look: (operation: ActionOperation) => Effect.Effect<Lookup> }
->()('vivid/ActionLookup') {}
+export interface ActionLookupService {
+  readonly look: (operation: ActionOperation) => Effect.Effect<Lookup>
+}
+
+export class ActionLookup extends Context.Service<ActionLookup, ActionLookupService>()(
+  'vivid/ActionLookup',
+) {}
 
 /** No Integration or Computer exposes a lookup by operation yet, so every check is inconclusive. */
 export const actionLookupLayer = Layer.succeed(

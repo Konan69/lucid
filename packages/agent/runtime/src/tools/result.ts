@@ -243,13 +243,9 @@ export const settle = Effect.fn('Tools.settle')(function* (
       DatabaseFailure: () => failure('Vivid could not read or save that record right now.'),
     }),
   )
-  const settled: {
-    readonly output: Schema.Json
-    readonly terminate: boolean
-    readonly receipts?: ReadonlyArray<ActionReceipt>
-  } = {
-    output: modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer)),
-    terminate: result.terminate === true,
-  }
-  return result.receipts === undefined ? settled : { ...settled, receipts: result.receipts }
+  const output = modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
+  const terminate = result.terminate === true
+  return result.receipts === undefined
+    ? { output, terminate }
+    : { output, terminate, receipts: result.receipts }
 })
