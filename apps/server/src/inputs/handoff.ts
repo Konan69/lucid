@@ -571,6 +571,26 @@ const merged = (
   ).pipe(Effect.filterOrFail(Arr.isReadonlyArrayNonEmpty, corrupt))
 
 /**
+ * Empties the form's fields that are still on the page, before Vivid can read it again. A
+ * Computer that is not running has no page holding them. Any other failure leaves the handoff open
+ * and the Computer held, so nothing typed is exposed; the Person may try again.
+ */
+const clearOf = Effect.fn('Handoffs.clear')(function* (row: Row) {
+  if (!Definition.guards.Form(row.request)) return
+  const labels = row.request.fields.map((field) => field.label)
+  const computer = yield* ComputerStore
+  yield* throughComputer(
+    row.id,
+    computer.clearFields(row.personId, row.binding, labels).pipe(
+      Effect.catchTags({
+        ComputerNotReady: () => Effect.void,
+        MachineNotRunning: () => Effect.void,
+      }),
+    ),
+  )
+})
+
+/**
  * Types the Person's values into the prepared fields, privately, and keeps one result per field.
  *
  * The row is claimed (`applying`) before anything is typed, so a second fill racing this one is
@@ -635,7 +655,11 @@ export const fillHandoff = Effect.fn('Handoffs.fill')(function* (
       .returning(),
   )
   yield* changed(actor, Topic.thread(row.threadId))
-  return rows.length > 0 ? yield* one(rows) : yield* current(row.id)
+  if (rows.length > 0) return yield* one(rows)
+  // Withdrawn while this fill was typing: its clearing may have run first, so the values just
+  // typed would stay on a page Vivid has back. Clear again; the step is over either way.
+  yield* clearOf(row)
+  return yield* current(row.id)
 }, Effect.uninterruptible)
 
 /** A field's result as Vivid reads it: what happened, never what was typed. */
@@ -674,26 +698,6 @@ const finishedWords = (row: Row, by: string) =>
     Screen: () =>
       `${by} finished the step on the Computer's screen at ${row.page.origin} and handed it back. Look at the page to see where things stand before going on.`,
   })
-
-/**
- * Empties the form's fields that are still on the page, before Vivid can read it again. A
- * Computer that is not running has no page holding them. Any other failure leaves the handoff open
- * and the Computer held, so nothing typed is exposed; the Person may try again.
- */
-const clearOf = Effect.fn('Handoffs.clear')(function* (row: Row) {
-  if (!Definition.guards.Form(row.request)) return
-  const labels = row.request.fields.map((field) => field.label)
-  const computer = yield* ComputerStore
-  yield* throughComputer(
-    row.id,
-    computer.clearFields(row.personId, row.binding, labels).pipe(
-      Effect.catchTags({
-        ComputerNotReady: () => Effect.void,
-        MachineNotRunning: () => Effect.void,
-      }),
-    ),
-  )
-})
 
 /** The Person had the screen for the step; it goes back to Vivid with the handoff. */
 const handBack = (person: PersonId) =>
