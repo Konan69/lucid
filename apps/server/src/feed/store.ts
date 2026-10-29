@@ -1,23 +1,28 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import {
+  FeedCause,
   FeedDisplayInvalid,
-  FeedPost,
+  FeedEvidence,
+  FeedProvenance,
   NotFound,
   PostOutcome,
+  PostRequest,
   type MarkFeedCardRequest,
   type PersonId,
-  type PostRequest,
+  type RunId,
   type ThreadId,
   type FeedCardId,
 } from '@vivid/contracts'
 import { stretches } from '@vivid/contracts/display'
-import { Database, returned } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { readableThread } from '../threads/access.ts'
+import { StoredRunOrigin, StoredRunOriginColumn } from '../threads/conversation.ts'
+import { runs } from '../threads/tables.ts'
 import { cardIdOf, readFeed } from './read.ts'
 import { feedCards } from './tables.ts'
 
@@ -63,16 +68,32 @@ const makeStore = (database: Database['Service']) => {
   const post = Effect.fn('FeedStore.post')(function* (input: {
     readonly person: PersonId
     readonly thread: ThreadId
-    readonly request: typeof PostRequest.Type
+    /** The Run acting in the Thread now, which posts this content (`actingRun`). */
+    readonly postedBy: RunId
+    readonly request: PostRequest
   }) {
     // Every caller posts through here, so a display that draws nothing never reaches a card.
-    if (FeedPost.guards.Drawn(input.request) && !draws(input.request.display))
+    if (PostRequest.guards.Drawn(input.request) && !draws(input.request.display))
       return yield* new FeedDisplayInvalid({ reason: 'NoRoot' })
     const now = yield* Clock.currentTimeMillis
     const id = cardIdOf(input.thread)
-    const columns = columnsOf(input.request)
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        const cause = yield* causeOf(tx, input.thread)
+        const columns = {
+          ...columnsOf(input.request),
+          provenance: yield* encodeProvenance(
+            FeedProvenance.cases.Recorded.make({
+              postedBy: input.postedBy,
+              cause,
+              // The cause's Run first: it holds what Vivid saw. Then the pages it read.
+              evidence: [
+                FeedEvidence.cases.ThreadRun.make({ thread: input.thread, run: cause.run }),
+                ...input.request.sources.map((source) => FeedEvidence.cases.Web.make(source)),
+              ],
+            }),
+          ),
+        }
         const rows = yield* tx
           .insert(feedCards)
           .values({
@@ -138,6 +159,34 @@ export class FeedStore extends Context.Service<FeedStore, ReturnType<typeof make
   'vivid/FeedStore',
 ) {}
 
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+const encodeProvenance = encodeStored(FeedProvenance, 'Feed provenance')
+const decodeOrigin = decodeStored(StoredRunOriginColumn, 'Run origin')
+
+/**
+ * What started a Thread's work: its first Run, which a later follow-up never replaces. A Run a
+ * Watch event started names that Watch and event; any other first Run, or a Watch Run from before
+ * events were recorded, is its Run alone. Read from the record, never from the newest Run.
+ */
+const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, thread: ThreadId) {
+  const rows = yield* tx
+    .select({ id: runs.id, origin: runs.origin })
+    .from(runs)
+    .where(eq(runs.threadId, thread))
+    .orderBy(asc(runs.turn))
+    .limit(1)
+  const first = yield* returned(rows, 'The Thread’s first Run')
+  const origin = yield* decodeOrigin(first.origin)
+  return StoredRunOrigin.guards.Watch(origin)
+    ? FeedCause.cases.Watch.make({
+        run: first.id,
+        watch: origin.watchId,
+        watchName: origin.watchName,
+        eventId: origin.eventId,
+      })
+    : FeedCause.cases.ThreadRun.make({ run: first.id })
+})
+
 export const feedStoreLayer = Layer.effect(
   FeedStore,
   Effect.gen(function* () {
@@ -149,8 +198,8 @@ export const feedStoreLayer = Layer.effect(
  * A card's columns: a drawn card keeps no words or buttons, a said one no drawing. The read side
  * (`postOf` in `read.ts`) tells them apart by the drawing, so each column holds only its own case.
  */
-const columnsOf = (post: typeof PostRequest.Type) => {
-  if (FeedPost.guards.Drawn(post))
+const columnsOf = (post: PostRequest) => {
+  if (PostRequest.guards.Drawn(post))
     return { title: post.title, words: null, display: post.display, actions: [] }
   return { title: post.title, words: post.words, display: null, actions: post.actions }
 }

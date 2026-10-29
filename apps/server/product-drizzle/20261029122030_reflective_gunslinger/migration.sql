@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_feed_cards" ADD COLUMN "provenance" jsonb DEFAULT '{"_tag":"Legacy"}' NOT NULL;

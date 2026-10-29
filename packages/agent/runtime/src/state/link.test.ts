@@ -384,7 +384,7 @@ describe('the state link', () => {
           const sent = yield* say(delivery('thread-1', 'k-1', { clientKey: 'CLIENT-KEY-ONE' }))
           yield* say(
             delivery('thread-1', 'k-2', {
-              attributes: { from: 'Grace', turn: '2' },
+              from: 'Grace',
               turn: 2,
               clientKey: 'CLIENT-KEY-TWO',
             }),

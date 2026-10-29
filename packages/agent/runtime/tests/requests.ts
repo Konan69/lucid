@@ -3,6 +3,7 @@ import {
   PersonId,
   RuntimeAdmissionReceipt,
   RuntimeSettlement,
+  SignalCue,
   type RuntimeSubmissionId,
 } from '@vivid/contracts'
 import { Effect, Schema, type Scope } from 'effect'
@@ -23,8 +24,10 @@ export const delivery = (
   given: {
     readonly creator?: PersonId
     readonly body?: string
-    readonly type?: string
-    readonly attributes?: Record<string, string>
+    /** A signal from this speaker; without it the delivery is a Person's private words. */
+    readonly from?: string
+    /** What the signal says; a shared message with `body` when only `from` is given. */
+    readonly cue?: SignalCue
     readonly acting?: PersonId
     readonly turn?: number
     readonly clientKey?: string
@@ -36,14 +39,27 @@ export const delivery = (
   } = {},
 ) => {
   const creator = given.creator === undefined ? ada : given.creator
+  const words = given.body === undefined ? 'hello' : given.body
+  const turn = given.turn === undefined ? 1 : given.turn
+  const signalled = given.from !== undefined || given.cue !== undefined
   const body = {
     threadId,
     idempotencyKey: key,
-    type: given.type === undefined ? 'message' : given.type,
-    body: given.body === undefined ? 'hello' : given.body,
-    attachments: given.attachments === undefined ? [] : given.attachments,
-    attributes: given.attributes === undefined ? {} : given.attributes,
-    turn: given.turn === undefined ? 1 : given.turn,
+    delivery: signalled
+      ? {
+          _tag: 'Signal' as const,
+          envelope: {
+            from: given.from === undefined ? 'Ada' : given.from,
+            turn,
+            cue: given.cue === undefined ? SignalCue.cases.Message.make({ body: words }) : given.cue,
+          },
+        }
+      : {
+          _tag: 'Words' as const,
+          body: words,
+          attachments: given.attachments === undefined ? [] : given.attachments,
+        },
+    turn,
     scope: { acting: given.acting === undefined ? creator : given.acting, libraryFolder: null },
     initialData: { creator, creatorName: 'Ada' },
   }

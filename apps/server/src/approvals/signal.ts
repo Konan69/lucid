@@ -1,9 +1,42 @@
-import { ApprovalInvalidation, ApprovalState, PersonId, type ApprovalId } from '@vivid/contracts'
+import {
+  ApprovalInvalidation,
+  ApprovalOutcome,
+  ApprovalState,
+  PersonId,
+  SignalCue,
+  type ApprovalId,
+} from '@vivid/contracts'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
+import * as SchemaGetter from 'effect/SchemaGetter'
 import * as Struct from 'effect/Struct'
 import { encodeStored } from '../database/client.ts'
 import { DeliveryMessage } from '../threads/conversation.ts'
+
+/**
+ * An owed delivery stored before 29 October 2026, when a signal was its type, words and string
+ * attributes. Only Approvals and answers were ever owed; each reads as its cue, with the outcome
+ * its attributes named. Nothing is written in this shape again, so it does not encode.
+ */
+const EarlierSignal = Schema.Union([
+  Schema.TaggedStruct('Signal', {
+    type: Schema.Literal('approval'),
+    body: Schema.String,
+    attributes: Schema.Struct({ outcome: ApprovalOutcome }),
+  }),
+  Schema.TaggedStruct('Signal', { type: Schema.Literal('answer'), body: Schema.String }),
+]).pipe(
+  Schema.decodeTo(DeliveryMessage.cases.Signal, {
+    decode: SchemaGetter.transform((earlier) => ({
+      _tag: 'Signal' as const,
+      cue:
+        earlier.type === 'approval'
+          ? { _tag: 'Approval' as const, body: earlier.body, outcome: earlier.attributes.outcome }
+          : { _tag: 'Answer' as const, body: earlier.body },
+    })),
+    encode: SchemaGetter.forbidden(() => 'An owed delivery is written only in its current shape.'),
+  }),
+)
 
 /** Durable delivery state is independent of the decision: executions owe their eventual outcome. */
 export const Signal = Schema.TaggedUnion({
@@ -13,7 +46,7 @@ export const Signal = Schema.TaggedUnion({
     idempotencyKey: Schema.String,
     /** Expiry has no decider; every human decision retains its original Person. */
     deciderId: Schema.NullOr(PersonId),
-    message: DeliveryMessage.cases.Signal,
+    message: Schema.Union([DeliveryMessage.cases.Signal, EarlierSignal]),
   },
   Delivered: { idempotencyKey: Schema.String, deliveredAt: Schema.Finite },
   Stopped: {
@@ -95,12 +128,10 @@ export const owed = (
     idempotencyKey: approvalKey(id),
     deciderId,
     message: DeliveryMessage.cases.Signal.make({
-      type: 'approval',
-      body,
-      attributes: {
-        approval: id,
+      cue: SignalCue.cases.Approval.make({
+        body,
         outcome: Conclusion.guards.Expired(conclusion) ? 'expired' : conclusion._tag,
-      },
+      }),
     }),
   })
 }

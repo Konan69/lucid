@@ -25,7 +25,8 @@ import {
   isDeliveryEntry,
   resolveAuthority,
   recoverAuthority,
-  SignalData,
+  PlacedSignal,
+  signalShown,
   SIGNAL_ENTRY,
 } from './delivery.ts'
 import { Memory } from './memory.ts'
@@ -181,7 +182,7 @@ const history = Effect.fn('Learning.history')(function* (
 })
 
 const decodeKept = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Kept)))
-const decodeSignal = Schema.decodeUnknownEffect(SignalData)
+const decodeSignal = Schema.decodeUnknownEffect(PlacedSignal)
 /** Signal types that carry a Person's own words: a message in a shared Thread, an answer. */
 const SPOKEN: ReadonlySet<string> = new Set(['message', 'answer'])
 
@@ -202,8 +203,9 @@ const recover = Effect.fn('Learning.recover')(function* (
  */
 const spokenSignal = Effect.fn('Learning.spokenSignal')(function* (entry: EntryRecord) {
   if (entry.kind !== SIGNAL_ENTRY) return Option.some(null)
-  const signal = yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
-  return SPOKEN.has(signal.type) ? Option.some(signal) : Option.none()
+  const placed = yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
+  const signal = signalShown(placed)
+  return SPOKEN.has(signal.tagName) ? Option.some(signal) : Option.none()
 })
 
 /** A delivery keeps its own Person even when another speaker steered the same run. */

@@ -337,7 +337,7 @@ describe('the runtime over HTTP', () => {
           ada,
           delivery('shared-1', 'signal-1', {
             body: 'is <this> due?',
-            attributes: { from: 'Grace "G"', turn: '4' },
+            from: 'Grace "G"',
             acting: grace,
             turn: 4,
           }),
@@ -359,9 +359,11 @@ describe('the runtime over HTTP', () => {
         const entries = yield* transcript(runtime, ada, 'shared-1')
         expect(entries.find((entry) => entry.kind === SIGNAL_ENTRY)).toMatchObject({
           data: {
-            type: 'message',
-            attributes: { from: 'Grace "G"', turn: '4' },
-            body: 'is <this> due?',
+            envelope: {
+              from: 'Grace "G"',
+              turn: 4,
+              cue: { _tag: 'Message', body: 'is <this> due?' },
+            },
           },
         })
         // Exactly one product client was built after the model asked for the tool, and it was

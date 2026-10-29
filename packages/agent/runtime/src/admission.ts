@@ -81,7 +81,7 @@ export const admit = Effect.fn('Admission.admit')(function* (
   recordScope(body.threadId, body.turn, body.scope)
   const delivery = modelDelivery(body)
   const acting = Option.map(
-    cachedAuthority(body.threadId, delivery, Option.some(body.initialData)),
+    cachedAuthority(body.threadId, addressed(delivery), Option.some(body.initialData)),
     (authority) => authority.acting,
   )
   // An earlier attempt with this key may have kept its context and gone no further. That

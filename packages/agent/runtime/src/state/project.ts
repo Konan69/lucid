@@ -4,7 +4,7 @@ import type { EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { ConversationState } from '@vivid/contracts'
 import { Array as Arr, Option, Order, Predicate, Schema } from 'effect'
 import { withoutCorrections } from '../correction.ts'
-import { isDeliveryEntry, MessageData, SIGNAL_ENTRY, SignalData } from '../delivery.ts'
+import { isDeliveryEntry, MessageData, PlacedSignal, SIGNAL_ENTRY, signalShown } from '../delivery.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY, RunData } from '../response.ts'
 
 /**
@@ -36,7 +36,7 @@ export interface Viewed {
 /** How a delivery ended. */
 export type Outcome = 'completed' | 'failed' | 'aborted'
 
-const decodeSignal = Schema.decodeUnknownOption(SignalData)
+const decodeSignal = Schema.decodeUnknownOption(PlacedSignal)
 const decodeMessage = Schema.decodeUnknownOption(MessageData)
 const decodeResponseData = Schema.decodeUnknownOption(ResponseData)
 const decodeRun = Schema.decodeUnknownOption(RunData)
@@ -165,17 +165,18 @@ function personMessage(
  * Clients classify shared messages, Routines and internal signals from these fields. */
 function dispatchMessage(
   entry: EntryRecord,
-  signal: SignalData,
+  signal: PlacedSignal,
   submission: Option.Option<number>,
 ) {
   const placed = Option.map(userOf(entry), (message) => iso(message.timestamp))
+  const shown = signalShown(signal)
   const base = {
     id: `entry-${entry.id}`,
     role: 'system' as const,
     purpose: 'dispatch' as const,
     display: 'diagnostic' as const,
-    signal: { tagName: signal.type, attributes: { ...signal.attributes } },
-    parts: [done(signal.body)],
+    signal: { tagName: shown.tagName, attributes: { ...shown.attributes } },
+    parts: [done(shown.body)],
   }
   const timed = Option.match(placed, {
     onNone: () => base,

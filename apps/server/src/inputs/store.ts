@@ -18,6 +18,7 @@ import {
   NotFound,
   PersonId,
   RunId,
+  SignalCue,
   ThreadId,
   type AnswerInputRequest,
   type AskInputRequest,
@@ -274,11 +275,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   const signal = Signal.cases.Owed.make({
     idempotencyKey: answerKey(request.id),
     deciderId: actor.person.id,
-    message: DeliveryMessage.cases.Signal.make({
-      type: 'answer',
-      body,
-      attributes: { request: request.id },
-    }),
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
   })
   const updated = yield* database.transaction((tx) =>
     Effect.gen(function* () {
