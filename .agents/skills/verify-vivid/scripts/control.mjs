@@ -117,6 +117,7 @@ async function launch() {
           COREPACK_HOME:
             process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
           COREPACK_ENABLE_NETWORK: '0',
+          VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD,
         },
       },
     )
@@ -167,7 +168,7 @@ try {
     )
   } else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord | browser <feature> | desktop | phone all|thread|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
@@ -189,7 +190,24 @@ try {
       const snapshot = await checkout()
       if (snapshot.tree !== state.tree || snapshot.diffHash !== state.diffHash)
         throw new Error('Working tree changed; launch again')
-      if (action === 'feature')
+      if (action === 'behaviour') {
+        console.log(
+          await command(
+            [
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/behaviour.mjs',
+              state.evidence + '/state.json',
+              ...args.filter((arg) => !arg.startsWith('pi-')),
+            ],
+            {
+              heavy: true,
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      } else if (action === 'feature')
         console.log(
           await command(
             [

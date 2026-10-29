@@ -15,6 +15,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Run a program](code.md).
 - [Documents](document.md).
 - [Watches](watch.md).
+- [Mail and Calendar behaviour](behaviour.md).
 - [Library](library.md).
 - [Feed](feed.md).
 - [Waiting on](owed.md).
