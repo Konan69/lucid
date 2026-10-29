@@ -18,6 +18,7 @@ import * as Result from 'effect/Result'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   ApprovalDecision,
+  ApprovalExpired,
   ApprovalState,
   AuditEvent,
   ActionTarget,
@@ -272,10 +273,8 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 decision: once,
               }),
             )
-            if (Result.isFailure(result)) {
-              expect(result.failure).toBeInstanceOf(Conflict)
-              expect(result.failure.message).toBe('This request ran out')
-            }
+            if (Result.isFailure(result))
+              expect(result.failure).toEqual(new ApprovalExpired({ id: approval.id }))
             expect(Result.isFailure(result)).toBe(true)
             yield* store.expire
             const records = yield* store.inThread(test.personalId)
