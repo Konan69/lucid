@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { applyImmutable, type Op } from '@earendil-works/chord/delta'
-import { createModels, Type } from '@earendil-works/pi-ai'
+import { createModels, Type, type Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, defineExtension, Harness } from '@earendil-works/pi-durable'
 import { describe, expect, it } from '@effect/vitest'
@@ -316,6 +316,58 @@ describe('main runtime parity on Pi', () => {
         expect(yield* settled(after, ada, THREAD, receipt.submissionId)).toEqual(
           RuntimeSettlement.cases.Stopped.make({}),
         )
+      }),
+    ),
+  )
+
+  it.live('continues a recovered generation after its stored words in one reply', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const given = yield* world({ tokensPerSecond: 200 })
+        const text = 'The reply already seen must survive its owner. '.repeat(100)
+        const continuation = 'and this is the rest of that same reply.'
+        given.faux.setResponses([fauxAssistantMessage(text)])
+        const first = yield* Scope.make()
+        yield* Effect.addFinalizer(() => Scope.close(first, Exit.void))
+        const before = yield* start(given).pipe(Scope.provide(first))
+        const link = yield* before.link(`${path}/state`)
+        const opening = yield* link.frame
+        if (!ConversationFrame.guards.Whole(opening)) expect.fail('opening state')
+        const receipt = yield* admit(before, ada, delivery(THREAD, 'recover-partial'))
+        let state = opening.state
+        while (words(state).length === 0) state = apply(state, yield* link.frame)
+        const prefix = words(state)
+        expect(prefix.length).toBeLessThan(text.length)
+        yield* link.leave
+        yield* Scope.close(first, Exit.void)
+        const attempts: Array<ReadonlyArray<Message>> = []
+        given.faux.setResponses([
+          (context) => {
+            attempts.push(context.messages)
+            return fauxAssistantMessage(continuation)
+          },
+        ])
+        const after = yield* start(given)
+        const ending = yield* settled(after, ada, THREAD, receipt.submissionId)
+        const recovered = yield* read(after)
+        const [request] = attempts
+        if (request === undefined) expect.fail('recovered request')
+        const assistant = request.findLast((message) => message.role === 'assistant')
+        if (assistant === undefined) expect.fail('interrupted answer in recovered request')
+        const supplied = assistant.content
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('')
+        expect(supplied.startsWith(prefix)).toBe(true)
+        expect(recovered.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+        expect(
+          recovered.messages
+            .filter((message) => message.role === 'assistant')
+            .flatMap((message) => message.parts.filter((part) => part.type === 'text')),
+        ).toHaveLength(1)
+        expect(words(recovered).startsWith(prefix)).toBe(true)
+        expect(words(recovered).endsWith(continuation)).toBe(true)
+        if (!RuntimeSettlement.guards.Done(ending)) expect.fail('completed recovered reply')
+        expect(ending.reply).toBe(words(recovered))
       }),
     ),
   )
