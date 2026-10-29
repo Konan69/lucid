@@ -3,7 +3,12 @@ import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { ConversationFrame } from './conversation.js'
-import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
+import {
+  ApprovalChanged,
+  ApprovalExpired,
+  ApprovalResponse,
+  DecideApprovalRequest,
+} from './approvals.js'
 import {
   ArtifactChanged,
   ArtifactDetail,
@@ -503,9 +508,9 @@ const ReadDocument = Rpc.make('ReadDocument', {
 const GetInbox = Rpc.make('GetInbox', { ...call, success: Inbox })
 const WatchInbox = Rpc.make('WatchInbox', { ...live, success: Inbox })
 const DecideApproval = Rpc.make('DecideApproval', {
-  ...call,
   payload: DecideApprovalRequest,
   success: ApprovalResponse,
+  error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired]),
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
