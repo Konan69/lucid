@@ -1,4 +1,5 @@
 import * as Schema from 'effect/Schema'
+import { ActionReceipt } from './actions.js'
 import { ACCOUNT_HANDLE_MAX, DisplayToolKind } from './connections.js'
 import { ApprovalId, ThreadId } from './identity.js'
 import { FeedCardId } from './feed.js'
@@ -96,6 +97,8 @@ export const CodeCall = Schema.Struct({
   kind: CodeCallKind,
   summary: Schema.String,
   end: CodeCallEnd,
+  /** The journal's receipt for an outward write this call sent; null for every other call. */
+  receipt: Schema.NullOr(ActionReceipt),
 }).annotate({ identifier: 'CodeCall', title: 'Code call' })
 export interface CodeCall extends Schema.Schema.Type<typeof CodeCall> {}
 
