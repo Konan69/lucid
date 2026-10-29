@@ -58,9 +58,12 @@ export async function provider() {
       : 'OPENCODE_API_KEY'
   if (!model.startsWith('rehearsal/') && !env[key])
     throw new Error('Missing provider key for selected model')
-  if (!env.EXPLABS_API_KEY)
+  // The server's memory and title model takes ExpLabs by default and OpenRouter when told
+  // (`serverModelGateway` in apps/server/src/config.ts), including rehearsal runs.
+  if (!env.EXPLABS_API_KEY && !env.OPENROUTER_API_KEY)
     throw new Error(
-      'EXPLABS_API_KEY is required by the real server memory and title model, including rehearsal runs',
+      'EXPLABS_API_KEY or OPENROUTER_API_KEY is required by the real server memory and title model, including rehearsal runs',
     )
+  if (!env.EXPLABS_API_KEY) env.VIVID_SERVER_MODEL_PROVIDER = 'openrouter'
   return { model, source: sources.join(', ') || 'process environment', env }
 }
