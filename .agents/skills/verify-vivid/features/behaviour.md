@@ -14,7 +14,7 @@ Every trial removes earlier Mail and Calendar connections through public RPCs, c
 
 `mail.json` contains `owner` with `name`, `email`, `timezone`, and `threads`. Each thread has `id`, `subject`, `labels`, and `messages`. Each message has `from`, `to`, `date`, `body`, and optional attachment filenames in `attachments`.
 
-`calendar.json` contains `timezone`, `calendars` with `name`, and `events`. Each event has `calendar`, `title`, ISO datetime `start` and `end`, `meet`, and optional `attendees`.
+`calendar.json` contains `timezone`, `calendars` with `name`, and `events`. Each event has `calendar`, `title`, ISO datetime `start` and `end`, and optional `meet` and `attendees`.
 
 `scenarios.json` is an array. Scenario ids must be unique lowercase words with optional hyphens. `connected` lists `Mail`, `Calendar`, both, or neither. `words` holds successive Person messages in the same trial Thread. Use the Person's words, never tool names. All check fields are required. Patterns use JavaScript regular expressions, case insensitive.
 

@@ -31,7 +31,7 @@ const Calendar = Schema.Struct({
       title: Schema.String,
       start: Schema.String,
       end: Schema.String,
-      meet: Schema.Boolean,
+      meet: Schema.optional(Schema.Boolean),
       attendees: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
