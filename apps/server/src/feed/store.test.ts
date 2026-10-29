@@ -232,6 +232,9 @@ const watched = Effect.fn('FeedTest.watched')(function* (
 
 const list = (person: PersonId) => Effect.flatMap(FeedStore, (store) => store.list(person))
 const items = (person: PersonId) => Effect.map(list(person), (feed) => feed.items)
+/** The posted cards on the Person's Feed, in its order. */
+const posts = (person: PersonId) =>
+  Effect.map(items(person), (all) => all.flatMap((item) => (item.post === null ? [] : [item.post])))
 
 describe.skipIf(!testDatabaseConfigured)('Feed', () => {
   layer(testLayer)((it) => {
@@ -297,8 +300,8 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             postedBy: cause,
             request: PostRequest.cases.Said.make({ ...firstPost, sources: [page] }),
           })
-          const first = (yield* items(test.ada))[0]
-          expect(first?.post?.provenance).toEqual(
+          expect((yield* posts(test.ada))[0]).toHaveProperty(
+            'provenance',
             FeedProvenance.cases.Recorded.make({
               postedBy: cause,
               cause: FeedCause.cases.Watch.make({
@@ -332,9 +335,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           )
           yield* TestClock.setTime(now + hour)
           yield* store.post({ person: test.ada, thread, postedBy: followed, request: followUp })
-          expect((yield* items(test.ada))[0]?.post).toEqual(
+          expect(yield* posts(test.ada)).toEqual([
             shown(followUp, recorded(thread, cause, followed)),
-          )
+          ])
         }).pipe(Effect.scoped),
     )
 
@@ -359,9 +362,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             updatedAt: now,
           }),
         )
-        expect((yield* items(test.ada))[0]?.post).toEqual(
+        expect(yield* posts(test.ada)).toEqual([
           shown(firstPost, FeedProvenance.cases.Legacy.make({})),
-        )
+        ])
       }).pipe(Effect.scoped),
     )
 

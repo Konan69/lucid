@@ -77,6 +77,7 @@ const makeStore = (database: Database['Service']) => {
       return yield* new FeedDisplayInvalid({ reason: 'NoRoot' })
     const now = yield* Clock.currentTimeMillis
     const id = cardIdOf(input.thread)
+    const cited = input.request.sources.map((source) => FeedEvidence.cases.Web.make(source))
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const cause = yield* causeOf(tx, input.thread)
@@ -89,7 +90,7 @@ const makeStore = (database: Database['Service']) => {
               // The cause's Run first: it holds what Vivid saw. Then the pages it read.
               evidence: [
                 FeedEvidence.cases.ThreadRun.make({ thread: input.thread, run: cause.run }),
-                ...input.request.sources.map((source) => FeedEvidence.cases.Web.make(source)),
+                ...cited,
               ],
             }),
           ),
