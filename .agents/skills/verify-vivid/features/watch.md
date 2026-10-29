@@ -1,6 +1,6 @@
 # Watches
 
-Model requirement: a real model with `EXPLABS_API_KEY` for the server memory/title model and a key for the chosen runtime model. Rehearsal cannot prove this journey.
+Model requirement: a real model with `OPENROUTER_API_KEY` for the server memory/title model and a key for the chosen runtime model. Rehearsal cannot prove this journey.
 
 ## Drive the journey
 

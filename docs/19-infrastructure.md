@@ -428,8 +428,7 @@ Required by the stack:
 
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
-- `OPENROUTER_API_KEY` for the default server title and decision provider. ExpLabs stays selectable
-  through `VIVID_SERVER_MODEL_PROVIDER=explabs` with `EXPLABS_API_KEY`.
+- `OPENROUTER_API_KEY` for server title and decision calls.
 - `VIVID_RUNTIME_TOKEN` — authority shared only between the application server and runtime host.
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored

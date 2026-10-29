@@ -9,6 +9,5 @@ for (const name of [
   'VIVID_MEMORY_DIR',
   'VIVID_MODEL',
   'OPENCODE_API_KEY',
-  'EXPLABS_API_KEY',
 ])
   delete NodeProcess.env[name]

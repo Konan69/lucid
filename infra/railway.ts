@@ -325,12 +325,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_CELL_VARS: cellVariables(environment, privateUrl(serviceNames.server, ports.server)),
       VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-      EXPLABS_API_KEY: environment.modelGatewayKey,
-      ...Option.match(environment.openRouterKey, {
-        onNone: () => ({}),
-        onSome: (key) => ({ OPENROUTER_API_KEY: key }),
-      }),
-      ...whenSet('VIVID_SERVER_MODEL_PROVIDER', environment.serverModelProvider),
+      OPENROUTER_API_KEY: environment.openRouterKey,
       ...computerAccess(environment),
       ...executorAccess(environment),
       ...textingAccess(environment),

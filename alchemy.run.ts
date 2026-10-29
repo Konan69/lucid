@@ -6,7 +6,6 @@ import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
 import { cellVariables } from './infra/cells.ts'
 import { databaseUrlFor } from './infra/database.ts'
@@ -85,10 +84,7 @@ const localStack = () =>
           VIVID_MIGRATIONS_HASH: migrations.hash.input,
           DATABASE_URL: databaseUrl,
           AUTH_SECRET: environment.authSecret,
-          ...Option.match(environment.serverModelProvider, {
-            onNone: () => ({}),
-            onSome: (provider) => ({ VIVID_SERVER_MODEL_PROVIDER: provider }),
-          }),
+          OPENROUTER_API_KEY: environment.openRouterKey,
           /** Loopback locally; a container sets its own bind address (`infra/railway.ts`). */
           HOST: '127.0.0.1',
           PORT: '8787',

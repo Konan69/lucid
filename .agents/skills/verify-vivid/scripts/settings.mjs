@@ -56,7 +56,7 @@ export function selection(state) {
 /** Credentials require an explicit file or environment; other tools' auth stores are never read. */
 export async function provider() {
   const candidates = process.env.VIVID_VERIFY_KEY_FILE ? [process.env.VIVID_VERIFY_KEY_FILE] : []
-  const names = ['EXPLABS_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
+  const names = ['OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
   const env = Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   )
@@ -74,26 +74,19 @@ export async function provider() {
     process.env.VIVID_VERIFY_MODEL ??
     (env.OPENCODE_API_KEY
       ? 'opencode-go/glm-5.3-flash'
-      : env.EXPLABS_API_KEY
-        ? 'explabs/glm-5.3-flash'
-        : env.OPENROUTER_API_KEY
-          ? 'openrouter/z-ai/glm-5.3-flash'
-          : null)
+      : env.OPENROUTER_API_KEY
+        ? 'openrouter/z-ai/glm-5.3-flash'
+        : null)
   if (!model)
     throw new Error(
       'No model credentials. Set VIVID_VERIFY_KEY_FILE or explicit provider environment variables; rehearsal requires VIVID_VERIFY_MODEL=rehearsal/script',
     )
-  const key = model.startsWith('explabs/')
-    ? 'EXPLABS_API_KEY'
-    : model.startsWith('openrouter/')
-      ? 'OPENROUTER_API_KEY'
-      : 'OPENCODE_API_KEY'
+  const key = model.startsWith('openrouter/') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'
   if (!model.startsWith('rehearsal/') && !env[key])
     throw new Error('Missing provider key for selected model')
-  if (!env.EXPLABS_API_KEY && !env.OPENROUTER_API_KEY)
+  if (!env.OPENROUTER_API_KEY)
     throw new Error(
-      'EXPLABS_API_KEY or OPENROUTER_API_KEY is required by the server memory and title model, including rehearsal runs',
+      'OPENROUTER_API_KEY is required by the server memory and title model, including rehearsal runs',
     )
-  env.VIVID_SERVER_MODEL_PROVIDER = env.EXPLABS_API_KEY ? 'explabs' : 'openrouter'
   return { model, source: sources.join(', ') || 'process environment', env }
 }

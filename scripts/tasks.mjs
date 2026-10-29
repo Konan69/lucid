@@ -80,7 +80,7 @@ function checkTestEnvironment(tasks) {
       [
         'VIVID_TEST_*',
         'VIVID_LIVE_*',
-        'EXPLABS_API_KEY',
+        'OPENROUTER_API_KEY',
         'OPENCODE_API_KEY',
         '!VIVID_TEST_DATABASE_URL',
       ],

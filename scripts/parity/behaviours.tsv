@@ -214,7 +214,7 @@ channel-consumer	One defective channel message does not stop the consumer	2ca3af
 memory-once	Replaying learning applies a fact only once	68ad5224a	runtime	[{"paths":["packages/agent/runtime/src/learning.test.ts"],"text":"learns a missed write once"}]
 memory-forgotten	Replaying learning cannot recreate something I forgot	68ad5224a	runtime	[{"paths":["packages/agent/runtime/src/learning.test.ts"],"text":"never recreates a forgotten entry"}]
 memory-short-answer	Vivid learns a preference from my short answer in context	c0c5937b2	runtime	[{"paths":["packages/agent/runtime/src/learning.test.ts"],"text":"resolves a short answer"},{"paths":["packages/agent/runtime/src/learning.live.test.ts"],"text":"keeps a durable short answer"}]
-memory-gateway	Server title calls use OpenRouter without ExpLabs	1c9967aa3	server	[{"paths":["apps/server/src/threads/provider.test.ts"],"text":"without an ExpLabs credential"}]
+memory-gateway	Server title calls use OpenRouter	1c9967aa3	server	[{"paths":["apps/server/src/threads/provider.test.ts"],"text":"with the OpenRouter credential"}]
 draft-workspace	My unsent words stay in the workspace where I wrote them	afdd57901	web/phone/desktop	[{"paths":["packages/client/state/src/drafts.ts"],"text":"draftScopeOf"}]
 draft-save-race	Saving a draft settles only the words that save sent	afdd57901	web/phone/desktop	[{"paths":["packages/client/state/src/drafts.ts"],"text":"saved"}]
 draft-device	My drafts follow me across devices	126a05390	web/phone/desktop	[{"paths":["packages/client/state/src/sync.ts"],"text":"makeDraftSync"}]

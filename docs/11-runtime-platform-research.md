@@ -1,6 +1,6 @@
 # Runtime platform research
 
-2026-10-03: Historical runtime research; PostgreSQL and Flue 2.2.2/pi 0.87.1 supersede the Node/SQLite plan, models use the Experiential Labs gateway without Vivid-owned retries, and current boundaries live in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and the server/runtime READMEs.
+2026-10-03: Historical runtime research; PostgreSQL and Flue 2.2.2/pi 0.87.1 supersede the Node/SQLite plan, and current boundaries live in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and the server/runtime READMEs.
 
 Status: Flue Node selected, 2 September 2026. Cloud and executor adapters remain replaceable.
 

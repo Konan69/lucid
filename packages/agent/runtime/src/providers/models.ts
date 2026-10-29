@@ -3,7 +3,6 @@ import type { ModelRef } from '@earendil-works/pi-durable'
 import { Config, Effect, Option, Redacted, Schema } from 'effect'
 import { settings } from './budget.ts'
 import { provider as openrouter } from './openrouter.ts'
-import { provider as explabs } from './explabs.ts'
 import { DEFAULT_MODEL, provider as opencode } from './opencode.ts'
 import { provider as rehearsal } from './rehearsal.ts'
 
@@ -23,12 +22,10 @@ export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable>()(
 export const makeProviders = Effect.fn('Providers.make')(function* () {
   const modelName = yield* Config.String('VIVID_MODEL').pipe(Config.withDefault(DEFAULT_MODEL))
   const opencodeKey = yield* Config.option(Config.Redacted('OPENCODE_API_KEY'))
-  const explabsKey = yield* Config.option(Config.Redacted('EXPLABS_API_KEY'))
   const openrouterKey = yield* Config.option(Config.Redacted('OPENROUTER_API_KEY'))
   const keys = new Map([
     ['OPENROUTER_API_KEY', openrouterKey],
     ['OPENCODE_API_KEY', opencodeKey],
-    ['EXPLABS_API_KEY', explabsKey],
   ])
   const authContext: AuthContext = {
     /** Pi requires a Promise; reveal only the requested key at this SDK authority boundary. */
@@ -45,7 +42,6 @@ export const makeProviders = Effect.fn('Providers.make')(function* () {
   }
   const models = createModels({ authContext })
   models.setProvider(opencode)
-  models.setProvider(explabs)
   models.setProvider(openrouter)
   if (modelName.startsWith('rehearsal/')) models.setProvider(rehearsal)
   const selected = models
