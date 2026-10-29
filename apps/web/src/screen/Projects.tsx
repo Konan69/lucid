@@ -372,13 +372,11 @@ function Work({
               <time className="ml-2 text-meta font-meta text-ink-3 tabular-nums">
                 {relativeTime(work.completedAt, now)}
               </time>
-              <Button
-                variant="link"
-                className="ml-2 h-auto p-0 text-meta"
-                onClick={() => onOpenThread(source.threadId)}
-              >
-                See the message
-              </Button>
+              <span className="mt-1 block">
+                <Button variant="link" size="xs" onClick={() => onOpenThread(source.threadId)}>
+                  See the message
+                </Button>
+              </span>
             </Fact>
           </dl>
         </Part>

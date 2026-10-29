@@ -2,6 +2,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   ConversationState,
   MessageId,
+  ProjectAuthor,
   ProjectChange,
   ProjectChanged,
   ProjectEvidence,
@@ -127,8 +128,7 @@ describe.skipIf(!testDatabaseConfigured)('Project work', () => {
             actual: ProjectRevision.make(1),
           }),
         )
-        const [listed] = yield* store.list(test.personal)
-        expect(listed?.revision).toBe(1)
+        expect(yield* store.list(test.personal)).toMatchObject([{ revision: 1 }])
       }).pipe(Effect.scoped),
     )
 
@@ -155,7 +155,10 @@ describe.skipIf(!testDatabaseConfigured)('Project work', () => {
           {
             at: expect.any(Number),
             text: 'Domain bought',
-            by: { _tag: 'Vivid', personId: test.personal.person.id, threadId: test.personalId },
+            by: ProjectAuthor.cases.Vivid.make({
+              personId: test.personal.person.id,
+              threadId: test.personalId,
+            }),
           },
         ])
 
@@ -194,8 +197,7 @@ describe.skipIf(!testDatabaseConfigured)('Project work', () => {
             ),
         )
         expect(fromPerson).toEqual(new ProjectEvidenceMissing({ id: created.id }))
-        const [still] = yield* store.list(test.personal)
-        expect(still?.revision).toBe(2)
+        expect(yield* store.list(test.personal)).toMatchObject([{ revision: 2 }])
 
         const done = yield* projectHandlers
           .UpdateProject({
