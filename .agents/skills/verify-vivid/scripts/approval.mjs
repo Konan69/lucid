@@ -133,7 +133,7 @@ export async function changed(state, id, directory, browser) {
     const title = 'Pulse words ' + receipt.slice(0, 8)
     const first = 'first-version-' + receipt.slice(0, 8)
     const second = 'second-version-' + receipt.slice(0, 8)
-    const prompt = `Write a document titled ${title} whose whole text is ${first}. Then, using my Verify Pulse Integration, produce one pulse with receipt ${receipt} whose words are that document: discover its emit operation with find_tools, then call use_tool with input {"receipt": "${receipt}", "words": {"$document": "${title}"}}. My Ask rule requires a decision before it runs. Do not use run_code or create a Watch.`
+    const prompt = `Write a document titled ${title} whose whole text is ${first}. Then, using my Verify Pulse Integration, produce one pulse with receipt ${receipt} whose words are that document: discover its emit operation with find_tools, then call use_tool directly with input {"receipt": "${receipt}", "words": {"$document": "${title}"}}. My Ask rule makes the server show me the approval when you call it, so call use_tool now and do not ask me yourself. Do not use run_code or create a Watch.`
     if (browser) {
       await browser.run(['find', 'label', 'Message Vivid', 'fill', prompt])
       await browser.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])

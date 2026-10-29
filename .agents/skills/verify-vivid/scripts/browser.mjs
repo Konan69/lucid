@@ -54,6 +54,7 @@ const missing = {
 const recipes = {
   approve: { check: 'approve' },
   deny: { check: 'deny' },
+  changed: { check: 'changed' },
   question: { check: 'question' },
   stop: { check: 'stop' },
   reading: { check: 'reading' },
