@@ -1,9 +1,11 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import type { MemoryLine, SavedMemory } from '@vivid/contracts'
+import type { MemoryForgetId, MemoryLine, SavedMemory } from '@vivid/contracts'
 import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
 import { ChevronDown } from 'lucide-react'
+import { Option } from 'effect'
 import { useState } from 'react'
-import { memory } from '../../data/live'
+import { memory, useLive } from '../../data/live'
+import { router } from '../../router'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../../ui/Markdown'
@@ -93,6 +95,7 @@ function Shown({
       <Pages title="How Vivid reaches you" pages={page('attention')} />
       <Pages title="Vivid" pages={vivid} />
       <Notice entry={shown.entry} />
+      {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
       <Section title="What Vivid remembers">
         {lines.length === 0 && (
           <Empty>When you tell Vivid something that matters later, it shows up here.</Empty>
@@ -147,8 +150,37 @@ function Notice({ entry }: { entry: remembering.Entry }) {
     Unsaved: () => null,
     Rereading: () => null,
     Forgetting: () => null,
+    Handed: () => null,
   })
   return <Refusal message={said} />
+}
+
+/**
+ * Where a forget the Person pressed stands. Vivid carries it out in the background across what
+ * it remembers, its Watches and the work queued with it, so this reads the forget's receipt live
+ * and says Forgotten only once nothing that can bring it back remains.
+ */
+function Forgotten({ id }: { id: MemoryForgetId }) {
+  const receipt = useLive(memory.forgets.get(id))
+  const words = LiveState.$match(receipt, {
+    Loading: () => remembering.forgetWords(remembering.pendingForget(id)),
+    Ready: ({ value }) => remembering.forgetWords(value),
+    Failed: () => ({ headline: 'Unable to tell how forgetting it went right now.', lines: [] }),
+  })
+  return (
+    <div role="status" className="mb-3 rounded-control bg-surface-2 px-3 py-2 edge">
+      <p className="text-label text-ink">{words.headline}</p>
+      {words.lines.length > 0 && (
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {words.lines.map((line) => (
+            <li key={line} className="text-label text-ink-3">
+              {line}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -171,6 +203,7 @@ function Line({
     Closed: () => false,
     Vanished: () => false,
     Forgetting: () => false,
+    Handed: () => false,
     Unforgotten: () => false,
     Opening: () => true,
     Unopened: () => true,
@@ -227,6 +260,7 @@ function Opened({
     Closed: () => null,
     Vanished: () => null,
     Forgetting: () => null,
+    Handed: () => null,
     Unforgotten: () => null,
     Opening: () => <Waiting />,
     Rereading: () => <Waiting />,
@@ -279,6 +313,7 @@ function Whole({
       <div className="rounded-control bg-surface-2 px-3 py-2.5 wrap-break-word *:text-label">
         <Markdown content={entry.body} />
       </div>
+      <Sources entry={entry} />
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={() => send(remembering.events.Edit())}>
           Correct
@@ -287,6 +322,36 @@ function Whole({
           Forget
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Where an entry came from: the Person's message or the conversation it was written in, each a
+ * way into that Thread, or what else wrote it. Its words come from `@vivid/state`, as the phone's.
+ */
+function Sources({ entry }: { entry: SavedMemory }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-label text-ink-3">Where this came from</span>
+      <ul className="flex flex-wrap gap-x-3 gap-y-1">
+        {remembering.sourcesOf(entry).map((source, index) => (
+          <li key={index} className="text-label text-ink-2">
+            {Option.match(source.thread, {
+              onNone: () => source.words,
+              onSome: (id) => (
+                <Button
+                  variant="link"
+                  size="xs"
+                  onClick={() => void router.navigate({ to: '/t/$id', params: { id } })}
+                >
+                  {source.words}
+                </Button>
+              ),
+            })}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -329,6 +394,7 @@ function Correcting({
               description: said,
               body,
               basis: 'said',
+              scope: entry.scope,
             },
           }),
         )
