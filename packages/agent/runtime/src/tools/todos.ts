@@ -85,7 +85,7 @@ export function todoTools(runTool: RunTool) {
     defineTool({
       name: Tool.add_todo,
       description:
-        'Add something to the Person’s own to-do list when they ask you to, or when they clearly commit to doing it themselves. Keep their words. Give a due date only when they gave one, resolved with their context clock and time zone; otherwise null. Never invent a date. Work you will do yourself is not a to-do.',
+        'Add something to the Person’s own to-do list when they ask you to, or when they clearly commit to doing it themselves. Keep their words. Give a due date only when they gave one, resolved with their context clock and time zone; otherwise null. Never invent a date. Call it whenever they ask to add something: words already open on the list answer with that to-do, so it is never listed twice. Work you will do yourself is not a to-do.',
       input: v.strictObject({ summary, what, due: v.nullable(localTime) }),
       /** The current Thread and acting Person come from Scope, never model arguments. */
       run({ data, signal }) {
