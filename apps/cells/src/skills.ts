@@ -1,6 +1,7 @@
 import { manifest, type BuiltinRuntimeName } from '@vivid/skills'
 import { parseSkill } from '@vivid/agent-runtime/cell'
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
+import type { SkillFile } from '@vivid/agent-runtime/cell'
 import skill0 from '@vivid/skills/make-an-integration/SKILL.md'
 import skill1 from '@vivid/skills/connect-a-service/SKILL.md'
 import skill2 from '@vivid/skills/work-in-a-signed-in-browser/SKILL.md'
@@ -24,6 +25,9 @@ import skill19 from '@vivid/skills/forget-something/SKILL.md'
 import skill20 from '@vivid/skills/first-conversation/SKILL.md'
 import skill21 from '@vivid/skills/what-vivid-can-do/SKILL.md'
 import skill22 from '@vivid/skills/find-pictures/SKILL.md'
+import displays from '@vivid/skills/make-an-integration/references/displays.md'
+import reminders from '@vivid/skills/make-an-integration/references/reminders.md'
+import schedules from '@vivid/skills/make-an-integration/references/schedules.md'
 
 /** Every manifest entry must ship its authored instructions in the Worker bundle. */
 const markdown = {
@@ -52,6 +56,21 @@ const markdown = {
   'find-pictures': skill22,
 } satisfies Record<BuiltinRuntimeName, string>
 
+/** The reference files each skill ships, by the path its instructions name them. A skill absent
+ * here ships none; one whose instructions point at a file missing here fails startup
+ * (`parseSkill`), so a forgotten import cannot reach a Person as a dangling pointer. */
+const references: Partial<Record<BuiltinRuntimeName, ReadonlyArray<SkillFile>>> = {
+  'make-an-integration': [
+    { name: 'references/displays.md', body: displays },
+    { name: 'references/reminders.md', body: reminders },
+    { name: 'references/schedules.md', body: schedules },
+  ],
+}
+
 export const skills = Effect.forEach(manifest, (entry) =>
-  parseSkill(markdown[entry.runtimeName], entry.runtimeName),
+  parseSkill(
+    markdown[entry.runtimeName],
+    entry.runtimeName,
+    Option.getOrElse(Option.fromUndefinedOr(references[entry.runtimeName]), () => []),
+  ),
 )

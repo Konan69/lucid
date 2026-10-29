@@ -7,7 +7,7 @@ metadata:
     Adapted from Executor 2.0.0-beta.23's own app-authoring skill (packages/app-templates/executor/skills/app-authoring: SKILL.md, tools.md, events.md, workflows.md), for apps framework 0.0.1-beta.92. Vivid's names replace Executor's where they differ.
 ---
 
-You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work. An app that only holds data for a display (see "Data and controls for a display") has tools and no event: skip the event, the watch and the timing questions.
+You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work. An app that only holds data for a display (see `references/displays.md`) has tools and no event: skip the event, the watch and the timing questions.
 
 Agree the outcome first: what, and for background work when and in which time zone (ask with `ask_person` if you do not know it), and what the Person wants to see. Prefer one app per purpose, named for it ("Reminders", "Morning", "Price check"). Before making a new one, use `find_tools` to see whether one you made earlier already has a tool that does it (a Reminders app's remindIn and remindAt set any number of reminders) and use that. A made Integration's source cannot be changed afterwards: for something it does not do, make a new one under a new name.
 
@@ -30,123 +30,9 @@ ctx.events.emit('reminder.due', { text }, { filters: { list }, id: someStableId 
 
 Event names are dotted lower-case words (`reminder.due`, `morning.started`). Filters are plain strings, numbers or booleans the watch can narrow on; when an event declares filters, every emit gives each one. An id that is stable for one occurrence keeps a retry from waking you twice. Emits from a handler that throws are discarded.
 
-## A reminder at a time (a workflow that waits)
+## Read only the reference the work needs
 
-```ts
-import {
-  defineApp,
-  event,
-  mutation,
-  workflow,
-  object,
-  string,
-  number,
-  router,
-  type MutationContext,
-  type WorkflowContext,
-} from 'apps'
-
-const due = event({
-  description: 'A reminder came due.',
-  filters: { list: string() },
-  payload: object({ text: string() }),
-})
-const requirements = { events: { 'reminder.due': due } }
-
-const ring = mutation(
-  { input: object({ text: string(), key: string() }) },
-  async (ctx: MutationContext<typeof requirements>, input) => {
-    ctx.events.emit(
-      'reminder.due',
-      { text: input.text },
-      { filters: { list: 'default' }, id: input.key },
-    )
-    return null
-  },
-)
-
-const wait = workflow(
-  { input: object({ text: string(), at: number(), key: string() }) },
-  async (ctx: WorkflowContext<typeof requirements>, input) => {
-    await ctx.step.sleepUntil('until', input.at)
-    await ctx.step.runMutation('ring', ring, { text: input.text, key: input.key })
-    return null
-  },
-)
-
-// Starts one waiting run; a past time is refused, because the run would never wake.
-const start = async (ctx: MutationContext<typeof requirements>, text: string, at: number) => {
-  if (Number.isNaN(at) || at <= Date.now()) throw new Error('the time must be in the future')
-  const key = `reminder-${crypto.randomUUID()}`
-  await ctx.workflows.start({ workflow: 'wait', input: { text, at, key }, key })
-  return { at: new Date(at).toISOString() }
-}
-
-// "In 20 minutes": the app reads its own clock, so nobody has to know what time it is now.
-const remindIn = mutation(
-  { input: object({ text: string(), minutes: number() }) },
-  async (ctx: MutationContext<typeof requirements>, input) =>
-    start(ctx, input.text, Date.now() + input.minutes * 60_000),
-)
-
-// "Tomorrow at 9": an ISO date-time with the Person's offset.
-const remindAt = mutation(
-  { input: object({ text: string(), at: string() }) },
-  async (ctx: MutationContext<typeof requirements>, input) =>
-    start(ctx, input.text, Date.parse(input.at)),
-)
-
-export default defineApp(requirements, {
-  tools: router({ remindIn, remindAt, ring }),
-  workflows: { wait },
-})
-```
-
-Make it once, `watch` `reminder.due` once with an instruction such as "Tell the Person on their Feed: <the reminder's text>", then set each reminder with `use_tool`: remindIn with the minutes for anything said as "in N minutes or hours" (you do not know the current time, so never turn it into a clock time yourself), and remindAt with an ISO date-time **with the Person's offset** for a clock time on a date (for Lagos, `2026-10-17T09:00:00+01:00`). The answer is the time the app set: tell the Person that time. A mutation run by a workflow step must also be in the tools router. Put clock reads and randomness inside steps, never in the workflow body.
-
-## Something on a schedule
-
-```ts
-import {
-  appCron,
-  defineApp,
-  event,
-  mutation,
-  object,
-  router,
-  string,
-  type MutationContext,
-} from 'apps'
-
-const started = event({
-  description: 'The morning began.',
-  filters: {},
-  payload: object({ day: string() }),
-})
-const requirements = { events: { 'morning.started': started } }
-
-const tick = mutation(
-  { input: object({}) },
-  async (ctx: MutationContext<typeof requirements, 'app'>) => {
-    const day = new Date().toISOString().slice(0, 10)
-    ctx.events.emit('morning.started', { day }, { id: `morning-${day}` })
-    return null
-  },
-)
-
-export default defineApp(requirements, {
-  tools: router({ tick }),
-  schedules: {
-    morning: appCron({ expression: '0 8 * * MON-FRI', timezone: 'Africa/Lagos' }, tick, {}),
-  },
-})
-```
-
-Use `appCron` (five-field cron, with an IANA time zone) or `appInterval` (`{ minutes: 30 }`, at least a minute); never `userCron` or `userInterval`, which would run as Vivid's own Executor user and stay paused. An event with no filters is emitted with only its id. Its mutation's context is `MutationContext<typeof requirements, "app">` and it declares no approval: nobody is there to ask. Vivid turns app schedules on when it makes the app. Then `watch` the event with the work as its instruction ("Brief the Person on today's mail and meetings"); the work itself runs in your background Run with all your tools, so keep the app to the clock. To check a public page on a schedule, the mutation can fetch it and emit what it read; your watch instruction then compares it with what you remembered last time and posts only a real change.
-
-## Data and controls for a display
-
-A made Integration's tools are reachable from a display like any other Integration's. For a tracker, a list or anything the Person wants to see and change in place, write query tools that read it and mutation tools that change it (keep the data in the app's own storage), then draw a display that reads with `Query("tool@account", {...}, default)` and changes with `Mutation("tool@account", {...})` run by a Button, followed by `@Run` of the Query so the display shows the change. Take the account and tool names exactly as `find_tools` returns them after `make_integration`; never guess them.
+For a reminder at a time, read [references/reminders.md](references/reminders.md). For recurring work, read [references/schedules.md](references/schedules.md). For a display, read [references/displays.md](references/displays.md). Use `read_skill_file` with this skill's name and the relative file path.
 
 ## Make, fix, check
 

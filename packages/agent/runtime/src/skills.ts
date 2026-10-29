@@ -1,7 +1,10 @@
 import { Type } from '@earendil-works/pi-ai'
 import { defineExtension, defineTool, section, type Extension } from '@earendil-works/pi-durable'
-import { Context } from 'effect'
+import { Context, Option, Schema } from 'effect'
 import type { LoadedSkill } from './frontmatter.ts'
+
+export const ACTIVATE_SKILL = 'activate_skill'
+export const READ_SKILL_FILE = 'read_skill_file'
 
 /** The catalogue heading matches the instructions that direct the model to Available Skills. */
 export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
@@ -24,14 +27,59 @@ export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
     '',
     '<skill_instructions>',
     skill.body,
+    ...references(skill),
     '</skill_instructions>',
   ].join('\n')
 }
 
-export const ACTIVATE_SKILL = 'activate_skill'
+/** After the body, each reference file by name with its first line, so the model knows what it can
+ * read and when; the heading marks of that line are dropped. Nothing when the skill has none. */
+function references(skill: LoadedSkill) {
+  if (skill.files.length === 0) return []
+  return [
+    '',
+    `Reference files. Read one with ${READ_SKILL_FILE} when a step needs it:`,
+    ...skill.files.map(
+      (file) =>
+        `- ${file.name}: ${file.body
+          .split('\n', 1)
+          .join('')
+          .replace(/^#+\s*/u, '')}`,
+    ),
+  ]
+}
 
-/** The catalogue and activation tool read only the bundled skills. An interrupted
- * activation may run again because it has no side effects. */
+/** The named skill ships no file by that name; `files` is what it does ship, to choose from. */
+export class SkillFileMissing extends Schema.TaggedError<SkillFileMissing>()(
+  'SkillFileMissing',
+  { skill: Schema.String, file: Schema.String, files: Schema.Array(Schema.String) },
+  { title: 'Skill reference file missing' },
+) {}
+const encodeFileMissing = Schema.encodeOption(SkillFileMissing)
+
+/** One reference file's contents, or the refusal the model reads: the sentence always, and the
+ * typed error beside it when it encodes, as `read_skill` refuses (`tools/skills.ts`). An unknown
+ * skill gets activation's own answer, which lists the names. */
+export function readFile(skills: ReadonlyArray<LoadedSkill>, name: string, path: string) {
+  const skill = skills.find((entry) => entry.name === name)
+  if (skill === undefined) return activate(skills, name)
+  const file = skill.files.find((entry) => entry.name === path)
+  if (file !== undefined) return file.body
+  const files = skill.files.map((entry) => entry.name)
+  const message =
+    files.length === 0
+      ? `Skill "${name}" has no reference files.`
+      : `Skill "${name}" has no file "${path}". Its files: ${files.join(', ')}.`
+  return JSON.stringify(
+    Option.match(encodeFileMissing(new SkillFileMissing({ skill: name, file: path, files })), {
+      onNone: () => ({ ok: false, message }),
+      onSome: (error) => ({ ok: false, error, message }),
+    }),
+  )
+}
+
+/** The catalogue, activation and reference reads use only the bundled skills. An interrupted
+ * activation or read may run again because neither has side effects. */
 export const skillsExtension = (skills: ReadonlyArray<LoadedSkill>) =>
   defineExtension({
     name: 'skills',
@@ -51,6 +99,23 @@ export const skillsExtension = (skills: ReadonlyArray<LoadedSkill>) =>
           Promise.resolve({
             output: [{ type: 'text', text: activate(skills, args.name) }],
             details: { skill: args.name },
+          }),
+      }),
+      defineTool({
+        name: READ_SKILL_FILE,
+        description:
+          'Read one reference file of an activated built-in skill, by the skill name and the file path its instructions list (references/<file>.md). Saved procedures have no files; use read_skill for those.',
+        parameters: Type.Object({
+          skill: Type.String({ description: 'Name of the activated skill' }),
+          file: Type.String({ description: 'Path of the file, as the skill lists it' }),
+        }),
+        replay: 'safe',
+        // A reference is returned whole, like the procedure that points at it.
+        outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
+        execute: (args) =>
+          Promise.resolve({
+            output: [{ type: 'text', text: readFile(skills, args.skill, args.file) }],
+            details: { skill: args.skill, file: args.file },
           }),
       }),
     ],
