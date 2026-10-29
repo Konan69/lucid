@@ -35,7 +35,7 @@ export const UNDELIVERED =
 /** A card resumes Vivid as an internal signal, with one key shared by its retry. */
 export const carryOn = (data: LiveData, thread: ThreadId, body: string) => {
   const key = randomUUID()
-  void start(
+  void App.start(
     data.changing((client) =>
       client.CarryOnThread({ threadId: thread, body, key }).pipe(Effect.retry({ times: 1 })),
     ),
