@@ -15,6 +15,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import type * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
   AttachmentTooLarge,
+  CarryOnRequest,
   Conflict,
   InvalidAttachment,
   PictureMediaType,
@@ -56,7 +57,7 @@ import { IncomingMessage, messageFingerprint, messagePictures } from './pictures
 
 const Params = Schema.Struct({ threadId: ThreadId })
 
-const decodeSent = Schema.decodeUnknownEffect(IncomingMessage)
+const decodeSent = Schema.decodeUnknownEffect(Schema.Union([IncomingMessage, CarryOnRequest]))
 const decodePictureType = Schema.decodeUnknownOption(PictureMediaType)
 
 const refuse = (status: number, message: string) =>
@@ -168,6 +169,27 @@ const declaresTooMuch = (headers: Headers.Headers) =>
     (length) => /^\d+$/u.test(length) && BigInt(length) > MESSAGE_LIMIT,
   )
 
+/**
+ * What one accepted send delivers: the Person's words and pictures, or a card's carry-on as a
+ * signal. None for words and pictures that are both empty, which must reserve no Run.
+ */
+const deliveryOf = Effect.fn('Gateway.delivery')(function* (
+  sent: typeof IncomingMessage.Type | CarryOnRequest,
+  thread: StoredThread,
+) {
+  if (sent.kind === 'signal')
+    return Option.some({
+      message: DeliveryMessage.cases.Signal.make({ type: sent.type, body: sent.body, attributes: {} }),
+      fingerprint: messageFingerprint(sent.body, []),
+    })
+  const attachments = yield* messagePictures(sent, thread)
+  if (sent.body.length === 0 && attachments.length === 0) return Option.none()
+  return Option.some({
+    message: DeliveryMessage.cases.Said.make({ body: sent.body, attachments }),
+    fingerprint: messageFingerprint(sent.body, attachments),
+  })
+})
+
 /** Admission repeats preserve the Run and use a stable stream origin for keyed HTTP receipts. */
 const send = Effect.fn('Gateway.send')(function* () {
   const { request, person, thread } = yield* admitted()
@@ -176,10 +198,9 @@ const send = Effect.fn('Gateway.send')(function* () {
   if (declaresTooMuch(request.headers)) return refuse(413, 'That message is too large to send')
   const sent = yield* decodeSent(yield* request.json).pipe(Effect.option)
   if (Option.isNone(sent)) return refuse(400, 'A message needs text')
-  const attachments = yield* messagePictures(sent.value, thread)
   // Pictures can be the whole message; an empty composer must still reserve no Run.
-  if (sent.value.body.length === 0 && attachments.length === 0)
-    return refuse(400, 'A message needs text or a picture')
+  const delivery = yield* deliveryOf(sent.value, thread)
+  if (Option.isNone(delivery)) return refuse(400, 'A message needs text or a picture')
   const origin = originOf(request.headers)
   if (Option.isNone(origin)) return refuse(400, 'The request has no host')
   const conversation = yield* Conversation
@@ -187,10 +208,8 @@ const send = Effect.fn('Gateway.send')(function* () {
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: person.id,
-    message: DeliveryMessage.cases.Said.make({ body: sent.value.body, attachments }),
-    origin: StoredRunOrigin.cases.Message.make({
-      fingerprint: messageFingerprint(sent.value.body, attachments),
-    }),
+    message: delivery.value.message,
+    origin: StoredRunOrigin.cases.Message.make({ fingerprint: delivery.value.fingerprint }),
     idempotencyKey:
       sent.value.idempotencyKey === undefined
         ? crypto.randomUUID()

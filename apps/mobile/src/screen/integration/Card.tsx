@@ -1,10 +1,15 @@
-import { ConnectionAuthorization, type ConnectionRequestMessage } from '@vivid/contracts'
+import {
+  ConnectionAuthorization,
+  type ConnectionRequestMessage,
+  type ThreadId,
+} from '@vivid/contracts'
 import { answered, answering, Awaited, awaitedWords, CardPress, cardPress } from '@vivid/state'
 import { Option } from 'effect'
 import { View } from 'react-native'
 import { commit } from '../../data/haptics'
 import { cardSaid, type Authorization } from '../../data/integration'
 import { useLiveData, useLiveValue } from '../../data/live'
+import { carryOn } from '../../data/threads'
 import { useTheme } from '../../theme'
 import { EDGE, Label, Notice, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
@@ -47,7 +52,7 @@ export function IntegrationCard({
   authorization,
   awaited,
   current,
-  onContinue,
+  thread,
 }: {
   /** The tool call this card stands for, which names its attempt and its one "carry on". */
   id: string
@@ -57,9 +62,11 @@ export function IntegrationCard({
   awaited: Awaited
   /** Whether this is the newest thing in the Thread and Vivid has stopped to wait for it. */
   current: boolean
-  onContinue: (message: string) => void
+  /** The Thread its carry-on goes to, unseen (`carryOn` in `data/threads.ts`). */
+  thread: ThreadId
 }) {
   const data = useLiveData()
+  const onCarryOn = (message: string) => carryOn(data, thread, message)
   const flow = useFlow()
   const go = useGo()
   const { colors: c } = useTheme()
@@ -88,7 +95,7 @@ export function IntegrationCard({
       // Only the account this card asked for carries its Thread on, and it is named, so Vivid
       // does not have to guess which of several accounts is the new one.
       const account = answering([connected], request, awaited)
-      if (Option.isSome(account)) onContinue(words.carryOn(account))
+      if (Option.isSome(account)) onCarryOn(words.carryOn(account))
     })
     CardPress.$match(next, {
       Resume: ({ id: begun }) => flow.resume(begun, Option.some(id)),
@@ -129,13 +136,13 @@ export function IntegrationCard({
       flow.carriedOn(id)
       // One more account is named by the account that was added, so Vivid does not have to
       // guess which of several is new.
-      onContinue(words.carryOn(answering(list, request, awaited)))
+      onCarryOn(words.carryOn(answering(list, request, awaited)))
     },
     onGiveUp: (message) => {
       commit()
       // A carry-on made by hand: nothing is owed for it by an attempt.
       flow.carriedOn(id)
-      onContinue(message)
+      onCarryOn(message)
     },
   })
   return (

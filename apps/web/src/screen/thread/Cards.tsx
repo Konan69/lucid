@@ -372,7 +372,7 @@ export function ConnectionCard({
   authorization,
   awaited,
   current,
-  onContinue,
+  onCarryOn,
 }: {
   /** The tool call this card stands for, which names its one "carry on". */
   id: string
@@ -381,7 +381,8 @@ export function ConnectionCard({
   awaited: Awaited
   /** Whether this is the newest thing in the Thread and Vivid has stopped to wait for it. */
   current: boolean
-  onContinue: (message: string) => void
+  /** Tells Vivid to go on, unseen (`carryOn` in `data/threads.ts`): never the Person's words. */
+  onCarryOn: (message: string) => void
 }) {
   const connections = useLiveValue(live.connections)
   const attempt = useAttempt()
@@ -429,7 +430,7 @@ export function ConnectionCard({
       signIn: Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn),
       card: Option.some({
         id,
-        carryOn: (connection) => onContinue(words.carryOn(Option.some(connection))),
+        carryOn: (connection) => onCarryOn(words.carryOn(Option.some(connection))),
       }),
     })
 
@@ -440,13 +441,13 @@ export function ConnectionCard({
    */
   const giveUp = (message: string) => {
     carriedOn(id)
-    onContinue(message)
+    onCarryOn(message)
   }
 
   /** "Carry on" by hand: said with the list as it stands, and no longer owed by an attempt. */
   const carryOn = () => {
     carriedOn(id)
-    onContinue(words.carryOn(answering(list, request, awaited)))
+    onCarryOn(words.carryOn(answering(list, request, awaited)))
   }
 
   const said = saidAfter(standing, request.serviceName)

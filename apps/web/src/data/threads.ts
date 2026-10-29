@@ -1,5 +1,5 @@
 import { createFlueClient, type FlueConversationMessage } from '@flue/sdk'
-import { ThreadId, type ProjectId } from '@vivid/contracts'
+import { ThreadId, type CarryOnRequest, type ProjectId } from '@vivid/contracts'
 import { saysWords, titleFromMessage, withFirst } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
 import { create } from 'zustand'
@@ -218,3 +218,22 @@ export const openThread = (projectId: ProjectId | null = scope.filing()) =>
   })
 
 export { live }
+
+/**
+ * Tells Vivid to go on in a Thread once a card's wait is over ("GitHub is connected"). It is sent
+ * as a `carry-on` signal (`CarryOnRequest`), which no surface draws, so it never reads as words
+ * the Person said. It is tried twice, as a message is; when both fail the card is still the thing
+ * the Thread waits on and offers its own Carry on (`ConnectionAction` in `screen/thread/Cards.tsx`).
+ */
+export const carryOn = (thread: ThreadId, body: string) => {
+  const message = { kind: 'signal', type: 'carry-on', body } as const satisfies Omit<
+    CarryOnRequest,
+    'idempotencyKey'
+  >
+  const idempotencyKey = crypto.randomUUID()
+  const client = createFlueClient({ url: `/api/vivid/${encodeURIComponent(thread)}` })
+  const once = () => client.send({ message, idempotencyKey })
+  void once()
+    .catch(once)
+    .catch(() => undefined)
+}
