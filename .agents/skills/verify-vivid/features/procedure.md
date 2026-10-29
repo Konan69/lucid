@@ -6,7 +6,7 @@ Model requirement: a real model with `EXPLABS_API_KEY` for the server memory/tit
 
 A Person walks Vivid through a task once in a Thread and Vivid learns it as a procedure it reuses. The shipped guidance is `packages/agent/skills/learn-how-we-do-this/SKILL.md`; the readback boundary is `boundProcedure` in `packages/agent/runtime/src/tools/result.ts`. The Person never names, sees or manages the procedure.
 
-Both recipes send a three-message walkthrough of filing a travel expense, asked in a Person's words with no tool, skill or field named. The second message carries a category table longer than 4,000 characters; the third corrects the code on its last row. The recipes check the actual receipts in every settled Run:
+Both recipes send a three-message walkthrough of filing a travel expense, asked in a Person's words with no tool, skill or field named. The second message carries a 150-row category table whose codes cannot be derived, longer than 4,000 characters even when copied down to vendor and code; the third corrects the code on its last row. The recipes check the actual receipts in every settled Run:
 
 - `save_skill` succeeds exactly once (a save refused because the name is taken does not count), after the last message, and its instructions hold the corrected code.
 - No Run calls `use_tool`, `watch`, `post`, `make_integration` or `notify_person`: learning a task does not do it or arrange it.

@@ -27,10 +27,14 @@ export function procedureSteps(task) {
     ['ML', 'meals while travelling, one line per receipt, tips included in the amount'],
     ['TR', 'rail and coach tickets between cities, seat reservations and booking fees'],
   ]
-  const rows = Array.from({ length: 59 }, (_, index) => {
+  // 149 rows with codes no model can derive from the row: even a copy that drops every word but
+  // the vendor and its code runs past 4,000 characters before the last row. A model shortened a
+  // 60-row table below that on 29 October 2026 (run pi-20261029162120888-3a909207).
+  const rows = Array.from({ length: 149 }, (_, index) => {
     const [prefix, covers] = kinds[index % kinds.length]
-    const number = String(index + 1).padStart(2, '0')
-    return `- Vendor ${number} ${tag} (any city): code ${prefix}-${number}, for ${covers}.`
+    const number = String(index + 1).padStart(3, '0')
+    const token = crypto.randomUUID().slice(0, 4).toUpperCase()
+    return `- Vendor ${number} ${tag} (any city): code ${prefix}-${number}-${token}, for ${covers}.`
   })
   rows.push(`- ${last} (any city): code ${wrong}, for ${kinds[3][1]}.`)
   const table = rows.join('\n')
