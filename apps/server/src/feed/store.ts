@@ -134,14 +134,7 @@ export const feedStoreLayer = Layer.effect(
  * A card's columns: a drawn card keeps no words or buttons, a said one no drawing. The read side
  * (`postOf` in `read.ts`) tells them apart by the drawing, so each column holds only its own case.
  */
-const columnsOf = (
-  post: typeof PostRequest.Type,
-): {
-  readonly title: string
-  readonly words: string | null
-  readonly display: string | null
-  readonly actions: ReadonlyArray<string>
-} => {
+const columnsOf = (post: typeof PostRequest.Type) => {
   if (FeedPost.guards.Drawn(post))
     return { title: post.title, words: null, display: post.display, actions: [] }
   return { title: post.title, words: post.words, display: null, actions: post.actions }
