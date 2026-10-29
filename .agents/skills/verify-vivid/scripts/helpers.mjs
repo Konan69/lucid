@@ -234,7 +234,7 @@ export async function helpers(state, id, directory) {
   await json(directory + '/scope.json', {
     kinds: [...new Set(children.map((child) => child.kind))],
     proved:
-      'Two or more helpers started by the real model, working at once, each answer read back, one result delivery per helper, and an answer after them.',
+      'Two or more helpers started by the real model, working at once, each answer read back, each helper heard once (by a result delivery or a wait; see hearings.json), and an answer after them.',
     blocked: helperLimits,
   })
 }
