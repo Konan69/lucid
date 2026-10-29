@@ -1,3 +1,4 @@
+import { RuntimeDelivery } from '@vivid/contracts'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Logger, Option, Queue, Ref, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -38,11 +39,9 @@ describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
         yield* Queue.take(control.connections)
         yield* Queue.offer(control.inbound, yield* test.message('first packet'))
         yield* Queue.offer(control.inbound, yield* test.message('still alive'))
-        expect((yield* Queue.take(control.admitted)).message).toEqual({
-          kind: 'user',
-          body: 'still alive',
-          attachments: [],
-        })
+        expect((yield* Queue.take(control.admitted)).message).toEqual(
+          RuntimeDelivery.cases.Words.make({ body: 'still alive', attachments: [] }),
+        )
       }).pipe(Effect.scoped, Effect.provide(caseContext))
     }).pipe(Effect.scoped),
   )
@@ -88,11 +87,9 @@ describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
         )
         expect(yield* Queue.take(failures)).toBe('Error')
         yield* TestClock.adjust('3 seconds')
-        expect((yield* Queue.take(control.admitted)).message).toEqual({
-          kind: 'user',
-          body: 'recovered',
-          attachments: [],
-        })
+        expect((yield* Queue.take(control.admitted)).message).toEqual(
+          RuntimeDelivery.cases.Words.make({ body: 'recovered', attachments: [] }),
+        )
         yield* Queue.take(failures)
         yield* TestClock.adjust('10 minutes')
         expect(yield* Ref.get(attempts)).toBe(2)
@@ -117,7 +114,9 @@ describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
         yield* Queue.take(control.connections)
         // Runtime admission itself is the typed readiness signal, rather than polling persisted state.
         const send = yield* Queue.take(control.admitted)
-        expect(send.message).toEqual({ kind: 'user', body: 'after reconnect', attachments: [] })
+        expect(send.message).toEqual(
+          RuntimeDelivery.cases.Words.make({ body: 'after reconnect', attachments: [] }),
+        )
         const saved = yield* store.byPerson(test.actor.person.id, 'iMessage')
         expect(Option.isSome(saved) && Option.isSome(saved.value.threadId)).toBe(true)
       }).pipe(Effect.scoped, Effect.provide(caseContext))

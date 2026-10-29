@@ -27,13 +27,17 @@ const EarlierSignal = Schema.Union([
   Schema.TaggedStruct('Signal', { type: Schema.Literal('answer'), body: Schema.String }),
 ]).pipe(
   Schema.decodeTo(DeliveryMessage.cases.Signal, {
-    decode: SchemaGetter.transform((earlier) => ({
-      _tag: 'Signal' as const,
-      cue:
-        earlier.type === 'approval'
-          ? { _tag: 'Approval' as const, body: earlier.body, outcome: earlier.attributes.outcome }
-          : { _tag: 'Answer' as const, body: earlier.body },
-    })),
+    decode: SchemaGetter.transform((earlier) =>
+      DeliveryMessage.cases.Signal.make({
+        cue:
+          earlier.type === 'approval'
+            ? SignalCue.cases.Approval.make({
+                body: earlier.body,
+                outcome: earlier.attributes.outcome,
+              })
+            : SignalCue.cases.Answer.make({ body: earlier.body }),
+      }),
+    ),
     encode: SchemaGetter.forbidden(() => 'An owed delivery is written only in its current shape.'),
   }),
 )

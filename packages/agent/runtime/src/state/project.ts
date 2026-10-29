@@ -4,7 +4,13 @@ import type { EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { ConversationState } from '@vivid/contracts'
 import { Array as Arr, Option, Order, Predicate, Schema } from 'effect'
 import { withoutCorrections } from '../correction.ts'
-import { isDeliveryEntry, MessageData, PlacedSignal, SIGNAL_ENTRY, signalShown } from '../delivery.ts'
+import {
+  isDeliveryEntry,
+  MessageData,
+  PlacedSignal,
+  SIGNAL_ENTRY,
+  signalShown,
+} from '../delivery.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY, RunData } from '../response.ts'
 
 /**

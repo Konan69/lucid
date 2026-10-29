@@ -30,6 +30,7 @@ export const runtimeMessage = (
           })
         : signal(SignalCue.cases.Message.make({ body })),
     Signal: ({ cue }) => signal(cue),
-    FirstConversation: () => signal(SignalCue.cases.FirstConversation.make({ body: FIRST_CONVERSATION })),
+    FirstConversation: () =>
+      signal(SignalCue.cases.FirstConversation.make({ body: FIRST_CONVERSATION })),
   })
 }

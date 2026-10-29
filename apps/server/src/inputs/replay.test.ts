@@ -78,10 +78,14 @@ layer(testDatabaseLayer)((cases) => {
                 expect(deliveries).toHaveLength(2)
                 expect(deliveries.map((delivery) => delivery.message)).toMatchObject([
                   {
-                    body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                    cue: {
+                      body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                    },
                   },
                   {
-                    body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                    cue: {
+                      body: 'Question: Which day?\nAnswer: Monday\n\nQuestion: Which place?\nAnswer: Lagos\n\nQuestion: What time?\nAnswer: Morning',
+                    },
                   },
                 ])
                 expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
@@ -171,7 +175,9 @@ layer(testDatabaseLayer)((cases) => {
             expect(yield* Ref.get(observed.deliveries)).toEqual([
               expect.objectContaining({
                 idempotencyKey: `answer-${request.id}`,
-                message: expect.objectContaining({ body: 'Question: Which day?\nAnswer: Monday' }),
+                message: expect.objectContaining({
+                  cue: expect.objectContaining({ body: 'Question: Which day?\nAnswer: Monday' }),
+                }),
               }),
             ])
           }).pipe(Effect.scoped, Effect.provide(context))

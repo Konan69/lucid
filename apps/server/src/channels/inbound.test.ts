@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { RunId, RunState, ThreadId } from '@vivid/contracts'
+import { RunId, RunState, ThreadId, RuntimeDelivery } from '@vivid/contracts'
 import { Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Settlement } from '../runtime/client.ts'
@@ -129,11 +129,12 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             const first = yield* started(test)
             expect(yield* (yield* RunStore).list(first.threadId)).toHaveLength(1)
             const admission = (yield* Ref.get((yield* ChannelControl).admissions))[0]
-            expect(present(admission).message).toEqual({
-              kind: 'user',
-              body: 'first private channel text',
-              attachments: [],
-            })
+            expect(present(admission).message).toEqual(
+              RuntimeDelivery.cases.Words.make({
+                body: 'first private channel text',
+                attachments: [],
+              }),
+            )
             yield* test.finish(first.run.id, 'Done')
             yield* test.receive('next private text')
             const second = yield* started(test)

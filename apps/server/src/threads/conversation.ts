@@ -1,7 +1,7 @@
 import * as Context from 'effect/Context'
 import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
-import * as SchemaTransformation from 'effect/SchemaTransformation'
+import * as SchemaGetter from 'effect/SchemaGetter'
 import {
   MessageAttachment,
   SignalCue,
@@ -75,13 +75,12 @@ export type StoredRunOrigin = typeof StoredRunOrigin.Type
 export const StoredRunOriginColumn = Schema.Union([
   StoredRunOrigin,
   Schema.TaggedStruct('Watch', { watchName: Schema.String }).pipe(
-    Schema.decodeTo(
-      StoredRunOrigin.cases.WatchUnrecorded,
-      SchemaTransformation.transform({
-        decode: ({ watchName }) => ({ _tag: 'WatchUnrecorded' as const, watchName }),
-        encode: ({ watchName }) => ({ _tag: 'Watch' as const, watchName }),
-      }),
-    ),
+    Schema.decodeTo(StoredRunOrigin.cases.WatchUnrecorded, {
+      decode: SchemaGetter.transform(({ watchName }) =>
+        StoredRunOrigin.cases.WatchUnrecorded.make({ watchName }),
+      ),
+      encode: SchemaGetter.forbidden(() => 'A Run origin is written only in its current shape.'),
+    }),
   ),
 ])
 

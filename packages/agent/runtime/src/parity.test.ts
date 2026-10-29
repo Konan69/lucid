@@ -177,7 +177,7 @@ describe('main runtime parity on Pi', () => {
         for (const body of [
           { ...valid, turn: 0 },
           { ...valid, scope: {} },
-          { ...valid, attachments: 'bad' },
+          { ...valid, delivery: { ...valid.delivery, attachments: 'bad' } },
         ]) {
           expect(yield* runtime.send(path, { method: 'POST', body })).toEqual({
             status: 400,

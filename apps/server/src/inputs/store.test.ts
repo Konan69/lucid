@@ -168,7 +168,7 @@ layer(testDatabaseLayer)((it) => {
           expect(deliveries[0]).toMatchObject({
             personId: test.personal.person.id,
             idempotencyKey: `answer-${request.id}`,
-            message: { type: 'answer', attributes: { request: request.id } },
+            message: { cue: { body: expect.stringContaining('\nAnswer: ') } },
           })
           expect(yield* store.inbox(test.personal)).toEqual([])
           const records = yield* store.inThread(test.personalId)

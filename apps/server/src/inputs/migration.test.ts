@@ -53,7 +53,9 @@ const none = Signal.cases.None.make({})
 const signal = Signal.cases.Owed.make({
   idempotencyKey: 'answer-chosen',
   deciderId: PersonId.make('migration-person'),
-  message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body: 'Monday' }) }),
+  message: DeliveryMessage.cases.Signal.make({
+    cue: SignalCue.cases.Answer.make({ body: 'Monday' }),
+  }),
 })
 const legacy = [
   { id: 'chosen', status: 'answered', answer: 'Monday', settled: 10, allows: false },
