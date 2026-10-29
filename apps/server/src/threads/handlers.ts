@@ -17,6 +17,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
 import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
+import { handoffsInThread } from '../inputs/handoff.ts'
 import { Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -38,6 +39,7 @@ const detail = Effect.fn('Threads.detail')(function* (actor: Actor, id: ThreadId
     present: yield* (yield* Presence).here(id),
     approvals: yield* (yield* ApprovalStore).inThread(id),
     requests: yield* (yield* InputStore).inThread(id),
+    handoffs: yield* handoffsInThread(id),
   })
 })
 

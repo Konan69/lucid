@@ -297,6 +297,8 @@ export const SignalType = Schema.Literals([
   'first-conversation',
   // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
   'event',
+  // The Person finished a step Vivid handed them on its Computer (`inputs/handoff.ts`).
+  'handoff',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
