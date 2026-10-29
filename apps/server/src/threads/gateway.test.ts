@@ -1,8 +1,19 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
+import { CompanyId, PersonId, RunId, ThreadId } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
-import { Context, Effect, Exit, Fiber, Layer, Predicate, PubSub, Queue, Stream } from 'effect'
+import {
+  Context,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  PubSub,
+  Queue,
+  Stream,
+} from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
@@ -14,7 +25,7 @@ import { Database, type DatabaseInfrastructureError } from '../database/client.t
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
-import { Conversation } from './conversation.ts'
+import { Conversation, DeliveryMessage, type Delivery } from './conversation.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { threads } from './tables.ts'
 import { authLayer } from '../auth/provider.ts'
@@ -294,6 +305,72 @@ layer(foundation)((it) => {
           expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
+    )
+  })
+})
+
+/**
+ * Posts one body through the real route, authentication and access check, as a client's send.
+ * The runtime is not reached: `admit` keeps what the gateway would have delivered.
+ */
+const send = Effect.fn('GatewayTest.send')(function* (
+  test: Fixture,
+  body: Readonly<Record<string, string>>,
+) {
+  const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
+  const admitted = yield* Queue.unbounded<Delivery>()
+  const context = yield* Layer.build(
+    Layer.mock(Conversation, {
+      admit: (delivery) =>
+        Queue.offer(admitted, delivery).pipe(
+          Effect.as({
+            runId: RunId.make(NodeCrypto.randomUUID()),
+            offset: '0',
+            incarnation: 'test',
+          }),
+        ),
+    }).pipe(Layer.provideMerge(Layer.mock(Runtime, {}))),
+  )
+  const response = yield* handle.pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(
+        new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${test.token}`,
+            host: 'gateway.test',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }),
+      ),
+    ),
+    Effect.provide(context),
+  )
+  return { status: response.status, delivery: yield* Queue.poll(admitted) }
+})
+
+layer(foundation, { excludeTestServices: true })((it) => {
+  describe.skipIf(!testDatabaseConfigured)("A card's carry-on", () => {
+    /** The owner, 29 October 2026: the nudge "shouldn't act like I prompted it". */
+    it.effect("reaches Vivid as a carry-on signal, never as the Person's words", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const body = 'GitHub is connected. Carry on.'
+        const sent = yield* send(test, {
+          kind: 'signal',
+          type: 'carry-on',
+          body,
+          idempotencyKey: NodeCrypto.randomUUID(),
+        })
+        expect(sent.status).toBe(202)
+        expect(Option.map(sent.delivery, (delivery) => delivery.message)).toEqual(
+          Option.some(
+            DeliveryMessage.cases.Signal.make({ type: 'carry-on', body, attributes: {} }),
+          ),
+        )
+      }).pipe(Effect.scoped),
     )
   })
 })

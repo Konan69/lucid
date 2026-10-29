@@ -1,6 +1,6 @@
 import { createFlueClient, type FlueClient } from '@flue/sdk'
 import { regenerateThreadTitle } from '@vivid/client-runtime'
-import { ThreadId, type ProjectId } from '@vivid/contracts'
+import { ThreadId, type CarryOnRequest, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
 import { Data, Effect, Redacted, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
@@ -41,6 +41,25 @@ export class Undelivered extends Schema.TaggedError<Undelivered>()(
 /** What a Person is told when a message left the phone and is not known to have arrived. */
 export const UNDELIVERED =
   'That message did not reach Vivid. Check your connection and send it again.'
+
+/**
+ * Tells Vivid to go on in a Thread once a card's wait is over ("GitHub is connected"). It is sent
+ * as a `carry-on` signal (`CarryOnRequest`), which no surface draws, so it never reads as words
+ * the Person said. It is tried twice, as a message is; when both fail the card is still the thing
+ * the Thread waits on and offers its own Carry on. The web's is `carryOn` in `data/threads.ts`.
+ */
+export const carryOn = (data: LiveData, thread: ThreadId, body: string) => {
+  const message = { kind: 'signal', type: 'carry-on', body } as const satisfies Omit<
+    CarryOnRequest,
+    'idempotencyKey'
+  >
+  const idempotencyKey = randomUUID()
+  const client = conversation(data.session, thread)
+  const once = () => client.send({ message, idempotencyKey })
+  void once()
+    .catch(once)
+    .catch(() => undefined)
+}
 
 /**
  * Delivers one message into a Thread, described and not yet started. The gateway turns it into an

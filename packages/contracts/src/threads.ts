@@ -32,6 +32,19 @@ export const SendMessageRequest = Schema.Struct({
 })
 export interface SendMessageRequest extends Schema.Schema.Type<typeof SendMessageRequest> {}
 
+/**
+ * A card telling Vivid to go on after something it waited for has happened ("GitHub is
+ * connected"). It reaches Vivid as a `carry-on` signal, not a user turn, so no client draws it as
+ * words the Person said: the owner, 29 October 2026, "it shouldn't act like I prompted it".
+ */
+export const CarryOnRequest = Schema.Struct({
+  kind: Schema.Literal('signal'),
+  type: Schema.Literal('carry-on'),
+  body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
+  idempotencyKey: SendMessageRequest.fields.idempotencyKey,
+})
+export interface CarryOnRequest extends Schema.Schema.Type<typeof CarryOnRequest> {}
+
 /** Invalid formats and mismatched signatures need the Person to choose another image. */
 export class UnsupportedAttachment extends Schema.TaggedError<UnsupportedAttachment>()(
   'UnsupportedAttachment',
@@ -264,6 +277,8 @@ export const SignalType = Schema.Literals([
   'first-conversation',
   // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
   'event',
+  // A card telling Vivid to go on (`CarryOnRequest`); no client draws it.
+  'carry-on',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
