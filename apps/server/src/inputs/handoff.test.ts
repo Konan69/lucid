@@ -1,7 +1,9 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
+import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import * as Layer from 'effect/Layer'
 import * as Logger from 'effect/Logger'
 import * as Option from 'effect/Option'
@@ -18,7 +20,7 @@ import {
   PrepareHandoffOutcome,
   PrepareHandoffRequest,
 } from '@vivid/contracts'
-import { HandoffNotAddressee, HandoffNotCleared } from '@vivid/contracts/rpc'
+import { HandoffClosed, HandoffNotAddressee, HandoffNotCleared } from '@vivid/contracts/rpc'
 import { fixture, Observation, recordRuns, trustTestServices } from '../approvals/testing.ts'
 import { ComputerStore } from '../computers/store.ts'
 import type { HandoffEntry, HandoffPageBinding } from '../computers/machine.ts'
@@ -32,6 +34,7 @@ import {
   handoffsInThread,
   handoffsWaiting,
   prepareHandoff,
+  withdrawHandoff,
 } from './handoff.ts'
 import { handoffs } from './tables.ts'
 
@@ -56,8 +59,36 @@ const signIn = PrepareHandoffRequest.cases.Form.make({
  * the provider seam, not the claim: these cases prove what the store keeps and tells, and record
  * only what reached the Computer, so the values are shown to arrive where they belong.
  */
+/** A point in a Computer call the case holds open: it hears the call arrive and lets it go on. */
+interface Gate {
+  readonly entered: Deferred.Deferred<void>
+  readonly release: Deferred.Deferred<void>
+}
+
+/** Holds the call at `gate` when a case armed it; passes straight through otherwise. */
+const pass = (gate: Ref.Ref<Option.Option<Gate>>) =>
+  Effect.flatMap(
+    Ref.getAndSet(gate, Option.none()),
+    Option.match({
+      onNone: () => Effect.void,
+      onSome: (held) =>
+        Deferred.succeed(held.entered, undefined).pipe(Effect.andThen(Deferred.await(held.release))),
+    }),
+  )
+
+/** Arms a gate for the next call through it. */
+const arm = Effect.fn('HandoffTest.arm')(function* (gate: Ref.Ref<Option.Option<Gate>>) {
+  const held: Gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() }
+  yield* Ref.set(gate, Option.some(held))
+  return held
+})
+
 const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
   const typed = yield* Ref.make<ReadonlyArray<HandoffEntry>>([])
+  /** What reached the Computer, in order: `typed` per fill and `cleared` per clearing. */
+  const events = yield* Ref.make<ReadonlyArray<'typed' | 'cleared'>>([])
+  const fillGate = yield* Ref.make(Option.none<Gate>())
+  const clearGate = yield* Ref.make(Option.none<Gate>())
   const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
   /** The labels the next clearing cannot show empty; none by default. */
   const remaining = yield* Ref.make<ReadonlyArray<string>>([])
@@ -71,14 +102,20 @@ const recordingComputer = Effect.fn('HandoffTest.computer')(function* () {
     findFields: (_person, labels) =>
       Effect.succeed({ page, address, fields: labels.map(() => Option.none()) }),
     fillFields: (_person, _page, entries) =>
-      Ref.update(typed, (before) => [...before, ...entries]).pipe(
+      pass(fillGate).pipe(
+        Effect.andThen(Ref.update(typed, (before) => [...before, ...entries])),
+        Effect.andThen(Ref.update(events, (before) => [...before, 'typed' as const])),
         Effect.as(entries.map(() => HandoffFieldResult.cases.Filled.make({}))),
       ),
     clearFields: (_person, _page, labels) =>
-      Ref.update(cleared, (before) => [...before, labels]).pipe(Effect.andThen(Ref.get(remaining))),
+      pass(clearGate).pipe(
+        Effect.andThen(Ref.update(cleared, (before) => [...before, labels])),
+        Effect.andThen(Ref.update(events, (before) => [...before, 'cleared' as const])),
+        Effect.andThen(Ref.get(remaining)),
+      ),
     hold: () => Ref.update(handedBack, (count) => count + 1).pipe(Effect.as(record)),
   })
-  return { layer: computer, typed, cleared, remaining, handedBack }
+  return { layer: computer, typed, events, fillGate, clearGate, cleared, remaining, handedBack }
 })
 
 /** Every log line written while a case runs, as JSON with its annotations and spans. */
@@ -239,6 +276,70 @@ layer(testDatabaseLayer)((it) => {
           expect(completed.state._tag).toBe('Completed')
           expect(yield* Ref.get(recorder.handedBack)).toBe(1)
           expect(yield* Ref.get((yield* Observation).deliveries)).toHaveLength(1)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+
+    it.effect('H4 no fill lands between a finish and the clearing that ends it', () =>
+      Effect.gen(function* () {
+        const recorder = yield* recordingComputer()
+        const context = yield* Layer.build(Layer.merge(trustTestServices, recorder.layer))
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const handoff = yield* filledSignIn(test)
+          const [, password] = handoff.fields
+          if (password === undefined) return expect.unreachable('two fields')
+          // The finish is clearing; the Person's second fill arrives in the middle of it.
+          const clearing = yield* arm(recorder.clearGate)
+          const finishing = yield* completeHandoff(test.personal, handoff.id).pipe(
+            Effect.forkChild,
+          )
+          yield* Deferred.await(clearing.entered)
+          const late = yield* Effect.result(
+            fillHandoff(test.personal, {
+              id: handoff.id,
+              values: [{ fieldId: password.id, value: Redacted.make(PASSWORD) }],
+            }),
+          )
+          expect(Result.isFailure(late) && late.failure instanceof HandoffClosed).toBe(true)
+          yield* Deferred.succeed(clearing.release, undefined)
+          const completed = yield* Fiber.join(finishing)
+          expect(completed.state._tag).toBe('Completed')
+          // Nothing was typed after the clearing that let the Computer go.
+          expect(yield* Ref.get(recorder.events)).toEqual(['typed', 'cleared'])
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+
+    it.effect('H5 a withdrawal while a fill types waits for it, then clears what it typed', () =>
+      Effect.gen(function* () {
+        const recorder = yield* recordingComputer()
+        const context = yield* Layer.build(Layer.merge(trustTestServices, recorder.layer))
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const handoff = yield* filledSignIn(test)
+          const [, password] = handoff.fields
+          if (password === undefined) return expect.unreachable('two fields')
+          // A fill again is typing when the Person withdraws.
+          const typing = yield* arm(recorder.fillGate)
+          const filling = yield* fillHandoff(test.personal, {
+            id: handoff.id,
+            values: [{ fieldId: password.id, value: Redacted.make(PASSWORD) }],
+          }).pipe(Effect.forkChild)
+          yield* Deferred.await(typing.entered)
+          const waiting = yield* withdrawHandoff(test.personal, handoff.id)
+          // The withdrawal is claimed but nothing is cleared under a fill still typing.
+          expect(waiting.state._tag).toBe('Applying')
+          expect(yield* Ref.get(recorder.events)).toEqual(['typed'])
+          expect(yield* Ref.get(recorder.handedBack)).toBe(0)
+          yield* Deferred.succeed(typing.release, undefined)
+          const ended = yield* Fiber.join(filling)
+          expect(ended.state._tag).toBe('Withdrawn')
+          expect(yield* Ref.get(recorder.events)).toEqual(['typed', 'typed', 'cleared'])
+          expect(yield* Ref.get(recorder.handedBack)).toBe(1)
+          expect(yield* handoffsWaiting(test.personal)).toEqual([])
+          // A withdrawn step never wakes Vivid.
+          expect(yield* Ref.get((yield* Observation).deliveries)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
     )

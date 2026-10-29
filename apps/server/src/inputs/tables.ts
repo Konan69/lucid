@@ -41,14 +41,30 @@ export const inputRequests = pgTable(
 )
 
 /**
+ * The statuses in which a handoff is not over: it waits on the Person, a fill is typing, or it is
+ * settling. Each holds the Computer for the handoff (`computers/store.ts` `load`) and admits at
+ * most one per Person (`vivid_handoffs_open`). A settling status excludes every new fill: the
+ * step's fields are emptied while it holds, and only then does it end.
+ */
+export const openHandoffStatuses = [
+  'waiting',
+  'applying',
+  'ready',
+  'completing',
+  'withdrawing',
+  'draining',
+] as const
+
+/**
  * One row per handoff: a step on the Computer only the Person asked can do.
  *
  * It holds no value the Person typed, in any form: not encrypted, not hashed, not its length.
  * `request` is the public definition (form fields or the live-screen kind) and `page` its public
  * address; `binding` is the browser's own window, tab and address the fields were found on, which
- * stays on the server. `status` is `waiting`, `applying`, `ready`, `completed` or `withdrawn`;
- * `receipts` holds one result per form field once a fill was typed. An open handoff (waiting,
- * applying, ready) keeps Vivid off the Person's Computer, so one Person has at most one.
+ * stays on the server. `status` is one of `openHandoffStatuses`, then `completed` or `withdrawn`;
+ * `completing` and `withdrawing` mean the ending is claimed and the fields are being emptied, and
+ * `draining` means a withdrawal was claimed while a fill was typing, which that fill moves on to
+ * `withdrawing` once it ends. `receipts` holds one result per form field once a fill was typed.
  */
 export const handoffs = pgTable(
   'vivid_handoffs',
@@ -79,6 +95,8 @@ export const handoffs = pgTable(
     index('vivid_handoffs_thread').on(table.threadId, table.createdAt),
     uniqueIndex('vivid_handoffs_open')
       .on(table.personId)
-      .where(sql`${table.status} in ('waiting', 'applying', 'ready')`),
+      .where(
+        sql`${table.status} in (${sql.raw(openHandoffStatuses.map((status) => `'${status}'`).join(', '))})`,
+      ),
   ],
 )

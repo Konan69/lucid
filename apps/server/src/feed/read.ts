@@ -16,7 +16,7 @@ import {
 } from '@vivid/contracts'
 import { approvals } from '../approvals/tables.ts'
 import { decodeStored, type Database } from '../database/client.ts'
-import { handoffs, inputRequests } from '../inputs/tables.ts'
+import { handoffs, inputRequests, openHandoffStatuses } from '../inputs/tables.ts'
 import { readableBy } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { feedCards } from './tables.ts'
@@ -115,7 +115,7 @@ const stillOpen = (now: number) =>
       sql`(select 1 from ${inputRequests} where ${inputRequests.threadId} = ${threads.id} and ${inputRequests.status} = 'waiting')`,
     ),
     exists(
-      sql`(select 1 from ${handoffs} where ${handoffs.threadId} = ${threads.id} and ${handoffs.status} in ('waiting', 'applying', 'ready'))`,
+      sql`(select 1 from ${handoffs} where ${handoffs.threadId} = ${threads.id} and ${inArray(handoffs.status, openHandoffStatuses)})`,
     ),
   )
 
@@ -214,7 +214,7 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
       .where(
         and(
           inArray(handoffs.threadId, [...ids]),
-          inArray(handoffs.status, ['waiting', 'applying', 'ready']),
+          inArray(handoffs.status, openHandoffStatuses),
         ),
       ),
   )

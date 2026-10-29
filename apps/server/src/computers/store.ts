@@ -67,7 +67,7 @@ import {
   type HandoffEntry,
   type HandoffPageBinding,
 } from './machine.ts'
-import { handoffs } from '../inputs/tables.ts'
+import { handoffs, openHandoffStatuses } from '../inputs/tables.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
 import { computers } from './tables.ts'
@@ -256,7 +256,7 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
       database
         .select({
           ...getTableColumns(computers),
-          held: sql<boolean>`${computers.held} or exists (select 1 from ${handoffs} where ${handoffs.personId} = ${computers.personId} and ${handoffs.status} in ('waiting', 'applying', 'ready'))`,
+          held: sql<boolean>`${computers.held} or exists (select 1 from ${handoffs} where ${handoffs.personId} = ${computers.personId} and ${inArray(handoffs.status, openHandoffStatuses)})`,
         })
         .from(computers)
         .where(eq(computers.personId, person))

@@ -1,6 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeURL from 'node:url'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, type SQL } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
@@ -59,13 +59,13 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { announceFeed } from '../feed/changes.ts'
-import { changed, Topic } from '../live/changes.ts'
+import { Changes, changed, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
 import { DeliveryMessage } from '../threads/conversation.ts'
 import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
-import { handoffs } from './tables.ts'
+import { handoffs, openHandoffStatuses } from './tables.ts'
 
 /**
  * Handoffs: the one step on the Computer only the Person can do (a sign-in, a code, a payment, a
@@ -105,7 +105,7 @@ const columns = Schema.Struct(
     request: Definition,
     page: HandoffPage,
     binding: HandoffPageBinding,
-    status: Schema.Literals(['waiting', 'applying', 'ready', 'completed', 'withdrawn']),
+    status: Schema.Literals([...openHandoffStatuses, 'completed', 'withdrawn']),
     receipts: Schema.NullOr(Receipts),
     completedBy: Schema.NullOr(PersonId),
     settledAt: Schema.NullOr(Schema.Finite),
@@ -119,8 +119,8 @@ const encodePage = encodeStored(HandoffPage, 'Handoff page')
 const encodeBinding = encodeStored(HandoffPageBinding, 'Handoff page binding')
 const encodeReceipts = encodeStored(Receipts, 'Handoff receipts')
 
-/** The statuses in which a handoff holds the Computer and waits on the Person. */
-const OPEN = ['waiting', 'applying', 'ready'] as const
+/** The statuses in which a handoff holds the Computer (`tables.ts`). */
+const OPEN = openHandoffStatuses
 
 /** The delivery key of a finished handoff; a repeated finish can never owe a second signal. */
 const handoffKey = (id: HandoffId) => `handoff-${id}`
@@ -164,7 +164,13 @@ const completion = (row: Row, people: ReadonlyMap<PersonId, PersonSummary>) => {
     : Effect.fail(corrupt())
 }
 
-/** A form's state from its row: receipts exist exactly once a fill was typed. */
+/**
+ * A form's state from its row: receipts exist exactly once a fill was typed.
+ *
+ * An ending that is claimed but not done (its fields are still being emptied, or could not be
+ * shown empty) is still open to the Person: it reads as the step it was, and the Person's next
+ * finish or withdraw resumes it. A withdrawal waiting on a fill reads as that fill.
+ */
 const formState = Effect.fn('Handoffs.formState')(function* (
   row: Row,
   people: ReadonlyMap<PersonId, PersonSummary>,
@@ -173,8 +179,14 @@ const formState = Effect.fn('Handoffs.formState')(function* (
     case 'waiting':
       return HandoffFormState.cases.Waiting.make({})
     case 'applying':
+    case 'draining':
       return HandoffFormState.cases.Applying.make({})
+    case 'withdrawing':
+      return row.receipts === null
+        ? HandoffFormState.cases.Waiting.make({})
+        : HandoffFormState.cases.Ready.make({ fields: row.receipts })
     case 'ready':
+    case 'completing':
       if (row.receipts === null) return yield* corrupt()
       return HandoffFormState.cases.Ready.make({ fields: row.receipts })
     case 'completed':
@@ -197,7 +209,10 @@ const screenState = Effect.fn('Handoffs.screenState')(function* (
   switch (row.status) {
     case 'waiting':
       return HandoffScreenState.cases.Waiting.make({})
+    // A claimed ending reads as the step still open, as a form's does.
     case 'ready':
+    case 'completing':
+    case 'withdrawing':
       return HandoffScreenState.cases.Ready.make({})
     case 'completed':
       return HandoffScreenState.cases.Completed.make(yield* completion(row, people))
@@ -205,6 +220,7 @@ const screenState = Effect.fn('Handoffs.screenState')(function* (
       if (row.settledAt === null) return yield* corrupt()
       return HandoffScreenState.cases.Withdrawn.make({ withdrawnAt: row.settledAt })
     case 'applying':
+    case 'draining':
       return yield* corrupt()
   }
 })
@@ -606,78 +622,6 @@ const clearOf = Effect.fn('Handoffs.clear')(function* (row: Row) {
     return yield* new HandoffNotCleared({ id: row.id, labels: remaining })
 })
 
-/**
- * Types the Person's values into the prepared fields, privately, and keeps one result per field.
- *
- * The row is claimed (`applying`) before anything is typed, so a second fill racing this one is
- * refused rather than typed twice. Values exist only in this call's memory and the driver's
- * private input file; the row gets the receipts. A Computer that cannot be reached types nothing
- * and the claim is given back. Uninterruptible once claimed: a fill is never left half recorded
- * by a cancelled request.
- */
-export const fillHandoff = Effect.fn('Handoffs.fill')(function* (
-  actor: Actor,
-  request: FillHandoffRequest,
-) {
-  const row = yield* addressed(actor, request.id)
-  if (row.status === 'completed' || row.status === 'withdrawn') return yield* closed(request.id)
-  if (!Definition.guards.Form(row.request))
-    return yield* new InvalidRequest({ message: 'This step is done on the screen.' })
-  const { fields } = row.request
-  const entries = entriesOf(fields, request, row.status === 'waiting')
-  if (Option.isNone(entries))
-    return yield* new InvalidRequest({ message: 'Fill each field of this step once.' })
-  const database = yield* Database
-  const claimed = yield* database.run(
-    database
-      .update(handoffs)
-      .set({ status: 'applying' })
-      .where(and(eq(handoffs.id, row.id), inArray(handoffs.status, ['waiting', 'ready'])))
-      .returning(),
-  )
-  if (claimed.length === 0) return yield* new Conflict({ message: 'This step is being filled.' })
-  const before = yield* decodeRow(yield* returned(claimed, 'Handoff'))
-  const computer = yield* ComputerStore
-  const results = yield* throughComputer(
-    row.id,
-    computer.fillFields(
-      actor.person.id,
-      row.binding,
-      entries.value.map((item) => item.entry),
-    ),
-  ).pipe(
-    // Nothing was typed: give the claim back, with the receipts it had.
-    Effect.tapError(() =>
-      database.run(
-        database
-          .update(handoffs)
-          .set({ status: row.status })
-          .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'applying'))),
-      ),
-    ),
-  )
-  const receipts = yield* merged(
-    fields,
-    before.receipts === null ? [] : before.receipts,
-    Arr.zipWith(entries.value, results, (item, result) =>
-      HandoffFieldReceipt.make({ fieldId: item.field.id, result }),
-    ),
-  )
-  const rows = yield* database.run(
-    database
-      .update(handoffs)
-      .set({ status: 'ready', receipts: yield* encodeReceipts(receipts) })
-      .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'applying')))
-      .returning(),
-  )
-  yield* changed(actor, Topic.thread(row.threadId))
-  if (rows.length > 0) return yield* one(rows)
-  // Withdrawn while this fill was typing: its clearing may have run first, so the values just
-  // typed would stay on a page Vivid has back. Clear again; the step is over either way.
-  yield* clearOf(row)
-  return yield* current(row.id)
-}, Effect.uninterruptible)
-
 /** A field's result as Vivid reads it: what happened, never what was typed. */
 const resultWords = (result: HandoffFieldResult) =>
   HandoffFieldResult.match(result, {
@@ -715,17 +659,225 @@ const finishedWords = (row: Row, by: string) =>
       `${by} finished the step on the Computer's screen at ${row.page.origin} and handed it back. Look at the page to see where things stand before going on.`,
   })
 
+/**
+ * Types the Person's values into the prepared fields, privately, and keeps one result per field.
+ *
+ * The row is claimed (`applying`) before anything is typed, so a second fill racing this one is
+ * refused rather than typed twice, and an ending claimed meanwhile waits on it (`draining`).
+ * Values exist only in this call's memory and the driver's private input file; the row gets the
+ * receipts. A Computer that cannot be reached types nothing and the claim is given back.
+ * Uninterruptible once claimed: a fill is never left half recorded by a cancelled request.
+ */
+export const fillHandoff = Effect.fn('Handoffs.fill')(function* (
+  actor: Actor,
+  request: FillHandoffRequest,
+) {
+  const row = yield* addressed(actor, request.id)
+  // An ending already claimed excludes every new fill, so the clearing it waits on is the last.
+  if (!['waiting', 'applying', 'ready'].includes(row.status)) return yield* closed(request.id)
+  if (!Definition.guards.Form(row.request))
+    return yield* new InvalidRequest({ message: 'This step is done on the screen.' })
+  const { fields } = row.request
+  const entries = entriesOf(fields, request, row.status === 'waiting')
+  if (Option.isNone(entries))
+    return yield* new InvalidRequest({ message: 'Fill each field of this step once.' })
+  const database = yield* Database
+  const claimed = yield* database.run(
+    database
+      .update(handoffs)
+      .set({ status: 'applying' })
+      .where(and(eq(handoffs.id, row.id), inArray(handoffs.status, ['waiting', 'ready'])))
+      .returning(),
+  )
+  if (claimed.length === 0) return yield* new Conflict({ message: 'This step is being filled.' })
+  const before = yield* decodeRow(yield* returned(claimed, 'Handoff'))
+  const computer = yield* ComputerStore
+  const typed = yield* Effect.result(
+    throughComputer(
+      row.id,
+      computer.fillFields(
+        actor.person.id,
+        row.binding,
+        entries.value.map((item) => item.entry),
+      ),
+    ),
+  )
+  if (Result.isFailure(typed)) {
+    // Nothing was typed: give the claim back with the receipts it had, or, when a withdrawal
+    // waited on this fill, end it now.
+    yield* database.run(
+      database
+        .update(handoffs)
+        .set({ status: row.status })
+        .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'applying'))),
+    )
+    yield* drained(row.id)
+    return yield* typed.failure
+  }
+  const receipts = yield* merged(
+    fields,
+    before.receipts === null ? [] : before.receipts,
+    Arr.zipWith(entries.value, typed.success, (item, result) =>
+      HandoffFieldReceipt.make({ fieldId: item.field.id, result }),
+    ),
+  )
+  const rows = yield* database.run(
+    database
+      .update(handoffs)
+      .set({ status: 'ready', receipts: yield* encodeReceipts(receipts) })
+      .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'applying')))
+      .returning(),
+  )
+  yield* changed(actor, Topic.thread(row.threadId))
+  if (rows.length > 0) return yield* one(rows)
+  // Withdrawn while this fill was typing. The withdrawal waited (`draining`), so the fields are
+  // emptied only now, after the last value went in, and the step ends here.
+  const ended = yield* drained(row.id)
+  return Option.isSome(ended) ? ended.value : yield* current(row.id)
+}, Effect.uninterruptible)
+
 /** The Person had the screen for the step; it goes back to Vivid with the handoff. */
 const handBack = (person: PersonId) =>
   Effect.gen(function* () {
     yield* (yield* ComputerStore).hold(person, false)
   })
 
+/** A handoff changed: the Person asked and everyone reading its Thread see it. */
+const announceChange = (row: Pick<Row, 'personId' | 'threadId'>) =>
+  Effect.gen(function* () {
+    yield* (yield* Changes).publish([Topic.person(row.personId), Topic.thread(row.threadId)])
+  })
+
 /**
- * The Person has finished. The fields are emptied, the record and its owed signal are written in
- * one transaction, the screen is handed back, and the signal is delivered, so Vivid carries on in
- * the Thread without the Person writing anything. A second finish answers the first's record and
- * owes nothing more; finishing a withdrawn step is refused.
+ * Ends a claimed finish. The fields are emptied first and must be shown empty; then the record
+ * and its owed signal are written in one transaction, the screen is handed back, and the signal
+ * is delivered, so Vivid carries on in the Thread without the Person writing anything. Clearing
+ * that fails leaves the record `completing` and the Computer held; finishing again resumes here.
+ */
+const finishCompletion = Effect.fn('Handoffs.finishCompletion')(function* (
+  row: Row,
+  person: Actor['person'],
+) {
+  yield* clearOf(row)
+  const now = yield* Clock.currentTimeMillis
+  const signal = Signal.cases.Owed.make({
+    idempotencyKey: handoffKey(row.id),
+    deciderId: person.id,
+    message: DeliveryMessage.cases.Signal.make({
+      type: 'handoff',
+      body: finishedWords(row, person.name),
+      attributes: { handoff: row.id },
+    }),
+  })
+  const database = yield* Database
+  const rows = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const written = yield* tx
+        .update(handoffs)
+        .set({
+          status: 'completed',
+          completedBy: person.id,
+          settledAt: now,
+          signal: yield* encodeSignal(signal),
+          signalDueAt: now,
+        })
+        .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'completing')))
+        .returning()
+      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
+      return written
+    }),
+  )
+  if (rows.length === 0) return yield* current(row.id)
+  yield* handBack(row.personId)
+  yield* announceChange(row)
+  yield* replaySignals(handoffSignals, Option.some([row.id])).pipe(
+    Effect.catch(() => Effect.logError('Handoff replay failed', { handoffId: row.id })),
+  )
+  return yield* one(rows)
+})
+
+/**
+ * Ends a claimed withdrawal: the fields are emptied and shown empty, then the record is
+ * withdrawn and the screen handed back. Vivid is not woken, as a withdrawn question does not wake
+ * it. Clearing that fails leaves the record `withdrawing` and the Computer held; withdrawing again
+ * resumes here.
+ */
+const finishWithdrawal = Effect.fn('Handoffs.finishWithdrawal')(function* (row: Row) {
+  yield* clearOf(row)
+  const database = yield* Database
+  const rows = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const written = yield* tx
+        .update(handoffs)
+        .set({ status: 'withdrawn', settledAt: yield* Clock.currentTimeMillis })
+        .where(and(eq(handoffs.id, row.id), eq(handoffs.status, 'withdrawing')))
+        .returning()
+      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
+      return written
+    }),
+  )
+  if (rows.length === 0) return yield* current(row.id)
+  yield* handBack(row.personId)
+  yield* announceChange(row)
+  return yield* one(rows)
+})
+
+/**
+ * A fill that ends while a withdrawal waits on it moves that withdrawal on (`draining` to
+ * `withdrawing`) and ends it, now that nothing more is being typed. None when nothing waited.
+ */
+const drained = Effect.fn('Handoffs.drained')(function* (id: HandoffId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(handoffs)
+      .set({ status: 'withdrawing' })
+      .where(and(eq(handoffs.id, id), eq(handoffs.status, 'draining')))
+      .returning(),
+  )
+  const value = rows[0]
+  if (value === undefined) return Option.none<HandoffRequest>()
+  return Option.some(yield* finishWithdrawal(yield* decodeRow(value)))
+})
+
+/**
+ * Claims the withdrawal of the open handoffs `where` names, before anything is cleared, so no fill
+ * can start after the clearing. A step a fill is typing into becomes `draining` and that fill ends
+ * it (`drained`); any other open step becomes `withdrawing`. A claimed finish can still be
+ * withdrawn: the Person changed their mind before its fields were shown empty.
+ */
+const claimWithdrawals = Effect.fn('Handoffs.claimWithdrawals')(function* (where: SQL) {
+  const database = yield* Database
+  yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* tx
+        .update(handoffs)
+        .set({ status: 'draining' })
+        .where(and(where, eq(handoffs.status, 'applying')))
+      yield* tx
+        .update(handoffs)
+        .set({ status: 'withdrawing' })
+        .where(and(where, inArray(handoffs.status, ['waiting', 'ready', 'completing'])))
+    }),
+  )
+})
+
+/** The record as it is now, decoded. */
+const reread = Effect.fn('Handoffs.reread')(function* (id: HandoffId) {
+  const database = yield* Database
+  return yield* decodeRow(
+    yield* returned(
+      yield* database.run(database.select().from(handoffs).where(eq(handoffs.id, id))),
+      'Handoff',
+    ),
+  )
+})
+
+/**
+ * The Person has finished. The finish is claimed first (`completing`), which no fill can start
+ * from, so the clearing that follows empties everything that was ever typed; then it ends
+ * (`finishCompletion`). A second finish answers the first's record and owes nothing more, a finish
+ * whose clearing failed resumes, and finishing a withdrawn step is refused.
  */
 export const completeHandoff = Effect.fn('Handoffs.complete')(function* (
   actor: Actor,
@@ -736,6 +888,8 @@ export const completeHandoff = Effect.fn('Handoffs.complete')(function* (
     case 'completed':
       return yield* current(id)
     case 'withdrawn':
+    case 'withdrawing':
+    case 'draining':
       return yield* closed(id)
     case 'waiting':
     case 'applying':
@@ -744,51 +898,29 @@ export const completeHandoff = Effect.fn('Handoffs.complete')(function* (
           ? 'Fill the fields first.'
           : 'Take the screen first.',
       })
+    case 'completing':
+      return yield* finishCompletion(row, actor.person)
     case 'ready':
       break
   }
-  yield* clearOf(row)
-  const now = yield* Clock.currentTimeMillis
-  const signal = Signal.cases.Owed.make({
-    idempotencyKey: handoffKey(id),
-    deciderId: actor.person.id,
-    message: DeliveryMessage.cases.Signal.make({
-      type: 'handoff',
-      body: finishedWords(row, actor.person.name),
-      attributes: { handoff: id },
-    }),
-  })
   const database = yield* Database
-  const rows = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .update(handoffs)
-        .set({
-          status: 'completed',
-          completedBy: actor.person.id,
-          settledAt: now,
-          signal: yield* encodeSignal(signal),
-          signalDueAt: now,
-        })
-        .where(and(eq(handoffs.id, id), eq(handoffs.status, 'ready')))
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
-      return written
-    }),
+  const claimed = yield* database.run(
+    database
+      .update(handoffs)
+      .set({ status: 'completing' })
+      .where(and(eq(handoffs.id, id), eq(handoffs.status, 'ready')))
+      .returning(),
   )
-  if (rows.length === 0) return yield* current(id)
-  yield* handBack(actor.person.id)
-  yield* changed(actor, Topic.thread(row.threadId))
-  yield* replaySignals(handoffSignals, Option.some([id])).pipe(
-    Effect.catch(() => Effect.logError('Handoff replay failed', { handoffId: id })),
-  )
-  return yield* one(rows)
+  const value = claimed[0]
+  // A fill or a withdrawal claimed the step first; the Person sees where it is now.
+  if (value === undefined) return yield* current(id)
+  return yield* finishCompletion(yield* decodeRow(value), actor.person)
 }, Effect.uninterruptible)
 
 /**
- * The Person no longer wants to do the step. The fields are emptied and the screen handed back;
- * Vivid is not woken, as a withdrawn question does not wake it. A fill whose answer was lost
- * leaves a handoff `applying`; withdrawing is how the Person ends it.
+ * The Person no longer wants to do the step. The withdrawal is claimed first, then the fields are
+ * emptied and the screen handed back (`finishWithdrawal`). A fill still typing ends it instead,
+ * once its last value is in (`drained`); a withdrawal whose clearing failed resumes.
  */
 export const withdrawHandoff = Effect.fn('Handoffs.withdraw')(function* (
   actor: Actor,
@@ -796,21 +928,15 @@ export const withdrawHandoff = Effect.fn('Handoffs.withdraw')(function* (
 ) {
   const row = yield* addressed(actor, id)
   if (row.status === 'completed' || row.status === 'withdrawn') return yield* closed(id)
-  yield* clearOf(row)
-  const database = yield* Database
-  const rows = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .update(handoffs)
-        .set({ status: 'withdrawn', settledAt: yield* Clock.currentTimeMillis })
-        .where(and(eq(handoffs.id, id), inArray(handoffs.status, OPEN)))
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
-      return written
-    }),
-  )
-  if (rows.length === 0) return yield* closed(id)
-  yield* handBack(actor.person.id)
-  yield* changed(actor, Topic.thread(row.threadId))
-  return yield* one(rows)
+  yield* claimWithdrawals(eq(handoffs.id, id))
+  const claimed = yield* reread(id)
+  yield* announceChange(claimed)
+  switch (claimed.status) {
+    case 'withdrawing':
+      return yield* finishWithdrawal(claimed)
+    case 'completed':
+      return yield* closed(id)
+    default:
+      return yield* current(id)
+  }
 }, Effect.uninterruptible)
