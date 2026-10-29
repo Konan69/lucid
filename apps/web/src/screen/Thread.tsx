@@ -17,6 +17,7 @@ import {
   inThread,
   isLive,
   isTooLong,
+  handing,
   lasting,
   QUIET_MS,
   readingOf,
@@ -51,6 +52,7 @@ import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Asks, useAsks } from './thread/Allow'
+import { Handing } from './thread/Handoff'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
@@ -181,6 +183,7 @@ function contextFor({
     runs,
     approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
+    handoffs: Option.match(detail, { onNone: () => [], onSome: (value) => value.handoffs }),
   }
 }
 
@@ -551,6 +554,9 @@ function Conversation({
           me={me.person.id}
           approvals={context.approvals}
           requests={context.requests}
+          handoffs={context.handoffs}
+          panelOpen={panelOpen}
+          onOpenScreen={onTogglePanel}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
           // another path that cannot carry one yet.
@@ -611,6 +617,9 @@ function Column({
   me,
   approvals,
   requests,
+  handoffs,
+  panelOpen,
+  onOpenScreen,
   working,
   pictures,
   onSay,
@@ -625,6 +634,11 @@ function Column({
   approvals: ThreadContext['approvals']
   /** Every request Vivid has made in this Thread, oldest first. */
   requests: ThreadContext['requests']
+  /** Every step Vivid has handed over in this Thread, oldest first. */
+  handoffs: ThreadContext['handoffs']
+  /** The Computer panel is showing; a step is finished on its screen. */
+  panelOpen: boolean
+  onOpenScreen: () => void
   working: boolean
   /** Whether a picture can be sent from the composer. */
   pictures: boolean
@@ -647,7 +661,19 @@ function Column({
   return (
     <>
       {children}
-      <Asks allowing={allowing} asked={asked} />
+      {/* A step on the Computer holds it, so it comes before a question or an Approval; those
+          keep waiting, and rise once the step is over. */}
+      {Option.match(handing.handoffUp(handoffs, me), {
+        onNone: () => <Asks allowing={allowing} asked={asked} />,
+        onSome: (handoff) => (
+          <Handing
+            key={handoff.id}
+            handoff={handoff}
+            panelOpen={panelOpen}
+            onOpenScreen={onOpenScreen}
+          />
+        ),
+      })}
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.

@@ -5,6 +5,7 @@ import {
   textOf,
   type Approval,
   type ConversationMessage,
+  type HandoffRequest,
   type InputRequest,
   type PersonId,
   type Run,
@@ -34,7 +35,15 @@ import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
+import {
+  approvalById,
+  AskedFirst,
+  cardFor,
+  ConnectionCard,
+  handoffById,
+  requestById,
+} from './Cards'
+import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Replies } from './Replies'
 import { stepIn, type ToolPart } from './Doing'
@@ -47,6 +56,7 @@ export interface ThreadContext {
   readonly runs: ReadonlyArray<Run>
   readonly approvals: ReadonlyArray<Approval>
   readonly requests: ReadonlyArray<InputRequest>
+  readonly handoffs: ReadonlyArray<HandoffRequest>
 }
 
 const reader = thisReader()
@@ -499,6 +509,12 @@ function ToolCards({
         const request = requestById(context.requests, wanted.id)
         return Option.isNone(request) ? null : (
           <Asked key={tool.toolCallId} request={request.value} me={context.me} />
+        )
+      }
+      case 'handoff': {
+        const handoff = handoffById(context.handoffs, wanted.id)
+        return Option.isNone(handoff) ? null : (
+          <Handed key={tool.toolCallId} handoff={handoff.value} me={context.me} />
         )
       }
     }

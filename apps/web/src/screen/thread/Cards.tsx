@@ -7,6 +7,8 @@ import {
   ConnectionRequestMessage,
   type AccountName,
   type Connection,
+  HandoffId,
+  type HandoffRequest,
   InputRequestId,
   type Approval,
   type InputRequest,
@@ -66,6 +68,9 @@ const decodeApprovalRequest = Schema.decodeUnknownOption(
 const decodeInputRequest = Schema.decodeUnknownOption(
   Schema.Struct({ kind: Schema.Literal('input-request'), requestId: InputRequestId }),
 )
+const decodeHandoff = Schema.decodeUnknownOption(
+  Schema.Struct({ kind: Schema.Literal('handoff'), handoffId: HandoffId }),
+)
 const decodeConnectionRequest = Schema.decodeUnknownOption(ConnectionRequestMessage)
 // An integration Vivid has already started adding carries what comes next: a sign-in or a key.
 const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
@@ -75,6 +80,7 @@ type ConnectionAuthorizationValue = typeof ConnectionAuthorization.Type
 export type CardRequest =
   | { readonly kind: 'approval'; readonly id: ApprovalId }
   | { readonly kind: 'input'; readonly id: InputRequestId }
+  | { readonly kind: 'handoff'; readonly id: HandoffId }
   | {
       readonly kind: 'connection'
       readonly request: ConnectionRequestMessage
@@ -93,6 +99,8 @@ export function cardFor(
     return Option.some({ kind: 'approval', id: approval.value.approvalId })
   const input = decodeInputRequest(output)
   if (Option.isSome(input)) return Option.some({ kind: 'input', id: input.value.requestId })
+  const handoff = decodeHandoff(output)
+  if (Option.isSome(handoff)) return Option.some({ kind: 'handoff', id: handoff.value.handoffId })
   return Option.map(decodeConnectionRequest(output), (request) => ({
     kind: 'connection',
     request,
@@ -734,3 +742,7 @@ export const approvalById = (approvals: ReadonlyArray<Approval>, id: ApprovalId)
 
 export const requestById = (requests: ReadonlyArray<InputRequest>, id: InputRequestId) =>
   Option.fromUndefinedOr(requests.find((request) => request.id === id))
+
+/** The step a card stands for, from the Thread's record of its handoffs. */
+export const handoffById = (handoffs: ReadonlyArray<HandoffRequest>, id: HandoffId) =>
+  Option.fromUndefinedOr(handoffs.find((handoff) => handoff.id === id))
