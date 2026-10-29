@@ -70,12 +70,36 @@ const Scenarios = Schema.Array(
   }),
 )
 
-/** Fresh connections give each trial a fresh app database through ordinary public reclamation. */
-async function reset(state) {
-  const listed = await rpc(state, 'ListConnections')
-  for (const connection of listed.connections)
-    if (['mail', 'calendar'].includes(connection.service))
-      await rpc(state, 'RemoveConnection', { id: connection.id })
+/**
+ * Each trial is its own Person: a fresh Better Auth sign-up, written as the account every wire
+ * helper reads. One shared Person let a trial's memory answer the next one (29 Oct 2026: the
+ * not-connected scenario "remembered" the mail the send scenario had sent), so trials were not
+ * independent measurements. A new Person also starts with no Connections and no memory.
+ */
+async function freshPerson(state, label, directory) {
+  const email = state.run + '-' + label + '@example.test'
+  const password = 'Verify!Local-0123456789'
+  const headers = { origin: state.web, 'content-type': 'application/json' }
+  const signup = await fetch(state.server + '/api/auth/sign-up/email', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: 'Verification Person', email, password }),
+  })
+  NodeAssert.equal(signup.status, 200, 'Trial sign-up failed')
+  const signin = await fetch(state.server + '/api/auth/sign-in/email', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ email, password }),
+  })
+  NodeAssert.equal(signin.status, 200, 'Trial sign-in failed')
+  const entered = await signin.json()
+  const cookie = signin.headers
+    .getSetCookie()
+    .map((value) => value.split(';')[0])
+    .join('; ')
+  NodeAssert.ok(cookie, 'Better Auth returned no session cookie')
+  await json(state.scratch + '/account.json', { person: entered.user.id, email, password, cookie })
+  await json(directory + '/person.json', { person: entered.user.id })
 }
 
 /** Provider reads observe actual committed effects. They do not run through the model. */
@@ -134,7 +158,7 @@ async function trial(state, scenario, number, { directory, context }) {
   let failure = null
   let integrations = {}
   try {
-    await reset(state)
+    await freshPerson(state, scenario.id + '-' + number, directory)
     integrations = await connectWorld(state, directory, scenario.connected)
     await rpc(
       state,
