@@ -179,7 +179,15 @@ import {
   NotificationReadResponse,
   ReadNotificationsRequest,
 } from './notifications.js'
-import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import {
+  CreateProjectRequest,
+  Project,
+  ProjectChanged,
+  ProjectEvidenceMissing,
+  ProjectListResponse,
+  ProjectNotActive,
+  UpdateProjectRequest,
+} from './projects.js'
 import {
   Owed,
   OwedListResponse,
@@ -641,6 +649,12 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
+/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+const UpdateProject = Rpc.make('UpdateProject', {
+  payload: UpdateProjectRequest,
+  success: Project,
+  error: Schema.Union([RpcFailure, ProjectChanged, ProjectNotActive, ProjectEvidenceMissing]),
+})
 
 // ── Waiting on ────────────────────────────────────────────────────────────
 const ListOwed = Rpc.make('ListOwed', { ...call, success: OwedListResponse })
@@ -1085,6 +1099,7 @@ export const VividRpc = RpcGroup.make(
   ListProjects,
   WatchProjects,
   CreateProject,
+  UpdateProject,
   ListOwed,
   WatchOwed,
   TrackOwed,

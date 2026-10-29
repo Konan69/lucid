@@ -34,6 +34,18 @@ export type TodoId = typeof TodoId.Type
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 /** Decoded Thread identifier. */
 export type ThreadId = typeof ThreadId.Type
+/**
+ * One message of a Thread's conversation, as the runtime names it in `ConversationMessage.id`:
+ * `entry-<n>` for a Person's words (the Pi transcript entry that holds them) and `run-<n>` for
+ * Vivid's reply (the entry its run started at). Pi transcript entries are append-only and never
+ * renumbered, compaction included (pi-durable 1.4.0 `entries.d.ts`, `CompactionEntry` adds a
+ * summary entry), so either name points at the same message for as long as the Thread lives
+ * (`packages/agent/runtime/src/state/project.ts` `personMessage`, `replyMessage`).
+ */
+export const MessageId = Schema.String.check(Schema.isPattern(/^(entry|run)-[1-9][0-9]*$/u)).pipe(
+  Schema.brand('MessageId'),
+)
+export type MessageId = typeof MessageId.Type
 /** Product Run identifier. The admission receipt links it to a runtime submission. */
 export const RunId = Schema.String.pipe(Schema.brand('RunId'))
 export type RunId = typeof RunId.Type
