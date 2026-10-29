@@ -84,7 +84,8 @@ export function feedTools(runTool: RunTool) {
     defineTool({
       name: Tool.post,
       description: `Post a card to the Person’s Feed. ${instructions}`,
-      input: v.object({ summary, card, sources }),
+      // Most posts cite nothing beyond the event, so leaving sources out means none.
+      input: v.object({ summary, card, sources: v.optional(sources, []) }),
       /** Runtime authority supplies the Person and the Thread; the server keeps one card per Thread. */
       run({ data, signal }) {
         return runTool(
