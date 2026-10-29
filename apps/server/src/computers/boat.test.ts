@@ -1169,18 +1169,16 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             step: 'Reconnect' as const,
           }
           expect(
-            yield* computerHandlers
-              .RecoverComputer(runtimeReceipt)
-              .pipe(
-                Effect.provideService(
-                  AuthContext,
-                  AuthState.Vivid({
-                    person: first,
-                    workspace: Workspace.cases.Personal.make({}),
-                    threadId: ThreadId.make(NodeCrypto.randomUUID()),
-                  }),
-                ),
+            yield* computerHandlers.RecoverComputer(runtimeReceipt).pipe(
+              Effect.provideService(
+                AuthContext,
+                AuthState.Vivid({
+                  person: first,
+                  workspace: Workspace.cases.Personal.make({}),
+                  threadId: ThreadId.make(NodeCrypto.randomUUID()),
+                }),
               ),
+            ),
           ).toEqual(
             ComputerRecoveryOutcome.cases.Refused.make({
               cause: ComputerRecoveryRefusal.cases.RunRequired.make({}),
