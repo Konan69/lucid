@@ -1,13 +1,16 @@
-import { defineTool } from './tool.ts'
+import { defineTool, type ContentResult } from './tool.ts'
+import type { ToolResult } from './result.ts'
 import {
   Tool,
+  ArtifactMessage,
+  type ArtifactReference,
   DocumentToolCallId,
   ReadDocumentOutcome,
   WriteDocumentRequest,
   type WriteDocumentOutcome,
 } from '@vivid/contracts'
 import { InvalidRequest } from '@vivid/contracts/rpc'
-import { Effect, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
@@ -31,6 +34,21 @@ export function written(outcome: typeof WriteDocumentOutcome.Type) {
     changed: outcome.changed,
     message: writeWords(outcome),
   }
+}
+
+/** Product references stay in Pi details; the model keeps the ordinary title/version receipt. */
+export function delivered(
+  result: { output: Schema.Json; terminate: boolean },
+  reference: Option.Option<typeof ArtifactReference.Type>,
+): ContentResult | ToolResult {
+  return Option.match(reference, {
+    onNone: () => result,
+    onSome: (artifact) => ({
+      content: [{ type: 'text', text: JSON.stringify(result.output) }],
+      details: { output: ArtifactMessage.make({ kind: 'artifact', artifact }) },
+      terminate: result.terminate,
+    }),
+  })
 }
 
 /** Missing documents offer only the titles in the acting Thread; found documents retain Markdown. */
@@ -66,6 +84,7 @@ export function documentTools(runTool: RunTool) {
       }),
       /** Pi supplies call identity outside model input, including when deliveries join a response. */
       run({ data, signal, toolCallId }) {
+        let reference = Option.none<typeof ArtifactReference.Type>()
         return runTool(
           Effect.gen(function* () {
             const request: Schema.Struct.Mutable<WriteDocumentRequest> = {
@@ -77,10 +96,11 @@ export function documentTools(runTool: RunTool) {
             }
             if (data.note !== undefined) request.note = data.note
             const outcome = yield* (yield* Scope).client.WriteDocument(request)
+            reference = Option.some(outcome.artifact)
             return { output: written(outcome) }
           }),
           { signal, tool: 'write_document' },
-        )
+        ).then((result) => delivered(result, reference))
       },
     }),
     defineTool({
@@ -104,5 +124,5 @@ export function documentTools(runTool: RunTool) {
 
 /** Compose durable-writing guidance alongside show's display guidance, without duplicating tool descriptions. */
 export const instructions =
-  'Use write_document for something the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Use Markdown and a clear title. An answer read once belongs in your reply. Writing the same title again revises the document; send its whole revised body and an optional sentence about what changed. Use read_document to read it before working on it in a later turn; if it is Missing, choose one of the returned titles.'
+  'For a Word document, PDF or PNG deliverable, create the file on the Computer, then use inspect_file. Look at its returned preview, fix defects and inspect again, then publish_file with that inspection and a short visual review. The preview of DOCX/PDF shows the first page; check later pages on the Computer before publishing a multi-page file. Keep the editable source with exports. Never claim a file is delivered from a Computer path alone. Use write_document for something the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Use Markdown and a clear title. An answer read once belongs in your reply. Writing the same title again revises the document; send its whole revised body and an optional sentence about what changed. Use read_document to read it before working on it in a later turn; if it is Missing, choose one of the returned titles.'
 documentTools.instructions = instructions

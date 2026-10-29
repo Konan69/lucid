@@ -451,6 +451,7 @@ export const cellMemoryLayer = Layer.effect(
 export const documentRun = Effect.fn('Runtime.documentRun')(function* (
   threadId: ThreadId,
   toolCallId: DocumentToolCallId,
+  toolName: 'write_document' | 'inspect_file' | 'publish_file',
 ) {
   const runtime = yield* Runtime
   const response = yield* runtime.read({
@@ -467,7 +468,7 @@ export const documentRun = Effect.fn('Runtime.documentRun')(function* (
       message.parts.some(
         (part) =>
           part.type === 'dynamic-tool' &&
-          part.toolName === 'write_document' &&
+          part.toolName === toolName &&
           part.toolCallId === toolCallId,
       ),
   )

@@ -1,5 +1,12 @@
 import {
   ComputerScreen,
+  type ArtifactNotEditable,
+  type ArtifactFileRefused,
+  type ArtifactFileTooLarge,
+  type ArtifactComputerUnavailable,
+  type ArtifactRenderUnsupported,
+  type ArtifactRenderFailed,
+  type ArtifactInspectionStale,
   ComputerSession,
   computerScreenAddress,
   type NoDeviceConnected,
@@ -31,6 +38,13 @@ export interface ToolResult {
 }
 
 export type ToolFailure =
+  | ArtifactNotEditable
+  | ArtifactFileRefused
+  | ArtifactFileTooLarge
+  | ArtifactComputerUnavailable
+  | ArtifactRenderUnsupported
+  | ArtifactRenderFailed
+  | ArtifactInspectionStale
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -185,6 +199,23 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
+      ArtifactNotEditable: () =>
+        failure(
+          'This is a file. Revise its editable source on the Computer, inspect it and publish a new version.',
+        ),
+      ArtifactFileRefused: ({ role, reason }) =>
+        failure(
+          `The ${role} file could not be captured (${reason}). Fix the path or file before inspecting again.`,
+        ),
+      ArtifactFileTooLarge: ({ role, limit }) =>
+        failure(`The ${role} file exceeds the ${limit}-byte limit.`),
+      ArtifactComputerUnavailable: ({ message }) => failure(message),
+      ArtifactRenderUnsupported: ({ message }) => failure(message),
+      ArtifactRenderFailed: ({ message }) => failure(message),
+      ArtifactInspectionStale: () =>
+        failure(
+          'That inspection is absent, belongs to another response or was already published. Inspect the file again.',
+        ),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>

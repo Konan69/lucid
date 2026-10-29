@@ -1,9 +1,14 @@
 import { testSubmissionId } from '../approvals/testing.ts'
 import * as NodeCrypto from 'node:crypto'
+import * as NodePath from 'node:path'
 import { and, eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   ArtifactAuthor,
+  ArtifactContent,
+  ArtifactSource,
+  ArtifactPreview,
+  SessionId,
   ArtifactChanged,
   ReadDocumentOutcome,
   CompanyId,
@@ -16,16 +21,25 @@ import {
 import { Clock, Context, Effect, Layer, Ref, Result, Schema, Stream } from 'effect'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { personTable } from '../auth/tables.ts'
+import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
-import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threadParticipants, threads } from '../threads/tables.ts'
 import { ArtifactStore, artifactStoreLayer } from './store.ts'
 import { artifactVersions, artifacts } from './tables.ts'
+import { keepInspection, publishArtifactFile } from './files.ts'
+import { capturedFile, FileCapture } from './render.ts'
+import { artifactBytesRoutes } from './bytes.ts'
+import { peer, peerAvailable } from '../computers/ssh/peer.ts'
+import { openLink } from '../computers/ssh/link.ts'
+import { authLayer } from '../auth/provider.ts'
+import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 
 class Published extends Context.Service<Published, Ref.Ref<ReadonlyArray<Topic>>>()(
   'artifacts/test/Published',
@@ -35,6 +49,7 @@ interface ResponseRecord {
   readonly threadId: ThreadId
   readonly runId: RunId
   readonly toolCallId: DocumentToolCallId
+  readonly toolName: 'write_document' | 'inspect_file' | 'publish_file'
   readonly settled: boolean
 }
 class Responses extends Context.Service<Responses, Ref.Ref<ReadonlyArray<ResponseRecord>>>()(
@@ -66,7 +81,7 @@ const runtimeHistoryLayer = Layer.effectContext(
                 parts: [
                   {
                     type: 'dynamic-tool',
-                    toolName: 'write_document',
+                    toolName: entry.toolName,
                     toolCallId: entry.toolCallId,
                     state: 'input-available',
                     input: {},
@@ -181,7 +196,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
   )
   yield* Ref.update(yield* Responses, (entries) => [
     ...entries,
-    { threadId, runId, toolCallId: documentCall, settled: false },
+    { threadId, runId, toolCallId: documentCall, settled: false, toolName: 'write_document' },
   ])
   return { database, person, member, admin, outsider, threadId, runId, companyId }
 })
@@ -189,6 +204,151 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
 /** Real SQL proves history, uniqueness, rollback, optimistic editing and access across workspaces. */
 describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
   layer(testLayer)((it) => {
+    it.effect.skipIf(!peerAvailable)(
+      'publishes captured SSH bytes once and downloads them only with Thread access',
+      () =>
+        Effect.gen(function* () {
+          const { database, person, outsider, threadId, runId } = yield* fixture()
+          const server = yield* peer()
+          const link = yield* openLink(server)
+          const outputPath = NodePath.join(server.home, 'output.png')
+          const sourcePath = NodePath.join(server.home, 'editable.docx')
+          const original = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128])
+          const source = Uint8Array.from([80, 75, 3, 4, 0, 128, 255, 10])
+          yield* link.put(outputPath, original)
+          yield* link.put(sourcePath, source)
+          const outputBytes = yield* link.read(outputPath)
+          const sourceBytes = yield* link.read(sourcePath)
+          const inspectionCall = DocumentToolCallId.make('inspect-captured-file')
+          const publicationCall = DocumentToolCallId.make('publish-captured-file')
+          yield* Ref.update(yield* Responses, (entries) => [
+            ...entries,
+            {
+              threadId,
+              runId,
+              toolCallId: inspectionCall,
+              settled: false,
+              toolName: 'inspect_file',
+            },
+            {
+              threadId,
+              runId,
+              toolCallId: publicationCall,
+              settled: false,
+              toolName: 'publish_file',
+            },
+          ])
+          const inspected = yield* keepInspection(
+            { personId: person.id, threadId, runId, toolCallId: inspectionCall },
+            {
+              capture: FileCapture.make({
+                output: capturedFile('output.png', outputBytes),
+                source: ArtifactSource.cases.Separate.make({
+                  file: capturedFile('editable.docx', sourceBytes),
+                }),
+                preview: ArtifactPreview.cases.Output.make({}),
+              }),
+              output: outputBytes,
+              source: sourceBytes,
+              preview: null,
+            },
+          )
+          expect(inspected.picture).toEqual(original)
+          yield* link.put(sourcePath, new TextEncoder().encode('changed source after inspection'))
+          yield* link.put(outputPath, new TextEncoder().encode('changed output after inspection'))
+          const request = {
+            inspection: inspected.inspection,
+            toolCallId: publicationCall,
+            title: 'Captured file',
+            review: 'Fixture preview checks immutable byte transport only.',
+          }
+          const [first, retried] = yield* Effect.all(
+            [
+              publishArtifactFile(person.id, threadId, request),
+              publishArtifactFile(person.id, threadId, request),
+            ],
+            { concurrency: 2 },
+          )
+          expect(retried).toEqual(first)
+          const store = yield* ArtifactStore
+          const detail = yield* store.get(person.id, { id: first.artifact.id })
+          expect(detail.versions).toHaveLength(1)
+          expect(ArtifactContent.guards.File(detail.content)).toBe(true)
+          expect(detail.content).toMatchObject({
+            output: { sha256: NodeCrypto.createHash('sha256').update(original).digest('hex') },
+          })
+          expect(
+            (yield* Effect.flip(
+              store.revise(person, {
+                id: first.artifact.id,
+                from: 1,
+                body: 'Must not replace bytes',
+              }),
+            ))._tag,
+          ).toBe('ArtifactNotEditable')
+          yield* database.run(
+            database
+              .update(runs)
+              .set({ state: 'completed', finishedAt: 2 })
+              .where(eq(runs.id, runId)),
+          )
+          expect(yield* publishArtifactFile(person.id, threadId, request)).toEqual(first)
+          const session = Effect.fn('Artifacts.test.session')(function* (id: PersonId) {
+            const token = NodeCrypto.randomUUID()
+            yield* database.run(
+              database.insert(sessionTable).values({
+                id: SessionId.make(NodeCrypto.randomUUID()),
+                token,
+                userId: id,
+                expiresAt: new Date(Date.now() + 60_000),
+              }),
+            )
+            return token
+          })
+          const ownerToken = yield* session(person.id)
+          const outsiderToken = yield* session(outsider.id)
+          const handle = yield* HttpRouter.toHttpEffect(artifactBytesRoutes)
+          const download = Effect.fn('Artifacts.test.download')(function* (
+            role: string,
+            token: string,
+          ) {
+            const response = yield* handle.pipe(
+              Effect.provideService(
+                HttpServerRequest.HttpServerRequest,
+                HttpServerRequest.fromWeb(
+                  new Request(
+                    `http://vivid.test/api/artifacts/${first.artifact.id}/versions/1/files/${role}`,
+                    { headers: { authorization: `Bearer ${token}` } },
+                  ),
+                ),
+              ),
+              Effect.scoped,
+            )
+            return HttpServerResponse.toWeb(response)
+          })
+          for (const [role, expected] of [
+            ['output', original],
+            ['source', source],
+          ] as const) {
+            const response = yield* download(role, ownerToken)
+            expect(response.status).toBe(200)
+            const bytes = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))
+            expect(bytes).toEqual(expected)
+            expect(NodeCrypto.createHash('sha256').update(bytes).digest('hex')).toBe(
+              NodeCrypto.createHash('sha256').update(expected).digest('hex'),
+            )
+            const refused = yield* download(role, outsiderToken)
+            expect(refused.status).toBe(404)
+            expect((yield* Effect.promise(() => refused.arrayBuffer())).byteLength).toBe(0)
+          }
+          const fileResponse = yield* download('source', ownerToken)
+          expect(fileResponse.headers.get('content-type')).toContain(
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          )
+          expect(fileResponse.headers.get('content-disposition')).toContain('attachment;')
+        }).pipe(Effect.provide(authLayer.pipe(Layer.provide(testConfigLayer)))),
+    )
+
     it.effect(
       'writes a private Thread with working Run attribution, history and identical-body receipts',
       () =>
@@ -201,14 +361,19 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             body: '# Plan\n\nFirst.',
             note: 'Ignored on creation',
           })
-          expect(first).toEqual({ title: 'Launch plan', version: 1, created: true, changed: true })
+          expect(first).toMatchObject({
+            title: 'Launch plan',
+            version: 1,
+            created: true,
+            changed: true,
+          })
           const revised = yield* store.write(person.id, threadId, {
             toolCallId: documentCall,
             title: 'LAUNCH PLAN',
             body: '# Plan\n\nSecond.',
             note: 'Changed scope',
           })
-          expect(revised).toEqual({
+          expect(revised).toMatchObject({
             title: 'Launch plan',
             version: 2,
             created: false,
@@ -229,7 +394,9 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const artifact = list[0]
           if (artifact === undefined) return yield* Effect.die('Document missing')
           const detail = yield* store.get(person.id, { id: artifact.id, version: 1 })
-          expect(detail.body).toBe('# Plan\n\nFirst.')
+          expect(detail.content).toEqual(
+            ArtifactContent.cases.Document.make({ body: '# Plan\n\nFirst.' }),
+          )
           expect(detail.versions.map((version) => version.number)).toEqual([2, 1])
           expect(detail.shown).not.toHaveProperty('note')
           expect(detail.versions[0]).toMatchObject({
@@ -366,7 +533,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           )
           yield* Ref.update(yield* Responses, (entries) => [
             ...entries,
-            { threadId, runId: theirs, toolCallId: theirCall, settled: false },
+            {
+              threadId,
+              runId: theirs,
+              toolCallId: theirCall,
+              settled: false,
+              toolName: 'write_document',
+            },
           ])
           expect(
             (yield* Effect.flip(
@@ -424,7 +597,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           ...entries.map((entry) =>
             entry.runId === earlier ? { ...entry, settled: true } : entry,
           ),
-          { threadId, runId: later, toolCallId: laterCall, settled: false },
+          {
+            threadId,
+            runId: later,
+            toolCallId: laterCall,
+            settled: false,
+            toolName: 'write_document',
+          },
         ])
         yield* store.write(person.id, threadId, {
           toolCallId: laterCall,
@@ -524,7 +703,10 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           expect(detail.versions).toHaveLength(3)
           const [firstOutcome] = outcomes
           if (firstOutcome === undefined) expect.fail('Expected both revision receipts')
-          expect(detail.body).toBe(Result.isSuccess(firstOutcome) ? 'Person A' : 'Person B')
+          expect(ArtifactContent.guards.Document(detail.content)).toBe(true)
+          if (!ArtifactContent.guards.Document(detail.content))
+            return yield* Effect.die('Expected Markdown content')
+          expect(detail.content.body).toBe(Result.isSuccess(firstOutcome) ? 'Person A' : 'Person B')
           expect(detail.shown.madeBy).toEqual(
             ArtifactAuthor.cases.Person.make({
               person: { id: person.id, name: person.name, image: null },
@@ -536,7 +718,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               store.write(person.id, threadId, {
                 toolCallId: documentCall,
                 title: 'plan',
-                body: detail.body,
+                body: detail.content.body,
               }),
             { concurrency: 3 },
           )

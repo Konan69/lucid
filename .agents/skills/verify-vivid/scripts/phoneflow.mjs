@@ -384,8 +384,8 @@ export async function document(state, id, ui) {
     ui.directory,
     'version-2',
   )
-  NodeAssert.match(second.body, /Ready for review/u)
-  NodeAssert.notEqual(first.body, second.body)
+  NodeAssert.match(second.content.body, /Ready for review/u)
+  NodeAssert.notEqual(first.content.body, second.content.body)
   await ui.visible('Plan updated')
   await ui.capture('document-revised')
   await ui.create('Document away ' + crypto.randomUUID().slice(0, 8))
