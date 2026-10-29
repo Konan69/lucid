@@ -70,6 +70,7 @@ const resume = Effect.fn('Continuity.resume')(function* (
       messages: [message],
     }))
   const active = yield* pi(() =>
+    // @effect-diagnostics-next-line asyncFunction:off -- Pi owns the atomic Promise transaction callback and its handle.
     conversation.commit(async (tx) => {
       const task = await tx.task(api.taskId)
       if (task === undefined || task.abortRequested || task.state.status !== 'running') return false

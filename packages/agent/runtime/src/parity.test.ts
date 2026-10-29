@@ -352,7 +352,7 @@ describe('main runtime parity on Pi', () => {
         const recovered = yield* read(after)
         const [request] = attempts
         if (request === undefined) expect.fail('recovered request')
-        const assistant = request.findLast((message) => message.role === 'assistant')
+        const assistant = request.filter((message) => message.role === 'assistant').at(-1)
         if (assistant === undefined) expect.fail('interrupted answer in recovered request')
         const supplied = assistant.content
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))

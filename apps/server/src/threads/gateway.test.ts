@@ -330,19 +330,20 @@ const send = Effect.fn('GatewayTest.send')(function* (test: Fixture, body: strin
     body,
     key: NodeCrypto.randomUUID(),
   })
+  const context = yield* Layer.build(
+    Layer.mock(Conversation, {
+      admit: (delivery) =>
+        Queue.offer(admitted, delivery).pipe(
+          Effect.as({
+            runId: RunId.make(NodeCrypto.randomUUID()),
+            submissionId: RuntimeSubmissionId.make(1),
+          }),
+        ),
+    }),
+  )
   yield* carryOnThread(request).pipe(
     Effect.provideService(AuthContext, AuthState.Person(auth)),
-    Effect.provide(
-      Layer.mock(Conversation, {
-        admit: (delivery) =>
-          Queue.offer(admitted, delivery).pipe(
-            Effect.as({
-              runId: RunId.make(NodeCrypto.randomUUID()),
-              submissionId: RuntimeSubmissionId.make(1),
-            }),
-          ),
-      }),
-    ),
+    Effect.provide(context),
   )
   return yield* Queue.take(admitted)
 })

@@ -35,6 +35,11 @@
     "symbols": ["<module>"]
   },
   {
+    "file": "packages/agent/runtime/src/continuity.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["resume", "continuityHooks"]
+  },
+  {
     "file": "packages/agent/runtime/src/correction.ts",
     "classification": "third-party-adapter",
     "symbols": ["correctionHooks"]
