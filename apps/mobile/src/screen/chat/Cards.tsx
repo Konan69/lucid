@@ -50,7 +50,7 @@ export function Cards({
           key={tool.toolCallId}
           runs={Option.match(detail, {
             onNone: () => [],
-            onSome: (value) => helpers.startedBy(value.children, tool.toolCallId),
+            onSome: (value) => helpers.startedIn(value.children, tools, tool.toolCallId),
           })}
         />
       )

@@ -22,7 +22,9 @@ export function Children({ runs }: { runs: ReadonlyArray<ChildRun> }) {
   return (
     <View style={{ marginTop: 8, gap: 2 }}>
       <Label size="caption" tone="ink-3">
-        {runs.length === 1 ? 'A helper' : `${runs.length} helpers`} working on parts of this
+        {runs.length === 1
+          ? 'A helper took part of this'
+          : `${runs.length} helpers took parts of this`}
       </Label>
       {runs.map((run) => (
         <Helper key={run.id} run={run} stop={stop} />

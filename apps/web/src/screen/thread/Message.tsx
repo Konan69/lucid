@@ -508,7 +508,7 @@ function ToolCards({
       return (
         <Children
           key={tool.toolCallId}
-          runs={helpers.startedBy(context.children, tool.toolCallId)}
+          runs={helpers.startedIn(context.children, tools, tool.toolCallId)}
         />
       )
     const card = cardFor(tool.output)
