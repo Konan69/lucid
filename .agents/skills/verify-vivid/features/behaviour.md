@@ -8,7 +8,7 @@ Set `VIVID_VERIFY_WORLD` to a private directory on the selected devbox before La
 
 Run Launch and Doctor, then `verify behaviour <run> --trials 1`. Every trial signs up its own Person, so no memory, Connection or sent mail carries from one trial to the next. Increase `--trials N` for repeated measurements. `--scenarios file` selects another private scenario file. Cleanup the run afterwards. No browser recipe or screenshots are needed for this history and provider-state measurement. It does not prove how the display looks on any client.
 
-Every trial removes earlier Mail and Calendar connections through public RPCs, connects the scenario's services, creates a fresh Thread, sends each Person contribution with `wire.mjs` chat, waits on WatchThread, and saves raw history. Mail and Calendar writes persist in the copied app's SQLite database. Provider-side read tools inspect sent messages and created events. A later thread/event read must return each write unchanged. Sends stay inside this disposable app; they do not send internet email or change a production calendar.
+Every trial signs up a fresh Person, connects the scenario's services (a new Connection gets a fresh app database), creates a fresh Thread, sends each Person contribution with `wire.mjs` chat, waits on WatchThread, and saves raw history. Mail and Calendar writes persist in the copied app's SQLite database. Provider-side read tools inspect sent messages and created events. A later thread/event read must return each write unchanged. Sends stay inside this disposable app; they do not send internet email or change a production calendar.
 
 ## Private input format
 

@@ -70,7 +70,6 @@ const Scenarios = Schema.Array(
   }),
 )
 
-/** Fresh connections give each trial a fresh app database through ordinary public reclamation. */
 /**
  * Each trial is its own Person: a fresh Better Auth sign-up, written as the account every wire
  * helper reads. One shared Person let a trial's memory answer the next one (29 Oct 2026: the
