@@ -16,7 +16,7 @@ async function send(run, words) {
 /** The walkthrough and the later request both go through the web composer; receipts back each turn. */
 export async function procedureBrowser(state, id, directory, { run, capture }) {
   assert.equal(state.modelKind, 'real', 'Teaching requires a real model; rehearsal cannot prove it')
-  const steps = procedureSteps()
+  const steps = procedureSteps('conference expense')
   await json(directory + '/steps.json', steps)
   let detail
   for (const [index, words] of steps.teach.entries()) {
