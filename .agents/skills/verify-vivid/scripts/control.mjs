@@ -6,7 +6,7 @@ import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
-import { host, provider, selection } from './settings.mjs'
+import { host, provider, selection, boatKey } from './settings.mjs'
 import * as NodeChildProcess from 'node:child_process'
 import {
   root,
@@ -42,6 +42,7 @@ async function launch() {
   await recoverPrevious(cache)
   await capacity()
   const modelConfig = await provider()
+  const boat = await boatKey()
   const snapshot = await checkout()
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
@@ -77,6 +78,9 @@ async function launch() {
     model: modelConfig.model,
     modelKind: modelConfig.model.startsWith('rehearsal/') ? 'rehearsal' : 'real',
     keySource: modelConfig.source,
+    // With a Boat key the server creates the synthetic Person's own Computer on first need;
+    // cleanup deletes exactly the machines the disposable database bound (computers.mjs).
+    computer: boat === null ? 'unconfigured' : 'disposable',
     hostname: NodeOS.hostname(),
     boot,
     executorExporter: 'vivid-verify-exporter-' + run,
@@ -101,7 +105,9 @@ async function launch() {
   let child
   // A failed spawn, identity capture or readiness step must not retain the provider handoff.
   try {
-    await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
+    const handoff =
+      boat === null ? modelConfig.env : { ...modelConfig.env, VIVID_BOAT_API_KEY: boat }
+    await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(handoff), {
       mode: 0o600,
     })
     child = NodeChildProcess.spawn(

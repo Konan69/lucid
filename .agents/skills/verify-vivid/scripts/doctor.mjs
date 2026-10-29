@@ -6,6 +6,7 @@ import { owned, sameBoot } from './recovery.mjs'
 import { readPhone, readApk } from './phonewire.mjs'
 import { equivalent } from './apk.mjs'
 import { cellSnapshot } from './cells.mjs'
+import { authority } from './computers.mjs'
 
 const ExecutorInspections = Schema.Array(
   Schema.Struct({
@@ -117,6 +118,7 @@ export async function doctor(state) {
     model: state.model,
     host: state.hostname,
     devbox: state.devbox,
+    computer: await authority(state),
     phone,
     checks,
   }

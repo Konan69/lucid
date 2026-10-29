@@ -34,7 +34,7 @@ async function egress(state, directory) {
   await json(directory + '/egress-socket.json', {
     events: events.map((event) => ({ type: types[event.type], source: event.source })),
     statuses,
-    routing: 'blocked: disposable server has no running Person Computer or Boat authority',
+    routing: 'blocked: no recipe drives the Computer browser through this egress yet',
   })
   NodeAssert.ok(
     statuses.includes('HTTP/1.1 101 Switching Protocols'),
