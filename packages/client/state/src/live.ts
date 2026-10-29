@@ -1,5 +1,5 @@
 import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
-import type { SkillReadOnly } from '@vivid/contracts'
+import type { ApprovalChanged, ApprovalExpired, SkillReadOnly } from '@vivid/contracts'
 import type { InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
@@ -23,6 +23,8 @@ import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 export type ProductFailure =
   | RpcFailure
   | SkillReadOnly
+  | ApprovalChanged
+  | ApprovalExpired
   | InputAnswerFailure
   | RpcClientError.RpcClientError
 
@@ -174,6 +176,8 @@ const FINAL = {
   InputAnswerSeveralForbidden: true,
   InputAnswerUnknownLabel: true,
   InputAnswerWrittenForbidden: true,
+  ApprovalChanged: true,
+  ApprovalExpired: true,
 } as const satisfies Partial<Record<ProductFailure['_tag'], true>>
 
 /**
