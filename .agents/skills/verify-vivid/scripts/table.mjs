@@ -4,7 +4,15 @@ import * as NodeModule from 'node:module'
 import { root } from './process.mjs'
 
 const require = NodeModule.createRequire(root + '/packages/agent/runtime/package.json')
-const { tokenize, split, parseExpression } = await import(require.resolve('@openuidev/lang-core'))
+const { createParser, createStore, evaluateRoot } = await import(
+  require.resolve('@openuidev/lang-core')
+)
+/** The library schema the model is prompted with; `apps/web` generates it from its own library
+ * (`pnpm --filter @vivid/web parts`), so this parser knows exactly the parts a client draws. */
+const spec = JSON.parse(
+  await NodeFSP.readFile(root + '/packages/agent/runtime/src/agents/parts.json', 'utf8'),
+)
+const parser = createParser(spec.schema, 'Col')
 const columns = ['Project', 'Hours', 'Owner']
 const rows = [
   ['Research', '4', 'Ada'],
@@ -12,20 +20,39 @@ const rows = [
   ['Review', '2', 'Cai'],
 ]
 
-/** Inspect the shipped parser's component AST, so prose and quoted source cannot count as a Table. */
+/** Every Table element in an evaluated tree, wherever a prop holds it. */
 function tables(node) {
-  if (node.k === 'Comp')
-    return [...(node.name === 'Table' ? [node] : []), ...node.args.flatMap(tables)]
-  if (node.k === 'Arr') return node.els.flatMap(tables)
-  return []
+  if (Array.isArray(node)) return node.flatMap(tables)
+  if (node === null || node === undefined || node.type !== 'element') return []
+  return [
+    ...(node.typeName === 'Table' ? [node] : []),
+    ...Object.values(node.props).flatMap(tables),
+  ]
 }
 
-/** Cells must resolve to literal strings or numbers; the recipe does not evaluate executable expressions. */
-function cells(node) {
-  NodeAssert.equal(node.k, 'Arr', 'Table columns and rows must be arrays')
-  return node.els.map((cell) => {
-    NodeAssert.ok(['Str', 'Num'].includes(cell.k), 'Table cell must be a string or number')
-    return String(cell.v)
+/**
+ * Evaluate one program the way a client first draws it: OpenUI's parser with the shipped library
+ * schema, its `$state` defaults, then `evaluateRoot`. Rows a display computes (an `@Each` over a
+ * filtered list, 29 October 2026) therefore count as the cells a Person sees on first draw.
+ */
+function drawn(program) {
+  const result = parser.parse(program)
+  NodeAssert.equal(result.meta.incomplete, false, 'Assistant openui-lang program is incomplete')
+  const store = createStore()
+  store.initialize(result.stateDeclarations, {})
+  const ctx = { getState: (name) => store.get(name), resolveRef: () => null }
+  return tables(evaluateRoot(result, { ctx, library: { components: {} }, store }))
+}
+
+/** Cells must be strings or numbers after evaluation; a component cell is not one of these rows. */
+function cells(row) {
+  NodeAssert.ok(Array.isArray(row), 'Table columns and rows must be arrays')
+  return row.map((cell) => {
+    NodeAssert.ok(
+      cell === String(cell) || Number.isFinite(cell),
+      'Table cell must be text or a number',
+    )
+    return String(cell)
   })
 }
 
@@ -39,23 +66,12 @@ export async function assertTable(page) {
       Array.from(part.text.matchAll(/```openui-lang\s*\n([\s\S]*?)```/g), (m) => m[1]),
     )
   NodeAssert.ok(programs.length > 0, 'No assistant openui-lang fence')
-  const candidates = programs.flatMap((program) => {
-    const definitions = new Map(
-      split(tokenize(program)).map((statement) => [
-        statement.id,
-        parseExpression(statement.tokens),
-      ]),
-    )
-    return [...definitions.values()].flatMap(tables).map((table) => ({ table, definitions }))
-  })
+  const candidates = programs.flatMap(drawn)
   NodeAssert.equal(candidates.length, 1, 'Expected one assistant Table program')
-  const { table, definitions } = candidates[0]
-  const [headers, expression] = table.args
-  const body = expression.k === 'Ref' ? definitions.get(expression.n) : expression
-  NodeAssert.ok(body, 'Table rows reference an undefined array')
-  NodeAssert.deepEqual(cells(headers), columns, 'Table columns differ')
-  NodeAssert.equal(body.k, 'Arr', 'Table rows must be an array')
-  NodeAssert.deepEqual(body.els.map(cells), rows, 'Table must contain all nine expected cells')
+  const { props } = candidates[0]
+  NodeAssert.deepEqual(cells(props.columns), columns, 'Table columns differ')
+  NodeAssert.ok(Array.isArray(props.rows), 'Table rows must be an array')
+  NodeAssert.deepEqual(props.rows.map(cells), rows, 'Table must contain all nine expected cells')
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname)

@@ -276,7 +276,7 @@ async function document(state, id, directory) {
     directory,
     'revise',
   )
-  await completed(state, id, directory, 2)
+  const revision = await completed(state, id, directory, 2)
   const revised = await rpc(
     state,
     'ListArtifacts',
@@ -285,7 +285,30 @@ async function document(state, id, directory) {
     'revised-artifacts',
   )
   NodeAssert.equal(revised.artifacts[0].id, artifact.id)
-  NodeAssert.equal(revised.artifacts[0].version, 2)
+  // Vivid may revise more than once in one Run (29 October 2026: it added a comma, then restored
+  // the Person's wording, ending on version 3). Each new version must be one of that Run's own
+  // write_document receipts, so no version appears from anywhere else.
+  const latest = revised.artifacts[0].version
+  const writes = revision.page.messages
+    .filter(
+      (message) =>
+        message.role === 'assistant' &&
+        message.submissionId === revision.detail.runs[1].submissionId,
+    )
+    .flatMap((message) => message.parts)
+    .filter(
+      (part) =>
+        part.type === 'dynamic-tool' &&
+        part.toolName === 'write_document' &&
+        part.state === 'output-available' &&
+        part.output.changed === true,
+    )
+  NodeAssert.ok(latest >= 2, 'The revision made no new version')
+  NodeAssert.deepEqual(
+    writes.map((part) => part.output.version),
+    Array.from({ length: latest - 1 }, (_, index) => index + 2),
+    'Each new version must be a write_document receipt of the revision Run',
+  )
   await chat(
     state,
     id,
@@ -310,7 +333,7 @@ async function document(state, id, directory) {
     )
   NodeAssert.ok(read, 'Third Run did not execute read_document')
   NodeAssert.equal(read.output.ok, true)
-  NodeAssert.equal(read.output.version, 2)
+  NodeAssert.equal(read.output.version, latest)
   NodeAssert.match(read.output.body, /Ready for review/)
   const v1 = await rpc(
     state,
@@ -322,12 +345,12 @@ async function document(state, id, directory) {
   const v2 = await rpc(
     state,
     'GetArtifact',
-    { id: artifact.id, version: 2 },
+    { id: artifact.id, version: latest },
     directory,
-    'version-2',
+    'version-' + latest,
   )
   NodeAssert.equal(v1.shown.number, 1)
-  NodeAssert.equal(v2.shown.number, 2)
+  NodeAssert.equal(v2.shown.number, latest)
   NodeAssert.notEqual(v1.body, v2.body)
   NodeAssert.match(v2.body, /Ready for review/)
 }

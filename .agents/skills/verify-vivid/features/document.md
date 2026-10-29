@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-One titled Artifact advances from version 1 to 2 under the same id. The third Run must contain a successful read_document tool part reporting version 2 and the added sentence Ready for review. The public version 2 body must also contain that sentence. Person ListArtifacts reports the latest summary; GetArtifact reads each immutable version, with SQL retaining the stored versions. Since 26 October 2026 the Thread draws no step rows: the browser proves the reply arrived as Vivid's bubbles and that no step list, "more steps" or "Worked" line is drawn, before and after reload. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
+One titled Artifact advances from version 1 under the same id. Vivid may revise more than once in the revision Run; every new version must be one of that Run's successful write_document receipts. The third Run must contain a successful read_document tool part reporting the latest version and the added sentence Ready for review. The public latest-version body must also contain that sentence and differ from version 1. Person ListArtifacts reports the latest summary; GetArtifact reads each immutable version, with SQL retaining the stored versions. Since 26 October 2026 the Thread draws no step rows: the browser proves the reply arrived as Vivid's bubbles and that no step list, "more steps" or "Worked" line is drawn, before and after reload. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
 
 ## How to get to it (user POV)
 
