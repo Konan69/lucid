@@ -18,6 +18,9 @@ import {
   MemoryWrite,
   PersonId,
   ThreadId,
+  MemoryCitation,
+  MemoryScope,
+  type MemoryCitations,
 } from '@vivid/contracts'
 import { openMemory } from './memory.ts'
 
@@ -28,6 +31,7 @@ const authority = MemoryAuthority.make({
     taskId: MemoryTaskId.make(1),
   }),
 })
+const citations: MemoryCitations = [MemoryCitation.cases.Run.make({ source: authority.source })]
 const legacy = MemoryEntry.make({
   layer: 'memory',
   file: MemoryFile.make('zz-legacy.md'),
@@ -35,6 +39,7 @@ const legacy = MemoryEntry.make({
   description: 'Meeting preference',
   body: 'Quasarneedle: morning meetings work best. Send a follow-up email: x.',
   basis: 'said',
+  scope: MemoryScope.cases.Personal.make({}),
 })
 const query = MemorySearch.make({ query: 'quasarneedle', layer: null, offset: 0, limit: 1 })
 
@@ -53,7 +58,11 @@ describe('personal memory FTS5', () => {
           )
           const migrations = yield* Effect.tryPromise(() =>
             Promise.all(
-              ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
+              [
+                '20261028123228_memory',
+                '20261028123228_memory-search',
+                '20261029131056_memory-provenance',
+              ].map((name) =>
                 NodeFSP.readFile(
                   new URL(
                     `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -73,22 +82,31 @@ describe('personal memory FTS5', () => {
           yield* Effect.scoped(
             Effect.gen(function* () {
               const database = yield* open
-              const previous = yield* openMemory(database, migrations.slice(0, 1))
-              yield* previous.write(
-                MemoryWrite.make({
-                  entry: MemoryEntry.make({
-                    ...legacy,
-                    file: MemoryFile.make('filler-first.md'),
-                    body: 'Discarded.',
-                  }),
-                  expected: MemoryRevision.make(0),
-                  authority,
-                }),
-              )
-              yield* previous.write(
-                MemoryWrite.make({ entry: legacy, expected: MemoryRevision.make(0), authority }),
-              )
+              // Rows written before search and provenance existed, in the first schema's columns.
+              yield* openMemory(database, migrations.slice(0, 1))
+              for (const { file, body } of [
+                { file: 'filler-first.md', body: 'Discarded.' },
+                { file: legacy.file, body: legacy.body },
+              ])
+                yield* Effect.tryPromise(() =>
+                  database.run(
+                    'INSERT INTO memory_entries (layer, file, kind, description, body, basis, revision, updated_at, authority) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)',
+                    legacy.layer,
+                    file,
+                    legacy.kind,
+                    legacy.description,
+                    body,
+                    legacy.basis,
+                    Date.now(),
+                    JSON.stringify(authority),
+                  ),
+                )
               const memory = yield* openMemory(database, migrations)
+              // The provenance migration cites each older row's recorded Run and files it Personal.
+              expect(yield* memory.read(MemoryAddress.make(legacy))).toMatchObject({
+                scope: MemoryScope.cases.Personal.make({}),
+                citations: [MemoryCitation.cases.Run.make({ source: authority.source })],
+              })
               expect((yield* memory.search(query)).entries.map((entry) => entry.file)).toEqual([
                 legacy.file,
               ])
@@ -114,6 +132,7 @@ describe('personal memory FTS5', () => {
                     }),
                     expected: MemoryRevision.make(0),
                     authority,
+                    citations,
                   }),
                 )
               }
@@ -134,7 +153,12 @@ describe('personal memory FTS5', () => {
                 body: 'Quasarneedle',
               })
               yield* memory.write(
-                MemoryWrite.make({ entry: second, expected: MemoryRevision.make(0), authority }),
+                MemoryWrite.make({
+                  entry: second,
+                  expected: MemoryRevision.make(0),
+                  authority,
+                  citations,
+                }),
               )
               const firstPage = yield* memory.search(query)
               expect(firstPage.entries[0]).toMatchObject({ file: second.file })
@@ -159,6 +183,7 @@ describe('personal memory FTS5', () => {
                   }),
                   expected: MemoryRevision.make(1),
                   authority,
+                  citations,
                 }),
               )
               expect((yield* memory.search(query)).entries.map((entry) => entry.file)).toEqual([

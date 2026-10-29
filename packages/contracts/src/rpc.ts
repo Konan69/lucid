@@ -168,6 +168,11 @@ import {
 import {
   CorrectMemoryRequest,
   ForgetMemoryRequest,
+  MemoryForgetId,
+  MemoryForgetPlan,
+  MemoryForgetReceipt,
+  MemoryForgetStale,
+  PlanMemoryForgetRequest,
   MemoryAddress,
   MemoryIndex,
   MemoryListing,
@@ -838,7 +843,24 @@ const CorrectMemory = Rpc.make('CorrectMemory', {
   payload: CorrectMemoryRequest,
   success: SavedMemory,
 })
-const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: ForgetMemoryRequest })
+/** Vivid's forget plan, checked against the acting Person's memory, Watches and owed records. */
+const PlanMemoryForget = Rpc.make('PlanMemoryForget', {
+  ...call,
+  payload: PlanMemoryForgetRequest,
+  success: MemoryForgetPlan,
+})
+/** Carry out a confirmed plan, or hand a Settings Forget press to Vivid; answers the receipt. */
+const ForgetMemory = Rpc.make('ForgetMemory', {
+  payload: ForgetMemoryRequest,
+  success: MemoryForgetReceipt,
+  error: Schema.Union([RpcFailure, MemoryForgetStale]),
+})
+/** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
+const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
+  ...live,
+  payload: { id: MemoryForgetId },
+  success: MemoryForgetReceipt,
+})
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
@@ -1143,7 +1165,9 @@ export const VividRpc = RpcGroup.make(
   ListMemory,
   ReadMemory,
   CorrectMemory,
+  PlanMemoryForget,
   ForgetMemory,
+  WatchMemoryForget,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,

@@ -116,6 +116,22 @@ const STEPS = {
   search_memory: UNKNOWN,
   write_memory: UNKNOWN,
   delete_memory: UNKNOWN,
+  plan_forget: {
+    said: {
+      running: 'Working out what to forget',
+      done: 'Worked out what to forget',
+      failed: 'Could not work out what to forget',
+    },
+    detail: nothing,
+  },
+  forget_memory: {
+    said: {
+      running: 'Forgetting',
+      done: 'Checked what is forgotten',
+      failed: 'Could not forget it',
+    },
+    detail: nothing,
+  },
   make_integration: UNKNOWN,
   search_library: {
     said: {

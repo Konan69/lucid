@@ -2,6 +2,7 @@ import {
   ComputerScreen,
   ComputerSession,
   computerScreenAddress,
+  type MemoryForgetStale,
   type NoDeviceConnected,
   type ProjectChanged,
   type ProjectEvidenceMissing,
@@ -46,6 +47,7 @@ export type ToolFailure =
   | ProjectChanged
   | ProjectNotActive
   | ProjectEvidenceMissing
+  | MemoryForgetStale
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -226,6 +228,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
       ProjectEvidenceMissing: () =>
         failure(
           'Nothing in this conversation shows the Project is done. Mark it done only once the Person has said so or this reply has observed it.',
+        ),
+      MemoryForgetStale: () =>
+        failure(
+          'Memory changed since you planned this forget. Read the entries again and make a new plan; nothing was changed.',
         ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),

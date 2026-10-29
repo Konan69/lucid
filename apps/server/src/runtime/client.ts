@@ -10,6 +10,8 @@ import {
   ConversationState,
   Conflict,
   MemoryAddress,
+  MemoryClosed,
+  MemoryClosure,
   MemoryConflict,
   MemoryIndex,
   MemoryListing,
@@ -363,6 +365,11 @@ export interface CellMemoryService {
     person: PersonId,
     input: MemoryRetraction,
   ) => Effect.Effect<void, CellMemoryFailure>
+  /** A forget's cell half: stop learning, change the entries, read them back (`runtime/forget.ts`). */
+  readonly close: (
+    person: PersonId,
+    input: MemoryClosure,
+  ) => Effect.Effect<MemoryClosed, CellMemoryFailure>
 }
 
 /** Settings addresses the acting Person's cell without a Thread ownership lookup. */
@@ -376,6 +383,7 @@ const decodeMemoryIndex = HttpClientResponse.schemaBodyJson(MemoryIndex)
 const decodeMemoryPage = HttpClientResponse.schemaBodyJson(MemoryPage)
 const decodeSavedMemory = HttpClientResponse.schemaBodyJson(SavedMemory)
 const decodeMemoryConflict = HttpClientResponse.schemaBodyJson(MemoryConflict)
+const decodeMemoryClosed = HttpClientResponse.schemaBodyJson(MemoryClosed)
 
 /** Reuse the cell ingress failover, keeping revision conflicts and missing entries actionable. */
 export const cellMemoryLayer = Layer.effect(
@@ -442,6 +450,14 @@ export const cellMemoryLayer = Layer.effect(
           input,
         ).pipe(Effect.mapError(memoryUnavailable))
         yield* receive(encoded)
+      }, Effect.scoped),
+      close: Effect.fn('CellMemory.close')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryClosure)(
+          request(person, '/forget', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        const response = yield* receive(encoded)
+        return yield* decodeMemoryClosed(response).pipe(Effect.mapError(memoryUnavailable))
       }, Effect.scoped),
     })
   }),

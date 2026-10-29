@@ -63,6 +63,8 @@ const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>
     Decision: () => Option.contains(tag, 'answer') && answered.has(run.id),
     FirstConversation: () => false,
     Watch: () => false,
+    // The forget's instruction is the server's own text about a Settings press, not words said.
+    Forget: () => false,
   })
 }
 

@@ -53,7 +53,7 @@ const requestFor = Effect.fn('ProjectTools.request')(function* (
 })
 
 /** The visible Project with this exact name; absence or ambiguity stops the call. */
-const projectNamed = Effect.fn('ProjectTools.named')(function* (name: string) {
+export const projectNamed = Effect.fn('ProjectTools.named')(function* (name: string) {
   const { client } = yield* Scope
   const response = yield* client.ListProjects()
   const selected = named(

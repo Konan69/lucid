@@ -12,6 +12,7 @@ export { computers, machineBindings, devices, deviceRequests } from '../computer
 export { connections, credentials } from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
 export { feedCards } from '../feed/tables.ts'
+export { memoryForgets } from '../forget/tables.ts'
 export { inputRequests } from '../inputs/tables.ts'
 export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 export { rules } from '../rules/tables.ts'

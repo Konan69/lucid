@@ -61,6 +61,7 @@ import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { owedStoreLayer } from './owed/store.ts'
 import { todoStoreLayer } from './todos/store.ts'
+import { forgetStoreLayer } from './forget/store.ts'
 import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
@@ -115,6 +116,7 @@ const serverProgram = Effect.gen(function* () {
     projectStoreLayer,
     owedStoreLayer,
     todoStoreLayer,
+    forgetStoreLayer,
     threadStoreLayer,
     runStoreLayer,
     notificationStoreLayer,
