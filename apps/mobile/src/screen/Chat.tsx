@@ -30,7 +30,9 @@ import {
   TOO_LONG,
   withFirst,
   workspaceKey,
+  answersAwaiting,
   type ApprovalUp,
+  type DeliveryReceipt,
   type Following,
   makeTurns,
   thisReader,
@@ -182,6 +184,8 @@ function useLooking(): boolean {
 function Present({ id }: { id: ThreadId }) {
   const data = useLiveData()
   useAtomMount(data.presentIn(id))
+  // Being looked at is also what lets a reply laid out here count as seen by them (`delivery`).
+  useAtomMount(data.delivery.watching(id))
   return null
 }
 
@@ -771,6 +775,9 @@ function useFollowed(id: ThreadId, settled: boolean) {
   return { reading, reopen, wake }
 }
 
+/** No reply awaiting a receipt: one value, not a new map each render. */
+const NO_ANSWERS: ReadonlyMap<string, ReadonlyArray<DeliveryReceipt>> = new Map()
+
 /** No Runs: a Thread whose detail has not arrived. One value, not a new list each render. */
 const NO_RUNS: ThreadDetail['runs'] = []
 
@@ -848,6 +855,17 @@ function Conversation({
   // The submissions the conversation has settled, from the same reading as what is said; a
   // reply's displays wait for its own (`Message`, `settled`).
   const settledIds = new Set(sending.settled)
+  // The replies to this Person's completed Runs, by the message that is each one (`delivery`).
+  // The same state object until the conversation says something new; the reading is made anew
+  // at each render, so the map is kept by the state.
+  const heard = Option.getOrUndefined(conversationIn(reading))
+  const answers = useMemo(
+    () =>
+      heard === undefined
+        ? NO_ANSWERS
+        : answersAwaiting({ runs: around.runs, conversation: heard, me: me.person.id }),
+    [heard, around.runs, me.person.id],
+  )
   const undelivered = new Set([...sending.undelivered, ...lostKeys(id, lost)])
 
   function type(next: string) {
@@ -905,6 +923,7 @@ function Conversation({
             covered={covered}
             foot={Option.getOrElse(dock, () => 0)}
             onContinue={speak}
+            answers={answers}
           />
         </View>
         <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
@@ -1254,6 +1273,8 @@ interface MessagesProps {
    */
   readonly foot: number
   readonly onContinue: Say
+  /** The replies to this Person's completed Runs, by message (`answersAwaiting`). */
+  readonly answers: ReadonlyMap<string, ReadonlyArray<DeliveryReceipt>>
 }
 
 /**
@@ -1362,6 +1383,7 @@ function Messages(props: MessagesProps) {
  */
 function Transcript(props: MessagesProps) {
   const { id, messages, working, thinking, rising } = props
+  const data = useLiveData()
   // Where the Person was reading when they last left this Thread, if its row is among those the
   // Thread opens with; a row that is not cannot be waited for, and the Thread opens on its end.
   const [opened] = useState(() =>
@@ -1497,6 +1519,9 @@ function Transcript(props: MessagesProps) {
             unsent={props.unsent}
             onContinue={props.onContinue}
             onRow={(key, laid) => {
+              // The row that is a Run's final reply has been laid out: drawn for the Person.
+              const answer = props.answers.get(key)
+              if (answer !== undefined) data.delivery.drawn(id, answer)
               if (place.row(key, laid)) settle()
             }}
           />

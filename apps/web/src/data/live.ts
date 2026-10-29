@@ -3,6 +3,7 @@ import { Workspace, type LibraryShelf, type MeResponse, type ThreadId } from '@v
 import {
   LiveState,
   liveStateOf,
+  makeDelivery,
   makeSeenThread,
   remembering,
   type LiveQuery,
@@ -224,11 +225,13 @@ export const presentIn = Atom.family((id: ThreadId) =>
  * and the query does it each time the Thread moves while someone has it open (`@vivid/state`
  * `seen.ts`, shared with the phone). Being present is `presentIn`.
  */
-export const seenThread = makeSeenThread({
-  engine,
-  threads: live.thread,
-  me: live.me,
-  launch: start,
-})
+export const seenThread = makeSeenThread({ engine, threads: live.thread, launch: start })
+
+/**
+ * The Person's acknowledgement of the replies their Runs got (`@vivid/state` `delivered.ts`,
+ * shared with the phone): sent once a reply was drawn while this window is the one looked at, the
+ * same signal presence reads.
+ */
+export const delivery = makeDelivery({ engine, front: looking, launch: start })
 
 export { LiveState }

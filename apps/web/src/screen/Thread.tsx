@@ -25,6 +25,8 @@ import {
   titleFromMessage,
   TOO_LONG,
   workspaceKey,
+  answersAwaiting,
+  type DeliveryReceipt,
   type Following,
 } from '@vivid/state'
 import { Option } from 'effect'
@@ -32,7 +34,16 @@ import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
-import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import {
+  change,
+  changing,
+  delivery,
+  LiveState,
+  presentIn,
+  seenThread,
+  typingIn,
+  useLive,
+} from '../data/live'
 import { router } from '../router'
 import { link } from '../data/runtime'
 import { orSay } from '../data/said'
@@ -204,6 +215,20 @@ const settledIn = (settlements: ConversationState['settlements']) => {
 }
 const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
 
+/** The replies to this Person's completed Runs, by message id (`answersAwaiting`). */
+type Answers = ReadonlyMap<string, ReadonlyArray<DeliveryReceipt>>
+const NO_ANSWERS: Answers = new Map()
+
+/**
+ * The ref of a row that is a Run's final reply. React calls it once the row is in the page, which
+ * is the drawing the receipt stands for; a row that leaves the page is called with nothing.
+ */
+const drawnAs =
+  (thread: ThreadId, receipts: ReadonlyArray<DeliveryReceipt>) =>
+  (element: HTMLLIElement | null) => {
+    if (element !== null) delivery.drawn(thread, receipts)
+  }
+
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`):
  * each message, and each answer to a question of Vivid's as a row of its own where it was given.
@@ -227,6 +252,7 @@ const Rows = memo(function Rows({
   context,
   working,
   settled,
+  answers,
   onContinue,
 }: {
   said: ReadonlyArray<ConversationMessage>
@@ -235,6 +261,7 @@ const Rows = memo(function Rows({
   working: boolean
   /** The submissions the conversation has settled (`settledIn`); a reply's displays wait for its own. */
   settled: ReadonlySet<string>
+  answers: Answers
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
   const newest = visible.at(-1)
@@ -265,10 +292,17 @@ const Rows = memo(function Rows({
         if (message === undefined) return null
         const latest = message === newest
         const turn = turns.get(key)
+        const answer = answers.get(key)
         return (
           // A reply with nothing to show yet draws nothing (`FromVivid`), and its row then takes
-          // no room either, so the line at the foot does not jump when the reply begins.
-          <li key={key} data-arrives className="empty:hidden">
+          // no room either, so the line at the foot does not jump when the reply begins. The row
+          // that is a Run's final reply says so once it is in the page (`delivery`).
+          <li
+            key={key}
+            data-arrives
+            className="empty:hidden"
+            ref={answer === undefined ? undefined : drawnAs(context.thread, answer)}
+          >
             {turn !== undefined && (
               <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
             )}
@@ -313,9 +347,12 @@ function ConversationMessages({
   onSay,
   hero,
   settled,
+  answers,
 }: {
   hero: React.ReactNode
   settled: ReadonlySet<string>
+  /** The replies to this Person's completed Runs, by message (`answersAwaiting`). */
+  answers: Answers
   ready: boolean
   empty: boolean
   working: boolean
@@ -350,6 +387,7 @@ function ConversationMessages({
         context={context}
         working={working}
         settled={settled}
+        answers={answers}
         onContinue={onContinue}
       />
       {marked(unsent, context.shared).map((failed) => (
@@ -452,8 +490,10 @@ function Conversation({
   panelOpen: boolean
   onTogglePanel: () => void
 }) {
-  // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
+  // Being on this screen is what makes the Person present in the Thread; see `presentIn`. It is
+  // also what lets a reply drawn here count as seen by them (`delivery`).
   useAtomMount(presentIn(id))
+  useAtomMount(delivery.watching(id))
   const setTyping = useAtomSet(typingIn(id))
   const thread = Option.map(detail, (value) => value.thread)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
@@ -488,6 +528,16 @@ function Conversation({
   const context = useMemo(
     () => contextFor({ thread: id, detail, me: me.person.id, shared, runs }),
     [id, detail, me.person.id, shared, runs],
+  )
+  // The replies to this Person's completed Runs, by the message that is each one; its row tells
+  // `delivery` once it is drawn. The same map until the Runs or the conversation change.
+  const answers = useMemo(
+    () =>
+      Option.match(conversation, {
+        onNone: () => NO_ANSWERS,
+        onSome: (state) => answersAwaiting({ runs, conversation: state, me: me.person.id }),
+      }),
+    [conversation, runs, me.person.id],
   )
 
   /**
@@ -575,6 +625,7 @@ function Conversation({
                 onSome: (state) => state.settlements,
               }),
             )}
+            answers={answers}
             onContinue={say}
             unsent={unsent}
             lastSaid={lastSaid}
