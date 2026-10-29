@@ -1,5 +1,12 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { ThreadDetail, ThreadId } from '@vivid/contracts'
+import {
+  RunOutcome,
+  type MeResponse,
+  type Run,
+  type RunId,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
 import { Effect, Exit, Result } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
@@ -70,10 +77,52 @@ const makeReadLedger = (limit: number) => {
   }
 }
 
+/**
+ * The completed Runs a Thread's screen is drawing for the Person they acted for, whose final
+ * response that Person has not yet acknowledged. Another member's Runs in a shared Thread are
+ * theirs to acknowledge, not this Person's.
+ */
+const unacknowledged = (detail: ThreadDetail, me: MeResponse) =>
+  detail.runs.flatMap((run: Run) =>
+    run.origin.person.id === me.person.id &&
+    run.outcome !== null &&
+    RunOutcome.guards.Completed(run.outcome)
+      ? [{ runId: run.id, responseId: run.outcome.responseId }]
+      : [],
+  )
+
+/**
+ * Which Runs' final responses this app has acknowledged, so each is sent once however often the
+ * Thread's detail moves. Bounded like the read ledger: a forgotten Run costs one repeated
+ * acknowledgement, which the server accepts without change.
+ */
+const makeDeliveryLedger = (limit: number) => {
+  const sent = new Set<RunId>()
+  return {
+    claim: (id: RunId): boolean => {
+      if (sent.has(id)) return false
+      sent.add(id)
+      if (sent.size > limit) {
+        const oldest = sent.values().next()
+        if (oldest.done !== true) sent.delete(oldest.value)
+      }
+      return true
+    },
+    release: (id: RunId): void => {
+      sent.delete(id)
+    },
+  }
+}
+
+/** A Thread holds at most this many Runs on the wire (`RunStore.list`), so this covers a Thread. */
+const ACKNOWLEDGED = 200
+
 /** What an app supplies: its live engine, its Thread queries and how it starts a program. */
 export interface SeenThreadInput {
   readonly engine: Pick<LiveEngine, 'run'>
   readonly threads: LiveFamily<ThreadId, ThreadDetail>
+  /** Who is signed in, so only the Runs Vivid did for them are acknowledged as theirs. */
+  readonly me: LiveQuery<MeResponse>
   /**
    * Starts a described program on the app's runtime. This module only describes the work. What
    * an app's own starter hands back (a way to stop the program) is not used: a report is one
@@ -97,6 +146,7 @@ export interface SeenThreadInput {
  */
 export function makeSeenThread(input: SeenThreadInput) {
   const ledger = makeReadLedger(REMEMBERED)
+  const delivered = makeDeliveryLedger(ACKNOWLEDGED)
 
   /**
    * One `MarkThreadRead`. `engine.run` puts a refusal in the value, so the claim is released on
@@ -120,6 +170,40 @@ export function makeSeenThread(input: SeenThreadInput) {
         Effect.asVoid,
       )
 
+  /**
+   * One `AcknowledgeRunDelivery`, released like a read report when it does not get through. A
+   * refusal (the Run is no longer this Person's to acknowledge) is released too and asked again
+   * only when the Thread moves.
+   */
+  const acknowledge = (receipt: { readonly runId: RunId; readonly responseId: RunId }) =>
+    input.engine
+      .run(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          yield* client.AcknowledgeRunDelivery(receipt)
+        }),
+      )
+      .pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (!(Exit.isSuccess(exit) && Result.isSuccess(exit.value)))
+              delivered.release(receipt.runId)
+          }),
+        ),
+        Effect.asVoid,
+      )
+
+  /**
+   * The Person a Run acted for has its Thread on screen with the Run's final response: their app
+   * says so, once per Run. This query is read only by the screen drawing that Thread while the
+   * Person is looking at it, which is what makes it their receipt and not a read mark.
+   */
+  const markDelivered = (result: LiveResult<ThreadDetail>, me: LiveResult<MeResponse>) => {
+    if (!AsyncResult.isSuccess(result) || !AsyncResult.isSuccess(me)) return
+    for (const receipt of unacknowledged(result.value, me.value))
+      if (delivered.claim(receipt.runId)) input.launch(acknowledge(receipt))
+  }
+
   /** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
   const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
     if (!AsyncResult.isSuccess(result)) return
@@ -140,6 +224,7 @@ export function makeSeenThread(input: SeenThreadInput) {
         Atom.readable((get) => {
           const result = get(base.atom)
           markSeen(id, result)
+          markDelivered(result, get(input.me.atom))
           return result
         }),
         0,

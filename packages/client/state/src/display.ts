@@ -178,6 +178,9 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
       failed('The Integration rejected this request. Check the information and try again.'),
     Blocked: () => failed('A rule prevents this action.'),
     ApprovalRequired: () => failed('This needs your approval in the Thread.'),
+    // The server only answers this way for Vivid's journaled calls; a display's own call is never
+    // one, so this says plainly that nothing new happened.
+    Repeated: () => failed('This was already done, so it was not done again.'),
     ConnectionNotReady: () => failed('This Integration needs to be connected again.'),
     OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
   })
@@ -239,7 +242,7 @@ export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResul
     ? waiting()
     : CodeOutcome.match(outcome, {
         Completed: ({ result }) =>
-          displayToolResult(ToolOutcome.cases.Completed.make({ output: result })),
+          displayToolResult(ToolOutcome.cases.Completed.make({ output: result, receipt: null })),
         ApprovalRequired: () => failed('This needs your approval in the Thread.'),
         Blocked: () => failed('A rule prevents this action.'),
         Failed: ({ failure }) => failed(programFailure(failure)),
