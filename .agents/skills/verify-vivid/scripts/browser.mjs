@@ -285,18 +285,12 @@ async function rendered(run, kind) {
   }
 }
 
-/** Reload only after observing actual model text. A completed reply cannot prove reconnect. */
+/** Reload on admitted work. A provider may publish its text only in the terminal frame, so
+ * waiting for a text chunk first can consume the entire reply and miss a valid reconnect. */
 async function reloadStreaming(state, id, directory, run) {
   for await (const active of conversation(state, id, { directory, name: 'before-reload-stream' })) {
     assert.equal(active.settlements.length, 0, 'Reply settled before mid-stream reload')
-    const streaming = active.messages.some(
-      (message) =>
-        message.purpose === 'assistant' &&
-        message.parts.some(
-          (part) => part.type === 'text' && part.state === 'streaming' && part.text.trim(),
-        ),
-    )
-    if (!active.working || !streaming) continue
+    if (!active.working || !active.messages.some((message) => message.role === 'user')) continue
     await json(directory + '/midstream.json', active)
     await run(['reload'])
     return active
@@ -574,7 +568,7 @@ async function journey(state, feature) {
             : feature === 'reload'
               ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
               : feature === 'first'
-                ? 'real streamed reply, mid-stream reload, same entries, completed reply and reload'
+                ? 'reload during admitted model work, same entries, completed reply and reload'
                 : 'composer send, rendered content and reload',
       }
     }
