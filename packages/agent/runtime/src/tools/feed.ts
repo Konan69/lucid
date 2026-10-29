@@ -70,7 +70,17 @@ export function feedTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             return resultOf(yield* client.Post(postOf(data.card)))
-          }),
+          }).pipe(
+            // The server refused a display that draws nothing; the model draws it again.
+            Effect.catchTag('FeedDisplayInvalid', () =>
+              Effect.succeed({
+                output: {
+                  ok: false,
+                  message: 'The display has no root statement: start it with root = …',
+                },
+              }),
+            ),
+          ),
           { signal, tool: 'post' },
         )
       },

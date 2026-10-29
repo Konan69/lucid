@@ -89,6 +89,17 @@ export const PostOutcome = Schema.TaggedUnion({
 })
 export type PostOutcome = typeof PostOutcome.Type
 
+/**
+ * A post whose display would draw nothing. `NoRoot`: the program has no `root =` statement, so
+ * OpenUI finds no program in it and the card shows an empty band. A model wrote `Card([...])`
+ * bare in two of four verify runs on 29 October 2026; the post is refused so it is drawn again.
+ */
+export class FeedDisplayInvalid extends Schema.TaggedError<FeedDisplayInvalid>()(
+  'FeedDisplayInvalid',
+  { reason: Schema.Literal('NoRoot') },
+  { title: 'The card’s display draws nothing' },
+) {}
+
 /** What a Person does to a card from the Feed. */
 export const MarkFeedCardRequest = Schema.Struct({
   card: FeedCardId,

@@ -4,6 +4,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import {
+  FeedDisplayInvalid,
   FeedPost,
   NotFound,
   PostOutcome,
@@ -13,11 +14,22 @@ import {
   type ThreadId,
   type FeedCardId,
 } from '@vivid/contracts'
+import { stretches } from '@vivid/contracts/display'
 import { Database, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { readableThread } from '../threads/access.ts'
 import { cardIdOf, readFeed } from './read.ts'
 import { feedCards } from './tables.ts'
+
+/**
+ * Whether a display draws: OpenUI finds exactly one whole program in it, found the way drawing
+ * finds one (`stretches`, as `code/source.ts` reads a reply). A bare `Card([...])` with no
+ * `root =` is words to it, so the card would show an empty band.
+ */
+const draws = (display: string) => {
+  const [only, ...rest] = stretches(display)
+  return rest.length === 0 && only !== undefined && only.kind === 'display' && only.whole
+}
 
 /** Every Feed write moves only the Person's Feed, so open Thread lists do not reload for it. */
 const feedTopic = (person: PersonId) => [Topic.part('feed')(Topic.person(person))]
@@ -53,6 +65,9 @@ const makeStore = (database: Database['Service']) => {
     readonly thread: ThreadId
     readonly request: typeof PostRequest.Type
   }) {
+    // Every caller posts through here, so a display that draws nothing never reaches a card.
+    if (FeedPost.guards.Drawn(input.request) && !draws(input.request.display))
+      return yield* new FeedDisplayInvalid({ reason: 'NoRoot' })
     const now = yield* Clock.currentTimeMillis
     const id = cardIdOf(input.thread)
     const columns = columnsOf(input.request)
