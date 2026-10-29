@@ -61,6 +61,8 @@ export const ComputerProbeFailure = Schema.TaggedUnion({
   ProviderOutgrown: { upgrade: Schema.Boolean },
   ProviderStalled: {},
   ProviderRefused: {},
+  /** A persisted lifecycle failure whose original typed receipt is no longer available. */
+  RecordedFailure: {},
   BindingUnresolved: {},
   SshUnreachable: {},
   SshAuthentication: {},

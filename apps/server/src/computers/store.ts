@@ -632,6 +632,7 @@ const observations = (
       return {
         computer: withoutRow(ComputerState.cases.Absent.make({})),
         outage: Option.none<MachineFailure>(),
+        failure: Option.none<MachineFailure>(),
       }
     const observed = yield* observe(row.value.machine).pipe(Effect.result)
     // By the failure's name only; the read itself answers the caller with a state, not a failure.
@@ -644,6 +645,7 @@ const observations = (
       return {
         computer: wire(row.value, unanswered(row.value.since)),
         outage: Option.some(observed.failure),
+        failure: Option.some(observed.failure),
       }
     const reported = Result.isSuccess(observed)
       ? observed.success
@@ -654,6 +656,10 @@ const observations = (
     return {
       computer: yield* reconcile(person, row.value, reported),
       outage: Option.none<MachineFailure>(),
+      // Health needs the typed observation even when the Person’s lifecycle keeps its sentence.
+      failure: Result.isFailure(observed)
+        ? Option.some(observed.failure)
+        : Option.none<MachineFailure>(),
     }
   })
   /** The lifecycle facts with the outage, for callers that must refuse rather than report. */

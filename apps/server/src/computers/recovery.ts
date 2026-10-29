@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import {
   ComputerHealth,
   ComputerProbeResult,
+  ComputerProbeFailure,
   ComputerRecoveryOutcome as Outcome,
   ComputerRecoveryRefusal as Refusal,
   type RecoverComputerRequest,
@@ -62,8 +63,10 @@ const mutate = Effect.fn('ComputerRecovery.mutate')(function* (
   if (
     !before.probes.some(
       (probe) =>
-        ['Ssh', 'Desktop', 'Driver'].includes(probe.component) &&
-        ComputerProbeResult.guards.Failed(probe.result),
+        ComputerProbeResult.guards.Failed(probe.result) &&
+        ComputerProbeFailure.isAnyOf(['SshUnreachable', 'DesktopSession', 'DriverUnresponsive'])(
+          probe.result.failure,
+        ),
     )
   )
     return Result.succeed(MachineRecovery.cases.Refused.make({}))
@@ -96,8 +99,16 @@ const step = (input: Authority) =>
       if (!(yield* admitted(actor).pipe(Effect.provideService(Database, input.database))))
         return Outcome.cases.Refused.make({ cause: Refusal.cases.RunRequired.make({}) })
       const before = yield* input.health(person, 'Deep')
-      if (ComputerHealth.guards.Held(before))
-        return Outcome.cases.Refused.make({ cause: Refusal.cases.Held.make({}) })
+      const refused = ComputerHealth.match<Option.Option<typeof Refusal.Type>>(before, {
+        Held: () => Option.some(Refusal.cases.Held.make({})),
+        Unavailable: ({ cause }) => Option.some(Refusal.cases.Unavailable.make({ cause })),
+        Absent: () => Option.none(),
+        Sleeping: () => Option.none(),
+        Starting: () => Option.none(),
+        Ready: () => Option.none(),
+        Degraded: () => Option.none(),
+      })
+      if (Option.isSome(refused)) return Outcome.cases.Refused.make({ cause: refused.value })
       const reason = unsupported.get(request.step)
       if (reason !== undefined)
         return Outcome.cases.Unsupported.make({ step: request.step, reason })

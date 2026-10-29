@@ -70,7 +70,7 @@ export const computerHealth = Effect.fn('Computer.health')(function* (input: {
         Effect.succeed(
           ComputerHealth.cases.Unavailable.make({
             checkedAt,
-            cause: ComputerProbeFailure.cases.ProviderRefused.make({}),
+            cause: ComputerProbeFailure.cases.RecordedFailure.make({}),
           }),
         ),
       Running: () =>
@@ -113,8 +113,8 @@ export function healthOperations(input: {
   const { state, database } = input
   /** Viewer-free lifecycle observations reuse reconciliation without touching activity. */
   const inspect = Effect.fn('ComputerStore.inspect')(function* (person: PersonId) {
-    const { computer, outage } = yield* state.observe(person)
-    if (Option.isSome(outage)) return yield* outage.value
+    const { computer, failure } = yield* state.observe(person)
+    if (Option.isSome(failure)) return yield* failure.value
     return { state: computer.state, heldByPerson: computer.heldByPerson }
   })
   /** Deep diagnostics stay outside preparation and activity, and never invoke guest setup. */
