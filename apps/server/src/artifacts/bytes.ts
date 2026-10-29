@@ -42,7 +42,6 @@ export const artifactBytesRoutes = HttpRouter.add(
     observeFailures('http'),
     Effect.catchTags({
       Unauthenticated: () => Effect.succeed(HttpServerResponse.empty({ status: 401 })),
-      Forbidden: () => Effect.succeed(HttpServerResponse.empty({ status: 403 })),
       NotFound: () => Effect.succeed(HttpServerResponse.empty({ status: 404 })),
       ArtifactNotEditable: () => Effect.succeed(HttpServerResponse.empty({ status: 404 })),
       InvalidRequest: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),

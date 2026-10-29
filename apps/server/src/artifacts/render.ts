@@ -16,7 +16,7 @@ import {
   type InspectArtifactFileRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect, Predicate, Schema } from 'effect'
 import { ComputerStore } from '../computers/store.ts'
 
 export const FileCapture = Schema.Struct({
@@ -60,18 +60,16 @@ const capture = Effect.fn('Artifacts.capture')(function* (
 ) {
   const computer = yield* ComputerStore
   const bytes = yield* computer.read(personId, path).pipe(
-    Effect.catchTag('MachineFileRefused', (failure) => {
-      if (failure.reason === 'large')
-        return Effect.fail(new ArtifactFileTooLarge({ role, limit: ARTIFACT_FILE_BYTES }))
-      const reason =
-        failure.reason === 'missing' || failure.reason === 'directory'
-          ? failure.reason
-          : 'unreadable'
-      return Effect.fail(new ArtifactFileRefused({ role, reason }))
-    }),
     Effect.mapError((failure) => {
-      if (failure instanceof ArtifactFileRefused || failure instanceof ArtifactFileTooLarge)
-        return failure
+      if (Predicate.isTagged(failure, 'MachineFileRefused')) {
+        if (failure.reason === 'large')
+          return new ArtifactFileTooLarge({ role, limit: ARTIFACT_FILE_BYTES })
+        const reason =
+          failure.reason === 'missing' || failure.reason === 'directory'
+            ? failure.reason
+            : 'unreadable'
+        return new ArtifactFileRefused({ role, reason })
+      }
       return new ArtifactComputerUnavailable({
         message: 'The Computer is unavailable or held by the Person.',
       })
@@ -152,7 +150,13 @@ export const captureArtifact = Effect.fn('Artifacts.captureArtifact')(function* 
       message: 'A PDF export needs its separate editable source.',
     })
   const output = yield* capture(personId, request.path, 'output')
-  const source = yield* ArtifactSourcePath.match(request.source, {
+  const source = yield* ArtifactSourcePath.match<
+    Effect.Effect<
+      { metadata: ArtifactSource; bytes: Uint8Array | null },
+      ArtifactComputerUnavailable | ArtifactFileRefused | ArtifactFileTooLarge,
+      ComputerStore
+    >
+  >(request.source, {
     Output: () => Effect.succeed({ metadata: ArtifactSource.cases.Output.make({}), bytes: null }),
     Separate: ({ path }) =>
       Effect.gen(function* () {
