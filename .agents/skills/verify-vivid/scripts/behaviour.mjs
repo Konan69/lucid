@@ -80,13 +80,13 @@ async function freshPerson(state, label, directory) {
   const email = state.run + '-' + label + '@example.test'
   const password = 'Verify!Local-0123456789'
   const headers = { origin: state.web, 'content-type': 'application/json' }
-  const signup = await fetch(state.server + '/api/auth/sign-up/email', {
+  const signup = await fetch(state.web + '/api/auth/sign-up/email', {
     method: 'POST',
     headers,
     body: JSON.stringify({ name: 'Verification Person', email, password }),
   })
   NodeAssert.equal(signup.status, 200, 'Trial sign-up failed')
-  const signin = await fetch(state.server + '/api/auth/sign-in/email', {
+  const signin = await fetch(state.web + '/api/auth/sign-in/email', {
     method: 'POST',
     headers,
     body: JSON.stringify({ email, password }),
