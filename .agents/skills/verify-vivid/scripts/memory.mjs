@@ -71,9 +71,58 @@ function callsOf(page, run) {
   return { calls, text }
 }
 
+/** The create turn writes exactly one new entry; the later steps follow its file and layer. */
+function created(writes, deletes, step, known) {
+  assert.equal(writes.length, 1, 'Expected one entry written in ' + step.name)
+  assert.equal(deletes.length, 0, 'Unexpected delete in ' + step.name)
+  const [write] = writes
+  assert.equal(write.output.ok, true)
+  assert.match(String(write.input.body), step.body)
+  assert.equal(write.output.replaced, false)
+  known.file = write.input.file
+  known.layer = write.output.layer
+}
+
+/**
+ * The correction turn must first rewrite the entry Vivid made, at its revision, as `KEEPING_MEMORY`
+ * in `packages/agent/runtime/src/agents/vivid.ts` tells it. Vivid may then rename that entry: it
+ * names a file after the value it holds, and on 28 October 2026 (run
+ * pi-20261028231419043-cc2526d7, HTTP and web alike) it rewrote "…-before-noon.md", wrote the same
+ * correction to "…-after-three.md" and retracted the old file in the same Run. That leaves one
+ * entry with the correction, which is the outcome the feature promises; `memoryIndexed` proves no
+ * second entry survives. A rename is exactly one new write plus the retraction of the old file;
+ * anything else still fails, and the later steps follow the new file.
+ */
+function corrected(writes, deletes, step, known) {
+  const [first, ...rest] = writes
+  assert.ok(first, 'Expected the correction written in ' + step.name)
+  assert.equal(first.input.file, known.file, 'The correction did not rewrite the entry it made')
+  assert.equal(first.output.layer, known.layer, 'The correction changed layers')
+  assert.equal(first.output.ok, true)
+  assert.equal(first.output.replaced, true)
+  assert.match(String(first.input.body), step.body)
+  if (rest.length === 0 && deletes.length === 0) return
+  assert.equal(rest.length, 1, 'More than one extra write in ' + step.name)
+  assert.equal(deletes.length, 1, 'The correction made a second entry')
+  const [moved] = rest
+  assert.equal(moved.output.ok, true)
+  assert.equal(moved.output.replaced, false)
+  assert.equal(moved.output.layer, known.layer, 'The renamed correction changed layers')
+  assert.match(String(moved.input.body), step.body)
+  assert.deepEqual(deletes[0].output, {
+    ok: true,
+    retracted: known.file,
+    layer: known.layer,
+    forget_complete: false,
+  })
+  known.renamed = { from: known.file, to: moved.input.file }
+  known.file = moved.input.file
+}
+
 /**
  * What one step left behind. `known.file` is the entry Vivid made in the first step; the later
- * steps must change that same entry. A settled model sentence never replaces a receipt.
+ * steps must change that same entry, or its rename. A settled model sentence never replaces a
+ * receipt.
  */
 export async function memoryReceipt(page, run, step, directory, known) {
   const { calls, text } = callsOf(page, run)
@@ -90,23 +139,8 @@ export async function memoryReceipt(page, run, step, directory, known) {
   if (step.change === 'none') {
     assert.equal(writes.length + deletes.length, 0, 'A question changed an entry in ' + step.name)
   }
-  if (step.change === 'write' || step.change === 'replace') {
-    assert.equal(writes.length, 1, 'Expected one entry written in ' + step.name)
-    assert.equal(deletes.length, 0, 'Unexpected delete in ' + step.name)
-    const [write] = writes
-    assert.equal(write.state, 'output-available')
-    assert.equal(write.output.ok, true)
-    assert.match(String(write.input.body), step.body)
-    if (step.change === 'write') {
-      assert.equal(write.output.replaced, false)
-      known.file = write.input.file
-      known.layer = write.output.layer
-    } else {
-      assert.equal(write.input.file, known.file, 'The correction made a second entry')
-      assert.equal(write.output.layer, known.layer, 'The correction changed layers')
-      assert.equal(write.output.replaced, true)
-    }
-  }
+  if (step.change === 'write') created(writes, deletes, step, known)
+  if (step.change === 'replace') corrected(writes, deletes, step, known)
   if (step.change === 'delete') {
     assert.equal(writes.length, 0, 'Unexpected write in delete')
     assert.equal(deletes.length, 1, 'Expected one entry deleted')
@@ -123,10 +157,34 @@ export async function memoryReceipt(page, run, step, directory, known) {
     run,
     file: known.file,
     layer: known.layer,
+    renamed: known.renamed ?? null,
     calls,
     text,
   })
   return text
+}
+
+/**
+ * After a write or a correction, the public index must hold exactly one entry for this fixture's
+ * project, and it must be the one the receipts name. This is the "no second entry" outcome, read
+ * from the Person's memory rather than counted from tool calls.
+ */
+export async function memoryIndexed(state, step, directory, known) {
+  if (step.change !== 'write' && step.change !== 'replace') return
+  const marker = step.prompt.match(/Cedar-[a-f0-9]{8}/u)
+  assert.ok(marker, 'The memory fixture has no unique project marker')
+  const project = marker[0].toLowerCase()
+  const index = await rpc(state, 'GetMemoryIndex', undefined, directory, 'index')
+  const entries = [...index.standing, ...index.lines].filter(
+    (entry) =>
+      entry.file.toLowerCase().includes(project) ||
+      entry.description.toLowerCase().includes(project),
+  )
+  assert.deepEqual(
+    entries.map((entry) => ({ layer: entry.layer, file: entry.file })),
+    [{ layer: known.layer, file: known.file }],
+    'Expected exactly one entry for this project after ' + step.name,
+  )
 }
 
 /** The shipped forget-something skill plans first. Confirm only this fixture's single entry,
@@ -194,10 +252,11 @@ export async function memory(state, id, directory) {
     count = detail.runs.length
     const page = await history(state, id, evidence)
     await memoryReceipt(page, detail.runs[count - 1].submissionId, step, evidence, known)
+    await memoryIndexed(state, step, evidence, known)
   }
   await json(directory + '/scope.json', {
     proved:
-      'Real model write, read, same-file replacement, read replacement, delete and missing read through public Thread transport.',
+      'Real model write, read, same-entry replacement (or its rename, one entry left in the index), read replacement, delete and missing read through public Thread transport.',
     unsupported: [
       'owner cancellation and idle capacity',
       'server process restart',

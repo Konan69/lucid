@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises'
 import * as assert from 'node:assert/strict'
-import { memorySteps, memoryReceipt, confirmMemory } from './memory.mjs'
+import { memorySteps, memoryReceipt, memoryIndexed, confirmMemory } from './memory.mjs'
 import { settled, history, json } from './wire.mjs'
 
 /** CopyWords marks each finished text reply; its sequence must reach this Run, even when words repeat. */
@@ -78,6 +78,7 @@ export async function memoryBrowser(state, id, directory, browser) {
     const page = await history(state, id, evidence)
     const currentRun = detail.runs[count - 1].submissionId
     await memoryReceipt(page, currentRun, step, evidence, known)
+    await memoryIndexed(state, step, evidence, known)
     await latestReply(browser, page, currentRun, { directory: evidence, stage: 'after' })
     await capture(step.name + '-after')
     await run(['reload'])
@@ -90,7 +91,7 @@ export async function memoryBrowser(state, id, directory, browser) {
   }
   await json(directory + '/scope.json', {
     proved:
-      'Web composer write, read, same-file replacement, read replacement, delete and missing read. Each tool receipt is checked and each reply survives reload.',
+      'Web composer write, read, same-entry replacement (or its rename, one entry left in the index), read replacement, delete and missing read. Each tool receipt is checked and each reply survives reload.',
     unsupported: [
       'Dedicated Memory list or editor; this composer journey does not drive the Settings controls',
       'owner cancellation and idle capacity',
