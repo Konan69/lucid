@@ -101,7 +101,6 @@ export function Feed() {
     onNone: () => [],
     onSome: (list) => owed.waitingOf(list.owed),
   })
-  const todoStandings = useTodoStandings()
   const toDo = Option.match(useLiveValue(data.live.todos), {
     onNone: () => [],
     onSome: (list) => todos.openOf(list.todos),
@@ -181,16 +180,7 @@ export function Feed() {
               />
             ),
             Todo: ({ todo }) => (
-              <TodoRow
-                todo={todo}
-                standing={Option.getOrElse(
-                  Option.fromUndefinedOr(todoStandings.get(todo.id)),
-                  (): todos.Standing => 'shown',
-                )}
-                now={now}
-                onClose={(closing) => closeTodo(data, todo.id, closing)}
-                onOpen={() => openThread(todo.threadId)}
-              />
+              <TodoRow todo={todo} now={now} onOpen={() => openThread(todo.threadId)} />
             ),
             Computer: ({ waiting: asking }) => <Computer waiting={asking} now={now} />,
             Handled: ({ items: settled }) => (
@@ -445,24 +435,19 @@ function OwedRow({
  * One to-do, built as a waiting-on row is (`OwedRow`) without its track: what to do, and when it
  * is due beside it when there is a date. A tap opens the Thread it was added in; a hold offers
  * the system menu (done, remove, open). A press folds the row out of the list while the server is
- * asked, and a press that did not get through brings it back saying so.
+ * asked, and a press that did not get through brings it back saying so. The row reads its own
+ * close machine's standing, so the Feed's list function stays one list.
  */
-function TodoRow({
-  todo,
-  standing,
-  now,
-  onClose,
-  onOpen,
-}: {
-  todo: todos.Open
-  standing: todos.Standing
-  now: number
-  onClose: (closing: todos.Closing) => void
-  onOpen: () => void
-}) {
+function TodoRow({ todo, now, onOpen }: { todo: todos.Open; now: number; onOpen: () => void }) {
   const { colors: c } = useTheme()
+  const data = useLiveData()
+  const standing = Option.getOrElse(
+    Option.fromUndefinedOr(useTodoStandings().get(todo.id)),
+    (): todos.Standing => 'shown',
+  )
+  const onClose = (closing: todos.Closing) => closeTodo(data, todo.id, closing)
   const folded = standing === 'folded'
-  const due = todoWords.due(todo, now)
+  const due = Option.getOrUndefined(todoWords.due(todo, now))
   return (
     <Animated.View
       pointerEvents={folded ? 'none' : 'auto'}
@@ -504,18 +489,15 @@ function TodoRow({
               <Label size="body" numberOfLines={2} style={{ flex: 1 }}>
                 {todo.what}
               </Label>
-              {Option.match(due, {
-                onNone: () => null,
-                onSome: (said) => (
-                  <Label
-                    size="label"
-                    tone={said.late ? 'status-danger' : 'ink-2'}
-                    style={{ fontVariant: ['tabular-nums'] }}
-                  >
-                    {said.words}
-                  </Label>
-                ),
-              })}
+              {due !== undefined && (
+                <Label
+                  size="label"
+                  tone={due.late ? 'status-danger' : 'ink-2'}
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
+                  {due.words}
+                </Label>
+              )}
             </View>
           </View>
         )}
