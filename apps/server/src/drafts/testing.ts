@@ -101,7 +101,13 @@ export const fixture = Effect.fn('DraftTest.fixture')(function* () {
       }),
     )
     return {
-      actor: { person, workspace, by: 'person', threadId: Option.none() } satisfies Actor,
+      actor: {
+        person,
+        workspace,
+        by: 'person',
+        threadId: Option.none(),
+        helper: Option.none(),
+      } satisfies Actor,
       session,
     } satisfies Caller
   })

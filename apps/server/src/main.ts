@@ -72,6 +72,7 @@ import { requestLimit } from './rpc/requests.ts'
 import { cellMemoryLayer, runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
+import { childRunsLayer } from './runs/store.ts'
 import { conversationLayer } from './threads/delivery.ts'
 import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
@@ -147,12 +148,13 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provide(titleModelLayer), Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
+  const helpers = childRunsLayer.pipe(Layer.provideMerge(conversation))
   const accounts = Layer.mergeAll(
     connectionStoreLayer,
     toolEffectsLayer,
     computerStoreLayer,
     egressLayer,
-  ).pipe(Layer.provideMerge(conversation))
+  ).pipe(Layer.provideMerge(helpers))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),

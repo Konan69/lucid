@@ -384,18 +384,21 @@ export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
     workspace: Workspace.cases.Company.make({ company, role: 'owner' }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const memberActor: Actor = {
     person: member,
     workspace: Workspace.cases.Company.make({ company, role: 'member' }),
     by: 'vivid',
     threadId: Option.some(threadId),
+    helper: Option.none(),
   }
   const personalActor: Actor = {
     person: owner,
     workspace: Workspace.cases.Personal.make({}),
     by: 'vivid',
     threadId: Option.some(threadId),
+    helper: Option.none(),
   }
   return { ownerActor, memberActor, personalActor, threadId }
 })

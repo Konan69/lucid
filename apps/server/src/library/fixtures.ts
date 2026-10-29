@@ -113,6 +113,7 @@ export const fixture = Effect.fn('LibraryTest.fixture')(function* () {
       workspace: Workspace.cases.Company.make({ company, role }),
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     }
     return { actor, token, sessionId }
   })

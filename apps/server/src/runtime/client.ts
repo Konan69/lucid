@@ -30,6 +30,7 @@ import {
   RuntimeSettlement,
   RuntimeStopped,
   RuntimeUnavailable,
+  RuntimeChildAnswer,
   type ConversationFrame,
   type DeliveryScope,
   type RuntimeDelivery,
@@ -141,6 +142,16 @@ export interface RuntimeService {
     runId: RunId,
   ) => Effect.Effect<Settlement, DatabaseInfrastructureError>
   readonly stop: (threadId: ThreadId) => Effect.Effect<boolean, RuntimeUnavailable>
+  /** How one helper's work stands in the runtime, with its answer once it ended. */
+  readonly child: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<RuntimeChildAnswer, RuntimeUnavailable>
+  /** Aborts one helper's work and answers once it ended; false when there was none to abort. */
+  readonly stopChild: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<boolean, RuntimeUnavailable>
   readonly read: (
     read: ConversationRead,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable, Scope.Scope>
@@ -283,6 +294,30 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       Effect.mapError(unavailable),
     )).aborted
   }, Effect.scoped)
+  /** A helper lives in its Thread's conversation store, under the Thread creator's address. */
+  const child: RuntimeService['child'] = Effect.fn('Runtime.child')(function* (threadId, runId) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}`
+    const response = yield* requestRuntime(http, request(address, suffix, 'GET'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return yield* HttpClientResponse.schemaBodyJson(RuntimeChildAnswer)(response).pipe(
+      Effect.mapError(unavailable),
+    )
+  }, Effect.scoped)
+  const stopChild: RuntimeService['stopChild'] = Effect.fn('Runtime.stopChild')(function* (
+    threadId,
+    runId,
+  ) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}/abort`
+    const response = yield* requestRuntime(http, request(address, suffix, 'POST'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
+      Effect.mapError(unavailable),
+    )).aborted
+  }, Effect.scoped)
   /** Finite history and attachment reads retain their caller's scope through body consumption. */
   const read: RuntimeService['read'] = Effect.fn('Runtime.read')(function* (input) {
     const address = yield* addressOf(input.threadId)
@@ -310,7 +345,15 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         )
       }),
     )
-  return Runtime.of({ admit: makeAdmit({ http, request }), settled, stop, read, watch })
+  return Runtime.of({
+    admit: makeAdmit({ http, request }),
+    settled,
+    stop,
+    child,
+    stopChild,
+    read,
+    watch,
+  })
 })
 
 export const runtimeLayer = Layer.effect(Runtime, makeRuntime())

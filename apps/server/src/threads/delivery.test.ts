@@ -230,6 +230,8 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       })
     }),
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
+    child: () => Effect.die('Delivery tests start no helpers'),
+    stopChild: () => Effect.succeed(false),
     watch: () => Stream.never,
     read: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
@@ -406,6 +408,7 @@ const actorOf = Effect.fn('Delivery.test.actor')(function* (test: Harness, perso
     }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 
@@ -417,7 +420,7 @@ const askFor = Effect.fn('Delivery.test.ask')(function* (
 ) {
   const actor = yield* actorOf(test, personId)
   return yield* test.inputs.ask(
-    { ...actor, by: 'vivid', threadId: Option.some(threadId) },
+    { ...actor, by: 'vivid', threadId: Option.some(threadId), helper: Option.none() },
     {
       questions: [
         {

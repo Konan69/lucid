@@ -25,6 +25,7 @@ const decidingPerson = Effect.fn('Approvals.person')(function* () {
     workspace: auth.workspace,
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 

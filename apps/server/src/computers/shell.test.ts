@@ -142,6 +142,7 @@ const acting = Effect.fn('ShellTest.acting')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'vivid',
     threadId: Option.some(ThreadId.make('shell-thread')),
+    helper: Option.none(),
   }
   return actor
 })

@@ -40,6 +40,7 @@ const actor = (name: string): Actor => ({
   workspace: Workspace.cases.Personal.make({}),
   by: 'person',
   threadId: Option.none(),
+  helper: Option.none(),
 })
 
 /** Fresh People isolate notices and settings; cleanup is registered before the first write. */

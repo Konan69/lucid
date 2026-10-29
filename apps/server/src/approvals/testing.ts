@@ -358,24 +358,28 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const member: Actor = {
     person: first,
     workspace: Workspace.cases.Company.make({ company, role: 'member' }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const owner: Actor = {
     person: second,
     workspace: Workspace.cases.Company.make({ company, role: 'owner' }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const other: Actor = {
     person: second,
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   return {
     personal,
@@ -385,13 +389,13 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     personalId,
     companyId,
     otherId,
-    vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId) } satisfies Actor,
+    vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId), helper: Option.none() } satisfies Actor,
     /** A write through Ada's own Integration, which exists for as long as this case does. */
     connectionAction: actionThrough(connectionId),
     /** What that action was prepared against: the Integration as it is signed in now. */
     bound: ApprovalBinding.make({ connectionGeneration: 0, preconditions: [] }),
     connectionId,
-    companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId) } satisfies Actor,
+    companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId), helper: Option.none() } satisfies Actor,
     summary: summaryOf(first),
   }
 })

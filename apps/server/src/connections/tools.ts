@@ -958,7 +958,13 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     )
     // An Approval in a Company cannot survive removal of its acting Person's Membership.
     if (Workspace.guards.Company(input.workspace)) yield* requireCompany(workspace)
-    const actor: Actor = { person: input.person, workspace, by: 'vivid', threadId: Option.none() }
+    const actor: Actor = {
+      person: input.person,
+      workspace,
+      by: 'vivid',
+      threadId: Option.none(),
+      helper: Option.none(),
+    }
     const prepared = yield* prepareTool(actor, input.target).pipe(
       // Discovery precedes dispatch; an infrastructure fault here is retryable, never uncertain.
       Effect.catchTag(
