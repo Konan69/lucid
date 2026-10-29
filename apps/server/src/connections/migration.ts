@@ -11,7 +11,7 @@ import {
   Result,
   Schema,
 } from 'effect'
-import { Conflict } from '@vivid/contracts'
+import { ApprovalInvalidation, Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
 import {
@@ -38,6 +38,7 @@ import {
 } from './records.ts'
 import { disconnectWatches, unsubscribeWatches } from '../watches/apps.ts'
 import { connections } from './tables.ts'
+import { invalidatePending, usingConnection } from '../approvals/stale.ts'
 
 const isLegacy = Schema.is(LegacyExecutorReferences)
 
@@ -209,6 +210,10 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
           updatedAt: sql`CASE
             WHEN ${connections.references} - 'compatibleAttempts' = ${payload}::jsonb - 'compatibleAttempts'
             THEN ${connections.updatedAt} ELSE ${revision} END`,
+          // New references can select another app or account; only a retry counter moving is not one.
+          authorizationGeneration: sql`CASE
+            WHEN ${connections.references} - 'compatibleAttempts' = ${payload}::jsonb - 'compatibleAttempts'
+            THEN ${connections.authorizationGeneration} ELSE ${connections.authorizationGeneration} + 1 END`,
         })
         .where(
           and(
@@ -219,12 +224,24 @@ const saveOutcome = Effect.fn('Connections.saveMigrationOutcome')(function* (
             sql`${connections.references} IS DISTINCT FROM ${payload}::jsonb`,
           ),
         )
-        .returning({ updatedAt: connections.updatedAt })
+        .returning({
+          updatedAt: connections.updatedAt,
+          generation: connections.authorizationGeneration,
+        })
       const changed = saved[0]
-      if (changed !== undefined && changed.updatedAt !== row.updatedAt)
+      if (changed !== undefined && changed.updatedAt !== row.updatedAt) {
+        yield* invalidatePending(
+          tx,
+          usingConnection(row.id),
+          ApprovalInvalidation.cases.ConnectionChanged.make({
+            connectionId: row.id,
+            generation: changed.generation,
+          }),
+        )
         yield* Effect.logInfo('Integration app reconciliation').pipe(
           Effect.annotateLogs({ connectionId: row.id, result: references._tag }),
         )
+      }
     }),
   )
 })
@@ -366,6 +383,11 @@ const removeRow = Effect.fn('Connections.removeRow')(function* (
     return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
   const subscriptions = yield* disconnectWatches(tx, row.id)
   yield* tx.delete(connections).where(eq(connections.id, row.id))
+  yield* invalidatePending(
+    tx,
+    usingConnection(row.id),
+    ApprovalInvalidation.cases.ConnectionChanged.make({ connectionId: row.id, generation: null }),
+  )
   return subscriptions
 })
 
@@ -414,6 +436,9 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
           executorApp: null,
           status: 'failed',
           reason: executorReconnectMessage,
+          // Its pending Approvals close when the row is deleted below; should deletion not follow,
+          // the moved generation still refuses them at the claim.
+          authorizationGeneration: sql`${connections.authorizationGeneration} + 1`,
           updatedAt: revision,
         })
         .where(and(eq(connections.id, row.id), eq(connections.updatedAt, row.updatedAt)))

@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-A Person contribution and a streamed reply from the selected model persist through Flue history. GetThread reports a Completed Run.
+A Person contribution and a streamed reply from the selected model persist through the Pi conversation feed. The browser reloads after observing the admitted Person message while the model is working, then requires the same message identities and the completed reply before another reload. Some providers publish visible text only at settlement, so a text chunk is not a prerequisite for the interruption. GetThread reports a Completed Run.
 
 ## How to get to it (user POV)
 

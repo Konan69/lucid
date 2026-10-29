@@ -6,6 +6,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import {
+  ApprovalInvalidation,
   DatabaseFailure,
   Conflict,
   DeliveryScope,
@@ -22,6 +23,7 @@ import {
 } from '@vivid/contracts'
 import { loadSummaries } from '../auth/access.ts'
 import { announceFeed } from '../feed/changes.ts'
+import { askedBy, invalidatePending } from '../approvals/stale.ts'
 import { personTable } from '../auth/tables.ts'
 import {
   Database,
@@ -42,7 +44,7 @@ export const RunEnding = Schema.TaggedUnion({
 })
 export type RunEnding = typeof RunEnding.Type
 
-/** A busy Thread keeps its first Person's authority; only a reserved turn may reach Flue. */
+/** A busy Thread keeps its first Person's authority; only a reserved turn may reach the runtime. */
 export const TurnReservation = Schema.TaggedUnion({
   Reserved: { turn: Schema.Finite },
   Replayed: { turn: Schema.Finite, receipt: Admitted },
@@ -77,9 +79,8 @@ export class NoActingRun extends Schema.TaggedError<NoActingRun>()(
  * `vivid_runs.person_id` is the Person each Run acts for, written when the Run was reserved. This
  * is what stops something that belongs to one Person (their own computer) being used by a Run
  * another member of a shared Thread started. Same-Person deliveries may join the live response;
- * its host is the earlier submission (`runtime/settlement.ts` hostOf and Flue 2.2.2
- * readSubmissionReply). Check every admitted working Run's authority before choosing that host
- * by turn. A reserved turn the runtime has not accepted is also `working`, so only admitted
+ * Pi identifies the host in settlement's `answeredBy`. Check every admitted working Run's
+ * authority before choosing that host by turn. A reserved turn the runtime has not accepted is also `working`, so only admitted
  * Runs count, as in `start` below.
  */
 export const actingRun = Effect.fn('RunStore.actingRun')(function* (
@@ -173,7 +174,7 @@ export interface RunStoreService {
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
   }) => Effect.Effect<TurnReservation, Conflict | DatabaseInfrastructureError>
-  /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
+  /** Records acceptance after the runtime returns its receipt, and reopens a failed delivery on retry. */
   readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
   /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
   readonly scope: (
@@ -194,7 +195,7 @@ export interface RunStoreService {
 
 /**
  * The record of every Run: which Thread, for which Person, why it started and how it ended.
- * Flue's history has the words; this has the attribution Flue does not keep.
+ * the runtime's history has the words; this has the attribution the runtime does not keep.
  */
 export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivid/RunStore') {}
 
@@ -267,7 +268,9 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
   summaries: ReadonlyMap<PersonId, PersonSummary>,
 ) {
   const person = yield* summaryFor(summaries, row.personId)
+  const receipt = row.receipt === null ? undefined : yield* decodeReceipt(row.receipt)
   return Run.make({
+    submissionId: receipt === undefined ? undefined : String(receipt.submissionId),
     id: row.id,
     threadId: row.threadId,
     turn: row.turn,
@@ -298,9 +301,8 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
 })
 
 /**
- * The server never joins a different Person's delivery into a response in progress. Flue 2.1
- * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
- * before calling Flue is mandatory. The working-Person check and turn reservation share the
+ * The server never joins a different Person's delivery into a response in progress. Check
+ * acting authority before runtime admission. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
  * Same-Person server deliveries still join. An admitted replay returns its original receipt before Busy;
  * unadmitted reservations remain subject to the current working authority.
@@ -362,7 +364,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
     )
   })
 
-/** The acting Person survives runtime restarts without entering Flue history. */
+/** The acting Person survives runtime restarts without entering the runtime history. */
 const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
   Effect.fn('RunStore.scope')(function* ({ threadId, turn }) {
     const [row] = yield* database.run(
@@ -431,6 +433,14 @@ const makeEnd = (database: DatabaseService) =>
           .returning({ thread: runs.threadId })
         const row = rows[0]
         if (row === undefined) return false
+        // A Run the Person stopped takes its open asks with it; a Run that only finished does not,
+        // because asking and then waiting for the answer is how a Run normally ends.
+        if (RunEnding.guards.Stopped(ending))
+          yield* invalidatePending(
+            tx,
+            askedBy(id),
+            ApprovalInvalidation.cases.RunStopped.make({ runId: id }),
+          )
         // Settlement dates the Feed's history even when admission failed before delivery's touch.
         yield* tx.update(threads).set({ updatedAt: now }).where(eq(threads.id, row.thread))
         yield* announceFeed(tx, [row.thread])
@@ -439,16 +449,23 @@ const makeEnd = (database: DatabaseService) =>
     )
   })
 
-/** The query remains lazy and repeatable while the service exposes an Effect value. */
-const makeWorking = (database: DatabaseService) =>
-  database
-    .run(
-      database
-        .select({ id: runs.id, threadId: runs.threadId, personId: runs.personId })
-        .from(runs)
-        .where(eq(runs.state, 'working')),
-    )
-    .pipe(Effect.withSpan('RunStore.working'))
+/** Receiptless reservations have no runtime identity to observe after a server crash.
+ * The cutover importer carries working legacy Runs; only saved Pi receipts resume here. */
+const makeWorking = Effect.fn('RunStore.working')(function* (database: DatabaseService) {
+  const rows = yield* database.run(database.select().from(runs).where(eq(runs.state, 'working')))
+  const resumed = yield* Effect.forEach(
+    rows,
+    Effect.fn('RunStore.resume')(function* (run) {
+      if (run.receipt === null) {
+        yield* makeEnd(database)(run.id, RunEnding.cases.Unknown.make({}))
+        return []
+      }
+      yield* decodeReceipt(run.receipt)
+      return [{ id: run.id, threadId: run.threadId, personId: run.personId }]
+    }),
+  )
+  return resumed.flat()
+})
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('RunStore.list')(function* (threadId: ThreadId) {

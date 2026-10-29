@@ -16,6 +16,7 @@ import * as Stream from 'effect/Stream'
 import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import {
   ActionTarget,
+  ApprovalBinding,
   ConnectionId,
   Company,
   CompanyId,
@@ -26,6 +27,7 @@ import {
   ProposedAction,
   Run,
   RunId,
+  RuntimeSubmissionId,
   RunOrigin,
   RunState,
   ThreadId,
@@ -35,7 +37,17 @@ import {
   RuntimeUnavailable,
   Conflict,
   DatabaseFailure,
+  ServiceId,
 } from '@vivid/contracts'
+import { encodeReferences } from '../connections/records.ts'
+import {
+  ExecutorAppId,
+  ExecutorAppOwnership,
+  ExecutorBinding,
+  ExecutorOwnerId,
+  ExecutorReferences,
+} from '../connections/executor.ts'
+import { connections } from '../connections/tables.ts'
 import { type Actor, summaryOf } from '../auth/access.ts'
 import { Review } from './policy.ts'
 import { Reviewer } from './review.ts'
@@ -159,8 +171,7 @@ const ports = Layer.effectContext(
         if (Option.isSome(failure)) return yield* failure.value
         return {
           runId: RunId.make(`test-${delivery.idempotencyKey}`),
-          offset: '0',
-          incarnation: 'test',
+          submissionId: RuntimeSubmissionId.make(1),
         }
       }),
       /** Delivery returns a test Run while recording the exact signal and idempotency key. */
@@ -233,6 +244,39 @@ const cleanup = Effect.fn('TrustTest.cleanup')(function* (
   expect(Result.isSuccess(result)).toBe(true)
 })
 
+/** A ready personal Integration of the Person's, as Connect leaves one, at generation 0. */
+const ownIntegration = Effect.fn('TrustTest.ownIntegration')(function* (
+  database: Database['Service'],
+  personId: PersonId,
+  now: number,
+) {
+  const connectionId = ConnectionId.make(NodeCrypto.randomUUID())
+  const app = ExecutorAppId.make(`app-${connectionId}`)
+  const references = ExecutorReferences.cases.Public.make({
+    service: ServiceId.make('projects'),
+    app,
+    owner: ExecutorOwnerId.make(`p-${personId}`),
+    binding: ExecutorBinding.cases.Public.make({}),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+  })
+  yield* database.run(
+    database.insert(connections).values({
+      id: connectionId,
+      personId,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Projects',
+      name: 'Work account',
+      executorApp: app,
+      references: yield* encodeReferences(references),
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }),
+  )
+  return connectionId
+})
+
 /** Each case registers cleanup before its first write and owns unique Persons, Company and Threads. */
 export const fixture = Effect.fn('TrustTest.fixture')(function* () {
   const database = yield* Database
@@ -275,6 +319,8 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     ]),
   )
   const now = yield* Clock.currentTimeMillis
+  // Ada's Integration: removed with her by the cleanup above, through its Person cascade.
+  const connectionId = yield* ownIntegration(database, first.id, now)
   yield* database.run(
     database.insert(threads).values([
       {
@@ -339,22 +385,29 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     companyId,
     otherId,
     vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId) } satisfies Actor,
+    /** A write through Ada's own Integration, which exists for as long as this case does. */
+    connectionAction: actionThrough(connectionId),
+    /** What that action was prepared against: the Integration as it is signed in now. */
+    bound: ApprovalBinding.make({ connectionGeneration: 0, preconditions: [] }),
+    connectionId,
     companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId) } satisfies Actor,
     summary: summaryOf(first),
   }
 })
 
-export const connectionAction = ProposedAction.make({
-  summary: 'Update a project',
-  rationale: 'Keep work current',
-  effect: 'write',
-  target: ActionTarget.cases.Connection.make({
-    connectionId: ConnectionId.make('test-connection'),
-    account: 'Work account',
-    tool: 'update_project',
-    input: { project: 'private tool value' },
-  }),
-})
+/** A write through the named Integration; each fixture makes its own (`fixture().connectionAction`). */
+export const actionThrough = (connectionId: ConnectionId) =>
+  ProposedAction.make({
+    summary: 'Update a project',
+    rationale: 'Keep work current',
+    effect: 'write',
+    target: ActionTarget.cases.Connection.make({
+      connectionId,
+      account: 'Work account',
+      tool: 'update_project',
+      input: { project: 'private tool value' },
+    }),
+  })
 export const desktopAction = ProposedAction.make({
   summary: 'Type the file name',
   rationale: 'Inspect work',
@@ -365,7 +418,7 @@ export const desktopAction = ProposedAction.make({
 })
 export const JudgmentMode = Judgment
 
-// Run records and Flue history, for tests of what the reviewer is shown as the Person's request.
+// Run records and conversation history for tests of what the reviewer sees as the Person's request.
 
 const encodeOrigin = encodeStored(StoredRunOrigin, 'Run origin')
 
@@ -395,6 +448,10 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
         state: run.working ? 'working' : 'completed',
         startedAt: index + 1,
         admittedAt: index + 1,
+        receipt: {
+          runId: testRunId(threadId, run.id),
+          submissionId: String(testSubmissionId(testRunId(threadId, run.id))),
+        },
       })),
     ),
   )
@@ -402,12 +459,61 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
 
 /** A test Run id, or the real derived id when the name is already one (an answer's Run). */
 export const testRunId = (threadId: ThreadId, name: string) =>
-  RunId.make(name.startsWith('sub_ik_') ? name : `${threadId}-${name}`)
+  RunId.make(name.startsWith('run_') ? name : `${threadId}-${name}`)
 
-/** One finished text part, as Flue's history holds a message's words. */
+/** Stable Person-local submission numbers let historical fixture messages join their saved receipts. */
+export const testSubmissionId = (id: string) =>
+  RuntimeSubmissionId.make(
+    Number.parseInt(NodeCrypto.createHash('sha256').update(id).digest('hex').slice(0, 12), 16) + 1,
+  )
+
+const HistoryMessage = Schema.Struct({
+  id: Schema.optionalKey(Schema.String),
+  role: Schema.String,
+  purpose: Schema.optionalKey(Schema.String),
+  display: Schema.optionalKey(Schema.String),
+  submissionId: Schema.optionalKey(Schema.String),
+  signal: Schema.optionalKey(
+    Schema.Struct({
+      tagName: Schema.String,
+      attributes: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ),
+  parts: Schema.Array(Schema.Json),
+})
+
+const decodeHistoryMessage = Schema.decodeUnknownResult(HistoryMessage)
+
+/** Fixture wire messages use the canonical runtime projection, including its required display fields. */
+export const historyMessage = (
+  input: Schema.Json | typeof HistoryMessage.Encoded,
+  index: number,
+) => {
+  // A malformed fixture cannot exercise the canonical history boundary.
+  const message = Result.getOrThrow(decodeHistoryMessage(input))
+  return {
+    ...message,
+    id: message.id === undefined ? `message-${index}` : message.id,
+    purpose: message.purpose === undefined ? message.role : message.purpose,
+    display: message.display === undefined ? 'visible' : message.display,
+    submissionId:
+      message.submissionId === undefined
+        ? undefined
+        : String(testSubmissionId(message.submissionId)),
+    signal:
+      message.signal === undefined
+        ? undefined
+        : {
+            ...message.signal,
+            attributes: message.signal.attributes === undefined ? {} : message.signal.attributes,
+          },
+  }
+}
+
+/** One finished text part of a message. */
 export const textPart = (value: string) => [{ type: 'text', text: value, state: 'done' }]
 
-/** A delivery as Flue's history projects it: a signal carries its tag, a private turn none. */
+/** A projected delivery. A signal carries its tag; a private turn carries none. */
 export const delivery = (threadId: ThreadId, run: string, tagName: string | null, value: string) =>
   tagName === null
     ? {
@@ -425,7 +531,7 @@ export const delivery = (threadId: ThreadId, run: string, tagName: string | null
       }
 
 export const history = (
-  messages: ReadonlyArray<unknown>,
+  messages: ReadonlyArray<Schema.Json | typeof HistoryMessage.Encoded>,
   settled: ReadonlyArray<string> = [],
   incarnation = 'test-runtime-incarnation',
 ) => ({
@@ -437,8 +543,13 @@ export const history = (
           JSON.stringify({
             v: 1,
             incarnation,
-            messages,
-            settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
+            messages: messages.map(historyMessage),
+            working: false,
+            queued: 0,
+            settlements: settled.map((id) => ({
+              submissionId: String(testSubmissionId(id)),
+              outcome: 'completed',
+            })),
           }),
           {
             headers: { 'content-type': 'application/json' },

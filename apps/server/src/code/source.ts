@@ -11,9 +11,9 @@ import {
 } from '@vivid/contracts'
 import { stretches } from '@vivid/contracts/display'
 import { Cache, Context, Duration, Effect, Exit, Layer, Option, Schema } from 'effect'
-import { HttpClientResponse } from 'effect/http'
 import { FeedStore } from '../feed/store.ts'
 import { Runtime } from '../runtime/client.ts'
+import { readThreadHistory } from '../runtime/history.ts'
 import { requireThread } from '../threads/access.ts'
 import type { Database, DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -21,20 +21,6 @@ import type { Database, DatabaseInfrastructureError } from '../database/client.t
  * message forces a new fetch and failed reads are never cached. */
 const HISTORY_FRESHNESS = Duration.seconds(2)
 
-/** Flue identifies final assistant responses by their submission's durable settlement. */
-const History = Schema.Struct({
-  incarnation: Schema.String,
-  messages: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      role: Schema.String,
-      submissionId: Schema.optional(Schema.String),
-      parts: Schema.Array(Schema.Json),
-    }),
-  ),
-  settlements: Schema.Array(Schema.Struct({ submissionId: Schema.String })),
-})
-const decodeHistory = HttpClientResponse.schemaBodyJson(History)
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }))
 const refusal = { message: DisplayProgramRefused.fields.message.literal }
 const Program = Schema.Struct({ ...RunCodeRequest.fields, kind: DisplayToolKind })
@@ -107,26 +93,21 @@ function declarations(text: string) {
 
 /** Read and decode once per burst; no response body or HTTP resource escapes its scope. */
 const readHistory = Effect.fn('Code.readDisplayHistory')(function* (thread: ThreadId) {
-  const response = yield* (yield* Runtime).read({
-    threadId: thread,
-    suffix: '',
-    search: '?view=history',
-    accept: 'application/json',
-  })
-  if (response.status !== 200)
-    return yield* new RuntimeUnavailable({ message: 'Display response could not be read' })
-  return yield* decodeHistory(response).pipe(
-    Effect.mapError(() => new RuntimeUnavailable({ message: 'Display response is invalid' })),
-  )
+  return yield* readThreadHistory(yield* Runtime, thread)
 }, Effect.scoped)
 
 /**
- * Resolve against one short-lived active projection, including its incarnation and settlement.
- * Flue can replace or remove a response without changing incarnation, so snapshots must expire.
+ * Resolve against a short-lived canonical projection and its settlement.
+ * Replies may change or disappear, so cached snapshots must expire.
  */
 const messagePrograms = Effect.fn('Code.messagePrograms')(function* (
   source: typeof DisplaySource.cases.ThreadMessage.Type,
-  histories: Cache.Cache<ThreadId, typeof History.Type, RuntimeUnavailable, Runtime>,
+  histories: Cache.Cache<
+    ThreadId,
+    Effect.Success<ReturnType<typeof readHistory>>,
+    Effect.Error<ReturnType<typeof readHistory>>,
+    Effect.Services<ReturnType<typeof readHistory>>
+  >,
 ) {
   const cached = yield* Cache.get(histories, source.thread)
   // A snapshot from just before this reply's submission began lacks the message and shows nothing

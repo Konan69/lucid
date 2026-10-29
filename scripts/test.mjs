@@ -45,7 +45,7 @@ function contentReader() {
 
 /**
  * Everything one module loads, from Vitest's own transform of it: static and dynamic imports as
- * Vite resolved them, so aliases, package exports and plugin-made modules (Flue's Markdown) are
+ * Vite resolved them, so aliases, package exports and plugin-made modules are
  * followed exactly as the test run follows them. This is the walk `vitest --changed` does
  * (vitest 5.0.1 dist/chunks/index, `getAffectedModules`), kept forward instead of reversed.
  * Dependencies inside `node_modules` are not followed; the lockfile stands for them.
@@ -211,7 +211,9 @@ async function packageInputs(project, closure, read) {
     NodePath.join(repositoryRoot, file),
   )
   const settings = Object.entries(process.env)
-    .filter(([name]) => /^(VIVID_TEST_|VIVID_LIVE_|EXPLABS_API_KEY$|OPENCODE_API_KEY$)/u.test(name))
+    .filter(([name]) =>
+      /^(VIVID_TEST_|VIVID_LIVE_|OPENROUTER_API_KEY$|OPENCODE_API_KEY$)/u.test(name),
+    )
     // Neither changes what a test does: the address differs per run, and "run everything"
     // must write the same records a selective run reads.
     .filter(([name]) => name !== 'VIVID_TEST_DATABASE_URL' && name !== 'VIVID_TEST_ALL')

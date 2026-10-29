@@ -2,11 +2,34 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeEvents from 'node:events'
-import { hosts } from './hosts.mjs'
+import { hosts, pc } from './hosts.mjs'
 
-const [action, alias] = process.argv.slice(2)
+const [action, alias, ...rest] = process.argv.slice(2)
+if (alias === pc.alias) {
+  if (!['attach', 'status'].includes(action)) throw new Error('verify android attach|status pc')
+  process.exit(await local(action, rest))
+}
 if (!Object.hasOwn(hosts, alias) || !['provision', 'stop', 'status'].includes(action))
-  throw new Error('verify android provision|stop|status <devbox-pick alias>')
+  throw new Error('verify android provision|stop|status <devbox-pick alias> | attach|status pc')
+
+/** The PC needs no SSH: install the cached phone tools here, then record the running Windows
+ * emulator. Nothing is started, so nothing here is ever stopped. */
+async function local(verb, extra) {
+  const run = async (file, args) => {
+    const child = NodeChildProcess.spawn(
+      'python3',
+      [new URL(file, import.meta.url).pathname, ...args],
+      { stdio: ['ignore', 'inherit', 'inherit'] },
+    )
+    const [code] = await NodeEvents.once(child, 'close')
+    return code === null ? 1 : code
+  }
+  if (verb === 'attach') {
+    const code = await run('./tools.py', [])
+    if (code !== 0) return code
+  }
+  return run('./attach.py', [verb, pc.machineId, ...extra])
+}
 
 /** Boat's proxy has truncated transfers. Check the entire stdin payload before interpreting it,
  * and repeat the sandbox check for every SSH invocation, including the tool bootstrap. */

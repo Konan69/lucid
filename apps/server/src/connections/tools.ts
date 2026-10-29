@@ -1,5 +1,6 @@
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
+  ApprovalBinding,
   ActionTarget,
   AnotherAccountMessage,
   ConnectionRequestMessage,
@@ -45,6 +46,8 @@ import { relevantTools, relevantToolsWithin, RELEVANCE_BUDGET } from './relevanc
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 import { namedAccounts } from './names.ts'
+import { bindDocuments } from '../artifacts/store.ts'
+import { namedDocuments } from '../artifacts/placeholder.ts'
 
 /** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
 const NamedTool = ExecutorTool.pipe(
@@ -579,6 +582,35 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
   return Result.succeed({ row, tool })
 })
 
+/**
+ * The call's input with the Thread's documents it names copied in, or the refusal Vivid reads when
+ * one of them is not there. A document is named within the acting Thread only; a call with no
+ * Thread (a display's) names none.
+ */
+const bindInput = Effect.fn('Connections.bindInput')(function* (actor: Actor, input: Schema.Json) {
+  if (Option.isNone(actor.threadId))
+    return namedDocuments(input).length === 0
+      ? Result.succeed({ input, preconditions: [] })
+      : Result.fail(
+          ToolOutcome.cases.Rejected.make({ message: 'Documents can be named only in a Thread.' }),
+        )
+  return yield* bindDocuments(actor.person.id, actor.threadId.value, input).pipe(
+    Effect.map(Result.succeed),
+    Effect.catchTag('DocumentNotFound', ({ title, titles }) =>
+      Effect.succeed(
+        Result.fail(
+          ToolOutcome.cases.Rejected.make({
+            message:
+              titles.length === 0
+                ? `This Thread has no document titled "${title}", and no documents at all.`
+                : `This Thread has no document titled "${title}". Its documents are: ${titles.join(', ')}.`,
+          }),
+        ),
+      ),
+    ),
+  )
+})
+
 /** Tool refusals are data; permission and effect come from ownership and provider metadata. */
 const useToolAs = Effect.fn('Connections.useTool')(function* (
   actor: Actor,
@@ -612,11 +644,17 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
     return toolAdmissionOutcome(ToolAdmissionRefusal.cases.IntegrationUnavailable.make({}))
   }
+  // A call may name a Thread document where its text goes (`artifacts/placeholder.ts`), because
+  // the model must not paste a body the Person may still revise. The newest text is copied in
+  // here, before the Gate and the digest, so an Approval shows exactly what would be sent and is
+  // bound to the version it was copied from.
+  const bound = yield* bindInput(actor, request.input)
+  if (Result.isFailure(bound)) return bound.failure
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
     account: named.account,
     tool: tool.name,
-    input: request.input,
+    input: bound.success.input,
   })
   const action = ProposedAction.make({
     summary: request.summary,
@@ -624,7 +662,15 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
     effect: tool.effect,
     target,
   })
-  const decision = yield* (yield* Gate).check(actor, action, yield* exposureOf(actor, row))
+  const decision = yield* (yield* Gate).check(
+    actor,
+    action,
+    yield* exposureOf(actor, row),
+    ApprovalBinding.make({
+      connectionGeneration: row.authorizationGeneration,
+      preconditions: bound.success.preconditions,
+    }),
+  )
   return yield* GateDecision.match<ReturnType<typeof runConnection>>(decision, {
     Blocked: ({ rule }) => Effect.succeed(ToolOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>

@@ -1,8 +1,8 @@
-import { SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
+import { PersonName, SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
-import { NoteIndex } from '../notes.ts'
+import { MemoryIndex } from '../memory.ts'
 
 /** Creation time is internal naming evidence; instructions remain out of the context catalog. */
 export const ContextSkill = SkillSummary
@@ -26,14 +26,14 @@ export type SavedProcedures = typeof SavedProcedures.Type
 /**
  * What Vivid remembers, as one response sees it.
  *
- * - `Off`: nobody is behind the message, so there is nobody whose notes to read.
- * - `Notes`: the index of the acting Person's notes, which may be empty.
- * - `Unavailable`: the notes exist but could not be read. This is told to the model as such; it
+ * - `Off`: nobody is behind the message, so there is nobody whose memory to read.
+ * - `Memory`: the index of the acting Person's memory, which may be empty.
+ * - `Unavailable`: the memory exists but could not be read. This is told to the model as such; it
  *   is never shown as an empty index, which would read as "you know nothing about this Person".
  */
 export const Remembered = Schema.TaggedUnion({
   Off: {},
-  Notes: { index: NoteIndex },
+  Memory: { index: MemoryIndex },
   Unavailable: {},
 })
 export type Remembered = typeof Remembered.Type
@@ -59,6 +59,8 @@ export const VividContext = Schema.Struct({
   integrations: Schema.Array(Schema.String),
   /** What Vivid is called where this Person is working; "Vivid" until someone renames it. */
   name: VividName,
+  /** The acting Person's plain name, absent when no valid name could be read through Me. */
+  person: Schema.Option(PersonName),
 })
 export interface VividContext extends Schema.Schema.Type<typeof VividContext> {}
 

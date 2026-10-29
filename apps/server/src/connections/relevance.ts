@@ -4,11 +4,11 @@ import { decideWithin, DECISION_QUESTION_LIMIT, DecisionUnavailable } from '../d
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './effects.ts'
 
 /** A 0.3 score promotes plausible necessary steps; lower scores retain lexical order
- * and remain discoverable. Experiential Labs gateway, jev-latest, 4 Oct 2026: a forged-marker
+ * and remain discoverable. jev-latest, 4 Oct 2026: a forged-marker
  * self-promotion scored 0.02 versus 0.89 for the honest necessary tool. This threshold affects
  * ordering only; neither candidate is excluded. */
 export const TOOL_RELEVANCE_THRESHOLD = 0.3
-/** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
+/** jev-latest, 4 Oct 2026, one process and ten warm calls:
  * twenty questions at 500 characters took first=828ms, warm min/median/max=662/818/1304ms;
  * input/output tokens=5024/374 on every call. 1800ms gives 496ms (38%) above the warm
  * maximum. findTools caps its wait at the remaining two-second optional-work

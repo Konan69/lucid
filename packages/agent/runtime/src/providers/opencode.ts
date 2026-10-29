@@ -5,19 +5,13 @@ import {
   type StreamOptions,
 } from '@earendil-works/pi-ai'
 import { Option } from 'effect'
-import { setProvider } from '@flue/runtime'
-import { budgeted } from './budget.ts'
+import { witnessed } from './budget.ts'
 
 /**
  * Vivid's model provider: OpenCode Go, the subscription gateway to open models
  * (https://opencode.ai/docs/go/). Its GLM, Kimi, DeepSeek and MiMo models speak OpenAI's Chat
  * Completions at one base address with one key (`OPENCODE_API_KEY`, the name Pi 0.87.1 itself
  * reads for `opencode-go` in `env-api-keys.js`), so `VIVID_MODEL` is `opencode-go/<id>`.
- *
- * It replaced the Experiential Labs gateway as the default on 11 October 2026. That evening the
- * old gateway answered the same request with `400 invalid_request` four times in ten, each after
- * ten seconds, and a Person got no reply; OpenCode Go answered that request eight times in eight.
- * `explabs.ts` stays declared, so `VIVID_MODEL` can still name a model there.
  *
  * A model Vivid may be pointed at is declared below with the limits Pi needs to run it. To use
  * another of Go's Chat Completions models, add it here with its id exactly as `GET /v1/models`
@@ -75,9 +69,9 @@ const forSession = <Given extends Sessioned>(options: Option.Option<Given>) =>
 
 const requests: ProviderStreams = {
   stream: (model, context, options) =>
-    budgeted.stream(model, context, forSession(Option.fromUndefinedOr(options))),
+    witnessed.stream(model, context, forSession(Option.fromUndefinedOr(options))),
   streamSimple: (model, context, options) =>
-    budgeted.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
+    witnessed.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
 }
 
 /** The same production provider is exercised through its public streaming seam in tests. */
@@ -89,5 +83,3 @@ export const provider = createProvider({
   models: [glm('glm-5.3-flash', 'GLM 5.3 Flash'), glm('glm-5.3', 'GLM 5.3')],
   api: requests,
 })
-
-setProvider(provider)

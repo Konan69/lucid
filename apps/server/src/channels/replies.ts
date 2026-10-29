@@ -73,7 +73,7 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
 
   /**
    * Claim before sending: crashes, partial sends and timeouts remain unknown and are never retried.
-   * Spectrum 12.10.1 cannot deduplicate caller keys. Flue's coalesced response identity is claimed
+   * Spectrum 12.10.1 cannot deduplicate caller keys. The runtime's coalesced response identity is claimed
    * once across joined Runs; app Runs have no route. Proven no-dispatch outcomes are not-sent.
    */
   const ended = Effect.fn('Channels.replyEnded')(function* (event: ChannelEnding) {

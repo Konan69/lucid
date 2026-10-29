@@ -1,8 +1,11 @@
 import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
+import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
+import { cellVariables, cellsUrl, railwayCells } from './cells.ts'
+import { cellInputs } from './inputs.ts'
 import { repository } from './github.ts'
 import type { DeploymentTarget } from './targets.ts'
 
@@ -16,11 +19,10 @@ const serviceNames = {
   database: 'vivid-postgres',
   executor: 'vivid-executor',
   helix: 'vivid-helix',
-  runtime: 'vivid-runtime',
   server: 'vivid-server',
 } as const
 
-const ports = { executor: 8080, helix: 8080, runtime: 5173, server: 8787 } as const
+const ports = { executor: 8080, helix: 8080, server: 8787 } as const
 
 /** Private mesh address of a service; never reachable from the public internet. */
 const privateUrl = (name: string, port: number) => `http://${name}.railway.internal:${port}`
@@ -31,16 +33,13 @@ const privateUrl = (name: string, port: number) => `http://${name}.railway.inter
  */
 const listenHost = '::'
 
-/** Where the runtime's volume is mounted; each Person's notes are one SQLite file in it. */
-const memoryPath = '/var/lib/vivid/memory'
-
 /**
- * The server and the runtime are built by Railway from this repository, on a push to `main`
+ * The server is built by Railway from this repository, on a push to `main`
  * (Railway's GitHub trigger; `alchemy/src/Railway/ServiceProvider.ts`, `syncBranch`). Before
  * 7 October 2026 a person ran the deploy, which uploaded a working tree for Railway to build, so
- * production held `main` only when someone had remembered to. Everything after the upload was
- * Railway's already and still is: it builds each Dockerfile, the server's image exports the phone
- * app's update, and the server's pre-deploy command migrates.
+ * production held `main` only when someone had remembered to. Railway builds the server's
+ * Dockerfile, the server's image exports the phone
+ * app's update, and the server's pre-deploy command migrates and publishes the Worker.
  *
  * Railway's GitHub app must be able to read the repository; that was proved on a disposable
  * project before this was written. A push is deployed without this stack seeing it, so nothing
@@ -48,7 +47,7 @@ const memoryPath = '/var/lib/vivid/memory'
  * off `main`. Railway can also wait for GitHub's checks, which do not run for this repository
  * today.
  *
- * Each service is given what its image is built from as `watchPatterns` (the two lists below),
+ * The server is given what its image is built from as `watchPatterns` (the list below),
  * so a push that changes none of it starts no build there (Railway "Watch Paths":
  * gitignore-style, from the repository's root). `scripts/infra-verify.mjs` fails when a
  * Dockerfile copies a path its service does not watch.
@@ -60,31 +59,12 @@ const builtFromMain = {
 } as const
 
 /**
- * What the runtime's image is built from (`packages/agent/runtime/Dockerfile`). A push to the
- * server, the web app or the phone app alone leaves the runtime running. The phone's native
- * Markdown view is the exception: it is a tarball in `apps/mobile/deps` that the lockfile names, so
- * the runtime's install reads it.
- */
-const runtimeInputs = [
-  '/packages/**',
-  '/patches/**',
-  '/apps/*/package.json',
-  '/apps/mobile/deps/**',
-  '/package.json',
-  '/pnpm-lock.yaml',
-  '/pnpm-workspace.yaml',
-  '/tsconfig.base.json',
-  '/tsconfig.hermes.json',
-  '/hermes.d.ts',
-  '/.dockerignore',
-]
-
-/**
  * What the server's image is built from (`apps/server/Dockerfile`). The phone app is here
  * because this image exports its update, and the desktop app's shared sources because the web
  * app's build reads them.
  */
 const serverInputs = [
+  ...cellInputs(),
   '/apps/server/**',
   '/apps/web/**',
   '/apps/mobile/**',
@@ -93,6 +73,7 @@ const serverInputs = [
   '/packages/**',
   '/patches/**',
   '/scripts/migrate.mjs',
+  '/infra/cli.mjs',
   '/scripts/sentry-upload.mjs',
   '/package.json',
   '/pnpm-lock.yaml',
@@ -179,12 +160,12 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
 })
 
 /**
- * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
+ * The hosted product on Railway: product PostgreSQL, native cells on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
  *
- * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
+ * The Person cell holds memory and Executor owns Integrations (`docs/24-executor-scale.md`).
  * Programs Vivid writes need nothing in this graph: they run on the Person's Computer, which the
  * server reaches through its Computer provider (`docs/19-infrastructure.md`).
  */
@@ -221,11 +202,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     return url.toString()
   })
 
-  /**
-   * Helix holds the memory graph on disk. The image and data path are the ones the local stack
-   * runs. The image runs as an unprivileged user and a fresh Railway volume is owned by root, so
-   * `RAILWAY_RUN_UID` makes the data directory writable without changing the image.
-   */
+  /** Migration reads the old memory once. Retain both resources until a follow-up removes their declarations. */
   const helix = yield* Railway.Service('Helix', {
     project,
     name: serviceNames.helix,
@@ -237,8 +214,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       HELIX_HTTP_ADDR: `[::]:${ports.helix}`,
       RAILWAY_RUN_UID: '0',
     },
-  })
-  yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' })
+  }).pipe(RemovalPolicy.retain())
+  yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' }).pipe(
+    RemovalPolicy.retain(),
+  )
 
   /**
    * Executor's hosted shape, as its self-host guide deploys it on Railway
@@ -266,7 +245,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
       /**
        * Executor fetches an address a Person gives it, from a network that also holds the
-       * database and Helix. These three keep it to public addresses: no loopback, no plain-HTTP
+       * database. These three keep it to public addresses: no loopback, no plain-HTTP
        * exceptions, no private ranges or internal names for an app's own requests. Upstream
        * enforces them at connection time, after DNS (`packages/utils/src/url-policy.ts`), so a
        * name that later resolves inward is refused too. The server may declare
@@ -301,54 +280,18 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
 
   /**
-   * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
-   * Person's notes: one SQLite file each (`packages/agent/runtime/src/notes.ts`), which sits beside
-   * the runtime because that is the part of Vivid that later runs on the Person's own device. The
-   * volume below holds them across deployments, and `VIVID_MEMORY_DIR` is what turns notes on.
-   *
-   * The image runs as `node` and a fresh Railway volume is owned by root, so `RAILWAY_RUN_UID`
-   * makes the directory writable without changing the image, as it does for Helix. One volume
-   * means exactly one runtime instance.
+   * Keep the existing logical id and mount path so the first cell deploy preserves every notes
+   * SQLite file. Volume.ts permits a disconnected volume; Plan.ts sees no service dependency.
+   * ServiceProvider.ts deletes only the old service, leaving this retained volume declared.
    */
-  const runtime = yield* Railway.Service('Runtime', {
+  yield* Railway.Volume('RuntimeMemory', {
     project,
-    name: serviceNames.runtime,
-    ...builtFromMain,
-    watchPatterns: runtimeInputs,
-    dockerfilePath: 'packages/agent/runtime/Dockerfile',
-    port: ports.runtime,
-    publicDomain: false,
-    healthcheckPath: '/health',
-    /** Bare Node runs the bundled workspace sources; a retained dashboard command cannot bypass it. */
-    startCommand: 'node packages/agent/runtime/dist/server.mjs',
-    /** Flue migrates its own schema at startup; clear any inherited pre-deploy command. */
-    preDeploy: { command: null },
-    env: {
-      DATABASE_URL: databaseUrl,
-      HOST: listenHost,
-      PORT: String(ports.runtime),
-      /** The runtime answers with OpenCode Go; the old gateway's key keeps its models selectable. */
-      OPENCODE_API_KEY: environment.openCodeKey,
-      ...Option.match(environment.openRouterKey, {
-        onNone: () => ({}),
-        onSome: (key) => ({ OPENROUTER_API_KEY: key }),
-      }),
-      EXPLABS_API_KEY: environment.modelGatewayKey,
-      VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-      VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),
-      VIVID_MODEL: environment.model,
-      VIVID_MEMORY_DIR: memoryPath,
-      RAILWAY_RUN_UID: '0',
-    },
-  })
-  yield* Railway.Volume('RuntimeMemory', { project, service: runtime, mountPath: memoryPath })
+    mountPath: '/var/lib/vivid/memory',
+  }).pipe(RemovalPolicy.retain())
 
-  /**
-   * Server and Runtime are independent graph nodes. Resource.ts:Resource registers them;
-   * Apply.ts:executePlan reconciles siblings concurrently and executeNode collects failures
-   * without cancelling peers. Literal private URLs preserve this independence: Server health,
-   * auth, migrations and static routes do not require Runtime to become healthy.
-   */
+  const storage = yield* railwayCells(project, target)
+
+  /** The server keeps product PostgreSQL and relays private runtime calls to the native fleet. */
   const server = yield* Railway.Service('Server', {
     project,
     name: serviceNames.server,
@@ -363,9 +306,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /**
      * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
-     * deployment serving.
+     * deployment serving. The matching Worker is published before the new server takes traffic.
      */
-    preDeploy: { command: 'node scripts/migrate.mjs' },
+    preDeploy: {
+      command: 'node scripts/migrate.mjs server && node apps/cells/scripts/build.mjs deploy',
+    },
     env: {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,
@@ -376,10 +321,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
        * domain does not exist until the service does, so it cannot be a resource output here.
        */
       PUBLIC_URL: 'https://${{RAILWAY_PUBLIC_DOMAIN}}',
-      VIVID_RUNTIME_URL: privateUrl(serviceNames.runtime, ports.runtime),
+      ...storage,
+      VIVID_CELL_VARS: cellVariables(environment, privateUrl(serviceNames.server, ports.server)),
+      VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-      EXPLABS_API_KEY: environment.modelGatewayKey,
-      VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
+      OPENROUTER_API_KEY: environment.openRouterKey,
       ...computerAccess(environment),
       ...executorAccess(environment),
       ...textingAccess(environment),

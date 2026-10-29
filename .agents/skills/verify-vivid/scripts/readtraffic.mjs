@@ -2,6 +2,7 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeEvents from 'node:events'
 import { ThreadDetail, ThreadId } from '@vivid/contracts'
 import { Option, Result, Schema } from 'effect'
+import { RpcSerialization } from 'effect/rpc'
 import { decode } from './wire.mjs'
 
 const Response = Schema.Union([
@@ -62,7 +63,7 @@ function incoming(value, socket, observed) {
     const request = observed.requests.get(socket + '/' + chunk.value.requestId)
     if (request === undefined || request.tag !== 'WatchThread') return
     for (const item of chunk.value.values) {
-      const detail = decode(ThreadDetail, item)
+      const detail = decode(RpcSerialization.ndjson.codecFor(ThreadDetail), item)
       observed.events.push({
         kind: 'standing',
         thread: detail.thread.id,

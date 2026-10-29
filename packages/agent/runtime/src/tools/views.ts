@@ -1,7 +1,6 @@
 import * as Arr from 'effect/Array'
 import {
   AnotherAccountMessage,
-  MemoryScope,
   type BrowseResult,
   type DesktopView,
   type ConnectionOffer,
@@ -9,7 +8,6 @@ import {
   type Service,
   type InputRequest,
   type LibrarySearchResult,
-  type Memory,
   type Skill,
   type SkillSummary,
 } from '@vivid/contracts'
@@ -75,25 +73,6 @@ export function tools(response: FindToolsResponse) {
   }
 }
 
-/** Scope and provenance are human concepts; Thread scope already carries its accessible title. */
-export function memories(items: readonly Memory[]) {
-  return items.map((item) => ({
-    kind: item.kind,
-    content: modelText(item.content),
-    about: MemoryScope.match(item.scope, {
-      Person: () => 'this Person',
-      Company: () => 'the whole Company',
-      Thread: ({ title }) => `the Thread “${modelText(title)}”`,
-    }),
-    learnedFrom: modelText(item.learnedFrom.name),
-  }))
-}
-
-/** A saved fact needs confirmation, not a reference the model can mutate later. */
-export function remembered(item: Memory) {
-  return { ok: true, remembered: modelText(item.content) }
-}
-
 /** Citations are source filenames and page numbers rather than storage references. */
 export function passages(items: readonly (typeof LibrarySearchResult.Type)[]) {
   return items.map((item) => ({
@@ -134,9 +113,7 @@ export function desktop(item: DesktopView) {
   }
 }
 
-/** Flue 2.1 custom tools stringify the same output stored in client history (conversation-stream-store).
- * These three card references are the sole exception: defineTool has no separate content/details API.
- * Web/mobile require these exact fields to render and answer the server-owned card. */
+/** Card references keep the exact fields web and phone clients need to draw and answer them. */
 export function inputRequest(item: InputRequest) {
   return {
     kind: 'input-request',

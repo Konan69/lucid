@@ -59,7 +59,7 @@ const written = Effect.fn('Inputs.validateWritten')(function* (
  * the question it answers, without ids or positions: an answer can reach Vivid in the middle of
  * other work, or after other questions, so it must say what it answers. Codex does the same with
  * `AnsweredQuestion` (`codex-rs/context-fragments/src/answered_question.rs`, openai/codex
- * b5115cdd), whose plain form quotes the question with `> `; Flue escapes `>` inside a signal
+ * b5115cdd), whose plain form quotes the question with `> `; the runtime escapes `>` inside a signal
  * (it reached the model as `&gt;`), so each pair is two labelled lines instead, the question kept
  * to one line. The complete text is persisted in the owed signal, so replay cannot change it.
  */

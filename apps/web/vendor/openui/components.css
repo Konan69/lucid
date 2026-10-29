@@ -146,8 +146,8 @@
 
 /* The hover and selection rings are outlines drawn inside the tile (painted over
    its content), so a scrolling row, a clipped Box or a Table cell never cuts them off. */
-.iui-pressable { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: var(--iui-radius-lg); cursor: pointer; outline: 1px solid transparent; outline-offset: -1px; transition: outline-color .15s, background-color .15s; }
-.iui-pressable:hover { outline-color: var(--iui-border-strong); }
+.iui-pressable { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: var(--iui-radius-lg); cursor: pointer; outline: 1px solid var(--iui-border-strong); outline-offset: -1px; transition: outline-color .15s, background-color .15s; }
+.iui-pressable:hover { outline-color: var(--iui-faint); }
 .iui-pressable.is-selected { outline: 2px solid var(--iui-ring); outline-offset: -2px; }
 .iui-pressable[aria-disabled="true"] { cursor: default; }
 .iui-pressable:focus-visible { outline: 2px solid var(--iui-focus) !important; outline-offset: -2px !important; }

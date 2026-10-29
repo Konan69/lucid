@@ -8,7 +8,7 @@ import {
   type Theme,
   mayChangeAppearance,
 } from '@vivid/contracts'
-import { channelWords } from '@vivid/state'
+import { channelWords, naming } from '@vivid/state'
 import { Data, Effect, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView, Switch, View } from 'react-native'
@@ -19,6 +19,7 @@ import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { running, version, writeMoment } from '../data/running'
 import { serverName } from '../data/server'
+import { openNaming, useNaming } from '../data/name'
 import { leaveAtom } from '../data/signing'
 import { reports } from '../data/telemetry'
 import { useAppearance } from '../data/vivid'
@@ -33,6 +34,7 @@ import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
 import { Record } from './settings/Record'
 import { Devices } from './settings/Devices'
+import { Name } from './settings/Name'
 import { Rules } from './settings/Rules'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
@@ -68,7 +70,7 @@ const IN_PLACE = [
 ] as const satisfies ReadonlyArray<{ title: string; detail: string; over: Over }>
 
 /**
- * Settings: the Person's own preferences and what Vivid has kept about them, which are the same
+ * Settings: the Person's name and own preferences and what Vivid has kept about them, which are the same
  * on every device; this phone's connection; what belongs to the workspace they are working in;
  * and the way out.
  */
@@ -81,6 +83,8 @@ export function Settings() {
   const close = () => setOver(Over.Nothing())
   const flow = useFlow()
   const setSearch = useAtomSet(data.serviceSearch)
+  // The name sheet is the session's naming machine, not one of the sheets in `over`.
+  const renaming = useNaming()
 
   /**
    * Opens the Integrations page as a new visit. The search is the session's, so the catalog's
@@ -116,6 +120,12 @@ export function Settings() {
             leading={<Avatar name={me.person.name} image={pictureOf(me.person)} size={40} />}
             title={me.person.name}
             detail={me.person.email}
+          />
+          <Row
+            title="Your name"
+            detail="What Vivid calls you, and what others see beside your messages."
+            wrap
+            onPress={() => openNaming(data)}
           />
           <Row
             title="What Vivid knows"
@@ -157,6 +167,7 @@ export function Settings() {
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
       {Over.$is('Rules')(over) && <Rules onClose={close} />}
       {Over.$is('Record')(over) && <Record onClose={close} />}
+      {naming.isOpen(renaming) && <Name current={me.person.name} />}
     </Screen>
   )
 }

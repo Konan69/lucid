@@ -46,6 +46,7 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
+import { unbound } from '../approvals/action.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
   isOutage,
@@ -1455,7 +1456,13 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
   const origin = yield* actionOrigin(actor)
   if (BrowseTarget.guards.Person(request.target) && !ActionOrigin.guards.Run(origin))
     return BrowseOutcome.cases.RunRequired.make({})
-  const decision = yield* gate.check(actor, action, yield* browserExposure(actor, request.target))
+  // A browser step is not bound to the page it acts on: no page here has a revision to compare.
+  const decision = yield* gate.check(
+    actor,
+    action,
+    yield* browserExposure(actor, request.target),
+    unbound,
+  )
   return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => Effect.succeed(BrowseOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
@@ -1517,7 +1524,7 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     effect: desktopEffect(request.action),
     target: ActionTarget.cases.Desktop.make({ action: request.action }),
   })
-  const decision = yield* gate.check(actor, action, 'Ordinary')
+  const decision = yield* gate.check(actor, action, 'Ordinary', unbound)
   return yield* GateDecision.match<Effect.Effect<DesktopOutcome, DatabaseInfrastructureError>>(
     decision,
     {

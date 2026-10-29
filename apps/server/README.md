@@ -71,14 +71,14 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 
 - **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
   No SSH key is configured: each connection to a Computer makes its own.
-- **Memory:** HelixDB at `VIVID_HELIX_URL`, with embeddings through the model gateway.
+- **Memory:** the acting Person's cell, reached through the runtime client. Settings reads and edits the same memory Vivid uses.
 - **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY` and
   `VIVID_EXECUTOR_ORGANIZATION`. Account references are in PostgreSQL; Executor holds credentials.
 - **Texting:** Photon. `VIVID_PHOTON_PROJECT_ID` and `VIVID_PHOTON_PROJECT_SECRET`.
 - **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
   `VIVID_PUSH_SUBJECT`.
 - **Models:** replies come from OpenCode Go in the runtime (`OPENCODE_API_KEY`); the server's own
-  calls (memory, embeddings, decisions) use the Experiential Labs gateway, `EXPLABS_API_KEY`. Vivid adds no model retry layer.
+  title and decision calls use OpenRouter, `OPENROUTER_API_KEY`.
 - **Sign-in with Google:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI`.
 
 There is no server that runs without one of them, and no local stand-in for any of them. What can

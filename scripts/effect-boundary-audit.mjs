@@ -44,6 +44,7 @@ export function isProductionTypeScript(relativePath) {
   if (/\.d\.[cm]?ts$/u.test(relativePath)) return false
   return (
     relativePath.startsWith('apps/server/src/') ||
+    relativePath.startsWith('apps/cells/src/') ||
     // `packages/<name>/src/` or, inside a group directory, `packages/<group>/<name>/src/`.
     /^packages\/[^/]+(?:\/[^/]+)?\/src\//u.test(relativePath)
   )
@@ -51,7 +52,10 @@ export function isProductionTypeScript(relativePath) {
 
 /** List files deterministically so reports and allowlist checks are stable across machines. */
 export function productionFiles(root = repositoryRoot) {
-  const roots = [NodePath.join(root, 'apps', 'server', 'src')]
+  const roots = [
+    NodePath.join(root, 'apps', 'server', 'src'),
+    NodePath.join(root, 'apps', 'cells', 'src'),
+  ]
   const packagesRoot = NodePath.join(root, 'packages')
   // A package is `packages/<name>` or, inside a group directory, `packages/<group>/<name>`.
   for (const entry of NodeFS.readdirSync(packagesRoot, { withFileTypes: true })) {
@@ -129,6 +133,7 @@ function identifierName(node) {
 function keyName(node) {
   if (node.computed) return undefined
   if (node.key.type === 'Identifier') return node.key.name
+  if (node.key.type === 'PrivateIdentifier') return `#${node.key.name}`
   return node.type === 'Property' && !isMethod(node) && isStringLiteral(node.key)
     ? node.key.value
     : undefined

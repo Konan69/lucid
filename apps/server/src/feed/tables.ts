@@ -17,7 +17,7 @@ export const feedCards = pgTable(
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
-    words: text('words').notNull(),
+    words: text('words'),
     display: text('display'),
     actions: jsonb('actions').notNull(),
     state: text('state').$type<FeedCardState>().notNull(),

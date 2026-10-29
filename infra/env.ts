@@ -24,15 +24,11 @@ export class InfrastructureEnvironmentError extends Schema.TaggedError<Infrastru
 export interface InfrastructureEnvironment {
   readonly authSecret: Redacted.Redacted
   readonly runtimeToken: Redacted.Redacted
-  readonly modelGatewayKey: Redacted.Redacted
   /** OpenCode Go, which the runtime answers with (`packages/agent/runtime/src/providers/opencode.ts`). */
   readonly openCodeKey: Redacted.Redacted
-  /** OpenRouter, which answers when the other two gateways cannot (`providers/openrouter.ts`).
-   * Sent only when the deploy has one: it is needed only while `VIVID_MODEL` names OpenRouter. */
-  readonly openRouterKey: Option.Option<Redacted.Redacted>
+  /** OpenRouter supplies the server models and declared runtime models. */
+  readonly openRouterKey: Redacted.Redacted
   readonly model: string
-  /** Server model provider, validated by the server. Absent keeps its existing default. */
-  readonly serverModelProvider: Option.Option<string>
   /** Sign-in with Google: the client's id and secret and the address Google sends a Person back to. */
   readonly google: GoogleAccess
   /**
@@ -47,7 +43,7 @@ export interface InfrastructureEnvironment {
   /**
    * Whether Jev makes Vivid's small judgements (`VIVID_DECISIONS` in
    * `apps/server/src/decisions/model.ts`). Absent means the server's own default, which is off.
-   * It needs no key of its own: decisions go through the model gateway with `EXPLABS_API_KEY`.
+   * It needs no key of its own: decisions go through the model gateway with `OPENROUTER_API_KEY`.
    */
   readonly decisions: Option.Option<string>
   /** Who sees the Discord Integration (`VIVID_DISCORD_PEOPLE` in
@@ -144,14 +140,12 @@ const optionalSecret = (name: string) =>
 export const loadInfrastructureEnvironment = Effect.gen(function* () {
   const authSecret = yield* requiredSecret('AUTH_SECRET')
   const runtimeToken = yield* requiredSecret('VIVID_RUNTIME_TOKEN')
-  const modelGatewayKey = yield* requiredSecret('EXPLABS_API_KEY')
   const openCodeKey = yield* requiredSecret('OPENCODE_API_KEY')
-  const openRouterKey = yield* optionalSecret('OPENROUTER_API_KEY')
+  const openRouterKey = yield* requiredSecret('OPENROUTER_API_KEY')
   const model = yield* Config.String('VIVID_MODEL').pipe(
     Config.withDefault('opencode-go/glm-5.3-flash'),
     Effect.mapError(() => environmentError('VIVID_MODEL')),
   )
-  const serverModelProvider = yield* optionalString('VIVID_SERVER_MODEL_PROVIDER')
   const google: GoogleAccess = {
     clientId: yield* requiredString('GOOGLE_CLIENT_ID'),
     clientSecret: yield* requiredSecret('GOOGLE_CLIENT_SECRET'),
@@ -200,11 +194,9 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
   return {
     authSecret,
     runtimeToken,
-    modelGatewayKey,
     openCodeKey,
     openRouterKey,
     model,
-    serverModelProvider,
     google,
     executor,
     texting,

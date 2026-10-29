@@ -6,6 +6,7 @@ import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
+import { host, provider, selection } from './settings.mjs'
 import * as NodeChildProcess from 'node:child_process'
 import {
   root,
@@ -19,6 +20,7 @@ import {
   dependencyLink,
   checkout,
   capacity,
+  lock,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
 const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
@@ -26,16 +28,15 @@ const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
 /** The CLI always selects a run it created, never any ordinary application instance. */
 async function selected() {
   const run =
-    args.find((arg) => arg.startsWith('flue-')) ??
+    args.find((arg) => arg.startsWith('pi-')) ??
     (await NodeFSP.readFile(cache + '/current', 'utf8').catch(() => '')).trim()
-  if (!run || !/^flue-[a-z0-9-]+$/.test(run))
+  if (!run || !/^pi-[a-z0-9-]+$/.test(run))
     throw new Error('No verification run; execute verify launch')
   return JSON.parse(await NodeFSP.readFile(cache + '/' + run + '/state.json', 'utf8'))
 }
 
 /** Recover only abandoned recorded resources, then capture unique ownership before spawning. A live run is a conflict. */
 async function launch() {
-  const { host, provider } = await import('./settings.mjs')
   const hostReceipt = await host()
   await NodeFSP.mkdir(cache, { recursive: true })
   await recoverPrevious(cache)
@@ -45,18 +46,18 @@ async function launch() {
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
   const run =
-    'flue-' +
-    new Date().toISOString().replace(/[^0-9]/g, '') +
-    '-' +
-    crypto.randomUUID().slice(0, 8)
+    'pi-' + new Date().toISOString().replace(/[^0-9]/g, '') + '-' + crypto.randomUUID().slice(0, 8)
   const evidence = cache + '/' + run
   const scratch = evidence + '/instance'
   const ports = await freePorts([
     'database',
-    'helix',
     'server',
     'web',
     'runtime',
+    'runtimePeer',
+    'runtimeOperator',
+    'runtimePeerOperator',
+    'bucket',
     'executor',
     'catalog',
   ])
@@ -78,7 +79,6 @@ async function launch() {
     keySource: modelConfig.source,
     hostname: NodeOS.hostname(),
     boot,
-    helixContainer: 'vivid-verify-helix-' + run,
     executorExporter: 'vivid-verify-exporter-' + run,
     ready: false,
     cleaned: false,
@@ -93,10 +93,10 @@ async function launch() {
   if (
     existing &&
     (!existing.isSymbolicLink() ||
-      (await NodeFSP.readlink(dependencies)) !== root + '/apps/server/node_modules')
+      (await NodeFSP.readlink(dependencies)) !== root + '/packages/agent/runtime/node_modules')
   )
     throw new Error('Verification dependency link is not ours')
-  if (!existing) await NodeFSP.symlink(root + '/apps/server/node_modules', dependencies)
+  if (!existing) await NodeFSP.symlink(root + '/packages/agent/runtime/node_modules', dependencies)
   const log = await NodeFSP.open(evidence + '/supervisor.log', 'a', 0o600)
   let child
   // A failed spawn, identity capture or readiness step must not retain the provider handoff.
@@ -106,7 +106,7 @@ async function launch() {
     })
     child = NodeChildProcess.spawn(
       process.execPath,
-      [skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
+      ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
       {
         cwd: root,
         detached: true,
@@ -117,6 +117,7 @@ async function launch() {
           COREPACK_HOME:
             process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
           COREPACK_ENABLE_NETWORK: '0',
+          VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD,
         },
       },
     )
@@ -150,7 +151,9 @@ async function launch() {
 
 try {
   if (action === 'launch') await launch()
-  else if (action === 'apk')
+  else if (action === 'apk') {
+    // The heavy lock lives in the checkout's cache, which only Launch created before.
+    await NodeFSP.mkdir(NodePath.dirname(lock), { recursive: true })
     console.log(
       await command(
         [
@@ -163,14 +166,19 @@ try {
         { heavy: true },
       ),
     )
-  else if (action === 'help')
+  } else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | feature all|first|reload|tool|question|approve|deny|stop|picture|code|document|watch|library|feed|devices|discord|github | browser <feature> | desktop | phone thread | android provision|stop|status <devbox> | cleanup | sign-in | create-thread | chat | history | stop\nOptional flue-… run ID selects retained run manifest. Evidence: .cache/verify/flue-…/',
+      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|stop|picture|code|document|watch|library|feed|devices|discord|github|learning|name | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()
     if (action === 'doctor') await doctor(state)
-    else if (action === 'cleanup') {
+    else if (action === 'cell') {
+      const [operation = 'state', role = 'runtime', scope] = args.filter(
+        (arg) => !arg.startsWith('pi-'),
+      )
+      console.log(JSON.stringify(await control(state, { action: 'cell', operation, role, scope })))
+    } else if (action === 'cleanup') {
       const result = await recover(state)
       console.log(JSON.stringify(result))
       await dependenciesCleanup()
@@ -182,7 +190,24 @@ try {
       const snapshot = await checkout()
       if (snapshot.tree !== state.tree || snapshot.diffHash !== state.diffHash)
         throw new Error('Working tree changed; launch again')
-      if (action === 'feature')
+      if (action === 'behaviour') {
+        console.log(
+          await command(
+            [
+              process.execPath,
+              '--import',
+              loader,
+              skill + '/scripts/behaviour.mjs',
+              state.evidence + '/state.json',
+              ...args.filter((arg) => !arg.startsWith('pi-')),
+            ],
+            {
+              heavy: true,
+              record: (process) => control(state, { action: 'capture', process }),
+            },
+          ),
+        )
+      } else if (action === 'feature')
         console.log(
           await command(
             [
@@ -191,7 +216,7 @@ try {
               loader,
               skill + '/scripts/drive.mjs',
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
+              args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
             ],
             {
               heavy: true,
@@ -212,12 +237,12 @@ try {
               loader,
               skill + '/scripts/phone.mjs',
               state.evidence + '/state.json',
-              args.find((arg) => !arg.startsWith('flue-')) ?? 'thread',
+              args.find((arg) => !arg.startsWith('pi-')) ?? 'thread',
             ],
             {
               heavy: true,
               log: state.evidence + '/phone-command.json',
-              env: { ...process.env, VIVID_VERIFY_DEVBOX: state.devbox },
+              env: { ...process.env, ...selection(state) },
               record: (process) => control(state, { action: 'capture', process }),
             },
           ),
@@ -248,7 +273,7 @@ try {
               loader,
               skill + '/scripts/browser.mjs',
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('flue-'))[0] ?? 'all',
+              args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
             ],
             {
               heavy: true,
@@ -262,7 +287,7 @@ try {
         await manual(
           state,
           action,
-          args.filter((arg) => !arg.startsWith('flue-')),
+          args.filter((arg) => !arg.startsWith('pi-')),
         )
       }
     }

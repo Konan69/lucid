@@ -1,5 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
 import { ConnectionState, ConnectionStep, WatchState, RunOrigin } from '@vivid/contracts'
 import { observe } from './observation.mjs'
@@ -61,8 +62,7 @@ export async function watchRows(state, { table, field, id }, directory, name) {
 
 /** The public live Feed carries the typed delivery receipt. A deadline can fail, never pass. */
 async function posted(state, marker, directory) {
-  const hasMarker = (candidate) =>
-    candidate.post && (candidate.post.title + ' ' + candidate.post.words).includes(marker)
+  const hasMarker = (candidate) => candidate.post && candidate.post.title.includes(marker)
   const feed = await observe(state, {
     tag: 'WatchFeed',
     payload: null,
@@ -92,6 +92,36 @@ export async function connectPulse(state, directory) {
   return integrationOf(state, connected.connection, directory)
 }
 
+/** World apps follow the same public Connect flow as Pulse, including the masked secrets step. */
+export async function connectWorld(state, directory, names = ['Mail', 'Calendar']) {
+  NodeAssert.equal(state.modelKind, 'real', 'World behaviour needs a real model')
+  const integrations = {}
+  for (const name of names) {
+    const service = name.toLowerCase()
+    const services = await rpc(state, 'FindServices', { query: name })
+    NodeAssert.ok(
+      services.services.some((candidate) => candidate.id === service),
+      name + ' not offered',
+    )
+    const begun = await rpc(state, 'BeginConnection', {
+      service,
+      from: 'Web',
+      name: null,
+      shared: false,
+    })
+    NodeAssert.ok(ConnectionStep.guards.EnterKey(begun))
+    const connected = await rpc(state, 'CompleteConnection', {
+      id: begun.connection.id,
+      fields: { code: Redacted.make('world-local') },
+    })
+    NodeAssert.ok(ConnectionState.guards.Ready(connected.connection.state))
+    const target = directory + '/' + service
+    await NodeFSP.mkdir(target, { recursive: true })
+    integrations[name] = await integrationOf(state, connected.connection, target)
+  }
+  return integrations
+}
+
 /** Observe the dedicated app Vivid claimed, after either HTTP or browser Connect. */
 export async function integrationOf(state, connection, directory) {
   const rows = await watchRows(
@@ -111,7 +141,7 @@ export async function integrationOf(state, connection, directory) {
 
 /** Only the model makes the Watch. Its durable tool calls must include discovery and subscription. */
 export function watchWords(marker) {
-  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker} and words containing the event's receipt and words. Do not emit any event yourself. Confirm when the Watch is active.`
+  return `Watch pulse.received in my Verify Pulse Integration. First find its available events, then start one Watch named ${marker}. Every time it fires, post to my Feed with title ${marker}, the event's receipt and words drawn in the card itself and no sentence beside them. Do not emit any event yourself. Confirm when the Watch is active.`
 }
 
 /** An external provider invokes Executor directly, outside every Vivid tool and approval adapter. */
@@ -158,7 +188,9 @@ export async function occurrence(state, { id, integration, marker }, directory) 
     directory,
   )
   const item = await posted(state, marker, directory)
-  NodeAssert.ok(item.post.words.includes(receipt), 'Feed item did not include the provider receipt')
+  // The card is the drawing: a drawn post, whose display holds the receipt, with no words or bar.
+  NodeAssert.equal(item.post._tag, 'Drawn', 'Feed card was said in words, not drawn')
+  NodeAssert.ok(item.post.display.includes(receipt), 'Feed display did not draw the receipt')
   const detail = await settled(state, item.thread, 1, 'Completed', directory)
   NodeAssert.ok(RunOrigin.guards.Watch(detail.runs[0].origin))
   NodeAssert.equal(item.thread, threadFor(watching.id, receipt))

@@ -294,8 +294,8 @@ for (const [ruleName, invalid, valid, filename] of cases) {
           .length,
         0,
       )
-      const flueBoundary = 'defineTool({ async run() { return Effect.runPromise(program) } })'
-      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, flueBoundary)).length, 0)
+      const toolBoundary = 'defineTool({ async run() { return Effect.runPromise(program) } })'
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, toolBoundary)).length, 0)
     }
 
     if (ruleName === 'no-platform-runtime-runmain-in-library') {

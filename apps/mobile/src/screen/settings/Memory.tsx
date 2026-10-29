@@ -1,16 +1,14 @@
-import {
-  MemoryScope,
-  type Memory as MemoryRecord,
-  type MemoryId,
-  type MemoryListResponse,
-} from '@vivid/contracts'
-import { Data, Effect, Option, Result } from 'effect'
-import { useState } from 'react'
+import { useAtomSet, useAtomValue } from '@effect/atom-react'
+import type { MemoryLine, SavedMemory } from '@vivid/contracts'
+import { makeWhen, remembering, thisReader } from '@vivid/state'
+import { useState, type ReactNode } from 'react'
 import { ScrollView, View } from 'react-native'
+import { openWebLink } from '../../data/links'
 import { warn } from '../../data/haptics'
-import { LiveState, useLive, useLiveData } from '../../data/live'
-import { Screen } from '../../ui/Screen'
+import { useLiveData } from '../../data/live'
 import { Row, Section } from '../../ui/List'
+import { Prose } from '../../ui/Prose'
+import { Screen } from '../../ui/Screen'
 import { Sheet } from '../../ui/Sheet'
 import {
   Button,
@@ -23,270 +21,302 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
-import { start } from '../../data/app'
 
-/** The most a memory's sentence can hold, as `CorrectMemoryRequest` in the contract checks it. */
-const SENTENCE_LIMIT = 1000
+const when = makeWhen(thisReader())
 
-/**
- * Where a memory came from and who can have it recalled, in the web app's words
- * (`apps/web/src/screen/settings/Memory.tsx`): a new scope fails to compile here.
- */
-const where = (memory: MemoryRecord) =>
-  MemoryScope.match(memory.scope, {
-    Person: () => 'About you',
-    Company: () => 'The whole company knows',
-    Thread: ({ title }) => `From “${title}”`,
-  })
+/** The most a remembered sentence can hold, as `MemoryEntry` in the contract checks it. */
+const SENTENCE_LIMIT = 200
 
-/** The line under a memory: where it came from, and the Person it was learned from. */
-const provenance = (memory: MemoryRecord) =>
-  `${where(memory)} · learned from ${memory.learnedFrom.name}`
+/** Whether Vivid was told or worked it out, in the web app's words (`settings/Memory.tsx`). */
+const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
 
-/** The list as it stands once a correction is taken: the same memory, in the new words. */
-const corrected =
-  (id: MemoryId, content: string) =>
-  (known: MemoryListResponse): MemoryListResponse => ({
-    brief: known.brief,
-    memories: known.memories.map((memory) => (memory.id === id ? { ...memory, content } : memory)),
-  })
+type Send = (event: remembering.Sent) => void
 
-/** The list as it stands once a fact is forgotten. The server writes the summary again later. */
-const forgotten =
-  (id: MemoryId) =>
-  (known: MemoryListResponse): MemoryListResponse => ({
-    brief: known.brief,
-    memories: known.memories.filter((memory) => memory.id !== id),
-  })
+/** The line under a remembered sentence: who it came from and when it last changed. */
+const provenance = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, now: number) =>
+  `${BASIS[line.basis]} · ${when(line.updatedAt, now)}`
 
 /**
- * The knowledge Vivid has saved for reference: each fact in a plain sentence, with where it
- * learned it, and the Person can correct or remove any of them. The page at the top is a summary
- * the server writes from those same facts.
+ * What Vivid remembers about the Person, the phone's half of the web app's section of the same
+ * name and on the same machine (`remembering` in `@vivid/state`): the pages Vivid keeps standing,
+ * each whole, then the newest things it remembers, one row each. It is the memory Vivid reads
+ * before every response, read from the Person's cell each time this screen is opened.
  *
- * This is one of Vivid's two kinds of memory and the screen says so. `WatchMemory` returns the
- * knowledge base only (`apps/server/src/memory/handlers.ts`), which Vivid searches when it needs
- * a fact. What is in front of Vivid on every response is the list of its own notes
- * (`packages/agent/runtime/src/context.ts`), and this query does not return those. So nothing
- * here is called everything Vivid knows, the summary is not called what Vivid reads before it
- * answers, and forgetting a fact here is not said to remove it from the notes (docs/25-memory.md).
- *
- * It is the phone's half of the web app's section of the same name, on the same live query. A
- * memory is opened to be changed, the way a Member is in People, because a row on a phone has
- * no room for two buttons beside a sentence.
+ * A row opens in a sheet, the way a Member is opened in People, because a row on a phone has no
+ * room for its whole text and two actions beside it.
  */
 export function Memory() {
   const data = useLiveData()
-  const memory = useLive(data.live.memory)
-  const [open, setOpen] = useState<Option.Option<MemoryRecord>>(Option.none())
-  // A memory is taken off the list the moment it is forgotten and its sheet is already closed, so
-  // a refusal has nowhere to be said but here, above the list the memory came back to.
-  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
-
+  const [visit] = useState(data.memory.begin)
+  const reading = useAtomValue(visit.reading)
+  const send = useAtomSet(visit.send)
+  const [opened] = useState(() => Date.now())
   return (
     <Screen>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[styles.page, styles.column]}
       >
-        <Shown
-          state={memory}
-          refused={refused}
-          onOpen={(item) => {
-            setRefused(Option.none())
-            setOpen(Option.some(item))
-          }}
-        />
+        <Page reading={reading} send={send} now={opened} />
       </ScrollView>
-      {Option.isSome(open) && (
-        <Kept memory={open.value} onClose={() => setOpen(Option.none())} onRefused={setRefused} />
+      {remembering.Remembering.guards.Shown(reading) && (
+        <Opened entry={reading.entry} send={send} now={opened} />
       )}
     </Screen>
   )
 }
 
-/**
- * The live query's three states, kept apart. This screen does not use `ui/Live.tsx` because its
- * failure is not the server's sentence: a failure here is the knowledge base not answering for a
- * while. That is nothing the Person did or can fix, so it is said plainly and not painted as a
- * refusal. It does not say that nothing is lost: a read that failed cannot know that.
- */
-function Shown({
-  state,
-  refused,
-  onOpen,
+type ShownReading = typeof remembering.Remembering.cases.Shown.Type
+
+/** The visit's reading: still on its way, refused, or shown. */
+function Page({
+  reading,
+  send,
+  now,
 }: {
-  state: LiveState<MemoryListResponse>
-  refused: Option.Option<string>
-  onOpen: (memory: MemoryRecord) => void
+  reading: remembering.Remembering
+  send: Send
+  now: number
 }) {
-  return LiveState.$match(state, {
-    Loading: () => <Skeleton rows={4} />,
-    Failed: () => (
+  return remembering.Remembering.match(reading, {
+    Reading: () => <Skeleton rows={4} />,
+    Unread: () => (
       <Card>
-        <Label size="label" tone="ink-2">
-          Unable to load saved knowledge right now. Try again in a moment.
+        <Label selectable size="label" tone="ink-2">
+          Unable to load what Vivid remembers right now.
         </Label>
+        <Button label="Try again" onPress={() => send(remembering.events.Retry())} />
       </Card>
     ),
-    Ready: ({ value }) => <Known known={value} refused={refused} onOpen={onOpen} />,
+    Shown: (shown) => <Shown shown={shown} send={send} now={now} />,
   })
 }
 
-/** Prose inside a Section. The summary is a page to read, not a row to press, so it runs on. */
-function Passage({ children }: { children: string }) {
-  return (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-      <Label selectable size="label" tone="ink-2">
-        {children}
-      </Label>
-    </View>
-  )
-}
+/**
+ * The row under the list, when there is anything older. A function and not a component: a
+ * Section draws a separator above every row it is given, including one that draws nothing.
+ */
+const olderRow = (older: remembering.Older, send: Send) =>
+  remembering.Older.match(older, {
+    None: () => null,
+    Resting: () => <Row title="Show older" onPress={() => send(remembering.events.ShowOlder())} />,
+    Paging: () => <Row title="Showing older…" />,
+    Unpaged: () => (
+      <Row
+        wrap
+        title="Older ones could not be loaded"
+        detail="Tap to try again."
+        onPress={() => send(remembering.events.ShowOlder())}
+      />
+    ),
+  })
 
-/** The summary of the saved knowledge, then each fact it was written from, each one openable. */
-function Known({
-  known,
-  refused,
-  onOpen,
-}: {
-  known: MemoryListResponse
-  refused: Option.Option<string>
-  onOpen: (memory: MemoryRecord) => void
-}) {
-  const brief = known.brief.text.trim()
+/** The standing pages, then the rows, then the way to older ones. */
+function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: number }) {
+  const page = (layer: SavedMemory['layer']) =>
+    shown.standing.filter((standing) => standing.layer === layer)
+  // A row being forgotten leaves the list at once; it comes back if the cell refuses.
+  const lines = remembering.Entry.guards.Forgetting(shown.entry)
+    ? shown.lines.filter((line) => !remembering.isAt(line, remembering.openAddress(shown.entry)))
+    : shown.lines
   return (
     <>
-      <Section title="In short" detail="A summary of the saved knowledge below.">
-        <Passage>
-          {brief.length === 0
-            ? 'Nothing yet. Facts Vivid saves for reference are summed up here.'
-            : brief}
-        </Passage>
-      </Section>
-      {Option.isSome(refused) && <Notice message={refused.value} />}
-      <Section
-        title="Saved knowledge"
-        detail="Facts Vivid can look up. Correct what is wrong, or remove what it should not keep. Vivid’s own notes are not shown here."
-      >
-        {known.memories.length === 0 && <Row title="Nothing saved yet" />}
-        {known.memories.map((item) => (
+      <Pages title="About you" pages={page('person')} />
+      <Pages title="How Vivid reaches you" pages={page('attention')} />
+      <Pages title="Vivid" pages={[...page('self'), ...page('soul')]} />
+      {remembering.Entry.guards.Unforgotten(shown.entry) && (
+        <Notice message="That could not be forgotten, so it is back in the list. Try again." />
+      )}
+      {remembering.Entry.guards.Vanished(shown.entry) && (
+        <Notice message="Vivid no longer remembers that, so it has left the list." />
+      )}
+      <Section title="What Vivid remembers">
+        {lines.length === 0 && (
+          <Row wrap title="When you tell Vivid something that matters later, it shows up here." />
+        )}
+        {lines.map((line) => (
           <Row
-            key={item.id}
+            key={`${line.layer}/${line.file}`}
             wrap
-            title={item.content}
-            detail={provenance(item)}
-            onPress={() => onOpen(item)}
+            title={line.description}
+            detail={provenance(line, now)}
+            onPress={() => send(remembering.events.Open({ line }))}
           />
         ))}
+        {olderRow(shown.older, send)}
       </Section>
     </>
   )
 }
 
-/** How the last attempt to save a correction went. */
-type Saving = Data.TaggedEnum<{ Idle: {}; Asking: {}; Refused: {} }>
-const Saving = Data.taggedEnum<Saving>()
+/** Prose inside a Section. A page is something to read, not a row to press, so it runs on. */
+function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemory> }) {
+  if (pages.length === 0) return null
+  return (
+    <Section title={title}>
+      {pages.map((standing) => (
+        <View key={standing.file} style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Whole text={standing.body} />
+        </View>
+      ))}
+    </Section>
+  )
+}
+
+/** An entry's whole text, in the reply's Markdown. */
+function Whole({ text }: { text: string }) {
+  return (
+    <Prose
+      text={text}
+      plain={text}
+      fresh={false}
+      marks={[]}
+      onLink={(url) => void openWebLink(url)}
+    />
+  )
+}
 
 /**
- * One memory, opened: its sentence in a field to correct, and the way to have Vivid forget it.
- *
- * The words being typed live here until the server takes them. A refused correction leaves the
- * sheet open with the words still in the field and says so; an accepted one closes it. Forgetting
- * asks first, then closes the sheet at once: the memory leaves the list as the question is
- * answered, and comes back with a sentence above the list if the server will not forget it.
- * Forgetting removes the saved fact only; Vivid's own notes are not reached from here.
+ * The entry the Person has open, in a sheet: its whole text with Correct and Forget, or the
+ * correction being written. The sheet is up from the press until the entry is put away; while
+ * it is being forgotten it is down, and the row is gone from the list behind it.
  */
-function Kept({
-  memory,
-  onClose,
-  onRefused,
-}: {
-  memory: MemoryRecord
-  onClose: () => void
-  onRefused: (refusal: Option.Option<string>) => void
-}) {
-  const data = useLiveData()
-  const [draft, setDraft] = useState(memory.content)
-  const [saving, setSaving] = useState<Saving>(Saving.Idle())
-  const content = draft.trim()
-  const asking = Saving.$is('Asking')(saving)
+function Opened({ entry, send, now }: { entry: remembering.Entry; send: Send; now: number }) {
+  const close = () => send(remembering.events.Close())
+  const sheet = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, body: ReactNode) => (
+    <Sheet title="Remembered" detail={provenance(line, now)} onClose={close}>
+      {body}
+    </Sheet>
+  )
+  return remembering.Entry.match(entry, {
+    Closed: () => null,
+    Vanished: () => null,
+    Forgetting: () => null,
+    Unforgotten: () => null,
+    Opening: ({ line }) => sheet(line, <Skeleton rows={2} />),
+    Rereading: ({ entry: open }) => sheet(open, <Skeleton rows={2} />),
+    Unopened: ({ line }) =>
+      sheet(
+        line,
+        <>
+          <Notice message="That could not be opened." />
+          <Button label="Try again" onPress={() => send(remembering.events.Open({ line }))} />
+        </>,
+      ),
+    Open: ({ entry: open }) => sheet(open, <Kept entry={open} moved={false} send={send} />),
+    Moved: ({ entry: open }) => sheet(open, <Kept entry={open} moved send={send} />),
+    Editing: ({ entry: open }) =>
+      sheet(open, <Correcting entry={open} saving={false} refused={false} send={send} />),
+    Saving: ({ entry: open }) =>
+      sheet(open, <Correcting entry={open} saving refused={false} send={send} />),
+    Unsaved: ({ entry: open }) =>
+      sheet(open, <Correcting entry={open} saving={false} refused send={send} />),
+  })
+}
 
-  function correct() {
-    return start(
-      Effect.gen(function* () {
-        setSaving(Saving.Asking())
-        const saved = yield* data.changing(
-          (client) => client.CorrectMemory({ id: memory.id, content }),
-          () => data.live.memory.expect(corrected(memory.id, content)),
-        )
-        if (Result.isSuccess(saved)) onClose()
-        else setSaving(Saving.Refused())
-      }),
-    )
-  }
-
-  function forget() {
-    return start(
-      Effect.gen(function* () {
-        warn()
-        onClose()
-        const result = yield* data.changing(
-          (client) => client.ForgetMemory({ id: memory.id }),
-          () => data.live.memory.expect(forgotten(memory.id)),
-        )
-        onRefused(
-          Result.isFailure(result)
-            ? Option.some('That could not be forgotten, so it is back in the list.')
-            : Option.none(),
-        )
-      }),
-    )
-  }
-
+/** One entry, opened: its whole text, and the two things the Person can do about it. */
+function Kept({ entry, moved, send }: { entry: SavedMemory; moved: boolean; send: Send }) {
   const askToForget = () =>
     confirmDestructive({
       title: 'Forget this?',
-      // Only the saved fact goes. A note of Vivid's own may hold the same thing, and only Vivid
-      // can remove that (`delete_note`), so the Person is told how to ask for it.
-      detail:
-        'This removes it from saved knowledge and cannot be undone. If Vivid still brings it up, ask Vivid to forget it.',
+      detail: 'Vivid stops remembering it. This cannot be undone.',
       action: 'Forget',
-      onConfirm: () => void forget(),
+      onConfirm: () => {
+        warn()
+        send(remembering.events.Forget())
+      },
     })
-
   return (
-    <Sheet title="Saved fact" detail={provenance(memory)} onClose={onClose}>
-      <Labelled label="What Vivid should know">
+    <>
+      {moved && (
+        <Label size="label" tone="ink-2" accessibilityLiveRegion="polite">
+          Vivid changed this while you had it open. This is what it says now.
+        </Label>
+      )}
+      <Label selectable size="label" style={{ fontWeight: '600' }}>
+        {entry.description}
+      </Label>
+      <Whole text={entry.body} />
+      <Button label="Correct" onPress={() => send(remembering.events.Edit())} />
+      <Button kind="danger" label="Forget this" onPress={askToForget} />
+    </>
+  )
+}
+
+/**
+ * A correction being written: the sentence and the whole text, each as the entry has it until
+ * the Person changes it. The words live here and stay while the correction is sent and if it is
+ * refused: the same element draws all three states, so nothing typed is lost between them. What
+ * the Person corrects is something they said.
+ */
+function Correcting({
+  entry,
+  saving,
+  refused,
+  send,
+}: {
+  entry: SavedMemory
+  saving: boolean
+  refused: boolean
+  send: Send
+}) {
+  const [sentence, setSentence] = useState(entry.description)
+  const [body, setBody] = useState(entry.body)
+  const said = sentence.trim()
+  // Nothing to save until both say something, and something other than they did.
+  const ready =
+    said.length > 0 && body.trim().length > 0 && (said !== entry.description || body !== entry.body)
+  const save = () =>
+    send(
+      remembering.events.Save({
+        change: {
+          layer: entry.layer,
+          file: entry.file,
+          kind: entry.kind,
+          description: said,
+          body,
+          basis: 'said',
+        },
+      }),
+    )
+  return (
+    <>
+      <Labelled label="What Vivid remembers">
         <Field
-          accessibilityLabel="What Vivid should know"
-          value={draft}
+          accessibilityLabel="What Vivid remembers"
+          value={sentence}
           maxLength={SENTENCE_LIMIT}
           multiline
-          onChangeText={(next) => {
-            setDraft(next)
-            // The refusal was about the words as they were; new words are a new attempt. A
-            // correction still on its way is left alone, so it cannot be sent twice.
-            if (Saving.$is('Refused')(saving)) setSaving(Saving.Idle())
-          }}
-          style={{ minHeight: 96, textAlignVertical: 'top' }}
+          editable={!saving}
+          onChangeText={setSentence}
+          style={{ minHeight: 72, textAlignVertical: 'top' }}
         />
       </Labelled>
-      {Saving.$is('Refused')(saving) && (
+      <Labelled label="In full">
+        <Field
+          accessibilityLabel="In full"
+          value={body}
+          multiline
+          editable={!saving}
+          onChangeText={setBody}
+          style={{ minHeight: 160, textAlignVertical: 'top' }}
+        />
+      </Labelled>
+      {refused && (
         <Notice message="That correction could not be saved. What you wrote is still here." />
       )}
       <Button
         kind="primary"
-        label={Saving.$match(saving, {
-          Idle: () => 'Save correction',
-          Asking: () => 'One moment…',
-          Refused: () => 'Try again',
-        })}
-        // Nothing to save until the sentence says something, and something other than it did.
-        disabled={asking || content.length === 0 || content === memory.content}
-        onPress={() => void correct()}
+        label={saving ? 'Saving…' : refused ? 'Try again' : 'Save correction'}
+        disabled={saving || !ready}
+        onPress={save}
       />
-      <Button kind="danger" label="Forget this" disabled={asking} onPress={askToForget} />
-    </Sheet>
+      <Button
+        kind="ghost"
+        label="Cancel"
+        disabled={saving}
+        onPress={() => send(remembering.events.Cancel())}
+      />
+    </>
   )
 }

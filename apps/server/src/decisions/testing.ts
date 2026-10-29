@@ -9,8 +9,7 @@ import { serverModelGateway } from '../config.ts'
  * under test is the model's behaviour, not the switch. The key is decoded redacted. */
 export const liveDecisionEnabled =
   NodeProcess.env['VIVID_LIVE_DECISIONS'] === '1' &&
-  (NodeProcess.env['EXPLABS_API_KEY'] !== undefined ||
-    NodeProcess.env['OPENROUTER_API_KEY'] !== undefined)
+  NodeProcess.env['OPENROUTER_API_KEY'] !== undefined
 export const liveDecisionLayer = Layer.unwrap(
   Effect.map(serverModelGateway, (gateway) =>
     gatewayDecisionLayer({ key: gateway.key, url: gateway.url, model: DECISION_MODEL }),

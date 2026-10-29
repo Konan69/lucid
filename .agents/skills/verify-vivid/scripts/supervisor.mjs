@@ -21,6 +21,9 @@ import { remoteCleanup } from './remote.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
 import { executor } from './executor.mjs'
 import { authSecret } from './settings.mjs'
+import { decodeText, RuntimeHealth } from './receipts.mjs'
+import { startCells, cellControl, cellSnapshot } from './cells.mjs'
+import { rpc, history } from './wire.mjs'
 const require = NodeModule.createRequire(root + '/apps/server/package.json')
 const state = JSON.parse(await NodeFSP.readFile(process.argv[2], 'utf8'))
 const children = new Map()
@@ -70,13 +73,16 @@ async function own(role, argv, options = {}) {
     ...options,
   })
   children.set(role, child)
-  child.observed = { data: [], message: [] }
+  const output = []
+  child.observed = { data: output, output, message: [] }
   child.stdout?.on('data', (bytes) => {
     child.observed.data.push(bytes)
+    child.emit('output', bytes)
     log.write(bytes)
   })
   child.stderr?.on('data', (bytes) => {
     child.observed.data.push(bytes)
+    child.emit('output', bytes)
     log.write(bytes)
   })
   child.on('message', (value) => child.observed.message.push(value))
@@ -143,8 +149,10 @@ async function database() {
       'POSTGRES_DB=verify',
       '-p',
       `127.0.0.1:${state.ports.database}:5432`,
+      // TCP, not the socket: the image's first-boot init server answers on the socket only and
+      // then restarts, so a socket check passes before the real server accepts connections.
       '--health-cmd',
-      'pg_isready -U verify -d verify',
+      'pg_isready -h 127.0.0.1 -U verify -d verify',
       '--health-interval',
       '1s',
       '--health-timeout',
@@ -213,60 +221,9 @@ async function serverReady(child) {
   throw new Error('Product server health deadline')
 }
 
-/** Helix has no configured Docker health event. Launch waits for a successful read-only query. */
-async function helix() {
-  state.helixCreated = true
-  await save()
-  await run(
-    [
-      'docker',
-      'run',
-      '--detach',
-      '--name',
-      state.helixContainer,
-      '--label',
-      'vivid.verify=' + state.run,
-      '-e',
-      'HELIX_DATA_DIR=/var/lib/helix',
-      '-e',
-      'HELIX_HTTP_ADDR=0.0.0.0:8080',
-      '-p',
-      `127.0.0.1:${state.ports.helix}:8080`,
-      'ghcr.io/helixdb/helixdb:v0.0.5',
-    ],
-    { heavy: true, log: state.evidence + '/helix-docker.json' },
-  )
-  const { readBatch, g } = await import(require.resolve('@helix-db/helix-db'))
-  const probe = readBatch()
-    .varAs('probe', g().nWithLabel('VerifyReadiness').limit(1))
-    .returning(['probe'])
-    .toQueryJson()
-  const deadline = Date.now() + 60_000
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${state.ports.helix}/v2/query`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: probe,
-        signal: AbortSignal.timeout(2000),
-      })
-      if (response.ok) {
-        await json(state.evidence + '/helix-health.json', {
-          status: response.status,
-          body: await response.text(),
-        })
-        return
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-  throw new Error('Disposable Helix health deadline')
-}
-
 async function launch() {
   await ownReceipt()
   await database()
-  await helix()
   state.web = `http://127.0.0.1:${state.ports.web}`
   state.server = `http://127.0.0.1:${state.ports.server}`
   const executorEnv = await executor(state, { run, own, save, cleanEnv })
@@ -284,12 +241,10 @@ async function launch() {
     VIVID_TEST_DATABASE_URL: databaseUrl(),
     AUTH_SECRET: authSecret,
     PORT: String(state.ports.server),
-    VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime}`,
+    VIVID_RUNTIME_URL: `http://127.0.0.1:${state.ports.runtime},http://127.0.0.1:${state.ports.runtimePeer}`,
     VIVID_SERVER_URL: state.server,
     VIVID_RUNTIME_TOKEN: token,
-    VIVID_MEMORY_DIR: state.scratch + '/memory',
     VIVID_MODEL: state.model,
-    VIVID_HELIX_URL: `http://127.0.0.1:${state.ports.helix}`,
     VIVID_BUILD_COMMIT: state.head,
     VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
     VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
@@ -315,28 +270,21 @@ async function launch() {
     },
   )
   await serverReady(serverChild)
-  await run([process.execPath, skill + '/scripts/build.mjs', state.scratch], {
-    cwd: root + '/packages/agent/runtime',
-    env,
-    heavy: true,
-    log: state.evidence + '/build.json',
-  })
-  await NodeFSP.symlink(
-    root + '/packages/agent/runtime/node_modules',
-    state.scratch + '/runtime/node_modules',
+  await startCells(
+    state,
+    { run, own, save, cleanEnv },
+    {
+      ...provider,
+      VIVID_RUNTIME_TOKEN: token,
+      VIVID_SERVER_URL: state.server,
+      VIVID_MODEL: state.model,
+    },
   )
-  const runtime = await own('runtime', [process.execPath, state.scratch + '/runtime/server.mjs'], {
-    cwd: state.scratch,
-    env: { ...env, PORT: String(state.ports.runtime) },
-  })
-  await signal(runtime, runtime.stdout, 'data', (bytes) =>
-    bytes.toString().includes('[flue] Server listening'),
-  )
-  const runtimeHealth = await fetch(env.VIVID_RUNTIME_URL + '/health')
-  const runtimeValue = await runtimeHealth.json()
+  const runtimeHealth = await fetch(`http://127.0.0.1:${state.ports.runtime}/health`)
+  const runtimeValue = decodeText(RuntimeHealth, await runtimeHealth.text())
   await json(state.evidence + '/runtime-health.json', runtimeValue)
-  if (runtimeValue.model !== state.model || runtimeValue.status !== 'ok')
-    throw new Error('Selected runtime health refused')
+  if (!runtimeHealth.ok || runtimeValue.service !== 'vivid-cells' || runtimeValue.status !== 'ok')
+    throw new Error('Native Worker health refused')
   await run([process.execPath, skill + '/scripts/dev.mjs', 'build', state.scratch], {
     cwd: root + '/apps/web',
     env: { ...cleanEnv, VIVID_SERVER_URL: state.server },
@@ -357,6 +305,13 @@ async function launch() {
   const webHealth = await fetch(state.web + '/health')
   if (!(await webHealth.json()).ok) throw new Error('Proxy health refused')
   await signedIn()
+  const probe = state.evidence + '/cell-activation'
+  await NodeFSP.mkdir(probe)
+  const thread = crypto.randomUUID()
+  await rpc(state, 'CreateThread', { id: thread, title: 'Cell activation', projectId: null }, probe)
+  await history(state, thread, probe)
+  await json(probe + '/fleet.json', await cellSnapshot(state))
+  state.cellProbe = thread
   state.ready = true
   state.launchSeconds = (Date.now() - Date.parse(state.started)) / 1000
   await save()
@@ -410,7 +365,16 @@ async function clean() {
     await terminate(owned, 'SIGTERM', true)
     await closed
   }
-  for (const role of ['browser-tunnel', 'web', 'runtime', 'server', 'catalog', 'executor-events']) {
+  for (const role of [
+    'browser-tunnel',
+    'web',
+    'runtime',
+    'runtime-peer',
+    'bucket',
+    'server',
+    'catalog',
+    'executor-events',
+  ]) {
     const child = children.get(role)
     if (!child || child.exitCode !== null || child.signalCode !== null) continue
     try {
@@ -429,12 +393,9 @@ async function clean() {
     }
   }
   const containers = (await run(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
-  for (const container of [
-    state.container,
-    state.helixContainer,
-    state.executorContainer,
-    state.executorExporter,
-  ].filter(Boolean)) {
+  for (const container of [state.container, state.executorContainer, state.executorExporter].filter(
+    Boolean,
+  )) {
     if (containers.includes(container)) {
       try {
         const label = await run([
@@ -512,6 +473,10 @@ async function dispatch(input) {
     await save()
     return { captured: true }
   }
+  if (input.action === 'cell') {
+    if (cleaning || !state.ready) throw new Error('Verification is not ready for cell controls')
+    return cellControl(state, { run, own, save, cleanEnv, children }, input)
+  }
   if (input.action === 'cleanup') {
     await cleanup()
     return { cleaned: true }
@@ -552,10 +517,6 @@ try {
   await launch()
 } catch (error) {
   await json(state.evidence + '/launch-failure.json', { error: error.stack })
-  if (state.helixCreated)
-    await run(['docker', 'logs', state.helixContainer], {
-      log: state.evidence + '/helix.log.json',
-    }).catch(() => {})
   if (process.connected) process.send({ ready: false, error: error.message })
   await cleanup()
   control.close()

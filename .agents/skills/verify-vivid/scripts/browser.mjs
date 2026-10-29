@@ -1,18 +1,24 @@
+import { approve, changed, deny } from './approval.mjs'
+import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import * as assert from 'node:assert/strict'
 import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
-import { rpc, settled, history, chat } from './wire.mjs'
-import { features } from './drive.mjs'
+import { rpc, settled, history, chat, conversation } from './wire.mjs'
+import { features, stop, png } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
-import { noteBrowser } from './notebrowser.mjs'
+import { learningBrowser, memoryBrowser } from './memorybrowser.mjs'
+import { nameBrowser } from './namebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
+import { owedBrowser } from './owedbrowser.mjs'
+import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
+import { libraryBrowser } from './librarybrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -43,25 +49,34 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  question: 'No browser recipe for the multi-question controls yet',
-  picture: 'No browser recipe for the composer file input yet',
-  approve: 'No connected disposable Integration to produce a pending Approval',
-  deny: 'No connected disposable Integration to produce a pending Approval',
-  stop: 'No reproducible active Run recipe yet',
   code: 'No disposable Person Computer authority',
-  library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
 }
 const recipes = {
+  approve: { check: 'approve' },
+  deny: { check: 'deny' },
+  changed: { check: 'changed' },
+  question: { check: 'question' },
+  stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
-  notes: { check: 'notes' },
+  name: { check: 'name' },
+  memory: { check: 'memory' },
+  learning: { check: 'learning' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
+  owed: { check: 'owed' },
+  todos: { check: 'todos' },
   replies: { check: 'replies' },
-  first: { phrase: 'Hello Vivid. Reply with one short sentence.', check: 'reply' },
+  library: { check: 'library' },
+  first: {
+    phrase:
+      'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
+    check: 'reply',
+  },
+  picture: { phrase: 'Hello Vivid with a picture. Acknowledge briefly.', check: 'picture' },
   reload: {
     phrase: 'What verification marker did I ask you to remember? Reply with the marker only.',
     check: 'reload',
@@ -80,6 +95,38 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  learning: {
+    drive: learningBrowser,
+    scope:
+      'Composer fact, native learner completion, one surviving memory entry and new-Thread recall through the web.',
+  },
+  library: {
+    drive: libraryBrowser,
+    scope:
+      'File-picker upload, worker readiness, original-file tab, search, real model citation and reload',
+  },
+  approve: {
+    drive: approve,
+    scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
+  },
+  deny: {
+    drive: deny,
+    scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
+  },
+  changed: {
+    drive: changed,
+    scope:
+      'Real Verify Pulse ask over a document, Person revision, stale card, fresh ask, Allow and reload',
+  },
+  question: {
+    drive: question,
+    scope: 'Real model question card, actual choice, Decision Run continuation and reload',
+  },
+  stop: {
+    drive: stopBrowser,
+    scope:
+      'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
+  },
   watch: {
     drive: watchBrowser,
     scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
@@ -94,6 +141,16 @@ const specialRecipes = {
     scope:
       'Device permission controls only; see scope.json. No model, Feed delivery or Watch generation claim.',
   },
+  todos: {
+    drive: todosBrowser,
+    scope:
+      'To-dos added and ticked off from the composer, shown on the web Feed, a row ticked off by its check and absent after reload; see scope.json.',
+  },
+  owed: {
+    drive: owedBrowser,
+    scope:
+      'Waiting-on row tracked from the composer, shown on the web Feed, resolved by its check and absent after reload; see scope.json.',
+  },
   feed: {
     drive: feedBrowser,
     scope:
@@ -104,10 +161,15 @@ const specialRecipes = {
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
   },
+  name: {
+    drive: nameBrowser,
+    scope:
+      'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
+  },
   settings: {
     drive: settingsBrowser,
     scope:
-      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
+      'Personal Settings groups, current memory index rendered before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
   },
 }
 for (const name of features)
@@ -128,6 +190,40 @@ function replyCount(text) {
 /** The same presence assertion must reject the pre-follow-up DOM and pass after rendering. */
 function requireReply(count) {
   assert.equal(count, 1, 'Expected exactly one assistant message with the exact reply')
+}
+
+/** The shared Stop proof uses the actual composer control. Exact rendered text waits for the
+ * web's reveal to finish before reload, so animation timing cannot truncate the comparison. */
+async function stopBrowser(state, id, directory, client) {
+  const page = await stop(state, id, directory, client)
+  const text = page.messages
+    .filter((message) => message.purpose === 'assistant')
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n\n')
+  for (const stage of ['stopped', 'reloaded']) {
+    if (stage === 'reloaded') await client.run(['reload'])
+    await client.run(['wait', '[aria-label="Message Vivid"]'])
+    await exactReply(client.run, text, directory, stage)
+    assert.equal(
+      await dom(client.run, `Boolean(document.querySelector('button[aria-label="Stop"]'))`),
+      false,
+    )
+    await client.capture(stage)
+  }
+  const reopened = await history(state, id, directory, 'browser-reloaded-history')
+  assert.equal(reopened.working, false, 'Browser reload restarted the conversation')
+  assert.equal(reopened.queued, 0)
+  assert.deepEqual(reopened.settlements, page.settlements)
+  assert.deepEqual(
+    reopened.messages.map((message) => ({ id: message.id, parts: message.parts })),
+    page.messages.map((message) => ({ id: message.id, parts: message.parts })),
+  )
+  const detail = await rpc(state, 'GetThread', { id }, directory, 'browser-reloaded-thread')
+  assert.equal(detail.runs.length, 1, 'Browser reload created another Run')
+  assert.equal(detail.runs[0].state._tag, 'Stopped')
+  assert.equal(detail.runs[0].submissionId, page.settlements[0].submissionId)
 }
 
 /** Retain counts at each DOM boundary so HTTP history cannot substitute for visible replies. */
@@ -175,6 +271,18 @@ async function rendered(run, kind) {
         )
       break
     }
+    case 'picture': {
+      await run([
+        'wait',
+        '--fn',
+        `Array.from(document.images).some(image => image.src.includes('/attachments/') && image.complete && image.naturalWidth > 0)`,
+      ])
+      await run([
+        'eval',
+        `JSON.stringify(Array.from(document.images).filter(image => image.src.includes('/attachments/')).map(image => ({ src: image.src, width: image.naturalWidth, height: image.naturalHeight })))`,
+      ])
+      break
+    }
     case 'document': {
       // Since 26 October 2026 a Thread draws no step rows (the owner: "tool call spam ... the user
       // doesn't need to see this"): the reply is Vivid's bubbles, and the document's receipt is
@@ -195,6 +303,19 @@ async function rendered(run, kind) {
     default:
       throw new Error('Unknown rendered assertion ' + kind)
   }
+}
+
+/** Reload on admitted work. A provider may publish its text only in the terminal frame, so
+ * waiting for a text chunk first can consume the entire reply and miss a valid reconnect. */
+async function reloadStreaming(state, id, directory, run) {
+  for await (const active of conversation(state, id, { directory, name: 'before-reload-stream' })) {
+    assert.equal(active.settlements.length, 0, 'Reply settled before mid-stream reload')
+    if (!active.working || !active.messages.some((message) => message.role === 'user')) continue
+    await json(directory + '/midstream.json', active)
+    await run(['reload'])
+    return active
+  }
+  throw new Error('No streamed reply to reload')
 }
 
 /** Read daemon identities from this run's private namespace, then capture its Chrome descendants. */
@@ -263,14 +384,21 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    feature === 'notes' && state.modelKind !== 'real'
-      ? 'Notes requires a real model; rehearsal cannot prove Notes tools.'
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(
+      feature,
+    ) && state.modelKind !== 'real'
+      ? feature + ' requires a real model.'
       : missing[feature]
-  if (reason) {
+  const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
+  if (reason || stopBlocked) {
     const verdict = {
       ...base,
       verdict: 'blocked',
-      reason: missing[feature] ? 'no browser recipe: ' + reason : reason,
+      reason: stopBlocked
+        ? 'Stop requires a real model; rehearsal cannot prove interruption.'
+        : missing[feature]
+          ? 'no browser recipe: ' + reason
+          : reason,
     }
     await json(directory + '/verdict.json', verdict)
     console.log(JSON.stringify(verdict))
@@ -354,15 +482,19 @@ async function journey(state, feature) {
     }
     await run(['wait', '[aria-label="Message Vivid"]'])
     if (feature in specialRecipes) {
-      await specialRecipes[feature].drive(state, id, directory, { run, capture })
+      await specialRecipes[feature].drive(state, id, directory, {
+        run,
+        capture,
+        exactReply: (text, stage) => exactReply(run, text, directory, stage),
+      })
       verdict = {
         ...base,
         verdict: state.modelKind === 'rehearsal' ? 'plumbing-only' : 'proved',
         thread: id,
         scope: specialRecipes[feature].scope,
       }
-    } else if (feature === 'notes') {
-      await noteBrowser(state, id, directory, {
+    } else if (feature === 'memory') {
+      await memoryBrowser(state, id, directory, {
         run,
         capture,
         render: (text) => dom(run, renderedReply(text)),
@@ -373,7 +505,7 @@ async function journey(state, feature) {
         verdict: 'proved',
         thread: id,
         scope:
-          'Notes tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
+          'Memory tools through the web composer and reload; see scope.json. No owner lifecycle or server restart claim.',
       }
     } else {
       if (existing) {
@@ -398,9 +530,23 @@ async function journey(state, feature) {
       const phrase =
         state.modelKind === 'rehearsal' && recipe.rehearsal ? recipe.rehearsal : recipe.phrase
       await run(['find', 'label', 'Message Vivid', 'fill', phrase])
+      if (feature === 'picture') {
+        await fs.writeFile(directory + '/pixel.png', Buffer.from(png, 'base64'))
+        await run(['upload', 'input[type=file]', directory + '/pixel.png'])
+        await run(['wait', 'button[aria-label="Take off pixel.png"]'])
+      }
       await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+      const interrupted =
+        feature === 'first' ? await reloadStreaming(state, id, directory, run) : undefined
       await settled(state, id, feature === 'reload' ? 2 : 1, 'Completed', directory)
       const page = await history(state, id, directory)
+      if (interrupted) {
+        for (const message of interrupted.messages)
+          assert.ok(
+            page.messages.some((saved) => saved.id === message.id),
+            'Reload lost a streamed entry',
+          )
+      }
       const replies = page.messages.filter((m) => m.role === 'assistant')
       assert.ok(
         replies.some((m) => m.parts.some((p) => p.type === 'text' && p.text.trim())),
@@ -442,7 +588,9 @@ async function journey(state, feature) {
             ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
             : feature === 'reload'
               ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
-              : 'send and rendered reply before and after reload',
+              : feature === 'first'
+                ? 'reload during admitted model work, same entries, completed reply and reload'
+                : 'composer send, rendered content and reload',
       }
     }
   } catch (error) {

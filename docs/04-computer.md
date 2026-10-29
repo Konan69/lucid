@@ -2,6 +2,13 @@
 
 2026-10-03: The Boat implementation and real-service proof below supersede the earlier Grok Bot mapping; runtime placement, external state sync, egress through a Person’s device and takeover remain planned. Provider prices/specifications record the earlier research, not a fresh quote; current status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
+The chosen conversation host is now [one celld Person cell](27-runtime-cells.md), with a native
+Pi Durable Harness over Durable Object SQLite. celld owns activation, ownership, and idle
+lifecycle; Pi owns durable execution. Cell integration and real product proof are in progress.
+The Computer remains the server-authorized place for files, programs, browser, and desktop work.
+Earlier Flue and on-Computer runtime passages below describe historical implementations or
+longer-term exploration, not prerequisites for the cell host.
+
 2026-10-04: Boat is the only Computer provider; the local Docker desktop stand-in and its image are removed.
 
 ## Thesis
@@ -555,18 +562,15 @@ not known; the file steps can only have been the new tools.
 - Why sending is slow through the endpoint, and whether it is as slow on a machine with its own
   IPv4 address.
 
-## Runtime on the Computer: planned
+## Runtime placement
 
-**Status: native browser and desktop backend built; runtime placement and external state sync planned.**
-The browser and desktop now share Boat’s shipped guest. Flue never runs on the Computer. What
-will run there is the runtime that replaces Flue, pi Durable (decided 4 October 2026); moving it
-onto the machine is a separate step. The intended shape follows.
+The chosen host is the Person cell, not the Computer. See [Runtime cells](27-runtime-cells.md)
+for storage and lifecycle ownership. The Computer is not yet reliable enough to hold conversation
+history. Host, Notes, infrastructure, and verification integration are still unproven.
 
-The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
-— `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
-identity, and desktop. Its ordinary POSIX disk is live truth." A harness hands the agent fragments
-and asks it to reassemble a workspace each time. This does the opposite: one machine, always there,
-with the agent's process inside it.
+The earlier on-Computer proposal explored keeping the agent beside its working files. It remains
+longer-term research and does not change the current cell decision. The remaining browser and
+access considerations below still apply to Computer tools.
 
 The browser is part of that machine, not a tool bolted beside it. It runs as a real, signed-in
 profile on the Computer's desktop — the same browser a person would use, with the same cookies and
@@ -595,9 +599,9 @@ sessions, reachable for human takeover.
 
 ### Ordering
 
-`docs/09-platform-architecture.md` sets the sequence and it still holds: run one real agent loop,
-prove durability across a restart, _then_ give it the real machine. The Computer lands on a backend
-whose auth and scoping are already verified — not beside one.
+Prove the cell-backed agent loop, durable history, and server authorization through the real
+product. Computer tools retain the existing server boundary while runtime hosting changes;
+there is no requirement to deploy the discarded PG runtime first.
 
 ## The Person's own browser
 

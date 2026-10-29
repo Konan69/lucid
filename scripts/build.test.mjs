@@ -102,8 +102,8 @@ void NodeTest.test(
     assert.deepEqual(built.results[0].failed, [], built.results[0].output)
     const artifacts = [
       'apps/web/dist/result',
-      'packages/agent/runtime/dist/result',
       'apps/mobile/.cache/updates/result',
+      'apps/cells/dist/result',
     ]
     for (const file of artifacts) {
       assert.equal(NodeFS.readFileSync(NodePath.join(directory, file), 'utf8'), 'built artifact')
@@ -111,6 +111,10 @@ void NodeTest.test(
     }
     assert.equal(NodeFS.existsSync(NodePath.join(directory, 'apps/desktop/dist/result')), false)
     assert.equal(NodeFS.existsSync(NodePath.join(directory, 'apps/mobile/dist/result')), false)
+    assert.equal(
+      NodeFS.existsSync(NodePath.join(directory, 'packages/agent/runtime/dist/result')),
+      false,
+    )
     const cached = await run()
     assert.match(
       cached.results[0].detail,

@@ -1,12 +1,13 @@
 import * as Alchemy from 'alchemy'
 import * as Command from 'alchemy/Command'
+import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Docker from 'alchemy/Docker'
 import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
+import { cellVariables } from './infra/cells.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
@@ -64,39 +65,12 @@ const localStack = () =>
         },
       })
 
-      /**
-       * These are intentionally local processes, not ECS services. The product
-       * needs stable localhost callback URLs today; `Command.Dev` is a scoped,
-       * restartable process and is a no-op outside dev mode. See
-       * `alchemy/lib/Command/Dev.d.ts`.
-       */
+      /** Native celld dev owns local SQLite and reloads the same Worker definition used by the fleet. */
       yield* Command.Dev(target.runtimeProcessId, {
-        command: 'pnpm dev -- --host 127.0.0.1 --port 5173',
-        cwd: './packages/agent/runtime',
-        env: {
-          /**
-           * Unused by the process. Reading the migration output makes Alchemy order this process
-           * after migrations, so it never boots against a schema that does not exist yet.
-           */
-          VIVID_MIGRATIONS_HASH: migrations.hash.input,
-          DATABASE_URL: databaseUrl,
-          PORT: '5173',
-          OPENCODE_API_KEY: environment.openCodeKey,
-          ...Option.match(environment.openRouterKey, {
-            onNone: () => ({}),
-            onSome: (key) => ({ OPENROUTER_API_KEY: key }),
-          }),
-          EXPLABS_API_KEY: environment.modelGatewayKey,
-          VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-          VIVID_SERVER_URL: target.serverUrl,
-          VIVID_MODEL: environment.model,
-          /**
-           * Vivid's notes: one SQLite file for each Person, beside the runtime
-           * (`packages/agent/runtime/src/notes.ts`). The runtime does not start without the
-           * directory. Locally it lives with the runtime's other state, which Git ignores.
-           */
-          VIVID_MEMORY_DIR: '.state/notes',
-        },
+        command:
+          'pnpm --filter @vivid/cells exec node ../../infra/cli.mjs dev --host 127.0.0.1 --port 5173',
+        cwd: '.',
+        env: { VIVID_CELL_VARS: cellVariables(environment, target.serverUrl) },
       })
 
       yield* Command.Dev(target.serverProcessId, {
@@ -110,10 +84,7 @@ const localStack = () =>
           VIVID_MIGRATIONS_HASH: migrations.hash.input,
           DATABASE_URL: databaseUrl,
           AUTH_SECRET: environment.authSecret,
-          ...Option.match(environment.serverModelProvider, {
-            onNone: () => ({}),
-            onSome: (provider) => ({ VIVID_SERVER_MODEL_PROVIDER: provider }),
-          }),
+          OPENROUTER_API_KEY: environment.openRouterKey,
           /** Loopback locally; a container sets its own bind address (`infra/railway.ts`). */
           HOST: '127.0.0.1',
           PORT: '8787',
@@ -125,7 +96,7 @@ const localStack = () =>
           GOOGLE_REDIRECT_URI: environment.google.redirectUri,
           /**
            * The rest of what the server does not start without is not a resource of this graph:
-           * Boat, Helix, Executor, Photon and the push keys are outside services. `Command.Dev`
+           * Boat, Executor, Photon and the push keys are outside services. `Command.Dev`
            * merges these variables over the environment `pnpm infra:dev` was started in
            * (`alchemy/lib/Command/Dev.d.ts`, "Environment Variables"), so their settings reach the
            * server from that environment, and `infra/env.ts` has already refused to go on without
@@ -168,7 +139,10 @@ const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
     {
-      providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
+      /** Cloudflare's providers carry the HttpClient the others use, so they are built first. */
+      providers: Layer.mergeAll(Railway.providers(), Command.providers(), GitHub.providers()).pipe(
+        Layer.provideMerge(Cloudflare.providers()),
+      ),
       /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
       state: hostedState(deployTarget.stackName),
     },

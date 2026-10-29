@@ -7,49 +7,41 @@
     ".": "./src/index.ts",
     "./sandbox": "./src/tools/sandbox.ts",
     "./scope": "./src/tools/scope.ts",
-    "./signins": "./src/tools/signins.ts"
+    "./signins": "./src/tools/signins.ts",
+    "./testing": "./tests/process.ts",
+    "./tooltesting": "./src/tools/tests/harness.ts",
+    "./cell": "./src/cell.ts",
+    "./memory": "./src/memory.ts"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
     "check:types": "pnpm typecheck",
-    "dev": "vite dev",
-    "docs": "flue docs",
-    "start": "node dist/server.mjs",
     "test": "node ../../../scripts/test.mjs",
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
-    "db:generate": "echo 'Flue owns runtime schema migrations'",
-    "db:migrate": "echo 'Flue owns runtime schema migrations'",
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@effect/ai-typesafe": "catalog:",
+    "@earendil-works/chord": "catalog:",
     "@earendil-works/pi-ai": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@flue/postgres": "catalog:",
-    "@flue/runtime": "catalog:",
+    "@earendil-works/pi-durable": "catalog:",
     "@openuidev/lang-core": "catalog:",
+    "@valibot/to-json-schema": "1.7.1",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
-    "agentfs-sdk": "0.6.4",
-    "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "hono": "catalog:",
-    "pg": "catalog:",
-    "valibot": "catalog:",
-    "zod": "catalog:"
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@flue/cli": "catalog:",
-    "@flue/sdk": "catalog:",
-    "@flue/vite": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "catalog:",
-    "vite": "catalog:",
-    "vitest": "catalog:"
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
+    "vitest": "catalog:",
+    "@effect/platform-node": "catalog:"
   }
 }

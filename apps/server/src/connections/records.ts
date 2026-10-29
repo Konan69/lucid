@@ -3,6 +3,7 @@ import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Clock, Effect, Schema, Match } from 'effect'
 import {
   AccountName,
+  ApprovalInvalidation,
   CompanyId,
   Connection,
   ConnectionId,
@@ -31,6 +32,7 @@ import { connectionLogo, connectionSite, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
 import { MADE } from './made.ts'
 import { connections } from './tables.ts'
+import { invalidatePending, usingConnection } from '../approvals/stale.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
@@ -237,7 +239,15 @@ export const recordChanged = Effect.fn('Connections.changed')(function* (
   yield* changed(actor, ...extra)
 })
 
-/** Compare saved ownership and state before updating, preventing late callbacks and duplicate readiness audits. */
+/**
+ * Compare saved ownership and state before updating, preventing late callbacks and duplicate
+ * readiness audits.
+ *
+ * Every save here is a change to the account's authorization (signed in, signed in again, signed
+ * out by the service, failed), so it raises the authorization generation and, in the same
+ * transaction, closes every pending Approval asked through this Integration: Allow on one of them
+ * would otherwise run under a sign-in the Person was never asked about.
+ */
 export const saveState = Effect.fn('Connections.saveState')(function* (
   row: ConnectionRecord,
   state: ConnectionState,
@@ -254,34 +264,48 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
     NeedsAuthorization: () => null,
     Failed: (failure) => failure.reason,
   })
-  const rows = yield* database.run(
-    database
-      .update(connections)
-      .set({
-        references: yield* encodeReferences(references),
-        executorApp: claimedApp(references),
-        status,
-        reason,
-        updatedAt: yield* Clock.currentTimeMillis,
-      })
-      .where(
-        and(
-          eq(connections.id, row.id),
-          eq(connections.personId, row.personId),
-          eq(connections.status, row.status),
-          eq(connections.updatedAt, row.updatedAt),
-          row.companyId === null
-            ? isNull(connections.companyId)
-            : eq(connections.companyId, row.companyId),
-        ),
+  const encoded = yield* encodeReferences(references)
+  const now = yield* Clock.currentTimeMillis
+  return yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const rows = yield* tx
+        .update(connections)
+        .set({
+          references: encoded,
+          executorApp: claimedApp(references),
+          status,
+          reason,
+          authorizationGeneration: sql`${connections.authorizationGeneration} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(connections.id, row.id),
+            eq(connections.personId, row.personId),
+            eq(connections.status, row.status),
+            eq(connections.updatedAt, row.updatedAt),
+            row.companyId === null
+              ? isNull(connections.companyId)
+              : eq(connections.companyId, row.companyId),
+          ),
+        )
+        .returning()
+      if (rows.length === 0)
+        return yield* new Conflict({
+          message: 'This integration changed before authorization finished; reload it.',
+        })
+      const saved = yield* decodeRow(yield* returned(rows, 'Connection'))
+      yield* invalidatePending(
+        tx,
+        usingConnection(saved.id),
+        ApprovalInvalidation.cases.ConnectionChanged.make({
+          connectionId: saved.id,
+          generation: saved.authorizationGeneration,
+        }),
       )
-      .returning(),
+      return saved
+    }),
   )
-  if (rows.length === 0)
-    return yield* new Conflict({
-      message: 'This integration changed before authorization finished; reload it.',
-    })
-  return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
 /**

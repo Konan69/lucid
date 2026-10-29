@@ -54,6 +54,14 @@ export const CONTAINED_THRESHOLD = 0.5
 export const ReviewOutcome = Schema.Literals(['Run', 'Ask'] as const)
 export type ReviewOutcome = typeof ReviewOutcome.Type
 
+/** A background request is never a Person's authorization; only a contained write can run. */
+export const unwatchedOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
+  Review.match(review, {
+    Reviewed: ({ contained }) =>
+      effect !== 'destructive' && contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask',
+    Unreviewed: () => 'Ask',
+  })
+
 /**
  * The server's policy over a review. The model supplies three measurements; it never authorizes.
  *

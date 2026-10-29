@@ -203,7 +203,7 @@ Follow `apps/server/src/config.ts`: load environment through `Config.schema`, co
 
 ## Drizzle
 
-Drizzle TypeScript schemas are authoritative. Change the schema, run the server's `db:generate` (auth) or `db:generate:product` (product), review the SQL, then migrate. Root `pnpm db:migrate` applies auth before product tables; Flue migrates its own storage at startup. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database/client.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
+Drizzle TypeScript schemas are authoritative. Change the schema, run the server's `db:generate` (auth) or `db:generate:product` (product), review the SQL, then migrate. Root `pnpm db:migrate` applies auth before product tables; the runtime's generated migrations follow through its own `db:migrate` command. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database/client.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
 
 ## React owns events, not synchronization effects
 

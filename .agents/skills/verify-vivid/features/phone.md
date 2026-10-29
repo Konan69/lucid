@@ -1,10 +1,10 @@
-# Android Thread navigation
+# Android product journeys
 
-Model requirement: none. Launch still starts the real runtime and requires its provider keys. This journey makes no model call and proves no model behaviour.
+Model requirement: real for every journey except `thread`. The idle baseline makes no model call. Recipes are drafts until their recorded native run passes; source inspection and lifecycle tests do not verify product behavior.
 
 ## Drive the phone
 
-Read [Android setup](../references/android.md). Select a devbox with `~/bin/devbox-pick`. Provision it from the PC with one command, even after a snapshot restore emptied both Android directories.
+Read [Android setup](../references/android.md). On the PC, attach the running host-GPU Windows emulator with `verify android attach pc <serial>` and launch with `VIVID_VERIFY_HOST=pc`. Otherwise select a devbox with `~/bin/devbox-pick` and provision it from the PC with one command, even after a snapshot restore emptied both Android directories.
 
 ```sh
 .agents/skills/verify-vivid/verify android provision cloudbox-konan3
@@ -13,9 +13,9 @@ Read [Android setup](../references/android.md). Select a devbox with `~/bin/devb
 In the separate proof checkout on that same host, run Launch and Doctor. Then run the phone journey with the explicit run id.
 
 ```sh
-.agents/skills/verify-vivid/verify phone thread flue-<id>
-.agents/skills/verify-vivid/verify doctor flue-<id>
-.agents/skills/verify-vivid/verify cleanup flue-<id>
+.agents/skills/verify-vivid/verify phone thread pi-<id>
+.agents/skills/verify-vivid/verify doctor pi-<id>
+.agents/skills/verify-vivid/verify cleanup pi-<id>
 ```
 
 The recipe creates one idle Thread through public `CreateThread`, installs a release APK from the recorded commit, and clears only this disposable emulator's Vivid app data. `adb reverse` maps the APK's fixed emulator loopback address to this run's own single-origin web proxy. Email sign-in uses the run's synthetic Better Auth account. It uses neither Google nor a developer account.
@@ -24,10 +24,42 @@ The recipe creates one idle Thread through public `CreateThread`, installs a rel
 
 ## Evidence
 
-`phone/receipt.json` records host alias, observed hostname, serial, boot identity and captured process generations. `phone/apk.json` and `phone/verdict.json` record the APK SHA-256, native fingerprint, build mode and commit. Numbered command receipts retain snapshots and the exact selected refs. `phone/threads.png` and `phone/thread.png` show the signed-in list and idle Thread. Doctor includes the phone artifact identity. `phone/cleanup.json` and `phone/ps-cleanup.json` prove the owned processes stopped.
+`phone/receipt.json` records host alias, observed hostname, serial, boot identity and captured process generations. `phone/apk.json` and `phone/verdict.json` record the APK SHA-256, native fingerprint, build mode and commit. Numbered command receipts retain snapshots and the exact selected refs. `phone/thread/threads.png` and `phone/thread/thread.png` show the signed-in list and idle Thread. Doctor includes the phone artifact identity. `phone/cleanup.json` and `phone/ps-cleanup.json` prove the owned processes stopped.
 
 The command holds the devbox Android lock until its finally block closes the private agent-device session, stops its daemon, removes its reverse mapping, and stops the captured emulator and adb generations. `verify cleanup` repeats recovery after a killed command. SDK, AVD and APK caches remain rebuildable.
 
+## Active journeys
+
+After Launch and Doctor at a clean head, run `verify phone all <run>` for one APK installation and one private device session. Each named journey is also available as `verify phone <journey> <run>`. On a devbox a phone command always stops its captured emulator in finally, so provision again before the next phone command; the PC's attached emulator stays up. `all` continues after an individual journey fails and retains its crash logcat, snapshot and screenshot.
+
+| Journey           | Phone actions and required receipts                                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `thread`          | Email sign-in, drawer selection, idle composer, public BePresent and opening Feed.                                                                                                                                     |
+| `name` | Change the Person’s name in Settings, require the sheet to close, and read the saved name through `Me`. See [the name feature](name.md). |
+| `send`            | Composer Send, streamed marker, leave/reopen, kill/relaunch, contextual follow-up, matching durable history and WatchThread settlement.                                                                                |
+| `tool`            | Send the shared rich-table prompt, check the stored Table and all native cells, reopen and capture.                                                                                                                    |
+| `replies`         | Send a natural question, tap a model-offered chip, compare its stored words with the next Person message.                                                                                                              |
+| `question`        | Ask the web recipe's Cedar/Willow prompt, choose Cedar on the phone, assert Answered and a Decision Run using Cedar.                                                                                                   |
+| `approve`         | Connect disposable Verify Pulse and add an Ask rule. Press Allow. Assert one provider event.                                                                                                                           |
+| `deny`            | A separate Thread and Ask rule. Press Don’t allow. Assert no provider event.                                                                                                                                           |
+| `stop`            | Stop Vivid during real text, assert the same Run Stopped, retain partial after reopen, send and receive the next message.                                                                                              |
+| `picture`         | Push an opaque red PNG into Android media storage, use Attach files and Photos, select it in the API-35 picker, send and recognize red, reopen with retained file parts and screenshot.                                |
+| `document`        | Create and revise through the composer, compare immutable Artifact versions, reopen the replies. No native Artifact-opener claim.                                                                                      |
+| `memory`          | Tell a project preference, require write_memory, ask in a new Thread, require a correct reply (from the index line or a read_memory of the same address; `recall-path.json` records which).                            |
+| `settings-memory` | Seed through the phone, open Settings and What Vivid knows, open the row, Correct, edit What Vivid remembers and In full, Save correction, relaunch, Forget this, confirm Forget, relaunch and compare GetMemoryIndex. |
+| `learning`        | Mention a unique durable fact, wait for its native learner task to complete, require one matching entry from the reply or learner, then recall in a new Thread.                                                        |
+| `feed`            | Complete a real Thread, open Feed, observe Settled through WatchFeed and capture its title under Handled.                                                                                                              |
+| `owed`            | Tell Vivid about a promise, open Waiting on, hold its row, choose Received, require Resolved and absence after relaunch.                                                                                               |
+| `move`            | Keep the phone watching streamed text, identify its resident Person owner, move that node, require the same Run, retained prefix, native owner change and a newly rendered completion marker.                          |
+
+Each has `phone/<journey>/verdict.json`, public RPC receipts, numbered native command logs and named screenshots. Inspect the screenshots for the picture, unread dot/bold title and each decisive control. An assertion pass does not replace this visual check. The root phone receipt retains APK and device identity.
+
+Use only snapshot refs from `snapshot -i --force-full` immediately before a press or fill. Preserve `~s` ref pins. Phone labels come from `apps/mobile/src`. The system Photos picker is Android-owned; retain its live snapshot and adjust its recipe if that build's semantic names differ. Never replace a phone press with an HTTP mutation.
+
 ## Limits
 
-This proves Android email sign-in, Thread list navigation and idle rendering only. A working Thread's thinking orb has crashed software renderers in prior runs. Do not infer active conversation, rich replies, notifications, permissions, iOS or desktop coverage from this feature. Extend the recipe before making those claims.
+The Thread drawer deliberately shows title, attention dot and time, without last-message previews (`screen/home/Row.tsx`). This conflicts with the brief's preview expectation and remains a reported product difference. Screenshots establish its visual unread treatment; the public receipt establishes Unread.
+
+The launcher does not forward VIVID_DECISIONS into Worker vars. Learning therefore uses its installed decisions-off mode, which considers every exchange. No Jev claim follows. There is no public learner-completion stream. The recipe observes LearnedRun and its terminal task in this launch's disposable native SQLite before checking the public memory index. It accepts a reply-saved fact without duplication, or a CellRun-saved fact when the reply did not save it. See [Learning](learning.md).
+
+A working Thread's thinking orb previously crashed software renderers. Devbox provision uses `-gpu swiftshader`; the PC uses the host GPU and attach refuses a software renderer. Retain crash logcat and the last snapshot when it fails. No iOS, desktop, native notification delivery or external provider account is proved by these Android recipes.

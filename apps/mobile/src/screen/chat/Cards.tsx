@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
+import { changedLine } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
@@ -144,6 +145,11 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
     Withdrawn: () => (
       <Label size="label" tone="ink-2">
         Withdrawn.
+      </Label>
+    ),
+    Invalidated: ({ reason }) => (
+      <Label size="label" tone="ink-2">
+        {changedLine(reason)}
       </Label>
     ),
   })

@@ -1,3 +1,4 @@
+import { testSubmissionId } from '../approvals/testing.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
@@ -39,7 +40,7 @@ interface ResponseRecord {
 class Responses extends Context.Service<Responses, Ref.Ref<ReadonlyArray<ResponseRecord>>>()(
   'artifacts/test/Responses',
 ) {}
-/** The public Flue history seam varies independently from product Run settlement. */
+/** Public conversation history varies independently from product Run settlement. */
 const runtimeHistoryLayer = Layer.effectContext(
   Effect.gen(function* () {
     const responses = yield* Ref.make<ReadonlyArray<ResponseRecord>>([])
@@ -47,15 +48,21 @@ const runtimeHistoryLayer = Layer.effectContext(
       admit: () => Effect.die('Artifact tests do not admit deliveries'),
       settled: () => Effect.never,
       stop: () => Effect.die('Artifact tests do not stop responses'),
+      watch: () => Stream.never,
       read: Effect.fn('Artifacts.test.history')(function* ({ threadId }) {
         const history = (yield* Ref.get(responses)).filter((entry) => entry.threadId === threadId)
         return HttpClientResponse.fromWeb(
           HttpClientRequest.get('https://runtime.example.test'),
           new Response(
             JSON.stringify({
-              messages: history.map((entry) => ({
+              working: false,
+              queued: 0,
+              messages: history.map((entry, index) => ({
+                id: `document-${index}`,
+                purpose: 'assistant',
+                display: 'visible',
                 role: 'assistant',
-                submissionId: entry.runId,
+                submissionId: String(testSubmissionId(entry.runId)),
                 parts: [
                   {
                     type: 'dynamic-tool',
@@ -69,7 +76,7 @@ const runtimeHistoryLayer = Layer.effectContext(
               settlements: history
                 .filter((entry) => entry.settled)
                 .map((entry) => ({
-                  submissionId: entry.runId,
+                  submissionId: String(testSubmissionId(entry.runId)),
                   outcome: 'completed',
                 })),
             }),
@@ -169,6 +176,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
       origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
       startedAt: yield* Clock.currentTimeMillis,
       admittedAt: yield* Clock.currentTimeMillis,
+      receipt: { runId, submissionId: String(testSubmissionId(runId)) },
     }),
   )
   yield* Ref.update(yield* Responses, (entries) => [
@@ -397,11 +405,12 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         const store = yield* ArtifactStore
         const later = RunId.make(NodeCrypto.randomUUID())
         const laterCall = DocumentToolCallId.make('late-answer-document')
-        // Flue completed A and started B from the late answer; the product observer has not
+        // The runtime completed A and started B from the late answer; the product observer has not
         // settled A yet. Both admitted product rows intentionally remain working throughout.
         yield* database.run(
           database.insert(runs).values({
             id: later,
+            receipt: { runId: later, submissionId: String(testSubmissionId(later)) },
             threadId,
             personId: person.id,
             turn: 2,

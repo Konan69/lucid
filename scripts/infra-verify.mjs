@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
+import { cellInputs } from '../infra/inputs.ts'
 import { verifyImage } from './images.mjs'
 
 const assert = NodeAssert
@@ -170,8 +171,12 @@ const assertEnvironmentWiring = (root, stackSource) => {
   ]
   const runtimeNames = new Set()
   for (const file of runtimeFiles) {
-    for (const name of extractEnvironmentNames(NodeFS.readFileSync(file, 'utf8')))
-      runtimeNames.add(name)
+    const text = NodeFS.readFileSync(file, 'utf8')
+    for (const name of extractEnvironmentNames(text)) runtimeNames.add(name)
+    for (const match of text.matchAll(
+      /Config\.(?:NonEmptyString|String|Redacted|URL)\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g,
+    ))
+      runtimeNames.add(match[1])
   }
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
@@ -180,7 +185,7 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const unwired = unwiredNames({
     serverNames,
     runtimeNames,
-    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}`,
+    wiringSource: `${stackSource}\n${source(root, 'infra/railway.ts')}\n${source(root, 'infra/cells.ts')}`,
     serverImage: imageSettings(source(root, 'apps/server/Dockerfile')),
   })
   for (const name of unwired) assert.fail(`${name} is read by an app but not wired by Alchemy`)
@@ -229,27 +234,32 @@ const assertPackagePolicy = (packageDocument) => {
   )
 }
 
-const assertStackPolicy = (stackSource, infrastructureSources) => {
+const assertStackPolicy = (stackSource, localDependencies) => {
+  const localStart = stackSource.indexOf('const localStack =')
+  const hostedStart = stackSource.indexOf('const railwayStack =')
+  assert.ok(localStart >= 0 && hostedStart > localStart, 'local and hosted graphs must be separate')
+  const localGraph = stackSource.slice(localStart, hostedStart)
+  const localSources = `${localGraph}\n${localDependencies}`
   assert.doesNotMatch(
-    infrastructureSources,
-    /alchemy\/(Cloudflare|Neon)/,
-    'removed cloud providers must not be imported',
+    localSources,
+    /alchemy\/(Cloudflare|Neon|AWS)|\b(Cloudflare|Neon|AWS)\./,
+    'local stack must not load cloud providers',
   )
-  // Railway is the one hosted provider. It may be loaded only for a Railway target, so
-  // `alchemy dev` on the local target never needs a Railway credential.
+  // Railway compute and hosted R2 load only for a Railway target. The local graph never
+  // requires their provider credentials.
   assert.match(
     stackSource,
     /deployTarget\.database === 'railway' \? railwayStack\(\) : localStack\(\)/,
     'Railway providers must load only for a Railway target',
   )
-  assert.doesNotMatch(stackSource, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
+  assert.doesNotMatch(localGraph, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
   assert.doesNotMatch(
-    infrastructureSources,
+    localSources,
     /AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/,
     'local stack must not require AWS credentials',
   )
   assert.doesNotMatch(
-    stackSource,
+    localGraph,
     /alchemy\/AWS/,
     'local stack must not load AWS providers: they boot the Floci emulator for nothing',
   )
@@ -257,11 +267,6 @@ const assertStackPolicy = (stackSource, infrastructureSources) => {
     stackSource,
     /Command\.Dev\(target\.serverProcessId/,
     'server must be an Alchemy-managed process',
-  )
-  assert.match(
-    stackSource,
-    /Command\.Dev\(target\.runtimeProcessId/,
-    'runtime must be an Alchemy-managed process',
   )
   // The local stack's resources are the machine's own Docker and processes, so its state stays in
   // that checkout. Production's state lives in the hosted store (`infra/state.ts`): read from a
@@ -315,13 +320,13 @@ const assertDatabasePolicy = (databaseSource) => {
 
 const assertMigrationPolicy = (migrationSource) => {
   const serverMigration = migrationSource.search(/name: ["']server["']/)
-  // The product tables moved from the Flue runtime into the server as a second migration owner
-  // with its own history; it still runs after the server's auth and tenancy tables.
+  // Product tables run after auth and tenancy. Cell SQLite is migrated at activation.
   const productMigration = migrationSource.search(/name: ["']server-product["']/)
   assert.ok(
     serverMigration >= 0 && serverMigration < productMigration,
     'migration order must be server → server-product',
   )
+  assert.doesNotMatch(migrationSource, /name: ["']runtime["']/, 'runtime has no PostgreSQL owner')
   assert.doesNotMatch(
     migrationSource,
     /name: ["']connectors["']/,
@@ -380,14 +385,12 @@ const assertContainerPolicy = (root) => {
   assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
   for (const { name, dockerfilePath, stages } of [
     {
-      name: 'Runtime',
-      dockerfilePath: 'packages/agent/runtime/Dockerfile',
-      stages: { build: ['@vivid/agent-runtime'] },
-    },
-    {
       name: 'Server',
       dockerfilePath: 'apps/server/Dockerfile',
-      stages: { build: ['@vivid/server', '@vivid/web'], updates: ['@vivid/mobile'] },
+      stages: {
+        build: ['@vivid/server', '@vivid/web', '@vivid/cells'],
+        updates: ['@vivid/mobile'],
+      },
     },
   ]) {
     const declaration = railwaySource.match(
@@ -401,7 +404,11 @@ const assertContainerPolicy = (root) => {
     assert.notEqual(named, null, `${name} must say which paths rebuild it`)
     const listed = railwaySource.match(new RegExp(`^const ${named[1]} = \\[([\\s\\S]*?)^\\]`, 'm'))
     assert.notEqual(listed, null, `${name} must list its watched paths in infra/railway.ts`)
-    const patterns = [...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1])
+    assert.match(listed[1], /\.\.\.cellInputs\(\)/, 'server must watch the cells workspace closure')
+    const patterns = [
+      ...cellInputs(root),
+      ...[...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1]),
+    ]
     const configInputs = verifyImage({ root, dockerfile: source(root, dockerfilePath), stages })
     assert.deepEqual(
       unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns, configInputs),
@@ -420,6 +427,23 @@ const assertContainerPolicy = (root) => {
       `${name} Railway startCommand must match image CMD`,
     )
   }
+}
+
+/** The authored cell target owns Person SQLite. Provider packaging is a separate infra concern. */
+export const assertRuntimePolicy = (config, cell) => {
+  assert.match(config, /"main": "src\/main.ts"/, 'cells must name their native Worker entry')
+  assert.match(config, /"name": "PERSONS", "class_name": "Person"/, 'Person cells must be bound')
+  assert.match(config, /"new_sqlite_classes": \["Person"\]/, 'Person cells must own SQLite')
+  assert.match(
+    cell,
+    /openDurableObjectSqliteStorage\(input.storage/,
+    'Pi must use native cell storage',
+  )
+  assert.doesNotMatch(
+    cell,
+    /DATABASE_URL|NodeHttpServer/,
+    'cells must not restore the Node/PG host',
+  )
 }
 
 const assertRepositoryPolicy = (root) => {
@@ -452,17 +476,30 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertPackagePolicy(decodePackageDocument(source(root, 'package.json')))
   const stackSource = source(root, 'alchemy.run.ts')
   const databaseSource = source(root, 'infra/database.ts')
-  const infrastructureSources = [
-    stackSource,
+  const localDependencies = [
     databaseSource,
     source(root, 'infra/env.ts'),
     source(root, 'infra/targets.ts'),
   ].join('\n')
-  assertStackPolicy(stackSource, infrastructureSources)
+  assertStackPolicy(stackSource, localDependencies)
   assertDatabasePolicy(databaseSource)
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
   assertContainerPolicy(root)
+  assert.match(
+    source(root, 'infra/railway.ts'),
+    /Railway\.Volume\('RuntimeMemory', \{[^}]*mountPath: '\/var\/lib\/vivid\/memory',[^}]*\}\)\.pipe\(RemovalPolicy\.retain\(\)\)/,
+    'retain the existing runtime volume',
+  )
+  assert.match(
+    source(root, 'infra/cells.ts'),
+    /Cloudflare\.R2\.Bucket\('CellsStorage',[\s\S]*?\.pipe\(RemovalPolicy\.retain\(\)\)/,
+    'retain the durable cells bucket',
+  )
+  assertRuntimePolicy(
+    source(root, 'apps/cells/wrangler.jsonc'),
+    source(root, 'packages/agent/runtime/src/cell.ts'),
+  )
   assertRepositoryPolicy(root)
   return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }
 }

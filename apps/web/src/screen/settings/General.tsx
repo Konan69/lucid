@@ -26,6 +26,7 @@ import {
 } from '../../ui/select'
 import { Customise } from '../vivid/Customise'
 import { Egress } from './Egress'
+import { Name } from './Name'
 import { Awaiting, Refusal, Row, Section } from './Parts'
 
 const THEMES = [
@@ -43,7 +44,7 @@ const SWITCH = [
 const ZONES = ['UTC', ...Intl.supportedValuesOf('timeZone')]
 
 /**
- * The Person's own settings: how Vivid looks, the time zone it reads "tomorrow at 9" in, whether
+ * The Person's own settings: what they are called, how Vivid looks, the time zone it reads "tomorrow at 9" in, whether
  * it tells them when something needs them, and the way out. They are the same in every workspace.
  */
 export function General({ me }: { me: MeResponse }) {
@@ -84,6 +85,7 @@ export function General({ me }: { me: MeResponse }) {
             You are still signed in: Vivid could not be reached to sign you out. Try again.
           </p>
         )}
+        <Name current={me.person.name} />
       </Section>
       <VividSection me={me} />
       {LiveState.$is('Ready')(settings) ? (

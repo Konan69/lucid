@@ -7,8 +7,7 @@
     ".": "./src/manifest.ts",
     "./manifest": "./src/manifest.ts",
     "./markdown": "./src/markdown.ts",
-    "./native": "./src/native.ts",
-    "./*/SKILL.md": "./*/SKILL.md"
+    "./*.md": "./*.md"
   },
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
@@ -17,13 +16,11 @@
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
-    "@flue/runtime": "catalog:",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@flue/vite": "catalog:",
     "@types/node": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

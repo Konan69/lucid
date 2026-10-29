@@ -1,361 +1,823 @@
-import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it } from '@effect/vitest'
-import { start } from '@flue/runtime/node'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
+  fauxAssistantMessage,
+  fauxText,
+  fauxToolCall,
+  type FauxResponseFactory,
+} from '@earendil-works/pi-ai/providers/faux'
+import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
+import { describe, expect, it } from '@effect/vitest'
+import {
+  ConversationFrame,
+  ConversationState,
   PersonId,
-  RuntimeAdmissionBody,
-  RuntimeRunRequest,
-  RuntimeRunResponse,
+  RuntimeSettlement,
   ThreadId,
-  ThreadOrigin,
 } from '@vivid/contracts'
-import { Config, Effect, Option, Redacted, Result, Schema } from 'effect'
-import { Client } from 'pg'
-import { disposableStorage, testDatabaseConfigured } from '../tests/schema.ts'
-import { routes, Settled, RouteRequestFailed, type Routes } from '../tests/routes.ts'
-import app from './app.ts'
-import { Vivid } from './agents/vivid.ts'
+import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
+import { held, start, world } from '../tests/process.ts'
+import {
+  ada,
+  admit,
+  decodeSettlement,
+  delivery,
+  grace,
+  scenario,
+  settled,
+  threadPath,
+  type Runtime,
+} from '../tests/requests.ts'
+import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY } from './response.ts'
+import { SIGNAL_ENTRY } from './delivery.ts'
+import { conversationOf, pi } from './threads.ts'
 
-/** Reading a body can fail independently of its wire schema. */
-class ResponseBodyFailed extends Schema.TaggedError<ResponseBodyFailed>()(
-  'ResponseBodyFailed',
-  {},
-  { title: 'Runtime response body read failed' },
-) {}
+const decodeResponse = Schema.decodeUnknownEffect(ResponseData)
+const decodeState = Schema.decodeUnknownEffect(ConversationState)
 
-/** Catalog inspection is separate from production Flue storage, and never borrows its pool. */
-class SchemaInspectionFailed extends Schema.TaggedError<SchemaInspectionFailed>()(
-  'SchemaInspectionFailed',
-  { schema: Schema.String },
-  { title: 'Runtime schema inspection failed' },
-) {}
-
-/** The failed-start control is a registration rejection, not a durable Run failure. */
-class DuplicateRegistrationRejected extends Schema.TaggedError<DuplicateRegistrationRejected>()(
-  'DuplicateRegistrationRejected',
-  {},
-  { title: 'Duplicate runtime registration rejected' },
-) {}
-
-/** Any other start failure must fail H4 rather than passing as the expected control. */
-class UnexpectedStartFailure extends Schema.TaggedError<UnexpectedStartFailure>()(
-  'UnexpectedStartFailure',
-  {},
-  { title: 'Unexpected runtime start failure' },
-) {}
-
-const Admission = RuntimeAdmissionBody
-const encodeAdmission = Schema.encodeEffect(Schema.fromJsonString(Admission))
-const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeRunResponse))
-const decodeAbort = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ aborted: Schema.Boolean })),
-)
-/** src/app.ts answers a refused delivery with one `error` sentence naming the reason. */
-const decodeRefusal = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ error: Schema.String })),
-)
-/**
- * The wire text the shared codec really produced, read back as an open record so a malformed
- * case can change one key of an otherwise accepted body. Values stay opaque on purpose: the
- * control must not restate the contract's encoded field types.
- */
-const decodeWire = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-)
-
-/**
- * Text-only history projection from Flue 2.2.2 sandbox-BSDnM6Na.d.mts ConversationUiMessage
- * and AgentConversationSnapshot, dispatch-BlxCz6iq.mjs handleHistory. Optional signal and
- * submissionId are genuine SDK absence; N7 asserts they exist on the admitted input. Parts
- * are intentionally text-only for this case: an unexpected tool/data/file part fails ingress.
- */
-const decodeSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      v: Schema.Literal(1),
-      conversationId: Schema.String,
-      offset: Schema.String,
-      messages: Schema.Array(
-        Schema.Struct({
-          role: Schema.Literals(['user', 'assistant', 'system']),
-          submissionId: Schema.optionalKey(Schema.String),
-          signal: Schema.optionalKey(Schema.Struct({ tagName: Schema.optionalKey(Schema.String) })),
-          parts: Schema.Array(Schema.Struct({ type: Schema.Literal('text'), text: Schema.String })),
-        }),
-      ),
-      settlements: Schema.Array(
-        Schema.Struct({
-          submissionId: Schema.String,
-          outcome: Schema.Literals(['completed', 'aborted', 'failed']),
-        }),
-      ),
+/** A Thread's transcript, oldest first, read from the Person's store as the state link will. */
+const transcript = (runtime: Runtime, person: PersonId, threadId: string) =>
+  runtime.persons.use(person, ({ harness }) =>
+    Effect.gen(function* () {
+      const conversation = yield* conversationOf(harness, ThreadId.make(threadId))
+      if (Option.isNone(conversation)) return []
+      const page = yield* pi(() =>
+        conversation.value.entries({ order: 'ascending' }, 200, undefined, BACKGROUND_CONTEXT),
+      )
+      return Array.from(page.items)
     }),
-  ),
-)
-const decodeCatalog = Schema.decodeUnknownEffect(
-  Schema.Array(
-    Schema.Struct({ namespace: Schema.NullOr(Schema.String), table: Schema.NullOr(Schema.String) }),
-  ),
-)
+  )
 
-/** Fresh Thread ids keep authority and durable history separate in every scoped case. */
-const thread = () => ThreadId.make(NodeCrypto.randomUUID())
-
-/** Only the response read is unsafe; schema decoding follows at the real wire ingress. */
-const bodyText = (response: Response) =>
-  Effect.tryPromise({ try: () => response.text(), catch: () => new ResponseBodyFailed({}) })
-
-/** Construct a keyed attributed message using the production wire vocabulary. */
-const delivery = (threadId: ThreadId, turn: number, body: string) => {
-  const personId = PersonId.make(NodeCrypto.randomUUID())
-  const request = RuntimeRunRequest.make({
-    threadId,
-    idempotencyKey: NodeCrypto.randomUUID(),
-    type: 'message',
-    body,
-    attributes: { speaker: 'Fixture Person' },
-    turn,
-    scope: { acting: personId },
-  })
-  const initialData = ThreadOrigin.make({ creator: personId, creatorName: 'Fixture Person' })
-  return Admission.make({ ...request, initialData })
-}
-
-/** All admissions go through the real token/context/Hono/Flue route, never init.dispatch. */
-const admit = Effect.fn('RuntimeRoutesTest.admit')(function* (
-  runtime: Routes,
-  request: typeof Admission.Type,
-) {
-  const response = yield* runtime.send(`/agents/vivid/${request.threadId}`, {
-    method: 'POST',
-    body: yield* encodeAdmission(request),
-  })
-  expect(response.status).toBe(202)
-  return yield* decodeReceipt(yield* bodyText(response))
-})
-
-/** A later client proves cleanup after the production adapter has already closed its pool. */
-const catalog = Effect.fn('RuntimeRoutesTest.catalog')(function* (schema: string) {
-  const url = yield* Config.Redacted('VIVID_TEST_DATABASE_URL')
-  const client = new Client({ connectionString: Redacted.value(url) })
-  yield* Effect.addFinalizer(() =>
-    Effect.tryPromise(() => client.end()).pipe(
-      Effect.catch(() =>
-        Effect.sync(() => expect.fail('Schema inspection connection close failed')),
-      ),
+describe('the runtime over HTTP', () => {
+  it.effect('opens a pre-cell Thread empty and its next message starts the conversation', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const path = threadPath(ada, 'pre-cell-thread')
+        const response = yield* runtime.send(`${path}/state`, { method: 'GET' })
+        expect(response.status).toBe(200)
+        expect(yield* decodeState(response.body)).toMatchObject({ messages: [], working: false })
+        const link = yield* runtime.link(`${path}/state`)
+        const first = yield* link.frame
+        expect(first._tag).toBe('Whole')
+        if (ConversationFrame.guards.Whole(first)) expect(first.state.messages).toEqual([])
+        given.faux.setResponses([() => fauxAssistantMessage('A new conversation')])
+        const receipt = yield* admit(runtime, ada, delivery('pre-cell-thread', 'first-new-message'))
+        expect(yield* settled(runtime, ada, 'pre-cell-thread', receipt.submissionId)).toMatchObject(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: 'A new conversation',
+            toolCalls: 0,
+          }),
+        )
+        yield* link.leave
+      }),
     ),
   )
-  yield* Effect.tryPromise({
-    try: () => client.connect(),
-    catch: () => new SchemaInspectionFailed({ schema }),
-  })
-  const result = yield* Effect.tryPromise({
-    try: () =>
-      client.query(
-        'SELECT to_regnamespace($1)::text AS namespace, to_regclass($2)::text AS table',
-        [schema, `${schema}.flue_meta`],
-      ),
-    catch: () => new SchemaInspectionFailed({ schema }),
-  })
-  return yield* decodeCatalog(result.rows)
-})
 
-/** Reused baseline also proves a fresh public start after the previous scope stopped Flue. */
-const baseline = Effect.gen(function* () {
-  const runtime = yield* routes
-  const id = thread()
-  yield* runtime.inspectTools
-  const receipt = yield* admit(runtime, delivery(id, 1, 'A real runtime message'))
-  expect(yield* runtime.settled(id, receipt.submissionId)).toEqual(
-    Settled.Completed({ text: 'ready' }),
-  )
-  expect(yield* runtime.modelCalls).toBe(1)
-  return runtime.schema
-}).pipe(Effect.withSpan('RuntimeRoutesTest.baseline'))
-
-describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable PostgreSQL', () => {
-  it.live(
-    'H1 assembles the words every Vivid tool must say for its step and durably completes an authenticated signal',
-    () => baseline.pipe(Effect.scoped),
-  )
-
-  it.live('H2 refuses a missing runtime token before calling the model', () =>
-    Effect.gen(function* () {
-      const runtime = yield* routes
-      const request = delivery(thread(), 1, 'Unauthorized message')
-      const body = yield* encodeAdmission(request)
-      const path = `/agents/vivid/${request.threadId}`
-      const response = yield* Effect.tryPromise({
-        // Hono may answer synchronously; Promise.resolve preserves either result form.
-        try: () =>
-          Promise.resolve(
-            app.fetch(
-              new Request(`http://runtime.test${path}`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body,
-              }),
-            ),
-          ),
-        catch: () => new RouteRequestFailed({ path }),
-      })
-      expect(response.status).toBe(401)
-      expect(yield* runtime.modelCalls).toBe(0)
-    }).pipe(Effect.scoped),
-  )
-
-  // Malformed wire input deliberately bypasses the shared constructor: the runtime must reject
-  // the same invalid turns the server encoder refuses, before context or Flue calls the model.
-  // The body starts as the shared codec's encoding of a valid request (the text `admit` sends
-  // and H1 proves accepted) and only `turn` is replaced. If the codec later transforms a field,
-  // the rest of the body stays valid, so the 400 is still about the turn and not the encoding.
-  it.live('H2 rejects malformed turns at runtime ingress before calling the model', () =>
-    Effect.gen(function* () {
-      const runtime = yield* routes
-      const request = delivery(thread(), 1, 'Invalid turn')
-      const wire = yield* decodeWire(yield* encodeAdmission(request))
-      expect(wire).toHaveProperty('turn', 1)
-      for (const turn of [0, 1.5]) {
-        const response = yield* runtime.send(`/agents/vivid/${request.threadId}`, {
-          method: 'POST',
-          body: JSON.stringify({ ...wire, turn }),
-        })
-        expect(response.status, `turn ${turn}`).toBe(400)
-        expect(yield* decodeRefusal(yield* bodyText(response))).toEqual({
-          error: 'Invalid runtime delivery',
-        })
-      }
-      expect(yield* runtime.modelCalls).toBe(0)
-      // The same encoded control is admitted and completed: the hostile inputs cannot pass
-      // merely because the route stopped accepting every request.
-      yield* runtime.reply('ready')
-      const receipt = yield* admit(runtime, request)
-      expect(yield* runtime.settled(request.threadId, receipt.submissionId)).toEqual(
-        Settled.Completed({ text: 'ready' }),
-      )
-      expect(yield* runtime.modelCalls).toBe(1)
-    }).pipe(Effect.scoped),
-  )
-
-  it.live('H3 drops the stopped schema and starts another runtime in the same module graph', () =>
-    Effect.gen(function* () {
-      const first = yield* baseline.pipe(Effect.scoped)
-      expect(yield* catalog(first)).toEqual([{ namespace: null, table: null }])
-      const second = yield* baseline.pipe(Effect.scoped)
-      expect(second).not.toBe(first)
-      expect(yield* catalog(second)).toEqual([{ namespace: null, table: null }])
-    }).pipe(Effect.scoped),
-  )
-
-  it.live('H4 cleans up a real migrated adapter after failed runtime assembly', () =>
-    Effect.gen(function* () {
-      const schema = yield* Effect.gen(function* () {
-        const fixture = yield* disposableStorage
-        // agents: [] fails before persistence (node/index.mjs start). Duplicate identity instead
-        // fails in registerFlueAgents after connectPersistenceAdapter migrated the real adapter;
-        // start catches assembly failure and closes it. No internal API is invoked by the case.
-        const failure = yield* Effect.tryPromise({
-          try: () => start({ agents: [Vivid, Vivid], db: fixture.storage, providers: [] }),
-          catch: (cause) =>
-            cause instanceof Error &&
-            cause.message.startsWith('[flue] Duplicate agent identity "vivid".')
-              ? new DuplicateRegistrationRejected({})
-              : new UnexpectedStartFailure({}),
-        }).pipe(Effect.result)
-        if (Result.isSuccess(failure)) {
-          yield* Effect.promise(() => failure.success.stop())
-          expect.fail('Duplicate runtime registration unexpectedly started')
+  it.effect('answers a Person and tells the model what main told it', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const seen = yield* Deferred.make<{
+          readonly prompt: string
+          readonly tools: ReadonlyArray<string>
+          readonly said: unknown
+        }>()
+        const answer: FauxResponseFactory = (context) => {
+          Deferred.doneUnsafe(
+            seen,
+            Effect.succeed({
+              prompt: getCurrentSystemPrompt(context.messages),
+              tools: getCurrentTools(context.messages).map((tool) => tool.name),
+              said: Option.getOrUndefined(
+                Arr.findLast(context.messages, (message) => message.role === 'user'),
+              ),
+            }),
+          )
+          return fauxAssistantMessage('hi ada')
         }
-        expect(failure.failure).toBeInstanceOf(DuplicateRegistrationRejected)
-        expect(yield* catalog(fixture.schema)).toEqual([
-          {
-            namespace: fixture.schema,
-            table: `${fixture.schema}.flue_meta`,
-          },
+        given.faux.setResponses([answer])
+        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+        expect(receipt.repeated).toBe(false)
+        expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toEqual(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: 'hi ada',
+            toolCalls: 0,
+          }),
+        )
+        const model = yield* Deferred.await(seen)
+        expect(model.said).toMatchObject({ role: 'user', content: 'hello' })
+        // The instruction, the context for this response and the skill catalogue, in that order,
+        // each separated by one blank line and none of it wrapped in a tag.
+        expect(model.prompt.startsWith('You are Vivid: one persistent teammate')).toBe(true)
+        const [instruction, context, skills] = [
+          model.prompt.indexOf('\nToday is '),
+          model.prompt.indexOf('\n\nContext for this response (saved facts may be stale'),
+          model.prompt.indexOf('\n\n## Available Skills\n\n'),
+        ]
+        expect(instruction).toBeGreaterThan(0)
+        expect(context).toBeGreaterThan(instruction)
+        expect(skills).toBeGreaterThan(context)
+        expect(model.prompt).toContain(' in the UTC time zone.')
+        expect(model.prompt).toContain('- **deep-research** — ')
+        expect(model.prompt).not.toContain(ada)
+        // Main's order: the Computer's tools, the skill tools, then the product tools.
+        expect(model.tools.slice(0, 13)).toEqual([
+          'read',
+          'write',
+          'edit',
+          'bash',
+          'grep',
+          'glob',
+          'use_desktop',
+          'browse',
+          'use_person_computer',
+          'copy_signin',
+          'activate_skill',
+          'read_skill_file',
+          'search_library',
         ])
-        return fixture.schema
-      }).pipe(Effect.scoped)
-      expect(yield* catalog(schema)).toEqual([{ namespace: null, table: null }])
-      // A failed assembly must also leave the public runtime bootstrap usable.
-      yield* baseline.pipe(Effect.scoped)
-    }).pipe(Effect.scoped),
+        // The response's metadata is one entry of our own after the answer.
+        yield* runtime.persons.use(ada, (person) => person.quiet)
+        const entries = yield* transcript(runtime, ada, 'thread-1')
+        const recorded = entries.find((entry) => entry.kind === RESPONSE_ENTRY)
+        expect(entries.map((entry) => entry.kind)).toEqual([
+          'pi.user',
+          'pi.system',
+          RUN_ENTRY,
+          'pi.assistant',
+          RESPONSE_ENTRY,
+        ])
+        expect(
+          yield* decodeResponse(recorded === undefined ? undefined : recorded.data),
+        ).toMatchObject({
+          model: 'fixture/text',
+          toolCallCount: 0,
+        })
+      }),
+    ),
   )
 
-  it.live('N5 an idle bodyless abort leaves a later submission free to complete', () =>
-    Effect.gen(function* () {
-      const runtime = yield* routes
-      const id = thread()
-      yield* runtime.reply('first')
-      const first = yield* admit(runtime, delivery(id, 1, 'First message'))
-      expect(yield* runtime.settled(id, first.submissionId)).toEqual(
-        Settled.Completed({ text: 'first' }),
-      )
-      const response = yield* runtime.send(`/agents/vivid/${id}/abort`, { method: 'POST' })
-      expect(response.status).toBe(200)
-      expect(yield* decodeAbort(yield* bodyText(response))).toEqual({ aborted: false })
-      yield* runtime.reply('second')
-      const second = yield* admit(runtime, delivery(id, 2, 'Later message'))
-      expect(yield* runtime.settled(id, second.submissionId)).toEqual(
-        Settled.Completed({ text: 'second' }),
-      )
-      expect(yield* runtime.modelCalls).toBe(2)
-    }).pipe(Effect.scoped),
+  it.effect('creates and pages long Markdown without a revision', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const body = '# Plan\n\n' + 'A lasting detail.\n'.repeat(400) + '\nThe final detail.'
+        given.faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall('write_memory', {
+              summary: 'Remember the plan',
+              layer: 'memory',
+              file: 'plan.md',
+              basis: 'said',
+              kind: 'workstream',
+              description: 'The complete plan',
+              body,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('read_memory', {
+              summary: 'Read the plan',
+              file: 'plan.md',
+              offset: 0,
+              characters: 4000,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('read_memory', {
+              summary: 'Read the rest of the plan',
+              file: 'plan.md',
+              offset: 4000,
+              characters: 4000,
+            }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('list_memory', { summary: 'Find saved plans', layer: 'memory', limit: 1 }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall('search_memory', { summary: 'Find the lasting detail', query: 'lasting' }),
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('Read the complete plan.'),
+        ])
+        const receipt = yield* admit(runtime, ada, delivery('long-memory', 'long-entry'))
+        expect(yield* settled(runtime, ada, 'long-memory', receipt.submissionId)).toMatchObject({
+          toolCalls: 5,
+          reply: 'Read the complete plan.',
+        })
+        const response = yield* runtime.send(`${threadPath(ada, 'long-memory')}/state`, {
+          method: 'GET',
+        })
+        const state = yield* decodeState(response.body)
+        const parts = state.messages.flatMap((message) => message.parts)
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'search_memory',
+            output: {
+              entries: [
+                expect.objectContaining({
+                  file: 'plan.md',
+                  excerpt: expect.stringContaining('lasting'),
+                }),
+              ],
+              next_offset: null,
+            },
+          }),
+        )
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'list_memory',
+            output: {
+              entries: [expect.objectContaining({ layer: 'memory', file: 'plan.md' })],
+              next_cursor: null,
+            },
+          }),
+        )
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'read_memory',
+            output: expect.objectContaining({
+              body: body.slice(0, 4000),
+              next_offset: 4000,
+              complete: false,
+              total_characters: body.length,
+            }),
+          }),
+        )
+        expect(parts).toContainEqual(
+          expect.objectContaining({
+            toolName: 'read_memory',
+            output: expect.objectContaining({
+              body: body.slice(4000),
+              next_offset: null,
+              complete: true,
+            }),
+          }),
+        )
+      }),
+    ),
   )
 
-  it.live(
-    'N6 bodyless abort settles both the held head and queued message without running the latter',
+  it.effect('keeps suggested replies in the persisted conversation state', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const replies = ['send it', 'make it shorter']
+        given.faux.setResponses([
+          fauxAssistantMessage(
+            [fauxText('The draft is ready.'), fauxToolCall('suggest_replies', { replies })],
+            { stopReason: 'toolUse' },
+          ),
+          // What the model wrote when it was asked again after the suggestions: never asked now.
+          fauxAssistantMessage('Ready when you are.'),
+        ])
+        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'suggestions'))
+        expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toMatchObject({
+          reply: 'The draft is ready.',
+          toolCalls: 1,
+        })
+        expect(given.faux.state.callCount).toBe(1)
+        const response = yield* runtime.send(`${threadPath(ada, 'thread-1')}/state`, {
+          method: 'GET',
+        })
+        expect(response.status).toBe(200)
+        const state = yield* decodeState(response.body)
+        expect(state.messages.flatMap((message) => message.parts)).toContainEqual(
+          expect.objectContaining({
+            type: 'dynamic-tool',
+            toolName: 'suggest_replies',
+            input: { replies },
+            state: 'output-available',
+            output: { ok: true },
+          }),
+        )
+        expect(JSON.stringify(state.messages)).not.toContain('Ready when you are.')
+      }),
+    ),
+  )
+
+  it.effect('admits one idempotency key once', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        given.faux.setResponses([fauxAssistantMessage('once')])
+        const first = yield* admit(runtime, ada, delivery('thread-1', 'same-key'))
+        const again = yield* admit(runtime, ada, delivery('thread-1', 'same-key'))
+        expect(again).toEqual({ submissionId: first.submissionId, repeated: true })
+        yield* settled(runtime, ada, 'thread-1', first.submissionId)
+        // After it settled, too: the key still names the same submission and asks the model nothing.
+        expect(yield* admit(runtime, ada, delivery('thread-1', 'same-key'))).toEqual({
+          submissionId: first.submissionId,
+          repeated: true,
+        })
+        expect(given.faux.state.callCount).toBe(1)
+      }),
+    ),
+  )
+
+  it.effect('places a signal as its own entry and acts for the Person its scope names', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const before = yield* Deferred.make<{ readonly asked: number; readonly said: unknown }>()
+        const call: FauxResponseFactory = (context) => {
+          Deferred.doneUnsafe(
+            before,
+            Effect.succeed({
+              asked: given.asked.length,
+              said: Option.getOrUndefined(
+                Arr.findLast(context.messages, (message) => message.role === 'user'),
+              ),
+            }),
+          )
+          return fauxAssistantMessage(
+            fauxToolCall('notify_person', { summary: 'Tell them', title: 'Due', body: 'Now.' }),
+            { stopReason: 'toolUse' },
+          )
+        }
+        given.faux.setResponses([call, fauxAssistantMessage('told them')])
+        const receipt = yield* admit(
+          runtime,
+          ada,
+          delivery('shared-1', 'signal-1', {
+            body: 'is <this> due?',
+            attributes: { from: 'Grace "G"', turn: '4' },
+            acting: grace,
+            turn: 4,
+          }),
+        )
+        expect(yield* settled(runtime, ada, 'shared-1', receipt.submissionId)).toEqual(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: 'told them',
+            toolCalls: 1,
+          }),
+        )
+        const model = yield* Deferred.await(before)
+        // Escaped signal text excludes the acting Person's private scope.
+        expect(model.said).toMatchObject({
+          role: 'user',
+          content:
+            '<message type="message" from="Grace &quot;G&quot;" turn="4">\nis &lt;this&gt; due?\n</message>',
+        })
+        const entries = yield* transcript(runtime, ada, 'shared-1')
+        expect(entries.find((entry) => entry.kind === SIGNAL_ENTRY)).toMatchObject({
+          data: {
+            type: 'message',
+            attributes: { from: 'Grace "G"', turn: '4' },
+            body: 'is <this> due?',
+          },
+        })
+        // Exactly one product client was built after the model asked for the tool, and it was
+        // built for the Person the delivery's scope names, not the Thread's creator.
+        expect(given.asked.slice(model.asked)).toEqual([
+          { threadId: ThreadId.make('shared-1'), personId: grace },
+        ])
+      }),
+    ),
+  )
+
+  it.effect('joins a delivery that arrives during a response to that response', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const round = yield* held('unused')
+        const working: FauxResponseFactory = (context, options, state, model) =>
+          Promise.resolve(round.factory(context, options, state, model)).then(() =>
+            fauxAssistantMessage(fauxToolCall('activate_skill', { name: 'deep-research' }), {
+              stopReason: 'toolUse',
+            }),
+          )
+        const heard = yield* Deferred.make<ReadonlyArray<unknown>>()
+        const both: FauxResponseFactory = (context) => {
+          Deferred.doneUnsafe(
+            heard,
+            Effect.succeed(
+              context.messages.flatMap((message) =>
+                message.role === 'user' ? [message.content] : [],
+              ),
+            ),
+          )
+          return fauxAssistantMessage('both answered')
+        }
+        given.faux.setResponses([working, both])
+        const first = yield* admit(runtime, ada, delivery('thread-1', 'first', { body: 'one' }))
+        yield* round.entered
+        const second = yield* admit(
+          runtime,
+          ada,
+          delivery('thread-1', 'second', { body: 'two', turn: 2 }),
+        )
+        expect(second.submissionId).not.toBe(first.submissionId)
+        yield* round.release
+        const answers = yield* Effect.all([
+          settled(runtime, ada, 'thread-1', first.submissionId),
+          settled(runtime, ada, 'thread-1', second.submissionId),
+        ])
+        const answer = { answeredBy: first.submissionId, reply: 'both answered' }
+        expect(answers).toEqual([
+          RuntimeSettlement.cases.Done.make({ ...answer, toolCalls: 1 }),
+          // The delivery that joined is answered by the whole response, tools included.
+          RuntimeSettlement.cases.Done.make({ ...answer, toolCalls: 1 }),
+        ])
+        expect(yield* Deferred.await(heard)).toEqual(['one', 'two'])
+        expect(given.faux.state.callCount).toBe(2)
+      }),
+    ),
+  )
+
+  it.effect('stops a response, and says so when there was none', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const reply = yield* held('never said')
+        given.faux.setResponses([reply.factory])
+        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+        yield* reply.entered
+        expect(
+          yield* runtime.send(`${threadPath(ada, 'thread-1')}/abort`, { method: 'POST' }),
+        ).toEqual({ status: 200, body: { aborted: true } })
+        expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toEqual(
+          RuntimeSettlement.cases.Stopped.make({}),
+        )
+        expect(
+          yield* runtime.send(`${threadPath(ada, 'thread-1')}/abort`, { method: 'POST' }),
+        ).toEqual({ status: 200, body: { aborted: false } })
+        expect(
+          yield* runtime.send(`${threadPath(ada, 'no-such-thread')}/abort`, { method: 'POST' }),
+        ).toEqual({ status: 200, body: { aborted: false } })
+      }),
+    ),
+  )
+
+  it.effect('finishes a reply after a restart with no client attached', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const given = yield* world()
+        const interrupted = yield* held('never said')
+        const resumed = yield* Deferred.make<string>()
+        const afterwards: FauxResponseFactory = (context) => {
+          Deferred.doneUnsafe(resumed, Effect.succeed(getCurrentSystemPrompt(context.messages)))
+          return fauxAssistantMessage('finished after the restart')
+        }
+        given.faux.setResponses([interrupted.factory, afterwards])
+
+        const first = yield* Scope.make()
+        const before = yield* start(given).pipe(Scope.provide(first))
+        const receipt = yield* admit(before, ada, delivery('thread-1', 'key-1'))
+        yield* interrupted.entered
+        // The process stops in the middle of the model's answer.
+        yield* Scope.close(first, Exit.void)
+
+        // The next process, on the same database. Nothing is sent to it before the reply resumes.
+        const after = yield* start(given)
+        const prompt = yield* Deferred.await(resumed)
+        // The context frozen for the response came back from the store, not from memory.
+        expect(prompt).toContain('Context for this response')
+        expect(prompt).toContain(' in the UTC time zone.')
+        expect(yield* settled(after, ada, 'thread-1', receipt.submissionId)).toEqual(
+          RuntimeSettlement.cases.Done.make({
+            answeredBy: receipt.submissionId,
+            reply: 'finished after the restart',
+            toolCalls: 0,
+          }),
+        )
+        // The instruction did not change across the restart: Pi wrote the system entry once.
+        const entries = yield* transcript(after, ada, 'thread-1')
+        expect(entries.filter((entry) => entry.kind === 'pi.system')).toHaveLength(1)
+        expect(yield* admit(after, ada, delivery('thread-1', 'key-1'))).toEqual({
+          submissionId: receipt.submissionId,
+          repeated: true,
+        })
+      }),
+    ),
+  )
+
+  it.effect('keeps each Person in a store of their own', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        given.faux.setResponses([
+          fauxAssistantMessage('for ada'),
+          fauxAssistantMessage('for grace'),
+        ])
+        const hers = yield* admit(runtime, ada, delivery('ada-thread', 'key-a'))
+        yield* settled(runtime, ada, 'ada-thread', hers.submissionId)
+        const theirs = yield* admit(
+          runtime,
+          grace,
+          delivery('grace-thread', 'key-g', { creator: grace }),
+        )
+        yield* settled(runtime, grace, 'grace-thread', theirs.submissionId)
+        // Ada's Thread does not exist in Grace's store, and cannot be put there.
+        expect(
+          yield* runtime.send(
+            `${threadPath(grace, 'ada-thread')}/submissions/${hers.submissionId}`,
+            { method: 'GET' },
+          ),
+        ).toEqual({ status: 404, body: { error: 'UnknownThread' } })
+        expect(
+          yield* runtime.send(threadPath(grace, 'ada-thread'), {
+            method: 'POST',
+            body: delivery('ada-thread', 'key-x'),
+          }),
+        ).toEqual({ status: 400, body: { error: 'WrongThread' } })
+        expect(
+          yield* runtime.send(threadPath(PersonId.make('not.a.name'), 'ada-thread'), {
+            method: 'POST',
+            body: delivery('ada-thread', 'key-y'),
+          }),
+        ).toMatchObject({ status: 400 })
+      }),
+    ),
+  )
+
+  it.effect(
+    'answers a delivery that was waiting when the response it would have joined failed',
+    () =>
+      scenario((given, runtime) =>
+        Effect.gen(function* () {
+          const failing = yield* held(
+            fauxAssistantMessage('', { stopReason: 'error', errorMessage: '401 invalid api key' }),
+          )
+          given.faux.setResponses([failing.factory, fauxAssistantMessage('for the second')])
+          const first = yield* admit(runtime, ada, delivery('thread-1', 'first', { body: 'one' }))
+          yield* failing.entered
+          const second = yield* admit(
+            runtime,
+            ada,
+            delivery('thread-1', 'second', { body: 'two', turn: 2 }),
+          )
+          yield* failing.release
+          expect(yield* settled(runtime, ada, 'thread-1', first.submissionId)).toEqual(
+            RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 401 }),
+          )
+          // Nothing else is sent to the Thread: the waiting delivery gets a response of its own.
+          expect(yield* settled(runtime, ada, 'thread-1', second.submissionId)).toEqual(
+            RuntimeSettlement.cases.Done.make({
+              answeredBy: second.submissionId,
+              reply: 'for the second',
+              toolCalls: 0,
+            }),
+          )
+        }),
+      ),
+  )
+
+  it.effect(
+    'keeps a delivery key apart from the keys the runtime writes its own entries under',
     () =>
       Effect.gen(function* () {
-        const runtime = yield* routes
-        const id = thread()
-        const held = yield* runtime.hold('Head answer')
-        const first = yield* admit(runtime, delivery(id, 1, 'Held message'))
-        // If the first admission settles durably without reaching the model, `entered` never
-        // resolves. Racing it against the public settlement read fails at once with the
-        // outcome, instead of at the runner's timeout. The losing read is only abandoned: it
-        // holds no resource, and the settlement is read again after the abort below.
-        const early = yield* Effect.raceFirst(
-          held.entered.pipe(Effect.as(Option.none<Settled>())),
-          runtime.settled(id, first.submissionId).pipe(Effect.map(Option.some)),
+        // A fresh store numbers its first delivery the same way every time.
+        const number = yield* scenario((given, runtime) =>
+          Effect.gen(function* () {
+            given.faux.setResponses([
+              fauxAssistantMessage('first'),
+              fauxAssistantMessage('a new delivery'),
+            ])
+            const first = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+            yield* settled(runtime, ada, 'thread-1', first.submissionId)
+            yield* runtime.persons.use(ada, (person) => person.quiet)
+            // The key of the entry the runtime has just written for that response.
+            const collides = `${RESPONSE_ENTRY}:${first.submissionId}`
+            const next = yield* admit(
+              runtime,
+              ada,
+              delivery('thread-1', collides, { body: 'again', turn: 2 }),
+            )
+            expect(next.repeated).toBe(false)
+            expect(yield* settled(runtime, ada, 'thread-1', next.submissionId)).toEqual(
+              RuntimeSettlement.cases.Done.make({
+                answeredBy: next.submissionId,
+                reply: 'a new delivery',
+                toolCalls: 0,
+              }),
+            )
+            return first.submissionId
+          }),
         )
-        if (Option.isSome(early)) {
-          expect.fail(`First admission settled ${early.value._tag} before the model was entered`)
-        }
-        const second = yield* admit(runtime, delivery(id, 2, 'Queued message'))
-        const response = yield* runtime.send(`/agents/vivid/${id}/abort`, { method: 'POST' })
-        expect(response.status).toBe(200)
-        expect(yield* decodeAbort(yield* bodyText(response))).toEqual({ aborted: true })
-        yield* held.release
-        expect(yield* runtime.settled(id, first.submissionId)).toEqual(Settled.Aborted())
-        expect(yield* runtime.settled(id, second.submissionId)).toEqual(Settled.Aborted())
-        expect(yield* runtime.modelCalls).toBe(1)
-      }).pipe(Effect.scoped),
+        // The other order: the delivery takes the key first, and its response is still recorded.
+        yield* scenario((given, runtime) =>
+          Effect.gen(function* () {
+            given.faux.setResponses([fauxAssistantMessage('first')])
+            const first = yield* admit(
+              runtime,
+              ada,
+              delivery('thread-1', `${RESPONSE_ENTRY}:${number}`),
+            )
+            expect(first.submissionId).toBe(number)
+            yield* settled(runtime, ada, 'thread-1', first.submissionId)
+            yield* runtime.persons.use(ada, (person) => person.quiet)
+            const entries = yield* transcript(runtime, ada, 'thread-1')
+            expect(entries.filter((entry) => entry.kind === RESPONSE_ENTRY)).toHaveLength(1)
+          }),
+        )
+      }),
   )
 
-  it.live('N7 history retains the admitted signal raw words and submission identity', () =>
-    Effect.gen(function* () {
-      const runtime = yield* routes
-      const id = thread()
-      const words = 'Keep these raw words <tag> & punctuation.\nSecond line.'
-      yield* runtime.reply('ready')
-      const receipt = yield* admit(runtime, delivery(id, 1, words))
-      expect(yield* runtime.settled(id, receipt.submissionId)).toEqual(
-        Settled.Completed({ text: 'ready' }),
-      )
-      const response = yield* runtime.send(`/agents/vivid/${id}`, { method: 'GET' })
-      expect(response.status).toBe(200)
-      const snapshot = yield* decodeSnapshot(yield* bodyText(response))
-      const messages = snapshot.messages.filter(
-        (message) => message.signal !== undefined && message.signal.tagName === 'message',
-      )
-      expect(messages).toHaveLength(1)
-      const message = messages[0]
-      if (message === undefined) expect.fail('History lost the admitted message')
-      expect(message.submissionId).toBe(receipt.submissionId)
-      expect(message.parts.map((part) => part.text).join('')).toBe(words)
-      expect(snapshot.settlements).toEqual([
-        { submissionId: receipt.submissionId, outcome: 'completed' },
-      ])
-    }).pipe(Effect.scoped),
+  it.effect('admits two requests with one key, sent at once, as one delivery', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        given.faux.setResponses([fauxAssistantMessage('once')])
+        const [one, other] = yield* Effect.all(
+          [
+            admit(runtime, ada, delivery('thread-1', 'same-key')),
+            admit(runtime, ada, delivery('thread-1', 'same-key')),
+          ],
+          { concurrency: 2 },
+        )
+        expect(other.submissionId).toBe(one.submissionId)
+        yield* settled(runtime, ada, 'thread-1', one.submissionId)
+        yield* runtime.persons.use(ada, (person) => person.quiet)
+        expect(given.faux.state.callCount).toBe(1)
+        const entries = yield* transcript(runtime, ada, 'thread-1')
+        expect(entries.filter((entry) => entry.kind === 'pi.user')).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.effect(
+    'gives the reply every word of the response, and asks the model to think as main did',
+    () =>
+      scenario((given, runtime) =>
+        Effect.gen(function* () {
+          const asked = yield* Deferred.make<unknown>()
+          const working: FauxResponseFactory = (_context, options) => {
+            Deferred.doneUnsafe(
+              asked,
+              Effect.succeed(options === undefined ? undefined : options.reasoning),
+            )
+            return fauxAssistantMessage(
+              [
+                fauxText('I found the report.'),
+                fauxToolCall('activate_skill', { name: 'deep-research' }),
+              ],
+              { stopReason: 'toolUse' },
+            )
+          }
+          given.faux.setResponses([
+            working,
+            fauxAssistantMessage([fauxText('Sent it.'), fauxText('Anything else?')]),
+          ])
+          const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+          expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toEqual(
+            RuntimeSettlement.cases.Done.make({
+              answeredBy: receipt.submissionId,
+              reply: 'I found the report.\n\nSent it.\n\nAnything else?',
+              toolCalls: 1,
+            }),
+          )
+          expect(yield* Deferred.await(asked)).toBe('medium')
+        }),
+      ),
+  )
+
+  it.effect(
+    'places every delivery that arrived during a round of tools before the next request',
+    () =>
+      scenario((given, runtime) =>
+        Effect.gen(function* () {
+          const round = yield* held('unused')
+          const working: FauxResponseFactory = (context, options, state, model) =>
+            Promise.resolve(round.factory(context, options, state, model)).then(() =>
+              fauxAssistantMessage(fauxToolCall('activate_skill', { name: 'deep-research' }), {
+                stopReason: 'toolUse',
+              }),
+            )
+          const heard = yield* Deferred.make<ReadonlyArray<unknown>>()
+          const all: FauxResponseFactory = (context) => {
+            Deferred.doneUnsafe(
+              heard,
+              Effect.succeed(
+                context.messages.flatMap((message) =>
+                  message.role === 'user' ? [message.content] : [],
+                ),
+              ),
+            )
+            return fauxAssistantMessage('all three')
+          }
+          given.faux.setResponses([working, all])
+          const first = yield* admit(runtime, ada, delivery('thread-1', 'a', { body: 'one' }))
+          yield* round.entered
+          const second = yield* admit(
+            runtime,
+            ada,
+            delivery('thread-1', 'b', { body: 'two', turn: 2 }),
+          )
+          const third = yield* admit(
+            runtime,
+            ada,
+            delivery('thread-1', 'c', { body: 'three', turn: 3 }),
+          )
+          yield* round.release
+          expect(yield* Deferred.await(heard)).toEqual(['one', 'two', 'three'])
+          for (const receipt of [first, second, third])
+            expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toMatchObject({
+              answeredBy: first.submissionId,
+              reply: 'all three',
+            })
+          expect(given.faux.state.callCount).toBe(2)
+        }),
+      ),
+  )
+
+  it.effect('measures a failed response without the response that follows it', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        given.faux.setResponses([
+          fauxAssistantMessage('', { stopReason: 'error', errorMessage: '401 invalid api key' }),
+          fauxAssistantMessage(fauxToolCall('activate_skill', { name: 'deep-research' }), {
+            stopReason: 'toolUse',
+          }),
+          fauxAssistantMessage('the second worked'),
+        ])
+        const failed = yield* admit(runtime, ada, delivery('thread-1', 'a'))
+        yield* settled(runtime, ada, 'thread-1', failed.submissionId)
+        const worked = yield* admit(runtime, ada, delivery('thread-1', 'b', { turn: 2 }))
+        yield* settled(runtime, ada, 'thread-1', worked.submissionId)
+        yield* runtime.persons.use(ada, (person) => person.quiet)
+        const entries = yield* transcript(runtime, ada, 'thread-1')
+        const recorded = yield* Effect.forEach(
+          entries.filter((entry) => entry.kind === RESPONSE_ENTRY),
+          (entry) => decodeResponse(entry.data),
+        )
+        expect(recorded.map((response) => [response.outcome, response.toolCallCount])).toEqual([
+          ['failed', 0],
+          ['completed', 1],
+        ])
+      }),
+    ),
+  )
+
+  it.effect('says how a response failed in closed words, never in the provider’s', () =>
+    scenario((given, runtime) =>
+      Effect.gen(function* () {
+        const marker = '/private/state/person-7f3a/sk-live-SECRET'
+        given.faux.setResponses([
+          fauxAssistantMessage('', {
+            stopReason: 'error',
+            errorMessage: `403 forbidden for ${marker}`,
+          }),
+        ])
+        const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+        const response = yield* runtime.send(
+          `${threadPath(ada, 'thread-1')}/submissions/${receipt.submissionId}`,
+          { method: 'GET' },
+        )
+        expect(yield* decodeSettlement(response.body)).toEqual(
+          RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 403 }),
+        )
+        expect(JSON.stringify(response.body)).not.toContain('SECRET')
+      }),
+    ),
+  )
+
+  it.effect(
+    'leaves an attempt the model made again out of the reply and out of the tool count',
+    () =>
+      scenario((given, runtime) =>
+        Effect.gen(function* () {
+          given.faux.setResponses([
+            // The provider fails after some words and a call Pi never runs; Pi tries again.
+            fauxAssistantMessage(
+              [fauxText('The message was sent.'), fauxToolCall('notify_person', { title: 'Sent' })],
+              { stopReason: 'error', errorMessage: '503 overloaded' },
+            ),
+            fauxAssistantMessage('I could not send it.'),
+          ])
+          const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
+          expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toEqual(
+            RuntimeSettlement.cases.Done.make({
+              answeredBy: receipt.submissionId,
+              reply: 'I could not send it.',
+              toolCalls: 0,
+            }),
+          )
+          yield* runtime.persons.use(ada, (person) => person.quiet)
+          const entries = yield* transcript(runtime, ada, 'thread-1')
+          const [recorded] = yield* Effect.forEach(
+            entries.filter((entry) => entry.kind === RESPONSE_ENTRY),
+            (entry) => decodeResponse(entry.data),
+          )
+          // Both attempts are in the transcript; only one was a step of the response.
+          expect(entries.filter((entry) => entry.kind === 'pi.assistant')).toHaveLength(2)
+          expect(recorded).toMatchObject({ outcome: 'completed', toolCallCount: 0 })
+          expect(given.faux.state.callCount).toBe(2)
+        }),
+      ),
+  )
+
+  it.effect('refuses a caller without the runtime token and answers health without one', () =>
+    scenario((_given, runtime) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runtime.send(threadPath(ada, 'thread-1'), {
+            method: 'POST',
+            body: delivery('thread-1', 'key-1'),
+            token: 'wrong',
+          }),
+        ).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+        expect(yield* runtime.send('/health', { method: 'GET', token: 'wrong' })).toEqual({
+          status: 200,
+          body: { model: 'fixture/text', service: 'vivid-agent-runtime', status: 'ok' },
+        })
+      }),
+    ),
   )
 })

@@ -13,8 +13,8 @@ The shared policy is [seen.ts](../../../../packages/client/state/src/seen.ts). T
 After Launch and Doctor on the unchanged commit, run both recipes with the explicit run id.
 
 ```sh
-.agents/skills/verify-vivid/verify feature reading flue-<id>
-.agents/skills/verify-vivid/verify browser reading flue-<id>
+.agents/skills/verify-vivid/verify feature reading pi-<id>
+.agents/skills/verify-vivid/verify browser reading pi-<id>
 ```
 
 HTTP uses an empty Thread created through public `CreateThread`. It sends two real `MarkThreadRead` writes and checks through `GetThread` that neither moves the Thread or creates a Run. It establishes the repeated-write contract, not client suppression.

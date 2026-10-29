@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import {
   Tool,
   ConnectionStep,
@@ -115,7 +115,7 @@ export function connectionTools(runTool: RunTool) {
               reason: data.reason,
               wanted: another ? 'Another' : 'Service',
             })
-            // A connect card is the answer for this turn. Flue must settle it rather than
+            // A connect card is the answer for this turn. The runtime must settle it rather than
             // asking the model to keep discovering the same unavailable account. The card's
             // WatchConnections continuation sends a fresh delivery after authorization.
             return { output: views.connectionRequest(response), terminate: !response.ready }

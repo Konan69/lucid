@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo"
+  },
+  "include": ["src"]
+}

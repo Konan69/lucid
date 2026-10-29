@@ -94,6 +94,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install pinned celld for Worker builds
+        if: matrix.stages == 'build'
+        run: |
+          curl -fsSL https://celld.dev/install.sh -o "$RUNNER_TEMP/celld-install.sh"
+          CELLD_VERSION=v0.6.2 sh "$RUNNER_TEMP/celld-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/celld" --version
+
       # pnpm's cache contains downloads, not successful check results. Task hashes decide reuse
       # after restoring the latest cache for this lockfile; each job keeps its own, so a job
       # restores only the results of the stages it runs.

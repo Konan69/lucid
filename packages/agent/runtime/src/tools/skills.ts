@@ -1,5 +1,5 @@
 import { Tool } from '@vivid/contracts'
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import { Effect, Option, Schema } from 'effect'
 import { builtinNamed, manifest } from '@vivid/skills'
 import * as v from 'valibot'

@@ -1,19 +1,13 @@
 # Deny an action
 
-Model requirement: needs a real model. Rehearsal proves plumbing only.
+Model requirement: real model. Rehearsal cannot prove this journey.
 
-## Sub-features
+Run `verify feature deny <run>` and `verify browser deny <run>` after Launch and worthy Doctor on the same unchanged head. Cleanup follows.
 
-The Approval becomes Denied, a Decision Run settles and the external disposable system has no mutation.
+The recipe connects the disposable Verify Pulse Integration and creates a personal Ask rule through public RPC. It asks the real model to discover and invoke emit using find_tools and use_tool. The first completed Run must leave one Pending Approval bound to that Connection and receipt. A quiesced Executor export must contain no matching event before the Person decides.
 
-## How to get to it (user POV)
+HTTP submits the Approval id and digest through DecideApproval. Browser presses **Don’t allow** in the actual card. Both require Denied, with no provider event, and one completed successor Decision Run. Browser reloads after deciding and checks the pending card has gone. Finally removes the owned rule and Connection, including after failure.
 
-Open a Thread with a real pending action from a disposable Integration. Choose Don’t allow above the composer. History retains the denial after the decision.
+Evidence stays in `deny/` and `browser/deny/`. It includes the pending action, decision, successor, safe provider exports and verdict. Browser also retains commands, snapshots and screenshots.
 
-## Driving it with verify-vivid
-
-Run `.agents/skills/verify-vivid/verify feature deny` after Launch and Doctor, then run `verify browser deny`. Both commands currently return blocked before exercising the journey. Inspect `deny/verdict.json` and `browser/deny/verdict.json`; no action transcript, settlement, history or SQL is produced. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
-
-## Gotchas
-
-Both recipes are blocked. The proposed proof needs a real pending action from a disposable Integration and an implemented recipe. Product Approvals can also address Browser or Desktop actions. Capture external state before and after the decision.
+Always allow, destructive effects, shared Threads and native clients remain unproved. One emitted event establishes the provider outcome; it does not count internal execution attempts hidden by provider deduplication.

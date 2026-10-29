@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import type { FlueConversationState } from '@flue/sdk'
+import type { ConversationState } from '@vivid/contracts'
 import { ComputerState, EgressStatus, PatchSettingsRequest } from '@vivid/contracts'
 import { Array as Arr, Config, Effect, Option, Schema, Stream } from 'effect'
 import { type ChainFixture, chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
@@ -42,10 +42,7 @@ const ECHO = 'https://api.ipify.org'
 /** An IPv4 or IPv6 address somewhere in a page's outline. */
 const ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b/iu
 
-/**
- * A browser step's receipt as the Thread holds it: a native Browse result with no picture is
- * its single JSON text block in Flue 2.2.2 (`computers/thread.live.test.ts`).
- */
+/** A browser receipt without a picture projects as its single JSON text block. */
 const Receipt = Schema.fromJsonString(
   Schema.Struct({
     ok: Schema.Literal(true),
@@ -59,7 +56,7 @@ const decodeReceipt = Schema.decodeUnknownOption(Receipt)
  * first. A receipt for another page, a refused step, or an echo page with no address in it
  * (an error page, a blocked request) is not one.
  */
-const echoed = (state: FlueConversationState, page: URL) =>
+const echoed = (state: ConversationState, page: URL) =>
   toolParts(state).flatMap((part) => {
     if (part.toolName !== 'browse' || part.state !== 'output-available') return []
     return Option.match(decodeReceipt(part.output), {

@@ -96,7 +96,10 @@ export async function executor(state, { run, own, save, cleanEnv }) {
   const catalog = await own(
     'catalog',
     [process.execPath, skill + '/scripts/pulse.mjs', String(state.ports.catalog)],
-    { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+    {
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      env: { ...cleanEnv, VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD },
+    },
   )
   await signal(catalog, catalog, 'message', Schema.is(Ready))
   const env = {

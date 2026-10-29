@@ -172,7 +172,7 @@ export async function browse(state, page, directory) {
         part.toolName === 'browse' &&
         part.state === 'output-available',
     )
-  // Native browse uses pictureResult's JSON text content in Flue history, even without a picture.
+  // Native browse uses pictureResult's JSON text content in conversation history, even without a picture.
   NodeAssert.ok(
     steps.some((step) => decode(BrowseReceipt, step.output).ok === true),
     'No successful browse tool receipt',

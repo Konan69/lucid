@@ -1,8 +1,78 @@
 [
   {
-    "file": "packages/agent/runtime/src/storage.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["query", "transaction", "close"]
+    "file": "packages/agent/runtime/src/tools/scope.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["runTool", "runScoped", "runMemory"]
+  },
+  {
+    "file": "packages/agent/runtime/src/memory.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["attempt", "index", "write", "retract", "search"]
+  },
+  {
+    "file": "packages/agent/runtime/src/learning.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>", "gate", "starter"]
+  },
+  {
+    "file": "packages/agent/runtime/src/providers/witness.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
+  },
+  {
+    "file": "packages/agent/runtime/src/person.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["run", "closeHarness", "openPerson"]
+  },
+  {
+    "file": "packages/agent/runtime/src/state/link.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["follow", "watching", "awaited"]
+  },
+  {
+    "file": "packages/agent/runtime/src/agents/vivid.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>"]
+  },
+  {
+    "file": "packages/agent/runtime/src/continuity.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["resume", "continuityHooks"]
+  },
+  {
+    "file": "packages/agent/runtime/src/correction.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["correctionHooks"]
+  },
+  {
+    "file": "packages/agent/runtime/src/response.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["nameAnswerer", "joinHooks", "settlement"]
+  },
+  {
+    "file": "packages/agent/runtime/src/threads.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["pi", "ensureConversation"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/machine.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["computerCall", "run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/sandbox.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/tool.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["executeCall", "execute"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/tests/harness.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["roundTrip", "invoke", "execute"]
   },
   {
     "file": "apps/server/src/library/extraction/main.ts",
@@ -13,26 +83,6 @@
     "file": "apps/server/src/library/fixtures/process/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["preparePdfjs"]
-  },
-  {
-    "file": "packages/agent/runtime/src/app.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["runResult", "requireRuntimeToken", "get:/health", "prepareContext"]
-  },
-  {
-    "file": "apps/server/src/runtime/client.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["makeRuntime"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/scope.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["runTool", "runScoped", "runNote"]
-  },
-  {
-    "file": "packages/agent/runtime/src/notes.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["openStore", "closeStore", "attempt", "noteIndex"]
   },
   {
     "file": "apps/server/src/auth/session.ts",
@@ -55,8 +105,45 @@
     "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
   },
   {
-    "file": "packages/agent/runtime/src/providers/witness.ts",
+    "file": "apps/cells/src/main.ts",
     "classification": "third-party-adapter",
-    "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
+    "symbols": [
+      "getAlarm",
+      "setAlarm",
+      "deleteAlarm",
+      "blockConcurrencyWhile",
+      "fetch",
+      "memoryIndex",
+      "listMemory",
+      "searchMemory",
+      "readMemory",
+      "writeMemory",
+      "deleteMemory",
+      "#open",
+      "#remote",
+      "#arm",
+      "alarm",
+      "settled",
+      "#answer",
+      "#carryUntilQuiet",
+      "#route",
+      "#wake",
+      "<module>"
+    ]
+  },
+  {
+    "file": "packages/agent/runtime/src/cell.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["openCell"]
+  },
+  {
+    "file": "packages/agent/runtime/src/history.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["responded", "append"]
+  },
+  {
+    "file": "apps/server/src/threads/adoption/main.ts",
+    "classification": "cli-entrypoint",
+    "symbols": ["command"]
   }
 ]

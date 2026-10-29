@@ -1,226 +1,193 @@
 # Runtime: one cell per Person on celld
 
-Status: design, not built. Branch `feat/pi-port` replaces Flue with Pi Durable on a Postgres store;
-this page moves that runtime into celld cells and retires the Postgres store.
+The cell host is implemented in `apps/cells/src/main.ts` (`Person`). Each Person has one native
+Pi Durable Harness over celld Durable Object SQLite. Memory shares that database. Product
+PostgreSQL remains on the server (`packages/agent/runtime/src/cell.ts`, `openCell`;
+`scripts/migrate.mjs`). Source describes the implementation; product and recovery claims still
+require the real-runtime evidence below. This document authorizes no production action.
+
+The implemented memory layers, cell-owned learning, and planned Dreamer are described in
+[Assistant patterns](28-assistant-patterns.md). The cell is their persistence and execution host.
 
 ## The decision
 
-Each Person's agent runtime runs as one celld Durable Object cell, named by `PersonId`. The cell
-opens a Pi Durable `Harness` over its own SQLite database, serves that Person's Threads, and
-sleeps when nothing runs. Postgres keeps only app records: auth, Company and Membership, the
-Thread index and titles, Library items, and Connections.
+Each Person's cell is named by `PersonId`. It serves every Thread created by that Person and
+opens one Harness over native SQLite. PostgreSQL keeps auth, Company and Membership, Thread
+metadata, Runs, Library items, and Connections (`apps/cells/src/main.ts`, `Person`;
+`packages/agent/runtime/src/person.ts`, `openPerson`).
 
-This is the shape [the Computer plan](04-computer.md) already chose: Pi Durable used directly,
-SQLite per Person, the server as relay and as the authority for consequential actions. The cell is
-a different host for the same shape. The Computer is not reliable enough to hold the conversation
-yet (15 October 2026), and a cell can move to the Computer later because Pi's storage contract
-does not change.
-
-It also absorbs [memory cells](26-memory-cells.md). That design gave each Person a `Memory` cell
-that the runtime reached through the server. With the runtime in the cell, the notes are tables
-in the same database and the note tools read them directly.
+The server remains the product authority and runtime relay. Tools that need product records
+call its typed RPC client. Memory uses the acting Person's cell, which can differ from the
+Thread creator's cell (`packages/agent/runtime/src/client.ts`, `Product`;
+`packages/agent/runtime/src/authority.ts`, `resolveMemoryCall`).
 
 ## Why cells
 
-- **Pi ships the adapter.** `openDurableObjectSqliteStorage(ctx.storage)` is Pi Durable's own
-  Durable Object backend. It needs `sql.exec(...).toArray()` and `transaction(async fn)`, and
-  celld supports both. Our Postgres store is about 4,250 lines that Pi does not maintain.
-- **Pi 1.4.0 can sleep.** `HarnessOptions.onWake` tells the host when the Harness next needs to
-  run (`active`, or `at` a time). The cell sets its alarm to that time and hibernates. Retries,
-  backoffs and sleeps no longer hold a process.
-- **One writer per Person, for free.** celld runs exactly one owner per cell, fenced by an epoch
-  in the bucket. The Postgres store's owner lock and generation fence (`storage/stores.ts`
-  `claim`) go away.
-- **The runtime scales out.** Today the runtime is one Railway copy because AgentFS locks each
-  Person's file. Cells spread Persons across nodes, and any node routes a call to the owner.
-- **The bucket is the truth.** Every write is an LTX segment copied to a follower node and then to
-  the bucket. A wiped node restores its cells from the bucket (measured in the memory proof: 200
-  Persons back in 1.9 s).
+- **Native storage.** `openCell` uses Pi's `openDurableObjectSqliteStorage` with the `pi_` prefix
+  (`packages/agent/runtime/src/cell.ts`).
+- **Native wake.** The cell arms alarms from Pi's `wake()` and resumes work on an alarm.
+  celld owns activation and idle lifecycle (`apps/cells/src/main.ts`, `Person`).
+- **One owner per Person.** Pi owns tasks, queues, deduplication, wait, abort, and restart.
+  Vivid registers its tools and learning task with that Harness
+  (`packages/agent/runtime/src/person.ts`, `openPerson`).
+- **Shared cell storage.** The fleet declares two nodes and one retained R2 bucket. Each node
+  has a separate local volume and advertised peer address (`infra/cells.ts`, `railwayCells`).
+
+History. The custom runtime PostgreSQL adapter and AgentFS memory belonged to the pre-cell
+implementation. Runtime migrations now apply only to server auth and product tables
+(`scripts/migrate.mjs`); cell memory migrations run when `Person` opens.
 
 ## The request path
 
-```
-client ──/api/rpc──▶ server (Node, Railway)
-                       │  auth, Company scope, Thread index, approvals
-                       │  fetch http://cells-a.railway.internal/persons/:personId/...
-                       ▼
-                     celld node (any) ──forwards──▶ owner node
-                                                     │
-                                                     ▼
-                                              Person cell
-                                              ├─ Pi Harness (tables prefixed pi_)
-                                              ├─ notes
-                                              └─ alarm = next wake
-                                                     │ fetch
-                              ┌──────────────────────┼─────────────────────┐
-                              ▼                      ▼                     ▼
-                         model provider        the Computer (Boat)    server /api/rpc
-                                                                     (tools that need
-                                                                      app records)
+```text
+client → /api/rpc → server → celld ingress → owning Person cell
+                   │                       ├─ Pi Harness (pi_ tables)
+                   │                       ├─ memory and FTS5
+                   │                       └─ alarm and carrier event
+                   └← product RPC tools ←────────┘
 ```
 
-1. The client talks only to the server, as today. The server checks the session and the
-   Membership, then calls the cells service on Railway's private network.
-2. The cells Worker reads `personId` from the path and calls `env.PERSONS.getByName(personId)`.
-   The node that received the call activates the cell, or forwards it to the node that owns it.
-3. The cell's `fetch` hands the request to the runtime's Effect router through
-   `HttpRouter.toWebHandler`. The routes stay those of `packages/agent/runtime/src/app.ts`:
-   submit, abort, submission, state, attachments.
-4. Tools that need an app record (Library, Connections, approvals) call the server's `/api/rpc`
-   with the runtime token, as today. Tools that act on the Computer call the Boat API. The model
-   call is a `fetch` to the provider.
+1. The server checks product authority and addresses the Thread creator's cell. It tries another
+   configured node on a transport failure (`apps/server/src/runtime/client.ts`, `makeRuntime`;
+   `apps/server/src/runtime/transport.ts`, `cellNodes`).
+2. The Worker checks the runtime token and resolves `PERSONS.getByName(personId)`
+   (`apps/cells/src/main.ts`, default `fetch`). `/health` is a public liveness exception.
+3. The cell hands requests to the Effect router created by `openCell`. Routes cover admission,
+   abort, terminal waiting, state, attachments, history import, and Settings memory
+   (`packages/agent/runtime/src/cell.ts`, `openCell`; `packages/agent/runtime/src/app.ts`, `routes`).
+4. The cell queues router work and pumps response bodies inside one carrier event. Model tools
+   use the server's RPC authority or memory authority
+   (`apps/cells/src/main.ts`, `Person`; `packages/agent/runtime/src/tools/index.ts`, `tools`).
 
-The cell holds no credential that the runtime does not hold today. The cells service's public
-listener has no authentication, so every call carries the runtime token (`Redacted`), checked in
-the Worker, and only the private network reaches it.
+`GET …/submissions/:id` returns only terminal `Done`, `Failed`, or `Stopped`. Its response body
+owns the native wait. State streams report progress separately
+(`packages/agent/runtime/src/app.ts`, `settled`, `stateEvents`).
 
 ## The cell
 
-One class, `Person`, in a new app `apps/cells`, deployed on its own with `celld deploy`.
+`Person` in `apps/cells/src/main.ts` owns the following lifecycle.
 
-- **Open.** The constructor opens storage and the Harness inside `blockConcurrencyWhile`, as
-  Earendil's `pi-durable-cloudflare` sample does. That gate has a 30-second limit, so opening
-  must not wait on the network.
-- **Run.** A submission commits through Pi's storage, then the Harness schedules the Run. A phase
-  is not inside a SQLite transaction, so a model call longer than 30 seconds is fine. Only each
-  commit is a transaction.
-- **Wake.** `onWake({ at })` sets the alarm. `alarm()` calls `harness.resume()`. A cell with
-  `active` work keeps itself resident until the work settles.
-- **Watch.** A client follows a Thread through the server. The server holds one hibernatable
-  WebSocket per open Person to the cell and fans updates out on its own live channel. When celld
-  moves the cell, the socket closes, and the server reconnects and reads the Thread's state
-  again. Everything committed is in the cell's database, so a reconnect loses nothing.
-- **Notes.** The `notes` and `dreams` tables of the memory design, beside Pi's tables. Pi 1.3.0
-  `prefix` keeps the two apart in one database. Dreaming runs in the cell on its alarm.
+- **Open.** `blockConcurrencyWhile` opens local memory migrations and the Harness. Recovery
+  resumes later inside the carrier, after the alarm has been armed.
+- **Run.** All Pi router work starts from one carrier loop. Its event stays live through
+  `waitUntil` until queued jobs, active work, settlement follow-ups, and ready or running
+  background tasks are quiet. Sleeping or waiting tasks remain scheduled by Pi.
+- **Wake.** Before admission, abort, or resume, the cell arms Pi's active-work heartbeat.
+  `onWake` updates the alarm from Pi's active flag and earliest deadline. `alarm()` queues
+  recovery through the same carrier.
+- **Watch.** The carrier pumps state and settlement response bodies. The state link uses
+  Server-Sent Events to the server, which exposes the product stream to clients
+  (`packages/agent/runtime/src/app.ts`, `stateEvents`;
+  `apps/server/src/runtime/client.ts`, `makeRuntime`).
+- **Memory.** Local operations use the opened store. Another acting Person's entries use native
+  cell RPC, with typed decoding of the result. Settings enters through the token-protected HTTP
+  routes. Memory migrations have a separate ledger (`packages/agent/runtime/src/memory.ts`,
+  `openMemory`).
 
-## What the runtime has to drop
+History. Holding one event per request until the Person became quiet accumulated retained
+events during overlapping Threads and learning. celld refused the cell at 64 in-flight events.
+The carrier fix in #174 holds one event for Pi work plus requests still being answered
+(`apps/cells/src/main.ts`, `Person` carrier implementation).
 
-A cell runs on V8 with partial Node compatibility: no `net`, no `child_process`, no TCP socket
-that outlives its event. The feature map below lists each Node-only import on `feat/pi-port`.
-The known ones:
+## What the runtime has dropped
 
-- `pg` and the Postgres store. Replaced by the Durable Object adapter.
-- `node:http` and `@effect/platform-node`. Replaced by `HttpRouter.toWebHandler` (Effect 4.0.2).
-- `agentfs-sdk`. Replaced by the notes tables.
-- `child_process` and `inspector`. Anything that ran a process runs on the Computer instead.
+The native host uses `HttpRouter.toWebHandler` rather than a Node HTTP listener
+(`packages/agent/runtime/src/cell.ts`, `openCell`). Cell memory is SQLite-backed through
+`openMemory` in `packages/agent/runtime/src/memory.ts`. Programs execute on the Computer
+through product tools (`packages/agent/runtime/src/tools/code.ts`, `codeTools`).
+
+History. Flue and the filesystem-slot design are no longer part of this runtime.
 
 ## Writes per reply
 
-Pi saves streamed output every 100 ms (`DEFAULT_PROGRESS_POLICY`), and each save is a replicated
-write. With two nodes a write finishes when the follower holds it (memory proof: p50 9.5 ms,
-p95 40.7 ms). With one node every write waits for the bucket, about 90 ms to a region-local
-store. So the fleet runs at least two nodes, and the proof measures whether 100 ms progress holds
-under load or the interval rises.
+Pi owns conversation commits and streamed progress persistence. Vivid supplies native storage
+and model settings rather than a second persistence loop (`packages/agent/runtime/src/cell.ts`,
+`openCell`; `packages/agent/runtime/src/person.ts`, `openPerson`). The carrier keeps the event
+that owns those continuations alive. Replication cost and progress under load need fleet
+measurements; the old memory-only prototype is historical evidence only.
 
 ## Infrastructure
 
-All of it lives in the Alchemy stack.
+Alchemy declares the fleet in `infra/cells.ts` (`railwayCells`). No deployment result is implied
+by these declarations.
 
-- **One Railway service per node:** `cells-a`, `cells-b`, image `ghcr.io/denoland/celld:v0.6.2`
-  pinned, each with its own small volume and its own private name. A node advertises that name to
-  its peers through the bucket. Replicas of one service would share one name, so each node is its
-  own service.
-- **One Cloudflare R2 bucket,** checked with `celld diagnose` for conditional writes before first
-  use.
-- **`CellProgram`,** a small Alchemy resource of our own that runs `celld deploy apps/cells` when
-  the bundle's hash changes. Nodes pick up a new version without a restart.
-- **The server** gets `VIVID_CELLS_URL` and the runtime token. The `runtime` service and its
-  volume go away.
+- Each node is a separate Railway service, `cells-a` or `cells-b`, pinned to celld 0.6.2, with
+  its own volume, private address, and peer advertisement.
+- One retained R2 bucket holds fleet data.
+- The server's pre-deploy command applies product migrations, then publishes the Worker
+  (`infra/railway.ts`, `railwayResources`; `apps/cells/scripts/build.mjs`, `main`).
+- `cellVariables` supplies private Worker bindings for server authority, selected model,
+  provider credentials, and optional `VIVID_DECISIONS`. The server gets the comma-separated
+  private node addresses (`infra/cells.ts`, `cellVariables`, `cellsUrl`).
+- History. The retained `RuntimeMemory` volume preserves the old filesystem data for migration.
+  It is disconnected from services (`infra/railway.ts`, `railwayResources`).
 
-Scaling adds a node: one more service (`cells-c`) pointed at the same bucket. celld moves
-hibernated cells onto it by weight. It does not autoscale, and Railway does not autoscale
-horizontally, so node count is a setting we raise.
+The local Alchemy graph starts the same Worker through native celld development mode on port
+5173 (`alchemy.run.ts`, `localStack`). It does not start a runtime PostgreSQL migration or Node
+listener. Adding a fleet node requires another declared service and volume
+(`infra/cells.ts`, `nodes`, `railwayCells`).
 
 ## Failure
 
-- **A node dies.** Its cells move to a survivor once the 10-second lease runs out (memory proof:
-  10.9 s). Calls in that window fail with a typed `CellUnavailable`; the client shows the Thread
-  as reconnecting. A Run that was mid-phase restarts from its last commit, and Pi 1.4.0 parks a
-  task that crashes five times in a row.
-- **Every node dies.** A fresh node restores every cell from the bucket.
-- **A deploy.** Pi 1.4.0 migrates its SQLite to schema version 2 on open, and 1.3.0 or earlier
-  cannot read it, so a runtime release cannot roll back past that upgrade.
+Transport failure can advance the server to another ingress node. Terminal observation
+reconnects through `observeRun`; the cell resumes interrupted native tasks through its alarm
+(`apps/server/src/runtime/transport.ts`, `cellNodes`;
+`apps/server/src/runtime/settlement.ts`, `observeRun`; `apps/cells/src/main.ts`, `Person`).
+
+A failed Harness aborts the cell instance. Provider or storage diagnostics stay behind the
+runtime's typed HTTP refusals (`apps/cells/src/main.ts`, `Person`;
+`packages/agent/runtime/src/app.ts`, `answered`). Recovery proof must inspect committed history
+and the same submission, not infer success from node health.
 
 ## Risks
 
-- celld is a 0.6.2 beta from one vendor.
-- Peer traffic is plaintext HTTP. Railway's private network carries it.
-- The 30-second limit on a transaction and on `blockConcurrencyWhile`.
-- An outbound socket from a cell closes when the cell moves. Every caller reconnects.
-- Attachments do not belong in a cell's SQLite. They go to the bucket under the Person's prefix.
+- A cell move interrupts open streams. Reconnect must be proved through the product
+  (`.agents/skills/verify-vivid/references/cells.md`).
+- Settlement follow-up still uses an in-memory queue. Once admitted, learning is a durable Pi
+  task; a kill before admission can lose it (`packages/agent/runtime/src/settled.ts`,
+  `followSettlements`; `packages/agent/runtime/src/learning.ts`, `starter`).
+- Picture bytes currently remain in Pi's transcript, and the attachment route reads them there
+  (`packages/agent/runtime/src/state/pictures.ts`, `picture`).
+- Memory retraction is local, not full forgetting across layers or queued work
+  (`packages/agent/runtime/src/tools/memory.ts`, `memoryTools`).
 
-## Order of work
+## Required proof
 
-1. Proof on a devbox: two celld nodes and MinIO, the real Vivid runtime in a cell, one Thread
-   driven through the server, the owner killed mid-reply. Done when the reply finishes on the
-   other node with no lost entry.
-2. Rebase `feat/pi-port` on main (done 25 October as `cb3ccd09`, carrying main's OpenUI, Watches,
-   Feed and the rest), drive it through `verify-vivid` once the recipes launch Pi instead of Flue,
-   then upgrade Pi Durable to 1.4.0.
-3. Take the runtime off Node, feature by feature, using the feature map below.
-4. `apps/cells` with the `Person` class, tested against `celld dev`.
-5. `PersonCells` in the server, the only client of the cells.
-6. Railway: `cells-a`, `cells-b`, the bucket, `CellProgram`. The proof re-run there.
-7. Import every Person's Threads (the Flue import) and notes into their cell.
-8. Delete the Postgres store, AgentFS, and the `runtime` service.
+The verifier deploys the shipped Worker to two celld 0.6.2 nodes with disposable native storage
+and a private bucket (`.agents/skills/verify-vivid/scripts/cells.mjs`, `startCells`). Run Launch,
+Doctor, touched HTTP and browser journeys, and Cleanup. Real-model memory, terminal waiting,
+explicit abort, pictures, restart, owner loss, idle wake, and reconnect after a move each require
+their own receipts (`.agents/skills/verify-vivid/references/cells.md`). A rehearsal proves
+plumbing only. Run continuity alone does not prove that streamed text was preserved.
 
 ## Feature map
 
-Each row is a feature from the `verify-vivid` map, or an entry point that map names as unmapped. The
-Pi-port column is the state of `feat/pi-port` at `cb3ccd09`, rebased on main on 25 October 2026.
-The rebase ported what main had gained since 13 October; those rows say "from main". None of it
-is proven in a browser at that head. "Unproven" names the test that covers it. In every row the
-server keeps auth, the Membership check and the Thread index.
+This map records ownership, not passing verification. Runtime routes and tool registration are
+in `packages/agent/runtime/src/app.ts` (`routes`) and
+`packages/agent/runtime/src/tools/index.ts` (`catalogue`). The server relay is
+`apps/server/src/runtime/client.ts` (`makeRuntime`). Each product claim needs its mapped recipe
+under `.agents/skills/verify-vivid/features`.
 
-The runtime runs the conversation in the cell. Everything that holds a credential, runs a process,
-or spans Persons stays on the server: approvals, Computers, devices, Integrations, Library
-ingestion, Watches, the Feed, notifications. The cell reaches those through `/api/rpc` the way
-the runtime does today.
-
-| Feature                      | Pi-port                                                              | In the cell                          | Server keeps                                     | Before the cell                                                                                                                        |
-| ---------------------------- | -------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| First message                | Unproven (`routes.test.ts`)                                          | Conversation, generation, projection | Run reservation and receipt, settlement effects  | Host off Node                                                                                                                          |
-| First-send handoff, greeting | Unproven (`sending.test.ts`, `first.live.test.ts`)                   | First conversation, greeting         | Once-only claim, Run receipt                     | Same delivery key across a cell move                                                                                                   |
-| Reload a Thread              | Unproven (`routes.test.ts`, `link.test.ts`)                          | Transcript and projection            | Access checks                                    | Each new reader loads the whole transcript (`state/link.ts` `transcript`)                                                              |
-| Socket recovery              | Unproven for a process restart, never run for a cell move            | Committed state                      | The product socket                               | Reconnect when a cell moves                                                                                                            |
-| Rich replies                 | From main: inline OpenUI, unproven                                   | Assistant text and tool records      | Display actions                                  | None                                                                                                                                   |
-| Interactive display actions  | From main, unproven                                                  | Stored display source                | Display authority, execution                     | None                                                                                                                                   |
-| Questions                    | From main: nonblocking, unproven                                     | Question call, answer delivery       | Input request, answers, withdrawal               | None                                                                                                                                   |
-| Question withdrawal          | Unproven                                                             | The new input                        | Answer and withdrawal race                       | None                                                                                                                                   |
-| Allow an action              | Unproven (`outcomes.test.ts`, `thread.live.test.ts`)                 | Proposed call and continuation       | Approval, policy, ledger, credentials            | External work stays outside a cell transaction                                                                                         |
-| Deny an action               | Unproven (`replay.test.ts`)                                          | Outcome signal                       | Denial, delivery debt                            | None                                                                                                                                   |
-| Stop work                    | Unproven (`routes.test.ts`)                                          | Task cancellation, settlement        | Run authorization, admission gate                | An `AbortSignal` does not cross a celld RPC. Stop stays an explicit route                                                              |
-| Send a picture               | Unproven (`link.test.ts`)                                            | Picture bytes in the transcript      | Size and type checks, byte proxy                 | Pictures go over HTTP, not a socket (1 MiB input budget). Move the bytes to the bucket                                                 |
-| Run a program                | Unproven (`code.test.ts`, `machine.test.ts`)                         | Tool call and receipt                | Program runner, Computer                         | None. Programs run on the Computer                                                                                                     |
-| Documents                    | Unproven. Attribution picks the working Run, main used the tool call | Tool receipts                        | Artifacts and versions                           | Settle attribution when two Runs are working                                                                                           |
-| Watches                      | From main, unproven                                                  | Background conversation              | Watch records, Executor subscriptions, callbacks | None                                                                                                                                   |
-| Reminders                    | From main (Watch chain), unproven                                    | The reply to a reminder              | The schedule, or main's Watch chain              | A Pi alarm does not replace the product scheduler                                                                                      |
-| Feed                         | From main, unproven                                                  | Background conversation              | Feed cards, seen and Done                        | It stays a server read across Threads, never a scan of cells                                                                           |
-| Library                      | Unproven for search (`scope.test.ts`)                                | Search call and result               | Upload, extraction, search, access               | None                                                                                                                                   |
-| Device permission requests   | From main with `asking`, unproven                                    | Model `UseWindow`/`Browse` calls     | Enrolment, allowance, native streams             | None                                                                                                                                   |
-| Desktop app                  | Unproven (`computer.test.ts`), `copy_signin` from main               | Conversation, native tool adapters   | Desktop auth, native work                        | None                                                                                                                                   |
-| Notes                        | Unproven. Notes lifecycle from main                                  | `notes` tables                       | Helix                                            | AgentFS cannot run in a cell (no persistent files). Notes move into the cell's tables                                                  |
-| Read reporting               | Not runtime. `seen.ts` from main                                     | None                                 | Read state, attention                            | None                                                                                                                                   |
-| Settings, Integrations       | Not runtime, apart from reading context (`routes.test.ts`)           | Frozen reply context                 | Settings, Connections                            | None                                                                                                                                   |
-| Appearance, name             | Name in context, unproven                                            | Frozen name                          | Appearance                                       | None                                                                                                                                   |
-| Projects                     | Unproven (`projects.test.ts`)                                        | Tool call                            | Projects, Thread filing                          | None                                                                                                                                   |
-| Saved and built-in skills    | Unproven (`skills.test.ts`)                                          | Built-ins, activation                | Saved procedures                                 | Built-in skills read files (`skills.ts` `readSkill`). Bundle them                                                                      |
-| Sharing                      | Unproven (`routes.test.ts`)                                          | The creator's conversation           | Participants, acting authority                   | A shared Thread lives in its creator's cell, but notes belong to whoever speaks. The cell reads that Person's notes through the server |
-| Notifications                | Unproven (`notify.test.ts`)                                          | Tool receipt, completion signal      | Notifications, push                              | The server must still see settlement after a cell sleeps or moves                                                                      |
-| Android navigation           | Not runtime                                                          | The open Thread's reads              | List, presence                                   | None                                                                                                                                   |
-
-Two changes apply to every row.
-
-- **The host.** `main.ts` (`node:http`, `@effect/platform-node`), the Postgres store (`pg`), and
-  AgentFS are the only hard blockers. No production code under `packages/agent/runtime/src`
-  imports `child_process`, `net` or `inspector`. `node:crypto`, `node:async_hooks`, `node:path`
-  and `node:events` have celld counterparts, but no bundle has been run in celld yet. The
-  dependencies they pull in are not checked yet.
-- **Settlement follow-up.** `settled.ts` `followSettlements` releases deliveries and records
-  responses from a queue in memory, after Pi's commit. A cell can be evicted between the two, so
-  that work becomes a Pi task.
-
-Every `verify-vivid` recipe drives Flue today (`.agents/skills/verify-vivid/scripts/wire.mjs`, the supervisor waits for
-`[flue] Server listening`). Once the port lands, the recipes send through `SendToThread`, read
-through `WatchConversation`, and take their evidence from the cell. Reload, socket recovery and
-Notes also need a step that moves the cell to another node.
+| Feature                              | In the cell                                    | Server keeps                                         |
+| ------------------------------------ | ---------------------------------------------- | ---------------------------------------------------- |
+| First message and first-send handoff | Conversation, generation, projection           | Run reservation, once-only claim, settlement effects |
+| Reload and socket recovery           | Transcript, state stream                       | Access checks, product subscription                  |
+| Rich replies and display actions     | Text, tool records, display source             | Display authority and execution                      |
+| Questions and withdrawal             | Question call, answer delivery                 | Input requests and answer race                       |
+| Allow or deny an action              | Proposed call, continuation, outcome signal    | Approval, policy, ledger, credentials                |
+| Stop work                            | Task cancellation, settlement                  | Run authorization and admission gate                 |
+| Pictures                             | Bytes in the transcript, attachment route      | Type and size checks, byte proxy                     |
+| Programs                             | Tool call and receipt                          | Computer runner                                      |
+| Documents                            | Tool receipt                                   | Artifacts and versions                               |
+| Watches and reminders                | Background conversation and reply              | Watch records, subscriptions, schedules              |
+| Feed                                 | Background conversation and tool calls         | Feed cards, seen and Done                            |
+| Library                              | Search call and result                         | Upload, extraction, search, access                   |
+| Devices and desktop                  | Conversation and native tool calls             | Enrolment, permission, native streams, auth          |
+| Memory                               | Layered entries, index, search, learning       | Settings authority and relay                         |
+| Read reporting                       | None                                           | Read state and attention                             |
+| Settings, Integrations, appearance   | Frozen response context                        | Settings, Connections, appearance                    |
+| Projects                             | Tool call                                      | Projects and Thread filing                           |
+| Saved and built-in skills            | Bundled built-ins, activation                  | Saved procedures                                     |
+| Sharing                              | Creator's conversation, acting Person's memory | Participants and acting authority                    |
+| Notifications                        | Tool receipt and completion signal             | Notifications and push                               |
+| Android navigation                   | Open Thread's reads                            | Thread list and presence                             |

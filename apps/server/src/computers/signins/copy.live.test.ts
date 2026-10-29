@@ -6,7 +6,7 @@ import { chainSession, completeRun, toolParts } from '../../runtime/chains.ts'
 
 const SITE = 'httpbingo.org'
 const VALUE = 'synthetic-copy-proof'
-/** Flue persists these tool receipts as JSON text, as the sibling egress proof observes. */
+/** The runtime persists these tool receipts as JSON text. */
 const copied = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({

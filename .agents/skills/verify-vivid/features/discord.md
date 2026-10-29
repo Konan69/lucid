@@ -26,7 +26,7 @@ After Launch and Doctor on the unchanged commit, export the three variables and 
 
 ```sh
 VIVID_VERIFY_DISCORD_TOKEN_FILE=/private/discord-token VIVID_VERIFY_DISCORD_GUILD=<guild> VIVID_VERIFY_DISCORD_CHANNEL=<channel> \
-  .agents/skills/verify-vivid/verify feature discord flue-<id>
+  .agents/skills/verify-vivid/verify feature discord pi-<id>
 ```
 
 1. Discord REST reads `/users/@me` for the bot id and checks that the channel belongs to the guild.

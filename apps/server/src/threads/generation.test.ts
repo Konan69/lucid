@@ -1,8 +1,17 @@
+import { historyMessage } from '../approvals/testing.ts'
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { Person, PersonId, RunId, RunState, ThreadId, Workspace } from '@vivid/contracts'
+import {
+  Person,
+  PersonId,
+  RunId,
+  RuntimeSubmissionId,
+  RunState,
+  ThreadId,
+  Workspace,
+} from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
   ThreadTitleModelUnavailable,
@@ -29,12 +38,11 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { announce, CHANNEL, Changes, Topic } from '../live/changes.ts'
-import { ProviderMalformed } from '../memory/embeddings.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
-import { Completion, MemoryModel } from '../memory/model.ts'
+import { ProviderMalformed } from './provider.ts'
+import { Completion, TitleModel } from './model.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { findThread } from './access.ts'
 import { Conversation, DeliveryMessage, DeliverySpeaker, StoredRunOrigin } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
@@ -90,7 +98,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
   yield* database.run(database.update(threads).set({ titleSource }).where(eq(threads.id, threadId)))
   const settlement = yield* Deferred.make<Settlement>()
   const completion = yield* Deferred.make<Completion, ProviderMalformed>()
-  const requests = yield* Queue.unbounded<Parameters<MemoryModel['Service']['complete']>[0]>()
+  const requests = yield* Queue.unbounded<Parameters<TitleModel['Service']['complete']>[0]>()
   const finished = yield* Deferred.make<void>()
   const finishedRuns = yield* Queue.unbounded<void>()
   const generatedWrites = yield* Ref.make(0)
@@ -119,7 +127,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       parts: [{ type: 'text', text: 'We can explore Florence.', state: 'done' }],
     },
   ])
-  const model = MemoryModel.of({
+  const model = TitleModel.of({
     complete: (input) =>
       Queue.offer(requests, input).pipe(
         Effect.andThen(Deferred.await(completion)),
@@ -130,22 +138,30 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
     admit: (input) =>
       Effect.succeed(
         Admission.make({
-          runId: submissionId(input.threadId, input.idempotencyKey),
-          offset: '1',
-          incarnation: 'test',
+          runId: deliveryRunId(input.threadId, input.idempotencyKey),
+          submissionId: RuntimeSubmissionId.make(input.turn),
           repeated: false,
         }),
       ),
     settled: () => Deferred.await(settlement),
     stop: () => Effect.succeed(false),
+    watch: () => Stream.never,
     read: () =>
       Ref.get(messages).pipe(
         Effect.map((history) =>
           HttpClientResponse.fromWeb(
             HttpClientRequest.get('http://runtime.test'),
-            new Response(JSON.stringify({ v: 1, messages: history, settlements: [] }), {
-              headers: { 'content-type': 'application/json' },
-            }),
+            new Response(
+              JSON.stringify({
+                messages: history.map(historyMessage),
+                settlements: [],
+                working: false,
+                queued: 0,
+              }),
+              {
+                headers: { 'content-type': 'application/json' },
+              },
+            ),
           ),
         ),
       ),
@@ -159,9 +175,8 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
     Layer.succeed(ThreadStore, observedStore),
     Layer.succeed(RunStore, yield* RunStore),
     Layer.succeed(Runtime, runtime),
-    Layer.succeed(MemoryModel, model),
+    Layer.succeed(TitleModel, model),
     Layer.succeed(Changes, changes),
-    silentLearningLayer,
     Layer.succeed(Notifier, { notify: () => Effect.void }),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )
@@ -621,7 +636,7 @@ layer(databaseLayer)((it) => {
     )
 
     // The first Thread is opened by Vivid, and the Person replies only by pressing answers on
-    // question cards. Flue records each as an `answer` dispatch, never a `user` message, so
+    // question cards. The runtime records each as an `answer` dispatch, never a `user` message, so
     // without this case the Thread has no Person words and keeps its Seed title forever.
     it.effect('counts a pressed answer as Person words when Vivid opened the Thread', () =>
       Effect.gen(function* () {

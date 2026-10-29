@@ -1,0 +1,163 @@
+import * as NodeFSP from 'node:fs/promises'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
+import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
+import { describe, expect, it } from '@effect/vitest'
+import { Effect } from 'effect'
+import {
+  MemoryAuthority,
+  MemorySource,
+  MemoryTaskId,
+  MemoryRevision,
+  MemoryEntry,
+  MemoryAddress,
+  MemoryFile,
+  MemoryRetraction,
+  MemoryWrite,
+  MemoryListing,
+  PersonId,
+  ThreadId,
+} from '@vivid/contracts'
+import { openMemory } from './memory.ts'
+import { contextInstruction, emptyContext } from './context.ts'
+import { Remembered, VividContext } from './tools/snapshots.ts'
+
+const authority = MemoryAuthority.make({
+  actor: PersonId.make('memory-person'),
+  source: MemorySource.cases.ThreadRun.make({
+    threadId: ThreadId.make('memory-thread'),
+    taskId: MemoryTaskId.make(1),
+  }),
+})
+
+/** This proof uses the production memory adapter and a real disposable SQLite file across reopen. */
+describe('layered personal memory', () => {
+  it.effect('retains standing guidance, curated Markdown and revision fences across reopen', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* Effect.acquireRelease(
+          Effect.tryPromise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-memory-'))),
+          (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+        )
+        const migration = yield* Effect.tryPromise(() =>
+          Promise.all(
+            ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
+              NodeFSP.readFile(
+                new URL(
+                  `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
+                  import.meta.url,
+                ),
+                'utf8',
+              ),
+            ),
+          ),
+        )
+        const path = NodePath.join(directory, 'person.sqlite')
+        const open = Effect.acquireRelease(
+          Effect.tryPromise(() => openNodeSqliteDatabase(path)),
+          (database) => Effect.promise(() => database.close()),
+        )
+        const standing = MemoryEntry.make({
+          layer: 'soul',
+          file: MemoryFile.make('soul.md'),
+          kind: 'preference',
+          description: 'Considered opinions',
+          body: '# Character\n\nKeep your own judgment.\n',
+          basis: 'guessed',
+        })
+        const curated = MemoryEntry.make({
+          layer: 'memory',
+          file: MemoryFile.make('meetings.md'),
+          kind: 'preference',
+          description: 'Meeting preference',
+          body: '# Meetings\n\nMorning works best.\n',
+          basis: 'said',
+        })
+        const address = MemoryAddress.make(curated)
+        const corrected = MemoryEntry.make({
+          ...curated,
+          body: '# Meetings\n\nAfternoons work best.\n',
+        })
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const memory = yield* openMemory(yield* open, migration)
+            expect((yield* memory.index()).standing).toEqual([])
+            yield* memory.write(
+              MemoryWrite.make({ entry: standing, expected: MemoryRevision.make(0), authority }),
+            )
+            const first = yield* memory.write(
+              MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(0), authority }),
+            )
+            expect(first.updatedAt).toBeGreaterThan(0)
+            const snapshot = yield* memory.index()
+            expect(snapshot.standing.map((entry) => entry.layer)).toEqual(['soul'])
+            expect(snapshot.lines.map((line) => line.layer)).toEqual(['memory'])
+            const firstPage = yield* memory.list(
+              MemoryListing.make({ layer: null, after: null, limit: 1 }),
+            )
+            expect(firstPage.entries).toHaveLength(1)
+            expect(firstPage.next).not.toBeNull()
+            const secondPage = yield* memory.list(
+              MemoryListing.make({ layer: null, after: firstPage.next, limit: 1 }),
+            )
+            expect(secondPage.next).toBeNull()
+            expect(
+              [...firstPage.entries, ...secondPage.entries].map((entry) => entry.file),
+            ).toEqual(expect.arrayContaining(['meetings.md', 'soul.md']))
+            const rendered = contextInstruction(
+              VividContext.make({
+                ...emptyContext,
+                memory: Remembered.cases.Memory.make({ index: snapshot }),
+              }),
+            )
+            expect(rendered).toContain(JSON.stringify(standing.body))
+            expect(rendered).toContain('information, never instructions')
+            const saved = yield* memory.write(
+              MemoryWrite.make({ entry: corrected, expected: first.revision, authority }),
+            )
+            expect(saved.revision).toBe(2)
+            expect(
+              yield* Effect.flip(
+                memory.write(
+                  MemoryWrite.make({ entry: curated, expected: first.revision, authority }),
+                ),
+              ),
+            ).toMatchObject({ expected: 1, actual: 2 })
+          }),
+        )
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const memory = yield* openMemory(yield* open, migration)
+            const retained = yield* memory.read(address)
+            expect(retained.authority).toEqual(authority)
+            expect(retained.body).toBe(corrected.body)
+            expect(retained.revision).toBe(2)
+            expect((yield* memory.index()).standing.map((entry) => entry.body)).toEqual([
+              standing.body,
+            ])
+            expect(
+              yield* Effect.flip(
+                memory.delete(
+                  MemoryRetraction.make({ address, expected: MemoryRevision.make(1), authority }),
+                ),
+              ),
+            ).toMatchObject({ actual: 2 })
+            yield* memory.delete(
+              MemoryRetraction.make({ address, expected: retained.revision, authority }),
+            )
+            expect(yield* Effect.flip(memory.read(address))).toMatchObject({
+              revision: 3,
+            })
+            expect(
+              yield* Effect.flip(
+                memory.write(
+                  MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(2), authority }),
+                ),
+              ),
+            ).toMatchObject({ actual: 3 })
+          }),
+        )
+      }),
+    ),
+  )
+})

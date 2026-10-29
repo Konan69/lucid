@@ -1,47 +1,54 @@
 import { Record, Result, Schema } from 'effect'
 
-/** Every tool Vivid mounts, including Flue's native file tools and skill activation. */
+/** Every tool Vivid mounts, including file tools and skill activation. */
 export const ToolName = Schema.Literals([
   'activate_skill',
   'add_integration',
+  'add_todo',
   'ask_person',
   'bash',
   'browse',
+  'complete_todo',
   'connect',
   'copy_signin',
   'create_project',
-  'delete_note',
+  'delete_memory',
+  'drop_owed',
+  'drop_todo',
   'edit',
   'find_events',
   'find_integrations',
   'find_tools',
   'glob',
   'grep',
+  'list_memory',
+  'list_todos',
   'list_watches',
   'make_integration',
   'notify_person',
   'post',
   'read',
   'read_document',
-  'read_note',
+  'read_memory',
   'read_page',
   'read_skill',
-  'recall',
-  'remember',
+  'resolve_owed',
   'run_code',
   'save_skill',
   'search_library',
+  'search_memory',
   'stop_watching',
   'suggest_replies',
-  'task',
   'test_integration',
+  'track_owed',
   'use_desktop',
   'use_person_computer',
+  'update_owed',
   'use_tool',
   'watch',
   'write',
   'write_document',
-  'write_note',
+  'write_memory',
 ])
 export type ToolName = typeof ToolName.Type
 
@@ -49,8 +56,8 @@ type ToolTable = { readonly [Name in ToolName]: Name }
 
 const isToolRecord = Schema.is(Schema.Record(ToolName, ToolName))
 
-/** Record construction loses each key's literal value type. Check that relation rather than
- * casting a string dictionary into the dependent type consumed by Flue's definitions. */
+/** Record construction loses each key's literal value. Check that relation rather than
+ * casting a string dictionary into the tool definition's dependent type. */
 const ToolTable = Schema.declare<ToolTable>(
   (input): input is ToolTable =>
     isToolRecord(input) && ToolName.literals.every((name) => input[name] === name),

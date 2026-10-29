@@ -2,7 +2,7 @@
   "generated": [
     {
       "path": "packages/agent/runtime/.state",
-      "reason": "Flue's ignored durable local state, never source."
+      "reason": "Archived runtime state, never source."
     },
     {
       "path": "docs/prds",
@@ -71,11 +71,6 @@
     },
     {
       "owner": "packages/agent/runtime/tsconfig.tests.json",
-      "path": "src/**/*.test.tsx",
-      "reason": "Shared test config guards future TSX test files alongside existing TS suites."
-    },
-    {
-      "owner": "packages/agent/skills/tsconfig.tests.json",
       "path": "src/**/*.test.tsx",
       "reason": "Shared test config guards future TSX test files alongside existing TS suites."
     },
@@ -284,11 +279,6 @@
       "owner": "docs/26-memory-cells.md",
       "paths": ["apps/memory"],
       "reason": "Proposed app in an explicitly unimplemented memory design."
-    },
-    {
-      "owner": "docs/27-runtime-cells.md",
-      "paths": ["apps/cells"],
-      "reason": "Proposed app in an explicitly unimplemented runtime design."
     },
     {
       "owner": "docs/checks.md",

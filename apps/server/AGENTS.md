@@ -1,6 +1,6 @@
 # Vivid application server
 
-The server owns all product logic and persistence. Clients use `VividRpc` over `/api/live` (WebSocket) or `/api/rpc` (HTTP). Plain HTTP adapters serve Better Auth, the Flue conversation gateway, Integration sign-in returns, Library bytes, the Computer screen, the mobile app's over-the-air updates (`updates/`), and health.
+The server owns all product logic and persistence. Clients use `VividRpc` over `/api/live` (WebSocket) or `/api/rpc` (HTTP). Plain HTTP adapters serve Better Auth, the conversation gateway, Integration sign-in returns, Library bytes, the Computer screen, the mobile app's over-the-air updates (`updates/`), and health.
 
 ## Layout
 
@@ -14,7 +14,7 @@ The server owns all product logic and persistence. Clients use `VividRpc` over `
 
 - Handlers decode, call services, and encode. No SQL or business rules.
 - Stores contain queries and domain rules. No HTTP or RPC types.
-- Code calls service relationships `Connection`; every string a Person reads says **Integration**. Executor owns Integration credentials; memory uses HelixDB and the Computer provider is Boat. All three are required: the server does not start without their settings, and none has a local stand-in.
+- Code calls service relationships `Connection`; every string a Person reads says **Integration**. Executor owns Integration credentials, Boat provides Computers, and each Person's cell owns their memory. Settings uses the cell memory RPCs; the server owns no memory store.
 - A domain depends on another domain's exported service, never its store internals.
 - Shared infrastructure does not import domains, except `database/schema.ts` and `database/product.ts` (the Drizzle barrels), and `auth/session.ts`, which asks `threads/access.ts` whether the Person the runtime names may see the Thread it names.
 - Every product row has an owner (`database/owner.ts`). Every read and write is scoped with `inWorkspace`/`ownedHere` or `requireThread`; a record outside the Actor's reach is `NotFound`.

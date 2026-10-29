@@ -1,4 +1,4 @@
-import type { InvitationId, ThreadId } from '@vivid/contracts'
+import type { InvitationId } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 
 /**
@@ -58,13 +58,6 @@ export const accountAddress = (server: ServerAddress, path: string): string =>
 /** The one WebSocket every live query and every write rides. `http` becomes `ws`, `https` `wss`. */
 export const liveAddress = (server: ServerAddress): string =>
   `${server.replace(/^http/u, 'ws')}/api/live`
-
-/**
- * A Thread's conversation, reached only through the server's gateway. The gateway is what knows
- * who is speaking; there is no other route to the conversation runtime.
- */
-export const threadAddress = (server: ServerAddress, id: ThreadId): string =>
-  `${server}/api/vivid/${encodeURIComponent(id)}`
 
 /** Library bytes, which travel over plain HTTP beside the socket. */
 export const libraryAddress = (server: ServerAddress, path: string): string =>

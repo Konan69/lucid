@@ -217,7 +217,7 @@ const programFailure = (failure: CodeFailure): string =>
 const isWaiting = Schema.is(DisplayProgramWaiting)
 
 /**
- * The server's wait: the reply this display came from is not yet settled in Flue's history. It is
+ * The server's wait: the reply this display came from is not yet settled in conversation history. It is
  * an error to OpenUI, never data: OpenUI keeps an error without settled data and asks again the
  * next time it reads the display's Queries (`evaluateQueries`, lang-core 1.0.0), so the display
  * runs its program once the reply has settled instead of keeping this wait as its answer. The
@@ -330,6 +330,7 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
     Forbidden: () => 'You do not have permission to run this display.',
     Unauthenticated: () => 'Sign in again to use this display.',
     Conflict: () => 'The Integration changed. Refresh this display and try again.',
+    ConversationTooLarge: () => 'This conversation is too large to open. Start a new Thread.',
     InvalidRequest: () => 'This display sent a request Vivid could not accept.',
     RuntimeUnavailable: () => 'Vivid is unavailable. Try again shortly.',
     ServiceUnavailable: ({ service }) =>

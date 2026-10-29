@@ -34,7 +34,7 @@ const NO_FILES: ReturnType<ReturnType<typeof useAttachments>['take']> = { lines:
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
  * working with nothing written the send button is the way to stop it. Words written while Vivid
  * works are sent to it, by Enter or by the button: they join the answer in progress at its next
- * step (Flue's durability contract). What is typed is kept for the place it was
+ * turn boundary. What is typed is kept for the place it was
  * typed in (`place`), on this device and for the Person's other devices (`data/drafts.ts`), so it
  * is still here after leaving and coming back; the Thread the composer belongs to decides what
  * sending means.

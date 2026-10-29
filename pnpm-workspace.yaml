@@ -1,4 +1,5 @@
 packages:
+  - 'apps/cells'
   - 'apps/desktop'
   - 'apps/mobile'
   - 'apps/server'
@@ -16,10 +17,8 @@ packages:
 # untracked .npmrc when a private registry eventually requires them.
 autoInstallPeers: false
 strictPeerDependencies: true
-# Strict peers stay on. These three are transitive peers of tools we do not run:
-# @shadcn/lint's ESLint parser (we load it through oxlint), Flue's decorator
-# transform (its Babel 8 plugin sits beside the Babel 7 the phone build uses), and alchemy's
-# Cloudflare types pin.
+# Strict peers stay on. The ESLint parser used through oxlint and Alchemy's
+# Cloudflare types pin have transitive peer exceptions.
 peerDependencyRules:
   ignoreMissing:
     - eslint
@@ -31,22 +30,18 @@ verifyDepsBeforeRun: false
 pmOnFail: error
 
 # Every repeated stack pin has one owner. Manifests reference these entries with
-# catalog: so Effect/Drizzle/Flue cannot drift by package.
+# catalog: so Effect/Drizzle cannot drift by package.
 catalog:
   '@alchemy.run/frontend-frameworks': 2.0.0-beta.81
-  '@earendil-works/pi-ai': 0.87.1
+  '@earendil-works/chord': 1.4.0
+  '@earendil-works/pi-ai': 1.4.0
+  '@earendil-works/pi-durable': 1.4.0
   '@effect/ai-openrouter': 4.0.2
   '@effect/ai-typesafe': 4.0.2
   '@effect/atom-react': 4.0.2
   '@effect/platform-node': 4.0.2
   '@effect/sql-pg': 4.0.2
   '@effect/vitest': 4.0.2
-  '@flue/cli': 2.2.2
-  '@flue/postgres': 2.2.2
-  '@flue/react': 2.2.2
-  '@flue/runtime': 2.2.2
-  '@flue/sdk': 2.2.2
-  '@flue/vite': 2.2.2
   '@openuidev/cli': 0.4.1
   '@openuidev/lang-core': 1.0.0
   '@openuidev/react-lang': 1.0.0
@@ -169,7 +164,6 @@ allowBuilds:
   'react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz': true
 
 patchedDependencies:
-  '@flue/runtime@2.2.2': patches/@flue__runtime@2.2.2.patch
   '@openuidev/react-lang@1.0.0': patches/@openuidev__react-lang@1.0.0.patch
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch

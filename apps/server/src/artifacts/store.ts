@@ -2,6 +2,8 @@ import * as NodeCrypto from 'node:crypto'
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import {
+  ApprovalInvalidation,
+  ApprovalPrecondition,
   Artifact,
   ArtifactAuthor,
   ArtifactBody,
@@ -27,7 +29,7 @@ import {
   ThreadId,
   type WriteDocumentRequest,
 } from '@vivid/contracts'
-import { Clock, Context, Effect, Layer, Option, Schema } from 'effect'
+import { Array, Clock, Context, Effect, Layer, Option, Schema } from 'effect'
 import type { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { isAdmin, summaryOf } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -42,6 +44,9 @@ import { documentRun, Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
+import { fillDocuments, namedDocuments } from './placeholder.ts'
+import { contentDigest } from '../approvals/action.ts'
+import { invalidatePending, sendingDocument } from '../approvals/stale.ts'
 
 const Row = createSelectSchema(artifacts, {
   id: ArtifactId,
@@ -58,6 +63,7 @@ const VersionRow = createSelectSchema(artifactVersions, {
   madeBy: ArtifactAuthor,
 })
 const decodeArtifact = decodeStored(Row, 'Artifact')
+const decodeArtifactTitle = decodeStored(Schema.Struct({ title: ArtifactTitle }), 'Artifact title')
 const decodeVersion = decodeStored(VersionRow, 'Artifact version')
 const encodeAuthor = Schema.encodeEffect(ArtifactAuthor)
 const decodeRole = decodeStored(Role, 'Membership role')
@@ -127,7 +133,12 @@ const lock = Effect.fn('Artifacts.lock')(function* (
   return yield* requireThread(threadId, personId)
 })
 
-/** Append bodies only after acquiring the Thread lock; the summary pointer advances in the same transaction. */
+/**
+ * Append bodies only after acquiring the Thread lock; the summary pointer advances in the same
+ * transaction. A new version, by the Person or by Vivid, also closes every pending Approval that
+ * carries an older version's text, in that transaction: what it would send is no longer the
+ * document.
+ */
 const append = Effect.fn('Artifacts.append')(function* (
   tx: Transaction,
   artifact: Artifact,
@@ -155,6 +166,11 @@ const append = Effect.fn('Artifacts.append')(function* (
     .set({ version: number, updatedAt: now })
     .where(eq(artifacts.id, artifact.id))
     .returning()
+  yield* invalidatePending(
+    tx,
+    sendingDocument(artifact.id),
+    ApprovalInvalidation.cases.ContentChanged.make({ artifactId: artifact.id, version: number }),
+  )
   return yield* decodeArtifact(yield* returned(rows, 'Artifact'))
 })
 
@@ -191,7 +207,7 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/** Lock the exact Flue response's admitted Run; unrelated working rows cannot change authorship. */
+/** Lock the exact response's admitted Run; unrelated working rows cannot change authorship. */
 const workingRun = Effect.fn('Artifacts.workingRun')(function* (
   tx: Transaction,
   author: { readonly threadId: ThreadId; readonly personId: PersonId; readonly runId: RunId },
@@ -295,6 +311,93 @@ const revise = Effect.fn('Artifacts.revise')(function* (
   return artifact
 }, Effect.uninterruptible)
 
+/** An Integration call named a document this Thread does not have. `titles` is what it does have. */
+export class DocumentNotFound extends Schema.TaggedError<DocumentNotFound>()('DocumentNotFound', {
+  title: Schema.String,
+  titles: Schema.Array(ArtifactTitle),
+}) {}
+
+/** The newest text of the one document of this Thread that `title` names, read under the Thread lock. */
+const bindOne = Effect.fn('Artifacts.bindOne')(function* (
+  tx: Transaction,
+  threadId: ThreadId,
+  title: string,
+) {
+  const [row] = yield* tx.select().from(artifacts).where(named(threadId, title))
+  if (row === undefined) {
+    const documents = yield* tx
+      .select({ title: artifacts.title })
+      .from(artifacts)
+      .where(eq(artifacts.threadId, threadId))
+    const decoded = yield* Effect.forEach(documents, decodeArtifactTitle)
+    return yield* new DocumentNotFound({
+      title,
+      titles: decoded.map((document) => document.title),
+    })
+  }
+  const artifact = yield* decodeArtifact(row)
+  const [latest] = yield* tx
+    .select()
+    .from(artifactVersions)
+    .where(
+      and(
+        eq(artifactVersions.artifactId, artifact.id),
+        eq(artifactVersions.number, artifact.version),
+      ),
+    )
+  if (latest === undefined)
+    return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
+  const version = yield* decodeVersion(latest)
+  return { title, artifact, body: version.body }
+})
+
+/** Every named document, under one Thread lock so all the texts are from the same moment. */
+const bindAll = Effect.fn('Artifacts.bindAll')(function* (
+  tx: Transaction,
+  scope: {
+    readonly personId: PersonId
+    readonly threadId: ThreadId
+    readonly titles: ReadonlyArray<string>
+  },
+) {
+  yield* lock(tx, scope.threadId, scope.personId)
+  return yield* Effect.forEach(scope.titles, (title) => bindOne(tx, scope.threadId, title))
+})
+
+/**
+ * Copies the newest text of every Thread document an Integration call names (`placeholder.ts`)
+ * into the call, and says which version of each it copied.
+ *
+ * Titles resolve in the acting Thread alone, by the same case-blind comparison its unique index
+ * uses, so a title names at most one document and there is nothing to guess between. A title the
+ * Thread has no document for refuses the call with `DocumentNotFound`; nothing is sent with a
+ * reference left in it. The reads share the Thread lock with every write here, so each body and
+ * the version recorded beside it are from the same moment.
+ */
+export const bindDocuments = Effect.fn('Artifacts.bindDocuments')(function* (
+  personId: PersonId,
+  threadId: ThreadId,
+  input: Schema.Json,
+) {
+  const titles = namedDocuments(input)
+  if (titles.length === 0) return { input, preconditions: [] }
+  const database = yield* Database
+  const found = yield* database.transaction((tx) => bindAll(tx, { personId, threadId, titles }))
+  return {
+    input: fillDocuments(input, new Map(found.map((entry) => [entry.title, entry.body]))),
+    preconditions: Array.dedupeWith(
+      found.map((entry) =>
+        ApprovalPrecondition.cases.ArtifactVersion.make({
+          artifactId: entry.artifact.id,
+          version: entry.artifact.version,
+          contentDigest: contentDigest(entry.body),
+        }),
+      ),
+      (left, right) => left.artifactId === right.artifactId,
+    ),
+  }
+})
+
 /** Admin authority is read from the Thread's Company, never the caller's active workspace. Visibility is required first. */
 const remove = Effect.fn('Artifacts.remove')(function* (personId: PersonId, id: ArtifactId) {
   const initial = yield* find(id)
@@ -324,6 +427,12 @@ const remove = Effect.fn('Artifacts.remove')(function* (personId: PersonId, id: 
         .where(eq(artifacts.id, id))
         .returning({ id: artifacts.id })
       if (deleted.length === 0) return yield* new NotFound({ message: 'Artifact not found' })
+      // A pending send of its text would send a document that no longer exists.
+      yield* invalidatePending(
+        tx,
+        sendingDocument(id),
+        ApprovalInvalidation.cases.ContentChanged.make({ artifactId: id, version: null }),
+      )
       return undefined
     }),
   )
