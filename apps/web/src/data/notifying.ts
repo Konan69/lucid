@@ -7,8 +7,8 @@ import {
   type Notification as Notice,
 } from '@vivid/contracts'
 import { notifying } from '@vivid/state'
-import { Effect, Layer, Option, Result, Schema } from 'effect'
-import workerAddress from '../worker.ts?worker&url'
+import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
+import workerAddress from '../worker/main.ts?worker&url'
 import { router } from '../router'
 import { changing, running } from './app'
 import { engine } from './runtime'
@@ -17,7 +17,7 @@ import { engine } from './runtime'
  * Notifications while Vivid is closed, in a browser: this browser's side of the session's
  * machine (`@vivid/state` `notifying.ts`), and the desktop app's own notices.
  *
- * A browser has an address when its service worker (`src/worker.ts`) holds a push subscription
+ * A browser has an address when its service worker (`src/worker/main.ts`) holds a push subscription
  * made against the server's key. The subscription is the browser's own record that the Person
  * turned notifications on here: turning off unsubscribes it, so a launch that finds one registers
  * it again and a launch that finds none leaves it off.
@@ -80,11 +80,14 @@ const keyBytes = (key: string) => {
   return Uint8Array.from(text, (character) => character.charCodeAt(0))
 }
 
-const decodeDestination = Schema.decodeUnknownEffect(PushDestination)
+const decodeSubscription = Schema.decodeUnknownEffect(
+  PushDestination.cases.Browser.mapFields(Struct.pick(['endpoint', 'keys'])),
+)
 
 /** A subscription as the address the server takes. The browser's own JSON is its ingress. */
 const destinationOf = (subscription: PushSubscription) =>
-  decodeDestination({ _tag: 'Browser', ...subscription.toJSON() }).pipe(
+  decodeSubscription(subscription.toJSON()).pipe(
+    Effect.map((fields) => PushDestination.cases.Browser.make(fields)),
     Effect.mapError(unavailable),
   )
 
@@ -94,6 +97,12 @@ const subscriptionIn = (registration: ServiceWorkerRegistration) =>
     try: () => registration.pushManager.getSubscription(),
     catch: unavailable,
   }).pipe(Effect.map(Option.fromNullOr))
+
+/** Lets go of a subscription, so the push service refuses it and a later launch reads `Off`. */
+const unsubscribed = (subscription: PushSubscription) =>
+  Effect.tryPromise({ try: () => subscription.unsubscribe(), catch: unavailable }).pipe(
+    Effect.asVoid,
+  )
 
 const browser = notifying.Device.of({
   read: Effect.gen(function* () {
@@ -131,11 +140,10 @@ const browser = notifying.Device.of({
     return yield* destinationOf(subscription)
   }),
   close: () =>
-    Effect.gen(function* () {
-      const subscription = yield* subscriptionIn(yield* registered)
-      if (Option.isNone(subscription)) return
-      yield* Effect.tryPromise({ try: () => subscription.value.unsubscribe(), catch: unavailable })
-    }),
+    registered.pipe(
+      Effect.flatMap(subscriptionIn),
+      Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: unsubscribed })),
+    ),
 })
 
 const targets = notifying.Targets.of({
@@ -205,7 +213,7 @@ const go = (threadId: PushPayload['threadId']) =>
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
 
 // The worker hands a pressed notification to the window it brought forward, which goes there
-// without loading again (`worker.ts` `open`). It is the worker's only message.
+// without loading again (`worker/main.ts` `open`). It is the worker's only message.
 if (pushable) {
   navigator.serviceWorker.addEventListener('message', (event) => {
     Option.map(decodePressed(event.data), (payload) => go(payload.threadId))

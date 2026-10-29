@@ -49,7 +49,7 @@ interface WorkerScope {
  * describe; the two type libraries cannot be loaded into one program. This checks the members it
  * goes on to use before treating the global as one.
  */
-const isWorkerScope = (value: object): value is WorkerScope =>
+const isWorkerScope = (value: Partial<WorkerScope>): value is WorkerScope =>
   'registration' in value && 'clients' in value && 'skipWaiting' in value
 
 const decodePushed = Schema.decodeUnknownOption(Schema.fromJsonString(PushPayload))
@@ -97,9 +97,9 @@ const open = Effect.fn('Worker.open')(function* (scope: WorkerScope, payload: Pu
   focused.postMessage(yield* encodePayload(payload))
 })
 
-// Read as a plain object first: narrowed from its DOM type, the global would keep the window's
-// own `addEventListener` overloads ahead of the worker's.
-const global: object = globalThis
+// Read as the worker's own members first: narrowed from its DOM type, the global would keep the
+// window's `addEventListener` overloads ahead of the worker's.
+const global: Partial<WorkerScope> = globalThis
 if (isWorkerScope(global)) {
   const scope = global
   scope.addEventListener('push', (event) => {
