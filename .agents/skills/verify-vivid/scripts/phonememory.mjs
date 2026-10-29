@@ -129,7 +129,8 @@ export async function settingsMemory(state, id, ui) {
   await ui.capture('correction-reopened')
   await ui.press(description)
   await ui.press('Forget this')
-  await ui.press('Forget')
+  // Android's native AlertDialog draws its buttons in capitals, and that is their accessible label.
+  await ui.press('FORGET')
   await ui.run(['wait', 'absent', 'label=' + JSON.stringify(description), '60000'])
   await ui.capture('forgotten')
   await ui.run(['close', 'work.vivid.mobile'])
