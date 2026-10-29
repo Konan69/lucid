@@ -455,7 +455,11 @@ const claim = Effect.fn('Approvals.claim')(function* (
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const changedBy = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      // A Deny runs nothing, so it is recorded as the Person's Deny whatever changed.
+      const changedBy =
+        Row.guards.pending(row) && !ApprovalDecision.guards.Deny(request.decision)
+          ? yield* drift(tx, row)
+          : Option.none<ApprovalInvalidation>()
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
       yield* invalidatePending(tx, scope, changedBy.value)
       return ClaimEnd.Changed()
