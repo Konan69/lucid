@@ -21,7 +21,8 @@
   "submit": {
     "testflight": {
       "ios": {
-        "appleTeamId": "4Q5T56FN73"
+        "appleTeamId": "4Q5T56FN73",
+        "ascAppId": "6828524576"
       }
     }
   }
