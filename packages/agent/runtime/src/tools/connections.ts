@@ -68,7 +68,7 @@ export function connectionTools(runTool: RunTool) {
           200,
         ),
         reason: text(
-          'One sentence said to the person, in your own voice, shown on the card: why this needs the integration, or which other account it is. Say "you", never "the person". For example: "You asked me to add another GitHub account."',
+          'Why this needs the integration, or which other account it is, in one sentence. The person does not see it: the card shows only the service, so say your own short sentence to them in your reply before the card. For example: "You asked me to add another GitHub account."',
           400,
         ),
         another: v.optional(
