@@ -313,10 +313,10 @@ export interface MachineConversation {
 }
 
 /**
- * The page a handoff's fields were found on, as the browser names it: its window, its tab and the
- * SHA-256 of its full address. It stays on the server and is never part of a public response or a
- * model's view; a fill is typed only while the browser still shows this exact tab at an address
- * with this digest. The address itself is not kept: its query can hold a session or reset token.
+ * The page a handoff's fields were found on, as the browser names it: the driver's capability for
+ * its window and tab, minted when Prepare bound the browser, and the SHA-256 of its full address.
+ * It stays on the server and is never part of a public response or a model's view; a fill is
+ * typed only into that same tab while it still shows an address with this digest. The address itself is not kept: its query can hold a session or reset token.
  */
 export const HandoffPageBinding = Schema.Struct({
   target: Schema.String,

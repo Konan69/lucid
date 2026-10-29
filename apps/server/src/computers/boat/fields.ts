@@ -2,7 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { HandoffFieldResult, type HandoffRefusalReason } from '@vivid/contracts'
 import { Effect, Option, Redacted, Result } from 'effect'
 import type { HandoffEntry, HandoffPageBinding, MachineFailure } from '../machine.ts'
-import { binding, chrome, currentTab, snapshot, type Page } from './browser.ts'
+import { binding, chrome, currentTab, Page, snapshot } from './browser.ts'
 import type { Driver } from './driver.ts'
 import { ActionReceipt } from './receipt.ts'
 import { ComputerActionRefused, ComputerToolRefused } from './refusal.ts'
@@ -38,19 +38,34 @@ const fieldOf = (page: Snapshot, label: string): Result.Result<string, HandoffRe
   )
 }
 
+/** A fresh snapshot of one tab the driver already knows, by the ids it minted for it. */
+const snapshotOf = (native: Driver, target: string, tab: string) =>
+  native.call(
+    'get_browser_state',
+    { target_id: target, tab_id: tab, snapshot_format: 'semantic_v2' },
+    Page,
+  )
+
 /**
- * The browser's current tab and a fresh snapshot of it, when it is still the bound page: the same
- * window, the same tab and the same address. Anything else is none, and is refused as changed.
+ * A fresh snapshot of the prepared tab, when it still shows the prepared address; none when the
+ * address moved on, which is refused as changed.
+ *
+ * It reads the capability Prepare was given and never binds again: Cua 0.23.2 mints a new
+ * `target_id` and new `tab_id`s on every bind (`browser/engine.rs` bind, `store.mint_target` and
+ * `mint_tab_id`), so comparing a fresh bind's ids with the prepared ones refused every fill. The
+ * prepared ids stay live in the driver's session store (`browser/store.rs` keeps every minted
+ * target) and name one CDP page target, so a snapshot by them reads that same tab whichever tab
+ * is current. The driver re-proves the whole binding chain before it types (`engine.rs`
+ * `revalidate_for_mutation`) and refuses a ref whose document navigated since its snapshot
+ * (`frame_session_for_mutation`, `browser_ref_stale`). Its public snapshot names the document by
+ * address only (`tools.rs` snapshot `page.url` is the document's `documentURL`); its loader id is
+ * private, so a reload of the same address cannot be told apart here.
  */
 const boundPage = Effect.fn('Machine.boat.fields.bound')(function* (
   native: Driver,
   page: HandoffPageBinding,
 ) {
-  const window = yield* chrome(native, false, noProxy)
-  const bound = yield* binding(native, window)
-  const tab = yield* currentTab(bound)
-  if (bound.target_id !== page.target || tab.tab_id !== page.tab) return Option.none<Snapshot>()
-  const now = yield* snapshot(native, bound)
+  const now = yield* snapshotOf(native, page.target, page.tab)
   return addressDigest(now.page.url) === page.digest ? Option.some(now) : Option.none<Snapshot>()
 })
 

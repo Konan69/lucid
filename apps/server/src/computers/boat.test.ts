@@ -10,6 +10,7 @@ import {
   BrowserAction,
   ComputerState,
   DesktopAction,
+  HandoffFieldResult,
   Person,
   PersonId,
   SessionId,
@@ -26,6 +27,7 @@ import {
   Layer,
   Option,
   Queue,
+  Redacted,
   Ref,
   Schema,
   Predicate,
@@ -122,6 +124,10 @@ interface EvidenceService {
   readonly active: Ref.Ref<boolean | null>
   readonly extraTab: Ref.Ref<boolean>
   readonly prepared: Ref.Ref<ReadonlySet<string>>
+  /** Every target and tab id pair a bind minted, as `target tab`: Cua mints fresh ones per bind. */
+  readonly minted: Ref.Ref<ReadonlyArray<string>>
+  /** The effect the next `browser_type` receipts report: the driver may be unsure what it typed. */
+  readonly typeEffect: Ref.Ref<'unverifiable' | 'partial'>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
   readonly refuseBrowser: Ref.Ref<boolean>
@@ -173,6 +179,8 @@ const evidenceLayer = Layer.effect(
       active: yield* Ref.make<boolean | null>(true),
       extraTab: yield* Ref.make(false),
       prepared: yield* Ref.make<ReadonlySet<string>>(new Set()),
+      minted: yield* Ref.make<ReadonlyArray<string>>([]),
+      typeEffect: yield* Ref.make<'unverifiable' | 'partial'>('unverifiable'),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
       refuseBrowser: yield* Ref.make(false),
@@ -476,6 +484,8 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         return commandReply('{"status":"refused","refusal":{"code":"consent_required"}}')
       const address = yield* Ref.get(evidence.address)
       if (Object.hasOwn(args, 'snapshot_format')) {
+        if (!(yield* Ref.get(evidence.minted)).includes(`${args.target_id} ${args.tab_id}`))
+          return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
         const snapshot = yield* Ref.updateAndGet(evidence.snapshots, (count) => count + 1)
         return commandReply(
           JSON.stringify({
@@ -497,9 +507,14 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
           }),
         )
       }
+      // As Cua's bind does (`browser/engine.rs`): a new target id and new tab ids every time.
+      const bind = (yield* Ref.get(evidence.minted)).length
+      const target = `fixture-target-${bind}`
+      const tab = `fixture-tab-${bind}`
+      yield* Ref.update(evidence.minted, (minted) => [...minted, `${target} ${tab}`])
       const tabs = [
         {
-          tab_id: 'fixture-tab',
+          tab_id: tab,
           title: 'Example',
           url: address,
           active: yield* Ref.get(evidence.active),
@@ -511,7 +526,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         JSON.stringify({
           status: 'ok',
           mode: 'bind',
-          target_id: 'fixture-target',
+          target_id: target,
           binding_quality: 'exact',
           tabs,
         }),
@@ -609,13 +624,20 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"effect":"refused","route":"trusted_input","escalation":{"reason":"route_unavailable","target":"page"}}',
       )
     case 'browser_type':
+      if (!(yield* Ref.get(evidence.minted)).includes(`${args.target_id} ${args.tab_id}`))
+        return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
       expect(args.ref).toBe(`p${yield* Ref.get(evidence.snapshots)}:2`)
       expect(args.replace).toBe(true)
-      expect(args.text).toBe('private-fixture-input')
+      // The Person's or Vivid's text, or nothing when a handoff's field is emptied.
+      expect(['private-fixture-input', '']).toContain(args.text)
       if (!(yield* Ref.get(evidence.noType)))
         yield* Ref.set(evidence.text, yield* decodeAddress(args.text))
       return commandReply(
-        '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
+        JSON.stringify({
+          effect: yield* Ref.get(evidence.typeEffect),
+          route: 'trusted_input',
+          delivery: { mode: 'background' },
+        }),
       )
     default:
       return rejected(400)
@@ -1686,6 +1708,45 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           ).toBe(1)
           expect((yield* Ref.get(evidence.files)).size).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** A handoff's page is the one Prepare bound; every later bind mints new ids for the same tab. */
+    it.effect('fills the prepared tab by its prepared ids and refuses it once it moved on', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.browse({
+          key,
+          egress: false,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com/signin' }),
+        })
+        const found = yield* machine.findFields({ key, labels: ['Message'] })
+        expect(found.fields).toEqual([Option.none()])
+        // Another step binds the browser again, as Vivid's own reads do; its ids are new.
+        yield* machine.browse({ key, egress: false, action: BrowserAction.cases.Read.make({}) })
+        const typed = () =>
+          Ref.get(evidence.calls).pipe(
+            Effect.map((calls) => calls.filter((tool) => tool === 'browser_type').length),
+          )
+        const before = yield* typed()
+        const entry = { label: 'Message', value: Redacted.make('private-fixture-input') }
+        const filled = yield* machine.fillFields({ key, page: found.page, entries: [entry] })
+        expect(filled).toEqual([HandoffFieldResult.cases.Filled.make({})])
+        expect(yield* typed()).toBe(before + 1)
+        expect(yield* Ref.get(evidence.text)).toBe('private-fixture-input')
+        // The same tab at another address is not the page the Person was asked about.
+        yield* machine.browse({
+          key,
+          egress: false,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com/other' }),
+        })
+        const moved = yield* machine.fillFields({ key, page: found.page, entries: [entry] })
+        expect(moved).toEqual([HandoffFieldResult.cases.Refused.make({ reason: 'TargetChanged' })])
+        expect(yield* typed()).toBe(before + 1)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
