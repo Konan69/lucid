@@ -163,7 +163,8 @@ const specialRecipes = {
   },
   name: {
     drive: nameBrowser,
-    scope: 'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
+    scope:
+      'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
   },
   settings: {
     drive: settingsBrowser,
@@ -383,8 +384,9 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(feature) &&
-    state.modelKind !== 'real'
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(
+      feature,
+    ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
