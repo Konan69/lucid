@@ -8,21 +8,22 @@
 cell with a native Pi Durable Harness over Durable Object SQLite. celld owns activation,
 ownership, and idle lifecycle; Pi owns tasks, queues, deduplication, wait, abort, and restart.
 PostgreSQL keeps auth, Company/Membership, Thread metadata, Runs, Library, and other product
-records. The custom runtime PG adapter is being deleted.
+records. The native host and memory migrations open in `apps/cells/src/main.ts` (`Person`).
+The runtime uses `openDurableObjectSqliteStorage` (`packages/agent/runtime/src/cell.ts`,
+`openCell`). `scripts/migrate.mjs` owns only server auth and product migrations.
 
-Cell hosting, Notes, Alchemy wiring, and cell-backed verification are in progress and unproven.
-The pre-cell graph below still exists in source; it is not a working cell launch or evidence of
-production conversion. Update infrastructure directly to the chosen cell design rather than
-build or deploy the discarded PG runtime first. No production action is authorized by this
-transition note.
+Alchemy starts the native Worker locally and declares the hosted fleet (`alchemy.run.ts`,
+`localStack`; `infra/cells.ts`, `railwayCells`). The verifier also deploys this Worker to
+its disposable native fleet (`.agents/skills/verify-vivid/scripts/cells.mjs`, `startCells`).
+These source paths do not establish a production deployment or authorize one.
 
-## Pre-cell graph
+## Local cell graph
 
 ```text
 pnpm infra:dev
   ├─ Docker: PostgreSQL 18 → 127.0.0.1:55433
   ├─ ordered Drizzle migrations: server auth → server product
-  ├─ Command.Dev: old Node Pi runtime → 127.0.0.1:5173 (being replaced)
+  ├─ Command.Dev: native celld Worker → 127.0.0.1:5173
   ├─ Command.Dev: application server → 127.0.0.1:8787
   └─ Command.Dev: Vite web proxy → 127.0.0.1:5178
 ```
@@ -36,16 +37,18 @@ skips recovery for it; beta.79 does not know the mark, keeps the same state vers
 recover and then delete the renamed resource's predecessor.
 PostgreSQL uses database/user/password `vivid` and the named volume
 `vivid-postgres-local-data`. `infra/database.ts` is the database seam and returns a `Redacted`
-URL. The server's migrations remain auth then product. Runtime PG migration wiring in
-`scripts/migrate.mjs` is obsolete and must leave with the adapter. Native Pi SQLite opens inside
-the cell; it has no runtime PostgreSQL migration owner or `DATABASE_URL` requirement.
+URL. The server's migrations remain auth then product (`scripts/migrate.mjs`). Native Pi SQLite
+opens inside the cell; it has no runtime PostgreSQL migration owner or `DATABASE_URL` requirement
+(`packages/agent/runtime/src/cell.ts`, `openCell`).
 
-`preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, native Person cells, and the public application server. The old Helix service and volume are
-retained only for migration. `pnpm infra:deploy` selects
-that graph; local development keeps the Command/Docker graph above. Railway PostgreSQL and
-Helix were reported healthy on 3 October 2026. That historical result does not prove the cell
-fleet or authorize its deployment. The target uses celld 0.6.2 nodes and a fleet bucket, declared
-through Alchemy as described in [Runtime cells](27-runtime-cells.md).
+`preview` remains disabled. `production` selects `infra/railway.ts` (`railwayResources`), which
+calls `railwayCells` in `infra/cells.ts` for the two celld 0.6.2 nodes and retained R2 bucket.
+The application server receives their private URLs. Local development keeps the Command/Docker
+graph above. [Runtime cells](27-runtime-cells.md) describes the request and wake paths.
+
+History. Helix was removed from personal memory. Its service and volume remain retained for
+migration in `infra/railway.ts` (`railwayResources`). The health reported for the old services
+on 3 October 2026 does not prove the cell fleet.
 
 ### Optional server settings and required capabilities
 
@@ -82,12 +85,13 @@ Those select a proof target and do not configure a running product.
 
 Keep the server at one Railway replica until desktop presence is shared and browse requests route to the replica holding the socket.
 
-A push to `main` deploys itself (since 7 October 2026). The server and the runtime are connected to
-this repository (`builtFromMain` in `infra/railway.ts`). Railway builds a service when a push
-changes a path that service watches, exports the phone app's update inside the server's image, and
-runs the server's migrations before the new server takes traffic. Nobody runs a command for a code
-change. A push that changes neither image (a document, the gate, this stack's own files) starts
-nothing, and a push to the server, the web app or the phone app alone leaves the runtime running.
+The server builds from `main` when a push changes a watched input (`infra/railway.ts`,
+`builtFromMain`, `serverInputs`). Its image includes the cell workspace and exports the phone
+update. Before the new server takes traffic, its pre-deploy command applies auth and product
+migrations, then publishes the Worker (`infra/railway.ts`, `railwayResources`;
+`apps/cells/scripts/build.mjs`, `main`). The celld node services use the pinned image and load
+the published Worker; they are not separate repository builds. A docs-only push does not match
+the server's watched inputs.
 
 Nothing in the stack sees a push before Railway builds it, so the gate that `git push` runs is the
 only thing that keeps a failing tree out of production. Judge a deploy by Railway's deployment
@@ -211,8 +215,9 @@ Executor answered `502` for 55 minutes. No data was lost. The rules that came ou
 
 ### When a service with a volume will not start
 
-Railway attaches a volume to one container at a time, so a deploy of Executor, Helix, PostgreSQL
-or the runtime stops the old container before the new one starts. If the old container hangs in
+Railway attaches a volume to one container at a time, so a deploy of a cell node, Executor,
+PostgreSQL, or the retained historical Helix service stops the old container before the new one
+starts (`infra/cells.ts`, `railwayCells`; `infra/railway.ts`, `railwayResources`). If the old container hangs in
 `stopping`, it keeps the volume and every new deployment waits at `CREATE_CONTAINER` with no log
 line until Railway fails it (about seventeen minutes), then tries again. The public address
 answers `502` throughout. Redeploying or rolling back does not help: each attempt waits on the
@@ -457,14 +462,19 @@ sign-in. `pnpm infra:verify` fails when a setting the server requires is not sen
 forwarded to the hosted server when set (`apps/server/src/computers/README.md` says what each
 does).
 
-The pre-cell graph still wires `VIVID_MEMORY_DIR` to a runtime volume or local `.state/notes`.
-The chosen cell design stores Notes beside Pi's tables and removes that directory requirement.
-Model credentials and server-call authority remain runtime-only. `VIVID_MODEL` currently defaults
-to `opencode-go/glm-5.3-flash`; `packages/agent/runtime/src/providers/opencode.ts` declares it.
-Vivid adds no model retry or fallback layer. Cell configuration and launch remain unproven.
+Cell memory opens beside Pi's tables without a filesystem directory binding
+(`apps/cells/src/main.ts`, `Person`). `cellVariables` in `infra/cells.ts` supplies private model
+credentials, server-call authority, and optional `VIVID_DECISIONS`. The cell's learning gate
+uses Jev when enabled and an OpenRouter key is present; decisions default off
+(`packages/agent/runtime/src/settings.ts`, `decisionLayer`). `VIVID_MODEL` defaults to
+`opencode-go/glm-5.3-flash` (`packages/agent/runtime/src/providers/models.ts`, `makeProviders`;
+`packages/agent/runtime/src/providers/opencode.ts`, `DEFAULT_MODEL`).
 
-Personal memory lives only in the Person cell. The hosted stack retains the old Helix service
-and volume for the one-time migration, with `RemovalPolicy.retain()` on both. It runs Executor and gives the server its private address
+History. The hosted stack retains the old Helix service and volume, and the disconnected
+`RuntimeMemory` volume, for migration (`infra/railway.ts`, `railwayResources`). Current personal
+memory lives only in the Person cell (`apps/cells/src/main.ts`, `Person`).
+
+The hosted stack runs Executor and gives the server its private address
 (`VIVID_EXECUTOR_URL`), and gives the server the settings above. Boat and Photon are outside
 services the stack does not provision. The local process graph runs none of these services and
 has no stand-in for them: `Command.Dev` merges the stack's variables over the environment
@@ -485,8 +495,9 @@ docker build -f apps/server/Dockerfile -t vivid-server .
 
 The server image uses Node 24 and the root manifest's pinned pnpm through Corepack, preserves
 the installed workspace layout, and runs `pnpm --filter @vivid/server start` as the non-root
-`node` user. The old runtime Dockerfile is not the chosen cell host. Its build or health does
-not prove celld integration; cell packaging belongs to the Alchemy work in progress.
+`node` user. The image also includes celld and the cells workspace for Worker publication
+(`apps/server/Dockerfile`). `apps/cells/scripts/build.mjs` (`main`) owns native Worker bundling
+and publication.
 No credential or application origin is supplied at build time. Container health checks use
 `GET /health` on the configured `PORT`.
 
@@ -529,8 +540,10 @@ build from `RAILWAY_GIT_COMMIT_SHA` (`apps/server/Dockerfile`); the run-time `VI
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. The runtime host needs the
-server-call authority and model credentials, not the product database URL or a Notes directory.
-Alchemy owns its cell endpoint and fleet storage configuration; that wiring is not yet proven.
+server-call authority and model credentials through private Worker bindings. It has no product
+PostgreSQL URL or memory directory requirement (`packages/agent/runtime/src/settings.ts`,
+`settingsLayer`; `infra/cells.ts`, `cellVariables`). Alchemy declares its endpoints and fleet
+storage (`infra/cells.ts`, `railwayCells`).
 The server also needs the capabilities listed under "Credentials and external services".
 Apply auth then product migrations before starting the server. Pi uses its native SQLite
 storage inside the cell.
