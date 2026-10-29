@@ -3,6 +3,7 @@ import type { AssistantMessage, ToolResultMessage, UserMessage } from '@earendil
 import type { EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { ConversationState } from '@vivid/contracts'
 import { Array as Arr, Option, Order, Predicate, Schema } from 'effect'
+import { withoutCorrections } from '../correction.ts'
 import { isDeliveryEntry, MessageData, SIGNAL_ENTRY, SignalData } from '../delivery.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY, RunData } from '../response.ts'
 
@@ -354,7 +355,7 @@ function know(
 export function unsettled(view: Viewed): ReadonlyArray<number> {
   const live: typeof Live.Type = Option.getOrElse(decodeLive(view.docs['pi.live']), () => ({}))
   const known = know(
-    Arr.sort(view.entries, oldestFirst),
+    withoutCorrections(Arr.sort(view.entries, oldestFirst)),
     live.run === undefined ? [] : live.run.inputs,
     new Map(),
   )
@@ -606,7 +607,7 @@ const same = (left: ReadonlyArray<unknown>, right: ReadonlyArray<unknown>) =>
 export function projector() {
   const kept = new Map<number, Kept>()
   return (view: Viewed): Projected => {
-    const entries = Arr.sort(view.entries, oldestFirst)
+    const entries = withoutCorrections(Arr.sort(view.entries, oldestFirst))
     const live: typeof Live.Type = Option.getOrElse(decodeLive(view.docs['pi.live']), () => ({}))
     const inbox = decodeInbox(view.docs['pi.inbox'])
     const running =

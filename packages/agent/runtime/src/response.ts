@@ -19,6 +19,7 @@ import {
 import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { runInputs } from './deliveries.ts'
+import { withoutCorrections } from './correction.ts'
 import { isDeliveryEntry } from './delivery.ts'
 import { classify } from './failure.ts'
 import { PiRejected, pi } from './threads.ts'
@@ -168,7 +169,7 @@ const measure = Effect.fn('Response.measure')(function* (
   to: Option.Option<EntryId>,
   own: Option.Option<ReadonlySet<number>>,
 ) {
-  const entries = ownEntries(yield* entriesBetween(conversation, from, to), own)
+  const entries = ownEntries(withoutCorrections(yield* entriesBetween(conversation, from, to)), own)
   const messages = entries.flatMap((entry) => Option.toArray(assistantOf(entry)))
   const [first] = entries
   const opened = first === undefined || first.model === undefined ? undefined : first.model[0]
