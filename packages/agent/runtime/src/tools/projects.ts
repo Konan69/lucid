@@ -192,7 +192,7 @@ export function projectTools(runTool: RunTool) {
     defineTool({
       name: Tool.update_project,
       description:
-        'Change a Project’s work at the revision read_project returned. Define sets or corrects what done means and the next step (it also reopens a completed Project). Progress adds a dated line of where it stands and the next step after it. Complete marks it done only when the Person has said so in this conversation (said: person) or you observed it in this reply (said: vivid); it is refused otherwise. Do not guess progress the Person has not told you or you have not seen.',
+        'Change a Project’s work at the revision read_project returned. Define sets or corrects what done means and the next step (it also reopens a completed Project). Progress adds a dated line of where it stands and the next step after it; record it as soon as the Person says how the work moved, before asking anything else. Complete marks it done only when the Person has said so in this conversation (said: person) or you observed it in this reply (said: vivid); it is refused otherwise. Do not guess progress the Person has not told you or you have not seen.',
       input: v.strictObject({
         summary,
         name: text('Exact existing Project name.', 80),
